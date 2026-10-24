@@ -36,17 +36,18 @@ def resolve_test_databases(environment: Mapping[str, str], worker_id: str | None
             fields = conninfo_to_dict(value)
         except (ProgrammingError, ValueError):
             raise ValueError(f"{variable}: invalid libpq DSN") from None
-        database = fields.get("dbname", "")
+        database = fields.get("dbname")
+        if not isinstance(database, str):
+            raise ValueError(f"{variable} requires a database name")
         if _DATABASE.fullmatch(database) is None:
             raise ValueError(f"{variable}: expected tank_test dbname with one {{worker}}")
         for field, content in fields.items():
-            if field != "dbname" and ("{" in content or "}" in content):
+            if field != "dbname" and isinstance(content, str) and ("{" in content or "}" in content):
                 raise ValueError(f"{variable}: placeholders allowed only in dbname")
         if worker_id is None:
             updates[variable] = value
         else:
-            fields["dbname"] = database.replace("{worker}", worker_id)
-            updates[variable] = make_conninfo(**fields)
+            updates[variable] = make_conninfo(value, dbname=database.replace("{worker}", worker_id))
     return updates
 
 
@@ -70,7 +71,9 @@ def parallel_requested(args: Sequence[str]) -> bool:
 
 
 @pytest.hookimpl(tryfirst=True)
-def pytest_load_initial_conftests(early_config, parser, args) -> None:
+def pytest_load_initial_conftests(
+    early_config: pytest.Config, parser: pytest.Parser, args: list[str]
+) -> None:
     """Run before conftest reads or validates inherited test database routes."""
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     if worker_id is None and not parallel_requested(args):

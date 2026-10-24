@@ -9,21 +9,39 @@ import asyncio
 import hashlib
 import re
 import uuid
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from types import SimpleNamespace
 
 import psycopg
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
+from pydantic import BaseModel, ConfigDict, Field
 
 from tank import storage
 from tank.storage import PostgresRepository
 
+type ConnectionIdentity = tuple[tuple[str, str | int | None], ...]
 
-def _connection_identity(admin_dsn):
+
+class OwnedTemplate(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    admin_dsn: str = Field(repr=False)
+    name: str
+
+
+class TemplateBuild(BaseModel):
+    model_config = ConfigDict(
+        strict=True, extra="forbid", arbitrary_types_allowed=True, validate_assignment=True
+    )
+    lock: asyncio.Lock = Field(default_factory=asyncio.Lock)
+    users: int = Field(default=0, ge=0)
+
+
+def _connection_identity(admin_dsn: str) -> ConnectionIdentity:
     params = conninfo_to_dict(admin_dsn)
-    if not params.get("dbname", "").startswith("tank_test"):
+    database = params.get("dbname")
+    if not isinstance(database, str) or not database.startswith("tank_test"):
         raise ValueError("PostgreSQL test admin must select a dedicated tank_test* database")
 
     identity = dict(params)
@@ -32,7 +50,7 @@ def _connection_identity(admin_dsn):
     return tuple(sorted(identity.items()))
 
 
-def _template_name(name):
+def _template_name(name: str) -> str:
     if not isinstance(name, str) or not re.fullmatch(r"tank_test_[A-Za-z0-9_]+", name):
         raise ValueError("Schema template must name a dedicated tank_test_* database")
     if len(name) > 63:
@@ -40,11 +58,11 @@ def _template_name(name):
     return name
 
 
-def _migration_paths():
+def _migration_paths() -> list[Path]:
     return sorted((Path(storage.__file__).parent / "migrations").glob("*.sql"))
 
 
-def schema_template_marker():
+def schema_template_marker() -> str:
     """Fingerprint actual SQL and migration code; no database or environment IO."""
     root = Path(storage.__file__).parent
     paths = [
@@ -63,7 +81,7 @@ def schema_template_marker():
     return "tank-test-schema-template:v1:" + digest.hexdigest()
 
 
-async def _finish(operation):
+async def _finish[T](operation: Awaitable[T]) -> T:
     """Finish owned resource cleanup even if its caller is cancelled again."""
     task = asyncio.ensure_future(operation)
     cancellation = None
@@ -80,7 +98,7 @@ async def _finish(operation):
     return result
 
 
-async def _attach_clickhouse(repo, name) -> None:
+async def _attach_clickhouse(repo: PostgresRepository, name: str) -> None:
     """Each case's exchange series live in its own ClickHouse database (CLICKHOUSE_TEST_URL)."""
     import os
 
@@ -94,7 +112,7 @@ async def _attach_clickhouse(repo, name) -> None:
         await repo.clickhouse.execute(statement)
 
 
-async def _detach_clickhouse(repo) -> None:
+async def _detach_clickhouse(repo: PostgresRepository) -> None:
     ch = getattr(repo, "clickhouse", None)
     if ch is not None:
         try:
@@ -103,7 +121,7 @@ async def _detach_clickhouse(repo) -> None:
             await ch.close()
 
 
-async def _drop_database(admin_dsn, name) -> None:
+async def _drop_database(admin_dsn: str, name: str) -> None:
     async def drop() -> None:
         admin = await psycopg.AsyncConnection.connect(admin_dsn, autocommit=True)
         try:
@@ -114,7 +132,7 @@ async def _drop_database(admin_dsn, name) -> None:
     await _finish(drop())
 
 
-async def _create_database(admin_dsn, template=None, *, name=None):
+async def _create_database(admin_dsn: str, template: str | None = None, *, name: str | None = None) -> str:
     _connection_identity(admin_dsn)
     name = _template_name(name) if name is not None else "tank_test_fixture_" + uuid.uuid4().hex
     command = sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name))
@@ -140,7 +158,7 @@ async def _create_database(admin_dsn, template=None, *, name=None):
     return name
 
 
-async def _validate_schema_template(admin_dsn, name) -> None:
+async def _validate_schema_template(admin_dsn: str, name: str) -> None:
     _connection_identity(admin_dsn)
     _template_name(name)
     admin = await psycopg.AsyncConnection.connect(admin_dsn, autocommit=True)
@@ -167,7 +185,7 @@ async def _validate_schema_template(admin_dsn, name) -> None:
         await _finish(admin.close())
 
 
-async def prepare_schema_template(admin_dsn, name):
+async def prepare_schema_template(admin_dsn: str, name: str) -> str:
     """Create, migrate and seal a new CI-owned seed; never replace an existing DB."""
     _connection_identity(admin_dsn)
     _template_name(name)
@@ -211,21 +229,21 @@ async def prepare_schema_template(admin_dsn, name):
 class PostgresTemplate:
     """Lazy template owner; an explicit sealed external seed is never owned."""
 
-    def __init__(self, *, schema_template=None) -> None:
+    def __init__(self, *, schema_template: str | None = None) -> None:
         self._external_template = _template_name(schema_template) if schema_template is not None else None
-        self._templates = {}
-        self._building = {}
+        self._templates: dict[ConnectionIdentity, OwnedTemplate] = {}
+        self._building: dict[ConnectionIdentity, TemplateBuild] = {}
 
-    async def _template(self, admin_dsn):
+    async def _template(self, admin_dsn: str) -> str:
         if self._external_template is not None:
             await _validate_schema_template(admin_dsn, self._external_template)
             return self._external_template
         identity = _connection_identity(admin_dsn)
         if identity in self._templates:
-            return self._templates[identity][1]
+            return self._templates[identity].name
         state = self._building.get(identity)
         if state is None:
-            state = SimpleNamespace(lock=asyncio.Lock(), users=0)
+            state = TemplateBuild()
             self._building[identity] = state
         state.users += 1
         try:
@@ -242,15 +260,15 @@ class PostgresTemplate:
                     except BaseException:
                         await _drop_database(admin_dsn, name)
                         raise
-                    self._templates[identity] = (admin_dsn, name)
+                    self._templates[identity] = OwnedTemplate(admin_dsn=admin_dsn, name=name)
         finally:
             state.users -= 1
             if state.users == 0:
                 self._building.pop(identity)
-        return self._templates[identity][1]
+        return self._templates[identity].name
 
     @asynccontextmanager
-    async def repository(self, admin_dsn, *, migrated=True):
+    async def repository(self, admin_dsn: str, *, migrated: bool = True) -> AsyncIterator[PostgresRepository]:
         template = await self._template(admin_dsn) if migrated else None
         name = await _create_database(admin_dsn, template)
         repo = PostgresRepository(make_conninfo(admin_dsn, dbname=name))
@@ -271,8 +289,8 @@ class PostgresTemplate:
 
     async def close(self) -> None:
         async def cleanup() -> None:
-            for identity, (admin_dsn, name) in list(self._templates.items()):
-                await _drop_database(admin_dsn, name)
+            for identity, template in list(self._templates.items()):
+                await _drop_database(template.admin_dsn, template.name)
                 del self._templates[identity]
 
         await _finish(cleanup())
