@@ -10,6 +10,7 @@ from tank.contracts.progress import ProgressPreferences
 from tank.market.capture_contracts import CaptureReadiness
 from tank.runtime import Runtime
 from tank.runtime_contracts import MarketTruthJob
+from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.time_precision import Timestamp
 from tank.util import parse_time
@@ -1051,7 +1052,13 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
     monkeypatch.setattr("tank.delivery.DELIVERY_LOCK_WAIT_S", 0.2)
     aid = new_id("alert")
     eid = new_id("event")
-    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = Settings(
+        telegram_token="fixture",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     sent_requests = []
 
     def send(request: httpx.Request):
@@ -1147,6 +1154,7 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
             async def run_one() -> None:
                 stop = asyncio.Event()
                 runtime = object.__new__(Runtime)
+                runtime.settings = settings
                 runtime.repo = repo
                 runtime.delivery = delivery
 
@@ -1227,7 +1235,13 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
     now = utcnow()
     held, release, acquiring = asyncio.Event(), asyncio.Event(), asyncio.Event()
     key = "event:" + eid if lock_kind == "event" else f"deliver:{aid}:1:telegram:alerts"
-    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = Settings(
+        telegram_token="fixture",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     requests = []
 
     async def holder() -> None:
@@ -1313,6 +1327,7 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
             async def run_one() -> None:
                 stop = asyncio.Event()
                 runtime = object.__new__(Runtime)
+                runtime.settings = settings
                 runtime.repo, runtime.delivery = repo, delivery
 
                 async def handle(payload):
