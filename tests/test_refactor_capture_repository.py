@@ -1,5 +1,5 @@
 import os
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -22,7 +22,7 @@ from tank.market.capture_repository import CaptureRepository
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.time_precision import Timestamp
-from tank.util import parse_time
+from tank.util import JsonInput, parse_time
 
 
 def observed(value: str = "2026-10-25T00:00:00Z") -> Timestamp:
@@ -121,6 +121,7 @@ class TestClock:
     def __init__(self) -> None:
         self.elapsed = 0.0
         self.sequence = 0
+        self.peer: Callable[[], Awaitable[None]] | None = None
 
     def now(self) -> datetime:
         return parse_time("2026-10-25T00:00:00Z") + timedelta(seconds=self.elapsed)
@@ -130,6 +131,8 @@ class TestClock:
 
     async def sleep(self, delay_s: float) -> None:
         self.elapsed += delay_s
+        if self.peer is not None:
+            await self.peer()
 
     def identity(self, prefix: str) -> str:
         self.sequence += 1
@@ -293,9 +296,9 @@ class LostAcknowledgementStore(MemoryRepository):
     async def put_market_batch(
         self,
         collection: str,
-        records: Iterable[Mapping[str, JsonValue]],
+        records: Iterable[Mapping[str, JsonInput]],
         *,
-        keys: Sequence[str] | None = None,
+        keys: Iterable[str] | None = None,
     ) -> list[dict[str, JsonValue]]:
         return []
 
@@ -313,3 +316,37 @@ async def test_acknowledged_control_write_without_durable_row_fails() -> None:
                 requested_at=observed(),
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_failed_repair_preserves_only_genuinely_observed_instrument_counts() -> None:
+    store = MemoryRepository()
+    clock = TestClock()
+
+    async def partial_failure() -> None:
+        (wire,) = await store.list("mkt.capture_requests")
+        wire.update(
+            status="FAILED",
+            reason="REPAIR_FAILED",
+            writer="go-peer",
+            started_at="2026-10-25T00:00:00Z",
+            started_at_prec="COLLECTION_ONLY",
+            started_at_prec_reason=None,
+            finished_at="2026-10-25T00:00:00.250000Z",
+            finished_at_prec="COLLECTION_ONLY",
+            finished_at_prec_reason=None,
+            result={"instruments": {"observed:spot:TEST": {"incomplete_before": 30, "incomplete_after": 2}}},
+        )
+        request_id = wire["request_id"]
+        assert isinstance(request_id, str)
+        await store.put("mkt.capture_requests", request_id, wire)
+
+    clock.peer = partial_failure
+    result = await lifecycle(store, clock).repair_windows(
+        "TOKEN-test", observed(), observed("2026-10-25T00:01:00Z")
+    )
+    assert result.status == "FAILED" and result.reason == "REPAIR_FAILED"
+    assert result.result is not None
+    assert set(result.result.instruments) == {"observed:spot:TEST"}
+    counts = result.result.instruments["observed:spot:TEST"]
+    assert counts.incomplete_before == 30 and counts.incomplete_after == 2

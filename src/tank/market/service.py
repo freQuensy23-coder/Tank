@@ -2388,19 +2388,14 @@ class MarketService:
                     held = rows[iid] = held[first:]
                     changed = [(k, row) for i, row, k in late if i == iid]
                     if changed:
-                        index = {point[1]: n for n, point in enumerate(held)}
+                        indexed = {point[1]: point for point in held}
                         for k, row in changed:
-                            point = (parse_time(row[field]), k, row)
-                            if k in index:
-                                old = held[index[k]][2]
+                            if k in indexed:
+                                old = indexed[k][2]
                                 if books and "bids" not in row and "bids" in old:
                                     row = dict(row, bids=old["bids"], asks=old.get("asks"))
-                                    point = (point[0], k, row)
-                                held[index[k]] = point
-                            else:
-                                held.insert(
-                                    bisect_right(held, (point[0], k), key=lambda p: (p[0], p[1])), point
-                                )
+                            indexed[k] = (parse_time(row[field]), k, row)
+                        held[:] = sorted(indexed.values(), key=lambda point: (point[0], point[1]))
                     if fresh.get(iid):
                         held.extend(
                             (parse_time(row[field]), k, row)

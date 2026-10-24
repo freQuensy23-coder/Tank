@@ -182,13 +182,20 @@ class CaptureLifecycle:
                     status="COMPLETE", request_id=request_id, instruments=row.result.instruments
                 )
             if isinstance(row, RepairFailed):
-                return RepairUnavailable(status="FAILED", request_id=request_id, reason=row.reason)
+                return RepairUnavailable(
+                    status="FAILED", request_id=request_id, reason=row.reason, result=row.result
+                )
             if isinstance(row, RepairExpired):
-                return RepairUnavailable(status="EXPIRED", request_id=request_id, reason=row.reason)
+                return RepairUnavailable(
+                    status="EXPIRED", request_id=request_id, reason=row.reason, result=None
+                )
             remaining = until - self.clock.monotonic()
             if remaining <= 0:
                 return RepairUnavailable(
-                    status="INCOMPLETE", request_id=request_id, reason="BOUNDED_CAPTURE_REQUEST_WAIT_EXPIRED"
+                    status="INCOMPLETE",
+                    request_id=request_id,
+                    reason="BOUNDED_CAPTURE_REQUEST_WAIT_EXPIRED",
+                    result=None,
                 )
             await self.clock.sleep(min(0.25, remaining))
 
