@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import yaml
+from pydantic import JsonValue
 
 from tank.market.normalize import timestamp_fields
 from tank.market.service import CAPTURE_REQUEST_GRACE_S, EXCHANGE_REST_OWNER, MarketService
@@ -61,6 +62,26 @@ def settings(tmp_path: Path):
     return make_settings(tmp_path)
 
 
+def capture_event() -> dict[str, JsonValue]:
+    return {
+        "event_id": "EVT-1",
+        "statement": "An official approval requires historical market capture",
+        "theme_tags": ["CAPTURE_TEST"],
+        "public_at": "2026-10-18T12:00:00Z",
+        "public_at_prec": "EXACT",
+        "public_at_basis": "Recorded official fixture publication",
+        "known_to_us_at": "2026-10-18T12:00:00Z",
+        "known_to_us_at_prec": "EXACT",
+        "freshness": "STALE",
+        "event_state": "APPROVED",
+        "state_verified": True,
+        "certainty": "HIGH",
+        "timing_confidence": "HIGH",
+        "best_source_class": "PRIMARY",
+        "lifecycle": "MONITORING",
+    }
+
+
 async def put(repo, collection, row, key) -> None:
     await repo.put_market_batch(collection, [row], keys=[key])
 
@@ -81,7 +102,7 @@ async def test_external_escalation_writes_the_obligation_and_starts_nothing(sett
     await repo.put(
         "evt.events",
         "EVT-1",
-        {"event_id": "EVT-1", "public_at": "2026-10-18T12:00:00Z", "public_at_prec": "EXACT"},
+        capture_event(),
     )
     await service.escalate("EVT-1", [TOKEN])
     assert [row["token_id"] for row in await repo.list("mkt.hot_tokens")] == [TOKEN]
@@ -354,7 +375,7 @@ async def test_external_contract_on_postgres(migrated, tmp_path: Path) -> None:
     await migrated.put(
         "evt.events",
         "EVT-1",
-        {"event_id": "EVT-1", "public_at": "2026-10-18T12:00:00Z", "public_at_prec": "EXACT"},
+        capture_event(),
     )
     await service.escalate("EVT-1", [TOKEN])
     (run,) = await migrated.list("mkt.backfill_runs")
