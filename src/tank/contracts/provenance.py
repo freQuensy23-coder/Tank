@@ -34,7 +34,9 @@ class GenerationProvenance(DomainModel):
 
 
 class AgentProvenance(DomainModel):
-    agent_id: str
+    """Legacy session snapshots can lack an agent identifier; never attribute them to a current agent."""
+
+    agent_id: str | None
     model_id: str
     model_id_basis: str
     agent_version: str | None
