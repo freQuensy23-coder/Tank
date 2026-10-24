@@ -79,9 +79,12 @@ with sync_playwright() as p:
  assert page.evaluate('localStorage.getItem("qualification")')==nonce,'browser localStorage lost'
  browser.close()
 server.shutdown()
+memory=Path('/mnt/memory/qualification/note.txt')
+assert memory.read_text()=='seed:'+nonce+''.join('\\n'+effect for effect in ${JSON.stringify(expectedEffects)}),'writable memory was lost or rebound to different data'
 previous.append(phase)
 ledger.write_text(json.dumps(previous))
-print('TANK_QUALIFICATION_RECEIPT:'+json.dumps({'phase':phase,'nonce':nonce,'image':${JSON.stringify(setup ? 'A' : 'B')},'workspaceSha256':hashlib.sha256(file.read_bytes()).hexdigest(),'outputSha256':hashlib.sha256(output.read_bytes()).hexdigest(),'uploadSha256':${JSON.stringify(uploadedHash)},'effects':previous,'browserCookie':True,'browserLocalStorage':True}))
+memory.write_text(memory.read_text()+'\\n'+phase)
+print('TANK_QUALIFICATION_RECEIPT:'+json.dumps({'phase':phase,'nonce':nonce,'image':${JSON.stringify(setup ? 'A' : 'B')},'workspaceSha256':hashlib.sha256(file.read_bytes()).hexdigest(),'outputSha256':hashlib.sha256(output.read_bytes()).hexdigest(),'uploadSha256':${JSON.stringify(uploadedHash)},'effects':previous,'browserCookie':True,'browserLocalStorage':True,'writableMemory':True}))
 `;
   return 'python3 -c ' + "'" + code.replaceAll("'", "'\\''") + "'";
 }
@@ -152,7 +155,11 @@ for (let round = 1; round <= 2; round++) {
     docker(['run', '-d', '--name', names.provider, '--label', 'tank.qualification=' + prefix, '--network', names.network, '--network-alias', 'provider', '--env', 'QUALIFICATION_PROVIDER_KEY', '--mount', `type=bind,src=${resolve('scripts/ci/qualification-provider.mjs')},dst=/qualification-provider.mjs,readonly`, '--entrypoint', 'node', image, '/qualification-provider.mjs'], { env });
     await start('A');
     const agent = await api('/v1/agents', { name: 'Isolated native upgrade qualification', model: 'claude-sonnet-4-6', system: 'Execute the supplied qualification command exactly once. Report tool output. No external requests.', tools: [{ type: 'agent_toolset_20260401', default_config: { enabled: false }, configs: [{ name: 'bash', enabled: true }] }] });
-    const session = await api('/v1/sessions', { agent: agent.id, environment_id: 'env-local-runtime', metadata: { qualification: prefix } });
+    const memoryStore = await api('/v1/memory_stores', { name: 'qualification', metadata: { qualification: prefix } });
+    const memory = await api('/v1/memory_stores/' + memoryStore.id + '/memories', { path: '/note.txt', content: 'seed:' + nonce });
+    const memoryContent = () => api('/v1/memory_stores/' + memoryStore.id + '/memories/' + memory.id + '?view=full');
+    receipt.memoryStoreId = memoryStore.id;
+    const session = await api('/v1/sessions', { agent: agent.id, environment_id: 'env-local-runtime', resources: [{ type: 'memory_store', memory_store_id: memoryStore.id, name: 'qualification', access: 'read_write' }], metadata: { qualification: prefix } });
     receipt.sessionId = session.id;
     const form = new FormData(); form.set('file', new Blob([uploaded]), 'qualification-upload.bin');
     const file = await api('/v1/files', form);
@@ -161,6 +168,13 @@ for (let round = 1; round <= 2; round++) {
     receipt.initialInput = await send('A');
     const initialHistory = await waitFor('actual A guest file/browser execution', async () => { const rows = await events(session.id); if (rows.some(row => row.type === 'session.error')) throw Object.assign(Error(JSON.stringify(rows.filter(row => row.type === 'session.error'))), { fatal: true }); return receipts(rows).length >= 1 && rows.some(row => row.type === 'session.status_idle' && row.stop_reason?.type === 'end_turn') ? rows : null; }, 600);
     receipt.before = publication();
+    const memoryBindings = runtimeId => JSON.parse(docker(['exec', names.service, 'node', '--input-type=module', '-e', "import {DatabaseSync} from 'node:sqlite';const db=new DatabaseSync(process.env.BOXLITE_HOME+'/db/boxlite.db',{readOnly:true});const row=db.prepare('SELECT id,name,json FROM box_config WHERE id=?').get(process.argv[1]);if(!row)throw Error('missing actual native catalog row');const data=JSON.parse(row.json);if(data.id!==row.id||data.name!==row.name)throw Error('actual native catalog identity mismatch');console.log(JSON.stringify(data.options.volumes.filter(v=>v.guest_path.startsWith('/mnt/memory/'))));db.close();", runtimeId]));
+    receipt.memoryBefore = await waitFor('A writable-memory synchronization through Managed API', async () => { const value = await memoryContent(); return value.content === 'seed:' + nonce + '\nA' ? value : null; });
+    receipt.memoryBindingsBefore = memoryBindings(receipt.before.handle.runtimeId);
+    assert.equal(receipt.memoryBindingsBefore.length, 1);
+    assert.equal(receipt.memoryBindingsBefore[0].guest_path, '/mnt/memory/qualification');
+    assert.equal(receipt.memoryBindingsBefore[0].read_only, false);
+    assert.ok(receipt.memoryBindingsBefore[0].host_path.includes(memoryStore.id));
     receipt.historyBefore = initialHistory.map(row => ({ id: row.id, sha256: createHash('sha256').update(JSON.stringify(row)).digest('hex') }));
     await stop();
     await start('B');
@@ -170,6 +184,10 @@ for (let round = 1; round <= 2; round++) {
     assert.ok(receipt.queueObserved.some(row => row.state === 'queued'), 'No actual durably queued input was observed during replacement');
     const history = await waitFor('same-session B upgrade and queued-input completion', async () => { const rows = await events(session.id); return receipts(rows).length >= 3 && rows.filter(row => row.type === 'session.status_idle' && row.stop_reason?.type === 'end_turn').length >= 2 ? rows : null; }, 600);
     receipt.after = publication();
+    receipt.memoryAfter = await waitFor('B writable-memory synchronization through Managed API', async () => { const value = await memoryContent(); return value.content === 'seed:' + nonce + '\nA\nB-first\nB-second' ? value : null; });
+    receipt.memoryBindingsAfter = memoryBindings(receipt.after.handle.runtimeId);
+    assert.deepEqual(receipt.memoryBindingsAfter, receipt.memoryBindingsBefore, 'restart/upgrade rebound a writable memory store to an unproved incarnation');
+    receipt.memoryVerified = true;
     assert.notEqual(receipt.before.handle.runtimeId, receipt.after.handle.runtimeId, 'image B did not replace A');
     assert.notEqual(receipt.before.imageIdentity, receipt.after.imageIdentity, 'image identity did not change');
     assert.deepEqual(receipt.before.compatibility, receipt.after.compatibility, 'protected compatibility changed');
@@ -242,6 +260,7 @@ for (let round = 1; round <= 2; round++) {
     await writeFile(join(evidence, 'managed-upgrade-' + round + '.json'), JSON.stringify(receipt, null, 2) + '\n');
   }
 }
+additionalCases.push({ case: 'writable-memory-restart-A-to-B', sourceSha, status: observations.length === 2 && observations.every(row => row.status === 'PASS' && row.memoryVerified) ? 'PASS' : 'FAIL', rounds: observations.map(row => ({ case: row.case, memoryStoreId: row.memoryStoreId, bindingsBefore: row.memoryBindingsBefore, bindingsAfter: row.memoryBindingsAfter, verified: row.memoryVerified === true })) });
 await rm(privateDirectory, { recursive: true, force: true });
 for (const row of additionalCases) await writeFile(join(evidence, row.case + '.json'), JSON.stringify(row, null, 2) + '\n');
 await writeFile(join(evidence, 'native-summary.json'), JSON.stringify({ schema: 'tank.native-managed-upgrade.v1', sourceSha, runId: process.env.GITHUB_RUN_ID, cases: [...observations, ...additionalCases].map(row => ({ case: row.case, status: row.status })), fullyQualified: false, unproved: ['legacy-native-publication', 'interrupted-transfer-publication', 'lease-loss-concurrent-resume-archive'] }, null, 2) + '\n');
