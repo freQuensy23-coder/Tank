@@ -12,7 +12,7 @@ def unassessed_dimension() -> ScoreDimension:
     return ScoreDimension(
         value=None,
         reason="NOT_ASSESSED",
-        rationale="This fixture does not perform a score assessment.",
+        rationale="Not assessed.",
         evidence=[],
         proposed_by="LLM",
         caps_applied=[],
