@@ -152,6 +152,7 @@ async def test_real_worker_http_errors_flow_through_source_checkpoint_to_multipa
     assert len(receipts) == 5
 
 
+@pytest.mark.timeout(10)
 @pytest.mark.parametrize("phase", ["status", "headers", "chunk_extension", "chunk_trailer"])
 async def test_absolute_deadline_closes_slow_http_transport_and_retains_completed_evidence(
     monkeypatch, phase
@@ -233,10 +234,13 @@ async def test_absolute_deadline_closes_slow_http_transport_and_retains_complete
         assert len(requests) == 2 and not failures
     finally:
         server.close()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         await server.wait_closed()
-        await asyncio.gather(*tasks)
 
 
+@pytest.mark.timeout(10)
 async def test_absolute_deadline_closes_stalled_tls_handshake(monkeypatch):
     root = Path(__file__).resolve().parents[1] / "apify" / "x-reader"
     monkeypatch.syspath_prepend(str(root))
@@ -271,5 +275,7 @@ async def test_absolute_deadline_closes_stalled_tls_handshake(monkeypatch):
         assert failure.value.diagnostics["attemptCount"] == 1
     finally:
         server.close()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         await server.wait_closed()
-        await asyncio.gather(*tasks)
