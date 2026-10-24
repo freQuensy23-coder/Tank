@@ -1,13 +1,13 @@
 {
-  "files": 331,
+  "files": 359,
   "counts": {
-    "any": 34,
-    "dictionary": 9532,
+    "any": 3,
+    "dictionary": 9698,
     "dynamic_go": 1014,
-    "fallback": 8065,
-    "none_default": 400,
-    "untyped_parameter": 5034,
-    "untyped_return": 2146
+    "fallback": 7860,
+    "none_default": 464,
+    "untyped_parameter": 4816,
+    "untyped_return": 1954
   },
   "areas": {
     "capture": {
@@ -15,32 +15,32 @@
     },
     "deploy": {
       "untyped_parameter": 106,
-      "untyped_return": 70,
+      "untyped_return": 50,
       "none_default": 4,
       "fallback": 213,
       "dictionary": 132
     },
     "scripts": {
       "untyped_parameter": 180,
-      "untyped_return": 107,
+      "untyped_return": 83,
       "dictionary": 211,
       "none_default": 9,
       "fallback": 329
     },
     "src": {
-      "dictionary": 2387,
-      "untyped_parameter": 2457,
-      "untyped_return": 1130,
-      "fallback": 6214,
-      "none_default": 315,
-      "any": 34
+      "dictionary": 2421,
+      "untyped_parameter": 2311,
+      "untyped_return": 1041,
+      "fallback": 6001,
+      "none_default": 378,
+      "any": 3
     },
     "tests": {
-      "untyped_parameter": 2291,
-      "fallback": 1309,
-      "untyped_return": 839,
-      "none_default": 72,
-      "dictionary": 6802
+      "untyped_parameter": 2219,
+      "fallback": 1317,
+      "untyped_return": 780,
+      "none_default": 73,
+      "dictionary": 6934
     }
   },
   "modules": {
@@ -255,12 +255,12 @@
     "deploy/boxlite/v0.10.6/replay-dns/apply_patch.py": {
       "dictionary": 2,
       "untyped_parameter": 5,
-      "untyped_return": 3,
+      "untyped_return": 2,
       "fallback": 2
     },
     "deploy/boxlite/v0.10.6/replay-dns/monitored_build.py": {
       "untyped_parameter": 11,
-      "untyped_return": 3,
+      "untyped_return": 2,
       "none_default": 1,
       "fallback": 12,
       "dictionary": 3
@@ -273,24 +273,24 @@
     },
     "deploy/openma_browser/browser-worker.py": {
       "untyped_parameter": 15,
-      "untyped_return": 12,
+      "untyped_return": 5,
       "none_default": 1,
       "fallback": 15,
       "dictionary": 7
     },
     "deploy/openma_browser/deadline-contract.py": {
       "untyped_parameter": 9,
-      "untyped_return": 9,
+      "untyped_return": 7,
       "dictionary": 4
     },
     "deploy/openma_browser/image-contract.py": {
-      "untyped_return": 2,
       "untyped_parameter": 3,
+      "untyped_return": 1,
       "dictionary": 2
     },
     "deploy/openma_browser/kvm-deadline-contract.py": {
       "untyped_parameter": 16,
-      "untyped_return": 9,
+      "untyped_return": 6,
       "dictionary": 2,
       "fallback": 1
     },
@@ -302,12 +302,12 @@
     },
     "deploy/openma_browser/prepare-font-cache.py": {
       "untyped_parameter": 2,
-      "untyped_return": 2,
+      "untyped_return": 1,
       "dictionary": 3
     },
     "deploy/openma_browser/response-contract.py": {
       "untyped_parameter": 2,
-      "untyped_return": 2,
+      "untyped_return": 1,
       "dictionary": 2
     },
     "deploy/openma_browser/startup-contract.py": {
@@ -317,14 +317,14 @@
     },
     "deploy/openma_lifecycle/native-startup-observer.py": {
       "untyped_parameter": 9,
-      "untyped_return": 5,
+      "untyped_return": 4,
       "dictionary": 11,
       "fallback": 3
     },
     "deploy/openma_session_proof.py": {
       "dictionary": 24,
       "untyped_parameter": 4,
-      "untyped_return": 2,
+      "untyped_return": 1,
       "fallback": 38
     },
     "deploy/prepare_boxlite_runtime.py": {
@@ -342,12 +342,12 @@
     "deploy/stack_sizing.py": {
       "dictionary": 17,
       "untyped_parameter": 1,
-      "untyped_return": 3,
+      "untyped_return": 2,
       "fallback": 17
     },
     "scripts/acceptance/assemble_packets.py": {
       "untyped_parameter": 81,
-      "untyped_return": 44,
+      "untyped_return": 37,
       "dictionary": 67,
       "none_default": 3,
       "fallback": 164
@@ -355,13 +355,13 @@
     "scripts/acceptance/common.py": {
       "fallback": 6,
       "untyped_parameter": 15,
-      "untyped_return": 9,
+      "untyped_return": 8,
       "none_default": 3,
       "dictionary": 3
     },
     "scripts/acceptance/e2e_trace.py": {
       "dictionary": 17,
-      "untyped_return": 7,
+      "untyped_return": 6,
       "untyped_parameter": 8,
       "fallback": 38
     },
@@ -378,19 +378,18 @@
     "scripts/acceptance/run_fixtures.py": {
       "fallback": 19,
       "untyped_parameter": 24,
-      "untyped_return": 12,
+      "untyped_return": 9,
       "none_default": 2,
       "dictionary": 15
     },
     "scripts/acceptance/shadow_daily.py": {
       "untyped_parameter": 9,
-      "untyped_return": 5,
+      "untyped_return": 2,
       "dictionary": 8,
       "fallback": 34
     },
     "scripts/acceptance/shadow_weekly.py": {
       "untyped_parameter": 3,
-      "untyped_return": 1,
       "dictionary": 6,
       "fallback": 5
     },
@@ -401,12 +400,11 @@
       "untyped_parameter": 11
     },
     "scripts/capture/gen_goldens.py": {
-      "untyped_parameter": 2,
-      "untyped_return": 2
+      "untyped_parameter": 2
     },
     "scripts/capture/gen_pyvectors.py": {
       "untyped_parameter": 13,
-      "untyped_return": 9,
+      "untyped_return": 4,
       "fallback": 3,
       "dictionary": 24
     },
@@ -415,7 +413,7 @@
       "dictionary": 1
     },
     "scripts/capture/parity.py": {
-      "untyped_return": 6,
+      "untyped_return": 5,
       "untyped_parameter": 5,
       "dictionary": 2,
       "fallback": 2
@@ -464,30 +462,33 @@
       "none_default": 2
     },
     "src/tank/agents/jev.py": {
-      "untyped_parameter": 5,
-      "untyped_return": 2,
-      "none_default": 2,
-      "dictionary": 3,
-      "fallback": 9
+      "dictionary": 6,
+      "none_default": 2
     },
     "src/tank/agents/pipeline.py": {
-      "dictionary": 26,
+      "dictionary": 24,
       "untyped_parameter": 33,
       "untyped_return": 21,
-      "fallback": 93,
+      "fallback": 85,
       "none_default": 1
     },
+    "src/tank/agents/provenance.py": {
+      "fallback": 10,
+      "dictionary": 5
+    },
     "src/tank/agents/security.py": {
-      "untyped_parameter": 4,
-      "untyped_return": 3,
-      "dictionary": 2
+      "dictionary": 6
     },
     "src/tank/agents/sessions.py": {
-      "untyped_parameter": 88,
-      "untyped_return": 61,
-      "fallback": 576,
-      "dictionary": 173,
-      "none_default": 9
+      "untyped_parameter": 78,
+      "untyped_return": 54,
+      "fallback": 553,
+      "none_default": 13,
+      "dictionary": 165
+    },
+    "src/tank/agents/tool_contracts.py": {
+      "dictionary": 2,
+      "fallback": 1
     },
     "src/tank/agents/wire.py": {
       "untyped_parameter": 4,
@@ -501,22 +502,35 @@
       "none_default": 7
     },
     "src/tank/analysis/decisions.py": {
-      "untyped_parameter": 25,
-      "untyped_return": 7,
-      "fallback": 174,
-      "dictionary": 50,
-      "none_default": 3
+      "untyped_parameter": 11,
+      "untyped_return": 4,
+      "fallback": 172,
+      "none_default": 3,
+      "dictionary": 46
+    },
+    "src/tank/analysis/identity.py": {
+      "dictionary": 3,
+      "fallback": 4,
+      "none_default": 1
+    },
+    "src/tank/analysis/positioning.py": {
+      "fallback": 3
     },
     "src/tank/analysis/truth.py": {
-      "dictionary": 390,
-      "untyped_parameter": 306,
-      "untyped_return": 131,
-      "fallback": 1206,
+      "dictionary": 388,
+      "untyped_parameter": 297,
+      "untyped_return": 129,
+      "fallback": 1205,
       "none_default": 21
     },
+    "src/tank/analysis/watch_contracts.py": {
+      "fallback": 2,
+      "dictionary": 1
+    },
+    "src/tank/analysis/watch_policy.py": {
+      "fallback": 1
+    },
     "src/tank/backup.py": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
       "fallback": 1
     },
     "src/tank/bootstrap.py": {
@@ -540,18 +554,25 @@
       "dictionary": 29
     },
     "src/tank/clickhouse_market.py": {
-      "dictionary": 23,
-      "untyped_return": 52,
-      "fallback": 32,
-      "untyped_parameter": 182,
-      "none_default": 17
+      "dictionary": 30,
+      "fallback": 29,
+      "none_default": 17,
+      "untyped_parameter": 165,
+      "untyped_return": 42
     },
     "src/tank/codex_gateway.py": {
       "untyped_return": 3,
-      "untyped_parameter": 3,
       "fallback": 38,
-      "none_default": 3,
-      "dictionary": 13
+      "dictionary": 15,
+      "none_default": 3
+    },
+    "src/tank/contracts/jobs.py": {
+      "dictionary": 1
+    },
+    "src/tank/contracts/repository.py": {
+      "dictionary": 17,
+      "none_default": 14,
+      "fallback": 1
     },
     "src/tank/delivery.py": {
       "untyped_parameter": 19,
@@ -562,10 +583,10 @@
     },
     "src/tank/event_tools.py": {
       "dictionary": 196,
-      "untyped_parameter": 173,
-      "untyped_return": 74,
-      "none_default": 11,
-      "fallback": 605
+      "untyped_parameter": 153,
+      "untyped_return": 68,
+      "fallback": 583,
+      "none_default": 10
     },
     "src/tank/fixture_reference.py": {
       "untyped_parameter": 40,
@@ -575,21 +596,19 @@
       "dictionary": 40
     },
     "src/tank/logging.py": {
-      "untyped_parameter": 1,
       "none_default": 1
     },
+    "src/tank/market/book_contracts.py": {
+      "fallback": 2
+    },
     "src/tank/market/books.py": {
-      "untyped_parameter": 20,
-      "untyped_return": 7,
-      "dictionary": 16,
-      "fallback": 10,
-      "none_default": 9
+      "dictionary": 28,
+      "none_default": 9,
+      "fallback": 3
     },
     "src/tank/market/capture.py": {
-      "untyped_parameter": 3,
-      "untyped_return": 2,
-      "fallback": 8,
-      "dictionary": 2,
+      "dictionary": 4,
+      "fallback": 5,
       "none_default": 1
     },
     "src/tank/market/flow.py": {
@@ -604,17 +623,16 @@
       "untyped_return": 13,
       "none_default": 9,
       "dictionary": 21,
-      "fallback": 79
+      "fallback": 78
     },
     "src/tank/market/rate_gate.py": {
-      "untyped_parameter": 2,
-      "untyped_return": 3
+      "fallback": 1
     },
     "src/tank/market/service.py": {
       "untyped_parameter": 172,
       "untyped_return": 77,
-      "dictionary": 211,
-      "fallback": 317,
+      "dictionary": 209,
+      "fallback": 315,
       "none_default": 20
     },
     "src/tank/market/supply.py": {
@@ -624,19 +642,23 @@
       "none_default": 1,
       "fallback": 59
     },
+    "src/tank/market_codec.py": {
+      "dictionary": 26,
+      "fallback": 45,
+      "none_default": 1
+    },
     "src/tank/market_schema.py": {
-      "dictionary": 21
+      "dictionary": 27
     },
     "src/tank/market_storage.py": {
-      "untyped_parameter": 105,
-      "untyped_return": 28,
-      "fallback": 129,
-      "dictionary": 43,
-      "none_default": 26
+      "untyped_parameter": 87,
+      "untyped_return": 21,
+      "none_default": 25,
+      "fallback": 80,
+      "dictionary": 26
     },
     "src/tank/models.py": {
-      "dictionary": 109,
-      "any": 1
+      "dictionary": 84
     },
     "src/tank/openma_sync.py": {
       "dictionary": 37,
@@ -652,10 +674,8 @@
       "fallback": 97
     },
     "src/tank/ops_entry_errors.py": {
-      "dictionary": 12,
-      "untyped_parameter": 16,
-      "untyped_return": 7,
-      "fallback": 29
+      "dictionary": 15,
+      "fallback": 3
     },
     "src/tank/ops_progress.py": {
       "dictionary": 7,
@@ -688,56 +708,61 @@
     "src/tank/runtime.py": {
       "dictionary": 16,
       "untyped_parameter": 33,
-      "untyped_return": 18,
+      "untyped_return": 19,
       "none_default": 13,
-      "fallback": 38
+      "fallback": 34
+    },
+    "src/tank/runtime_contracts.py": {
+      "fallback": 3,
+      "dictionary": 3
     },
     "src/tank/scheduler.py": {
-      "dictionary": 169,
+      "dictionary": 168,
       "untyped_parameter": 117,
       "untyped_return": 65,
-      "fallback": 305,
+      "fallback": 304,
       "none_default": 7
     },
     "src/tank/search.py": {
-      "untyped_return": 7,
-      "dictionary": 8,
-      "any": 7,
-      "fallback": 7,
-      "none_default": 3
+      "dictionary": 5,
+      "none_default": 5,
+      "fallback": 5
     },
     "src/tank/settings.py": {
-      "dictionary": 9,
+      "dictionary": 12,
       "fallback": 7,
-      "any": 8,
-      "untyped_parameter": 6,
-      "untyped_return": 3
+      "any": 3
     },
     "src/tank/sources/__init__.py": {
-      "untyped_return": 19,
-      "untyped_parameter": 29,
-      "none_default": 3,
-      "fallback": 128,
-      "dictionary": 21
+      "untyped_return": 18,
+      "untyped_parameter": 26,
+      "none_default": 4,
+      "dictionary": 18,
+      "fallback": 102
     },
     "src/tank/sources/capture_fetch.py": {
-      "untyped_parameter": 12,
-      "untyped_return": 3,
-      "fallback": 17,
-      "dictionary": 8,
+      "dictionary": 10,
+      "fallback": 4,
       "none_default": 3
     },
+    "src/tank/sources/configuration.py": {
+      "dictionary": 6,
+      "fallback": 4
+    },
+    "src/tank/sources/errors.py": {
+      "fallback": 2,
+      "dictionary": 4
+    },
     "src/tank/sources/organization.py": {
-      "untyped_parameter": 6,
-      "untyped_return": 2,
-      "fallback": 32,
+      "untyped_parameter": 3,
+      "fallback": 20,
       "none_default": 1,
       "dictionary": 2
     },
     "src/tank/sources/parsers.py": {
       "untyped_parameter": 35,
       "untyped_return": 25,
-      "fallback": 125,
+      "fallback": 118,
       "dictionary": 51,
       "none_default": 1
     },
@@ -749,45 +774,39 @@
       "dictionary": 3
     },
     "src/tank/sources/polling.py": {
-      "untyped_parameter": 88,
-      "untyped_return": 32,
-      "dictionary": 66,
-      "fallback": 143,
+      "untyped_parameter": 82,
+      "untyped_return": 28,
+      "dictionary": 58,
+      "fallback": 127,
       "none_default": 1
     },
     "src/tank/sources/probe.py": {
       "untyped_parameter": 4,
       "untyped_return": 2,
-      "dictionary": 4,
-      "fallback": 10
+      "dictionary": 2,
+      "fallback": 1
     },
     "src/tank/sources/rate_limits.py": {
-      "untyped_parameter": 32,
-      "untyped_return": 13,
-      "fallback": 7,
-      "dictionary": 3,
+      "fallback": 8,
+      "dictionary": 6,
       "none_default": 1
     },
     "src/tank/sources/raw_store.py": {
-      "untyped_parameter": 12,
-      "untyped_return": 4,
       "fallback": 1
     },
     "src/tank/sources/read_report.py": {
-      "untyped_parameter": 6,
-      "untyped_return": 3,
       "dictionary": 16,
-      "fallback": 16,
-      "none_default": 2
+      "fallback": 5,
+      "none_default": 3
     },
     "src/tank/sources/xsensor.py": {
       "dictionary": 9,
       "fallback": 3
     },
     "src/tank/storage.py": {
-      "untyped_return": 82,
-      "untyped_parameter": 201,
-      "none_default": 63,
+      "untyped_return": 100,
+      "untyped_parameter": 287,
+      "none_default": 102,
       "dictionary": 58,
       "fallback": 152
     },
@@ -799,23 +818,18 @@
       "none_default": 9
     },
     "src/tank/telegram_rich.py": {
-      "untyped_parameter": 8,
-      "untyped_return": 6,
-      "fallback": 44,
-      "dictionary": 14
+      "dictionary": 7,
+      "fallback": 5
     },
     "src/tank/time_precision.py": {
+      "fallback": 31,
       "dictionary": 6,
-      "any": 10,
-      "fallback": 28,
-      "none_default": 5,
-      "untyped_return": 2
+      "none_default": 7
     },
     "src/tank/util.py": {
-      "any": 8,
       "fallback": 3,
       "none_default": 3,
-      "dictionary": 1
+      "dictionary": 4
     },
     "tests/conftest.py": {
       "untyped_parameter": 32,
@@ -866,15 +880,17 @@
     "tests/score_fixtures.py": {
       "dictionary": 2
     },
+    "tests/source_support.py": {
+      "dictionary": 7,
+      "fallback": 1
+    },
     "tests/test_acceptance_scripts.py": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "dictionary": 14
+      "dictionary": 16
     },
     "tests/test_agents.py": {
       "untyped_parameter": 37,
       "untyped_return": 23,
-      "dictionary": 170,
+      "dictionary": 171,
       "fallback": 37
     },
     "tests/test_agents_analysis_completion.py": {
@@ -904,8 +920,13 @@
     "tests/test_agents_jev.py": {
       "untyped_parameter": 12,
       "untyped_return": 12,
-      "dictionary": 27,
+      "dictionary": 25,
       "fallback": 1
+    },
+    "tests/test_agents_jev_contracts.py": {
+      "untyped_parameter": 3,
+      "untyped_return": 4,
+      "dictionary": 20
     },
     "tests/test_agents_native_retry.py": {
       "untyped_parameter": 8,
@@ -932,9 +953,7 @@
       "fallback": 4
     },
     "tests/test_agents_security.py": {
-      "untyped_parameter": 4,
-      "untyped_return": 8,
-      "dictionary": 11
+      "dictionary": 10
     },
     "tests/test_agents_session_audit.py": {
       "untyped_parameter": 23,
@@ -942,6 +961,9 @@
       "dictionary": 86,
       "fallback": 23,
       "none_default": 1
+    },
+    "tests/test_agents_tool_contracts.py": {
+      "dictionary": 11
     },
     "tests/test_agents_workflow.py": {
       "untyped_parameter": 8,
@@ -1005,10 +1027,8 @@
       "dictionary": 11
     },
     "tests/test_codex_gateway.py": {
-      "untyped_parameter": 79,
-      "untyped_return": 70,
-      "dictionary": 67,
-      "none_default": 2,
+      "none_default": 3,
+      "dictionary": 75,
       "fallback": 3
     },
     "tests/test_config.py": {
@@ -1052,7 +1072,7 @@
     "tests/test_event_tools.py": {
       "untyped_return": 47,
       "untyped_parameter": 208,
-      "dictionary": 788,
+      "dictionary": 787,
       "fallback": 160,
       "none_default": 2
     },
@@ -1114,6 +1134,10 @@
       "fallback": 5,
       "none_default": 1
     },
+    "tests/test_foundation_contracts.py": {
+      "dictionary": 10,
+      "fallback": 5
+    },
     "tests/test_funding_confirmations.py": {
       "untyped_parameter": 3,
       "untyped_return": 2,
@@ -1131,6 +1155,10 @@
       "untyped_return": 6,
       "dictionary": 117,
       "none_default": 1,
+      "fallback": 2
+    },
+    "tests/test_ingestion_contracts.py": {
+      "dictionary": 10,
       "fallback": 2
     },
     "tests/test_logging.py": {
@@ -1173,7 +1201,7 @@
       "dictionary": 2
     },
     "tests/test_market_service.py": {
-      "dictionary": 93,
+      "dictionary": 94,
       "untyped_return": 21,
       "untyped_parameter": 87,
       "fallback": 12,
@@ -1188,7 +1216,7 @@
     },
     "tests/test_model_context.py": {
       "untyped_return": 9,
-      "dictionary": 168,
+      "dictionary": 170,
       "untyped_parameter": 47,
       "fallback": 23
     },
@@ -1250,7 +1278,7 @@
     "tests/test_ops_progress.py": {
       "untyped_parameter": 13,
       "untyped_return": 3,
-      "dictionary": 43,
+      "dictionary": 44,
       "fallback": 2
     },
     "tests/test_parallel_postgres.py": {
@@ -1276,8 +1304,22 @@
       "none_default": 4,
       "fallback": 1
     },
+    "tests/test_refactor_identity_contracts.py": {
+      "untyped_return": 4,
+      "dictionary": 12
+    },
     "tests/test_refactor_inventory.py": {
       "dictionary": 2
+    },
+    "tests/test_refactor_market_contracts.py": {
+      "untyped_parameter": 7,
+      "untyped_return": 11,
+      "dictionary": 20
+    },
+    "tests/test_refactor_watch_contracts.py": {
+      "untyped_parameter": 2,
+      "untyped_return": 3,
+      "dictionary": 11
     },
     "tests/test_replay.py": {
       "untyped_return": 26,
@@ -1335,11 +1377,14 @@
       "dictionary": 8
     },
     "tests/test_runtime.py": {
-      "dictionary": 102,
+      "dictionary": 100,
       "untyped_parameter": 58,
       "untyped_return": 21,
       "fallback": 27,
       "none_default": 1
+    },
+    "tests/test_runtime_payload_contracts.py": {
+      "dictionary": 10
     },
     "tests/test_runtime_precision.py": {
       "dictionary": 7,
@@ -1348,10 +1393,10 @@
       "untyped_parameter": 1
     },
     "tests/test_scheduler.py": {
-      "dictionary": 253,
+      "dictionary": 262,
       "fallback": 47,
       "untyped_parameter": 62,
-      "untyped_return": 24,
+      "untyped_return": 25,
       "none_default": 3
     },
     "tests/test_scheduler_capture_yield.py": {
@@ -1396,7 +1441,7 @@
     },
     "tests/test_search.py": {
       "dictionary": 8,
-      "untyped_return": 9,
+      "untyped_return": 7,
       "untyped_parameter": 33,
       "fallback": 2
     },
@@ -1416,7 +1461,7 @@
     "tests/test_session_retention.py": {
       "untyped_parameter": 16,
       "untyped_return": 5,
-      "dictionary": 16,
+      "dictionary": 17,
       "none_default": 2,
       "fallback": 5
     },
@@ -1540,8 +1585,8 @@
       "fallback": 107
     },
     "tests/test_telegram_rich.py": {
-      "untyped_return": 2,
-      "dictionary": 37,
+      "untyped_return": 1,
+      "dictionary": 40,
       "fallback": 2
     },
     "tests/test_time_precision.py": {
@@ -1557,7 +1602,7 @@
     "tests/test_truth.py": {
       "untyped_parameter": 84,
       "untyped_return": 27,
-      "dictionary": 409,
+      "dictionary": 408,
       "fallback": 22,
       "none_default": 6
     },
@@ -1869,8 +1914,7 @@
       "dictionary": 1
     },
     "deploy/boxlite/v0.10.6/replay-dns/apply_patch.py:apply.edit": {
-      "untyped_parameter": 3,
-      "untyped_return": 1
+      "untyped_parameter": 3
     },
     "deploy/boxlite/v0.10.6/replay-dns/apply_patch.py:sha": {
       "untyped_parameter": 1,
@@ -1886,7 +1930,6 @@
     },
     "deploy/boxlite/v0.10.6/replay-dns/monitored_build.py:run": {
       "untyped_parameter": 9,
-      "untyped_return": 1,
       "none_default": 1,
       "fallback": 12,
       "dictionary": 3
@@ -1910,7 +1953,6 @@
       "untyped_return": 1
     },
     "deploy/openma_browser/browser-worker.py:main": {
-      "untyped_return": 1,
       "dictionary": 1
     },
     "deploy/openma_browser/browser-worker.py:paths": {
@@ -1923,7 +1965,6 @@
     },
     "deploy/openma_browser/browser-worker.py:request": {
       "untyped_parameter": 2,
-      "untyped_return": 1,
       "fallback": 1
     },
     "deploy/openma_browser/browser-worker.py:request_deadline": {
@@ -1932,12 +1973,10 @@
       "fallback": 2
     },
     "deploy/openma_browser/browser-worker.py:serve": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
+      "untyped_parameter": 1
     },
     "deploy/openma_browser/browser-worker.py:serve.handle": {
       "untyped_parameter": 2,
-      "untyped_return": 1,
       "dictionary": 3
     },
     "deploy/openma_browser/browser-worker.py:serve.operation": {
@@ -1946,27 +1985,18 @@
       "fallback": 12,
       "dictionary": 3
     },
-    "deploy/openma_browser/browser-worker.py:supervise_descendants": {
-      "untyped_return": 1
-    },
     "deploy/openma_browser/browser-worker.py:terminate_owned_descendants": {
       "untyped_parameter": 1,
-      "untyped_return": 1,
       "none_default": 1
     },
     "deploy/openma_browser/browser-worker.py:terminate_owned_descendants.stop_children": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
+      "untyped_parameter": 1
     },
     "deploy/openma_browser/deadline-contract.py:": {
       "dictionary": 3
     },
-    "deploy/openma_browser/deadline-contract.py:Handler.do_GET": {
-      "untyped_return": 1
-    },
     "deploy/openma_browser/deadline-contract.py:Handler.log_message": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
+      "untyped_parameter": 1
     },
     "deploy/openma_browser/deadline-contract.py:active": {
       "untyped_parameter": 1,
@@ -1996,7 +2026,6 @@
       "untyped_return": 1
     },
     "deploy/openma_browser/image-contract.py:main": {
-      "untyped_return": 1,
       "dictionary": 1
     },
     "deploy/openma_browser/image-contract.py:main.rpc": {
@@ -2030,17 +2059,14 @@
     },
     "deploy/openma_browser/kvm-deadline-contract.py:run": {
       "untyped_parameter": 3,
-      "untyped_return": 1,
       "fallback": 1
     },
     "deploy/openma_browser/kvm-deadline-contract.py:run.mark": {
       "untyped_parameter": 2,
-      "untyped_return": 1,
       "dictionary": 1
     },
     "deploy/openma_browser/kvm-deadline-contract.py:send": {
       "untyped_parameter": 4,
-      "untyped_return": 1,
       "dictionary": 1
     },
     "deploy/openma_browser/launch-failure-contract.py:": {
@@ -2062,7 +2088,6 @@
     },
     "deploy/openma_browser/prepare-font-cache.py:prepare": {
       "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 3
     },
     "deploy/openma_browser/response-contract.py:": {
@@ -2072,9 +2097,6 @@
       "untyped_parameter": 2,
       "untyped_return": 1,
       "dictionary": 1
-    },
-    "deploy/openma_browser/response-contract.py:exercise.serve": {
-      "untyped_return": 1
     },
     "deploy/openma_browser/startup-contract.py:": {
       "dictionary": 3
@@ -2099,7 +2121,6 @@
     },
     "deploy/openma_lifecycle/native-startup-observer.py:run": {
       "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 8,
       "fallback": 1
     },
@@ -2118,8 +2139,7 @@
       "fallback": 3
     },
     "deploy/openma_session_proof.py:save": {
-      "untyped_parameter": 2,
-      "untyped_return": 1
+      "untyped_parameter": 2
     },
     "deploy/prepare_boxlite_runtime.py:": {
       "dictionary": 5
@@ -2180,7 +2200,6 @@
       "fallback": 2
     },
     "deploy/stack_sizing.py:sample": {
-      "untyped_return": 1,
       "dictionary": 1
     },
     "scripts/acceptance/assemble_packets.py:_capture": {
@@ -2198,8 +2217,7 @@
       "dictionary": 1
     },
     "scripts/acceptance/assemble_packets.py:apply_slugs": {
-      "untyped_parameter": 4,
-      "untyped_return": 1
+      "untyped_parameter": 4
     },
     "scripts/acceptance/assemble_packets.py:assemble": {
       "untyped_parameter": 5,
@@ -2237,7 +2255,6 @@
     },
     "scripts/acceptance/assemble_packets.py:assemble.restore.walk": {
       "untyped_parameter": 1,
-      "untyped_return": 1,
       "fallback": 1
     },
     "scripts/acceptance/assemble_packets.py:content_hash": {
@@ -2256,7 +2273,6 @@
     },
     "scripts/acceptance/assemble_packets.py:entity_families.put": {
       "untyped_parameter": 2,
-      "untyped_return": 1,
       "fallback": 1
     },
     "scripts/acceptance/assemble_packets.py:entity_families.token_role": {
@@ -2277,11 +2293,9 @@
     },
     "scripts/acceptance/assemble_packets.py:leak_scan.walk": {
       "untyped_parameter": 2,
-      "untyped_return": 1,
       "fallback": 1
     },
     "scripts/acceptance/assemble_packets.py:main": {
-      "untyped_return": 1,
       "dictionary": 6,
       "fallback": 1
     },
@@ -2309,7 +2323,6 @@
     },
     "scripts/acceptance/assemble_packets.py:registry_family_pass": {
       "untyped_parameter": 3,
-      "untyped_return": 1,
       "fallback": 4
     },
     "scripts/acceptance/assemble_packets.py:registry_venues": {
@@ -2330,8 +2343,7 @@
       "untyped_return": 1
     },
     "scripts/acceptance/assemble_packets.py:safe_remove": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
+      "untyped_parameter": 1
     },
     "scripts/acceptance/assemble_packets.py:sha": {
       "untyped_parameter": 1,
@@ -2424,8 +2436,7 @@
       "untyped_return": 1
     },
     "scripts/acceptance/common.py:write_json": {
-      "untyped_parameter": 2,
-      "untyped_return": 1
+      "untyped_parameter": 2
     },
     "scripts/acceptance/e2e_trace.py:": {
       "dictionary": 5,
@@ -2451,7 +2462,6 @@
     },
     "scripts/acceptance/e2e_trace.py:trace.at": {
       "untyped_parameter": 3,
-      "untyped_return": 1,
       "dictionary": 1
     },
     "scripts/acceptance/e2e_trace.py:trace.operator_job": {
@@ -2507,7 +2517,6 @@
     },
     "scripts/acceptance/run_fixtures.py:dump_replay_db": {
       "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 3
     },
     "scripts/acceptance/run_fixtures.py:entries": {
@@ -2523,11 +2532,7 @@
       "fallback": 1
     },
     "scripts/acceptance/run_fixtures.py:mark_window": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
-    "scripts/acceptance/run_fixtures.py:reset_replay_db": {
-      "untyped_return": 1
+      "untyped_parameter": 1
     },
     "scripts/acceptance/run_fixtures.py:resolve": {
       "untyped_parameter": 1,
@@ -2568,19 +2573,16 @@
     },
     "scripts/acceptance/shadow_daily.py:merge": {
       "untyped_parameter": 2,
-      "untyped_return": 1,
       "fallback": 9,
       "dictionary": 1
     },
     "scripts/acceptance/shadow_daily.py:metrics": {
       "untyped_parameter": 3,
-      "untyped_return": 1,
       "fallback": 9,
       "dictionary": 1
     },
     "scripts/acceptance/shadow_daily.py:prepare": {
       "untyped_parameter": 2,
-      "untyped_return": 1,
       "dictionary": 6,
       "fallback": 14
     },
@@ -2589,7 +2591,6 @@
     },
     "scripts/acceptance/shadow_weekly.py:main": {
       "untyped_parameter": 3,
-      "untyped_return": 1,
       "dictionary": 6,
       "fallback": 5
     },
@@ -2629,30 +2630,21 @@
       "dictionary": 4,
       "fallback": 1
     },
-    "scripts/capture/gen_goldens.py:main": {
-      "untyped_return": 1
-    },
     "scripts/capture/gen_goldens.py:write": {
-      "untyped_parameter": 2,
-      "untyped_return": 1
+      "untyped_parameter": 2
     },
     "scripts/capture/gen_pyvectors.py:decimals": {
       "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 4
     },
     "scripts/capture/gen_pyvectors.py:jsons": {
       "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 2
     },
     "scripts/capture/gen_pyvectors.py:literal": {
       "untyped_parameter": 1,
       "untyped_return": 1,
       "fallback": 2
-    },
-    "scripts/capture/gen_pyvectors.py:main": {
-      "untyped_return": 1
     },
     "scripts/capture/gen_pyvectors.py:run": {
       "untyped_parameter": 4,
@@ -2664,7 +2656,6 @@
     },
     "scripts/capture/gen_pyvectors.py:times": {
       "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 18
     },
     "scripts/capture/gen_pyvectors.py:value": {
@@ -2673,8 +2664,7 @@
       "fallback": 1
     },
     "scripts/capture/gen_pyvectors.py:write": {
-      "untyped_parameter": 2,
-      "untyped_return": 1
+      "untyped_parameter": 2
     },
     "scripts/capture/gen_schema.py:render": {
       "untyped_return": 1,
@@ -2699,9 +2689,6 @@
     },
     "scripts/capture/parity.py:load": {
       "untyped_parameter": 1,
-      "untyped_return": 1
-    },
-    "scripts/capture/parity.py:main": {
       "untyped_return": 1
     },
     "scripts/check-unit-timings.py:main": {
@@ -2929,17 +2916,18 @@
       "untyped_return": 1,
       "none_default": 1
     },
+    "src/tank/agents/jev.py:JevQuestion": {
+      "dictionary": 1
+    },
+    "src/tank/agents/jev.py:JevResponse": {
+      "dictionary": 1
+    },
     "src/tank/agents/jev.py:binding": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "none_default": 1
     },
     "src/tank/agents/jev.py:classify": {
-      "untyped_parameter": 4,
-      "untyped_return": 1,
       "none_default": 1,
-      "dictionary": 3,
-      "fallback": 9
+      "dictionary": 4
     },
     "src/tank/agents/pipeline.py:": {
       "dictionary": 2
@@ -2958,8 +2946,8 @@
     "src/tank/agents/pipeline.py:Pipeline._score_record": {
       "untyped_parameter": 3,
       "untyped_return": 1,
-      "fallback": 11,
-      "dictionary": 9
+      "fallback": 3,
+      "dictionary": 8
     },
     "src/tank/agents/pipeline.py:Pipeline.candidate_events": {
       "untyped_parameter": 1,
@@ -3024,7 +3012,7 @@
     "src/tank/agents/pipeline.py:Pipeline.score_identity": {
       "untyped_parameter": 3,
       "untyped_return": 1,
-      "dictionary": 4
+      "dictionary": 3
     },
     "src/tank/agents/pipeline.py:Pipeline.state": {
       "untyped_parameter": 1,
@@ -3049,32 +3037,22 @@
       "untyped_return": 1,
       "fallback": 6
     },
+    "src/tank/agents/provenance.py:_text": {
+      "fallback": 1
+    },
+    "src/tank/agents/provenance.py:resolve_agent_provenance": {
+      "dictionary": 5,
+      "fallback": 9
+    },
     "src/tank/agents/security.py:redact_tool_arguments": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
-      "dictionary": 1
+      "dictionary": 4
     },
     "src/tank/agents/security.py:redact_tool_arguments.redact": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "dictionary": 1
-    },
-    "src/tank/agents/security.py:redact_tool_arguments.redact.hide_userinfo": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
+      "dictionary": 2
     },
     "src/tank/agents/sessions.py:AdmissionDeferred.__init__": {
       "untyped_parameter": 1,
       "untyped_return": 1
-    },
-    "src/tank/agents/sessions.py:CapturedToolResult.from_record": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "fallback": 3
-    },
-    "src/tank/agents/sessions.py:CapturedToolResult.signature": {
-      "untyped_return": 1,
-      "dictionary": 1
     },
     "src/tank/agents/sessions.py:SessionService.__init__": {
       "untyped_parameter": 5,
@@ -3101,10 +3079,7 @@
       "dictionary": 1
     },
     "src/tank/agents/sessions.py:SessionService.agent_provenance": {
-      "untyped_parameter": 3,
-      "untyped_return": 1,
-      "fallback": 18,
-      "dictionary": 5
+      "dictionary": 2
     },
     "src/tank/agents/sessions.py:SessionService.analyst_tools": {
       "untyped_parameter": 1,
@@ -3191,15 +3166,13 @@
       "fallback": 1
     },
     "src/tank/agents/sessions.py:SessionService.headers": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "none_default": 1,
-      "dictionary": 1
+      "dictionary": 2
     },
     "src/tank/agents/sessions.py:SessionService.hydrate_prompt_provenance": {
       "untyped_parameter": 1,
       "untyped_return": 1,
-      "fallback": 10,
+      "fallback": 9,
       "dictionary": 2
     },
     "src/tank/agents/sessions.py:SessionService.invoke_tool": {
@@ -3262,8 +3235,8 @@
       "dictionary": 2
     },
     "src/tank/agents/sessions.py:SessionService.request": {
-      "untyped_parameter": 3,
-      "untyped_return": 1
+      "none_default": 4,
+      "dictionary": 1
     },
     "src/tank/agents/sessions.py:SessionService.resolve": {
       "untyped_parameter": 1,
@@ -3339,14 +3312,14 @@
     "src/tank/agents/sessions.py:SessionService.sync_tools": {
       "untyped_parameter": 2,
       "untyped_return": 1,
-      "fallback": 17,
+      "fallback": 16,
       "dictionary": 3
     },
     "src/tank/agents/sessions.py:SessionService.tool": {
       "untyped_parameter": 2,
       "untyped_return": 1,
       "fallback": 29,
-      "dictionary": 12
+      "dictionary": 9
     },
     "src/tank/agents/sessions.py:SessionService.tool_context": {
       "untyped_parameter": 2,
@@ -3354,9 +3327,7 @@
       "fallback": 2
     },
     "src/tank/agents/sessions.py:SessionService.tool_failure": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "dictionary": 4
+      "dictionary": 1
     },
     "src/tank/agents/sessions.py:SessionService.transition_note": {
       "untyped_parameter": 1,
@@ -3369,10 +3340,6 @@
       "none_default": 1,
       "fallback": 17,
       "dictionary": 7
-    },
-    "src/tank/agents/sessions.py:SessionService.url": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
     },
     "src/tank/agents/sessions.py:SessionService.usage": {
       "untyped_parameter": 2,
@@ -3394,6 +3361,10 @@
       "untyped_parameter": 1,
       "untyped_return": 1,
       "fallback": 2
+    },
+    "src/tank/agents/tool_contracts.py:CapturedToolResult.from_record": {
+      "dictionary": 2,
+      "fallback": 1
     },
     "src/tank/agents/wire.py:tool_wire_result": {
       "untyped_parameter": 4,
@@ -3553,23 +3524,12 @@
       "none_default": 1,
       "dictionary": 1
     },
-    "src/tank/analysis/decisions.py:DecisionEngine._conditions": {
-      "untyped_parameter": 6,
-      "untyped_return": 1,
-      "fallback": 11,
-      "dictionary": 4
-    },
     "src/tank/analysis/decisions.py:DecisionEngine.evaluate": {
       "untyped_parameter": 6,
       "untyped_return": 1,
       "none_default": 2,
-      "fallback": 159,
-      "dictionary": 41
-    },
-    "src/tank/analysis/decisions.py:_condition": {
-      "untyped_parameter": 3,
-      "untyped_return": 1,
-      "dictionary": 2
+      "fallback": 168,
+      "dictionary": 45
     },
     "src/tank/analysis/decisions.py:_contradictions": {
       "untyped_parameter": 2,
@@ -3581,10 +3541,25 @@
       "untyped_return": 1,
       "fallback": 1
     },
-    "src/tank/analysis/decisions.py:_expr": {
-      "untyped_parameter": 5,
-      "untyped_return": 1,
-      "dictionary": 2
+    "src/tank/analysis/identity.py:IdentityRegistry.from_wire": {
+      "dictionary": 3,
+      "fallback": 1
+    },
+    "src/tank/analysis/identity.py:entity_identity": {
+      "fallback": 1
+    },
+    "src/tank/analysis/identity.py:resolve_entity": {
+      "none_default": 1,
+      "fallback": 1
+    },
+    "src/tank/analysis/identity.py:resolve_token": {
+      "fallback": 1
+    },
+    "src/tank/analysis/positioning.py:_beyond": {
+      "fallback": 2
+    },
+    "src/tank/analysis/positioning.py:oi_class": {
+      "fallback": 1
     },
     "src/tank/analysis/truth.py:": {
       "dictionary": 1
@@ -3711,7 +3686,7 @@
       "untyped_return": 1,
       "none_default": 2,
       "fallback": 16,
-      "dictionary": 2
+      "dictionary": 1
     },
     "src/tank/analysis/truth.py:_oi_stats.nearest": {
       "untyped_parameter": 1,
@@ -3882,11 +3857,6 @@
       "untyped_return": 1,
       "dictionary": 2
     },
-    "src/tank/analysis/truth.py:decomposition": {
-      "untyped_parameter": 4,
-      "untyped_return": 1,
-      "dictionary": 1
-    },
     "src/tank/analysis/truth.py:depth_at_band": {
       "untyped_parameter": 3,
       "untyped_return": 1,
@@ -4012,11 +3982,6 @@
       "untyped_return": 1,
       "fallback": 8,
       "dictionary": 5
-    },
-    "src/tank/analysis/truth.py:oi_class": {
-      "untyped_parameter": 5,
-      "untyped_return": 1,
-      "fallback": 1
     },
     "src/tank/analysis/truth.py:oi_temporally_admissible": {
       "untyped_parameter": 1,
@@ -4274,9 +4239,19 @@
       "untyped_parameter": 2,
       "untyped_return": 1
     },
+    "src/tank/analysis/watch_contracts.py:WatchCondition": {
+      "dictionary": 1
+    },
+    "src/tank/analysis/watch_contracts.py:WatchLeaf.valid_predicate": {
+      "fallback": 1
+    },
+    "src/tank/analysis/watch_contracts.py:WatchReferencePrices.exact_price": {
+      "fallback": 1
+    },
+    "src/tank/analysis/watch_policy.py:build_watch_conditions": {
+      "fallback": 1
+    },
     "src/tank/backup.py:prune_backup_snapshots": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
       "fallback": 1
     },
     "src/tank/bootstrap.py:_config_timestamp_metadata": {
@@ -4574,33 +4549,23 @@
       "dictionary": 5
     },
     "src/tank/clickhouse_market.py:ClickHouse.__init__": {
-      "untyped_parameter": 4,
-      "untyped_return": 1,
       "none_default": 2,
-      "fallback": 4
-    },
-    "src/tank/clickhouse_market.py:ClickHouse._post": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
-      "dictionary": 3,
       "fallback": 1
     },
-    "src/tank/clickhouse_market.py:ClickHouse.close": {
-      "untyped_return": 1
+    "src/tank/clickhouse_market.py:ClickHouse._post": {
+      "dictionary": 4,
+      "fallback": 1
     },
     "src/tank/clickhouse_market.py:ClickHouse.execute": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
-      "none_default": 1
+      "none_default": 1,
+      "dictionary": 1
     },
     "src/tank/clickhouse_market.py:ClickHouse.insert": {
-      "untyped_parameter": 2,
-      "untyped_return": 1
+      "dictionary": 1
     },
     "src/tank/clickhouse_market.py:ClickHouse.rows": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
-      "none_default": 1
+      "none_default": 1,
+      "dictionary": 2
     },
     "src/tank/clickhouse_market.py:Query.__init__": {
       "untyped_return": 1,
@@ -4661,8 +4626,7 @@
       "untyped_return": 1
     },
     "src/tank/clickhouse_market.py:_json_lines": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
+      "dictionary": 2
     },
     "src/tank/clickhouse_market.py:_literal": {
       "untyped_parameter": 1,
@@ -4697,12 +4661,7 @@
       "untyped_return": 1,
       "none_default": 2
     },
-    "src/tank/clickhouse_market.py:client": {
-      "untyped_parameter": 2,
-      "untyped_return": 1
-    },
     "src/tank/clickhouse_market.py:ddl": {
-      "untyped_return": 1,
       "fallback": 1
     },
     "src/tank/clickhouse_market.py:delete": {
@@ -4714,8 +4673,6 @@
       "untyped_return": 1
     },
     "src/tank/clickhouse_market.py:install": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
       "fallback": 1
     },
     "src/tank/clickhouse_market.py:late_page": {
@@ -4814,15 +4771,15 @@
       "untyped_return": 1
     },
     "src/tank/codex_gateway.py:CodexGateway.__init__": {
-      "untyped_parameter": 1,
       "untyped_return": 1,
       "none_default": 1
     },
     "src/tank/codex_gateway.py:CodexGateway._body": {
-      "fallback": 8,
-      "dictionary": 2
+      "dictionary": 5,
+      "fallback": 9
     },
     "src/tank/codex_gateway.py:CodexGateway._collect": {
+      "dictionary": 1,
       "fallback": 4
     },
     "src/tank/codex_gateway.py:CodexGateway._credentials": {
@@ -4830,28 +4787,24 @@
     },
     "src/tank/codex_gateway.py:CodexGateway._credentials_locked": {
       "none_default": 1,
-      "dictionary": 4,
+      "dictionary": 2,
       "fallback": 4
-    },
-    "src/tank/codex_gateway.py:CodexGateway._error": {
-      "dictionary": 2
     },
     "src/tank/codex_gateway.py:CodexGateway._headers": {
       "dictionary": 2,
       "fallback": 2
     },
     "src/tank/codex_gateway.py:CodexGateway._load": {
-      "fallback": 14,
-      "dictionary": 1
-    },
-    "src/tank/codex_gateway.py:CodexGateway._remember": {
-      "untyped_parameter": 1
+      "fallback": 13
     },
     "src/tank/codex_gateway.py:CodexGateway._responses": {
       "fallback": 3,
       "dictionary": 1
     },
     "src/tank/codex_gateway.py:CodexGateway.start": {
+      "dictionary": 1
+    },
+    "src/tank/codex_gateway.py:Credentials": {
       "dictionary": 1
     },
     "src/tank/codex_gateway.py:Credentials.fingerprint": {
@@ -4864,11 +4817,64 @@
       "untyped_return": 1
     },
     "src/tank/codex_gateway.py:_claims": {
-      "fallback": 1
+      "fallback": 1,
+      "dictionary": 1
+    },
+    "src/tank/codex_gateway.py:_refresh_token": {
+      "dictionary": 1
     },
     "src/tank/codex_gateway.py:_text": {
-      "untyped_parameter": 1,
       "fallback": 1
+    },
+    "src/tank/contracts/jobs.py:JobEnvelope": {
+      "dictionary": 1
+    },
+    "src/tank/contracts/repository.py:Collection.decode": {
+      "dictionary": 1
+    },
+    "src/tank/contracts/repository.py:Collection.encode": {
+      "dictionary": 1
+    },
+    "src/tank/contracts/repository.py:DocumentStore.get": {
+      "dictionary": 1
+    },
+    "src/tank/contracts/repository.py:DocumentStore.iter_all": {
+      "none_default": 1,
+      "dictionary": 2
+    },
+    "src/tank/contracts/repository.py:DocumentStore.latest_before": {
+      "none_default": 1,
+      "dictionary": 2
+    },
+    "src/tank/contracts/repository.py:DocumentStore.list": {
+      "none_default": 1,
+      "dictionary": 2
+    },
+    "src/tank/contracts/repository.py:DocumentStore.list_range": {
+      "none_default": 4,
+      "dictionary": 2
+    },
+    "src/tank/contracts/repository.py:DocumentStore.put": {
+      "dictionary": 2
+    },
+    "src/tank/contracts/repository.py:Repository.get": {
+      "fallback": 1
+    },
+    "src/tank/contracts/repository.py:Repository.iter_all": {
+      "none_default": 1,
+      "dictionary": 1
+    },
+    "src/tank/contracts/repository.py:Repository.latest_before": {
+      "none_default": 1,
+      "dictionary": 1
+    },
+    "src/tank/contracts/repository.py:Repository.list": {
+      "none_default": 1,
+      "dictionary": 1
+    },
+    "src/tank/contracts/repository.py:Repository.list_range": {
+      "none_default": 4,
+      "dictionary": 1
     },
     "src/tank/delivery.py:DeliveryDeferred.__init__": {
       "untyped_parameter": 1,
@@ -5218,8 +5224,7 @@
     "src/tank/event_tools.py:EventToolService.web_search": {
       "untyped_parameter": 2,
       "untyped_return": 1,
-      "dictionary": 2,
-      "fallback": 2
+      "dictionary": 2
     },
     "src/tank/event_tools.py:EventToolService.web_search.count_attempt": {
       "untyped_parameter": 1,
@@ -5238,10 +5243,6 @@
       "untyped_parameter": 1,
       "untyped_return": 1
     },
-    "src/tank/event_tools.py:_word": {
-      "untyped_parameter": 2,
-      "untyped_return": 1
-    },
     "src/tank/event_tools.py:compact_series": {
       "untyped_parameter": 1,
       "untyped_return": 1,
@@ -5258,11 +5259,6 @@
       "untyped_return": 1,
       "fallback": 1,
       "dictionary": 2
-    },
-    "src/tank/event_tools.py:entity_identity": {
-      "untyped_parameter": 4,
-      "untyped_return": 1,
-      "fallback": 1
     },
     "src/tank/event_tools.py:evidence_ids": {
       "untyped_parameter": 1,
@@ -5290,32 +5286,11 @@
       "untyped_parameter": 1,
       "untyped_return": 1
     },
-    "src/tank/event_tools.py:resolve_entity": {
-      "untyped_parameter": 4,
-      "untyped_return": 1,
-      "none_default": 1,
-      "fallback": 13
-    },
-    "src/tank/event_tools.py:resolve_token": {
-      "untyped_parameter": 3,
-      "untyped_return": 1,
-      "fallback": 4
-    },
-    "src/tank/event_tools.py:resolve_tokens": {
-      "untyped_parameter": 3,
-      "untyped_return": 1,
-      "fallback": 1
-    },
     "src/tank/event_tools.py:summarize_unlocks": {
       "untyped_parameter": 2,
       "untyped_return": 1,
       "dictionary": 6,
       "fallback": 8
-    },
-    "src/tank/event_tools.py:token_identities": {
-      "untyped_parameter": 4,
-      "untyped_return": 1,
-      "fallback": 1
     },
     "src/tank/event_tools.py:validate_schema": {
       "untyped_parameter": 3,
@@ -5431,58 +5406,49 @@
       "dictionary": 2
     },
     "src/tank/logging.py:configure_logging": {
-      "untyped_parameter": 1,
       "none_default": 1
     },
-    "src/tank/market/books.py:OrderBook.__init__": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "dictionary": 6
-    },
-    "src/tank/market/books.py:OrderBook._levels": {
-      "untyped_parameter": 3,
-      "untyped_return": 1,
+    "src/tank/market/book_contracts.py:BookInstrument.venue_key": {
       "fallback": 1
     },
+    "src/tank/market/book_contracts.py:BookLevel.from_wire": {
+      "fallback": 1
+    },
+    "src/tank/market/books.py:": {
+      "dictionary": 1
+    },
+    "src/tank/market/books.py:OrderBook.__init__": {
+      "dictionary": 11
+    },
     "src/tank/market/books.py:OrderBook.frozen": {
-      "untyped_return": 1,
       "dictionary": 3
     },
     "src/tank/market/books.py:OrderBook.snapshot": {
-      "untyped_parameter": 6,
-      "untyped_return": 1,
       "none_default": 3,
-      "dictionary": 1,
-      "fallback": 1
+      "dictionary": 1
     },
     "src/tank/market/books.py:OrderBook.summary": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "none_default": 1,
-      "fallback": 6,
-      "dictionary": 6
+      "fallback": 1,
+      "dictionary": 12
     },
     "src/tank/market/books.py:OrderBook.update": {
-      "untyped_parameter": 8,
-      "untyped_return": 1,
       "none_default": 5,
       "fallback": 2
     },
-    "src/tank/market/books.py:OrderBook.verify": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
+    "src/tank/market/capture.py:": {
+      "dictionary": 1
+    },
+    "src/tank/market/capture.py:EventAnchor.to_wire": {
+      "dictionary": 2
     },
     "src/tank/market/capture.py:capture_boundary_points": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
       "none_default": 1,
       "fallback": 1
     },
     "src/tank/market/capture.py:event_anchor": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "fallback": 7,
-      "dictionary": 2
+      "dictionary": 1,
+      "fallback": 4
     },
     "src/tank/market/flow.py:FlowAccumulator.__init__": {
       "untyped_return": 1,
@@ -5545,7 +5511,7 @@
       "untyped_parameter": 5,
       "untyped_return": 1,
       "none_default": 1,
-      "fallback": 21,
+      "fallback": 20,
       "dictionary": 3
     },
     "src/tank/market/normalize.py:kline": {
@@ -5611,15 +5577,7 @@
       "fallback": 2
     },
     "src/tank/market/rate_gate.py:PriorityGate.__init__": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
-    "src/tank/market/rate_gate.py:PriorityGate.enter": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
-    "src/tank/market/rate_gate.py:PriorityGate.release": {
-      "untyped_return": 1
+      "fallback": 1
     },
     "src/tank/market/service.py:": {
       "dictionary": 1
@@ -5812,7 +5770,7 @@
       "untyped_parameter": 3,
       "untyped_return": 1,
       "dictionary": 2,
-      "fallback": 4
+      "fallback": 3
     },
     "src/tank/market/service.py:MarketService._schedule_hot_backfills": {
       "untyped_return": 1,
@@ -5908,8 +5866,8 @@
     "src/tank/market/service.py:MarketService.escalate": {
       "untyped_parameter": 2,
       "untyped_return": 1,
-      "fallback": 13,
-      "dictionary": 7
+      "fallback": 12,
+      "dictionary": 5
     },
     "src/tank/market/service.py:MarketService.flush_market": {
       "untyped_return": 1,
@@ -6094,11 +6052,49 @@
       "fallback": 3,
       "dictionary": 2
     },
-    "src/tank/market_schema.py:": {
-      "dictionary": 21
+    "src/tank/market_codec.py:": {
+      "dictionary": 2
     },
-    "src/tank/market_storage.py:": {
-      "dictionary": 1
+    "src/tank/market_codec.py:_identity": {
+      "fallback": 1
+    },
+    "src/tank/market_codec.py:_object_index": {
+      "dictionary": 5
+    },
+    "src/tank/market_codec.py:_optional_object": {
+      "dictionary": 2
+    },
+    "src/tank/market_codec.py:_optional_text": {
+      "fallback": 1
+    },
+    "src/tank/market_codec.py:_prepare_records": {
+      "fallback": 4,
+      "dictionary": 5
+    },
+    "src/tank/market_codec.py:_timestamp": {
+      "fallback": 1
+    },
+    "src/tank/market_codec.py:_unproves": {
+      "fallback": 4
+    },
+    "src/tank/market_codec.py:decode": {
+      "dictionary": 4,
+      "fallback": 2
+    },
+    "src/tank/market_codec.py:encode": {
+      "dictionary": 4,
+      "fallback": 10
+    },
+    "src/tank/market_codec.py:merge_point": {
+      "dictionary": 4,
+      "fallback": 21
+    },
+    "src/tank/market_codec.py:semantic_fingerprint": {
+      "none_default": 1,
+      "fallback": 1
+    },
+    "src/tank/market_schema.py:": {
+      "dictionary": 27
     },
     "src/tank/market_storage.py:_identity_key": {
       "untyped_parameter": 2,
@@ -6120,12 +6116,6 @@
       "dictionary": 1,
       "fallback": 1
     },
-    "src/tank/market_storage.py:_prepare_records": {
-      "untyped_parameter": 5,
-      "untyped_return": 1,
-      "fallback": 4,
-      "dictionary": 2
-    },
     "src/tank/market_storage.py:_put_market_batch": {
       "untyped_parameter": 4,
       "untyped_return": 1,
@@ -6136,23 +6126,6 @@
     "src/tank/market_storage.py:_put_market_batch.prepare": {
       "untyped_return": 1,
       "fallback": 1
-    },
-    "src/tank/market_storage.py:_unproves": {
-      "untyped_parameter": 3,
-      "untyped_return": 1,
-      "fallback": 4
-    },
-    "src/tank/market_storage.py:decode": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
-      "dictionary": 2,
-      "fallback": 2
-    },
-    "src/tank/market_storage.py:encode": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
-      "fallback": 9,
-      "dictionary": 3
     },
     "src/tank/market_storage.py:iter_market_projection": {
       "untyped_parameter": 9,
@@ -6234,12 +6207,6 @@
       "dictionary": 2,
       "fallback": 2
     },
-    "src/tank/market_storage.py:merge_point": {
-      "untyped_parameter": 3,
-      "untyped_return": 1,
-      "fallback": 29,
-      "dictionary": 9
-    },
     "src/tank/market_storage.py:put_market_batch": {
       "untyped_parameter": 3,
       "untyped_return": 1,
@@ -6252,19 +6219,8 @@
       "fallback": 3,
       "dictionary": 2
     },
-    "src/tank/market_storage.py:semantic_fingerprint": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
-      "none_default": 1,
-      "fallback": 1
-    },
-    "src/tank/market_storage.py:semantic_fingerprint.strip": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
     "src/tank/models.py:": {
-      "dictionary": 109,
-      "any": 1
+      "dictionary": 84
     },
     "src/tank/openma_sync.py:": {
       "dictionary": 4
@@ -6388,42 +6344,24 @@
     "src/tank/ops_entry_errors.py:": {
       "dictionary": 1
     },
-    "src/tank/ops_entry_errors.py:entry_block": {
-      "untyped_parameter": 3,
-      "untyped_return": 1,
-      "fallback": 14,
+    "src/tank/ops_entry_errors.py:EntryNoticeRepository.enqueue": {
       "dictionary": 1
     },
+    "src/tank/ops_entry_errors.py:EntryNoticeRepository.get": {
+      "dictionary": 1
+    },
+    "src/tank/ops_entry_errors.py:EntryNoticeRepository.put": {
+      "dictionary": 2
+    },
+    "src/tank/ops_entry_errors.py:entry_block": {
+      "fallback": 1
+    },
     "src/tank/ops_entry_errors.py:error_key": {
-      "untyped_parameter": 3,
-      "untyped_return": 1,
-      "dictionary": 1,
-      "fallback": 2
-    },
-    "src/tank/ops_entry_errors.py:identity": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "fallback": 6,
-      "dictionary": 4
-    },
-    "src/tank/ops_entry_errors.py:render": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "fallback": 2
+      "dictionary": 2
     },
     "src/tank/ops_entry_errors.py:report_entry_errors": {
-      "untyped_parameter": 6,
-      "untyped_return": 1,
-      "fallback": 5,
-      "dictionary": 5
-    },
-    "src/tank/ops_entry_errors.py:seen_label": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
-    "src/tank/ops_entry_errors.py:units": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
+      "fallback": 2,
+      "dictionary": 8
     },
     "src/tank/ops_progress.py:": {
       "dictionary": 1
@@ -6927,9 +6865,12 @@
       "dictionary": 1
     },
     "src/tank/runtime.py:Runtime.assess": {
-      "untyped_parameter": 1,
       "untyped_return": 1,
-      "fallback": 2
+      "fallback": 1
+    },
+    "src/tank/runtime.py:Runtime.assess_wire": {
+      "untyped_parameter": 1,
+      "untyped_return": 1
     },
     "src/tank/runtime.py:Runtime.bootstrap": {
       "untyped_return": 1
@@ -6937,10 +6878,9 @@
     "src/tank/runtime.py:Runtime.close": {
       "untyped_return": 1
     },
-    "src/tank/runtime.py:Runtime.escalate": {
+    "src/tank/runtime.py:Runtime.escalate_wire": {
       "untyped_parameter": 1,
-      "untyped_return": 1,
-      "fallback": 3
+      "untyped_return": 1
     },
     "src/tank/runtime.py:Runtime.pause": {
       "untyped_parameter": 2,
@@ -7000,6 +6940,24 @@
     "src/tank/runtime.py:RuntimeSupervisor.run": {
       "untyped_parameter": 2,
       "untyped_return": 1
+    },
+    "src/tank/runtime_contracts.py:CallExpiredMessage.describes_expired_call": {
+      "fallback": 1
+    },
+    "src/tank/runtime_contracts.py:ConditionFiredMessage.matches_condition": {
+      "fallback": 1
+    },
+    "src/tank/runtime_contracts.py:MarketTruthJob.validate_cutoff": {
+      "fallback": 1
+    },
+    "src/tank/runtime_contracts.py:parse_agent_message": {
+      "dictionary": 1
+    },
+    "src/tank/runtime_contracts.py:parse_delivery_job": {
+      "dictionary": 1
+    },
+    "src/tank/runtime_contracts.py:parse_direct_agent_message": {
+      "dictionary": 1
     },
     "src/tank/scheduler.py:": {
       "dictionary": 1
@@ -7080,9 +7038,7 @@
       "untyped_return": 1
     },
     "src/tank/scheduler.py:Scheduler.anchor": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "dictionary": 2
+      "dictionary": 1
     },
     "src/tank/scheduler.py:Scheduler.backup_identity": {
       "untyped_parameter": 2,
@@ -7136,8 +7092,13 @@
       "untyped_parameter": 2,
       "untyped_return": 1,
       "none_default": 1,
-      "fallback": 8,
-      "dictionary": 4
+      "fallback": 7,
+      "dictionary": 3
+    },
+    "src/tank/scheduler.py:Scheduler.ensure_reactions.capture_job": {
+      "untyped_parameter": 1,
+      "untyped_return": 1,
+      "dictionary": 1
     },
     "src/tank/scheduler.py:Scheduler.ensure_reactions.capture_pre": {
       "untyped_parameter": 1,
@@ -7354,84 +7315,38 @@
       "dictionary": 1
     },
     "src/tank/search.py:DuckDuckGoSearchService.__init__": {
-      "untyped_return": 1,
-      "none_default": 2,
-      "dictionary": 1,
-      "any": 1,
-      "fallback": 2
+      "none_default": 2
     },
     "src/tank/search.py:DuckDuckGoSearchService.search": {
       "none_default": 1,
       "fallback": 2
     },
-    "src/tank/search.py:DuckDuckGoSearchService.search.run_attempt": {
-      "untyped_return": 1
-    },
-    "src/tank/search.py:SearchError.__init__": {
-      "untyped_return": 1
-    },
     "src/tank/search.py:SearchError.as_dict": {
-      "dictionary": 2,
-      "any": 1
-    },
-    "src/tank/search.py:SearchLimiter.__init__": {
-      "untyped_return": 1
-    },
-    "src/tank/search.py:SearchLimiter.run": {
-      "dictionary": 2,
-      "any": 2
-    },
-    "src/tank/search.py:SearchResponse": {
-      "dictionary": 1,
-      "any": 1
-    },
-    "src/tank/search.py:_DuckDuckGoEngine.__init__": {
-      "untyped_return": 1
-    },
-    "src/tank/search.py:_DuckDuckGoHTTP.__init__": {
-      "untyped_return": 1
+      "dictionary": 2
     },
     "src/tank/search.py:_DuckDuckGoHTTP.request": {
-      "any": 1,
+      "none_default": 2,
+      "dictionary": 2,
       "fallback": 2
-    },
-    "src/tank/search.py:_DuckDuckGoOnly.__init__": {
-      "untyped_return": 1
     },
     "src/tank/search.py:_DuckDuckGoOnly._get_engines": {
       "fallback": 1
     },
     "src/tank/search.py:_search_sync": {
-      "dictionary": 2,
-      "any": 1
+      "dictionary": 1
+    },
+    "src/tank/settings.py:ConfigOwnedSource.__call__": {
+      "fallback": 1,
+      "dictionary": 1
     },
     "src/tank/settings.py:Settings": {
-      "any": 2
+      "dictionary": 2
     },
     "src/tank/settings.py:Settings._config_name": {
       "fallback": 1
     },
     "src/tank/settings.py:Settings.load_config": {
-      "dictionary": 1,
-      "any": 1
-    },
-    "src/tank/settings.py:Settings.model_post_init": {
-      "any": 1
-    },
-    "src/tank/settings.py:Settings.read_config_json": {
-      "any": 1
-    },
-    "src/tank/settings.py:Settings.settings_customise_sources": {
-      "untyped_parameter": 5,
-      "untyped_return": 1
-    },
-    "src/tank/settings.py:Settings.settings_customise_sources.without_config_owned": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
-    "src/tank/settings.py:Settings.settings_customise_sources.without_config_owned.read": {
-      "untyped_return": 1,
-      "fallback": 1
+      "dictionary": 1
     },
     "src/tank/settings.py:_capture_tree": {
       "dictionary": 2,
@@ -7458,8 +7373,8 @@
       "untyped_parameter": 3,
       "untyped_return": 1,
       "none_default": 1,
-      "fallback": 9,
-      "dictionary": 5
+      "dictionary": 4,
+      "fallback": 4
     },
     "src/tank/sources/__init__.py:SourceService._account_checks": {
       "untyped_return": 1,
@@ -7477,14 +7392,11 @@
     },
     "src/tank/sources/__init__.py:SourceService._saved_health": {
       "untyped_return": 1,
-      "fallback": 5,
+      "fallback": 3,
       "dictionary": 1
     },
     "src/tank/sources/__init__.py:SourceService.acquire_budget": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "fallback": 11,
-      "dictionary": 1
+      "fallback": 7
     },
     "src/tank/sources/__init__.py:SourceService.captured": {
       "untyped_parameter": 1,
@@ -7502,11 +7414,11 @@
       "untyped_return": 1
     },
     "src/tank/sources/__init__.py:SourceService.fetch": {
-      "untyped_parameter": 3,
+      "untyped_parameter": 2,
       "untyped_return": 1,
       "none_default": 1,
-      "fallback": 20,
-      "dictionary": 3
+      "fallback": 11,
+      "dictionary": 2
     },
     "src/tank/sources/__init__.py:SourceService.filing_matches": {
       "untyped_parameter": 1,
@@ -7514,9 +7426,9 @@
       "fallback": 2
     },
     "src/tank/sources/__init__.py:SourceService.ingest": {
-      "untyped_parameter": 2,
+      "untyped_parameter": 1,
       "untyped_return": 1,
-      "fallback": 59,
+      "fallback": 53,
       "dictionary": 7
     },
     "src/tank/sources/__init__.py:SourceService.is_escalated": {
@@ -7543,37 +7455,62 @@
       "untyped_parameter": 1,
       "untyped_return": 1
     },
+    "src/tank/sources/__init__.py:SourceService.stamp": {
+      "none_default": 1
+    },
     "src/tank/sources/__init__.py:tls_context": {
       "untyped_return": 1
     },
-    "src/tank/sources/capture_fetch.py:_capture_request": {
-      "untyped_parameter": 4,
-      "untyped_return": 1,
-      "dictionary": 4,
-      "fallback": 4
+    "src/tank/sources/capture_fetch.py:CaptureRepository.get": {
+      "dictionary": 1
     },
-    "src/tank/sources/capture_fetch.py:capture_fetch": {
-      "untyped_parameter": 7,
-      "untyped_return": 1,
-      "none_default": 3,
-      "dictionary": 4,
-      "fallback": 12
+    "src/tank/sources/capture_fetch.py:CaptureRepository.put": {
+      "dictionary": 2
     },
-    "src/tank/sources/capture_fetch.py:is_exchange_url": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
+    "src/tank/sources/capture_fetch.py:FetchRequest": {
+      "dictionary": 1
+    },
+    "src/tank/sources/capture_fetch.py:FetchRequest.allowed_destination": {
       "fallback": 1
     },
+    "src/tank/sources/capture_fetch.py:FetchResult.body_encoding": {
+      "fallback": 1
+    },
+    "src/tank/sources/capture_fetch.py:_capture_request": {
+      "dictionary": 2,
+      "fallback": 1
+    },
+    "src/tank/sources/capture_fetch.py:capture_fetch": {
+      "none_default": 3,
+      "dictionary": 4,
+      "fallback": 1
+    },
+    "src/tank/sources/configuration.py:HttpFetchPlan": {
+      "dictionary": 3
+    },
+    "src/tank/sources/configuration.py:SourceFeed": {
+      "dictionary": 3
+    },
+    "src/tank/sources/configuration.py:SourceFeed.adapter_requirements": {
+      "fallback": 4
+    },
+    "src/tank/sources/errors.py:EntryErrorMarker.storage_record": {
+      "dictionary": 2
+    },
+    "src/tank/sources/errors.py:EntryErrorNotice.storage_record": {
+      "dictionary": 2
+    },
+    "src/tank/sources/errors.py:parse_entry_error": {
+      "fallback": 2
+    },
     "src/tank/sources/organization.py:_retained_publisher_organization": {
-      "untyped_parameter": 3,
-      "untyped_return": 1,
-      "fallback": 17
+      "untyped_parameter": 1,
+      "fallback": 10
     },
     "src/tank/sources/organization.py:resolve_author_organization": {
-      "untyped_parameter": 3,
-      "untyped_return": 1,
+      "untyped_parameter": 2,
       "none_default": 1,
-      "fallback": 15,
+      "fallback": 10,
       "dictionary": 2
     },
     "src/tank/sources/parsers.py:": {
@@ -7608,8 +7545,8 @@
     "src/tank/sources/parsers.py:article_links": {
       "untyped_parameter": 2,
       "untyped_return": 1,
-      "fallback": 5,
-      "dictionary": 3
+      "dictionary": 3,
+      "fallback": 1
     },
     "src/tank/sources/parsers.py:article_links.bind": {
       "untyped_parameter": 1,
@@ -7642,12 +7579,12 @@
       "untyped_parameter": 3,
       "untyped_return": 1,
       "dictionary": 7,
-      "fallback": 15
+      "fallback": 14
     },
     "src/tank/sources/parsers.py:instruments": {
       "untyped_parameter": 2,
       "untyped_return": 1,
-      "fallback": 13,
+      "fallback": 11,
       "dictionary": 3
     },
     "src/tank/sources/parsers.py:json_items": {
@@ -7706,8 +7643,8 @@
     "src/tank/sources/polling.py:SourcePoller._article": {
       "untyped_parameter": 4,
       "untyped_return": 1,
-      "dictionary": 5,
-      "fallback": 9
+      "fallback": 7,
+      "dictionary": 1
     },
     "src/tank/sources/polling.py:SourcePoller._empty_body": {
       "untyped_parameter": 2,
@@ -7718,20 +7655,19 @@
     "src/tank/sources/polling.py:SourcePoller._fetch_rows": {
       "untyped_parameter": 4,
       "untyped_return": 1,
-      "fallback": 17,
+      "fallback": 13,
       "dictionary": 7
     },
     "src/tank/sources/polling.py:SourcePoller._item": {
       "untyped_parameter": 5,
       "untyped_return": 1,
-      "dictionary": 1,
       "fallback": 5
     },
     "src/tank/sources/polling.py:SourcePoller._json_history": {
       "untyped_parameter": 5,
       "untyped_return": 1,
-      "fallback": 23,
-      "dictionary": 16
+      "fallback": 22,
+      "dictionary": 15
     },
     "src/tank/sources/polling.py:SourcePoller._json_history.identity": {
       "untyped_parameter": 1,
@@ -7756,17 +7692,6 @@
       "fallback": 3,
       "dictionary": 1
     },
-    "src/tank/sources/polling.py:SourcePoller.feed": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
-      "dictionary": 2,
-      "fallback": 1
-    },
-    "src/tank/sources/polling.py:SourcePoller.interval": {
-      "untyped_parameter": 3,
-      "untyped_return": 1,
-      "fallback": 2
-    },
     "src/tank/sources/polling.py:SourcePoller.lock": {
       "untyped_parameter": 2,
       "untyped_return": 1
@@ -7774,7 +7699,7 @@
     "src/tank/sources/polling.py:SourcePoller.loop": {
       "untyped_parameter": 2,
       "untyped_return": 1,
-      "fallback": 9
+      "fallback": 8
     },
     "src/tank/sources/polling.py:SourcePoller.mark_request_start": {
       "untyped_parameter": 1,
@@ -7785,14 +7710,11 @@
       "untyped_return": 1,
       "fallback": 1
     },
-    "src/tank/sources/polling.py:SourcePoller.now": {
-      "untyped_return": 1
-    },
     "src/tank/sources/polling.py:SourcePoller.poll_once": {
       "untyped_parameter": 3,
       "untyped_return": 1,
-      "fallback": 4,
-      "dictionary": 1
+      "dictionary": 1,
+      "fallback": 2
     },
     "src/tank/sources/polling.py:SourcePoller.poll_once.one_feed": {
       "untyped_parameter": 1,
@@ -7832,8 +7754,6 @@
       "fallback": 1
     },
     "src/tank/sources/polling.py:SourcePoller.stamp": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "none_default": 1
     },
     "src/tank/sources/polling.py:SourcePoller.state": {
@@ -7850,7 +7770,7 @@
     "src/tank/sources/polling.py:instrument_changes": {
       "untyped_parameter": 6,
       "untyped_return": 1,
-      "fallback": 8,
+      "fallback": 5,
       "dictionary": 8
     },
     "src/tank/sources/polling.py:instrument_changes.action": {
@@ -7872,103 +7792,57 @@
     "src/tank/sources/probe.py:probe_feeds": {
       "untyped_parameter": 1,
       "untyped_return": 1,
-      "dictionary": 1,
-      "fallback": 1
+      "dictionary": 1
     },
     "src/tank/sources/probe.py:probe_feeds.probe": {
       "untyped_parameter": 3,
       "untyped_return": 1,
-      "dictionary": 3,
-      "fallback": 9
-    },
-    "src/tank/sources/rate_limits.py:RequestLedger.__init__": {
-      "untyped_parameter": 2,
-      "untyped_return": 1
-    },
-    "src/tank/sources/rate_limits.py:RequestLedger._execute": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
+      "dictionary": 1,
       "fallback": 1
     },
-    "src/tank/sources/rate_limits.py:RequestLedger.block": {
-      "untyped_parameter": 3,
-      "untyped_return": 1
-    },
-    "src/tank/sources/rate_limits.py:RequestLedger.call": {
-      "untyped_parameter": 2,
-      "untyped_return": 1
-    },
-    "src/tank/sources/rate_limits.py:RequestLedger.close": {
-      "untyped_return": 1
-    },
-    "src/tank/sources/rate_limits.py:RequestLedger.shutdown": {
-      "untyped_return": 1
+    "src/tank/sources/rate_limits.py:RequestLedger._execute": {
+      "fallback": 1
     },
     "src/tank/sources/rate_limits.py:RequestLedger.wait_s": {
-      "untyped_parameter": 5,
-      "untyped_return": 1
+      "fallback": 1
     },
     "src/tank/sources/rate_limits.py:SharedRequestBudgets.__init__": {
-      "untyped_return": 1,
-      "dictionary": 3
+      "dictionary": 6
     },
     "src/tank/sources/rate_limits.py:SharedRequestBudgets._acquire_shared": {
-      "untyped_parameter": 5,
-      "untyped_return": 1,
       "fallback": 2
     },
     "src/tank/sources/rate_limits.py:SharedRequestBudgets.acquire": {
-      "untyped_parameter": 6,
-      "untyped_return": 1,
       "none_default": 1,
       "fallback": 4
     },
-    "src/tank/sources/rate_limits.py:SharedRequestBudgets.block": {
-      "untyped_parameter": 3,
-      "untyped_return": 1
-    },
-    "src/tank/sources/rate_limits.py:SharedRequestBudgets.configure": {
-      "untyped_parameter": 3,
-      "untyped_return": 1
-    },
-    "src/tank/sources/rate_limits.py:SharedRequestBudgets.release": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
-    "src/tank/sources/raw_store.py:_sync_directory": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
-    "src/tank/sources/raw_store.py:_sync_hierarchy": {
-      "untyped_parameter": 2,
-      "untyped_return": 1
-    },
     "src/tank/sources/raw_store.py:raw_item_path": {
-      "untyped_parameter": 4,
-      "untyped_return": 1,
       "fallback": 1
     },
-    "src/tank/sources/raw_store.py:write_raw_item": {
-      "untyped_parameter": 5,
-      "untyped_return": 1
+    "src/tank/sources/read_report.py:CheckpointReader.get": {
+      "dictionary": 1
+    },
+    "src/tank/sources/read_report.py:ReadReport": {
+      "dictionary": 1
+    },
+    "src/tank/sources/read_report.py:ReadSnapshot": {
+      "dictionary": 1
     },
     "src/tank/sources/read_report.py:main": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "none_default": 1
     },
     "src/tank/sources/read_report.py:rates": {
-      "untyped_parameter": 3,
-      "untyped_return": 1,
       "none_default": 1,
-      "fallback": 9,
-      "dictionary": 11
+      "dictionary": 4
+    },
+    "src/tank/sources/read_report.py:report": {
+      "none_default": 1,
+      "dictionary": 3,
+      "fallback": 1
     },
     "src/tank/sources/read_report.py:snapshot": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
-      "dictionary": 5,
-      "fallback": 7
+      "dictionary": 6,
+      "fallback": 4
     },
     "src/tank/sources/xsensor.py:ApifyPost.row": {
       "dictionary": 2
@@ -8065,6 +7939,10 @@
       "untyped_return": 1,
       "fallback": 2
     },
+    "src/tank/storage.py:PostgresRepository._exact_predicate": {
+      "untyped_parameter": 2,
+      "untyped_return": 1
+    },
     "src/tank/storage.py:PostgresRepository._log_deferral": {
       "untyped_parameter": 3,
       "untyped_return": 1
@@ -8129,6 +8007,10 @@
     "src/tank/storage.py:PostgresRepository.transaction": {
       "untyped_return": 1,
       "fallback": 1
+    },
+    "src/tank/storage.py:QueueMixin._exact_predicate": {
+      "untyped_parameter": 2,
+      "untyped_return": 1
     },
     "src/tank/storage.py:QueueMixin._transition_job": {
       "untyped_parameter": 2,
@@ -8258,6 +8140,83 @@
     },
     "src/tank/storage.py:Repository.transaction": {
       "untyped_return": 1
+    },
+    "src/tank/storage.py:RepositoryQueries.iter_all": {
+      "untyped_parameter": 3,
+      "untyped_return": 1,
+      "none_default": 1
+    },
+    "src/tank/storage.py:RepositoryQueries.iter_late_arrivals": {
+      "untyped_parameter": 8,
+      "untyped_return": 1,
+      "none_default": 3
+    },
+    "src/tank/storage.py:RepositoryQueries.iter_market_projection": {
+      "untyped_parameter": 9,
+      "untyped_return": 1,
+      "none_default": 5
+    },
+    "src/tank/storage.py:RepositoryQueries.iter_metadata": {
+      "untyped_parameter": 4,
+      "untyped_return": 1,
+      "none_default": 1
+    },
+    "src/tank/storage.py:RepositoryQueries.iter_range": {
+      "untyped_parameter": 6,
+      "untyped_return": 1,
+      "none_default": 3
+    },
+    "src/tank/storage.py:RepositoryQueries.latest_before": {
+      "untyped_parameter": 4,
+      "untyped_return": 1,
+      "none_default": 1
+    },
+    "src/tank/storage.py:RepositoryQueries.latest_market_records": {
+      "untyped_parameter": 8,
+      "untyped_return": 1,
+      "none_default": 5
+    },
+    "src/tank/storage.py:RepositoryQueries.list_latest": {
+      "untyped_parameter": 6,
+      "untyped_return": 1,
+      "none_default": 3
+    },
+    "src/tank/storage.py:RepositoryQueries.list_range": {
+      "untyped_parameter": 7,
+      "untyped_return": 1,
+      "none_default": 4
+    },
+    "src/tank/storage.py:RepositoryQueries.market_dependency_head": {
+      "untyped_parameter": 9,
+      "untyped_return": 1,
+      "none_default": 5
+    },
+    "src/tank/storage.py:RepositoryQueries.market_series_counts": {
+      "untyped_parameter": 4,
+      "untyped_return": 1,
+      "none_default": 1
+    },
+    "src/tank/storage.py:RepositoryQueries.page_range": {
+      "untyped_parameter": 7,
+      "untyped_return": 1,
+      "none_default": 4
+    },
+    "src/tank/storage.py:RepositoryQueries.preserved_market_windows": {
+      "untyped_return": 1
+    },
+    "src/tank/storage.py:RepositoryQueries.prune_jobs": {
+      "untyped_parameter": 1,
+      "untyped_return": 1
+    },
+    "src/tank/storage.py:RepositoryQueries.prune_market": {
+      "untyped_parameter": 3,
+      "untyped_return": 1,
+      "none_default": 2
+    },
+    "src/tank/storage.py:RepositoryQueries.put_market_batch": {
+      "untyped_parameter": 3,
+      "untyped_return": 1,
+      "none_default": 1
     },
     "src/tank/storage.py:_MemoryAdvisoryLock.__init__": {
       "untyped_return": 1
@@ -8678,72 +8637,57 @@
       "untyped_parameter": 2,
       "untyped_return": 1
     },
-    "src/tank/telegram_rich.py:card_rich_message": {
-      "untyped_parameter": 3,
-      "untyped_return": 1,
-      "fallback": 4,
-      "dictionary": 4
-    },
-    "src/tank/telegram_rich.py:message_text": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "fallback": 5,
+    "src/tank/telegram_rich.py:RichMessage.telegram_payload": {
       "dictionary": 1
     },
-    "src/tank/telegram_rich.py:rich_message_text": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "fallback": 17
+    "src/tank/telegram_rich.py:_assessment": {
+      "dictionary": 4
     },
-    "src/tank/telegram_rich.py:rich_text": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
+    "src/tank/telegram_rich.py:card_rich_message": {
+      "fallback": 3,
+      "dictionary": 1
     },
-    "src/tank/telegram_rich.py:score_summary": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "fallback": 9,
-      "dictionary": 2
+    "src/tank/telegram_rich.py:message_text": {
+      "fallback": 2
     },
     "src/tank/telegram_rich.py:score_table": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "dictionary": 7,
-      "fallback": 9
+      "dictionary": 1
     },
     "src/tank/time_precision.py:": {
       "dictionary": 3
     },
-    "src/tank/time_precision.py:Timestamp.__post_init__": {
-      "untyped_return": 1,
-      "fallback": 2
+    "src/tank/time_precision.py:Timestamp.__init__": {
+      "none_default": 2
     },
     "src/tank/time_precision.py:Timestamp.fields": {
       "none_default": 1,
       "fallback": 3,
-      "dictionary": 3,
-      "any": 2
+      "dictionary": 3
+    },
+    "src/tank/time_precision.py:Timestamp.validate_provenance": {
+      "fallback": 2
     },
     "src/tank/time_precision.py:_size": {
-      "any": 1,
+      "fallback": 1
+    },
+    "src/tank/time_precision.py:_text": {
+      "fallback": 1
+    },
+    "src/tank/time_precision.py:_time": {
       "fallback": 1
     },
     "src/tank/time_precision.py:chosen_boundary": {
       "none_default": 1,
-      "any": 2,
       "fallback": 1
     },
     "src/tank/time_precision.py:collection_clock": {
-      "none_default": 1,
-      "any": 1
+      "none_default": 1
     },
     "src/tank/time_precision.py:interval_bounds": {
-      "untyped_return": 1,
       "fallback": 1
     },
     "src/tank/time_precision.py:normalize_precision": {
       "none_default": 1,
-      "any": 1,
       "fallback": 3
     },
     "src/tank/time_precision.py:offset_schedule": {
@@ -8751,31 +8695,21 @@
     },
     "src/tank/time_precision.py:propagate_timestamp": {
       "none_default": 1,
-      "any": 3,
-      "fallback": 16
-    },
-    "src/tank/util.py:canonical_json": {
-      "any": 1
+      "fallback": 17
     },
     "src/tank/util.py:iso": {
-      "none_default": 1,
-      "any": 1
+      "none_default": 1
     },
     "src/tank/util.py:jsonable": {
-      "any": 3
+      "dictionary": 3
     },
     "src/tank/util.py:new_id": {
       "none_default": 2,
-      "any": 1,
       "dictionary": 1,
       "fallback": 2
     },
     "src/tank/util.py:parse_time": {
-      "any": 1,
       "fallback": 1
-    },
-    "src/tank/util.py:sha256": {
-      "any": 1
     },
     "tests/conftest.py:_check_credential_file": {
       "untyped_parameter": 2,
@@ -9048,9 +8982,24 @@
     "tests/score_fixtures.py:unassessed_score_dimensions": {
       "dictionary": 1
     },
-    "tests/test_acceptance_scripts.py:load": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
+    "tests/source_support.py:fetch_plan": {
+      "dictionary": 2,
+      "fallback": 1
+    },
+    "tests/source_support.py:source_configuration": {
+      "dictionary": 2
+    },
+    "tests/source_support.py:source_definition": {
+      "dictionary": 2
+    },
+    "tests/source_support.py:source_feed": {
+      "dictionary": 1
+    },
+    "tests/test_acceptance_scripts.py:test_clickhouse_parameters_remain_literal_shell_arguments": {
+      "dictionary": 1
+    },
+    "tests/test_acceptance_scripts.py:test_clickhouse_parameters_remain_literal_shell_arguments.local_shell": {
+      "dictionary": 1
     },
     "tests/test_acceptance_scripts.py:test_source_ratio_uses_counter_deltas_and_cadence": {
       "dictionary": 14
@@ -9192,7 +9141,7 @@
       "dictionary": 3
     },
     "tests/test_agents.py:test_slow_denial_turn_remains_until_exit_update_delivered": {
-      "dictionary": 27,
+      "dictionary": 28,
       "fallback": 14
     },
     "tests/test_agents.py:test_sse_resume_and_paginated_recovery_dedup_usage": {
@@ -9513,7 +9462,7 @@
     "tests/test_agents_jev.py:test_malformed_typed_answer_is_rejected": {
       "untyped_parameter": 1,
       "untyped_return": 1,
-      "dictionary": 6
+      "dictionary": 5
     },
     "tests/test_agents_jev.py:test_opencode_key_selects_paid_model_with_bearer_header": {
       "untyped_return": 1
@@ -9525,7 +9474,7 @@
     "tests/test_agents_jev.py:test_provider_errors_are_not_retried_or_chat_wrapped": {
       "untyped_parameter": 2,
       "untyped_return": 1,
-      "dictionary": 7
+      "dictionary": 6
     },
     "tests/test_agents_jev.py:test_provider_errors_are_not_retried_or_chat_wrapped.transport": {
       "untyped_parameter": 1,
@@ -9535,6 +9484,25 @@
       "untyped_parameter": 1,
       "untyped_return": 1,
       "dictionary": 2
+    },
+    "tests/test_agents_jev_contracts.py:test_omitted_provider_accounting_remains_explicitly_unknown": {
+      "untyped_return": 1,
+      "dictionary": 4
+    },
+    "tests/test_agents_jev_contracts.py:test_probability_contract_refuses_non_probability_values": {
+      "untyped_parameter": 1,
+      "untyped_return": 1,
+      "dictionary": 4
+    },
+    "tests/test_agents_jev_contracts.py:test_response_answers_match_exact_requested_names": {
+      "untyped_parameter": 1,
+      "untyped_return": 1,
+      "dictionary": 5
+    },
+    "tests/test_agents_jev_contracts.py:test_usage_refuses_invalid_numeric_fields": {
+      "untyped_parameter": 1,
+      "untyped_return": 1,
+      "dictionary": 7
     },
     "tests/test_agents_native_retry.py:error": {
       "untyped_parameter": 3,
@@ -9695,38 +9663,27 @@
       "untyped_parameter": 1
     },
     "tests/test_agents_security.py:test_all_settings_token_and_key_credentials_are_scrubbed": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
-      "dictionary": 2
+      "dictionary": 1
     },
     "tests/test_agents_security.py:test_configured_database_password_is_scrubbed_from_plain_text": {
-      "untyped_return": 1,
       "dictionary": 1
     },
     "tests/test_agents_security.py:test_domain_token_is_preserved_and_copy_is_detached": {
-      "untyped_return": 1,
       "dictionary": 2
     },
     "tests/test_agents_security.py:test_evidence_url_credentials_are_redacted_and_refused": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 1
     },
     "tests/test_agents_security.py:test_known_secret_is_scrubbed_when_url_encoded_under_unrecognized_key": {
-      "untyped_return": 1,
       "dictionary": 1
     },
     "tests/test_agents_security.py:test_nested_explicit_auth_and_configured_secret_values_are_scrubbed": {
-      "untyped_return": 1,
       "dictionary": 2
     },
     "tests/test_agents_security.py:test_public_url_and_empty_credentials_are_allowed": {
-      "untyped_return": 1,
       "dictionary": 1
     },
     "tests/test_agents_security.py:test_url_and_dsn_userinfo_is_redacted_without_configured_secret": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 1
     },
     "tests/test_agents_session_audit.py:seed": {
@@ -9889,6 +9846,18 @@
     "tests/test_agents_session_audit.py:test_usage_keeps_effort_stop_reason_and_search_count": {
       "dictionary": 3,
       "fallback": 1
+    },
+    "tests/test_agents_tool_contracts.py:test_capture_error_flag_is_derived_from_completed_status": {
+      "dictionary": 2
+    },
+    "tests/test_agents_tool_contracts.py:test_captured_json_is_detached_and_its_signature_includes_outcome": {
+      "dictionary": 5
+    },
+    "tests/test_agents_tool_contracts.py:test_error_capture_refuses_contradictory_or_untyped_flag": {
+      "dictionary": 2
+    },
+    "tests/test_agents_tool_contracts.py:test_pending_capture_cannot_be_replayed_as_completed": {
+      "dictionary": 2
     },
     "tests/test_agents_workflow.py:test_actual_producer_consumer_workflow": {
       "untyped_parameter": 3,
@@ -10222,321 +10191,128 @@
       "untyped_parameter": 1,
       "untyped_return": 1
     },
-    "tests/test_codex_gateway.py:Chunks.__aiter__": {
-      "untyped_return": 1
+    "tests/test_codex_gateway.py:GatewayFactory.__call__": {
+      "none_default": 1,
+      "dictionary": 1
     },
-    "tests/test_codex_gateway.py:Chunks.__init__": {
-      "untyped_parameter": 2,
-      "untyped_return": 1
-    },
-    "tests/test_codex_gateway.py:Chunks.aclose": {
-      "untyped_return": 1
+    "tests/test_codex_gateway.py:access_token": {
+      "dictionary": 1
     },
     "tests/test_codex_gateway.py:auth_document": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
       "none_default": 1,
-      "dictionary": 3,
+      "dictionary": 4,
       "fallback": 1
     },
     "tests/test_codex_gateway.py:body": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
+      "dictionary": 3
+    },
+    "tests/test_codex_gateway.py:document_tokens": {
       "dictionary": 2
     },
-    "tests/test_codex_gateway.py:gateway_factory": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
     "tests/test_codex_gateway.py:gateway_factory.factory": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
       "none_default": 1,
-      "fallback": 1,
-      "dictionary": 1
+      "dictionary": 2,
+      "fallback": 1
     },
     "tests/test_codex_gateway.py:jwt": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
       "dictionary": 1
     },
-    "tests/test_codex_gateway.py:test_401_refresh_once_then_forward_provider_auth_failure": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
     "tests/test_codex_gateway.py:test_401_refresh_once_then_forward_provider_auth_failure.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 3
     },
     "tests/test_codex_gateway.py:test_account_from_id_token_when_explicit_account_absent": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "dictionary": 2
+      "dictionary": 3
     },
     "tests/test_codex_gateway.py:test_account_from_id_token_when_explicit_account_absent.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 1
-    },
-    "tests/test_codex_gateway.py:test_atomic_write_failure_keeps_old_auth": {
-      "untyped_parameter": 2,
-      "untyped_return": 1
-    },
-    "tests/test_codex_gateway.py:test_atomic_write_failure_keeps_old_auth.failure": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
     },
     "tests/test_codex_gateway.py:test_atomic_write_failure_keeps_old_auth.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 1
     },
-    "tests/test_codex_gateway.py:test_concurrent_401_refreshes_once": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
     "tests/test_codex_gateway.py:test_concurrent_401_refreshes_once.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 2
     },
-    "tests/test_codex_gateway.py:test_connection_nominated_headers_not_forwarded": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
     "tests/test_codex_gateway.py:test_connection_nominated_headers_not_forwarded.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 3
     },
     "tests/test_codex_gateway.py:test_expired_refresh_singleflight_atomic_preservation_and_no_cookie": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 1
     },
     "tests/test_codex_gateway.py:test_expired_refresh_singleflight_atomic_preservation_and_no_cookie.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 4
     },
-    "tests/test_codex_gateway.py:test_external_auth_replacement_during_refresh_wins": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
     "tests/test_codex_gateway.py:test_external_auth_replacement_during_refresh_wins.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 2
-    },
-    "tests/test_codex_gateway.py:test_external_unrelated_token_metadata_edit_preserved_during_refresh": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
     },
     "tests/test_codex_gateway.py:test_external_unrelated_token_metadata_edit_preserved_during_refresh.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 2
     },
-    "tests/test_codex_gateway.py:test_gateway_shutdown_transport_error_is_static": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
-    "tests/test_codex_gateway.py:test_gateway_shutdown_transport_error_is_static.BadClose.aclose": {
-      "untyped_return": 1
-    },
     "tests/test_codex_gateway.py:test_internal_key_required_before_auth_or_provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 1,
       "fallback": 1
     },
-    "tests/test_codex_gateway.py:test_internal_key_required_before_auth_or_provider.forbidden": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
-    "tests/test_codex_gateway.py:test_invalid_refresh_expiry_never_replaces_auth": {
-      "untyped_parameter": 2,
-      "untyped_return": 1
-    },
     "tests/test_codex_gateway.py:test_invalid_refresh_expiry_never_replaces_auth.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 1
     },
     "tests/test_codex_gateway.py:test_invalid_request_never_reaches_provider": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
       "dictionary": 2
     },
-    "tests/test_codex_gateway.py:test_invalid_request_never_reaches_provider.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
-    "tests/test_codex_gateway.py:test_no_refresh_token_valid_access_but_401_requires_login": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
-    "tests/test_codex_gateway.py:test_no_refresh_token_valid_access_but_401_requires_login.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
     "tests/test_codex_gateway.py:test_nonstream_collects_terminal_response": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 4
     },
     "tests/test_codex_gateway.py:test_nonstream_collects_terminal_response.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 1
     },
     "tests/test_codex_gateway.py:test_nonstream_preserves_actual_json_success_response": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 1
     },
     "tests/test_codex_gateway.py:test_nonstream_preserves_actual_json_success_response.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 1
     },
     "tests/test_codex_gateway.py:test_nonstream_recognizes_sse_body_despite_content_type": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
       "dictionary": 2
     },
     "tests/test_codex_gateway.py:test_nonstream_recognizes_sse_body_despite_content_type.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 2
     },
-    "tests/test_codex_gateway.py:test_nonstream_truncated_response_is_failure": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
     "tests/test_codex_gateway.py:test_nonstream_truncated_response_is_failure.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 1
     },
-    "tests/test_codex_gateway.py:test_preflight_rejects_invalid_or_unrefreshable_auth_offline": {
-      "untyped_parameter": 3,
-      "untyped_return": 1
-    },
     "tests/test_codex_gateway.py:test_provider_errors_and_reset_headers_preserved": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
       "dictionary": 2
     },
     "tests/test_codex_gateway.py:test_provider_errors_and_reset_headers_preserved.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 1
     },
-    "tests/test_codex_gateway.py:test_provider_redirect_never_followed_or_exposed": {
-      "untyped_parameter": 2,
-      "untyped_return": 1
-    },
     "tests/test_codex_gateway.py:test_provider_redirect_never_followed_or_exposed.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 1
     },
     "tests/test_codex_gateway.py:test_refresh_failures_static_safe_and_auth_unmodified": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
       "dictionary": 3
     },
-    "tests/test_codex_gateway.py:test_refresh_failures_static_safe_and_auth_unmodified.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
-    "tests/test_codex_gateway.py:test_refresh_redirect_refused_no_provider_call": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
     "tests/test_codex_gateway.py:test_refresh_redirect_refused_no_provider_call.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 1
-    },
-    "tests/test_codex_gateway.py:test_reload_new_auth_without_refresh": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
     },
     "tests/test_codex_gateway.py:test_reload_new_auth_without_refresh.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 1
     },
-    "tests/test_codex_gateway.py:test_run_start_close_without_provider_traffic": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
-    "tests/test_codex_gateway.py:test_run_start_close_without_provider_traffic.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
     "tests/test_codex_gateway.py:test_signing_translation_and_header_isolation": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 5
     },
     "tests/test_codex_gateway.py:test_signing_translation_and_header_isolation.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 3
-    },
-    "tests/test_codex_gateway.py:test_sse_failure_and_usage_reset_preserved": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
     },
     "tests/test_codex_gateway.py:test_sse_failure_and_usage_reset_preserved.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 1
-    },
-    "tests/test_codex_gateway.py:test_sse_redacts_secrets_split_at_every_byte_and_rotated_tokens": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
     },
     "tests/test_codex_gateway.py:test_sse_redacts_secrets_split_at_every_byte_and_rotated_tokens.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 3
     },
-    "tests/test_codex_gateway.py:test_stream_interruption_visible_and_closed": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
     "tests/test_codex_gateway.py:test_stream_interruption_visible_and_closed.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 1
-    },
-    "tests/test_codex_gateway.py:test_stream_is_incremental_and_downstream_disconnect_closes_upstream": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
-    "tests/test_codex_gateway.py:test_stream_is_incremental_and_downstream_disconnect_closes_upstream.Blocking.__aiter__": {
-      "untyped_return": 1
-    },
-    "tests/test_codex_gateway.py:test_stream_is_incremental_and_downstream_disconnect_closes_upstream.Blocking.aclose": {
-      "untyped_return": 1
     },
     "tests/test_codex_gateway.py:test_stream_is_incremental_and_downstream_disconnect_closes_upstream.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "dictionary": 1
-    },
-    "tests/test_codex_gateway.py:test_unknown_provider_exception_never_logs_credential": {
-      "untyped_parameter": 2,
-      "untyped_return": 1
-    },
-    "tests/test_codex_gateway.py:test_unknown_provider_exception_never_logs_credential.provider": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
     },
     "tests/test_config.py:load": {
       "untyped_parameter": 1,
@@ -11445,8 +11221,7 @@
     },
     "tests/test_event_tools.py:test_search_and_fetched_evidence_keep_agent_certainty.Search.search": {
       "untyped_parameter": 2,
-      "untyped_return": 1,
-      "dictionary": 1
+      "untyped_return": 1
     },
     "tests/test_event_tools.py:test_search_and_fetched_evidence_keep_agent_certainty.page": {
       "untyped_return": 1,
@@ -12190,6 +11965,32 @@
     "tests/test_formula_vectors.py:test_t9_disconnected_minutes_are_incomplete_and_exclude_the_venue": {
       "dictionary": 2
     },
+    "tests/test_foundation_contracts.py:test_domain_rejects_missing_coerced_and_unknown_fields": {
+      "dictionary": 4
+    },
+    "tests/test_foundation_contracts.py:test_market_codec_does_not_treat_invalid_source_metadata_as_absent": {
+      "dictionary": 2
+    },
+    "tests/test_foundation_contracts.py:test_market_codec_rejects_coerced_scalars": {
+      "dictionary": 1
+    },
+    "tests/test_foundation_contracts.py:test_market_codec_requires_real_identity_instead_of_empty_key_parts": {
+      "dictionary": 1
+    },
+    "tests/test_foundation_contracts.py:test_repository_refuses_nested_mutation_before_write": {
+      "fallback": 1
+    },
+    "tests/test_foundation_contracts.py:test_repository_refuses_unvalidated_constructed_entity_before_write": {
+      "fallback": 1
+    },
+    "tests/test_foundation_contracts.py:test_typed_repository_roundtrips_timestamps_and_preserves_immutability": {
+      "fallback": 2,
+      "dictionary": 1
+    },
+    "tests/test_foundation_contracts.py:test_typed_repository_validates_persisted_payload": {
+      "dictionary": 1,
+      "fallback": 1
+    },
     "tests/test_funding_confirmations.py:observations": {
       "untyped_parameter": 1,
       "untyped_return": 1,
@@ -12366,6 +12167,26 @@
     },
     "tests/test_holders_revenue.py:test_unavailable_protocol_and_chart_only_are_not_zero": {
       "dictionary": 6
+    },
+    "tests/test_ingestion_contracts.py:test_capture_binary_and_request_policy": {
+      "dictionary": 1
+    },
+    "tests/test_ingestion_contracts.py:test_capture_preserves_invalid_terminal_evidence": {
+      "dictionary": 1,
+      "fallback": 1
+    },
+    "tests/test_ingestion_contracts.py:test_capture_verified_response_releases_queue_record": {
+      "dictionary": 1,
+      "fallback": 1
+    },
+    "tests/test_ingestion_contracts.py:test_entry_error_variants_preserve_run_identity_and_validate_evidence": {
+      "dictionary": 5
+    },
+    "tests/test_ingestion_contracts.py:test_read_window_rejects_counter_resets_and_aggregates_details.window": {
+      "dictionary": 1
+    },
+    "tests/test_ingestion_contracts.py:test_source_configuration_requires_adapter_inputs_and_unique_identities": {
+      "dictionary": 1
     },
     "tests/test_logging.py:test_credential_urls_are_redacted_even_when_httpx_info_enabled": {
       "fallback": 1
@@ -12807,7 +12628,7 @@
     },
     "tests/test_market_service.py:test_hot_expiry_protection_is_scoped_to_event_and_token": {
       "untyped_parameter": 1,
-      "dictionary": 4,
+      "dictionary": 5,
       "fallback": 5
     },
     "tests/test_market_service.py:test_loop_watchdog_logs_the_stack_that_holds_the_loop": {
@@ -13007,7 +12828,7 @@
     },
     "tests/test_model_context.py:test_identical_watches_on_different_tokens_are_disarmed_by_cond_id": {
       "untyped_parameter": 2,
-      "dictionary": 6,
+      "dictionary": 8,
       "fallback": 1
     },
     "tests/test_model_context.py:test_incoming_source_binding_rejects_override_but_allows_other_claim_evidence": {
@@ -13596,7 +13417,7 @@
     },
     "tests/test_ops_progress.py:test_generated_card_only_becomes_sent_after_telegram_receipt": {
       "untyped_parameter": 1,
-      "dictionary": 6,
+      "dictionary": 7,
       "fallback": 1
     },
     "tests/test_ops_progress.py:test_generated_card_only_becomes_sent_after_telegram_receipt.respond": {
@@ -13734,10 +13555,83 @@
     "tests/test_reaction_benchmark_coalesce.py:test_late_changes_keep_one_queued_revision_per_checkpoint": {
       "dictionary": 7
     },
+    "tests/test_refactor_identity_contracts.py:registry": {
+      "untyped_return": 1,
+      "dictionary": 5
+    },
+    "tests/test_refactor_identity_contracts.py:test_domain_rejects_malformed_identities_and_empty_qualifier_rules": {
+      "untyped_return": 1,
+      "dictionary": 7
+    },
+    "tests/test_refactor_identity_contracts.py:test_known_token_names_require_id_and_external_names_remain_explicit": {
+      "untyped_return": 1
+    },
+    "tests/test_refactor_identity_contracts.py:test_qualified_alias_requires_whole_word_qualifier": {
+      "untyped_return": 1
+    },
     "tests/test_refactor_inventory.py:test_inventory_preserves_fixture_and_third_party_exclusions": {
       "dictionary": 1
     },
     "tests/test_refactor_inventory.py:test_inventory_reports_import_cycles_without_importing_modules": {
+      "dictionary": 1
+    },
+    "tests/test_refactor_market_contracts.py:observation": {
+      "untyped_parameter": 1,
+      "untyped_return": 1,
+      "dictionary": 1
+    },
+    "tests/test_refactor_market_contracts.py:test_book_instrument_rejects_unsupported_identity_instead_of_assuming_spot": {
+      "untyped_parameter": 1,
+      "untyped_return": 1,
+      "dictionary": 4
+    },
+    "tests/test_refactor_market_contracts.py:test_cancelled_waiter_does_not_lose_capacity_or_reorder_priority": {
+      "untyped_return": 1
+    },
+    "tests/test_refactor_market_contracts.py:test_cancelled_waiter_does_not_lose_capacity_or_reorder_priority.worker": {
+      "untyped_parameter": 2,
+      "untyped_return": 1
+    },
+    "tests/test_refactor_market_contracts.py:test_capture_boundaries_require_anchor_timestamp_and_include_mirrored_window": {
+      "untyped_return": 1,
+      "dictionary": 2
+    },
+    "tests/test_refactor_market_contracts.py:test_event_anchor_requires_verified_exact_event_time_and_preserves_public_precision": {
+      "untyped_return": 1,
+      "dictionary": 3
+    },
+    "tests/test_refactor_market_contracts.py:test_funding_requires_finite_typed_rate_positive_interval_and_declared_identity": {
+      "untyped_return": 1,
+      "dictionary": 7
+    },
+    "tests/test_refactor_market_contracts.py:test_gate_rejects_capacity_that_cannot_admit_work": {
+      "untyped_parameter": 1,
+      "untyped_return": 1
+    },
+    "tests/test_refactor_market_contracts.py:test_order_book_preserves_decimal_checksum_spelling_and_unavailable_usd": {
+      "untyped_return": 1,
+      "dictionary": 1
+    },
+    "tests/test_refactor_market_contracts.py:test_order_book_rejects_invalid_level_quantities": {
+      "untyped_parameter": 2,
+      "untyped_return": 1
+    },
+    "tests/test_refactor_market_contracts.py:test_realized_zero_funding_is_preserved_instead_of_replaced_by_forecast": {
+      "untyped_return": 1,
+      "dictionary": 2
+    },
+    "tests/test_refactor_watch_contracts.py:leaf": {
+      "untyped_parameter": 1,
+      "untyped_return": 1,
+      "dictionary": 2
+    },
+    "tests/test_refactor_watch_contracts.py:test_invalid_predicates_are_rejected_before_persistence": {
+      "untyped_parameter": 1,
+      "untyped_return": 1,
+      "dictionary": 8
+    },
+    "tests/test_refactor_watch_contracts.py:test_zero_watch_threshold_is_a_value_and_recursive_conjunction_is_typed": {
+      "untyped_return": 1,
       "dictionary": 1
     },
     "tests/test_replay.py:packet": {
@@ -14307,7 +14201,7 @@
       "dictionary": 1
     },
     "tests/test_runtime.py:test_market_truth_repairs_windows_within_budget_before_assessing": {
-      "dictionary": 4
+      "dictionary": 2
     },
     "tests/test_runtime.py:test_market_truth_repairs_windows_within_budget_before_assessing.Market.capture_readiness": {
       "untyped_parameter": 3,
@@ -14436,6 +14330,24 @@
       "untyped_parameter": 2,
       "untyped_return": 1
     },
+    "tests/test_runtime_payload_contracts.py:test_agent_message_refuses_unknown_fields_and_kinds": {
+      "dictionary": 2
+    },
+    "tests/test_runtime_payload_contracts.py:test_delivery_has_one_explicit_destination_and_subject": {
+      "dictionary": 2
+    },
+    "tests/test_runtime_payload_contracts.py:test_dependency_metadata_distinguishes_absent_and_declared_empty": {
+      "dictionary": 1
+    },
+    "tests/test_runtime_payload_contracts.py:test_durable_scout_alias_normalizes_to_one_canonical_field": {
+      "dictionary": 3
+    },
+    "tests/test_runtime_payload_contracts.py:test_escalation_refuses_invalid_tokens_before_market_side_effect": {
+      "dictionary": 1
+    },
+    "tests/test_runtime_payload_contracts.py:test_escalation_requires_explicit_token_set_instead_of_single_token_fallback": {
+      "dictionary": 1
+    },
     "tests/test_runtime_precision.py:test_job_expiring_after_real_claim_records_actual_finish_precision": {
       "dictionary": 2,
       "fallback": 1
@@ -14517,6 +14429,10 @@
     "tests/test_scheduler.py:test_existing_backup_with_newly_protected_credential_is_rejected_before_read.read": {
       "untyped_parameter": 3,
       "untyped_return": 1
+    },
+    "tests/test_scheduler.py:test_failed_capture_job_of_this_event_records_a_gap_and_other_events_jobs_do_not": {
+      "untyped_return": 1,
+      "dictionary": 9
     },
     "tests/test_scheduler.py:test_heartbeat_preserves_unknown_llm_cost": {
       "dictionary": 2
@@ -14965,9 +14881,6 @@
     "tests/test_search.py:test_pinned_engine_payload_parser_and_unmodified_result.Forbidden.__init__": {
       "untyped_parameter": 2
     },
-    "tests/test_search.py:test_pinned_engine_payload_parser_and_unmodified_result.respond": {
-      "untyped_return": 1
-    },
     "tests/test_search.py:test_pinned_engine_payload_parser_and_unmodified_result.text": {
       "untyped_parameter": 3,
       "untyped_return": 1
@@ -14979,7 +14892,6 @@
       "untyped_parameter": 1
     },
     "tests/test_search.py:test_real_ddgs_preserves_block_and_retry_contract.respond": {
-      "untyped_return": 1,
       "dictionary": 1
     },
     "tests/test_search.py:test_retries_and_other_queries_share_the_same_limiter": {
@@ -15116,7 +15028,7 @@
     "tests/test_session_retention.py:settings": {
       "untyped_parameter": 2,
       "untyped_return": 1,
-      "dictionary": 3
+      "dictionary": 4
     },
     "tests/test_session_retention.py:test_a_reader_question_counts_as_the_last_message": {
       "dictionary": 1,
@@ -16687,17 +16599,16 @@
       "untyped_return": 1,
       "dictionary": 9
     },
+    "tests/test_telegram_rich.py:test_presentation_rejects_missing_score_dimensions_and_malformed_blocks": {
+      "dictionary": 5
+    },
     "tests/test_telegram_rich.py:test_rich_delivery_retries_frozen_payload_and_threads_update_once": {
       "dictionary": 7,
       "fallback": 1
     },
     "tests/test_telegram_rich.py:test_rich_delivery_retries_frozen_payload_and_threads_update_once.send": {
-      "untyped_return": 1,
       "dictionary": 4,
       "fallback": 1
-    },
-    "tests/test_telegram_rich.py:test_rich_size_check_counts_the_added_rationales_and_api_limits": {
-      "dictionary": 2
     },
     "tests/test_telegram_rich.py:test_rich_text_reader_handles_nested_blocks_and_formatting": {
       "dictionary": 15
@@ -17006,9 +16917,6 @@
       "dictionary": 5
     },
     "tests/test_truth.py:test_outcome_btc_reference_and_horizon_ranges_are_frozen_from_entry_history": {
-      "dictionary": 1
-    },
-    "tests/test_truth.py:test_position_majority_rule_uses_exact_dollar_terms_not_rounded_display_share": {
       "dictionary": 1
     },
     "tests/test_truth.py:test_previous_window_bars_without_usd_rate_do_not_crash_size_profile": {
@@ -17498,27 +17406,39 @@
     "tank.agents.context": [
       "tank.event_tools"
     ],
-    "tank.agents.jev": [],
+    "tank.agents.jev": [
+      "tank.contracts"
+    ],
     "tank.agents.pipeline": [
       "tank.agents.jev",
       "tank.ops_progress",
       "tank.time_precision",
       "tank.util"
     ],
+    "tank.agents.provenance": [
+      "tank.contracts.provenance",
+      "tank.util"
+    ],
     "tank.agents.security": [],
     "tank.agents.sessions": [
-      "tank.agents",
       "tank.agents.context",
       "tank.agents.pipeline",
+      "tank.agents.provenance",
       "tank.agents.security",
+      "tank.agents.tool_contracts",
       "tank.agents.wire",
       "tank.agents.workflow",
+      "tank.contracts.json",
+      "tank.contracts.provenance",
       "tank.delivery",
       "tank.openma_sync",
       "tank.ops_progress",
-      "tank.settings",
       "tank.telegram_inbox",
       "tank.time_precision",
+      "tank.util"
+    ],
+    "tank.agents.tool_contracts": [
+      "tank.contracts",
       "tank.util"
     ],
     "tank.agents.wire": [
@@ -17532,12 +17452,29 @@
       "tank.util"
     ],
     "tank.analysis.decisions": [
+      "tank.analysis.watch_contracts",
+      "tank.analysis.watch_policy",
       "tank.time_precision",
       "tank.util"
     ],
+    "tank.analysis.identity": [
+      "tank.contracts"
+    ],
+    "tank.analysis.positioning": [
+      "tank.contracts"
+    ],
     "tank.analysis.truth": [
+      "tank.analysis.positioning",
       "tank.market.capture",
       "tank.time_precision",
+      "tank.util"
+    ],
+    "tank.analysis.watch_contracts": [
+      "tank.contracts",
+      "tank.contracts.provenance"
+    ],
+    "tank.analysis.watch_policy": [
+      "tank.analysis.watch_contracts",
       "tank.util"
     ],
     "tank.backup": [],
@@ -17572,11 +17509,34 @@
       "tank.util"
     ],
     "tank.clickhouse_market": [
+      "tank.contracts.json",
+      "tank.market_codec",
       "tank.market_schema",
-      "tank.market_storage",
+      "tank.settings",
       "tank.util"
     ],
-    "tank.codex_gateway": [],
+    "tank.codex_gateway": [
+      "tank.contracts",
+      "tank.contracts.json",
+      "tank.settings"
+    ],
+    "tank.contracts": [],
+    "tank.contracts.configuration": [
+      "tank.contracts"
+    ],
+    "tank.contracts.jobs": [
+      "tank.contracts"
+    ],
+    "tank.contracts.json": [],
+    "tank.contracts.provenance": [
+      "tank.contracts"
+    ],
+    "tank.contracts.repository": [
+      "tank.contracts.json"
+    ],
+    "tank.contracts.score": [
+      "tank.contracts"
+    ],
     "tank.delivery": [
       "tank.analysis.cards",
       "tank.ops_cards",
@@ -17586,6 +17546,8 @@
     ],
     "tank.event_tools": [
       "tank.analysis.cards",
+      "tank.analysis.identity",
+      "tank.analysis.watch_contracts",
       "tank.fixture_reference",
       "tank.ops_progress",
       "tank.scheduler",
@@ -17602,17 +17564,21 @@
       "tank.time_precision",
       "tank.util"
     ],
-    "tank.logging": [],
-    "tank.market": [
-      "tank.market.normalize",
-      "tank.market.service"
+    "tank.logging": [
+      "tank.settings"
+    ],
+    "tank.market": [],
+    "tank.market.book_contracts": [
+      "tank.contracts"
     ],
     "tank.market.books": [
+      "tank.market.book_contracts",
       "tank.market.normalize",
       "tank.time_precision",
       "tank.util"
     ],
     "tank.market.capture": [
+      "tank.contracts",
       "tank.time_precision",
       "tank.util"
     ],
@@ -17621,7 +17587,11 @@
       "tank.time_precision",
       "tank.util"
     ],
+    "tank.market.funding": [
+      "tank.contracts"
+    ],
     "tank.market.normalize": [
+      "tank.market.funding",
       "tank.time_precision",
       "tank.util"
     ],
@@ -17645,13 +17615,17 @@
       "tank.time_precision",
       "tank.util"
     ],
+    "tank.market_codec": [
+      "tank.market_schema",
+      "tank.time_precision",
+      "tank.util"
+    ],
     "tank.market_schema": [],
     "tank.market_storage": [
       "tank",
       "tank.clickhouse_market",
+      "tank.market_codec",
       "tank.market_schema",
-      "tank.storage",
-      "tank.time_precision",
       "tank.util"
     ],
     "tank.models": [
@@ -17667,6 +17641,9 @@
     "tank.ops_entry_errors": [
       "tank.ops_cards",
       "tank.ops_progress",
+      "tank.settings",
+      "tank.sources.configuration",
+      "tank.sources.errors",
       "tank.time_precision",
       "tank.util"
     ],
@@ -17715,6 +17692,7 @@
       "tank.market.capture",
       "tank.market.service",
       "tank.ops_progress",
+      "tank.runtime_contracts",
       "tank.scheduler",
       "tank.settings",
       "tank.sources",
@@ -17722,6 +17700,11 @@
       "tank.telegram_inbox",
       "tank.time_precision",
       "tank.util"
+    ],
+    "tank.runtime_contracts": [
+      "tank.analysis.watch_contracts",
+      "tank.contracts",
+      "tank.time_precision"
     ],
     "tank.scheduler": [
       "tank.analysis.truth",
@@ -17732,11 +17715,18 @@
       "tank.time_precision",
       "tank.util"
     ],
-    "tank.search": [],
-    "tank.settings": [],
+    "tank.search": [
+      "tank.contracts"
+    ],
+    "tank.settings": [
+      "tank.contracts.configuration",
+      "tank.contracts.json",
+      "tank.util"
+    ],
     "tank.sources": [
       "tank.ops_progress",
       "tank.sources.capture_fetch",
+      "tank.sources.configuration",
       "tank.sources.organization",
       "tank.sources.parsers",
       "tank.sources.policy",
@@ -17749,31 +17739,41 @@
       "tank.util"
     ],
     "tank.sources.capture_fetch": [
+      "tank.contracts",
       "tank.time_precision",
       "tank.util"
     ],
-    "tank.sources.organization": [],
+    "tank.sources.configuration": [
+      "tank.contracts"
+    ],
+    "tank.sources.errors": [
+      "tank.contracts"
+    ],
+    "tank.sources.organization": [
+      "tank.sources.configuration"
+    ],
     "tank.sources.parsers": [
+      "tank.sources.configuration",
       "tank.time_precision",
       "tank.util"
     ],
     "tank.sources.policy": [],
     "tank.sources.polling": [
-      "tank",
       "tank.ops_entry_errors",
-      "tank.sources",
+      "tank.sources.configuration",
       "tank.sources.parsers",
       "tank.time_precision",
       "tank.util"
     ],
     "tank.sources.probe": [
-      "tank.sources",
       "tank.sources.capture_fetch",
       "tank.sources.parsers",
       "tank.time_precision",
       "tank.util"
     ],
     "tank.sources.rate_limits": [
+      "tank.contracts",
+      "tank.settings",
       "tank.storage"
     ],
     "tank.sources.raw_store": [
@@ -17782,7 +17782,9 @@
     "tank.sources.read_report": [
       "tank",
       "tank.clickhouse_market",
+      "tank.contracts",
       "tank.settings",
+      "tank.sources.configuration",
       "tank.storage",
       "tank.util"
     ],
@@ -17793,6 +17795,8 @@
     "tank.storage": [
       "tank",
       "tank.clickhouse_market",
+      "tank.contracts.jobs",
+      "tank.market_codec",
       "tank.market_schema",
       "tank.market_storage",
       "tank.models",
@@ -17808,30 +17812,17 @@
       "tank.time_precision",
       "tank.util"
     ],
-    "tank.telegram_rich": [],
+    "tank.telegram_rich": [
+      "tank.contracts",
+      "tank.contracts.score"
+    ],
     "tank.time_precision": [
+      "tank.contracts",
       "tank.util"
     ],
-    "tank.util": []
-  },
-  "cycles": [
-    [
-      "tank.agents",
-      "tank.agents.sessions"
-    ],
-    [
-      "tank.clickhouse_market",
-      "tank.market_storage",
-      "tank.storage"
-    ],
-    [
-      "tank.market",
-      "tank.market.service"
-    ],
-    [
-      "tank.sources",
-      "tank.sources.polling",
-      "tank.sources.probe"
+    "tank.util": [
+      "tank.contracts.json"
     ]
-  ]
+  },
+  "cycles": []
 }

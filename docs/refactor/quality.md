@@ -77,4 +77,3 @@ Add `--details` for exact source expressions/lines. The current quality-only bra
 - Dedicated Go capture+REST run: 134 actual cases passed with zero skips, verified by the results checker from `/srv/tank-refactor-evidence/quality-fetch-final.jsonl`; exit file is zero. This is not PostgreSQL/ClickHouse integration qualification.
 - The earlier `go test ./...` package exit was zero, but was not a zero-skip service integration proof and is not used as one.
 - Root owns the actual disposable PostgreSQL/ClickHouse integration run, full collection/timing evidence, cross-domain validation, GitHub CI, and Codex review. Those remain required before declaring the global refactor complete.
-
