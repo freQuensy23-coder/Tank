@@ -40,6 +40,7 @@ const result = spawnSync(
   process.execPath,
   [
     "--import", resolve(root, "scripts/node-typescript-loader.mjs"),
+    "--experimental-transform-types",
     "--experimental-test-module-mocks",
     "--test",
     "--test-reporter=tap",

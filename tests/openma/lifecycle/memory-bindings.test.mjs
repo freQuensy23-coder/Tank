@@ -76,7 +76,7 @@ test('fresh process recovers native writable-memory generation and image upgrade
       const mount = await new ManagedMemorySnapshotMaterializer({ listMemories: async () => { throw Error('must not project over retained data'); } }, blobs).materialize({ ...input.scope, memoryStoreId: 'store-A', access: 'read_write', runtimeGeneration: generation });
       console.log(JSON.stringify({ generation, mount, text: await blobs.getText(mount.mountStoreId + '/note.txt') }));
     `;
-    const child = spawnSync(process.execPath, ['--import', fileURLToPath(new URL('../../../scripts/node-typescript-loader.mjs', import.meta.url)), '--input-type=module', '-e', code,
+    const child = spawnSync(process.execPath, ['--experimental-transform-types', '--import', fileURLToPath(new URL('../../../scripts/node-typescript-loader.mjs', import.meta.url)), '--input-type=module', '-e', code,
       JSON.stringify({ ...s.input, native: { id: s.record.id, name: s.record.name } })], { encoding: 'utf8', timeout: 5000, env: { ...process.env, BOXLITE_HOME: s.directory } });
     assert.equal(child.status, 0, child.stderr);
     const recovered = JSON.parse(child.stdout);
