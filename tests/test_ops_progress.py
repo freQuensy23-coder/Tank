@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from delivery_support import delivery_job
 from source_support import source_definition
 from test_agents_pipeline_audit import options
 from test_event_tools import seed
@@ -217,13 +218,13 @@ async def test_generated_card_only_becomes_sent_after_telegram_receipt(
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
         delivery = DeliveryService(repo, delivery_settings(), http=http)
         if success:
-            await delivery.deliver(payload)
-            await delivery.deliver(payload)
+            await delivery.deliver(delivery_job(payload))
+            await delivery.deliver(delivery_job(payload))
         else:
             for _ in range(5):
                 with pytest.raises(DeliveryError):
-                    await delivery.deliver(payload)
-            await delivery.terminal_failure(payload, "EXPIRED", 5)
+                    await delivery.deliver(delivery_job(payload))
+            await delivery.terminal_failure(delivery_job(payload), "EXPIRED", 5)
     stages = [row["stage"] for row in await notices(repo)]
     assert stages.count("ALERT_SENT" if success else "ALERT_FAILED") == 1
     assert ("ALERT_FAILED" if success else "ALERT_SENT") not in stages

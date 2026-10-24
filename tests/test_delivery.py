@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from delivery_support import delivery_job
 
 from tank.delivery import DeliveryError, DeliveryService
 from tank.storage import MemoryRepository
@@ -45,8 +46,8 @@ async def test_delivery_sent_opens_once_and_escapes_html() -> None:
             SimpleNamespace(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2"),
             http=http,
         )
-        await service.deliver({"alert_id": "a", "version": 1})
-        await service.deliver({"alert_id": "a", "version": 1})
+        await service.deliver(delivery_job({"alert_id": "a", "version": 1}))
+        await service.deliver(delivery_job({"alert_id": "a", "version": 1}))
     assert len(requests) == 1
     assert "&lt;test&gt;" in requests[0].content.decode()
     assert len(await repo.list("ana.calls", filters={"status": "OPEN"})) == 1
@@ -84,7 +85,7 @@ async def test_receipt_beyond_first_ledger_page_prevents_duplicate_delivery() ->
     settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
     async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
         service = DeliveryService(repo, settings, http=http)
-        await service.deliver({"alert_id": "a", "version": 1})
+        await service.deliver(delivery_job({"alert_id": "a", "version": 1}))
     assert requests == []
     assert await repo.list("out.deliveries", filters=subject, limit=2000) == ledger
     assert await repo.get("out.deliveries", "zz-sent") == receipt
@@ -108,7 +109,7 @@ async def test_failure_never_opens_call_and_honors_retry_after() -> None:
             http=http,
         )
         with pytest.raises(DeliveryError) as exc:
-            await service.deliver({"alert_id": "a", "version": 1})
+            await service.deliver(delivery_job({"alert_id": "a", "version": 1}))
         assert exc.value.retry_after == 20
     assert await repo.list("ana.calls") == []
     assert [r["status"] for r in await repo.list("out.deliveries")] == ["GENERATED", "FAILED"]
@@ -129,14 +130,14 @@ async def test_update_replies_to_first_event_card() -> None:
             SimpleNamespace(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2"),
             http=http,
         )
-        await service.deliver({"alert_id": "a", "version": 1})
+        await service.deliver(delivery_job({"alert_id": "a", "version": 1}))
         await repo.put(
             "out.alerts",
             "b:1",
             {"alert_id": "b", "version": 1, "event_id": "e", "card_text": "update", "decisions": []},
             immutable=True,
         )
-        await service.deliver({"alert_id": "b", "version": 1})
+        await service.deliver(delivery_job({"alert_id": "b", "version": 1}))
     import json
 
     assert json.loads(requests[1].content)["reply_parameters"] == {"message_id": 41}
@@ -172,14 +173,18 @@ async def test_invalidated_session_finalizes_only_after_sent_terminal_correction
         transport=httpx.MockTransport(lambda r: httpx.Response(500, json={"ok": False}))
     ) as http:
         with pytest.raises(DeliveryError):
-            await DeliveryService(repo, settings, http=http).deliver({"alert_id": "b", "version": 1})
+            await DeliveryService(repo, settings, http=http).deliver(
+                delivery_job({"alert_id": "b", "version": 1})
+            )
     assert not (await repo.get("evt.events", "e")).get("session_finalized_at")
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda r: httpx.Response(200, json={"ok": True, "result": {"message_id": 9}})
         )
     ) as http:
-        await DeliveryService(repo, settings, http=http).deliver({"alert_id": "b", "version": 1})
+        await DeliveryService(repo, settings, http=http).deliver(
+            delivery_job({"alert_id": "b", "version": 1})
+        )
     event = await repo.get("evt.events", "e")
     assert event["session_finalized_at"] and event["terminal_alert_id"] == "b"
     assert any(r["status"] == "SENT" for r in await repo.list("out.deliveries"))
@@ -214,7 +219,7 @@ async def test_invalidated_session_waits_for_every_call_to_close() -> None:
         )
     ) as http:
         service = DeliveryService(repo, settings, http=http)
-        await service.deliver({"alert_id": "a", "version": 1})
+        await service.deliver(delivery_job({"alert_id": "a", "version": 1}))
         assert not (await repo.get("evt.events", "e")).get("session_finalized_at")
         await repo.put(
             "ana.decisions", "exit", {"dec_id": "exit", "event_id": "e", "token_id": "t", "action": "EXIT"}
@@ -234,7 +239,7 @@ async def test_invalidated_session_waits_for_every_call_to_close() -> None:
             },
             immutable=True,
         )
-        await service.deliver({"alert_id": "a", "version": 2})
+        await service.deliver(delivery_job({"alert_id": "a", "version": 2}))
     assert (await repo.get("ana.calls", "open"))["status"] == "CLOSED"
     assert (await repo.get("evt.events", "e"))["session_finalized_at"]
 
@@ -271,7 +276,9 @@ async def test_structural_first_delivery_measures_missed_three_minute_target() -
             lambda r: httpx.Response(200, json={"ok": True, "result": {"message_id": 9}})
         )
     ) as http:
-        await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 1})
+        await DeliveryService(repo, settings, http=http).deliver(
+            delivery_job({"alert_id": "a", "version": 1})
+        )
     event = await repo.get("evt.events", "e")
     assert event["first_card_delivered_at"] and event["first_card_latency_s"] >= 300
     assert event["first_card_deadline_met"] is False
@@ -319,14 +326,18 @@ async def test_expiry_notice_never_reopens_frozen_start_and_consumes_only_delive
         transport=httpx.MockTransport(lambda r: httpx.Response(500, json={"ok": False}))
     ) as http:
         with pytest.raises(DeliveryError):
-            await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 2})
+            await DeliveryService(repo, settings, http=http).deliver(
+                delivery_job({"alert_id": "a", "version": 2})
+            )
     assert (await repo.get("evt.events", "e"))["call_expired_ids"] == ["c", "later"]
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda r: httpx.Response(200, json={"ok": True, "result": {"message_id": 9}})
         )
     ) as http:
-        await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 2})
+        await DeliveryService(repo, settings, http=http).deliver(
+            delivery_job({"alert_id": "a", "version": 2})
+        )
     event = await repo.get("evt.events", "e")
     assert (
         event["call_expired"]
@@ -415,7 +426,9 @@ async def test_held_update_is_never_sent_after_a_newer_immediate_exit(
     async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
         for _ in range(2):
             with pytest.raises(DeliveryError) as exc:
-                await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 2})
+                await DeliveryService(repo, settings, http=http).deliver(
+                    delivery_job({"alert_id": "a", "version": 2})
+                )
             assert exc.value.retry_after == 13 * 60
         assert not requests
         assert not await repo.list("out.deliveries", filters={"alert_id": "a", "version": 2})
@@ -438,11 +451,17 @@ async def test_held_update_is_never_sent_after_a_newer_immediate_exit(
             },
             immutable=True,
         )
-        await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 3})
+        await DeliveryService(repo, settings, http=http).deliver(
+            delivery_job({"alert_id": "a", "version": 3})
+        )
         assert len(requests) == 1 and (await repo.get("ana.calls", "call"))["status"] == "CLOSED"
         clock[0] = base + timedelta(minutes=20)
-        await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 2})
-        await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 2})
+        await DeliveryService(repo, settings, http=http).deliver(
+            delivery_job({"alert_id": "a", "version": 2})
+        )
+        await DeliveryService(repo, settings, http=http).deliver(
+            delivery_job({"alert_id": "a", "version": 2})
+        )
         assert len(requests) == 1
         assert json.loads(requests[0].content)["text"] == "<b>EXIT official denial</b>"
     assert not await repo.list("out.deliveries", filters={"alert_id": "a", "version": 2})
@@ -516,8 +535,8 @@ async def test_normal_update_sends_at_fifteen_minutes_and_is_idempotent(
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
         service = DeliveryService(repo, settings, http=http)
-        await service.deliver({"alert_id": "a", "version": 2})
-        await service.deliver({"alert_id": "a", "version": 2})
+        await service.deliver(delivery_job({"alert_id": "a", "version": 2}))
+        await service.deliver(delivery_job({"alert_id": "a", "version": 2}))
     assert len(requests) == 1
 
 
@@ -532,8 +551,8 @@ async def test_terminal_failure_is_durable_once_and_never_opens_calls(cause) -> 
         transport=httpx.MockTransport(lambda r: pytest.fail("Unexpected send"))
     ) as http:
         service = DeliveryService(repo, settings, http=http)
-        await service.terminal_failure({"alert_id": "a", "version": 1}, cause, 2)
-        await service.terminal_failure({"alert_id": "a", "version": 1}, cause, 2)
+        await service.terminal_failure(delivery_job({"alert_id": "a", "version": 1}), cause, 2)
+        await service.terminal_failure(delivery_job({"alert_id": "a", "version": 1}), cause, 2)
     ledger = await repo.list("out.deliveries")
     assert len(ledger) == 1 and ledger[0]["terminal"] and ledger[0]["status"] == "FAILED"
     assert len(await repo.list("out.ops_notices")) == 1
@@ -551,9 +570,9 @@ async def test_terminal_ops_failure_never_recurses_and_sent_is_preserved() -> No
         )
     ) as http:
         service = DeliveryService(repo, settings, http=http)
-        await service.deliver({"alert_id": "a", "version": 1})
-        await service.terminal_failure({"alert_id": "a", "version": 1}, "EXPIRED", 5)
-        await service.terminal_failure({"notice_id": "ops"}, TimeoutError(), 5)
+        await service.deliver(delivery_job({"alert_id": "a", "version": 1}))
+        await service.terminal_failure(delivery_job({"alert_id": "a", "version": 1}), "EXPIRED", 5)
+        await service.terminal_failure(delivery_job({"notice_id": "ops"}), TimeoutError(), 5)
     assert not await repo.list("out.ops_notices")
     assert not await repo.list("ops.jobs")
     assert len(await repo.list("out.deliveries", filters={"alert_id": "a"})) == 2
@@ -570,8 +589,8 @@ async def test_fifth_http_failure_records_terminal_and_single_notice() -> None:
         service = DeliveryService(repo, settings, http=http)
         for _ in range(5):
             with pytest.raises(DeliveryError):
-                await service.deliver({"alert_id": "a", "version": 1})
-        await service.terminal_failure({"alert_id": "a", "version": 1}, "EXHAUSTED", 5)
+                await service.deliver(delivery_job({"alert_id": "a", "version": 1}))
+        await service.terminal_failure(delivery_job({"alert_id": "a", "version": 1}), "EXHAUSTED", 5)
     assert len([r for r in await repo.list("out.deliveries") if r.get("terminal")]) == 1
     assert len(await repo.list("out.ops_notices")) == 1
     assert len(await repo.list("ops.jobs")) == 1
@@ -611,14 +630,18 @@ async def test_milestone_resolution_consumed_only_on_matching_sent_snapshot(curr
         transport=httpx.MockTransport(lambda r: httpx.Response(500, json={"ok": False}))
     ) as http:
         with pytest.raises(DeliveryError):
-            await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 1})
+            await DeliveryService(repo, settings, http=http).deliver(
+                delivery_job({"alert_id": "a", "version": 1})
+            )
     assert (await repo.get("evt.events", "e"))["milestone_resolved"] is True
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda r: httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
         )
     ) as http:
-        await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 1})
+        await DeliveryService(repo, settings, http=http).deliver(
+            delivery_job({"alert_id": "a", "version": 1})
+        )
     event = await repo.get("evt.events", "e")
     assert event["milestone_resolved"] is (current_resolution != "resolution-1")
     assert event["milestone_resolution_id"] == current_resolution
@@ -640,7 +663,9 @@ async def test_first_sent_persists_alerted_until_subsequent_scheduler_transition
             lambda r: httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
         )
     ) as http:
-        await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 1})
+        await DeliveryService(repo, settings, http=http).deliver(
+            delivery_job({"alert_id": "a", "version": 1})
+        )
     assert (await repo.get("evt.events", "e"))["lifecycle"] == "ALERTED"
     await Scheduler(repo, SimpleNamespace(), None, None).lifecycle(utcnow())
     event = await repo.get("evt.events", "e")
@@ -699,7 +724,9 @@ async def test_explicit_ordinary_update_flag_preserves_rate_with_persistent_safe
         transport=httpx.MockTransport(lambda r: pytest.fail("Ordinary update sent early"))
     ) as http:
         with pytest.raises(DeliveryError) as exc:
-            await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 2})
+            await DeliveryService(repo, settings, http=http).deliver(
+                delivery_job({"alert_id": "a", "version": 2})
+            )
         assert 14 * 60 < exc.value.retry_after <= 15 * 60
     assert not await repo.list("out.deliveries", filters={"alert_id": "a", "version": 2})
 
@@ -726,7 +753,9 @@ async def test_delivery_ledger_and_calls_keep_source_precision_and_actual_clocks
             lambda r: httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
         )
     ) as http:
-        await DeliveryService(repo, settings, http=http).deliver({"alert_id": "precision", "version": 1})
+        await DeliveryService(repo, settings, http=http).deliver(
+            delivery_job({"alert_id": "precision", "version": 1})
+        )
     ledger = await repo.list("out.deliveries", filters={"alert_id": "precision"})
     sent = next(row for row in ledger if row["status"] == "SENT")
     assert sent["generated_at"] == alert["generated_at"]
@@ -788,7 +817,9 @@ async def test_delivery_due_guard_preserves_sent_anchor_and_records_no_attempt(p
     settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: pytest.fail("Sent early"))) as http:
         with pytest.raises(DeliveryError) as exc:
-            await DeliveryService(repo, settings, http=http).deliver({"alert_id": "p", "version": 2})
+            await DeliveryService(repo, settings, http=http).deliver(
+                delivery_job({"alert_id": "p", "version": 2})
+            )
         assert 14 * 60 < exc.value.retry_after <= 15 * 60
     assert await repo.get("out.deliveries", "sent") == stamp
     assert not await repo.list("out.deliveries", filters={"alert_id": "p", "version": 2})
@@ -831,7 +862,9 @@ async def test_accepted_immutable_card_is_not_semantically_recensored_by_deliver
         )
     ) as http:
         for _ in range(2):
-            await DeliveryService(repo, settings, http=http).deliver({"alert_id": "legacy", "version": 1})
+            await DeliveryService(repo, settings, http=http).deliver(
+                delivery_job({"alert_id": "legacy", "version": 1})
+            )
     ledger = await repo.list("out.deliveries")
     assert [row["status"] for row in ledger] == ["GENERATED", "SENT"]
     assert all(not row.get("suppressed") for row in ledger)
@@ -861,7 +894,9 @@ async def test_historical_suppression_is_preserved_without_censoring_explicit_re
     settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
     async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
         for _ in range(2):
-            await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 1})
+            await DeliveryService(repo, settings, http=http).deliver(
+                delivery_job({"alert_id": "a", "version": 1})
+            )
     assert len(requests) == 1
     assert await repo.get("out.deliveries", "old-suppression") == suppressed
     assert len(await repo.list("out.deliveries", filters={"status": "SENT"})) == 1
@@ -976,11 +1011,15 @@ async def test_newer_held_update_supersedes_older_and_keeps_spacing_through_rest
             )
             frozen = copy.deepcopy(await repo.get("out.alerts", f"{aid}:3"))
             async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
-                await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 2})
+                await DeliveryService(repo, settings, http=http).deliver(
+                    delivery_job({"alert_id": aid, "version": 2})
+                )
                 assert requests == []
                 assert not await repo.list("out.deliveries", filters={"alert_id": aid, "version": 2})
                 with pytest.raises(DeliveryError) as deferred:
-                    await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 3})
+                    await DeliveryService(repo, settings, http=http).deliver(
+                        delivery_job({"alert_id": aid, "version": 3})
+                    )
                 assert deferred.value.retry_after == 5 * 60
                 assert requests == []
                 if backend == "postgres":
@@ -988,9 +1027,15 @@ async def test_newer_held_update_supersedes_older_and_keeps_spacing_through_rest
                     repo = PostgresRepository(database_url)
                     await repo.open()
                 clock[0] = base + timedelta(minutes=30)
-                await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 3})
-                await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 3})
-                await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 2})
+                await DeliveryService(repo, settings, http=http).deliver(
+                    delivery_job({"alert_id": aid, "version": 3})
+                )
+                await DeliveryService(repo, settings, http=http).deliver(
+                    delivery_job({"alert_id": aid, "version": 3})
+                )
+                await DeliveryService(repo, settings, http=http).deliver(
+                    delivery_job({"alert_id": aid, "version": 2})
+                )
                 assert len(requests) == 1
                 assert requests[0]["text"] == "<b>Accepted immutable version 3</b>"
                 assert requests[0]["reply_parameters"] == {"message_id": 42}

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from delivery_support import delivery_job
 
 from tank.delivery import DeliveryService
 from tank.storage import MemoryRepository
@@ -39,8 +40,8 @@ async def test_requested_and_returned_reply_targets_are_separate(returned_target
     settings = SimpleNamespace(telegram_token="fake-token", telegram_alerts_chat="1", telegram_ops_chat="2")
     async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
         service = DeliveryService(repo, settings, http=http)
-        await service.deliver({"alert_id": "a", "version": 1})
-        await service.deliver({"alert_id": "b", "version": 1})
+        await service.deliver(delivery_job({"alert_id": "a", "version": 1}))
+        await service.deliver(delivery_job({"alert_id": "b", "version": 1}))
     sent = await repo.list("out.deliveries", filters={"status": "SENT"})
     first, update = sent
     assert first["request_reply_to_message_ref"] is None

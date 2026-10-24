@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from delivery_support import delivery_job
 from test_session_binding_concurrency import fixture_repo
 
 from tank.delivery import DeliveryDeferred, DeliveryError, DeliveryService
@@ -280,7 +281,7 @@ async def test_burst_is_one_message_and_later_change_edits_it_across_restart(
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
             service = DeliveryService(repo, settings, http=http)
-            await asyncio.gather(*(service.deliver(job["payload"]) for job in reversed(jobs)))
+            await asyncio.gather(*(service.deliver(delivery_job(job["payload"])) for job in reversed(jobs)))
             assert len(requests) == 1 and requests[0][0] == "sendMessage"
             assert requests[0][1]["disable_notification"] is True
             item.update(
@@ -293,8 +294,8 @@ async def test_burst_is_one_message_and_later_change_edits_it_across_restart(
             newer = (await repo.list("ops.jobs", filters={"type": "DELIVER"}))[-1]
             clock += timedelta(seconds=10)
             service = DeliveryService(repo, settings, http=http)
-            await service.deliver(newer["payload"])
-            await asyncio.gather(*(service.deliver(job["payload"]) for job in jobs))
+            await service.deliver(delivery_job(newer["payload"]))
+            await asyncio.gather(*(service.deliver(delivery_job(job["payload"])) for job in jobs))
         assert len(requests) == 2
         assert requests[1][0] == "editMessageText" and requests[1][1]["message_id"] == 77
         assert "Отклонено агентом" in requests[1][1]["text"]
@@ -343,8 +344,8 @@ async def test_legacy_backlog_updates_existing_message_instead_of_replaying_stag
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
         service = DeliveryService(repo, settings, http=http)
-        await service.deliver({"notice_id": "2"})
-        await service.deliver({"notice_id": "1"})
+        await service.deliver(delivery_job({"notice_id": "2"}))
+        await service.deliver(delivery_job({"notice_id": "1"}))
     assert len(requests) == 1 and requests[0][0].endswith("/editMessageText")
     assert requests[0][1]["message_id"] == 66 and "OLD RAW MESSAGE" not in requests[0][1]["text"]
 
@@ -359,7 +360,9 @@ async def test_debounce_sends_no_intermediate_network_request(settings) -> None:
         transport=httpx.MockTransport(lambda request: pytest.fail("no send before debounce"))
     ) as http:
         with pytest.raises(DeliveryDeferred):
-            await DeliveryService(repo, settings, http=http).deliver({"notice_id": notice["notice_id"]})
+            await DeliveryService(repo, settings, http=http).deliver(
+                delivery_job({"notice_id": notice["notice_id"]})
+            )
     assert await repo.list("out.deliveries") == []
 
 
@@ -396,8 +399,8 @@ async def test_missing_legacy_message_does_not_create_a_new_spam_message(
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
         service = DeliveryService(repo, settings, http=http)
         with pytest.raises(DeliveryError):
-            await service.deliver({"notice_id": notice["notice_id"]})
-        await service.deliver({"notice_id": notice["notice_id"]})
+            await service.deliver(delivery_job({"notice_id": notice["notice_id"]}))
+        await service.deliver(delivery_job({"notice_id": notice["notice_id"]}))
     assert len(requests) == 1 and requests[0].endswith("/editMessageText")
     assert (await repo.get("out.ops_cards", key))["delivery_status"] == "FAILED"
 
@@ -490,9 +493,9 @@ async def test_rate_limit_defers_other_items_without_extra_http_attempts(setting
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
         service = DeliveryService(repo, settings, http=http)
         with pytest.raises(DeliveryError):
-            await service.deliver({"notice_id": notices[0]["notice_id"]})
+            await service.deliver(delivery_job({"notice_id": notices[0]["notice_id"]}))
         with pytest.raises(DeliveryDeferred):
-            await service.deliver({"notice_id": notices[1]["notice_id"]})
+            await service.deliver(delivery_job({"notice_id": notices[1]["notice_id"]}))
     assert len(requests) == 1
     assert not await repo.list("out.deliveries", filters={"notice_id": notices[1]["notice_id"]})
 
@@ -516,8 +519,8 @@ async def test_edit_not_modified_is_successful_recovery_without_another_message(
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
         service = DeliveryService(repo, settings, http=http)
-        await service.deliver({"notice_id": notice["notice_id"]})
-        await service.deliver({"notice_id": notice["notice_id"]})
+        await service.deliver(delivery_job({"notice_id": notice["notice_id"]}))
+        await service.deliver(delivery_job({"notice_id": notice["notice_id"]}))
     assert len(requests) == 1 and requests[0].endswith("/editMessageText")
     assert (await repo.get("out.ops_cards", key))["delivery_status"] == "SENT"
 

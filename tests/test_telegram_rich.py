@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from delivery_support import delivery_job
 from pydantic import ValidationError
 
 from tank.delivery import DeliveryError, DeliveryService
@@ -149,10 +150,10 @@ async def test_rich_delivery_retries_frozen_payload_and_threads_update_once() ->
     async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
         service = DeliveryService(repo, settings, http=http)
         with pytest.raises(DeliveryError):
-            await service.deliver({"alert_id": "a", "version": 1})
-        await service.deliver({"alert_id": "a", "version": 1})
-        await service.deliver({"alert_id": "a", "version": 1})
-        await service.deliver({"alert_id": "a", "version": 2})
+            await service.deliver(delivery_job({"alert_id": "a", "version": 1}))
+        await service.deliver(delivery_job({"alert_id": "a", "version": 1}))
+        await service.deliver(delivery_job({"alert_id": "a", "version": 1}))
+        await service.deliver(delivery_job({"alert_id": "a", "version": 2}))
     assert len(requests) == 3
     assert all(body["rich_message"] == frozen for _, body in requests)
     assert all(

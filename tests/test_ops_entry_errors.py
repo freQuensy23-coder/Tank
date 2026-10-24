@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from delivery_support import delivery_job
 from source_support import source_definition, source_feed
 from test_session_binding_concurrency import fixture_repo
 from test_sources import RSS
@@ -182,8 +183,8 @@ async def test_publisher_json_entry_error_is_reported_and_delivered_to_ops(tmp_p
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
         delivery = DeliveryService(repo, settings, http=http)
         [job] = await entry_jobs(repo)
-        await delivery.deliver(job["payload"])
-        await delivery.deliver(job["payload"])
+        await delivery.deliver(delivery_job(job["payload"]))
+        await delivery.deliver(delivery_job(job["payload"]))
     assert len(requests) == 1 and requests[0]["chat_id"] == "ops"
     assert requests[0]["text"] == html.escape(notice["text"])
 
@@ -246,9 +247,7 @@ async def test_entry_error_notices_persist_and_deduplicate_in_storage(backend, p
     async with fixture_repo(backend, postgres_template) as repo:
         settings = SimpleNamespace(ops_progress_enabled=True)
         source = {"source_id": "S30", "name": "Fixture blog"}
-        errors = [
-            {"reason": "ENTRY_WITHOUT_ID_OR_URL", "entry_sha256": "e" * 64, "payload_sha256": "a" * 64}
-        ]
+        errors = [{"reason": "ENTRY_WITHOUT_ID_OR_URL", "entry_sha256": "e" * 64, "payload_sha256": "a" * 64}]
         ids = await asyncio.gather(
             *(
                 report_entry_errors(

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from delivery_support import delivery_job
 from score_fixtures import unassessed_score_dimensions
 from source_support import source_configuration, source_definition
 
@@ -247,12 +248,14 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
             await repo.put("out.alerts", "a:1", dict(alert, card_text="changed"), immutable=True)
         deliver = DeliveryService(repo, settings, http=http)
         with pytest.raises(DeliveryError):
-            await deliver.deliver({"alert_id": "a", "version": 1})
-        await deliver.deliver({"alert_id": "a", "version": 1})
-        await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 1})
+            await deliver.deliver(delivery_job({"alert_id": "a", "version": 1}))
+        await deliver.deliver(delivery_job({"alert_id": "a", "version": 1}))
+        await DeliveryService(repo, settings, http=http).deliver(
+            delivery_job({"alert_id": "a", "version": 1})
+        )
         assert len(sent) == 2
         await repo.put("out.alerts", "a:2", dict(alert, version=2), immutable=True)
-        await deliver.deliver({"alert_id": "a", "version": 2})
+        await deliver.deliver(delivery_job({"alert_id": "a", "version": 2}))
         assert sent[-1]["reply_parameters"]["message_id"] == 102
         await session.close()
         await resumed.close()
@@ -714,8 +717,8 @@ async def test_full_sse_pipeline_postgres(
             await repo.open()
             delivery = DeliveryService(repo, settings, http=http)
             payload = {"alert_id": published["alert_id"], "version": published["version"]}
-            await delivery.deliver(payload)
-            await delivery.deliver(payload)
+            await delivery.deliver(delivery_job(payload))
+            await delivery.deliver(delivery_job(payload))
             assert (
                 len(sends) == 1
                 and (await repo.list("out.alerts", filters={"event_id": eid}))[0]["card_text"] == frozen
@@ -800,7 +803,9 @@ async def test_full_sse_pipeline_postgres(
                     },
                 )
                 assert correction["published"], correction
-                await delivery.deliver({"alert_id": correction["alert_id"], "version": correction["version"]})
+                await delivery.deliver(
+                    delivery_job({"alert_id": correction["alert_id"], "version": correction["version"]})
+                )
                 assert len(sends) == 2 and sends[-1]["reply_parameters"]["message_id"] == 901
                 assert (
                     rich_message_text(sends[-1]["rich_message"]).splitlines()[1] == "WHAT: " + correction_what
@@ -818,7 +823,9 @@ async def test_full_sse_pipeline_postgres(
 
                 before = len(posted)
                 await session.stream(sid)
-                await delivery.deliver({"alert_id": correction["alert_id"], "version": correction["version"]})
+                await delivery.deliver(
+                    delivery_job({"alert_id": correction["alert_id"], "version": correction["version"]})
+                )
                 assert len(posted) == before and len(sends) == 2
                 assert len(await repo.list("ana.calls", filters={"event_id": eid})) == 1
             await resumed.close()

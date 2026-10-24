@@ -18,10 +18,12 @@ from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
 
 import httpx
+from pydantic import JsonValue
 
 from tank import ops_cards
 from tank.analysis.cards import telegram_card_html
 from tank.ops_progress import STAGES
+from tank.runtime_contracts import TelegramAnswerJob
 from tank.telegram_rich import message_text, rich_message_text
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import new_id, parse_time, sha256, utcnow
@@ -241,7 +243,9 @@ async def record_answer(repo, question_id, text, *, status):
 class TelegramInbox:
     def __init__(self, repo, settings, *, http=None):
         self.repo, self.settings = repo, settings
-        self.http = http or httpx.AsyncClient(timeout=httpx.Timeout(POLL_TIMEOUT_S + 15))
+        self.http = (
+            http if http is not None else httpx.AsyncClient(timeout=httpx.Timeout(POLL_TIMEOUT_S + 15))
+        )
         self.owns_http = http is None
         self.bot_id = None
         self.members = {}
@@ -1175,9 +1179,10 @@ class TelegramInbox:
         with contextlib.suppress(RuntimeError, httpx.HTTPError):
             await self.call("sendChatAction", {"chat_id": row["chat_id"], "action": "typing"})
 
-    async def answer(self, payload):
+    async def answer(self, payload: TelegramAnswerJob | dict[str, JsonValue]) -> None:
         """TELEGRAM_ANSWER job: send the recorded answer as replies, chunk by chunk, exactly once."""
-        question = await self.repo.get("out.user_questions", payload["question_id"])
+        job = payload if isinstance(payload, TelegramAnswerJob) else TelegramAnswerJob.model_validate(payload)
+        question = await self.repo.get("out.user_questions", job.question_id)
         if question is None:
             raise ValueError("Answer subject does not exist")
         status = question.get("answer_status")
@@ -1253,9 +1258,10 @@ class TelegramInbox:
             question.update(status="DELIVERED", **collection_clock(utcnow()).fields("delivered_at"))
             await self.repo.put("out.user_questions", question["question_id"], question)
 
-    async def answer_failed(self, payload, reason):
+    async def answer_failed(self, payload: TelegramAnswerJob | dict[str, JsonValue], reason: str) -> None:
         """A TELEGRAM_ANSWER job that ran out of attempts leaves a terminal, monitorable record."""
-        question_id = payload["question_id"]
+        job = payload if isinstance(payload, TelegramAnswerJob) else TelegramAnswerJob.model_validate(payload)
+        question_id = job.question_id
         async with self.repo.lock("question:" + question_id):
             question = await self.repo.get("out.user_questions", question_id)
             if question is None or question.get("status") in ("DELIVERED", "DELIVERY_FAILED"):
