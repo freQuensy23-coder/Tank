@@ -759,7 +759,7 @@ Expected load (estimate from feed sizes on 16 Oct 2026): ≈ 230 items/day go st
 
 ### 3.2 Agent sessions (OpenMA)
 
-One event, one agent session. The first item of an event opens a session on Tank's self-hosted OpenMA server (open-managed-agents, 02 §5), and the session lives as long as the event (§3.7). Everything that later concerns the event arrives in the same session as a message: a repeat, a development, a fired condition, a milestone, an expiring call. The agent does the steps that used to be separate jobs: facts with quotes, certainty and the check of official sources, freshness, stage, class, scores, beneficiaries, and the wording of the card. It changes Tank's state only through Tank's tools. Every tool validates its input with the rules of §3–§7 and refuses what breaks them. Market Truth, Outlook, the grades, the action and the alert gate are code behind the tools.
+One event, one agent session. The first item of an event opens a session on Tank's self-hosted OpenMA server (open-managed-agents, 02 §5), and the session lives as long as the event (§3.7) and at least ⚙7 days after its last message (`session_keep_days`), so a reader can continue it from Telegram. Everything that later concerns the event arrives in the same session as a message: a repeat, a development, a fired condition, a milestone, an expiring call. The agent does the steps that used to be separate jobs: facts with quotes, certainty and the check of official sources, freshness, stage, class, scores, beneficiaries, and the wording of the card. It changes Tank's state only through Tank's tools. Every tool validates its input with the rules of §3–§7 and refuses what breaks them. Market Truth, Outlook, the grades, the action and the alert gate are code behind the tools.
 
 | Setting | Value |
 |---|---|
@@ -770,6 +770,7 @@ One event, one agent session. The first item of an event opens a session on Tank
 | Tool calls | Tank's tools are OpenMA custom tools that Tank executes: the session emits `agent.custom_tool_use` and pauses (`requires_action`); `sessions` runs the tool and answers with `user.custom_tool_result`. A slow tool (`get_market_truth`) answers when its job finishes |
 | Streams | `sessions` follows a session's stream (`GET /v1/sessions/{id}/events/stream`) while the agent works. On start it replays each open session from `last_event_seq` (`Last-Event-ID`) and keeps following the ones still at work; a tool call left without a result runs again, and a write tool that already ran returns its stored result (`ops.tool_calls`, keyed by the call id) |
 | Failures | A turn that ends in `session.error` or a refusal is sent again once; then the event is marked FAILED. |
+| Follow-ups | A reply in "Tank Alerts" to a card, an update or an agent answer, or a reply in "Tank Ops" to a notice about a material, is posted as a `user.message` into the session that handled that event or material, whether or not a card was published; the agent's final text is sent back as a reply in the same chat. Reader files up to 20 MB are passed to the agent. If the material never reached a session (filtered by Jev, still queued, stopped earlier) or the session can no longer be continued, Tank replies only with that reason and asks the agent nothing; there is no reply composed from stored records. |
 | Record and replay | Every tool call and result is also stored in `ops.tool_calls`; pages and search results are stored as evidence. A replay runs a fresh session on the same messages and answers the tools from the stored results instead of live sources; the verdicts come from the tools' code, so they reproduce. Commands in the sandbox run again in a replay, without internet and against the replay database (§11.1), so the agent's own analysis may differ |
 
 Messages into a session:
@@ -961,7 +962,7 @@ stateDiagram-v2
   CLOSED --> [*]
 ```
 
-STRUCTURAL_SHOCK sends a PARTIAL card from SCORED (as soon as the class and certainty are settled) while ANALYZING continues; the FULL card is threaded to it. The event's OpenMA session ends when the event reaches CLOSED, INVALIDATED or MERGED.
+STRUCTURAL_SHOCK sends a PARTIAL card from SCORED (as soon as the class and certainty are settled) while ANALYZING continues; the FULL card is threaded to it. The event's OpenMA session is archived only when the event is CLOSED, INVALIDATED or MERGED (or the agent recorded no event for its material), nothing keeps it open (an open call, an armed watch condition, an unfinished tool call or job), and ⚙7 days have passed since its last message; a session whose card was delivered or that received a reader's question stays open.
 
 ### 3.8 The service and its jobs
 
