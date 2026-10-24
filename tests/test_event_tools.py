@@ -374,7 +374,20 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service) -> 
     assert all(c["created_at_prec"] == "COLLECTION_ONLY" for c in first["conditions"])
     assert all(c["expires_at_prec"] == "BUCKET(1h)" for c in first["conditions"])
     armed = next(c for c in first["conditions"] if c["role"] == "UPGRADE")
-    armed.update(counters={"root": {"count": 1, "window": 42}})
+    armed.update(
+        counters={
+            "root": {
+                "count": 1,
+                "window": 42,
+                "value": "BUY",
+                "data_available": True,
+                "unavailable_reason": None,
+                "cutoff": truth["cutoff"],
+                "cutoff_prec": truth["cutoff_prec"],
+                "cutoff_prec_reason": None,
+            }
+        }
+    )
     await service.repo.put("ana.watch_conditions", armed["cond_id"], armed)
     second = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
     same = next(c for c in second["conditions"] if c["role"] == "UPGRADE")

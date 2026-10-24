@@ -23,6 +23,7 @@ from tank.analysis.identity import (
 from tank.analysis.identity import (
     resolve_token as resolve_token,
 )
+from tank.analysis.watch_contracts import WatchCondition
 from tank.ops_progress import event_progress, item_progress, tool_progress
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.time_precision import (
@@ -2465,7 +2466,11 @@ class EventToolService:
                     condition["rearmed_from"] = predecessor["cond_id"]
             used.add(condition["cond_id"])
             reconciled.append(condition)
-            await self.repo.put("ana.watch_conditions", condition["cond_id"], condition)
+            await self.repo.put(
+                "ana.watch_conditions",
+                condition["cond_id"],
+                WatchCondition.model_validate(condition).model_dump(mode="json", exclude_unset=True),
+            )
         for old in existing:
             if old["cond_id"] not in used and old.get("status") == "ARMED" and not old.get("agent_defined"):
                 old.update(
@@ -2499,7 +2504,11 @@ class EventToolService:
                 cancel_provenance=self.provenance(c),
                 **collection_clock(now).fields("cancelled_at"),
             )
-            await self.repo.put("ana.watch_conditions", condition["cond_id"], condition)
+            await self.repo.put(
+                "ana.watch_conditions",
+                condition["cond_id"],
+                WatchCondition.model_validate(condition).model_dump(mode="json", exclude_unset=True),
+            )
             return {"accepted": True, "cond_id": condition["cond_id"], "status": "CANCELLED"}
         token = a.get("token_id")
         if not isinstance(token, str):
@@ -2575,7 +2584,11 @@ class EventToolService:
             ).fields("expires_at"),
             **self.provenance(c),
         }
-        await self.repo.put("ana.watch_conditions", condition["cond_id"], condition)
+        await self.repo.put(
+            "ana.watch_conditions",
+            condition["cond_id"],
+            WatchCondition.model_validate(condition).model_dump(mode="json", exclude_unset=True),
+        )
         return {"accepted": True, "condition": condition}
 
     async def publish_card(self, a, c):
@@ -3283,7 +3296,10 @@ class EventToolService:
         row["evidence"] += evidence_ids(a["evidence"])
         await self.repo.put("scout.expansion_proposals", row["prp_id"], row)
         await self.repo.enqueue(
-            "SCOUT_REVIEW", {"prp_id": row["prp_id"]}, f"{row['prp_id']}:{row['occurrences']}", priority=4
+            "SCOUT_REVIEW",
+            {"proposal_id": row["prp_id"]},
+            f"{row['prp_id']}:{row['occurrences']}",
+            priority=4,
         )
         return row
 
