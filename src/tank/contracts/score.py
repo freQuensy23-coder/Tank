@@ -82,3 +82,18 @@ class ScoreDimensionsView(DomainModel):
 
 class ScoreAssessmentView(DomainModel):
     dims: ScoreDimensionsView
+
+    @classmethod
+    def from_domain(cls, assessment: ScoreAssessment) -> Self:
+        dims = assessment.dims
+        return cls(
+            dims=ScoreDimensionsView(
+                economic_directness=dims.economic_directness.presentation(),
+                magnitude=dims.magnitude.presentation(),
+                permanence=dims.permanence.presentation(),
+                distribution_expansion=dims.distribution_expansion.presentation(),
+                mechanical_flows=dims.mechanical_flows.presentation(),
+                surprise=dims.surprise.presentation(),
+                implementation=dims.implementation.presentation(),
+            )
+        )
