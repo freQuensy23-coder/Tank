@@ -8,7 +8,7 @@ services:
   postgres:
     image: ghcr.io/frequensy23-coder/tank/tank-postgres:${TANK_VERSION:?}
     restart: unless-stopped
-    shm_size: 512m
+    shm_size: 2g
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
       TANK_DB_PASSWORD: ${TANK_DB_PASSWORD:?}
@@ -17,8 +17,6 @@ services:
       TANK_REPLAY_AGENT_DB_PASSWORD: ${TANK_REPLAY_AGENT_DB_PASSWORD:?}
     volumes:
     - pg-data:/var/lib/postgresql/data
-    mem_limit: 3g
-    cpus: 8.0
     logging: *logging
     networks: [tank-net]
   clickhouse:
@@ -31,8 +29,6 @@ services:
     - clickhouse-data:/var/lib/clickhouse
     ulimits:
       nofile: {soft: 262144, hard: 262144}
-    mem_limit: 3g
-    cpus: 3.0
     logging: *logging
     networks: [tank-net]
   openma:
@@ -71,9 +67,6 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       clickhouse: {condition: service_healthy}
-    mem_limit: 1536m
-    mem_reservation: 256m
-    cpus: 3.0
     logging: *logging
     networks: [tank-net]
   tank:
@@ -100,8 +93,6 @@ services:
       postgres: {condition: service_healthy}
       clickhouse: {condition: service_healthy}
       openma: {condition: service_healthy}
-    mem_limit: 7g
-    memswap_limit: 7g
     logging: *logging
     networks: [tank-net]
 volumes:

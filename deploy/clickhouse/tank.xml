@@ -1,9 +1,6 @@
-<!-- Tank's ClickHouse (HLD §7.1): exchange market series and prints. Bounded memory, and
-     none of the system log tables, which would otherwise grow on the shared disk. -->
+<!-- Tank's ClickHouse (HLD §7.1): exchange market series and prints. Memory and caches are
+     ClickHouse's defaults for the host; none of the system log tables, which would otherwise grow. -->
 <clickhouse>
-    <max_server_memory_usage>2500000000</max_server_memory_usage>
-    <mark_cache_size>268435456</mark_cache_size>
-    <uncompressed_cache_size>0</uncompressed_cache_size>
     <logger>
         <level>warning</level>
         <size>50M</size>

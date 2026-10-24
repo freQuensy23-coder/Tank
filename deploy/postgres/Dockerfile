@@ -9,10 +9,8 @@ CMD ["postgres", \
      "-c", "password_encryption=scram-sha-256", \
      "-c", "hba_file=/etc/postgresql/tank-pg_hba.conf", \
      "-c", "max_locks_per_transaction=256", \
-     "-c", "shared_buffers=384MB", \
-     "-c", "work_mem=16MB", \
-     "-c", "hash_mem_multiplier=1.5", \
-     "-c", "maintenance_work_mem=128MB", \
-     "-c", "autovacuum_work_mem=64MB", \
-     "-c", "effective_cache_size=1GB", \
-     "-c", "max_parallel_workers_per_gather=0"]
+     "-c", "shared_buffers=8GB", \
+     "-c", "effective_cache_size=20GB", \
+     "-c", "work_mem=64MB", \
+     "-c", "maintenance_work_mem=2GB", \
+     "-c", "autovacuum_work_mem=1GB"]
