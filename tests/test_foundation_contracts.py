@@ -5,7 +5,7 @@ import httpx
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from tank.clickhouse_market import ClickHouse
+from tank.clickhouse_market import ClickHouse, _response_timestamp
 from tank.contracts import DomainModel
 from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import InvalidJobClaim, JobEnvelope
@@ -384,3 +384,13 @@ def test_timestamp_validation_reason_does_not_echo_raw_source_value() -> None:
         Timestamp(secret, "EXACT")
     assert secret not in str(failure.value)
     assert "Invalid ISO timestamp" in str(failure.value)
+
+
+def test_clickhouse_utc_transport_timestamp_requires_text_and_preserves_microseconds() -> None:
+    expected = datetime(2026, 10, 24, 12, 3, 4, 123456, tzinfo=UTC)
+    assert _response_timestamp("2026-10-24 12:03:04.123456") == expected
+    assert _response_timestamp("2026-10-24T14:03:04.123456+02:00") == expected
+    with pytest.raises(ValueError, match="requires ISO date-time text"):
+        _response_timestamp(1700000000000)
+    with pytest.raises(ValueError, match="explicit epoch unit"):
+        _response_timestamp("1700000000000")
