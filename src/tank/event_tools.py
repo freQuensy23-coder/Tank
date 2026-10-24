@@ -3,7 +3,6 @@
 import asyncio
 import copy
 import os
-import re
 from contextlib import AsyncExitStack, suppress
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
@@ -13,6 +12,17 @@ from urllib.parse import parse_qsl, unquote, urlparse
 import httpx
 import zstandard
 
+from tank.analysis.identity import (
+    entity_identity,
+    resolve_tokens,
+    token_identities,
+)
+from tank.analysis.identity import (
+    resolve_entity as resolve_entity,
+)
+from tank.analysis.identity import (
+    resolve_token as resolve_token,
+)
 from tank.ops_progress import event_progress, item_progress, tool_progress
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.time_precision import (
@@ -48,88 +58,6 @@ LAYERS = [
 ]
 IMPLEMENTATION = dict(zip(STATES, [0, 4, 6, 6, 7, 8, 10], strict=False))
 M1_VENUES = frozenset({"binance", "coinbase", "okx", "bybit", "kraken", "robinhood"})
-
-
-def _word(term, text):
-
-    return bool(term) and re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", text, re.IGNORECASE)
-
-
-def resolve_entity(registry, name, entity_id=None, context=""):
-    """V3 (03 §2.11): registered aliases, whole and case-insensitive; a generic
-    word resolves only with its qualifier. Unknown names stay UNRESOLVED."""
-    rows = registry.get("entities", [])
-    if entity_id and any(row.get("entity_id") == entity_id for row in rows):
-        return entity_id
-    name = str(name or "").strip()
-    for row in rows:
-        qualified = {str(rule["alias"]).casefold() for rule in row.get("qualified_aliases") or []}
-
-        known = [row.get("name") or "", *row.get("names", []), *row.get("aliases", [])]
-        if name and any(
-            name.casefold() == str(v).casefold() and str(v).casefold() not in qualified for v in known
-        ):
-            return row["entity_id"]
-        for rule in row.get("qualified_aliases") or []:
-            if (name.casefold() == str(rule["alias"]).casefold() or _word(rule["alias"], name)) and any(
-                _word(q, name + " " + context) for q in rule.get("requires_any", [])
-            ):
-                return row["entity_id"]
-    return "UNRESOLVED:" + name
-
-
-def resolve_token(registry, value, context=""):
-    """V3 for tokens: a token id, a ticker or $TICKER, or an alias of the
-    token's project resolves to its token_id; any other name stays
-    UNRESOLVED:<name>. An id outside the universe ("chain:TICKER") is kept."""
-    if not isinstance(value, str):
-        return value
-    text = value.strip()
-    tokens = registry.get("tokens", [])
-    if text.startswith("UNRESOLVED:") or any(row["token_id"] == text for row in tokens):
-        return text
-    if ":" in text:
-        return text
-    ticker = text.removeprefix("$")
-    for row in tokens:
-        if ticker.casefold() == str(row.get("symbol", "")).casefold():
-            return row["token_id"]
-    entity = resolve_entity(registry, text, context=context)
-    for row in tokens:
-        if row.get("entity_id") == entity:
-            return row["token_id"]
-    return "UNRESOLVED:" + text
-
-
-def resolve_tokens(registry, values, context=""):
-    return list(dict.fromkeys(resolve_token(registry, value, context) for value in values or []))
-
-
-def entity_identity(registry, entity_id, name, context=""):
-    """V3: an entity is named by its registry entity_id or, outside the registry, by its name (kept UNRESOLVED).
-    A name the registry resolves (alias, or qualified alias with its qualifier) is refused: pass the entity_id."""
-    if entity_id is not None:
-        return entity_id
-    if not str(name or "").strip():
-        raise ValueError("Name each entity by its registry entity_id or, outside the registry, by its name")
-    resolved = resolve_entity(registry, name, context=context)
-    if not resolved.startswith("UNRESOLVED:"):
-        raise ValueError(f"{name!r} is the registry entity {resolved}: pass its entity_id")
-    return "UNRESOLVED:" + str(name).strip()
-
-
-def token_identities(registry, token_ids, names, context=""):
-    """Registry token_ids as given; a token outside the registry is kept by its name, UNRESOLVED.
-    A name the registry resolves (ticker, $TICKER or project alias) is refused: pass the token_id."""
-    unresolved = []
-    for name in names:
-        if not str(name).strip():
-            raise ValueError("A token outside the registry needs its name")
-        resolved = resolve_token(registry, name, context)
-        if any(row["token_id"] == resolved for row in registry.get("tokens", [])):
-            raise ValueError(f"{name!r} is the registry token {resolved}: pass its token_id")
-        unresolved.append("UNRESOLVED:" + str(name).strip())
-    return list(dict.fromkeys([*token_ids, *unresolved]))
 
 
 SCOPED_TOOLS = frozenset(
