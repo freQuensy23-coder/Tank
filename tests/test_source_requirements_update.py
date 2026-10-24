@@ -88,7 +88,14 @@ async def test_duplicate_preserves_capture_and_counts_one_observation(tmp_path: 
 
     def captured(item_id, payload, item):
         ref, digest = service.raw(payload, source_id="S30", item_id=item_id, observed_at=item["observed_at"])
-        return dict(item, item_id=item_id, raw_ref=ref, raw_sha256=digest)
+        return dict(
+            item,
+            item_id=item_id,
+            raw_ref=ref,
+            raw_sha256=digest,
+            discovery_config_version="test",
+            discovery_code_version="test",
+        )
 
     incoming = {
         "url": "https://synthetic.invalid/original-publication",
