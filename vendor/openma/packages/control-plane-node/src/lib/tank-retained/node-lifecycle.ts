@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { LegacyResolution } from './legacy-provenance.js';
 import { assertCompatible, stableDigest, type RuntimeIdentity } from './runtime-identity.js';
 import { RetainedSessionLifecycle, type Fences, type Options, type Scope } from './retained-session.js';
 import { RetainedBoxOperations, pinnedBoxLiteProvider, type Allocation, type BoxLiteRuntime, type PinnedBoxLiteModule } from './boxlite-provider.js';
@@ -33,6 +34,7 @@ export interface NodeRetainedOptions {
   leaseTtlMs: number;
   fingerprint(context: Context, allocation: Allocation): Promise<string>;
   identity?(context: Context, allocation: Allocation): Promise<RuntimeIdentity>;
+  resolveLegacy?(context: Context, allocation: Allocation): Promise<(fingerprint: string) => LegacyResolution | null>;
   assertExecutionCurrent(fence: unknown): Promise<void>;
 }
 const key = (scope: Omit<Scope, 'workId'>) => JSON.stringify([scope.workspaceId, scope.environmentId, scope.sessionId]);
@@ -88,8 +90,8 @@ export class NodeRetainedLifecycle {
       }
     }
   }
-  private controller(scope: Omit<Scope, 'workId'>, fingerprint: string, allocation: Allocation, identity?: RuntimeIdentity): RetainedSessionLifecycle<BoxLiteRuntime> {
-    return new RetainedSessionLifecycle({ scope, fingerprint, identity, providerId: 'litebox', ownerId: this.options.ownerId,
+  private controller(scope: Omit<Scope, 'workId'>, fingerprint: string, allocation: Allocation, identity?: RuntimeIdentity, resolveLegacy?: Options<BoxLiteRuntime>['resolveLegacy']): RetainedSessionLifecycle<BoxLiteRuntime> {
+    return new RetainedSessionLifecycle({ scope, fingerprint, identity, resolveLegacy, providerId: 'litebox', ownerId: this.options.ownerId,
       leaseTtlMs: this.options.leaseTtlMs, fences: this.options.fences,
       orphans: this.options.orphans,
       provider: pinnedBoxLiteProvider({ module: this.options.providerModule, client: this.options.client,
@@ -135,7 +137,7 @@ export class NodeRetainedLifecycle {
         this.assertOpen(lifetime);
         if (entry.controller?.options.identity && identity) {
           assertCompatible(entry.controller.options.identity, identity);
-          if (stableDigest(entry.controller.options.identity) !== stableDigest(identity)) entry.controller = this.controller(scope, fingerprint, entry.allocation, identity);
+          if (stableDigest(entry.controller.options.identity) !== stableDigest(identity)) entry.controller = this.controller(scope, fingerprint, entry.allocation, identity, await this.options.resolveLegacy?.(context, entry.allocation));
         } else if (entry.controller && fingerprint !== entry.controller.options.fingerprint) throw Error('retained_configuration_changed');
       }
       entry.context = context;
@@ -151,7 +153,7 @@ export class NodeRetainedLifecycle {
       const fingerprint = await this.options.fingerprint(owned.context, allocation);
       const identity = await this.options.identity?.(owned.context, allocation);
       this.assertOpen(lifetime);
-      owned.controller = this.controller(scope, fingerprint, allocation, identity);
+      owned.controller = this.controller(scope, fingerprint, allocation, identity, await this.options.resolveLegacy?.(owned.context, allocation));
       const use = async <T>(operation: (runtime: BoxLiteRuntime) => Promise<T>): Promise<T> => {
         await this.ensureActive(owned);
         return owned.controller!.use(operation);

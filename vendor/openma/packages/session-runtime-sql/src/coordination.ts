@@ -1,6 +1,6 @@
 import { encodeSessionEventDocument, type ExecutionProgressReceipt } from '@open-managed-agents/session-runtime-contract/history';
 import type { YieldSessionExecutionProgress, YieldSessionExecutionProgressResult } from '@open-managed-agents/session-runtime-contract/coordination';
-import { imageMismatchRecoveryBoundary, planSessionContinuation, resultCallId, verifiedProgress, type ContinuationSnapshot } from '@open-managed-agents/session-runtime-contract/continuation';
+import { imageMismatchRecoveryBoundary, imageRecoveryRetryBoundary, planSessionContinuation, resultCallId, verifiedProgress, type ContinuationSnapshot } from '@open-managed-agents/session-runtime-contract/continuation';
 import { loadSessionContinuationSnapshot, SessionContinuationMissingError } from './continuation';
 import type {
   AdmitSessionExecution,
@@ -482,9 +482,7 @@ export class SqlSessionExecutionStore
         AND (CAST(? AS VARCHAR(191)) IS NULL OR session_id = ?)
         AND (CAST(? AS VARCHAR(191)) IS NULL OR lane_id = ?)
         AND (state = 'queued' OR (state = 'running' AND lease_expires_at_ms <= ? AND owner_id <> ?)
-          OR (state = 'failed' AND failure = 'retained_configuration_changed' AND interrupt_requested_at_ms IS NULL
-            AND NOT EXISTS (SELECT 1 FROM managed_session_image_recoveries AS recovery
-              WHERE recovery.workspace_id = managed_session_executions.workspace_id AND recovery.execution_id = managed_session_executions.id)))
+          OR (state = 'failed' AND failure = 'retained_configuration_changed' AND interrupt_requested_at_ms IS NULL))
         AND attempt_count < max_attempts AND deadline_at_ms > ?
       ORDER BY admitted_at_ms, id`).bind(input.workspaceId ?? null, input.workspaceId ?? null, input.sessionId ?? null, input.sessionId ?? null, input.laneId ?? null, input.laneId ?? null, claimedAt, input.ownerId, claimedAt).all<ExecutionRow>();
     const ordered = (candidates.results ?? []).map(row => ({
@@ -515,16 +513,18 @@ export class SqlSessionExecutionStore
           .bind(claimedAt, row.workspace_id, row.id, row.revision, claimedAt, input.ownerId, row.workspace_id, row.session_id).run();
         continue;
       }
-      const imageRecoveryAfterEventId = row.state === 'failed' ? imageMismatchRecoveryBoundary(snapshot, row.id) : null;
+      const previousRecovery = snapshot.executions.find(execution => execution.id === row.id);
+      const imageRecoveryAfterEventId = previousRecovery?.imageRecoveryAfterEventId ?? (row.state === 'failed' ? imageMismatchRecoveryBoundary(snapshot, row.id) : null);
       if (row.state === 'failed' && !imageRecoveryAfterEventId) continue;
+      const imageRecoveryRetryAfterEventId = imageRecoveryRetryBoundary(snapshot, row.id) ?? previousRecovery?.imageRecoveryRetryAfterEventId;
       const planning = imageRecoveryAfterEventId ? { ...snapshot, executions: snapshot.executions.map(execution => execution.id === row.id
-        ? { ...execution, state: 'queued' as const, imageRecoveryAfterEventId } : execution) } : snapshot;
+        ? { ...execution, state: 'queued' as const, imageRecoveryAfterEventId, imageRecoveryInterruptRequestedAt: null, imageRecoveryRetryAfterEventId } : execution) } : snapshot;
       const plan = planSessionContinuation(planning, row.id);
       if (plan.mode === 'blocked' || (imageRecoveryAfterEventId && plan.mode === 'failure'))
         continue;
       return {
         workspace_id: row.workspace_id, session_id: row.session_id, id: row.id,
-        revision: row.revision, continuation: snapshot, lane_id: row.lane_id, serial, imageRecoveryAfterEventId
+        revision: row.revision, continuation: snapshot, lane_id: row.lane_id, serial, imageRecoveryAfterEventId, imageRecoveryRetryAfterEventId
       };
     }
     return null;
@@ -595,6 +595,7 @@ export class SqlSessionExecutionStore
     lane_id?: string;
     serial?: boolean;
     imageRecoveryAfterEventId?: string | null;
+    imageRecoveryRetryAfterEventId?: string;
   }): Promise<ClaimSessionExecutionResult | null> {
     const claimToken = crypto.randomUUID();
     await this.sql.prepare(`
@@ -631,8 +632,9 @@ export class SqlSessionExecutionStore
         INSERT INTO managed_session_image_recoveries (workspace_id, execution_id, after_event_id)
         SELECT workspace_id, id, ? FROM managed_session_executions
           WHERE workspace_id = ? AND id = ? AND state = 'running' AND attempt_id = ? AND owner_id = ?
-        ON CONFLICT (workspace_id, execution_id) DO NOTHING
-      `).bind(candidate.imageRecoveryAfterEventId, candidate.workspace_id, candidate.id, input.attemptId, input.ownerId)] : []),
+            AND interrupt_requested_at_ms IS NULL
+        ON CONFLICT (workspace_id, execution_id) DO UPDATE SET after_event_id = excluded.after_event_id
+      `).bind(JSON.stringify({ afterEventId: candidate.imageRecoveryAfterEventId, interruptRequestedAt: null, retryAfterEventId: candidate.imageRecoveryRetryAfterEventId }), candidate.workspace_id, candidate.id, input.attemptId, input.ownerId)] : []),
     ]);
     if ((results[0]?.meta.changes ?? 0) !== 1)
       return null;
@@ -649,6 +651,7 @@ export class SqlSessionExecutionStore
     lane_id?: string;
     serial?: boolean;
     imageRecoveryAfterEventId?: string | null;
+    imageRecoveryRetryAfterEventId?: string;
   }): Promise<ClaimSessionExecutionResult | null> {
     const revision = safeInteger(candidate.revision, "execution revision");
     const row = await this.executionClaimStatement(input, claimedAt, candidate, revision).first<ExecutionRow>();
@@ -663,6 +666,7 @@ export class SqlSessionExecutionStore
     lane_id?: string;
     serial?: boolean;
     imageRecoveryAfterEventId?: string | null;
+    imageRecoveryRetryAfterEventId?: string;
   }, revision: number, lock?: {
     workspaceId: string;
     sessionId: string;
@@ -782,6 +786,10 @@ export class SqlSessionExecutionStore
         sessionId: input.fence.sessionId,
       }, async () => {
         const settledAt = timestamp(input.settledAt, "settlement");
+        if (input.outcome === 'failed') {
+          const recovery = await this.retryImagePreflight(input, settledAt);
+          if (recovery) return recovery;
+        }
         const row = await this.sql.prepare(`
         UPDATE managed_session_executions
            SET state = CASE
@@ -831,6 +839,42 @@ export class SqlSessionExecutionStore
       }),
       catch: (error: unknown) => error,
     }));
+  }
+
+  private async retryImagePreflight(input: {
+    fence: SessionExecutionFence; settledAt: string; outcome: string; failure?: string;
+  }, settledAt: number): Promise<SettleSessionExecutionResult | null> {
+    const saved = await this.sql.prepare(`SELECT after_event_id FROM managed_session_image_recoveries
+      WHERE workspace_id = ? AND execution_id = ?`).bind(input.fence.workspaceId, input.fence.executionId).first<{ after_event_id: string }>();
+    if (!saved) return null;
+    const snapshot = await loadSessionContinuationSnapshot(this.sql, input.fence);
+    const execution = snapshot.executions.find(row => row.id === input.fence.executionId);
+    const boundary = imageRecoveryRetryBoundary(snapshot, input.fence.executionId);
+    if (!boundary || !execution) return null;
+    const proof = JSON.stringify({ afterEventId: execution.imageRecoveryAfterEventId,
+      interruptRequestedAt: execution.imageRecoveryInterruptRequestedAt, retryAfterEventId: boundary });
+    const result = await this.sql.batch<ExecutionRow>([
+      this.sql.prepare(`UPDATE managed_session_executions SET state = 'failed', settled_at_ms = ?,
+        failure = 'retained_configuration_changed', attempt_count = CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE 0 END,
+        revision = revision + 1
+        WHERE workspace_id = ? AND id = ? AND session_id = ? AND revision = ?
+          AND state = 'running' AND attempt_id = ? AND owner_id = ? AND generation = ?
+          AND interrupt_requested_at_ms IS NULL AND lease_expires_at_ms > ? AND deadline_at_ms > ?
+          AND EXISTS (SELECT 1 FROM managed_sessions WHERE workspace_id = ? AND id = ? AND revision = ? AND archived_at IS NULL)
+        RETURNING ${columns()}`).bind(settledAt, input.fence.workspaceId, input.fence.executionId, input.fence.sessionId,
+        execution.revision, input.fence.attemptId, input.fence.ownerId, input.fence.generation, settledAt, settledAt,
+        input.fence.workspaceId, input.fence.sessionId, snapshot.revision),
+      this.sql.prepare(`UPDATE managed_session_image_recoveries SET after_event_id = ?
+        WHERE workspace_id = ? AND execution_id = ? AND after_event_id = ?
+          AND EXISTS (SELECT 1 FROM managed_session_executions WHERE workspace_id = ? AND id = ? AND session_id = ?
+            AND revision = ? AND state = 'failed' AND failure = 'retained_configuration_changed'
+            AND attempt_id = ? AND owner_id = ? AND generation = ? AND settled_at_ms = ?)`)
+        .bind(proof, input.fence.workspaceId, input.fence.executionId, saved.after_event_id,
+          input.fence.workspaceId, input.fence.executionId, input.fence.sessionId, execution.revision + 1,
+          input.fence.attemptId, input.fence.ownerId, input.fence.generation, settledAt),
+    ]);
+    const row = result[0]?.results?.[0];
+    return row && result[1]?.meta.changes === 1 ? { type: 'settled', execution: toExecution(row) } : { type: 'lost' };
   }
 
   yieldProgress(input: YieldSessionExecutionProgress): Promise<YieldSessionExecutionProgressResult> {

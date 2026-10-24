@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setup } from './fakes.mjs';
+import { trustedLegacyBuild } from '../../../vendor/openma/packages/control-plane-node/src/lib/tank-retained/legacy-build-provenance.ts';
+import { resolveLegacyProvenance, retainedCompatibility } from '../../../vendor/openma/packages/control-plane-node/src/lib/tank-retained/legacy-provenance.ts';
+import { stableDigest } from '../../../vendor/openma/packages/control-plane-node/src/lib/tank-retained/runtime-identity.ts';
+import { assertLegacyNativeConfiguration } from '../../../vendor/openma/packages/control-plane-node/src/lib/tank-retained/legacy-native-provenance.ts';
 
 const image = value => 'sha256:' + value.repeat(64);
 const identity = value => ({ version: 2, image: image(value), compatibility: { scope: image('c'), network: image('d'), databasePolicy: image('e') } });
@@ -172,3 +176,93 @@ test('legacy adoption requires exact original fingerprint and provider ownership
   assert.equal([...s.rows.values()][0].publication.workspaceCandidate.metadata.schema, 2);
   assert.equal(s.replacements.length, 0);
 });
+
+function legacyInputs() {
+  return {
+    scope: ['test-workspace', 'test-environment', 'test-session'], resources: [], skills: [{ type: 'custom', skillId: 'test-skill', version: '1' }],
+    environmentName: 'test-analysis', environment: { type: 'cloud', networking: { type: 'unrestricted' } },
+    allocation: { image: 'test-analysis:amd64', rootfsPath: '/opt/test-oci', cpus: 2, memoryMib: 2048, name: 'oma-test-session',
+      security: { jailerEnabled: false, seccompEnabled: false }, network: { mode: 'enabled' },
+      volumes: [{ hostPath: '/owned/test-output', guestPath: '/mnt/session/outputs', readOnly: false }] },
+    databasePolicy: { host: 'test-postgres', port: '5432', database: '/test', role: 'readonly' },
+  };
+}
+function historicalFingerprint(inputs, runtimeIdentity = trustedLegacyBuild.runtimeIdentity) {
+  return stableDigest({ ...inputs, runtimeIdentity, rootfsIndex: stableDigest(trustedLegacyBuild.rawIndex) });
+}
+
+test('the reviewed legacy build reconstructs the complete fingerprint and adopts the old image before fenced replacement', async () => {
+  const inputs = legacyInputs(), fingerprint = historicalFingerprint(inputs);
+  const resolved = resolveLegacyProvenance(inputs, fingerprint);
+  assert.equal(resolved.identity.image, 'sha256:5069a7cd9fe3f987d7839d839ab3a9448ca8c9e5321b4d9a69c533ae887c7f90');
+  assert.equal(resolved.provenance.build, '5dd1d3495f79bc203f9d0ea5a2320e148cf7a963b4709fe06dad0ac62430d296');
+  const s = fixture();
+  const legacy = s.controller({ fingerprint });
+  await legacy.begin(permitted, signal()); await legacy.idle(permitted);
+  const before = structuredClone([...s.rows.values()][0].publication.workspaceCandidate);
+  s.hooks.transfer = async () => {
+    const migrating = publication(s);
+    assert.equal(migrating.identity.image, resolved.identity.image);
+    assert.equal(migrating.legacy.fingerprint, fingerprint);
+    assert.equal(migrating.legacy.publicationHash, before.contentHash);
+    assert.equal(migrating.legacy.runtimeId, before.metadata.runtimeId);
+  };
+  const controller = s.controller({ fingerprint: image('f'), identity: { version: 2, image: image('b'), compatibility: retainedCompatibility(inputs) },
+    resolveLegacy: saved => resolveLegacyProvenance(inputs, saved) });
+  await controller.begin(permitted, signal());
+  assert.equal(s.replacements.length, 1);
+  assert.equal(publication(s).identity.image, image('b'));
+  assert.equal(publication(s).upgradedFrom, resolved.identity.image);
+  assert.equal(publication(s).legacy.digest, resolved.provenance.digest);
+  assert.equal(publication(s).retired.some(handle => handle.runtimeId === before.metadata.runtimeId), true);
+  await controller.idle(permitted);
+});
+
+test('unknown historical runtime identities and every altered protected fingerprint component refuse adoption', () => {
+  const inputs = legacyInputs(), original = historicalFingerprint(inputs);
+  assert.equal(resolveLegacyProvenance(inputs, historicalFingerprint(inputs, 'f'.repeat(64))), null);
+  const mutations = [
+    value => value.scope.push('foreign'), value => value.resources.push({ id: 'new-resource' }),
+    value => value.skills[0].version = '2', value => value.environmentName = 'other',
+    value => value.environment.networking.type = 'limited', value => value.allocation.cpus = 4,
+    value => value.allocation.memoryMib = 4096, value => value.allocation.rootfsPath = '/foreign-oci',
+    value => value.allocation.volumes[0].readOnly = true, value => value.allocation.network.mode = 'disabled',
+    value => value.allocation.security.seccompEnabled = true, value => value.databasePolicy.role = 'writer',
+  ];
+  for (const mutate of mutations) {
+    const changed = structuredClone(inputs); mutate(changed);
+    assert.equal(resolveLegacyProvenance(changed, original), null);
+  }
+});
+
+function nativeLegacyRecord(allocation) {
+  return { id: 'test-native-id', name: 'test-native-owner', options: {
+    cpus: 2, memory_mib: 2048, rootfs: { RootfsPath: '/opt/test-oci' },
+    volumes: [{ host_path: '/owned/test-output', guest_path: '/mnt/session/outputs', read_only: false }],
+    network: { Enabled: { allow_net: [] } }, env: [], secrets: [], ports: [],
+    advanced: { security: { jailer_enabled: false, seccomp_enabled: false, uid: 65534, gid: 65534,
+      new_pid_ns: true, new_net_ns: false, chroot_base: '/srv/boxlite', chroot_enabled: true,
+      close_fds: true, sanitize_env: true, env_allowlist: ['RUST_LOG'],
+      resource_limits: { max_open_files: null, max_file_size: 21474836480, max_processes: null, max_memory: null, max_cpu_time: null },
+      sandbox_profile: null, network_enabled: true }, isolate_mounts: false, health_check: null,
+      kernel: null, nested_virtualization: false, privileged: false },
+  } };
+}
+
+test('legacy native provenance binds exact id, ownership, CPU, RAM, rootfs, mounts, network and security records', () => {
+  const allocation = legacyInputs().allocation, record = nativeLegacyRecord(allocation);
+  assert.doesNotThrow(() => assertLegacyNativeConfiguration(record, 'test-native-id', 'test-native-owner', allocation));
+  const mutations = [
+    value => value.id = 'foreign-id', value => value.name = 'foreign-owner', value => value.options.cpus = 4,
+    value => value.options.memory_mib = 4096, value => value.options.rootfs.RootfsPath = '/foreign-image',
+    value => value.options.volumes[0].read_only = true, value => value.options.network.Enabled.allow_net.push('foreign'),
+    value => value.options.advanced.security.sanitize_env = false, value => value.options.advanced.privileged = true,
+    value => value.options.env.push(['UNEXPECTED', 'value']), value => value.options.secrets.push({ name: 'unexpected' }),
+  ];
+  for (const mutate of mutations) {
+    const changed = structuredClone(record); mutate(changed);
+    assert.throws(() => assertLegacyNativeConfiguration(changed, 'test-native-id', 'test-native-owner', allocation), /retained_legacy_provider_provenance_missing/);
+  }
+  assert.throws(() => assertLegacyNativeConfiguration(null, 'test-native-id', 'test-native-owner', allocation), /runtime_ownership/);
+});
+

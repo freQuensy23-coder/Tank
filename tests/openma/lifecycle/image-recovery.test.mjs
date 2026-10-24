@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { imageMismatchRecoveryBoundary, planSessionContinuation } from '../../../vendor/openma/packages/session-runtime-contract/src/continuation.ts';
+import { imageMismatchRecoveryBoundary, imageRecoveryRetryBoundary, planSessionContinuation } from '../../../vendor/openma/packages/session-runtime-contract/src/continuation.ts';
 
 function fixture() {
   const message = { id: 'input-old', type: 'user.message', content: [{ type: 'text', text: 'pending original input' }], processedAt: '2026-10-24T00:00:00Z' };
@@ -11,7 +11,7 @@ function fixture() {
   return { revision: 2, orderedEvents: entries, executions: [{ id: message.id, laneId: 'sthr_primary', state: 'failed', revision: 1,
     events: [message], attemptCount: 1, interruptRequestedAt: null }] };
 }
-const recover = snapshot => ({ ...snapshot, executions: snapshot.executions.map(row => ({ ...row, state: 'running', imageRecoveryAfterEventId: 'failed-idle' })) });
+const recover = snapshot => ({ ...snapshot, executions: snapshot.executions.map(row => ({ ...row, state: 'running', imageRecoveryAfterEventId: 'failed-idle', imageRecoveryInterruptRequestedAt: null })) });
 
 test('only exact image-mismatch preflight without agent effects becomes an unfinished-input recovery', () => {
   const snapshot = fixture();
@@ -73,3 +73,52 @@ test('successful committed output after recovery finalizes instead of re-running
   assert.equal(plan.mode, 'finalize');
   assert.deepEqual(plan.recoveredStopReason, { type: 'end_turn' });
 });
+
+test('interrupting a recovered execution preserves its historical proof and never poisons the next input', () => {
+  const snapshot = recover(fixture());
+  snapshot.executions[0].interruptRequestedAt = '2026-10-24T00:02:00Z';
+  snapshot.orderedEvents.push({ event: { id: 'later-interrupt', type: 'user.interrupt' }, position: { revision: 3, index: 0 } });
+  assert.deepEqual(planSessionContinuation(snapshot, 'input-old'), { mode: 'blocked', reason: 'interrupted_or_terminal_failure' });
+  snapshot.executions[0].state = 'cancelled';
+  snapshot.executions.push({ id: 'fresh', laneId: 'sthr_primary', state: 'running', revision: 1, attemptCount: 1, interruptRequestedAt: null,
+    events: [{ id: 'fresh', type: 'user.message', content: [{ type: 'text', text: 'fresh valid input' }] }] });
+  const plan = planSessionContinuation(snapshot, 'fresh');
+  assert.equal(plan.mode, 'model');
+  assert.deepEqual(plan.phaseInputIds, ['fresh']);
+  assert.deepEqual(plan.historyEvents.map(event => event.id), ['later-interrupt', 'fresh']);
+  assert.equal(snapshot.executions[0].imageRecoveryInterruptRequestedAt, null);
+});
+
+test('temporary no-effects upgrade failures have durable retry boundaries without suppressing later normal output', () => {
+  const snapshot = recover(fixture());
+  snapshot.orderedEvents.push(
+    { event: { id: 'temporary', type: 'session.error', error: { message: 'retained_legacy_provenance_missing:opaque_fingerprint_mismatch;historical_image_and_configuration_required' } }, executionId: 'input-old', position: { revision: 3, index: 0 } },
+    { event: { id: 'temporary-idle', type: 'session.status_idle', stopReason: { type: 'retries_exhausted' } }, executionId: 'input-old', position: { revision: 4, index: 0 } },
+  );
+  assert.equal(imageRecoveryRetryBoundary(snapshot, 'input-old'), 'temporary-idle');
+  snapshot.executions[0].imageRecoveryRetryAfterEventId = 'temporary-idle';
+  const restarted = structuredClone(snapshot);
+  assert.equal(planSessionContinuation(restarted, 'input-old').mode, 'model');
+  restarted.orderedEvents.push({ event: { id: 'completed-after-retry', type: 'session.status_idle', stopReason: { type: 'end_turn' } }, executionId: 'input-old', position: { revision: 5, index: 0 } });
+  assert.equal(imageRecoveryRetryBoundary(restarted, 'input-old'), null);
+  assert.equal(planSessionContinuation(restarted, 'input-old').mode, 'finalize');
+});
+
+for (const message of ['unrelated failure', 'permission denied']) test(`recovery does not refund or hide ${message}`, () => {
+  const snapshot = recover(fixture());
+  snapshot.orderedEvents.push({ event: { id: 'unrelated', type: 'session.error', error: { message } }, executionId: 'input-old', position: { revision: 3, index: 0 } });
+  assert.equal(imageRecoveryRetryBoundary(snapshot, 'input-old'), null);
+  snapshot.executions[0].imageRecoveryRetryAfterEventId = 'unrelated';
+  assert.equal(planSessionContinuation(snapshot, 'input-old').mode, 'failure');
+});
+
+test('a retry boundary containing model/tool effects or a pre-recovery interrupt cannot become permanent proof', () => {
+  const snapshot = recover(fixture());
+  snapshot.orderedEvents.push({ event: { id: 'effect', type: 'span.model_request_start' }, executionId: 'input-old', position: { revision: 3, index: 0 } });
+  assert.equal(imageRecoveryRetryBoundary(snapshot, 'input-old'), null);
+  snapshot.executions[0].imageRecoveryRetryAfterEventId = 'effect';
+  assert.equal(planSessionContinuation(snapshot, 'input-old').mode, 'failure');
+  const interrupted = recover(fixture()); interrupted.executions[0].imageRecoveryInterruptRequestedAt = '2026-10-24T00:00:00Z';
+  assert.equal(planSessionContinuation(interrupted, 'input-old').mode, 'failure');
+});
+

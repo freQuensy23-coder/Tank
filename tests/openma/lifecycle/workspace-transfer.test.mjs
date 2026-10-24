@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, readlink, chmod, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, readlink, chmod, stat, copyFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workspaceTransferProgram } from '../../../vendor/openma/packages/control-plane-node/src/lib/tank-retained/workspace-transfer.ts';
+import { transferWorkspaceArchive, workspaceChunkProgram, workspaceChunkBytes } from '../../../vendor/openma/packages/control-plane-node/src/lib/tank-retained/workspace-chunks.ts';
 
 async function fixture(fn) {
   const root = await mkdtemp(join(tmpdir(), 'tank-workspace-transfer-'));
@@ -66,3 +67,79 @@ test('archive path traversal is rejected before touching replacement or host fil
     await assert.rejects(readFile(join(root, 'escape')), { code: 'ENOENT' });
   });
 });
+
+async function chunkFixture(run) {
+  await fixture(async ({ root, source, target, archive, transfer }) => {
+    await writeFile(join(source, 'larger-than-a-transfer'), Buffer.alloc(12289, 197));
+    const exported = transfer('export', source);
+    assert.equal(exported.status, 0, exported.stderr);
+    const chunkBytes = 4096, copied = [];
+    const guestArchive = '/owned-workspace.tar';
+    const operations = (directory, corrupt = false) => ({
+      exec: async (command, args) => {
+        const mapped = args.map(arg => arg === guestArchive ? join(directory, 'workspace.tar') : arg === guestArchive + '.part' ? join(directory, 'workspace.tar.part') : arg);
+        const result = spawnSync(command, mapped, { encoding: 'utf8', timeout: 3000 });
+        return { stdout: result.stdout, stderr: result.stderr, exitCode: result.status ?? 1 };
+      },
+      copyOut: async (guest, host) => {
+        const path = join(directory, 'workspace.tar.part');
+        const bytes = (await stat(path)).size;
+        assert.ok(bytes <= chunkBytes);
+        copied.push(bytes);
+        await copyFile(path, host);
+      },
+      copyIn: async (host, guest) => {
+        assert.ok((await stat(host)).size <= chunkBytes);
+        await copyFile(host, join(directory, 'workspace.tar.part'));
+        if (corrupt) await writeFile(join(directory, 'workspace.tar.part'), Buffer.alloc((await stat(host)).size, 1));
+      },
+    });
+    await copyFile(archive, join(source, 'workspace.tar'));
+    await run({ root, source, target, archive, exported, chunkBytes, copied, guestArchive, operations });
+  });
+}
+
+test('bounded chunks transfer an aggregate above the per-file ceiling with exact archive and inventory integrity', async () => {
+  await chunkFixture(async ({ root, source, target, archive, exported, chunkBytes, copied, guestArchive, operations }) => {
+    await transferWorkspaceArchive({ source: operations(source), target: operations(target), archive: guestArchive,
+      hostDirectory: root, chunkBytes, assertCurrent: async () => {} });
+    assert.ok((await stat(archive)).size > chunkBytes);
+    assert.ok(copied.length > 1);
+    assert.equal(copied.reduce((sum, size) => sum + size, 0), (await stat(archive)).size);
+    assert.deepEqual(await readFile(join(target, 'workspace.tar')), await readFile(archive));
+    await rm(join(source, 'workspace.tar'));
+    const restored = join(root, 'restored'); await mkdir(restored);
+    const imported = spawnSync('python3', ['-c', workspaceTransferProgram, 'import', join(target, 'workspace.tar'), '[]', restored], { encoding: 'utf8', timeout: 3000 });
+    assert.equal(imported.status, 0, imported.stderr);
+    assert.equal(imported.stdout, exported.stdout);
+    assert.deepEqual(await readFile(join(restored, 'larger-than-a-transfer')), Buffer.alloc(12289, 197));
+    await assert.rejects(readFile(join(root, 'workspace.part')), { code: 'ENOENT' });
+    assert.ok(workspaceChunkBytes < 512 * 1024 * 1024);
+  });
+});
+
+test('corrupt chunks and lease loss fail before publishing data and preserve the source archive', async () => {
+  await chunkFixture(async ({ root, source, target, archive, chunkBytes, guestArchive, operations }) => {
+    const original = await readFile(archive);
+    await assert.rejects(transferWorkspaceArchive({ source: operations(source), target: operations(target, true), archive: guestArchive,
+      hostDirectory: root, chunkBytes, assertCurrent: async () => {} }), /chunk_append/);
+    assert.deepEqual(await readFile(archive), original);
+    await assert.rejects(readFile(join(target, 'workspace.tar')), { code: 'ENOENT' });
+    await assert.rejects(transferWorkspaceArchive({ source: operations(source), target: operations(target), archive: guestArchive,
+      hostDirectory: root, chunkBytes, assertCurrent: async () => { throw Error('retained_fence_lost'); } }), /retained_fence_lost/);
+    await assert.rejects(transferWorkspaceArchive({ source: operations(source), target: operations(target), archive: guestArchive,
+      hostDirectory: root, chunkBytes: workspaceChunkBytes + 1, assertCurrent: async () => {} }), /chunk_bounds/);
+  });
+});
+
+test('chunk append refuses duplicate or out-of-order boundaries', async () => {
+  await fixture(async ({ root, archive }) => {
+    const part = join(root, 'part'); await writeFile(part, 'abcd'); await writeFile(archive, 'existing');
+    const result = spawnSync('python3', ['-c', workspaceChunkProgram, 'append', archive, part, '2', '4',
+      '88d4266fd4e6338d13b845fcf289579d209c897823b9217da3e161936f031589'], { encoding: 'utf8', timeout: 3000 });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /retained_workspace_chunk_order/);
+    assert.equal(await readFile(archive, 'utf8'), 'existing');
+  });
+});
+

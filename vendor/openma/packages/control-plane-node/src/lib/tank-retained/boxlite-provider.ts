@@ -4,6 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workspaceTransferProgram } from './workspace-transfer.js';
+import { transferWorkspaceArchive } from './workspace-chunks.js';
+import { assertLegacyNativeConfiguration, readNativeLegacyConfiguration, validateLegacyNativeArtifact, type NativeLegacyConfiguration } from './legacy-native-provenance.js';
 import type { Fence, Handle, Provider, RetainedRuntime, Scope } from './retained-session.js';
 
 type Process = {
@@ -79,6 +81,7 @@ export function publicBoxLiteClient(raw: unknown) {
 export function pinnedBoxLiteProvider(input: {
   module: PinnedBoxLiteModule; client: unknown; allocation: Allocation; leaseTtlMs: number;
   isCurrent?(fence: Fence): Promise<boolean>;
+  readLegacyConfiguration?(runtimeId: string): Promise<NativeLegacyConfiguration | null>;
   unpublishedCleanupFailed?(handle: Handle, scope: Scope, fence: Fence): Promise<void>;
 }): Provider<BoxLiteRuntime> {
   const client = publicBoxLiteClient(input.client);
@@ -169,6 +172,9 @@ export function pinnedBoxLiteProvider(input: {
       signal.throwIfAborted(); await current(fence);
       const info = await inspect(handle.runtimeId);
       if (!info || info.id !== handle.runtimeId || info.name !== expectedName(scope)) throw Error('retained_legacy_provider_provenance_missing:runtime_ownership');
+      const configuration = await (input.readLegacyConfiguration ?? readNativeLegacyConfiguration)(handle.runtimeId);
+      assertLegacyNativeConfiguration(configuration, handle.runtimeId, expectedName(scope), input.allocation);
+      await validateLegacyNativeArtifact();
       await current(fence);
     },
     async replacementIntent(_source, _identity, scope, fence, signal) {
@@ -183,7 +189,6 @@ export function pinnedBoxLiteProvider(input: {
       await assertCurrent();
       if (await inspect(name)) throw Error('retained_upgrade_target_exists');
       const directory = await mkdtemp(join(tmpdir(), 'tank-runtime-upgrade-'));
-      const hostArchive = join(directory, 'workspace.tar');
       const guestArchive = '/tmp/tank-runtime-upgrade-' + randomUUID() + '.tar';
       const allowed = JSON.stringify((input.allocation.volumes ?? []).map(volume => volume.guestPath));
       let source: BoxLiteRuntime | undefined, replacement: BoxLiteRuntime | undefined;
@@ -193,10 +198,6 @@ export function pinnedBoxLiteProvider(input: {
         const original = new RetainedBoxOperations(async operation => { await assertCurrent(); return operation(source!); });
         const exported = await original.exec('python3', ['-c', workspaceTransferProgram, 'export', guestArchive, allowed, '/workspace'], undefined, { cwd: '/', timeoutSecs: 120 });
         if (exported.exitCode !== 0 || !/^[a-f0-9]{64}$/.test(exported.stdout.trim())) throw Error('retained_upgrade_transfer_failed:workspace_export');
-        await original.copyOut(guestArchive, hostArchive);
-        await original.exec('rm', ['-f', guestArchive], undefined, { cwd: '/' });
-        await assertCurrent();
-        await source.suspend({ kind: 'filesystem' }); source = undefined;
         await assertCurrent();
         const selectedProvider = publicProvider(journal.target, scope);
         replacement = decorate(await selectedProvider.create({ sessionId: scope.sessionId, workdir: '/workspace' }, {}, acquisition(scope, fence, signal)), name);
@@ -204,7 +205,12 @@ export function pinnedBoxLiteProvider(input: {
         if (!info || info.id !== replacement.runtimeHandle().runtimeId || info.name !== name) throw Error('retained_upgrade_target_ownership_invalid');
         await assertCurrent();
         const target = new RetainedBoxOperations(async operation => { await assertCurrent(); return operation(replacement!); });
-        await target.copyIn(hostArchive, guestArchive);
+        await transferWorkspaceArchive({ source: original, target, archive: guestArchive, hostDirectory: directory, assertCurrent });
+        const sourceRemoved = await original.exec('rm', ['-f', guestArchive], undefined, { cwd: '/' });
+        if (sourceRemoved.exitCode !== 0) throw Error('retained_upgrade_transfer_failed:archive_cleanup');
+        await assertCurrent();
+        await source.suspend({ kind: 'filesystem' }); source = undefined;
+        await assertCurrent();
         const imported = await target.exec('python3', ['-c', workspaceTransferProgram, 'import', guestArchive, allowed, '/workspace'], undefined, { cwd: '/', timeoutSecs: 120 });
         if (imported.exitCode !== 0 || imported.stdout.trim() !== exported.stdout.trim()) throw Error('retained_upgrade_transfer_failed:workspace_validation');
         const removed = await target.exec('rm', ['-f', guestArchive], undefined, { cwd: '/' });

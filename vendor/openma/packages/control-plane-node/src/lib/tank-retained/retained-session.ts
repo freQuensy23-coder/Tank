@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { LegacyReceipt, LegacyResolution } from './legacy-provenance.js';
 import { assertCompatible, stableDigest, validateRuntimeIdentity, type RuntimeIdentity } from './runtime-identity.js';
 
 export type UpgradeJournal = {
@@ -15,6 +16,8 @@ type Manifest = {
   upgrade?: UpgradeJournal;
   retired?: Handle[];
   upgradedFrom?: string;
+  legacy?: LegacyReceipt;
+  legacyAdoptionRequired?: boolean;
 };
 
 export type Scope = { workspaceId: string; environmentId: string; sessionId: string; workId: string };
@@ -49,6 +52,7 @@ export interface Options<R extends RetainedRuntime> {
   scope: Omit<Scope, 'workId'>;
   fingerprint: string;
   identity?: RuntimeIdentity;
+  resolveLegacy?(fingerprint: string): LegacyResolution | null;
   providerId: string;
   ownerId: string;
   leaseTtlMs: number;
@@ -155,9 +159,15 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     const identity = { scope: this.scope, provider: metadata.provider, runtimeId: metadata.runtimeId,
       fingerprint: metadata.fingerprint, state: metadata.state };
     if (candidate.contentHash !== digest(identity)) fail('retained_manifest_invalid');
-    if (!archiveOnly && metadata.state !== 'archived' && metadata.fingerprint !== this.options.fingerprint)
-      fail(this.options.identity ? 'retained_legacy_provenance_missing:opaque_fingerprint_mismatch;historical_image_and_configuration_required' : 'retained_configuration_changed');
-    return { handle: { provider: String(metadata.provider), runtimeId: metadata.runtimeId as string }, state: String(metadata.state), archived: metadata.state === 'archived' };
+    let resolution: LegacyResolution | null = null;
+    if (!archiveOnly && metadata.state !== 'archived' && metadata.fingerprint !== this.options.fingerprint) {
+      resolution = typeof metadata.fingerprint === 'string' ? this.options.resolveLegacy?.(metadata.fingerprint) ?? null : null;
+      if (!resolution || !this.options.identity) fail(this.options.identity ? 'retained_legacy_provenance_missing:opaque_fingerprint_mismatch;historical_image_and_configuration_required' : 'retained_configuration_changed');
+      assertCompatible(resolution.identity, this.options.identity);
+    }
+    return { handle: { provider: String(metadata.provider), runtimeId: metadata.runtimeId as string }, state: String(metadata.state), archived: metadata.state === 'archived',
+      ...(resolution ? { identity: resolution.identity, legacyAdoptionRequired: true, legacy: { ...resolution.provenance,
+        fingerprint: String(metadata.fingerprint), publicationHash: candidate.contentHash, runtimeId: metadata.runtimeId } } : {}) };
   }
   private async publishManifest(manifest: Manifest): Promise<void> {
     if (manifest.state !== 'archived') await this.executionCurrent?.();
@@ -203,7 +213,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     const handle = runtime.runtimeHandle();
     if (handle.provider !== this.options.providerId || !handle.runtimeId || handle.runtimeId === manifest.handle.runtimeId) fail('retained_provider_identity_invalid');
     await assertCurrent();
-    await this.publishManifest({ handle, state: 'retained', archived: false, identity,
+    await this.publishManifest({ handle, state: 'retained', archived: false, identity, legacy: manifest.legacy,
       retired: [...retired, manifest.handle], upgradedFrom: manifest.identity!.image });
     this.handle = handle;
   }
@@ -230,10 +240,11 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
           manifest = { ...manifest, handle: resolved };
         }
         await assertExecutionCurrent();
-        if (this.options.identity && !manifest.identity) {
+        if (this.options.identity && (!manifest.identity || manifest.legacyAdoptionRequired)) {
           if (!this.options.provider.validateLegacy) fail('retained_legacy_provider_provenance_missing');
           await this.options.provider.validateLegacy(this.handle, this.scope, await this.current(), signal);
-          manifest = { ...manifest, state: 'retained', identity: this.options.identity, retired: [] };
+          const { legacyAdoptionRequired, ...adopted } = manifest;
+          manifest = { ...adopted, state: 'retained', identity: manifest.identity ?? this.options.identity, retired: [] };
           await this.publishManifest(manifest);
         }
         if (this.options.identity && (manifest.state === 'upgrading' || manifest.identity!.image !== this.options.identity.image)) {

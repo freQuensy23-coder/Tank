@@ -74,7 +74,10 @@ import * as retainedBoxLiteProvider from "@open-managed-agents/managed-runtime-b
 import { verifyReplayEvidence } from "@open-managed-agents/sandbox-adapter-litebox";
 import { validateReplayAttachment } from "../lib/tank-retained/replay-attachment.js";
 import { executableImageIdentity, stableDigest } from "../lib/tank-retained/runtime-identity.js";
-import { NodeRetainedLifecycle, type AttachableSandbox } from "../lib/tank-retained/node-lifecycle.js";
+import { NodeRetainedLifecycle, type AttachableSandbox, type Context } from "../lib/tank-retained/node-lifecycle.js";
+import type { Allocation } from "../lib/tank-retained/boxlite-provider.js";
+import { retainedCompatibility, resolveLegacyProvenance, type LegacyFingerprintInputs } from "../lib/tank-retained/legacy-provenance.js";
+import { trustedLegacyBuild } from "../lib/tank-retained/legacy-build-provenance.js";
 import { join } from "node:path";
 import { nanoid } from "nanoid";
 
@@ -348,6 +351,21 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
     };
   };
   const retainedImageIdentities = new Map<string, Promise<string>>();
+  const retainedFingerprintInputs = async (context: Context, allocation: Allocation): Promise<LegacyFingerprintInputs> => {
+    const domain = context as typeof context & {
+      session: { resources: unknown; agent: { skills: unknown }; metadata: Record<string, string> };
+      environment: { config: unknown; name: string };
+    };
+    await validateReplayAttachment(domain, allocation, verifyReplayEvidence, process.env.TANK_REPLAY_EVIDENCE_ROOT);
+    const databaseUrl = domain.environment.name === "tank-replay" ? process.env.TANK_SANDBOX_REPLAY_DB_URL : process.env.TANK_SANDBOX_DB_URL;
+    const database = databaseUrl ? new URL(databaseUrl) : null;
+    return {
+      scope: [context.workspaceId, context.environment.id, context.sessionId],
+      resources: domain.session.resources, skills: domain.session.agent.skills,
+      environmentName: domain.environment.name, environment: domain.environment.config, allocation,
+      databasePolicy: database ? { host: database.hostname, port: database.port, database: database.pathname, role: database.username } : null,
+    };
+  };
   const retainedLifecycle = new NodeRetainedLifecycle({
     fences: new SqlRuntimeResourceFencePort(sql), orphans: new SqlRuntimeOrphanPort(sql), providerModule: retainedBoxLiteProvider,
     client: retainedSdk.JsBoxlite.withDefaultConfig(), ownerId: config.execution.ownerId, leaseTtlMs: 30000,
@@ -356,53 +374,24 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
         throw new Error("Retained Session execution fence lost");
     },
     fingerprint: async (context, allocation) => {
-      const domain = context as typeof context & {
-        session: {
-          resources: unknown;
-          agent: {
-            skills: unknown;
-          };
-          metadata: Record<string, string>;
-        };
-        environment: {
-          config: unknown;
-          name: string;
-        };
-      };
-      await validateReplayAttachment(domain, allocation, verifyReplayEvidence, process.env.TANK_REPLAY_EVIDENCE_ROOT);
+      const inputs = await retainedFingerprintInputs(context, allocation);
       const rootfsIndex = allocation.rootfsPath ? stableDigest(await readFile(join(allocation.rootfsPath, "index.json"), "utf8")) : null;
-      const databaseUrl = domain.environment.name === "tank-replay" ? process.env.TANK_SANDBOX_REPLAY_DB_URL : process.env.TANK_SANDBOX_DB_URL;
-      const database = databaseUrl ? new URL(databaseUrl) : null;
-      return stableDigest({
-        runtimeIdentity: "c4afefbdddba3e6f05634a3bb5a46db20d5636413f4f24909b2abcdfa8fa8654", scope: [context.workspaceId, context.environment.id, context.sessionId],
-        resources: domain.session.resources, skills: domain.session.agent.skills, environmentName: domain.environment.name, environment: domain.environment.config, allocation, rootfsIndex,
-        databasePolicy: database ? { host: database.hostname, port: database.port, database: database.pathname, role: database.username } : null
-      });
+      return stableDigest({ ...inputs, runtimeIdentity: trustedLegacyBuild.runtimeAbi, rootfsIndex });
+    },
+    resolveLegacy: async (context, allocation) => {
+      const inputs = await retainedFingerprintInputs(context, allocation);
+      return fingerprint => resolveLegacyProvenance(inputs, fingerprint);
     },
     identity: async (context, allocation) => {
-      const domain = context as typeof context & {
-        session: { resources: unknown; agent: { skills: unknown }; metadata: Record<string, string> };
-        environment: { config: unknown; name: string };
-      };
-      await validateReplayAttachment(domain, allocation, verifyReplayEvidence, process.env.TANK_REPLAY_EVIDENCE_ROOT);
+      const inputs = await retainedFingerprintInputs(context, allocation);
       if (!allocation.rootfsPath) throw Error("retained_image_provenance_missing:oci_layout_required");
       let image = retainedImageIdentities.get(allocation.rootfsPath);
       if (!image) {
         image = executableImageIdentity(allocation.rootfsPath);
         retainedImageIdentities.set(allocation.rootfsPath, image);
+        void image.catch(() => { if (retainedImageIdentities.get(allocation.rootfsPath!) === image) retainedImageIdentities.delete(allocation.rootfsPath!); });
       }
-      const databaseUrl = domain.environment.name === "tank-replay" ? process.env.TANK_SANDBOX_REPLAY_DB_URL : process.env.TANK_SANDBOX_DB_URL;
-      const database = databaseUrl ? new URL(databaseUrl) : null;
-      const { image: imageReference, rootfsPath, name, volumes, network, security, ...runtimeResources } = allocation;
-      const components = {
-        runtimeAbi: "c4afefbdddba3e6f05634a3bb5a46db20d5636413f4f24909b2abcdfa8fa8654",
-        scope: [context.workspaceId, context.environment.id, context.sessionId],
-        resources: domain.session.resources, skills: domain.session.agent.skills,
-        environmentName: domain.environment.name, environment: domain.environment.config,
-        runtimeResources, mounts: volumes, network, security,
-        databasePolicy: database ? { host: database.hostname, port: database.port, database: database.pathname, role: database.username } : null,
-      };
-      return { version: 2, image: await image, compatibility: Object.fromEntries(Object.entries(components).map(([key, value]) => [key, stableDigest(value)])) };
+      return { version: 2, image: await image, compatibility: retainedCompatibility(inputs) };
     },
   });
   await retainedLifecycle.reconcileOrphans();
