@@ -4,6 +4,7 @@ from pathlib import Path
 import httpx
 import pytest
 from review_typed_fixtures import put_boundary, put_flow
+from score_fixtures import unassessed_score_dimensions
 
 from tank.review import ReviewService, validate_checks
 from tank.storage import MemoryRepository
@@ -210,6 +211,7 @@ async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_pa
         "event_time": {"value": None, "precision": "UNKNOWN"},
     }
     assessment = {
+        "dims": unassessed_score_dimensions(),
         "ems_id": "review-ems",
         "event_id": eid,
         "class": "MAJOR",
@@ -308,7 +310,7 @@ async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_pa
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
         await DeliveryService(repo, settings, http=http).deliver(
-            {"alert_id": published["alert_id"], "version": 1}
+            {"channel": "telegram:alerts", "alert_id": published["alert_id"], "version": 1}
         )
     verified = await ReviewService(repo).report(
         iso(parse_time(now) - timedelta(minutes=1)),

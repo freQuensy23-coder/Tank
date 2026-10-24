@@ -5,6 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from score_fixtures import unassessed_score_dimensions
 
 from tank.analysis.truth import (
     _oi_stats,
@@ -1798,7 +1799,12 @@ def test_canonical_text_facts_print_units_windows_and_preserve_audit_companion()
         assert detail["unit"] in text and detail["window"] in text
         assert "coverage" in text or "covered" in text or "complete" in text
     event = {"event_id": "E", "event_state": "APPROVED", "state_verified": True, "freshness": "FRESH"}
-    assessment = {"class": "MAJOR", "certainty": "HIGH", "impact_horizon": {"impact_start": "NOW"}}
+    assessment = {
+        "dims": unassessed_score_dimensions(),
+        "class": "MAJOR",
+        "certainty": "HIGH",
+        "impact_horizon": {"impact_start": "NOW"},
+    }
     beneficiary = {"token_id": "T", "role": "PRIMARY", "credible": True, "capture_class": "DIRECT"}
     decision = DecisionEngine().evaluate(event, assessment, beneficiary, truth)
     card = compose_card(

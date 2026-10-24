@@ -108,6 +108,9 @@ class ReleasedMarket:
     async def capture_readiness(self, *args, **kwargs):
         return {"status": "PARTIAL"}
 
+    async def repair_windows(self, *args, **kwargs):
+        return {}
+
     async def wait_capture(self, *args, **kwargs) -> None:
         raise AssertionError("Terminal capture must not wait")
 
@@ -231,7 +234,7 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
 
         runtime = object.__new__(Runtime)
         runtime.repo, runtime.market, runtime.truth = repo, market, truth
-        runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
+        runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate_wire, "RUN_MARKET_TRUTH": runtime.assess_wire}
         stop = asyncio.Event()
         worker = None
         event = {
@@ -389,7 +392,10 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
             market.released = True
             runtime = object.__new__(Runtime)
             runtime.repo, runtime.market, runtime.truth = repo, market, truth
-            runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
+            runtime.handlers = {
+                "ESCALATE_TOKENS": runtime.escalate_wire,
+                "RUN_MARKET_TRUTH": runtime.assess_wire,
+            }
             stop = asyncio.Event()
             worker = asyncio.create_task(runtime.worker(stop))
             try:
@@ -464,7 +470,7 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
         market.released = True
         runtime = object.__new__(Runtime)
         runtime.repo, runtime.market, runtime.truth = repo, market, truth
-        runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate, "RUN_MARKET_TRUTH": runtime.assess}
+        runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate_wire, "RUN_MARKET_TRUTH": runtime.assess_wire}
         stop = asyncio.Event()
         worker = asyncio.create_task(runtime.worker(stop))
         async with httpx.AsyncClient(

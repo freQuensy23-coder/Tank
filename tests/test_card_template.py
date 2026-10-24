@@ -619,7 +619,9 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
         )
         async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
             delivery = DeliveryService(repo, delivery_settings, http=http)
-            await delivery.deliver({"alert_id": alert["alert_id"], "version": alert["version"]})
+            await delivery.deliver(
+                {"channel": "telegram:alerts", "alert_id": alert["alert_id"], "version": alert["version"]}
+            )
         assert sent == [alert["rich_message"]]
         assert rich_message_text(sent[0]).splitlines()[1] == "WHAT: " + what
     finally:

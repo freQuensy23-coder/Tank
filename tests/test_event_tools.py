@@ -1117,7 +1117,7 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
         delivery = DeliveryService(service.repo, service.settings, http=http)
-        await delivery.deliver({"alert_id": first["alert_id"], "version": 1})
+        await delivery.deliver({"channel": "telegram:alerts", "alert_id": first["alert_id"], "version": 1})
         stale_event = await service.repo.get("evt.events", eid)
         stale_event["freshness"] = freshness
         await service.repo.put("evt.events", eid, stale_event)
@@ -1155,7 +1155,9 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(
         assert not alert["delivery_immediate"]
         assert "No longer following" in alert["card_text"]
         assert alert["expired_call_ids"] == ["expiry-call"]
-        await delivery.deliver({"alert_id": correction["alert_id"], "version": 2})
+        await delivery.deliver(
+            {"channel": "telegram:alerts", "alert_id": correction["alert_id"], "version": 2}
+        )
         assert len(sent) == 2
 
     calls = await service.repo.list("ana.calls", filters={"event_id": eid})
@@ -1284,7 +1286,7 @@ async def test_material_update_is_queued_once_and_delivered_after_window(
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
         delivery = DeliveryService(service.repo, service.settings, http=http)
-        await delivery.deliver({"alert_id": full["alert_id"], "version": 1})
+        await delivery.deliver({"channel": "telegram:alerts", "alert_id": full["alert_id"], "version": 1})
         low = dict(
             truth,
             mta_id="material-low",
@@ -1321,7 +1323,9 @@ async def test_material_update_is_queued_once_and_delivered_after_window(
         for module in ("tank.analysis.cards", "tank.event_tools", "tank.delivery"):
             monkeypatch.setattr(module + ".utcnow", lambda: later)
 
-        await delivery.deliver({"alert_id": published["alert_id"], "version": 2})
+        await delivery.deliver(
+            {"channel": "telegram:alerts", "alert_id": published["alert_id"], "version": 2}
+        )
 
     assert len(sent) == 2
     assert len(await service.repo.list("ana.calls", filters={"event_id": eid})) == 1
@@ -2619,7 +2623,7 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
         delivery = DeliveryService(service.repo, service.settings, http=http)
-        await delivery.deliver({"alert_id": first["alert_id"], "version": 1})
+        await delivery.deliver({"channel": "telegram:alerts", "alert_id": first["alert_id"], "version": 1})
         event = await service.repo.get("evt.events", eid)
         await service.repo.put("evt.events", eid, {**event, "freshness": "FRESH", "lifecycle": "INVALIDATED"})
         await service.repo.put(
@@ -2640,7 +2644,9 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(
         args["kind"] = "UPDATE"
         correction = await service.dispatch("publish_card", args, {})
         assert correction["published"], correction
-        await delivery.deliver({"alert_id": correction["alert_id"], "version": 2})
+        await delivery.deliver(
+            {"channel": "telegram:alerts", "alert_id": correction["alert_id"], "version": 2}
+        )
         for _ in range(2):
             repeat = await service.dispatch("publish_card", args, {})
             assert not repeat["published"], repeat
@@ -2683,7 +2689,7 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(
         assert started["version"] == 4
         frozen = await service.repo.get("out.alerts", started["alert_id"] + ":4")
         assert frozen["delivery_immediate"]
-        await delivery.deliver({"alert_id": started["alert_id"], "version": 4})
+        await delivery.deliver({"channel": "telegram:alerts", "alert_id": started["alert_id"], "version": 4})
         assert len(sent) == 3
 
 
