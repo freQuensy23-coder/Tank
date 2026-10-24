@@ -164,6 +164,7 @@ for (const [index, scenario] of scenarios.entries()) {
     } while (page);
     assert.equal(new Set(collected.map(row => row.id)).size, collected.length, 'duplicate public event IDs');
     latestHistory = collected;
+    await writeFile(join(evidence, 'progress-history-' + round + '.json'), sanitized(JSON.stringify({ sourceSha, runId: process.env.GITHUB_RUN_ID, scenario, events: collected }, null, 2)) + '\n');
     return collected;
   };
   const strings = value => typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap(strings) : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
@@ -185,14 +186,20 @@ for (const [index, scenario] of scenarios.entries()) {
     const memory = await api('/v1/memory_stores/' + memoryStore.id + '/memories', { path: '/note.txt', content: 'seed:' + nonce });
     const memoryContent = () => api('/v1/memory_stores/' + memoryStore.id + '/memories/' + memory.id + '?view=full');
     receipt.memoryStoreId = memoryStore.id;
-    const session = await api('/v1/sessions', { agent: agent.id, environment_id: 'env-local-runtime', resources: [{ type: 'memory_store', memory_store_id: memoryStore.id, name: 'qualification', access: 'read_write' }], metadata: { qualification: prefix } });
+    const session = await api('/v1/sessions', { agent: agent.id, environment_id: 'env-local-runtime', resources: [{ type: 'memory_store', memory_store_id: memoryStore.id, access: 'read_write' }], metadata: { qualification: prefix } });
     receipt.sessionId = session.id;
     const form = new FormData(); form.set('file', new Blob([uploaded]), 'qualification-upload.bin');
     const file = await api('/v1/files', form);
     await api('/v1/sessions/' + session.id + '/resources', { type: 'file', file_id: file.id, mount_path: '/workspace/upload.bin' });
     const send = phase => api('/v1/sessions/' + session.id + '/events', { events: [{ type: 'user.message', content: [{ type: 'text', text: 'TANK_QUALIFICATION_COMMAND:' + Buffer.from(guestCommand(phase, nonce, uploadedHash)).toString('base64') }] }] });
     receipt.initialInput = await send('A');
-    const initialHistory = await waitFor('actual A guest file/browser execution', async () => { const rows = await events(session.id); if (rows.some(row => row.type === 'session.error')) throw Object.assign(Error(JSON.stringify(rows.filter(row => row.type === 'session.error'))), { fatal: true }); return receipts(rows).length >= 1 && rows.some(row => row.type === 'session.status_idle' && row.stop_reason?.type === 'end_turn') ? rows : null; }, 600);
+    const initialHistory = await waitFor('actual A guest file/browser execution', async () => {
+      const rows = await events(session.id);
+      if (rows.some(row => row.type === 'session.error')) throw Object.assign(Error(JSON.stringify(rows.filter(row => row.type === 'session.error'))), { fatal: true });
+      const ended = rows.some(row => row.type === 'session.status_idle' && row.stop_reason?.type === 'end_turn');
+      if (ended && receipts(rows).length === 0) throw Object.assign(Error('A model turn ended without a successful native guest receipt: ' + sanitized(JSON.stringify(rows))), { fatal: true });
+      return receipts(rows).length >= 1 && ended ? rows : null;
+    }, 600);
     receipt.before = publication();
     receipt.nativeBefore = nativeCatalog();
     const memoryBindings = runtimeId => JSON.parse(docker(['exec', activeService, 'node', '--input-type=module', '-e', "import {DatabaseSync} from 'node:sqlite';const db=new DatabaseSync(process.env.BOXLITE_HOME+'/db/boxlite.db',{readOnly:true});const row=db.prepare('SELECT id,name,json FROM box_config WHERE id=?').get(process.argv[1]);if(!row)throw Error('missing actual native catalog row');const data=JSON.parse(row.json);if(data.id!==row.id||data.name!==row.name)throw Error('actual native catalog identity mismatch');console.log(JSON.stringify(data.options.volumes.filter(v=>v.guest_path.startsWith('/mnt/memory/'))));db.close();", runtimeId]));
@@ -254,7 +261,12 @@ for (const [index, scenario] of scenarios.entries()) {
         continue;
       }
     }
-    const history = await waitFor('same-session B upgrade and queued-input completion', async () => { const rows = await events(session.id); return receipts(rows).length >= 3 && rows.filter(row => row.type === 'session.status_idle' && row.stop_reason?.type === 'end_turn').length >= 2 ? rows : null; }, 600);
+    const history = await waitFor('same-session B upgrade and queued-input completion', async () => {
+      const rows = await events(session.id);
+      if (receipts(rows).length >= 3 && rows.filter(row => row.type === 'session.status_idle' && row.stop_reason?.type === 'end_turn').length >= 2) return rows;
+      if (Number(sql("SELECT count(*) FROM managed_session_executions WHERE state IN ('running','queued')")) === 0) throw Object.assign(Error('B inputs settled without complete native receipts: ' + sanitized(JSON.stringify(rows))), { fatal: true });
+      return null;
+    }, 600);
     receipt.after = publication();
     receipt.nativeAfter = nativeCatalog();
     if (receipt.committedBeforeLostAck) assert.deepEqual(receipt.after.handle, receipt.committedBeforeLostAck.handle, 'lost publication acknowledgement caused a second replacement');
