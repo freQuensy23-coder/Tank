@@ -246,6 +246,7 @@ async def test_agent_acceptance_completion_and_failure_are_not_confused_with_app
         "message_log": [
             {
                 "message_id": "m",
+                "retry_count": 0,
                 "payload": {"kind": "NEW_ITEM", "item_id": "i"},
                 "sent_at": iso(),
                 "turn_status": "PENDING",
@@ -403,6 +404,33 @@ async def test_publication_reporting_rejects_missing_reason_before_notice() -> N
             {"event_id": "event"},
             {},
             {"published": False},
+        )
+    assert await repo.list("out.ops_notices") == []
+    assert await repo.list("ops.jobs") == []
+
+
+@pytest.mark.asyncio
+async def test_source_session_reporting_requires_retry_ownership() -> None:
+    from pydantic import ValidationError
+
+    from tank.contracts.progress import ProgressPreferences
+
+    repo = MemoryRepository()
+    await repo.put("ingest.source_items", "item", {"item_id": "item", "source_id": "S30"})
+    with pytest.raises(ValidationError, match="retry_count"):
+        await session_progress(
+            repo,
+            ProgressPreferences(ops_progress_enabled=True, replay=False),
+            {
+                "session_id": "session",
+                "message_log": [
+                    {
+                        "message_id": "message",
+                        "payload": {"kind": "NEW_ITEM", "item_id": "item"},
+                        "turn_status": "DONE",
+                    }
+                ],
+            },
         )
     assert await repo.list("out.ops_notices") == []
     assert await repo.list("ops.jobs") == []

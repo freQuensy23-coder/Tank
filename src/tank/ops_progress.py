@@ -8,6 +8,7 @@ from pydantic import JsonValue
 from tank.contracts.progress import (
     EventObservationSubject,
     EventProgressRepository,
+    ExtractionProgressView,
     ProgressDetails,
     ProgressIdentity,
     ProgressNotice,
@@ -16,6 +17,8 @@ from tank.contracts.progress import (
     ProgressStage,
     ProgressSubject,
     PublicationProgressResult,
+    SessionProgressView,
+    SourceMessageProgress,
     ToolProgressContext,
 )
 from tank.time_precision import collection_clock, offset_schedule
@@ -243,31 +246,73 @@ async def tool_progress(
         )
 
 
-async def session_progress(repo, settings, session):
+def source_message_progress(message: JsonValue) -> SourceMessageProgress | None:
+    if not isinstance(message, dict):
+        raise ValueError("Session progress messages must be JSON objects")
+    payload = message["payload"]
+    if not isinstance(payload, dict) or not isinstance(payload["kind"], str):
+        raise ValueError("Session message payload requires its declared kind")
+    if payload["kind"] not in {"NEW_ITEM", "ITEM_ADDED"}:
+        return None
+    return SourceMessageProgress.model_validate(
+        {
+            **{
+                name: message[name]
+                for name in ("message_id", "retry_count", "turn_status", "sent_at")
+                if name in message
+            },
+            "payload": {
+                name: payload[name]
+                for name in ("kind", "item_id", "event_id", "session_id")
+                if name in payload
+            },
+        }
+    )
+
+
+async def session_progress(
+    repo: ProgressRepository,
+    settings: ProgressSettings,
+    session: Mapping[str, JsonValue],
+) -> None:
     if not enabled(settings):
         return
-    for message in session.get("message_log", []):
-        payload = message.get("payload") or {}
-        if payload.get("kind") not in {"NEW_ITEM", "ITEM_ADDED"}:
-            continue
-        item_id = payload.get("item_id")
-        key = f"{session['session_id']}:{message['message_id']}:{message.get('retry_count', 0)}"
-        status = message.get("turn_status")
-        if status == "FAILED":
+    log = session["message_log"]
+    if not isinstance(log, list):
+        raise ValueError("Session progress requires its durable message log")
+    messages = [source_message_progress(message) for message in log]
+    view = SessionProgressView.model_validate(
+        {
+            **{name: session[name] for name in ("session_id", "event_id") if name in session},
+            "source_messages": [message for message in messages if message is not None],
+        }
+    )
+    for message in view.source_messages:
+        item_id = message.payload.item_id
+        key: str | None = f"{view.session_id}:{message.message_id}:{message.retry_count}"
+        stage: ProgressStage
+        if message.turn_status == "FAILED":
             stage, reason = "PROCESSING_FAILED", "AGENT_EXECUTION_FAILED"
-        elif status == "DONE":
+        elif message.turn_status == "DONE":
             item = await repo.get("ingest.source_items", item_id)
-            if item and item.get("extraction_status") == "SKIPPED":
+            extraction = (
+                ExtractionProgressView.model_validate(
+                    {name: item[name] for name in ("extraction_status", "extraction_reason") if name in item}
+                )
+                if item is not None
+                else None
+            )
+            if extraction is not None and extraction.extraction_status == "SKIPPED":
                 stage = "AGENT_REJECTED"
-                reason = item.get("extraction_reason") or ""
+                reason = extraction.extraction_reason if extraction.extraction_reason is not None else ""
                 key = None
             else:
                 stage, reason = "AGENT_COMPLETED", ""
-        elif message.get("sent_at"):
+        elif message.sent_at is not None:
             stage, reason = "AGENT_ACCEPTED", "Ожидается результат анализа"
         else:
             continue
-        await item_progress(repo, settings, item_id, stage, reason, event_id=session.get("event_id"), key=key)
+        await item_progress(repo, settings, item_id, stage, reason, event_id=view.event_id, key=key)
 
 
 async def job_failure_progress(repo, settings, job, reason):

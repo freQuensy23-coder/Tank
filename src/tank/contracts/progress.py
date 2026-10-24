@@ -7,7 +7,7 @@ from typing import Literal, Protocol, Self
 from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
-from tank.contracts.source_items import SourceContextId
+from tank.contracts.source_items import SourceContextId, SourceRoutingMessage
 from tank.time_precision import Timestamp
 
 type ProgressStage = Literal[
@@ -192,3 +192,22 @@ class PublicationProgressResult(DomainModel):
         if self.published and (self.alert_id is None or self.version is None):
             raise ValueError("Published progress requires its card identity and version")
         return self
+
+
+class SourceMessageProgress(DomainModel):
+    message_id: SourceContextId
+    payload: SourceRoutingMessage
+    retry_count: int = Field(ge=0)
+    turn_status: Literal["ACCEPTING", "PENDING", "RUNNING", "DONE", "FAILED"]
+    sent_at: str | None = None
+
+
+class SessionProgressView(DomainModel):
+    session_id: SourceContextId
+    event_id: SourceContextId | None = None
+    source_messages: list[SourceMessageProgress]
+
+
+class ExtractionProgressView(DomainModel):
+    extraction_status: Literal["PENDING", "RUNNING", "DONE", "SKIPPED", "FAILED"]
+    extraction_reason: str | None = None
