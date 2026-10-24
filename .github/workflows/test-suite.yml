@@ -222,3 +222,5 @@ jobs:
           TANK_FILE_IO_TEST_PYTHON: /usr/bin/python3.12
       - name: Local JavaScript contracts
         run: node scripts/test-node.mjs local-contract
+      - name: Sandbox qualification evidence gate regressions
+        run: node --test scripts/ci/qualification-evidence.test.mjs

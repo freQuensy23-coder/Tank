@@ -255,6 +255,103 @@ jobs:
           path: ${{ runner.temp }}/sandbox-qualification/
           if-no-files-found: error
 
+  sandbox-native:
+    name: Real isolated KVM Managed API A-to-B runs
+    if: github.event_name == 'workflow_dispatch' && inputs.sandbox-qualification
+    needs: sandbox-kvm-prerequisites
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24.22.0"
+          package-manager-cache: false
+      - name: Prove KVM in the actual qualification executor
+        run: node scripts/ci/kvm-preflight.mjs
+        env:
+          TANK_QUALIFICATION_EVIDENCE: ${{ runner.temp }}/sandbox-qualification
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Build the shipping sandbox as a coherent amd64 OCI layout
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: deploy/sandbox.Dockerfile
+          platforms: linux/amd64
+          provenance: false
+          outputs: type=oci,dest=${{ runner.temp }}/sandbox-base.tar
+          cache-from: type=gha,scope=tank-sandbox
+      - name: Build genuine executable and Python-package A and B image layers
+        run: |
+          mkdir -p "$RUNNER_TEMP/sandbox-base"
+          tar -xf "$RUNNER_TEMP/sandbox-base.tar" -C "$RUNNER_TEMP/sandbox-base"
+          rm "$RUNNER_TEMP/sandbox-base.tar"
+          for version in A B; do
+            docker buildx build --platform linux/amd64 --provenance=false \
+              --build-context "sandbox=oci-layout://$RUNNER_TEMP/sandbox-base" \
+              --file scripts/ci/qualification-sandbox.Dockerfile \
+              --build-arg "IMAGE_VERSION=$version" \
+              --output "type=oci,dest=$RUNNER_TEMP/sandbox-$version.tar" .
+            mkdir -p "$RUNNER_TEMP/sandbox-$version"
+            tar -xf "$RUNNER_TEMP/sandbox-$version.tar" -C "$RUNNER_TEMP/sandbox-$version"
+            rm "$RUNNER_TEMP/sandbox-$version.tar"
+          done
+      - name: Build and load the exact candidate OpenMA service
+        id: candidate
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: vendor/openma
+          file: vendor/openma/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          build-contexts: sandbox=${{ runner.temp }}/sandbox-A
+          build-args: SKIP_CONSOLE=1
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+          tags: tank-qualification:${{ github.sha }}
+          cache-from: type=gha,scope=tank-openma
+      - name: Execute two real same-session native upgrades using only fresh owned services
+        run: node scripts/ci/managed-upgrade-qualification.mjs
+        env:
+          TANK_QUALIFICATION_IMAGE: ${{ steps.candidate.outputs.imageid }}
+          TANK_QUALIFICATION_EVIDENCE: ${{ runner.temp }}/sandbox-qualification
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: sandbox-native-${{ github.sha }}
+          path: ${{ runner.temp }}/sandbox-qualification/
+          if-no-files-found: error
+
+  sandbox-acceptance:
+    name: Sandbox upgrade acceptance
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.sandbox-qualification
+    needs: [sandbox-kvm-prerequisites, sandbox-vendored, sandbox-native]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Refuse failed or skipped prerequisites and native executions
+        env:
+          KVM_RESULT: ${{ needs.sandbox-kvm-prerequisites.result }}
+          VENDORED_RESULT: ${{ needs.sandbox-vendored.result }}
+          NATIVE_RESULT: ${{ needs.sandbox-native.result }}
+        run: |
+          test "$KVM_RESULT" = success
+          test "$VENDORED_RESULT" = success
+          test "$NATIVE_RESULT" = success
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: sandbox-native-${{ github.sha }}
+          path: ${{ runner.temp }}/sandbox-native-evidence
+      - name: Require complete exact-head native evidence, never a partial green
+        run: node scripts/ci/check-sandbox-acceptance.mjs
+        env:
+          TANK_QUALIFICATION_EVIDENCE: ${{ runner.temp }}/sandbox-native-evidence
+
   publish:
     if: github.event_name == 'push'
     needs: [lint-python, lint-go, mypy, test, capture, image]
