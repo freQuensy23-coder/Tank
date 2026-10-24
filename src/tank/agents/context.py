@@ -180,8 +180,8 @@ CONTEXT_TRANSITION = {
         "instructions that cite records by description. record_review cites evidence only by ID - {claim_id}, "
         "{event_id} or {item_id} - and names a duplicate in duplicate_of by its proposal ID; the current proposal "
         "stays implicit. Registry objects read «Name · key»; search_tank_items.source_ids take the key after « · ». "
-        "Your sandbox shell is now enabled, only for read-only SQL lookups of record IDs "
-        '(psql "$TANK_DB_URL" -Atc "<query>"); this replaces the earlier rule to use only web_search, '
+        "OpenMA's full built-in toolset is now enabled for you: shell, programs, files, browser, web search and fetch "
+        '(record IDs: psql "$TANK_DB_URL" -Atc "<query>"); this replaces the earlier rule to use only web_search, '
         "search_tank_items and record_review. Finding record IDs: "
         "«Proposals by subject»: SELECT prp_id, concept_name, document->'evidence' FROM scout.expansion_proposals "
         "WHERE human_action IS NULL AND strpos(lower(concept_name), lower('<words>')) > 0 ORDER BY prp_id. "

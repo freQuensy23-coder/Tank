@@ -81,21 +81,11 @@ def model_card(model_id):
 
 
 def agent_tools(settings, name):
-    """The agent's toolset; the scout's sandbox runs only bash, for read-only SQL lookups of record IDs."""
+    """Every agent gets OpenMA's full built-in toolset next to its own Tank tools."""
     tools = settings.read_config_json(f"skills/{name}/tools.json")
-    scout = name == "tank-scout-reviewer"
-    return [
-        {
-            "type": "agent_toolset_20260401",
-            "default_config": {"enabled": not scout},
-            "configs": [
-                {"name": n, "enabled": False}
-                for n in ["web_search", "web_fetch", "schedule", "cancel_schedule", "list_schedules"]
-            ]
-            + [{"name": "browser", "enabled": not scout}]
-            + ([{"name": "bash", "enabled": True}] if scout else []),
-        }
-    ] + [dict(type="custom", **tool) for tool in tools]
+    return [{"type": "agent_toolset_20260401", "default_config": {"enabled": True}, "configs": []}] + [
+        dict(type="custom", **tool) for tool in tools
+    ]
 
 
 def agent_payload(settings, config, name, skills):

@@ -129,13 +129,13 @@ async def test_legacy_callbacks_upgrade_before_delivery_and_new_turns_reject_ids
         "«Source document by URL»",
     ):
         assert lookup in text
-    assert ("Your sandbox shell is now enabled" in text) is scout
+    assert ("full built-in toolset is now enabled" in text) is scout
     assert ("Finding record IDs for tool arguments" in text) is not scout
     assert current["context_note_version"] == CONTEXT_VERSION
     assert event["event_id"] not in text and item["item_id"] not in text
     assert native.tools == agent_tools(settings, "tank-scout-reviewer" if scout else "tank-event-analyst")
-    assert native.tools[0]["default_config"]["enabled"] is not scout
-    assert ({"name": "bash", "enabled": True} in native.tools[0]["configs"]) is scout
+    assert native.tools[0]["default_config"]["enabled"] is True
+    assert native.tools[0]["configs"] == []
 
 
 async def test_old_description_call_in_a_legacy_turn_is_refused_once_and_the_id_call_runs(legacy):
