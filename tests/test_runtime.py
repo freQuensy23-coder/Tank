@@ -492,9 +492,19 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
     config.mkdir()
     backup = tmp_path / "backup"
     backup.mkdir()
-    for name in ("sources", "registry", "semantics", "dependency_map", "exchange_addresses"):
+    for name in ("registry", "semantics", "dependency_map", "exchange_addresses"):
         (config / f"{name}.yaml").write_text("{}\n")
     import yaml
+
+    (config / "sources.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": "reload-fixture",
+                "contact_email": "runtime@example.test",
+                "sources": [],
+            }
+        )
+    )
 
     thresholds = config / "thresholds.yaml"
     threshold_values = Settings(_env_file=None).thresholds().model_dump(mode="json")

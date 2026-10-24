@@ -5,7 +5,9 @@ import os
 from types import SimpleNamespace
 
 import pytest
+from pydantic import JsonValue
 
+from tank.agents.jev import JevState
 from tank.agents.pipeline import Pipeline
 from tank.util import iso, new_id
 
@@ -96,9 +98,11 @@ async def test_independent_routing_calls_overlap_preserve_source_updates_and_ded
     pipe = Pipeline(repo, opts, http=object())
     arrived, release, both_blocked = set(), asyncio.Event(), asyncio.Event()
 
-    async def score(item, name, state):
-        assert state["event"]["statement"] == marker
-        arrived.add(item["item_id"])
+    async def score(item: dict[str, JsonValue], name: str, state: JevState) -> float:
+        assert state.event is not None and state.event.statement == marker
+        item_id = item["item_id"]
+        assert isinstance(item_id, str)
+        arrived.add(item_id)
         if len(arrived) == 2:
             both_blocked.set()
         await release.wait()

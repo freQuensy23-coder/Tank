@@ -286,3 +286,11 @@ The new tool-path privacy case and focused security/provider/gateway unit
 cases pass:33 tests,zero skips,1.52 seconds. Existing actual gateway integration
 coverage includes credential-bearing provider exceptions and malformed refresh
 responses.
+
+
+The two integrated-check-5 fixture corrections are isolated: reload configuration
+now supplies the complete declared source-config root while preserving snapshot
+and malformed-edit assertions; the PostgreSQL score callback reads JevState
+attributes, so it reaches the overlap barrier. The reload unit case passes in
+1.50 seconds. All seven actual routing PostgreSQL integration cases pass in
+3.15 seconds via the guarded runner, zero skips; timeout budgets are unchanged.
