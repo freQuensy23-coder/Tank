@@ -3,7 +3,7 @@
 import json
 import re
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from urllib.parse import urljoin, urlsplit
 
@@ -14,7 +14,7 @@ from selectolax.parser import HTMLParser
 from tank.contracts.source_items import discovered_item
 from tank.contracts.sources import FeedParsingSpec
 from tank.time_precision import Timestamp
-from tank.util import iso, sha256
+from tank.util import EpochUnit, iso, parse_epoch, parse_utc_time, sha256
 
 
 def text(html):
@@ -26,28 +26,48 @@ def text(html):
     return " ".join(tree.text(separator=" ").split())
 
 
-def published(value):
+type PublicationInput = str | int | float | datetime | None
+
+
+def published(value: PublicationInput, *, epoch_unit: EpochUnit | None = None) -> str | None:
     if value is None or isinstance(value, bool):
         return None
     try:
-        if isinstance(value, (int, float)) or re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", str(value)):
-            return iso(value)
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(value)):
-            return iso(value)
-        try:
-            instant = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
-        except ValueError:
-            instant = parsedate_to_datetime(str(value))
-
+        if isinstance(value, (int, float)):
+            return iso(parse_epoch(value, unit=epoch_unit)) if epoch_unit is not None else None
+        if isinstance(value, str):
+            if re.fullmatch(r"[+-]?[0-9]+(?:\.[0-9]+)?", value):
+                return iso(parse_epoch(value, unit=epoch_unit)) if epoch_unit is not None else None
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+                return iso(parse_utc_time(value))
+            try:
+                instant = datetime.fromisoformat(value)
+            except ValueError:
+                instant = parsedate_to_datetime(value)
+        elif isinstance(value, datetime):
+            instant = value
+        else:
+            return None
         return iso(instant) if instant.tzinfo is not None else None
     except (ValueError, TypeError, OverflowError):
         return None
 
 
-def timestamp_fields(value, name="published_at", *, date_only=False):
-    """Read a provider field's declared calendar day or timestamp semantics."""
-    normalized = published(value)
-    day = date_only or bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(value or "")))
+def preferred_publication(primary: PublicationInput, alternate: PublicationInput) -> PublicationInput:
+    """Prefer the declared field while preserving a valid zero epoch value."""
+    return primary if primary is not None else alternate
+
+
+def timestamp_fields(
+    value: PublicationInput,
+    name: str = "published_at",
+    *,
+    date_only: bool = False,
+    epoch_unit: EpochUnit | None = None,
+) -> dict[str, str | int | None]:
+    """Decode declared provider epoch units or calendar-day/offset-bearing publication semantics."""
+    normalized = published(value, epoch_unit=epoch_unit)
+    day = date_only or (isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) is not None)
     precision = (
         "BUCKET(1d)"
         if normalized and day
@@ -59,7 +79,6 @@ def timestamp_fields(value, name="published_at", *, date_only=False):
     )
     reason = None if normalized else "INCOMPLETE" if value is None else "UNVERIFIED_SEMANTICS"
     fields = Timestamp(normalized, precision, reason).fields(name)
-
     fields[name + "_precision"] = precision
     return fields
 
@@ -377,7 +396,12 @@ def article(payload, *, source_id=None):
             }
             if len(dates) == 1:
                 try:
-                    timestamp = datetime.strptime(next(iter(dates)), "%b %d, %Y").date().isoformat()
+                    timestamp = (
+                        datetime.strptime(next(iter(dates)), "%b %d, %Y")
+                        .replace(tzinfo=UTC)
+                        .date()
+                        .isoformat()
+                    )
                     basis = "DTCC_CALENDAR_MASTHEAD"
                 except ValueError:
                     pass
@@ -397,7 +421,11 @@ def article(payload, *, source_id=None):
             elif not designated and len(times) == 1:
                 timestamp = times[0].attributes.get("datetime")
                 basis = "ARTICLE_TIME_ELEMENT"
-    fields = timestamp_fields(timestamp, date_only=basis == "BLACKROCK_CALENDAR_PUBLICATION_META")
+    fields = timestamp_fields(
+        timestamp,
+        date_only=basis == "BLACKROCK_CALENDAR_PUBLICATION_META",
+        epoch_unit="ms" if basis == "BLACKROCK_CALENDAR_PUBLICATION_META" else None,
+    )
     return {
         "title": title,
         "text": body_text if body_text is not None else text(body.html if body else payload),
@@ -514,7 +542,9 @@ def _json_items(payload, source_id):
                 "title": r["title"],
                 "text": text(r.get("body", "")),
                 "url": "https://www.binance.com/en/support/announcement/" + r["code"],
-                **timestamp_fields(r.get("releaseDate") or r.get("publishDate")),
+                **timestamp_fields(
+                    preferred_publication(r.get("releaseDate"), r.get("publishDate")), epoch_unit="ms"
+                ),
             }
             for r in rows
         ]
@@ -528,9 +558,9 @@ def _json_items(payload, source_id):
                 "title": r["title"],
                 "text": r.get("title", ""),
                 "url": r["url"],
-                **timestamp_fields(r["pTime"]),
+                **timestamp_fields(r["pTime"], epoch_unit="ms"),
                 "announcement_type": r.get("annType"),
-                **timestamp_fields(r.get("businessPTime"), "business_published_at"),
+                **timestamp_fields(r.get("businessPTime"), "business_published_at", epoch_unit="ms"),
             }
             for r in rows
         ]
@@ -543,7 +573,9 @@ def _json_items(payload, source_id):
                 "title": r["title"],
                 "text": BYBIT_BOILERPLATE.sub("", text(r.get("description", ""))).strip() or r["title"],
                 "url": r["url"],
-                **timestamp_fields(r.get("publishTime") or r.get("dateTimestamp")),
+                **timestamp_fields(
+                    preferred_publication(r.get("publishTime"), r.get("dateTimestamp")), epoch_unit="ms"
+                ),
                 "tags": r.get("tags"),
                 "announcement_type": r.get("type"),
             }
@@ -577,8 +609,8 @@ def _json_items(payload, source_id):
                 + "; total: "
                 + str(r["scores_total"]),
                 "url": "https://snapshot.org/#/" + r["space"]["id"] + "/proposal/" + r["id"],
-                **timestamp_fields(r.get("created", r["start"])),
-                **timestamp_fields(r["end"], "end"),
+                **timestamp_fields(r.get("created", r["start"]), epoch_unit="s"),
+                **timestamp_fields(r["end"], "end", epoch_unit="s"),
                 "scores": r["scores"],
                 "scores_total": r["scores_total"],
             }

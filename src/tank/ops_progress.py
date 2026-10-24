@@ -24,7 +24,7 @@ from tank.contracts.progress import (
     ToolProgressContext,
 )
 from tank.time_precision import collection_clock, offset_schedule
-from tank.util import iso, sha256
+from tank.util import clock_iso, sha256
 
 STAGES = {
     "ANALYSIS_UPDATED": "Обновлён результат анализа",
@@ -96,7 +96,7 @@ async def item_progress(
     async with repo.lock("ops-progress:" + notice_id), repo.transaction():
         if await repo.get("out.ops_notices", notice_id) is not None:
             return
-        created_at = iso()
+        created_at = clock_iso()
         stamp = collection_clock(created_at)
         notice = ProgressNotice(
             notice_id=notice_id,
