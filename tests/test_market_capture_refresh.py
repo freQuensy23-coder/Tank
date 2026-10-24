@@ -278,6 +278,10 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
 
 
 async def test_runtime_waits_for_capture_release_before_numerical_assessment() -> None:
+    from tank.runtime_contracts import MarketTruthJob
+
+    from tank.analysis.truth_contracts import MarketTruthAssessmentRef
+
     repo = MemoryRepository()
     await repo.put("evt.events", "e", {"event_id": "e", "public_at": iso(), "known_to_us_at": iso()})
     waiting, release = asyncio.Event(), asyncio.Event()
@@ -287,18 +291,47 @@ async def test_runtime_waits_for_capture_release_before_numerical_assessment() -
         waiting.set()
         await release.wait()
 
+    reference = MarketTruthAssessmentRef(
+        mta_id="MTA-released",
+        event_id="e",
+        token_id="T",
+        cutoff="2026-06-17T04:00:00Z",
+        cutoff_prec="EXACT",
+        cutoff_prec_reason=None,
+    )
     runtime = object.__new__(Runtime)
     runtime.repo = repo
     runtime.market = SimpleNamespace(
-        capture_readiness=AsyncMock(return_value={"status": "RUNNING"}), wait_capture=wait_capture
+        capture_readiness=AsyncMock(return_value={"status": "RUNNING"}),
+        wait_capture=wait_capture,
+        repair_windows=AsyncMock(return_value=None),
     )
-    runtime.truth = SimpleNamespace(assess=AsyncMock(return_value={"measured": True}))
-    job = asyncio.create_task(runtime.assess({"event_id": "e", "token_id": "T"}))
-    await waiting.wait()
-    runtime.truth.assess.assert_not_called()
-    release.set()
-    assert await job == {"measured": True}
-    runtime.truth.assess.assert_awaited_once()
+    runtime.truth = SimpleNamespace(assess_for_job=AsyncMock(return_value=reference))
+    payload = MarketTruthJob(
+        event_id="e",
+        token_id="T",
+        cutoff=reference.cutoff,
+        cutoff_prec=reference.cutoff_prec,
+        cutoff_prec_reason=reference.cutoff_prec_reason,
+    )
+    job = asyncio.create_task(runtime.assess(payload))
+    observing = asyncio.create_task(waiting.wait())
+    try:
+        done, _ = await asyncio.wait((job, observing), return_when=asyncio.FIRST_COMPLETED)
+        if job in done:
+            await job
+            pytest.fail("Assessment completed before the required capture release")
+        runtime.truth.assess_for_job.assert_not_called()
+        release.set()
+        assert await job == reference
+        runtime.truth.assess_for_job.assert_awaited_once()
+    finally:
+        release.set()
+        if not job.done():
+            job.cancel()
+        if not observing.done():
+            observing.cancel()
+        await asyncio.gather(job, observing, return_exceptions=True)
 
 
 @pytest.mark.parametrize(
