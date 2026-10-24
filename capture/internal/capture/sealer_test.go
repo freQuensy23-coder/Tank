@@ -276,6 +276,29 @@ func TestReconnectBridgeKeepsMinutesOpenUntilRepaired(t *testing.T) {
 	}
 }
 
+func TestQuietMinuteOfADisconnectSealsIncomplete(t *testing.T) {
+	r := newRig(t, "bybit", "SPOT")
+	base := r.clock.t
+	r.s.Connected(r.inst, 1, base, nil)
+	r.s.Trade(r.inst, r.trade(1, at(base, 10)), 1)
+	r.clock.set(at(base, 40))
+	r.s.Disconnected(r.inst, 1, "STREAM_DISCONNECTED: NO_MESSAGE_FOR_30_SECONDS")
+	bridge := r.s.Connected(r.inst, 2, at(base, 150), nil)
+	r.s.Trade(r.inst, r.trade(9, at(base, 185)), 2)
+	r.s.RepairDone(r.inst.ID, bridge.start, bridge.end)
+	r.tick(at(base, 250))
+	row := r.last(minuteOf(base, 1))
+	if row == nil || row["complete"] != false || row["zero_trade_minute"] != true {
+		t.Fatalf("a minute with no prints while the stream was down is written incomplete, not left out: %v", row)
+	}
+	if reason, _ := row["gap_reason"].(string); reason != "STREAM_DISCONNECTED: NO_MESSAGE_FOR_30_SECONDS" {
+		t.Fatalf("the quiet minute carries the disconnect reason: %v", row["gap_reason"])
+	}
+	if row := r.last(base); row["complete"] != false {
+		t.Fatalf("the minute the stream dropped in stays incomplete: %v", row)
+	}
+}
+
 func TestPrintBeforeFirstConnectionTakesStoredPath(t *testing.T) {
 	r := newRig(t, "coinbase", "SPOT")
 	base := r.clock.t

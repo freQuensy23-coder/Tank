@@ -2,6 +2,7 @@ package capture
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -72,5 +73,25 @@ func TestCaptureRequestRepairsWithinBudget(t *testing.T) {
 	}
 	if done["CR-2"]["status"] != "EXPIRED" {
 		t.Fatalf("a request past its deadline is expired, not run: %v", done["CR-2"])
+	}
+}
+
+func TestKlineAuditsSpreadAcrossTheHour(t *testing.T) {
+	order := make([]string, 51)
+	for i := range order {
+		order[i] = "venue:spot:I" + strconv.Itoa(i)
+	}
+	s := &Service{opt: Options{Order: order}}
+	seen := map[time.Duration]bool{}
+	var last time.Duration
+	for _, iid := range order {
+		d := s.auditOffset(iid)
+		if d < time.Minute || d >= time.Minute+time.Hour || seen[d] {
+			t.Fatalf("every instrument audits at its own point inside the first hour: %s at %v", iid, d)
+		}
+		if d-last > 0 && last > 0 && d-last < time.Minute {
+			t.Fatalf("neighbouring audits start at least a minute apart: %v after %v", d, last)
+		}
+		seen[d], last = true, d
 	}
 }

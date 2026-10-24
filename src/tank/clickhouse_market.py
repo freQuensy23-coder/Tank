@@ -269,18 +269,22 @@ def _table(collection):
 async def _select(ch, collection, q, order, tail="", selected="*"):
     day = MARKET_TABLES[collection]
     keys = await ch.rows(
-        f"SELECT storage_key, `{day}` AS _day FROM {_table(collection)} WHERE {q.predicate()} ORDER BY {order} {tail}",
+        f"SELECT storage_key, instrument_id, `{day}` AS _day FROM {_table(collection)} "
+        f"WHERE {q.predicate()} ORDER BY {order} {tail}",
         q.params,
     )
     if not keys:
         return []
     days = [parse_time(r["_day"]) for r in keys]
     k = Query()
+    k.where(f"instrument_id IN {k.param(sorted({r['instrument_id'] for r in keys}), 'Array(String)')}")
     k.where(f"`{day}` >= {k.param(min(days), DT)}")
     k.where(f"`{day}` <= {k.param(max(days), DT)}")
     k.where(f"storage_key IN {k.param([r['storage_key'] for r in keys], 'Array(String)')}")
     return await ch.rows(
-        f"SELECT {selected} FROM {_table(collection)} WHERE {k.predicate()} ORDER BY {order}", k.params
+        f"SELECT {selected} FROM {_table(collection)} WHERE {k.predicate()} ORDER BY {order} "
+        "SETTINGS use_skip_indexes_if_final = 0",
+        k.params,
     )
 
 

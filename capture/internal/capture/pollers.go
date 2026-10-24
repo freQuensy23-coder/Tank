@@ -456,7 +456,7 @@ func floatText(f float64) (string, error) {
 func (s *Service) instrumentLoop(ctx context.Context, inst *venue.Instrument) {
 	iid := inst.ID
 	var derivDue, tickerDue time.Duration
-	auditDue := s.clock.Monotonic() + 60*time.Second
+	auditDue := s.clock.Monotonic() + s.auditOffset(iid)
 	for ctx.Err() == nil {
 		started := s.clock.Monotonic()
 		_, hot := s.hot(inst.TokenID)
@@ -466,10 +466,7 @@ func (s *Service) instrumentLoop(ctx context.Context, inst *venue.Instrument) {
 		s.poll(ctx, iid, pollKinds{derivatives: doDeriv, klines: true, ticker: doTicker}, 0)
 		if s.clock.Monotonic() >= auditDue {
 			auditDue = s.clock.Monotonic() + time.Duration(s.opt.Threshold("kline_audit_interval_s", 3600)*float64(time.Second))
-			now := pytime.MinuteFloor(s.clock.Now())
-			if _, err := s.backfillKlines(ctx, s.instrument(iid), now.Add(-25*time.Hour), now, false, "KLINES_GAP"); err != nil && err != ErrStopped {
-				s.gap(inst, "KLINES_GAP", err.Error(), nil, nil)
-			}
+			s.auditKlines(ctx, inst)
 		}
 		if doDeriv {
 			derivDue = s.clock.Monotonic() + time.Duration(s.opt.Threshold("base_oi_funding_interval_s", 300)*float64(time.Second))
@@ -485,6 +482,30 @@ func (s *Service) instrumentLoop(ctx context.Context, inst *venue.Instrument) {
 		case <-ctx.Done():
 		case <-time.After(wait):
 		}
+	}
+}
+
+func (s *Service) auditOffset(iid string) time.Duration {
+	interval := s.opt.Threshold("kline_audit_interval_s", 3600)
+	slot := 0
+	for i, id := range s.opt.Order {
+		if id == iid {
+			slot = i
+			break
+		}
+	}
+	return time.Minute + time.Duration(interval*float64(slot)/float64(max(len(s.opt.Order), 1))*float64(time.Second))
+}
+
+func (s *Service) auditKlines(ctx context.Context, inst *venue.Instrument) {
+	release, err := s.repairSlot(ctx)
+	if err != nil {
+		return
+	}
+	defer release()
+	now := pytime.MinuteFloor(s.clock.Now())
+	if _, err := s.backfillKlines(ctx, s.instrument(inst.ID), now.Add(-25*time.Hour), now, false, "KLINES_GAP"); err != nil && err != ErrStopped {
+		s.gap(inst, "KLINES_GAP", err.Error(), nil, nil)
 	}
 }
 
