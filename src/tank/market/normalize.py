@@ -6,6 +6,7 @@ from decimal import Decimal, localcontext
 from functools import wraps
 from inspect import iscoroutinefunction
 
+from tank.market.funding import FundingObservation
 from tank.time_precision import collection_clock, propagate_timestamp
 from tank.util import canonical_json, iso, jsonable, parse_time
 
@@ -401,7 +402,11 @@ def funding(instrument, raw, *, kind, interval_h, received_ts=None):
             raw["fundingTime"] if kind == "SETTLED" else raw.get("time", raw.get("E", received_ts or iso()))
         )
     elif key.startswith("okx"):
-        rate = raw.get("realizedRate") or raw["fundingRate"] if kind == "SETTLED" else raw["fundingRate"]
+        rate = (
+            raw["realizedRate"]
+            if kind == "SETTLED" and raw.get("realizedRate") is not None
+            else raw["fundingRate"]
+        )
         timestamp = raw["fundingTime"] if kind == "SETTLED" else raw.get("ts", received_ts or iso())
     elif key.startswith("bybit"):
         rate = raw["fundingRate"]
@@ -420,14 +425,24 @@ def funding(instrument, raw, *, kind, interval_h, received_ts=None):
         or key.startswith("hyperliquid")
         and raw.get("time") is not None
     )
+    observation = FundingObservation(
+        instrument_id=instrument["instrument_id"],
+        token_id=instrument["token_id"],
+        kind=kind,
+        rate=rate,
+        interval_h=interval,
+        timestamp=iso(timestamp),
+        source_clock=source_clock,
+        metric_key=key + ".funding",
+    )
     return jsonable(
         dict(
-            instrument_id=instrument["instrument_id"],
-            token_id=instrument["token_id"],
-            kind=kind,
-            rate=rate,
-            interval_h=interval,
-            rate_8h_eq=rate * 8 / interval,
+            instrument_id=observation.instrument_id,
+            token_id=observation.token_id,
+            kind=observation.kind,
+            rate=observation.rate,
+            interval_h=observation.interval_h,
+            rate_8h_eq=observation.rate_8h_eq,
             **timestamp_fields("as_of", timestamp, "EXACT" if source_clock else "COLLECTION_ONLY"),
             **(
                 {
