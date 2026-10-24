@@ -1,12 +1,14 @@
 import os
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
 
 import pytest
 from postgres_helpers import PostgresTemplate
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 
 from tank.market.capture_contracts import (
+    CaptureCadences,
     CapturePolicy,
     NewBackfillRequest,
     NewRepairRequest,
@@ -15,6 +17,7 @@ from tank.market.capture_contracts import (
     TokenEscalation,
 )
 from tank.market.capture_lifecycle import CaptureLifecycle
+from tank.market.capture_ports import CaptureInvariantError
 from tank.market.capture_repository import CaptureRepository
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -260,3 +263,53 @@ async def test_capture_control_requests_round_trip_actual_postgres(
         assert queued.budget_s == "20"
         assert queued.started_at is None
         assert await repo.repair("REQ-peer") == queued
+
+
+def test_cadence_policy_cannot_drop_a_supply_kind() -> None:
+    with pytest.raises(ValidationError, match="every supply kind"):
+        CaptureCadences(
+            oi_funding_s=60.0, kline_s=60.0, book_s=10.0, supply_by_kind={"EXCHANGE_INVENTORY": 900}
+        )
+
+
+@pytest.mark.asyncio
+async def test_idempotent_control_write_returns_the_existing_durable_obligation() -> None:
+    store = MemoryRepository()
+    repo = repository(store)
+    request = NewBackfillRequest(
+        backfill_id="BF-repeat",
+        event_id="EVT-repeat",
+        token_id="TOKEN-test",
+        anchor=observed(),
+        requested_at=observed(),
+    )
+    initial = await repo.request_backfill(request)
+    repeated = await repo.request_backfill(request)
+    assert repeated == initial
+    assert len(await repo.backfills("TOKEN-test", "EVT-repeat")) == 1
+
+
+class LostAcknowledgementStore(MemoryRepository):
+    async def put_market_batch(
+        self,
+        collection: str,
+        records: Iterable[Mapping[str, JsonValue]],
+        *,
+        keys: Sequence[str] | None = None,
+    ) -> list[dict[str, JsonValue]]:
+        return []
+
+
+@pytest.mark.asyncio
+async def test_acknowledged_control_write_without_durable_row_fails() -> None:
+    repo = repository(LostAcknowledgementStore())
+    with pytest.raises(CaptureInvariantError, match="no durable record"):
+        await repo.request_backfill(
+            NewBackfillRequest(
+                backfill_id="BF-lost",
+                event_id="EVT-test",
+                token_id="TOKEN-test",
+                anchor=observed(),
+                requested_at=observed(),
+            )
+        )
