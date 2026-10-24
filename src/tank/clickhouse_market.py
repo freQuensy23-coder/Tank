@@ -16,11 +16,15 @@ import re
 import time
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Literal, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
+from pydantic import JsonValue
 
+from tank.contracts.json import decode_json
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES
+from tank.settings import Settings
 from tank.util import canonical_json, iso, parse_time
 
 MARKET_TABLES = {
@@ -82,7 +86,7 @@ CODECS = {"timestamptz": TIME_CODEC, "boolean": "", "bigint": "CODEC(Delta, ZSTD
 TRADES_TTL_DAYS = 30
 
 
-def ddl():
+def ddl() -> list[str]:
     """Idempotent statements creating the mkt database and its tables."""
     statements = ["CREATE DATABASE IF NOT EXISTS mkt"]
     for collection, part in MARKET_TABLES.items():
@@ -115,19 +119,30 @@ def ddl():
 class ClickHouse:
     """A small async client of the ClickHouse HTTP interface (server-side parameters)."""
 
-    def __init__(self, url, *, password=None, http=None, database="mkt"):
+    def __init__(
+        self,
+        url: str,
+        *,
+        password: str | None = None,
+        http: httpx.AsyncClient | None = None,
+        database: str = "mkt",
+    ) -> None:
         self.database = database
         parts = urlsplit(url)
-        self.user = parts.username or "default"
-        self.password = password if password is not None else (parts.password or "")
+        self.user = "default" if parts.username is None else parts.username
+        self.password = (
+            password if password is not None else ("" if parts.password is None else parts.password)
+        )
+        if parts.scheme not in {"http", "https"} or parts.hostname is None:
+            raise ValueError("ClickHouse URL requires an HTTP(S) scheme and host")
         netloc = parts.hostname + (f":{parts.port}" if parts.port else "")
-        self.base = urlunsplit((parts.scheme or "http", netloc, "/", "", ""))
-        self.http = http or httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10))
+        self.base = urlunsplit((parts.scheme, netloc, "/", "", ""))
+        self.http = httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) if http is None else http
 
-    async def close(self):
+    async def close(self) -> None:
         await self.http.aclose()
 
-    async def _post(self, query, params):
+    async def _post(self, query: str, params: dict[str, tuple[str, str]] | None) -> bytes:
         request = {
             "date_time_output_format": "iso",
             "output_format_json_quote_64bit_integers": "0",
@@ -148,23 +163,33 @@ class ClickHouse:
             raise RuntimeError(f"ClickHouse {response.status_code}: {response.text[:500]}")
         return response.content
 
-    async def rows(self, query, params=None):
+    async def rows(
+        self, query: str, params: dict[str, tuple[str, str]] | None = None
+    ) -> list[dict[str, JsonValue]]:
         body = await self._post(query + " FORMAT JSONEachRow", params)
         if len(body) > 1_000_000:
             return await asyncio.to_thread(_json_lines, body)
         return _json_lines(body)
 
-    async def execute(self, query, params=None):
+    async def execute(self, query: str, params: dict[str, tuple[str, str]] | None = None) -> None:
         await self._post(query, params)
 
-    async def insert(self, table, rows):
+    async def insert(self, table: str, rows: list[dict[str, JsonValue]]) -> None:
         if rows:
             body = "\n".join(json.dumps(row) for row in rows)
             await self._post(f"INSERT INTO {table} FORMAT JSONEachRow\n{body}", None)
 
 
-def _json_lines(body):
-    return [json.loads(line) for line in body.splitlines() if line]
+def _json_lines(body: bytes) -> list[dict[str, JsonValue]]:
+    rows: list[dict[str, JsonValue]] = []
+    for line in body.splitlines():
+        if not line:
+            continue
+        value = decode_json(line)
+        if not isinstance(value, dict):
+            raise ValueError("ClickHouse JSONEachRow must contain objects")
+        rows.append(value)
+    return rows
 
 
 def _literal(value):
@@ -247,7 +272,7 @@ def _ids(q, instrument_ids):
 
 def _record(collection, row):
     """A ClickHouse row as the typed values a PostgreSQL row carries (then decode)."""
-    from tank.market_storage import decode
+    from tank.market_codec import decode
 
     out = {}
     for name, kind in MARKET_COLUMNS[collection].items():
@@ -666,23 +691,30 @@ async def prune(ch, cutoff, preserved_days, *, book_cutoff=None, trades_cutoff=N
     return dropped
 
 
-def install(repo, settings):
+class MarketClientOwner(Protocol):
+    @property
+    def backend(self) -> Literal["memory", "postgres"]: ...
+
+    clickhouse: ClickHouse | None
+
+
+def install(repo: MarketClientOwner, settings: Settings) -> ClickHouse | None:
     """Give a production repository its ClickHouse client (never a replay database)."""
-    url = getattr(settings, "clickhouse_url", None)
-    if not url or getattr(settings, "replay", False):
+    url = settings.clickhouse_url
+    if url is None or settings.replay:
         return None
-    repo.clickhouse = ClickHouse(url, password=getattr(settings, "tank_db_password", None))
+    repo.clickhouse = ClickHouse(url, password=settings.tank_db_password)
     return repo.clickhouse
 
 
-def client(repo, collection):
+def client(repo: MarketClientOwner, collection: str) -> ClickHouse | None:
     """The ClickHouse client serving `collection` for this repository, else None.
 
     A database repository has no other store for the exchange series."""
     if collection not in MARKET_TABLES:
         return None
-    ch = getattr(repo, "clickhouse", None)
-    if ch is None and hasattr(repo, "_conn"):
+    ch = repo.clickhouse
+    if ch is None and repo.backend == "postgres":
         raise RuntimeError(f"{collection} is stored in ClickHouse only; TANK_CLICKHOUSE_URL is not set")
     return ch
 
@@ -748,7 +780,7 @@ async def put_batch(ch, collection, records, keys=None):
 
     A complete flow bar is never replaced by an unproven one, funding and ticker points
     merge into the stored row, and an unchanged fingerprint is not written again."""
-    from tank.market_storage import _prepare_records, _unproves, decode, merge_point
+    from tank.market_codec import _prepare_records, _unproves, decode, merge_point
 
     unique = _prepare_records(collection, records, keys, MARKET_COLUMNS[collection], False)
     if not unique:

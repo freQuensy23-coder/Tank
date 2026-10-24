@@ -12,11 +12,12 @@ from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
 from datetime import timedelta
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
+from tank.clickhouse_market import ClickHouse
 from tank.contracts.jobs import JobEnvelope
+from tank.market_codec import decode as decode_market
 from tank.market_schema import MARKET_COLUMNS
-from tank.market_storage import decode as decode_market
 from tank.market_storage import (
     iter_market_projection,
     latest_market_records,
@@ -240,7 +241,167 @@ def _job(kind, payload, idem_key, priority, run_after, expires_at, max_attempts)
     return JobEnvelope.model_validate(result).model_dump(mode="json", exclude_unset=True)
 
 
-class QueueMixin:
+class RepositoryQueries:
+    async def prune_market(self, before, *, book_before=None, trades_before=None):
+        return await _prune_market(self, before, book_before=book_before, trades_before=trades_before)
+
+    async def list_range(
+        self, collection, time_field, *, start=None, end=None, filters=None, limit=1000, after=None
+    ):
+        return await _list_range(
+            self, collection, time_field, start=start, end=end, filters=filters, limit=limit, after=after
+        )
+
+    async def page_range(
+        self, collection, time_field, *, start=None, end=None, filters=None, limit=1000, after=None
+    ):
+        return await _range_page(
+            self, collection, time_field, start=start, end=end, filters=filters, limit=limit, after=after
+        )
+
+    async def iter_range(
+        self, collection, time_field, *, start=None, end=None, filters=None, batch_size=10000
+    ):
+        async for row in _iter_range(
+            self, collection, time_field, start=start, end=end, filters=filters, batch_size=batch_size
+        ):
+            yield row
+
+    async def prune_jobs(self, before):
+        return await _prune_jobs(self, before)
+
+    async def preserved_market_windows(self):
+        return await _preserved_windows(self)
+
+    async def latest_before(self, collection, time_field, cutoff, *, filters=None):
+        return await _latest_before(self, collection, time_field, cutoff, filters=filters)
+
+    async def iter_all(self, collection, *, filters=None, batch_size=1000):
+        async for row in _iter_all(self, collection, filters=filters, batch_size=batch_size):
+            yield row
+
+    async def list_latest(self, collection, time_field, *, filters=None, limit=100, start=None, end=None):
+        return await _list_latest(
+            self, collection, time_field, filters=filters, limit=limit, start=start, end=end
+        )
+
+    async def iter_late_arrivals(
+        self,
+        collection,
+        arrival_field,
+        market_field,
+        *,
+        since=None,
+        end=None,
+        market_end,
+        filters=None,
+        batch_size=1000,
+    ):
+        async for row in _iter_late_arrivals(
+            self,
+            collection,
+            arrival_field,
+            market_field,
+            since=since,
+            end=end,
+            market_end=market_end,
+            filters=filters,
+            batch_size=batch_size,
+        ):
+            yield row
+
+    async def iter_metadata(self, collection, fields, *, filters=None, batch_size=1000):
+        async for row in _iter_metadata(self, collection, fields, filters=filters, batch_size=batch_size):
+            yield row
+
+    async def put_market_batch(self, collection, records, *, keys=None):
+        return await put_market_batch(self, collection, records, keys=keys)
+
+    async def latest_market_records(
+        self,
+        collection,
+        *,
+        group_by=("instrument_id",),
+        time_field="ts",
+        filters=None,
+        cutoff=None,
+        assembled_at=None,
+        start=None,
+        instrument_ids=None,
+    ):
+        return await latest_market_records(
+            self,
+            collection,
+            group_by=group_by,
+            time_field=time_field,
+            filters=filters,
+            cutoff=cutoff,
+            assembled_at=assembled_at,
+            start=start,
+            instrument_ids=instrument_ids,
+        )
+
+    async def market_dependency_head(
+        self,
+        collection,
+        semantic_field,
+        cutoff,
+        *,
+        start=None,
+        filters=None,
+        instrument_ids=None,
+        assembled_at=None,
+        order="availability",
+        orders=None,
+    ):
+        return await market_dependency_head(
+            self,
+            collection,
+            semantic_field,
+            cutoff,
+            start=start,
+            filters=filters,
+            instrument_ids=instrument_ids,
+            assembled_at=assembled_at,
+            order=order,
+            orders=orders,
+        )
+
+    async def iter_market_projection(
+        self,
+        collection,
+        fields,
+        time_field,
+        *,
+        start=None,
+        end=None,
+        filters=None,
+        instrument_ids=None,
+        assembled_at=None,
+        batch_size=1000,
+    ):
+        async for row in iter_market_projection(
+            self,
+            collection,
+            fields,
+            time_field,
+            start=start,
+            end=end,
+            filters=filters,
+            instrument_ids=instrument_ids,
+            assembled_at=assembled_at,
+            batch_size=batch_size,
+        ):
+            yield row
+
+    async def market_series_counts(self, instrument_ids, start, cutoff, assembled_at=None):
+        return await market_series_counts(self, instrument_ids, start, cutoff, assembled_at)
+
+
+class QueueMixin(RepositoryQueries):
+    def _exact_predicate(self, collection, filters):
+        return _exact_predicate(collection, filters)
+
     async def enqueue(
         self, kind, payload, idem_key, *, priority=1, run_after=None, expires_at=None, max_attempts=3
     ):
@@ -296,6 +457,9 @@ class _MemoryAdvisoryLock:
 
 class MemoryRepository(QueueMixin):
     """Deterministic test implementation with nested rollback and task-local ownership."""
+
+    backend: Literal["memory"] = "memory"
+    clickhouse: ClickHouse | None = None
 
     def __init__(self):
         self._data = {}
@@ -687,6 +851,12 @@ async def _stable_transaction(conn):
 
 
 class PostgresRepository(QueueMixin):
+    backend: Literal["postgres"] = "postgres"
+    clickhouse: ClickHouse | None = None
+
+    def _exact_predicate(self, collection, filters):
+        return _exact_predicate(collection, filters)
+
     def __init__(self, database_url):
         self.database_url = database_url
         self._pool = None
@@ -1250,10 +1420,6 @@ async def _prune_market(self, before, *, book_before=None, trades_before=None):
     return counts
 
 
-MemoryRepository.prune_market = _prune_market
-PostgresRepository.prune_market = _prune_market
-
-
 async def _range_page(
     self, collection, time_field, *, start=None, end=None, filters=None, limit=1000, after=None
 ):
@@ -1347,14 +1513,6 @@ async def _iter_range(self, collection, time_field, *, start=None, end=None, fil
         after = page[-1][1]
 
 
-MemoryRepository.list_range = _list_range
-MemoryRepository.page_range = _range_page
-PostgresRepository.page_range = _range_page
-PostgresRepository.list_range = _list_range
-MemoryRepository.iter_range = _iter_range
-PostgresRepository.iter_range = _iter_range
-
-
 async def _prune_jobs(self, before):
     """Prune aged terminal jobs; retain references needed by jobs, sessions or tool recovery.
 
@@ -1426,12 +1584,6 @@ async def _prune_expired_escalations(self, cutoff):
             rows.pop(key)
 
 
-MemoryRepository.prune_jobs = _prune_jobs
-PostgresRepository.prune_jobs = _prune_jobs
-MemoryRepository.preserved_market_windows = _preserved_windows
-PostgresRepository.preserved_market_windows = _preserved_windows
-
-
 async def _latest_before(self, collection, time_field, cutoff, *, filters=None):
     """Last actual observation strictly before cutoff, using typed time and stable key indexes."""
     _table(collection)
@@ -1482,10 +1634,6 @@ async def _latest_before(self, collection, time_field, cutoff, *, filters=None):
             if at < cutoff and all(k in row and row[k] == v for k, v in (filters or {}).items()):
                 candidates.append((at, key, row))
         return copy.deepcopy(max(candidates, key=lambda item: (item[0], item[1]))[2]) if candidates else None
-
-
-MemoryRepository.latest_before = _latest_before
-PostgresRepository.latest_before = _latest_before
 
 
 def _exact_predicate(collection, filters):
@@ -1632,12 +1780,6 @@ async def _list_latest(self, collection, time_field, *, filters=None, limit=100,
         ]
 
 
-MemoryRepository.iter_all = _iter_all
-PostgresRepository.iter_all = _iter_all
-MemoryRepository.list_latest = _list_latest
-PostgresRepository.list_latest = _list_latest
-
-
 async def _iter_late_arrivals(
     self,
     collection,
@@ -1744,10 +1886,6 @@ async def _iter_late_arrivals(
         after = page[-1][1]
 
 
-MemoryRepository.iter_late_arrivals = _iter_late_arrivals
-PostgresRepository.iter_late_arrivals = _iter_late_arrivals
-
-
 async def _iter_metadata(self, collection, fields, *, filters=None, batch_size=1000):
     """Page selected top-level JSON fields without returning the full stored evidence payload.
 
@@ -1787,23 +1925,5 @@ async def _iter_metadata(self, collection, fields, *, filters=None, batch_size=1
         after = page[-1]["storage_key"]
 
 
-MemoryRepository.iter_metadata = _iter_metadata
-PostgresRepository.iter_metadata = _iter_metadata
-
-
 def _read_record(collection, row):
     return decode_market(collection, row) if collection in MARKET_COLUMNS else row["document"]
-
-
-MemoryRepository.put_market_batch = put_market_batch
-PostgresRepository.put_market_batch = put_market_batch
-MemoryRepository.latest_market_records = latest_market_records
-PostgresRepository.latest_market_records = latest_market_records
-
-MemoryRepository.market_dependency_head = market_dependency_head
-PostgresRepository.market_dependency_head = market_dependency_head
-
-MemoryRepository.iter_market_projection = iter_market_projection
-PostgresRepository.iter_market_projection = iter_market_projection
-MemoryRepository.market_series_counts = market_series_counts
-PostgresRepository.market_series_counts = market_series_counts
