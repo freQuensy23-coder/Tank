@@ -153,3 +153,74 @@ class JobRetryState(DomainModel):
                 "expires_at": document.get("expires_at"),
             }
         )
+
+
+class JobIdentity(DomainModel):
+    """Identity projection independent of legacy payload/provenance completeness."""
+
+    job_id: str
+    type: str
+    idem_key: str
+
+    @classmethod
+    def from_document(cls, document: Mapping[str, JsonValue]) -> Self:
+        return cls.model_validate(
+            {"job_id": document["job_id"], "type": document["type"], "idem_key": document["idem_key"]}
+        )
+
+
+class JobClaimState(JobRetryState):
+    """Only fields that claiming/recovery actually reads from a persisted job."""
+
+    job_id: str
+    type: str
+    priority: int = Field(ge=0, le=4)
+    run_after: str
+    recovery_reclaim: bool | None
+    recovery_count: int | None = Field(ge=0)
+
+    @classmethod
+    def from_document(cls, document: Mapping[str, JsonValue]) -> Self:
+        return cls.model_validate(
+            {
+                "job_id": document["job_id"],
+                "type": document["type"],
+                "status": document["status"],
+                "priority": document["priority"],
+                "run_after": document["run_after"],
+                "expires_at": document.get("expires_at"),
+                "attempts": document["attempts"],
+                "max_attempts": document["max_attempts"],
+                "recovery_reclaim": document.get("recovery_reclaim"),
+                "recovery_count": document.get("recovery_count"),
+            }
+        )
+
+
+class JobClaimRevision(DomainModel):
+    """Only the identity/state needed for conditional rejection of a claimed wire row."""
+
+    job_id: str
+    type: str
+    status: Literal["QUEUED", "RUNNING", "DONE", "FAILED", "EXPIRED"]
+    attempts: int = Field(ge=0)
+
+    @classmethod
+    def from_document(cls, document: Mapping[str, JsonValue]) -> Self:
+        return cls.model_validate(
+            {
+                "job_id": document["job_id"],
+                "type": document["type"],
+                "status": document["status"],
+                "attempts": document["attempts"],
+            }
+        )
+
+
+class InvalidJobClaim(DomainModel):
+    job_id: str
+    kind: str
+    attempts: int = Field(ge=0)
+    revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+    error_codes: tuple[str, ...]
+    error_fields: tuple[str, ...]

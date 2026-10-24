@@ -2,7 +2,7 @@
 
 import asyncio
 import copy
-from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -124,9 +124,9 @@ def _is_memory(store: MarketStore) -> TypeIs[MemoryMarketStore]:
 async def put_market_batch(
     self: MarketStore,
     collection: str,
-    records: Sequence[Mapping[str, JsonInput]],
+    records: Iterable[Mapping[str, JsonInput]],
     *,
-    keys: Sequence[str] | None = None,
+    keys: Iterable[str] | None = None,
 ) -> list[Record]:
     records = list(records)
     keys = None if keys is None else list(keys)

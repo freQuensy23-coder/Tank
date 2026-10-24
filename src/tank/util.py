@@ -41,18 +41,30 @@ def utcnow() -> datetime:
 
 
 def parse_time(value: TimeInput) -> datetime:
+    """Read supported ISO and numeric epoch forms without echoing invalid source values."""
+    if isinstance(value, bool):
+        raise ValueError("Timestamp must not be a boolean")
     if isinstance(value, datetime):
         return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
     if isinstance(value, (int, float, Decimal)) or (
         isinstance(value, str) and value.replace(".", "", 1).isdigit()
     ):
-        number = float(value)
-        if abs(number) > 1e14:
-            number /= 1e6
-        elif abs(number) > 1e11:
-            number /= 1e3
-        return datetime.fromtimestamp(number, UTC)
-    return parse_time(datetime.fromisoformat(str(value).replace("Z", "+00:00")))
+        try:
+            number = float(value)
+            if abs(number) > 1e14:
+                number /= 1e6
+            elif abs(number) > 1e11:
+                number /= 1e3
+            return datetime.fromtimestamp(number, UTC)
+        except (OSError, OverflowError, ValueError):
+            raise ValueError("Invalid or out-of-range epoch timestamp") from None
+    if not isinstance(value, str):
+        raise ValueError("Unsupported timestamp input type")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError("Invalid ISO timestamp") from None
+    return parse_time(parsed)
 
 
 def iso(value: TimeInput | None = None) -> str:
