@@ -24,12 +24,12 @@ def test_t1_oi_decomposition_real_native() -> None:
     d = decomposition(n0, n1, p0, p1)
     usd = pct(n0 * p0, Decimal("108.18") * Decimal("1.0705"))
     assert round(usd * 100, 2) == Decimal("15.81")
-    assert d["position"] == Decimal("8.18")
-    assert d["markup"] == Decimal("7.05")
-    assert round(d["interaction"], 3) == Decimal("0.577")
+    assert d.position == Decimal("8.18")
+    assert d.markup == Decimal("7.05")
+    assert round(d.interaction, 3) == Decimal("0.577")
 
-    assert Decimal(str(d["pos_share"])).quantize(Decimal("0.001"), rounding=ROUND_DOWN) == Decimal("0.517")
-    assert d["pos_share"] > 0.5
+    assert Decimal(str(d.pos_share)).quantize(Decimal("0.001"), rounding=ROUND_DOWN) == Decimal("0.517")
+    assert d.pos_share > 0.5
     assert oi_class(0.0818, float(usd), d, [-0.03, 0.035], [-0.04, 0.05]) == "REAL_NATIVE"
 
 

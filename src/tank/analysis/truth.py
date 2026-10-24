@@ -23,6 +23,15 @@ from functools import wraps
 from math import log
 from statistics import mean, median, stdev
 
+from tank.analysis.positioning import (
+    MissingOIDecomposition,
+)
+from tank.analysis.positioning import (
+    decomposition as decomposition,
+)
+from tank.analysis.positioning import (
+    oi_class as oi_class,
+)
 from tank.market.capture import event_anchor
 from tank.time_precision import chosen_boundary, offset_schedule, propagate_timestamp
 from tank.util import iso, jsonable, new_id, parse_time
@@ -211,33 +220,6 @@ def beyond(v, r):
 def within(v, r):
     b = beyond(v, r)
     return None if b is None else not b
-
-
-@precise
-def decomposition(n0, n1, p0, p1):
-    n0, n1, p0, p1 = (Decimal(str(v)) for v in (n0, n1, p0, p1))
-    exact_context(n0, n1, p0, p1)
-    position = (n1 - n0) * p0
-    markup = n0 * (p1 - p0)
-    interaction = (n1 - n0) * (p1 - p0)
-    share = ratio(abs(position), abs(position) + abs(markup) + abs(interaction))
-    return dict(position=position, markup=markup, interaction=interaction, pos_share=share)
-
-
-def oi_class(dn, du, dec, nrange, urange):
-    nb = beyond(dn, nrange)
-    ub = beyond(du, urange)
-    if nb is None:
-        return None
-    if nb:
-        if dec.get("pos_share") is None:
-            return None
-        terms = [decimal(dec[k]) for k in ("position", "markup", "interaction")]
-        exact_context(*terms)
-        return "REAL_NATIVE" if 2 * abs(terms[0]) > sum(abs(v) for v in terms) else "MIXED"
-    if ub is None:
-        return None
-    return "PRICE_MARKUP" if ub else "MIXED"
 
 
 def beta(token, benchmark):
@@ -865,18 +847,7 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
     p0 = u0 / n0 if u0 is not None else None
     p1 = u1 / n1 if u1 is not None and n1 else decimal(z.get("mark_price", z.get("mark")))
     usd_ready = u0 is not None and u1 is not None and u0 > 0
-    dec = (
-        decomposition(n0, n1, p0, p1)
-        if p0 is not None and p1 is not None
-        else dict(
-            position=None,
-            markup=None,
-            interaction=None,
-            pos_share=None,
-            reason="INCOMPLETE",
-            detail="SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE",
-        )
-    )
+    dec = decomposition(n0, n1, p0, p1) if p0 is not None and p1 is not None else MissingOIDecomposition()
     length = _time(z) - _time(a)
 
     window = end - start
@@ -969,7 +940,7 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
         oi_usd_chg_pct=du,
         oi_usd_reason=None if usd_ready else "INCOMPLETE",
         oi_usd_detail=None if usd_ready else "SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE",
-        decomposition=dec,
+        decomposition=dec.model_dump(mode="python"),
         oi_class=oi_class(dn, du, dec, nr, ur),
         classification_ready=oi_class(dn, du, dec, nr, ur) is not None,
         native_normal_range=nr,

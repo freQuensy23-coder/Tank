@@ -132,10 +132,10 @@ def _add_fresh_perp_fields(snapshot) -> None:
 
 def test_oi_formula_vectors() -> None:
     d = decomposition(100, 108.18, 1, 1.0705)
-    assert d["position"] == Decimal("8.18")
-    assert d["markup"] == Decimal("7.05")
-    assert d["interaction"] == Decimal("0.57669")
-    assert d["pos_share"] > 0.5
+    assert d.position == Decimal("8.18")
+    assert d.markup == Decimal("7.05")
+    assert d.interaction == Decimal("0.57669")
+    assert d.pos_share > 0.5
     assert oi_class(0.0818, 0.1580669, d, [-0.03, 0.035], [-0.04, 0.05]) == "REAL_NATIVE"
     d = decomposition(100, 100.5, 1, 1.1)
     assert oi_class(0.005, 0.1055, d, [-0.03, 0.035], [-0.04, 0.05]) == "PRICE_MARKUP"
@@ -2332,14 +2332,14 @@ def test_exact_usd_decomposition_and_funding_interval_conversion() -> None:
     n0 = "10000000000000000000000000000000000000000.000000000000000001"
     n1 = "10000000000000000000000000000000000000000.000000000000000002"
     d = decomposition(n0, n1, "1.23456789", "1.23456790")
-    assert d["position"] == Decimal("0.00000000000000000123456789")
-    assert d["interaction"] == Decimal("0.00000000000000000000000001")
+    assert d.position == Decimal("0.00000000000000000123456789")
+    assert d.interaction == Decimal("0.00000000000000000000000001")
     with localcontext() as ctx:
         ctx.prec = 128
-        assert d["markup"] == Decimal(n0) * Decimal("0.00000001")
-        assert d["position"] + d["markup"] + d["interaction"] == Decimal(n1) * Decimal(
-            "1.23456790"
-        ) - Decimal(n0) * Decimal("1.23456789")
+        assert d.markup == Decimal(n0) * Decimal("0.00000001")
+        assert d.position + d.markup + d.interaction == Decimal(n1) * Decimal("1.23456790") - Decimal(
+            n0
+        ) * Decimal("1.23456789")
     end = parse_time("2026-10-16T12:00:00Z")
     start = end - timedelta(hours=4)
     iid = "A:perp:T"
@@ -2409,7 +2409,9 @@ def test_market_truth_json_preserves_exact_large_plus_tiny_native_volume() -> No
 
 def test_position_majority_rule_uses_exact_dollar_terms_not_rounded_display_share() -> None:
     position = Decimal("0.5000000000000000000000000000000000000001")
-    dec = {"position": position, "markup": Decimal(".5"), "interaction": Decimal(0), "pos_share": 0.5}
+    from tank.analysis.positioning import OIDecomposition
+
+    dec = OIDecomposition(position=position, markup=Decimal(".5"), interaction=Decimal(0), pos_share=0.5)
     assert oi_class(0.08, 0.1, dec, [-0.01, 0.01], [-0.01, 0.01]) == "REAL_NATIVE"
 
 
