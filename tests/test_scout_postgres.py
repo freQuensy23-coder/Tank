@@ -224,7 +224,7 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
         assert len(proposals) == 1 and proposals[0]["hook"] == "MARKET_TRUTH_STATE"
         prp_id = proposals[0]["prp_id"]
         jobs = await repository.list("ops.jobs", filters={"type": "SCOUT_REVIEW"})
-        assert [(job["priority"], job["payload"]) for job in jobs] == [(4, {"prp_id": prp_id})]
+        assert [(job["priority"], job["payload"]) for job in jobs] == [(4, {"proposal_id": prp_id})]
         assert max(job["priority"] for job in await repository.list("ops.jobs")) == 4
 
         openma.posted.clear()

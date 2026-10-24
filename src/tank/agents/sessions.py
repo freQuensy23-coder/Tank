@@ -171,7 +171,6 @@ class SessionService:
         params: Mapping[str, str | int] | Sequence[tuple[str, str]] | None = None,
         files: Mapping[str, tuple[str, bytes, str]] | None = None,
         idem: str | None = None,
-        timeout: float = REST_TIMEOUT_S,
     ) -> dict[str, JsonValue]:
         response = await self.http.request(
             method,
@@ -180,7 +179,7 @@ class SessionService:
             json=json,
             params=params,
             files=files,
-            timeout=timeout,
+            timeout=REST_TIMEOUT_S,
         )
         response.raise_for_status()
         payload = decode_json(response.content)

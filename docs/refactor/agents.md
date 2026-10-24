@@ -157,3 +157,12 @@ with provenance, lifecycle timestamps and fully specified expressions.
 Milestone notification outcomes retain verified descriptive source outcomes,
 including event-state labels and official denials, rather than a narrower
 unsupported enum. These 24 focused regression/runtime tests pass, zero skips.
+
+
+CI found a real native REST deadline regression introduced during request
+signature typing: a default argument captured REST_TIMEOUT_S at definition
+time, ignoring subsequent configured/test deadline changes. The native request
+adapter now reads REST_TIMEOUT_S at each request; its stream timeout remains
+independent. Both local real-HTTP deadline integration cases pass, zero skips,
+1.18 seconds. The PostgreSQL scout integration expectation now matches its
+canonical proposal_id producer contract.
