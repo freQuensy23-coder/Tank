@@ -4,42 +4,17 @@
  * This exercises actual production bridge/provider/fences/browser; no model/API
  * credential, external network request or OpenMA session/history row is used. */
 import assert from 'node:assert/strict';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
-const hash = value => createHash('sha256').update(value).digest('hex');
-export const phaseWallSeconds = Object.freeze({ first: 1080, resume: 900, cleanup: 60 });
-export const PREPARATION_TIMEOUT_EXIT = 86;
-export function preparationWatchdog(expire, milliseconds = 240000) {
-  const timer = setTimeout(expire, milliseconds);return () => clearTimeout(timer);
-}
-export function configuration(env) {
-  if (env.TANK_NATIVE_LIFECYCLE_GO !== 'AUTHORIZED_NATIVE_PROOF') throw Error('Native qualification requires explicit deployment-owner GO');
-  const directory = resolve(env.TANK_NATIVE_PROOF_DIR ?? '/not-configured');
-  if (!directory.startsWith('/proof/') || directory === '/proof') throw Error('A dedicated new /proof/<run> directory is required');
-  const previousProof = env.TANK_NATIVE_REUSE_CACHE_PROOF_DIR;
-  if (previousProof !== undefined && (!/^\/proof\/[a-zA-Z0-9_-]+$/.test(previousProof) || previousProof === directory)) throw Error('Cache reuse requires a distinct explicit owned /proof/<run> receipt directory');
-  const runtimeHome = join(previousProof ?? directory, 'boxlite');
-  if (env.BOXLITE_HOME !== runtimeHome) throw Error('BOXLITE_HOME must be the dedicated proof directory/boxlite (or explicitly declared cleaned owned cache home)');
-  if (!/^[a-f0-9]{64}$/.test(env.TANK_NATIVE_EXPECT_IDENTITY ?? '')) throw Error('Exact candidate runtime identity is required');
-  if (!/^sha256:[a-f0-9]{64}$/.test(env.TANK_NATIVE_IMAGE_ID ?? '')) throw Error('Host-inspected candidate image ID is required');
-  if (env.TANK_NATIVE_MEMORY_MIB !== '2048') throw Error('Final native qualification requires explicit memory2048 in a fresh scope');
-  const rootfs = resolve(env.TANK_NATIVE_ROOTFS ?? '/opt/tank-sandbox-oci');
-  if (!rootfs.startsWith('/opt/')) throw Error('Explicit readonly /opt OCI layout is required');
-  return { directory, rootfs, identity: env.TANK_NATIVE_EXPECT_IDENTITY, imageId: env.TANK_NATIVE_IMAGE_ID, memoryMib: 2048, previousProof, runtimeHome };
-}
-const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
-export async function mountedOutputNonce(sandbox, nonce, write) {
-  const encoded = Buffer.from(nonce).toString('base64');
-  const script = "from pathlib import Path; import base64; p=Path('/mnt/session/outputs/native-retained-proof'); " +
-    (write ? `p.write_bytes(base64.b64decode('${encoded}')); ` : '') + "print(base64.b64encode(p.read_bytes()).decode())";
-  const reply = (await sandbox.exec('python3 -c ' + quote(script), 5000)).trim();
-  assert.equal(reply, encoded, 'mounted output nonce guest exec failed or returned different bytes');
-}
+import { hash, quote, configuration, phaseWallSeconds, PREPARATION_TIMEOUT_EXIT,
+  preparationWatchdog, mountedOutputNonce, browserEvidence } from './qualification-contracts.mts';
+export { configuration, phaseWallSeconds, PREPARATION_TIMEOUT_EXIT,
+  preparationWatchdog, mountedOutputNonce, browserEvidence } from './qualification-contracts.mts';
 async function json(path, value) { await writeFile(path, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 }); }
 async function proc(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
@@ -62,16 +37,6 @@ async function stopped(client, id, before) {
   return { id, state: info.state, autoDelete: info.autoDelete, oldProcess: before, oldProcessAfter: after,
     oldProcessMemoryReleased: released,
     runtimeMetrics: metrics };
-}
-export async function browserEvidence(page, directory, name) {
-  const dom = await page.content();assert.ok(dom.includes('native-retained-browser-proof'), 'loopback DOM marker missing');
-  const png = Buffer.from(await page.screenshot({ type: 'png' }));
-  assert.ok(png.length > 24 && png.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])), 'browser did not return PNG bytes');
-  const dimensions = { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
-  assert.ok(dimensions.width > 0 && dimensions.height > 0, 'PNG dimensions missing');
-  await writeFile(join(directory, `browser-${name}.html`), dom, { mode: 0o600 });
-  await writeFile(join(directory, `browser-${name}.png`), png, { mode: 0o600 });
-  return { domSha256: hash(dom), pngSha256: hash(png), pngBytes: png.length, ...dimensions };
 }
 async function observeBrowser(sb, config, scope, name, workerSha) {
   const guest = '/mnt/session/outputs';
