@@ -385,7 +385,10 @@ async def test_external_contract_on_postgres(migrated, tmp_path: Path) -> None:
     )
     await service.escalate("EVT-1", [TOKEN])
     (run,) = await migrated.list("mkt.backfill_runs")
-    assert run["status"] == "PENDING" and run["started_at_prec"] == "COLLECTION_ONLY"
+    assert run["status"] == "PENDING"
+    assert run["started_at"] is None and run["started_at_prec"] is None
+    assert run["started_at_prec_reason"] == "PENDING"
+    assert run["recorded_at"] is not None and run["recorded_at_prec"] == "COLLECTION_ONLY"
     await service.close()
 
 
