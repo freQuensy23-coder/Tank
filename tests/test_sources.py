@@ -537,6 +537,9 @@ async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path: Pat
                 )
                 item = {
                     "item_id": item_id,
+                    "feed": source["feeds"][0]["url"],
+                    "discovery_config_version": svc.settings.config_version,
+                    "discovery_code_version": svc.settings.code_version,
                     "raw_ref": raw_ref,
                     "raw_sha256": digest,
                     "observed_at": "2026-10-16T12:00:01Z",

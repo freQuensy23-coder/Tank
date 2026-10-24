@@ -119,3 +119,6 @@ The only record dictionaries in this workflow are explicit repository query/queu
 
 
 The Pipeline cohort caller migration now uses required SourceProgressSink injection and typed ItemJob in owned Ops tests. Real Jev MockTransport responses exercise actual immutable score-ledger creation and replay-safe dedup, threshold rejection/routing and source notices; the partial _score_record mock and HTTP object() placeholder are removed. Pure publisher identity tests use RoutingSelector/RoutingItem projections directly rather than constructing a network/application Pipeline for a pure identity decision. Source tests preserve all actual authority and attribution assertions.103 Ops/source/publisher cases pass3.93seconds before the final request-ledger count assertions.
+
+
+Clean combined checkpoint a5e1819 (canonical SourceIngestion0e7381b, Pipelinea8666d5, E2E64ed6c3) passed420 owned units4.23seconds and31/32actual integrations12.26seconds withzero skips; trackedHEAD was unchanged before/after. The sole failure identified the manually constructed PostgreSQL source fixture lacking required feed and discovery versions; its explicit captured provenance is now declared. The real source producer and full four E2E process cases passed. A fresh pinned full rerun will verify this fixture correction.
