@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from tank.delivery import DeliveryError, DeliveryService
 from tank.storage import MemoryRepository
@@ -63,7 +64,11 @@ def test_rich_size_check_counts_the_added_rationales_and_api_limits() -> None:
     with pytest.raises(ValueError, match="maximum 32768"):
         card_rich_message(f"MAJOR\n{score_summary(data)}", data, max_chars=100000)
     with pytest.raises(ValueError, match="500 blocks"):
-        card_rich_message("\n".join(["line", score_summary({}), *(["line"] * 501)]), {}, max_chars=100000)
+        card_rich_message(
+            "\n".join(["line", score_summary(assessment()), *(["line"] * 501)]),
+            assessment(),
+            max_chars=100000,
+        )
 
 
 def test_rich_text_reader_handles_nested_blocks_and_formatting() -> None:
@@ -128,7 +133,7 @@ async def test_rich_delivery_retries_frozen_payload_and_threads_update_once() ->
         )
     requests = []
 
-    def send(request: pytest.FixtureRequest):
+    def send(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         requests.append((request.url.path, body))
         assert request.url.path.endswith("/sendRichMessage")
@@ -169,3 +174,14 @@ def test_multiline_headline_and_reason_keep_the_table_at_the_canonical_summary()
     assert result["blocks"][2]["type"] == "table"
     assert result["blocks"][2]["cells"][2][2]["text"] == "Unknown volume.\nNo estimate."
     assert result["blocks"][3]["text"] == "Stage: LIVE"
+
+
+def test_presentation_rejects_missing_score_dimensions_and_malformed_blocks() -> None:
+    with pytest.raises(ValidationError):
+        score_summary({"dims": {"economic_directness": {"value": 8}}})
+    data = assessment()
+    data["dims"]["economic_directness"]["value"] = 11
+    with pytest.raises(ValidationError):
+        score_table(data)
+    with pytest.raises(ValidationError, match="table requires cells"):
+        rich_message_text({"blocks": [{"type": "table"}]})

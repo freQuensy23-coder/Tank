@@ -2084,10 +2084,11 @@ async def test_reused_attachment_keeps_its_recorded_size() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("forwarded", [False, True])
 async def test_rich_card_reference_and_rich_question_continue_original_session(forwarded) -> None:
-    from tank.telegram_rich import card_rich_message, score_summary
+    from tank.telegram_rich import SCORE_DIMENSIONS, card_rich_message, score_summary
 
     repo = MemoryRepository()
-    assessment = {"dims": {"economic_directness": {"value": 8, "rationale": "Fees reach UNI burn."}}}
+    assessment = {"dims": {name: {"value": None, "reason": "NOT_ESTIMABLE"} for _, name in SCORE_DIMENSIONS}}
+    assessment["dims"]["economic_directness"] = {"value": 8, "rationale": "Fees reach UNI burn."}
     rich = card_rich_message(f"MAJOR — UNI launch\n{score_summary(assessment)}\nStage: LIVE", assessment)
     await seed(repo, rich_message=rich)
     question_rich = {
