@@ -147,7 +147,7 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 		fail("REPAIR_FAILED")
 		return
 	}
-	coverage := make([]map[string]any, len(instruments))
+	coverage := make([]InstrumentCaptureCoverage, len(instruments))
 	for i, inst := range instruments {
 		coverage[i], err = s.captureWindowCoverage(ctx, inst, anchor)
 		if err != nil {
@@ -161,7 +161,7 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 	}
 	ready := len(coverage) > 0
 	for _, c := range coverage {
-		ready = ready && c["complete"] == true
+		ready = ready && c.Complete
 	}
 	for _, b := range benchmarks {
 		ready = ready && b.Complete
@@ -172,7 +172,7 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 	}
 	instrumentsResult := make([]any, len(coverage))
 	for i, c := range coverage {
-		instrumentsResult[i] = c
+		instrumentsResult[i] = c.storageValue()
 	}
 	benchResult := make([]any, len(benchmarks))
 	for i, b := range benchmarks {
@@ -619,11 +619,11 @@ func benchmarkLess(a, b *venue.Instrument) bool {
 	return a.ID < b.ID
 }
 
-func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrument, anchor time.Time) (map[string]any, error) {
+func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrument, anchor time.Time) (InstrumentCaptureCoverage, error) {
 	end := anchor
-	windows := map[string]any{}
+	var windows [3]CaptureWindowCoverage
 	allComplete := true
-	for _, hours := range []int{1, 4, 24} {
+	for index, hours := range []int{1, 4, 24} {
 		start := end.Add(-time.Duration(hours) * time.Hour)
 		lo := pytime.MinuteFloor(start)
 		if start.After(lo) {
@@ -632,69 +632,78 @@ func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrum
 		hi := pytime.MinuteFloor(end)
 		expected := int64(hi.Sub(lo) / time.Minute)
 		if expected < 0 {
-			expected = 0
+			return InstrumentCaptureCoverage{}, errors.New("capture coverage interval end precedes start")
 		}
-		metrics := map[string]any{}
+		var metrics [2]CoverageMinutes
 		windowComplete := true
-		for _, spec := range [][3]string{{"flow", "mkt.flow_bars_1m", "minute_start"}, {"klines", "mkt.klines_1m", "open_time"}} {
+		for metricIndex, spec := range [][3]string{{"flow", "mkt.flow_bars_1m", "minute_start"}, {"klines", "mkt.klines_1m", "open_time"}} {
 			rows, err := s.store.Range(ctx, spec[1], spec[2], lo, hi, map[string]any{"instrument_id": inst.ID})
 			if err != nil {
-				return nil, fmt.Errorf("%s %s coverage unavailable: %w", inst.ID, spec[0], err)
+				return InstrumentCaptureCoverage{}, fmt.Errorf("%s %s coverage unavailable: %w", inst.ID, spec[0], err)
 			}
-			var complete int64
-			for _, r := range rows {
-				if pyval.Truthy(r["complete"]) {
-					complete++
-				}
+			metric, err := decodeCoverageMinutes(rows, spec[2], lo, hi)
+			if err != nil {
+				return InstrumentCaptureCoverage{}, err
 			}
-			ok := complete == expected && expected > 0
-			windowComplete = windowComplete && ok
-			metrics[spec[0]] = map[string]any{
-				"expected_minutes": expected, "complete_minutes": complete,
-				"missing_or_incomplete_minutes": max(int64(0), expected-complete), "complete": ok,
-			}
+			windowComplete = windowComplete && metric.Complete
+			metrics[metricIndex] = metric
 		}
 		unresolved := lo.Sub(start).Seconds() + end.Sub(hi).Seconds()
-		w := map[string]any{
-			"start": pytime.ISO(start), "end": pytime.ISO(end), "observed_bucket_start": pytime.ISO(lo),
-			"observed_bucket_end": pytime.ISO(hi), "timestamp_precision": "BUCKET",
-			"unresolved_boundary_seconds": unresolved,
+		windows[index] = CaptureWindowCoverage{
+			Start: pytime.ISO(start), End: pytime.ISO(end), ObservedBucketStart: pytime.ISO(lo),
+			ObservedBucketEnd: pytime.ISO(hi), UnresolvedBoundarySeconds: unresolved,
+			Flow: metrics[0], Klines: metrics[1],
 		}
-		for k, v := range metrics {
-			w[k] = v
-		}
-		windows[fmt.Sprintf("W%dH", hours)] = w
 		allComplete = allComplete && windowComplete && unresolved == 0
 	}
-	result := map[string]any{"instrument_id": inst.ID, "windows": windows, "complete": allComplete}
+	result := InstrumentCaptureCoverage{
+		InstrumentID: inst.ID, Windows: CaptureWindows{W1H: windows[0], W4H: windows[1], W24H: windows[2]}, Complete: allComplete,
+	}
 	if inst.Spot() {
 		boundary := end.Add(-24 * time.Hour)
 		bars, err := s.store.Range(ctx, "mkt.flow_bars_1m", "minute_start", pytime.MinuteFloor(boundary).Add(-time.Minute), pytime.MinuteFloor(boundary).Add(time.Minute), map[string]any{"instrument_id": inst.ID})
 		if err != nil {
-			return nil, fmt.Errorf("%s pre24 reference unavailable: %w", inst.ID, err)
+			return InstrumentCaptureCoverage{}, fmt.Errorf("%s pre24 reference unavailable: %w", inst.ID, err)
 		}
 		var reference map[string]any
 		var referenceTS time.Time
 		for _, bar := range bars {
-			for _, p := range pyval.List(bar["reference_points"]) {
-				point := pyval.Map(p)
+			for _, raw := range pyval.List(bar["reference_points"]) {
+				point := pyval.Map(raw)
 				at, err := pytime.Parse(point["boundary"])
 				if point["complete"] != true || err != nil || !at.Equal(boundary) {
 					continue
 				}
-				lt := pyval.Map(point["last_trade"])
-				ts, err := pytime.Parse(lt["ts"])
+				trade := pyval.Map(point["last_trade"])
+				ts, err := pytime.Parse(trade["ts"])
 				if err == nil && (reference == nil || ts.After(referenceTS)) {
-					reference, referenceTS = lt, ts
+					reference, referenceTS = trade, ts
 				}
 			}
 		}
-		pre := map[string]any{"available": reference != nil, "trade_id": nil, "ts": nil, "ts_prec": nil, "reason": "INCOMPLETE"}
+		reason := "INCOMPLETE"
+		pre := Pre24Reference{Reason: &reason}
 		if reference != nil {
-			pre["trade_id"], pre["ts"], pre["ts_prec"], pre["reason"] = reference["trade_id"], reference["ts"], reference["ts_prec"], nil
+			identity, err := decodeReferenceTradeIdentity(reference["trade_id"])
+			if err != nil {
+				return InstrumentCaptureCoverage{}, err
+			}
+			ts, ok := reference["ts"].(string)
+			if !ok {
+				return InstrumentCaptureCoverage{}, errors.New("reference trade requires a JSON timestamp string")
+			}
+			var precision *string
+			if raw := reference["ts_prec"]; raw != nil {
+				value, ok := raw.(string)
+				if !ok {
+					return InstrumentCaptureCoverage{}, errors.New("reference trade precision requires text or null")
+				}
+				precision = &value
+			}
+			pre = Pre24Reference{Available: true, TradeID: &identity, TS: &ts, Precision: precision}
 		}
-		result["pre24_reference"] = pre
-		result["complete"] = allComplete && reference != nil
+		result.Pre24Reference = &pre
+		result.Complete = allComplete && pre.Available
 	}
 	return result, nil
 }

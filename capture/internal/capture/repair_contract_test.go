@@ -2,12 +2,15 @@ package capture
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/freQuensy23-coder/Tank/capture/internal/pyjson"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyval"
 )
@@ -105,7 +108,7 @@ func TestCaptureCoverageReadFailuresRemainUnavailable(t *testing.T) {
 			r := newRESTRig(t, "coinbase")
 			r.s.store = &unavailableCoverageStore{Store: r.mem, failAt: test.read}
 			coverage, err := r.s.captureWindowCoverage(context.Background(), r.inst, r.base)
-			if err == nil || !strings.Contains(err.Error(), test.message) || coverage != nil {
+			if err == nil || !strings.Contains(err.Error(), test.message) {
 				t.Fatalf("failed observation became invented counters: coverage=%v error=%v", coverage, err)
 			}
 		})
@@ -149,5 +152,88 @@ func TestKlineInvertedIntervalRejectsBeforeStorageEffects(t *testing.T) {
 	}
 	if calls := store.projectionReads.Load(); calls != 0 {
 		t.Fatalf("invalid interval reached storage before validation: %d", calls)
+	}
+}
+
+func TestCoverageRejectsTruthyNonBooleanCompletion(t *testing.T) {
+	r := newRESTRig(t, "coinbase")
+	r.mem.rows["mkt.flow_bars_1m"] = map[string]map[string]any{
+		"malformed-completion": {
+			"instrument_id": r.inst.ID, "minute_start": pytime.ISO(r.base.Add(-time.Minute)), "complete": "true",
+		},
+	}
+	_, err := r.s.captureWindowCoverage(context.Background(), r.inst, r.base)
+	if err == nil || !strings.Contains(err.Error(), "requires boolean completion") {
+		t.Fatalf("truthy wire text became proven complete coverage: %v", err)
+	}
+}
+
+func TestCoverageReferenceSelectsLatestAndPreservesIntegerIdentity(t *testing.T) {
+	r := newRESTRig(t, "coinbase")
+	boundary := r.base.Add(-24 * time.Hour)
+	r.mem.rows["mkt.flow_bars_1m"] = map[string]map[string]any{
+		"reference": {
+			"instrument_id": r.inst.ID, "minute_start": pytime.ISO(boundary.Add(-time.Minute)), "complete": false,
+			"reference_points": []any{
+				map[string]any{"boundary": pytime.ISO(boundary), "complete": true, "last_trade": map[string]any{
+					"trade_id": "older-trade", "ts": pytime.ISO(boundary.Add(-2 * time.Second)), "ts_prec": "EXACT",
+				}},
+				map[string]any{"boundary": pytime.ISO(boundary), "complete": true, "last_trade": map[string]any{
+					"trade_id": json.Number("9007199254740993"), "ts": pytime.ISO(boundary.Add(-time.Second)), "ts_prec": "EXACT",
+				}},
+			},
+		},
+	}
+	coverage, err := r.s.captureWindowCoverage(context.Background(), r.inst, r.base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire := pyjson.Canonical(coverage.storageValue())
+	if !strings.Contains(wire, "\"trade_id\":9007199254740993") || strings.Contains(wire, "older-trade") {
+		t.Fatalf("latest reference selection or integer wire identity lost precision: %s", wire)
+	}
+}
+
+func TestCoverageCountsUniqueBucketsAndRejectsConflicts(t *testing.T) {
+	r := newRESTRig(t, "coinbase")
+	rows := map[string]map[string]any{}
+	for minute := 0; minute < 59; minute++ {
+		rows[strconv.Itoa(minute)] = map[string]any{
+			"instrument_id": r.inst.ID, "minute_start": pytime.ISO(r.base.Add(time.Duration(minute-60) * time.Minute)), "complete": true,
+		}
+	}
+	rows["duplicate"] = copyRow(rows["58"])
+	r.mem.rows["mkt.flow_bars_1m"] = rows
+	coverage, err := r.s.captureWindowCoverage(context.Background(), r.inst, r.base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	window := coverage.Windows.W1H.Flow
+	if window.Complete || window.CompleteMinutes != 59 || window.MissingOrIncompleteMinutes != 1 {
+		t.Fatalf("duplicate observation hid a genuinely missing minute: %+v", window)
+	}
+	rows["duplicate"]["complete"] = false
+	if _, err := r.s.captureWindowCoverage(context.Background(), r.inst, r.base); err == nil || !strings.Contains(err.Error(), "conflicting observations") {
+		t.Fatalf("conflicting duplicate completion flags were resolved arbitrarily: %v", err)
+	}
+}
+
+func TestCoverageRejectsUnalignedBucket(t *testing.T) {
+	r := newRESTRig(t, "coinbase")
+	r.mem.rows["mkt.flow_bars_1m"] = map[string]map[string]any{
+		"unaligned": {"instrument_id": r.inst.ID, "minute_start": pytime.ISO(r.base.Add(-30 * time.Second)), "complete": true},
+	}
+	if _, err := r.s.captureWindowCoverage(context.Background(), r.inst, r.base); err == nil || !strings.Contains(err.Error(), "aligned bucket") {
+		t.Fatalf("non-minute evidence was counted as a complete minute: %v", err)
+	}
+}
+
+func TestReferenceTradeIdentityRejectsNonIntegerJSONNumbers(t *testing.T) {
+	for _, raw := range []json.Number{"null", "true", "[]", "1.5", "2e4", ""} {
+		t.Run(string(raw), func(t *testing.T) {
+			if _, err := decodeReferenceTradeIdentity(raw); err == nil {
+				t.Fatalf("non-integer JSON value entered an integer trade identity: %q", raw)
+			}
+		})
 	}
 }
