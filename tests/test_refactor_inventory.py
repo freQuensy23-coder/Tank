@@ -114,3 +114,22 @@ def test_inventory_includes_explicit_embedded_python_with_original_locations(
     found = {(item.path, item.line, item.symbol, item.kind) for item in report.findings}
     assert ("deploy/probe.mjs", 40, "PROBE.decode", "untyped_parameter") in found
     assert ("deploy/probe.mjs", 41, "PROBE.decode", "fallback") in found
+
+
+def test_inventory_observes_exact_historical_recipe_and_rejects_changed_exemption(
+    inventory_module: ModuleType, tmp_path: Path
+) -> None:
+    relative = Path("capture/internal/budget/testdata/gen_vectors.py")
+    source = Path(__file__).parents[1] / relative
+    target = tmp_path / relative
+    target.parent.mkdir(parents=True)
+    target.write_bytes(source.read_bytes())
+    report = inventory_module.inventory(tmp_path)
+    assert report.files == 0
+    reference = report.reference_programs[str(relative)]
+    assert reference.provenance.role == "historical-oracle-recipe"
+    assert reference.findings
+    assert any(item.kind == "untyped_parameter" for item in reference.findings)
+    target.write_text(target.read_text() + "\n")
+    with pytest.raises(ValueError, match="Historical reference program changed"):
+        inventory_module.inventory(tmp_path)
