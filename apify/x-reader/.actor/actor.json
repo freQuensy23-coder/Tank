@@ -1,0 +1,8 @@
+{
+  "actorSpecification": 1,
+  "name": "tank-x-notifier",
+  "title": "Tank \u2014 X direct fetch",
+  "version": "0.2",
+  "dockerfile": "../Dockerfile",
+  "input": "./input_schema.json"
+}

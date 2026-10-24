@@ -1,0 +1,251 @@
+import base64
+import json
+from email import policy
+from email.parser import BytesParser
+from types import SimpleNamespace
+
+import httpx
+import pytest
+from test_sources import settings as source_settings
+from test_xsensor import URL, run
+
+from tank.delivery import DeliveryError, DeliveryService
+from tank.ops_entry_errors import report_entry_errors
+from tank.sources import SourceService
+from tank.sources.x_diagnostics import documents, sanitize
+from tank.sources.xsensor import XSensor
+from tank.storage import MemoryRepository
+from tank.util import sha256
+
+
+def diagnostics(
+    body="upstream body", *, encoding="utf-8", status=503, at="2026-10-24T12:00:00Z", request_id="one"
+):
+    return {
+        "request": {"method": "GET", "url": "https://x.com/alice", "body": None},
+        "outcome": "exhausted",
+        "attemptCount": 3,
+        "attempts": [
+            {
+                "attempt": index,
+                "at": at,
+                "error": f"PUBLIC_PROFILE_HTTP_{status}",
+                "status": status,
+                "retryable": True,
+                "response": {
+                    "status": status,
+                    "headers": {"content-type": "text/plain", "x-request-id": request_id},
+                    "body": body,
+                    "bodyEncoding": encoding,
+                    "bodyTruncated": False,
+                },
+            }
+            for index in range(1, 4)
+        ],
+    }
+
+
+def failed_run(evidence):
+    return run(
+        [],
+        [
+            {
+                "handle": "alice",
+                "status": "failed",
+                "error": "PUBLIC_PROFILE_HTTP_503",
+                "diagnostics": evidence,
+            }
+        ],
+        {"alice": "999"},
+        health="failed",
+        error="PUBLIC_SOURCE_UNAVAILABLE",
+    )
+
+
+def telegram_settings():
+    return SimpleNamespace(
+        telegram_token="test",
+        telegram_ops_chat="ops",
+        telegram_alerts_chat="alerts",
+        ops_progress_enabled=True,
+        apify_api_token="apify-secret",
+    )
+
+
+def multipart(request):
+    message = BytesParser(policy=policy.default).parsebytes(
+        b"Content-Type: " + request.headers["content-type"].encode() + b"\r\n\r\n" + request.content
+    )
+    return {
+        part.get_param("name", header="content-disposition"): (
+            part.get_filename(),
+            part.get_payload(decode=True),
+        )
+        for part in message.iter_parts()
+    }
+
+
+async def notice_for(repo, evidence):
+    notice_id = await report_entry_errors(
+        repo,
+        telegram_settings(),
+        {"source_id": "S29", "name": "X"},
+        {"url": URL},
+        [{"account": "alice", "reason": "PUBLIC_PROFILE_HTTP_503", "diagnostics": evidence}],
+        "2026-10-24T12:00:00Z",
+    )
+    return await repo.get("out.ops_notices", notice_id)
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "base64"])
+def test_sanitization_removes_echoed_token_cookies_and_auth_headers(encoding):
+    raw = b"apify-secret\nCookie: forbidden-cookie\nAuthorization: Bearer forbidden-auth\nbody"
+    evidence = diagnostics(
+        base64.b64encode(raw).decode() if encoding == "base64" else raw.decode(), encoding=encoding
+    )
+    evidence["attempts"][0]["response"]["headers"].update(
+        {"Authorization": "forbidden-auth", "Set-Cookie": "forbidden-cookie"}
+    )
+    clean = sanitize(evidence, "apify-secret")
+    serialized = json.dumps(clean)
+    payloads = b"".join(row["content"] for row in documents([{"account": "alice", "diagnostics": clean}]))
+    assert all(
+        secret.encode() not in payloads and secret not in serialized
+        for secret in ("apify-secret", "forbidden-cookie", "forbidden-auth")
+    )
+    assert clean["attempts"][0]["response"]["headers"] == {
+        "content-type": "text/plain",
+        "x-request-id": "one",
+    }
+
+
+async def test_all_failed_accounts_reach_checkpoint_ops_and_preserve_cursor(tmp_path):
+    repo = MemoryRepository()
+    config = source_settings(
+        tmp_path, [{"source_id": "S29", "name": "X", "feeds": [{"kind": "x", "url": URL}]}]
+    )
+    config.apify_api_token = "apify-secret"
+    config.ops_progress_enabled = True
+    evidence = diagnostics("full upstream diagnostic body")
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(201, json=failed_run(evidence)))
+    ) as http:
+        service = SourceService(repo, config, http=http)
+        service.accounts = {"alice": {"handle": "alice", "role": "OTHER", "entity_id": "alice"}}
+        await repo.put("ops.source_checkpoints", "S29:0", {"account_cursors": {"alice": "90"}})
+        result = await service.poll_once("S29")
+    state = await repo.get("ops.source_checkpoints", "S29:0")
+    assert result["status"] == "DEGRADED" and result["items"] == 0
+    assert state["account_cursors"] == {"alice": "90"}
+    assert (
+        state["entry_errors"][0]["diagnostics"]["attempts"][2]["response"]["body"]
+        == "full upstream diagnostic body"
+    )
+    [notice] = await repo.list("out.ops_notices", filters={"kind": "ENTRY_ERRORS"})
+    assert "Ошибка HTTP-сбора X" in notice["text"] and "GET request body: empty" in notice["text"]
+    assert len(notice["document_manifest"]) == 4
+    [job] = await repo.list("ops.jobs", filters={"type": "DELIVER"})
+    assert job["payload"] == {"notice_id": notice["notice_id"], "channel": "telegram:ops"}
+
+
+async def test_same_body_deduplicates_despite_new_attempt_time_and_request_id_but_changed_body_is_sent():
+    repo = MemoryRepository()
+    first = await notice_for(repo, diagnostics("first"))
+    settings = telegram_settings()
+    source, feed = {"source_id": "S29"}, {"url": URL}
+    error = {
+        "account": "alice",
+        "reason": "PUBLIC_PROFILE_HTTP_503",
+        "diagnostics": diagnostics("first", at="2026-10-24T12:05:00Z", request_id="two"),
+    }
+    assert await report_entry_errors(repo, settings, source, feed, [error], "2026-10-24T12:05:00Z") is None
+    second = await notice_for(repo, diagnostics("second"))
+    assert second["notice_id"] != first["notice_id"]
+    assert len(await repo.list("out.ops_notices", filters={"kind": "ENTRY_ERRORS"})) == 2
+
+
+@pytest.mark.parametrize(
+    "raw,encoding",
+    [
+        (b"small <html>& full body", "utf-8"),
+        (b"long full diagnostic " * 1000, "utf-8"),
+        (b"\x00\xff\x80binary", "base64"),
+    ],
+)
+async def test_actual_document_upload_preserves_every_response_byte_and_receipt(raw, encoding):
+    repo = MemoryRepository()
+    body = base64.b64encode(raw).decode() if encoding == "base64" else raw.decode()
+    notice = await notice_for(repo, diagnostics(body, encoding=encoding))
+    sent = []
+
+    def send(request):
+        sent.append(request)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent), "date": 1}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+        delivery = DeliveryService(repo, telegram_settings(), http=http)
+        payload = {"notice_id": notice["notice_id"], "channel": "telegram:ops"}
+        await delivery.deliver(payload)
+        await DeliveryService(repo, telegram_settings(), http=http).deliver(payload)
+    assert len(sent) == 5 and sent[0].url.path.endswith("sendMessage")
+    uploads = [multipart(request) for request in sent[1:]]
+    assert all(
+        upload["chat_id"][1] == b"ops" and json.loads(upload["reply_parameters"][1]) == {"message_id": 1}
+        for upload in uploads
+    )
+    assert [upload["document"][1] for upload in uploads[:3]] == [raw, raw, raw]
+    metadata = json.loads(uploads[3]["document"][1])
+    assert metadata["request"] == {"method": "GET", "url": "https://x.com/alice", "body": None}
+    assert [a["response"]["bodySha256"] for a in metadata["attempts"]] == [sha256(raw)] * 3
+    assert all("content-type" in a["response"]["headers"] for a in metadata["attempts"])
+    receipts = await repo.list("out.deliveries", filters={"status": "SENT", "method": "sendDocument"})
+    assert len(receipts) == 4 and [row["document_bytes"] for row in receipts[:3]] == [len(raw)] * 3
+
+
+async def test_partial_document_delivery_retry_does_not_duplicate_successful_message_or_documents():
+    repo = MemoryRepository()
+    notice = await notice_for(repo, diagnostics("complete body"))
+    sent, successful = [], []
+    fail = True
+
+    def send(request):
+        nonlocal fail
+        sent.append(request)
+        if len(sent) == 3 and fail:
+            fail = False
+            return httpx.Response(429, json={"ok": False, "parameters": {"retry_after": 7}})
+        successful.append(request)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent)}})
+
+    payload = {"notice_id": notice["notice_id"], "channel": "telegram:ops"}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+        delivery = DeliveryService(repo, telegram_settings(), http=http)
+        with pytest.raises(DeliveryError) as failure:
+            await delivery.deliver(payload)
+        assert failure.value.retry_after == 7
+        await DeliveryService(repo, telegram_settings(), http=http).deliver(payload)
+        await delivery.deliver(payload)
+    assert len(sent) == 6 and len(successful) == 5
+    assert sum(request.url.path.endswith("sendMessage") for request in sent) == 1
+    filenames = [multipart(request)["document"][0] for request in successful[1:]]
+    assert len(set(filenames)) == 4
+
+
+async def test_diagnostics_do_not_allow_failed_account_posts_or_cursors_to_advance():
+    evidence = failed_run(diagnostics())
+    evidence["health"] = "degraded"
+    evidence["posts"] = [
+        {
+            "id": "100",
+            "author": "alice",
+            "text": "bad",
+            "url": "https://x.com/alice/status/100",
+            "publishedAt": "2026-10-24T12:00:00Z",
+        }
+    ]
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(201, json=evidence))
+    ) as http:
+        scan = await XSensor(http, "apify-secret").posts(URL, ["alice"], {"alice": "90"})
+    assert scan.cursors == {"alice": "90"}
+    assert scan.rows == []
