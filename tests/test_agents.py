@@ -13,7 +13,7 @@ from tank.contracts.source_items import parse_feed_source_item
 from tank.ops_progress import DisabledSourceProgress
 from tank.storage import MemoryRepository
 from tank.telegram_rich import score_summary
-from tank.util import iso, sha256, utcnow
+from tank.util import clock_iso, iso, sha256, utcnow
 
 
 def settings(**overrides):
@@ -285,7 +285,7 @@ async def test_sse_resume_and_paginated_recovery_dedup_usage() -> None:
     event = {
         "id": "usage_1",
         "type": "span.model_request_end",
-        "processed_at": iso(),
+        "processed_at": clock_iso(),
         "model_usage": {"input_tokens": 1000, "output_tokens": 10},
     }
     requests = []
@@ -379,7 +379,7 @@ async def test_canonical_event_routing_and_added_message() -> None:
         },
     )
     await repo.put("evt.ems_assessments", "ems_1", {"ems_id": "ems_1", "event_id": "evt_1", "class": "MAJOR"})
-    await seed_session(repo, last_item_at=iso())
+    await seed_session(repo, last_item_at=clock_iso())
     posted = []
 
     def handler(req):
@@ -489,7 +489,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
     repo = MemoryRepository()
     opts = Settings(data_dir=tmp_path)
     tools = EventToolService(repo, opts, None, DecisionEngine(opts))
-    now = iso()
+    now = clock_iso()
     await repo.put(
         "evt.events",
         "evt_1",
@@ -686,7 +686,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
         assert alert["decisions"] == [decision["dec_id"]]
 
         invalidated = await repo.get("evt.events", "evt_1")
-        invalidated["session_finalized_at"] = iso()
+        invalidated["session_finalized_at"] = clock_iso()
         await repo.put("evt.events", "evt_1", invalidated)
         await service.process_event(
             "ses_1", {"id": "idle", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}}
@@ -958,7 +958,7 @@ async def test_routing_and_resume_find_late_history_with_one_row_pages() -> None
     await repo.put(
         "ops.agent_sessions",
         "zz_session",
-        {"session_id": "zz_session", "event_id": "zz_event", "status": "OPEN", "last_item_at": iso()},
+        {"session_id": "zz_session", "event_id": "zz_event", "status": "OPEN", "last_item_at": clock_iso()},
     )
     await repo.put(
         "ingest.source_items",

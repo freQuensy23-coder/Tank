@@ -20,7 +20,7 @@ from tank.contracts.repository import Collection
 from tank.contracts.source_items import FeedSourceItem
 from tank.ops_progress import DisabledSourceProgress
 from tank.storage import PostgresRepository
-from tank.util import iso, new_id
+from tank.util import clock_iso, iso, new_id
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
@@ -40,7 +40,7 @@ async def test_independent_routing_calls_overlap_preserve_source_updates_and_ded
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = isolated_routing_repo
-    marker, at = new_id("ROUTING-TEST"), iso()
+    marker, at = new_id("ROUTING-TEST"), clock_iso()
     entity = marker + "-entity"
     config: dict[str, dict[str, JsonValue]] = {
         "registry": {"entities": [{"entity_id": entity, "aliases": [marker]}]},
@@ -189,7 +189,7 @@ async def test_parallel_candidate_scores_survive_retry_without_partial_winner(
     import json
 
     repo = isolated_routing_repo
-    marker, at = new_id("ROUTE-PAIRS"), iso()
+    marker, at = new_id("ROUTE-PAIRS"), clock_iso()
     item_id = marker + "-item"
     await repo.put(
         "ingest.source_items",
