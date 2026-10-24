@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -12,7 +11,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyjson"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
 	"github.com/freQuensy23-coder/Tank/capture/internal/schema"
-	"github.com/jackc/pgx/v5"
 )
 
 func (s *Store) Get(ctx context.Context, collection, key string) (map[string]any, error) {
@@ -210,6 +208,9 @@ func (s *Store) BackfillRuns(ctx context.Context, statuses []string) ([]map[stri
 const requests = "mkt.capture_requests"
 
 func (s *Store) ClaimRequest(ctx context.Context, writer string, now time.Time) (map[string]any, error) {
+	if writer == "" {
+		return nil, fmt.Errorf("capture request requires a writer identity")
+	}
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -222,37 +223,33 @@ func (s *Store) ClaimRequest(ctx context.Context, writer string, now time.Time) 
 	if err != nil {
 		return nil, err
 	}
-	expired, keys, err := collectRows(requests, rows)
+	expired, _, err := collectRows(requests, rows)
 	if err != nil {
 		return nil, err
 	}
 	for _, row := range expired {
-		row["status"], row["reason"] = "EXPIRED", "REQUEST_DEADLINE_PASSED"
-		pytime.CollectionClock(now).Into(row, "finished_at")
-	}
-	if len(expired) > 0 {
-		if _, err := s.putMarketBatch(ctx, tx, requests, expired, keys); err != nil {
+		if _, err := s.applyRequestLifecycle(ctx, tx, row, requestExpiry{finished: now}); err != nil {
 			return nil, err
 		}
 	}
+
 	rows, err = tx.Query(ctx, "SELECT "+selectList(requests, "")+" FROM "+liveTable(requests)+
 		" WHERE status='PENDING' ORDER BY requested_at NULLS LAST,storage_key LIMIT 1 FOR UPDATE SKIP LOCKED")
 	if err != nil {
 		return nil, err
 	}
-	claimed, keys, err := collectRows(requests, rows)
+	claimed, _, err := collectRows(requests, rows)
 	if err != nil {
 		return nil, err
 	}
 	var row map[string]any
 	if len(claimed) == 1 {
-		row = claimed[0]
-		row["status"], row["writer"] = "RUNNING", writer
-		pytime.CollectionClock(now).Into(row, "started_at")
-		if _, err := s.putMarketBatch(ctx, tx, requests, []map[string]any{row}, keys); err != nil {
+		row, err = s.applyRequestLifecycle(ctx, tx, claimed[0], requestClaim{writer: writer, started: now})
+		if err != nil {
 			return nil, err
 		}
 	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -260,17 +257,27 @@ func (s *Store) ClaimRequest(ctx context.Context, writer string, now time.Time) 
 }
 
 func (s *Store) FinishRequest(ctx context.Context, row map[string]any) error {
-	id, _ := row["request_id"].(string)
-	if id == "" {
-		return fmt.Errorf("capture request without request_id")
-	}
-	key := id
-	err := s.Pool.QueryRow(ctx, "SELECT storage_key FROM "+liveTable(requests)+" WHERE request_id=$1", id).Scan(&key)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	id, err := requestIdentity(row)
+	if err != nil {
 		return err
 	}
-	_, err = s.putMarketBatch(ctx, s.Pool, requests, []map[string]any{row}, []string{key})
-	return err
+	update, err := decodeRequestCompletion(row)
+	if err != nil {
+		return err
+	}
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	original, err := s.lockRequest(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if _, err := s.applyRequestLifecycle(ctx, tx, original, update); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) PruneFetches(ctx context.Context, before time.Time) (int64, error) {

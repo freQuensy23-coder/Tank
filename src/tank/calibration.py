@@ -11,12 +11,15 @@ proposed thresholds patch, which is recorded in config by a D6 checkpoint.
 import asyncio
 import hashlib
 import json
+from collections.abc import Mapping
 from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
 
 import yaml
+from pydantic import JsonValue
 
+from tank.contracts.source_items import PendingRelevance
 from tank.sources.policy import initial_relevance
 from tank.util import iso, parse_time, sha256
 
@@ -30,11 +33,28 @@ class CalibrationError(ValueError):
     """Invalid or insufficient labeled calibration packet."""
 
 
-def requires_filter(item):
-    policy = initial_relevance(item.get("source_id"), item.get("subtype"), item.get("author_role"))
-    if policy.get("pending_reason") == "SOURCE_INGESTION_POLICY_NOT_CAPTURED":
-        raise CalibrationError(f"{item.get('item_id')}: source outside S01–S34")
-    return policy["decision"] != "ALWAYS"
+def _source_text(value: JsonValue, field: str, *, required: bool) -> str | None:
+    if value is None and not required:
+        return None
+    if not isinstance(value, str) or (required and not value):
+        raise CalibrationError(f"source_item.{field} requires text")
+    return value
+
+
+def requires_filter(item: Mapping[str, JsonValue]) -> bool:
+    source_id = _source_text(item["source_id"], "source_id", required=True)
+    item_id = _source_text(item["item_id"], "item_id", required=True)
+    policy = initial_relevance(
+        source_id,
+        _source_text(item.get("subtype"), "subtype", required=False),
+        _source_text(item.get("author_role"), "author_role", required=False),
+    )
+    if (
+        isinstance(policy, PendingRelevance)
+        and policy.pending_reason == "SOURCE_INGESTION_POLICY_NOT_CAPTURED"
+    ):
+        raise CalibrationError(f"{item_id}: source outside S01–S34")
+    return policy.decision != "ALWAYS"
 
 
 def load_packet(packet):

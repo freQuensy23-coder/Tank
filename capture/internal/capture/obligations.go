@@ -21,18 +21,26 @@ func (s *Service) obligations(ctx context.Context) {
 		return
 	}
 	for _, row := range rows {
-		id := text(row["backfill_id"])
-		s.mu.Lock()
-		started := s.obliged[id]
-		s.mu.Unlock()
-		if started || id == "" {
+		id, validID := row["backfill_id"].(string)
+		if !validID || id == "" {
+			s.log.Error("capture obligation has no backfill identity")
 			continue
 		}
 		s.mu.Lock()
-		s.obliged[id] = true
+		if _, active := s.activeObligations[id]; active {
+			s.mu.Unlock()
+			continue
+		}
+		s.activeObligations[id] = struct{}{}
 		s.mu.Unlock()
-		row := row
-		s.spawn(func(ctx context.Context) { s.runObligation(ctx, row) })
+		s.spawn(func(ctx context.Context) {
+			defer func() {
+				s.mu.Lock()
+				delete(s.activeObligations, id)
+				s.mu.Unlock()
+			}()
+			s.runObligation(ctx, row)
+		})
 	}
 }
 
@@ -87,7 +95,7 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 		return
 	}
 	token := text(row["token_id"])
-	row["status"] = "RUNNING"
+	row["status"], row["started_at"] = "RUNNING", pytime.ISO(s.clock.Now())
 	s.putRun(ctx, row)
 	instruments := s.tokenInstruments(ctx, token)
 	ids := make([]string, len(instruments))
@@ -197,40 +205,54 @@ func (s *Service) runRequest(ctx context.Context, row map[string]any) {
 			s.log.Warn("capture request not finished", "request_id", row["request_id"], "error", err)
 		}
 	}
-	budget := time.Duration(0)
-	if deadline, err := pytime.Parse(row["deadline"]); err == nil {
-		budget = deadline.Sub(s.clock.Now())
-		if budget <= 0 {
-			finish("EXPIRED", "REQUEST_DEADLINE_PASSED", nil)
-			return
-		}
+	limits, invalid := decodeRequestLimits(row, s.clock.Now())
+	if invalid != nil {
+		finish("FAILED", string(invalid.reason), nil)
+		return
 	}
-	if seconds, err := pyval.Decimal(row["budget_s"]); err == nil && seconds.Float64() > 0 {
-		limit := time.Duration(seconds.Float64() * float64(time.Second))
-		if budget <= 0 || limit < budget {
-			budget = limit
-		}
+	if limits.budget <= 0 || !limits.deadline.After(s.clock.Now()) {
+		finish("EXPIRED", "REQUEST_DEADLINE_PASSED", nil)
+		return
 	}
+	budget := limits.budget
+
 	switch text(row["kind"]) {
 	case "HTTP_FETCH":
 		s.runFetch(ctx, row, budget, finish)
 		return
 	}
-	start, err1 := pytime.Parse(row["start"])
-	end, err2 := pytime.Parse(row["end"])
-	if err1 != nil || err2 != nil || text(row["kind"]) != "REPAIR_WINDOWS" {
+	start, err1 := requestTimestamp(row["start"])
+	end, err2 := requestTimestamp(row["end"])
+	if err1 != nil || err2 != nil || !end.After(start) || text(row["kind"]) != "REPAIR_WINDOWS" {
 		finish("FAILED", "UNSUPPORTED_CAPTURE_REQUEST", nil)
 		return
 	}
-	results := s.repairWindows(ctx, text(row["token_id"]), start, end, budget)
+	tokenID, validToken := row["token_id"].(string)
+	if !validToken || tokenID == "" {
+		finish("FAILED", string(invalidRequestToken), nil)
+		return
+	}
+	results := s.repairWindows(ctx, tokenID, start, end, budget)
 	out := map[string]any{}
-	for iid, r := range results {
-		out[iid] = r
+	for iid, result := range results {
+		out[iid] = result.storageValue()
 	}
 	finish("COMPLETE", nil, map[string]any{"instruments": out})
 }
 
-func (s *Service) repairWindows(ctx context.Context, token string, start, end time.Time, budget time.Duration) map[string]map[string]any {
+type RepairCoverage struct {
+	IncompleteBefore int64 `json:"incomplete_before"`
+	IncompleteAfter  int64 `json:"incomplete_after"`
+}
+
+func (r RepairCoverage) storageValue() map[string]any {
+	return map[string]any{
+		"incomplete_before": r.IncompleteBefore,
+		"incomplete_after":  r.IncompleteAfter,
+	}
+}
+
+func (s *Service) repairWindows(ctx context.Context, token string, start, end time.Time, budget time.Duration) map[string]RepairCoverage {
 	if budget > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, budget)
@@ -275,7 +297,7 @@ func (s *Service) repairWindows(ctx context.Context, token string, start, end ti
 		reserved bool
 	}
 	phases := []phase{{reference, recent, hi, true}, {othersSpot, recent, hi, false}, {perp, recent, hi, false}, {instruments, lo, recent, false}}
-	results := map[string]map[string]any{}
+	results := map[string]RepairCoverage{}
 	var mu sync.Mutex
 	for _, ph := range phases {
 		var wg sync.WaitGroup
@@ -286,12 +308,9 @@ func (s *Service) repairWindows(ctx context.Context, token string, start, end ti
 				before, after := s.repairInstrument(ctx, inst, ph.a, ph.b, ph.reserved)
 				mu.Lock()
 				total := results[inst.ID]
-				if total == nil {
-					total = map[string]any{"incomplete_before": int64(0), "incomplete_after": int64(0)}
-					results[inst.ID] = total
-				}
-				total["incomplete_before"] = total["incomplete_before"].(int64) + before
-				total["incomplete_after"] = total["incomplete_after"].(int64) + after
+				total.IncompleteBefore += before
+				total.IncompleteAfter += after
+				results[inst.ID] = total
 				mu.Unlock()
 			}(inst)
 		}

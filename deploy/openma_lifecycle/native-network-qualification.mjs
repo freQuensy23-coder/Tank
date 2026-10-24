@@ -22,53 +22,7 @@ const agentPassword = await secret('TANK_AGENT_DB_PASSWORD');
 const replayPassword = await secret('TANK_REPLAY_AGENT_DB_PASSWORD');
 const hash = value => createHash('sha256').update(value).digest('hex');
 
-const PROBE = String.raw`
-import json, os, socket, ssl, struct, subprocess, time, urllib.request
-r = {}
-def attempt(name, fn):
-    t = time.monotonic()
-    try:
-        r[name] = {"ok": True, "value": fn()}
-    except Exception as e:
-        r[name] = {"ok": False, "error": (type(e).__name__ + ": " + str(e))[:240]}
-    r[name]["ms"] = round((time.monotonic() - t) * 1000)
-def udp_dns(server, name="example.com"):
-    q = struct.pack(">HHHHHH", 0x5441, 0x0100, 1, 0, 0, 0) + b"".join(bytes([len(p)]) + p.encode() for p in name.split(".")) + b"\0" + struct.pack(">HH", 1, 1)
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(4)
-    s.sendto(q, (server, 53)); d, _ = s.recvfrom(1500); s.close()
-    rcode, answers = d[3] & 15, struct.unpack(">H", d[6:8])[0]
-    if rcode != 0 or answers == 0: raise RuntimeError("rcode=%d answers=%d" % (rcode, answers))
-    return {"rcode": rcode, "answers": answers}
-def tls(host, port=443, sni=None):
-    raw = socket.create_connection((host, port), timeout=6)
-    with ssl.create_default_context().wrap_socket(raw, server_hostname=sni or host) as s:
-        return {"peer": s.getpeername()[0], "version": s.version()}
-def https(target):
-    with urllib.request.urlopen(target, timeout=12) as response:
-        return response.status
-def psql(dburl, sql):
-    p = subprocess.run(["psql", dburl, "-v", "ON_ERROR_STOP=1", "-Atc", sql], capture_output=True, text=True, timeout=25)
-    if p.returncode: raise RuntimeError(p.stderr.strip().splitlines()[-1] if p.stderr.strip() else "exit %d" % p.returncode)
-    return p.stdout.strip()
-attempt("machine", lambda: os.uname().machine)
-attempt("kernel", lambda: os.uname().release)
-attempt("hypervisor_cpu_flag", lambda: "hypervisor" in open("/proc/cpuinfo").read())
-nameservers = [l.split()[1] for l in open("/etc/resolv.conf") if l.startswith("nameserver")]
-r["nameservers"] = nameservers
-for host in ("example.com", "openrouter.ai", "api.etherscan.io", "postgres"):
-    attempt("dns_getaddrinfo_" + host, lambda h=host: sorted({a[4][0] for a in socket.getaddrinfo(h, 443, proto=socket.IPPROTO_TCP)}))
-attempt("dns_udp_configured", lambda: udp_dns(nameservers[0]))
-attempt("dns_udp_public_1.1.1.1", lambda: udp_dns("1.1.1.1"))
-attempt("tls_direct_ip_1.1.1.1", lambda: tls("1.1.1.1", sni="one.one.one.one"))
-attempt("tls_direct_ip_8.8.8.8", lambda: tls("8.8.8.8", sni="dns.google"))
-attempt("https_example.com", lambda: https("https://example.com/"))
-attempt("https_openrouter_models", lambda: https("https://openrouter.ai/api/v1/models"))
-attempt("db_tcp", lambda: socket.create_connection((os.environ["TANK_NATIVE_DB_IPV4"], 5432), timeout=6).getpeername()[0])
-attempt("db_select", lambda: psql(os.environ["TANK_DB_URL"], "select current_user || ' ' || current_database()"))
-attempt("db_write_refused", lambda: psql(os.environ["TANK_DB_URL"], "create table tank_native_probe(x int)"))
-attempt("db_cross_database", lambda: psql(os.environ["TANK_CROSS_DB_URL"], "select current_database()"))
-print("TANKPROBE" + json.dumps(r))
-`;
+const PROBE = await readFile(new URL('./native_network_probe.py', import.meta.url), 'utf8');
 
 const policies = {
   unrestricted: { mode: 'enabled' },
