@@ -146,3 +146,14 @@ namespace. All helper functions, test parameters, stream iterators and cleanup
 methods have exact annotations. Synthetic JSON auth/protocol fixtures remain
 wire maps with runtime narrowing where nested structures are inspected.
 All 49 gateway integration cases still pass, zero skips, 1.87 seconds.
+
+
+Integrated regression fixes: Runtime consumes the canonical EventAnchor model's
+guaranteed value for capture readiness and repair intervals. It no longer
+indexes a JSON field and passes a union to parse_time. The denial-turn fixture
+declares all seven score dimensions as explicitly unestimated; no score is
+fabricated. Watch-disarm fixtures instantiate complete WatchCondition records
+with provenance, lifecycle timestamps and fully specified expressions.
+Milestone notification outcomes retain verified descriptive source outcomes,
+including event-state labels and official denials, rather than a narrower
+unsupported enum. These 24 focused regression/runtime tests pass, zero skips.

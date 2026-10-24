@@ -200,7 +200,7 @@ class MilestoneMessage(JobPayload, ReplayBinding):
     kind: Literal["MILESTONE"]
     event_id: str
     milestone: str | MilestoneSnapshot
-    outcome: Literal["VERIFIED", "FAILED", "MISSED"] | None = None
+    outcome: str | None = None
     quotes: list[str] = Field(default_factory=list)
     evidence: list[str] = Field(default_factory=list)
     verification_required: bool

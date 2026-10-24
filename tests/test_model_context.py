@@ -12,7 +12,7 @@ from tank.agents.sessions import SessionService
 from tank.event_tools import EventToolService, validate_schema
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.util import iso, new_id, sha256
+from tank.util import iso, new_id, sha256, utcnow
 
 
 @pytest.fixture
@@ -655,15 +655,37 @@ async def test_diagnostics_map_registry_keys_to_names_without_rewriting_quotes_o
 async def test_identical_watches_on_different_tokens_are_disarmed_by_cond_id(context, token) -> None:
     repo, settings, session, _ = context
     event = await bound_event(repo, session)
+    from datetime import timedelta
+
+    from tank.analysis.watch_contracts import WatchCondition
+    from tank.time_precision import collection_clock, offset_schedule
+
+    service = EventToolService(repo, settings, None, None)
+    created = collection_clock()
+    expires = offset_schedule(created, timedelta(days=7))
+    provenance = service.provenance({"session_id": session["session_id"], "role": "analyst"})
     watches = [
-        {
-            "cond_id": new_id("CND"),
-            "event_id": event["event_id"],
-            "token_id": value,
-            "human_text": "Data confidence becomes high",
-            "expr": {"metric": "dc.class", "op": "==", "value": "HIGH"},
-            "status": "ARMED",
-        }
+        WatchCondition.model_validate(
+            {
+                "cond_id": new_id("CND"),
+                "event_id": event["event_id"],
+                "token_id": value,
+                "role": "AGENT",
+                "human_text": "Data confidence becomes high",
+                "expr": {
+                    "metric": "dc.class",
+                    "window": "W1H",
+                    "op": "==",
+                    "value": "HIGH",
+                    "persist": {"count": 1, "unit": "consecutive_windows"},
+                },
+                "status": "ARMED",
+                "created_by": "analyst",
+                **created.fields("created_at"),
+                **expires.fields("expires_at"),
+                **provenance,
+            }
+        ).model_dump(mode="json", exclude_none=False)
         for value in ("uniswap:UNI", "cow:COW")
     ]
     for row in watches:
@@ -802,8 +824,6 @@ async def test_superseded_claims_must_belong_to_the_current_event(context) -> No
 
 async def test_milestone_callback_confirms_from_the_fetched_official_document_by_id(context) -> None:
     from datetime import timedelta
-
-    from tank.util import utcnow
 
     repo, settings, session, opening = context
     opening.update(source_id="S29", observed_at=iso(utcnow() - timedelta(days=2)))

@@ -428,7 +428,27 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
             "tokens_mentioned": ["world:WLD"],
         },
     )
-    await repo.put("evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": "evt_1", "class": "MAJOR"})
+    await repo.put(
+        "evt.ems_assessments",
+        "ems",
+        {
+            "ems_id": "ems",
+            "event_id": "evt_1",
+            "class": "MAJOR",
+            "dims": {
+                key: {"value": None, "reason": "NO_ESTIMATE"}
+                for key in (
+                    "economic_directness",
+                    "magnitude",
+                    "permanence",
+                    "distribution_expansion",
+                    "mechanical_flows",
+                    "surprise",
+                    "implementation",
+                )
+            },
+        },
+    )
     await repo.put(
         "evt.beneficiary_maps", "map", {"event_id": "evt_1", "map_version": 1, "analysis_set": ["world:WLD"]}
     )

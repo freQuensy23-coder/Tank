@@ -171,8 +171,9 @@ class Runtime:
         event = await self.repo.get("evt.events", payload.event_id)
         if event is None:
             raise ValueError("Market truth event does not exist")
+        anchor = event_anchor(event)
         prerequisite = await self.market.capture_readiness(
-            payload.event_id, payload.token_id, anchor=event_anchor(event)["ts"]
+            payload.event_id, payload.token_id, anchor=anchor.value
         )
         if prerequisite["status"] not in {"PENDING", "RUNNING", "COMPLETE", "PARTIAL", "FAILED"}:
             raise RuntimeError("Required durable event capture was not scheduled")
@@ -186,10 +187,10 @@ class Runtime:
             else None
         )
         if hasattr(self.market, "repair_windows"):
-            anchor = parse_time(event_anchor(event)["ts"])
+            anchor_time = parse_time(anchor.value)
             end = parse_time(cutoff.value) if cutoff is not None and cutoff.value else utcnow()
             await self.market.repair_windows(
-                payload.token_id, min(anchor, end) - REPAIR_LOOKBACK, end, budget_s=REPAIR_BUDGET_S
+                payload.token_id, min(anchor_time, end) - REPAIR_LOOKBACK, end, budget_s=REPAIR_BUDGET_S
             )
         return await self.truth.assess(payload.event_id, payload.token_id, cutoff)
 
