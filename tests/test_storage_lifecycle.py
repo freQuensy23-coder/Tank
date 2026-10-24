@@ -3,17 +3,24 @@
 import asyncio
 import logging
 import os
+from collections.abc import AsyncIterator
+from types import TracebackType
 
+import psycopg
 import pytest
+from postgres_helpers import PostgresTemplate
+
+from tank.market_codec import StoredRow
+from tank.storage import PostgresRepository
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 
 @pytest.fixture
-async def lifecycle_repo(postgres_template):
+async def lifecycle_repo(postgres_template: PostgresTemplate) -> AsyncIterator[PostgresRepository]:
     dsn = os.getenv("TANK_TEST_DATABASE_URL")
     if not dsn:
-        pytest.skip("Requires isolated PostgreSQL CREATE DATABASE for owned lifecycle QA")
+        pytest.fail("Requires isolated PostgreSQL CREATE DATABASE for owned lifecycle QA")
     async with postgres_template.repository(dsn, migrated=False) as repo:
         async with repo.transaction():
             await repo._conn().execute(
@@ -23,7 +30,7 @@ async def lifecycle_repo(postgres_template):
 
 
 async def test_pg_early_iterator_exit_releases_transaction(
-    lifecycle_repo, caplog: pytest.LogCaptureFixture
+    lifecycle_repo: PostgresRepository, caplog: pytest.LogCaptureFixture
 ) -> None:
     repo = lifecycle_repo
     caplog.set_level(logging.WARNING)
@@ -33,6 +40,7 @@ async def test_pg_early_iterator_exit_releases_transaction(
         break
 
     assert repo._connection.get() is None
+    assert repo._pool is not None
     assert repo._pool.get_stats()["pool_available"] == repo._pool.get_stats()["pool_size"]
     await iterator.aclose()
     assert await repo.get("reg.tokens", "two")
@@ -40,23 +48,26 @@ async def test_pg_early_iterator_exit_releases_transaction(
 
 
 async def test_pg_repeated_cancel_during_transaction_exit(
-    lifecycle_repo, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    lifecycle_repo: PostgresRepository, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    import psycopg
-
     repo = lifecycle_repo
     caplog.set_level(logging.WARNING)
     body_entered = asyncio.Event()
     exit_entered = asyncio.Event()
     release_exit = asyncio.Event()
     original = psycopg.AsyncTransaction.__aexit__
-    target_connection = None
+    target_connection: psycopg.AsyncConnection[StoredRow] | None = None
 
-    async def delayed_exit(transaction, *args):
+    async def delayed_exit(
+        transaction: psycopg.AsyncTransaction,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool:
         if transaction._conn is target_connection:
             exit_entered.set()
             await release_exit.wait()
-        return await original(transaction, *args)
+        return await original(transaction, exc_type, exc_val, exc_tb)
 
     monkeypatch.setattr(psycopg.AsyncTransaction, "__aexit__", delayed_exit)
 
@@ -78,13 +89,15 @@ async def test_pg_repeated_cancel_during_transaction_exit(
     with pytest.raises(asyncio.CancelledError):
         await task
     assert await repo.get("reg.tokens", "cancelled") is None
+    assert target_connection is not None
     assert target_connection.info.transaction_status == psycopg.pq.TransactionStatus.IDLE
     assert target_connection._num_transactions == 0
+    assert repo._pool is not None
     assert repo._pool.get_stats().get("returns_bad", 0) == 0
     assert not caplog.records
 
 
-async def test_pg_child_task_uses_own_connection_and_savepoints(lifecycle_repo) -> None:
+async def test_pg_child_task_uses_own_connection_and_savepoints(lifecycle_repo: PostgresRepository) -> None:
     repo = lifecycle_repo
     async with repo.transaction():
         parent_connection = repo._conn()
@@ -108,17 +121,15 @@ async def test_pg_child_task_uses_own_connection_and_savepoints(lifecycle_repo) 
 
 
 async def test_pg_cancel_during_enter_rolls_back_without_running_body(
-    lifecycle_repo, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    lifecycle_repo: PostgresRepository, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    import psycopg
-
     entered = asyncio.Event()
     release = asyncio.Event()
-    body = []
-    connection = []
+    body: list[bool] = []
+    connection: list[psycopg.AsyncConnection[StoredRow]] = []
     original = psycopg.AsyncTransaction.__aenter__
 
-    async def delayed_enter(transaction):
+    async def delayed_enter(transaction: psycopg.AsyncTransaction) -> psycopg.AsyncTransaction:
         result = await original(transaction)
         connection.append(transaction._conn)
         entered.set()
@@ -141,18 +152,17 @@ async def test_pg_cancel_during_enter_rolls_back_without_running_body(
         await task
     assert not body and connection[0]._num_transactions == 0
     assert connection[0].info.transaction_status == psycopg.pq.TransactionStatus.IDLE
+    assert lifecycle_repo._pool is not None
     assert lifecycle_repo._pool.get_stats().get("returns_bad", 0) == 0
     assert not caplog.records
 
 
 async def test_pg_cancel_active_query_keeps_connection_usable(
-    lifecycle_repo, caplog: pytest.LogCaptureFixture
+    lifecycle_repo: PostgresRepository, caplog: pytest.LogCaptureFixture
 ) -> None:
-    import psycopg
-
     repo = lifecycle_repo
     entered = asyncio.Event()
-    connections = []
+    connections: list[psycopg.AsyncConnection[StoredRow]] = []
 
     async def worker() -> None:
         async with repo.transaction():
@@ -171,11 +181,14 @@ async def test_pg_cancel_active_query_keeps_connection_usable(
     assert connections[0].info.transaction_status == psycopg.pq.TransactionStatus.IDLE
     assert connections[0]._num_transactions == 0
     assert await repo.get("reg.tokens", "one")
+    assert repo._pool is not None
     assert repo._pool.get_stats().get("returns_bad", 0) == 0
     assert not caplog.records
 
 
-async def test_pg_child_outliving_parent_does_not_reuse_stale_binding(lifecycle_repo) -> None:
+async def test_pg_child_outliving_parent_does_not_reuse_stale_binding(
+    lifecycle_repo: PostgresRepository,
+) -> None:
     repo = lifecycle_repo
     release = asyncio.Event()
 
@@ -194,14 +207,12 @@ async def test_pg_child_outliving_parent_does_not_reuse_stale_binding(lifecycle_
 
 
 async def test_pg_repeated_cancel_nested_advisory_wait_keeps_parent_lock(
-    lifecycle_repo, caplog: pytest.LogCaptureFixture
+    lifecycle_repo: PostgresRepository, caplog: pytest.LogCaptureFixture
 ) -> None:
-    import psycopg
-
     repo = lifecycle_repo
     started = asyncio.Event()
-    connections = []
-    acquired = []
+    connections: list[psycopg.AsyncConnection[StoredRow]] = []
+    acquired: list[bool] = []
 
     async def worker() -> None:
         async with repo.transaction():
@@ -223,5 +234,6 @@ async def test_pg_repeated_cancel_nested_advisory_wait_keeps_parent_lock(
         assert connections[0]._num_transactions == 0
         assert connections[0].info.transaction_status == psycopg.pq.TransactionStatus.IDLE
         assert await repo.get("reg.tokens", "one")
+    assert repo._pool is not None
     assert repo._pool.get_stats().get("returns_bad", 0) == 0
     assert not caplog.records

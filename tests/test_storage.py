@@ -2,18 +2,29 @@ import asyncio
 import os
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 import pytest_asyncio
 from deployment_postgres_helpers import deployment_repository
+from foundation_helpers import present, text_field
 from postgres_helpers import PostgresTemplate
+from pydantic import JsonValue
 
 from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import InvalidJobClaim
 from tank.models import Record
 from tank.storage import ImmutableRecordError, MemoryRepository, PostgresRepository, StorageBackend
 from tank.util import clock_iso, iso, new_id, parse_time, sha256, utcnow
+
+
+def nested_values(record: Record) -> list[JsonValue]:
+    """Return the actual stored list so isolation tests mutate the returned reference."""
+    nested = record["nested"]
+    assert isinstance(nested, dict)
+    values = nested["values"]
+    assert isinstance(values, list)
+    return values
 
 
 def complete_fixture_record(collection: str, record: Record) -> Record:
@@ -181,7 +192,12 @@ async def test_append_only_and_immutable(repo: StorageBackend) -> None:
         "alert-fixture-event",
         complete_fixture_record("evt.events", {"event_id": "alert-fixture-event"}),
     )
-    record = {"alert_id": "a", "version": 1, "event_id": "alert-fixture-event", "card_text": "original"}
+    record: Record = {
+        "alert_id": "a",
+        "version": 1,
+        "event_id": "alert-fixture-event",
+        "card_text": "original",
+    }
     await repo.put("out.alerts", "a:1", complete_fixture_record("out.alerts", record))
     assert await repo.put("out.alerts", "a:1", complete_fixture_record("out.alerts", record)) == record
     with pytest.raises(ImmutableRecordError):
@@ -199,14 +215,14 @@ async def test_append_only_and_immutable(repo: StorageBackend) -> None:
 
 async def test_queue_namespaced_idempotency_concurrency_priority(repo: StorageBackend) -> None:
     rows = await asyncio.gather(*[repo.enqueue("FILTER_ITEM", {"item_id": "i"}, "i") for _ in range(10)])
-    assert len({r["job_id"] for r in rows}) == 1
+    assert len({text_field(present(r), "job_id") for r in rows}) == 1
     routed = await repo.enqueue("ROUTE_ITEM", {"item_id": "i"}, "i", priority=0)
-    assert routed["job_id"] != rows[0]["job_id"]
+    assert text_field(present(routed), "job_id") != text_field(present(rows[0]), "job_id")
     claimed = await asyncio.gather(*[repo.claim_job() for _ in range(5)])
     jobs = [j for j in claimed if j]
     assert len(jobs) == 2
-    assert len({j["job_id"] for j in jobs}) == 2
-    await repo.finish_job(routed["job_id"])
+    assert len({text_field(present(j), "job_id") for j in jobs}) == 2
+    await repo.finish_job(text_field(present(routed), "job_id"))
     assert (await repo.enqueue("ROUTE_ITEM", {}, "i"))["status"] == "DONE"
 
 
@@ -214,17 +230,21 @@ async def test_queue_expiry_retry_recovery(repo: StorageBackend) -> None:
     expired = await repo.enqueue("X", {}, "expired", expires_at=iso(utcnow() - timedelta(seconds=1)))
     delayed = await repo.enqueue("X", {}, "delayed", run_after=iso(utcnow() + timedelta(hours=1)))
     retry = await repo.enqueue("X", {}, "retry", max_attempts=2)
-    assert (await repo.claim_job())["job_id"] == retry["job_id"]
-    await repo.fail_job(retry["job_id"], "temporary", retry_after=0)
-    assert (await repo.claim_job())["attempts"] == 2
+    assert text_field(present(present(await repo.claim_job())), "job_id") == text_field(
+        present(retry), "job_id"
+    )
+    await repo.fail_job(text_field(present(retry), "job_id"), "temporary", retry_after=0)
+    assert (present(await repo.claim_job()))["attempts"] == 2
     await repo.recover_jobs()
-    assert (await repo.get("ops.jobs", retry["job_id"]))["status"] == "QUEUED"
-    recovered = await repo.claim_job()
+    assert (present(await repo.get("ops.jobs", text_field(present(retry), "job_id"))))["status"] == "QUEUED"
+    recovered = present(await repo.claim_job())
     assert recovered["attempts"] == 2
-    await repo.fail_job(retry["job_id"], "actual final failure")
-    assert (await repo.get("ops.jobs", retry["job_id"]))["status"] == "FAILED"
-    assert (await repo.get("ops.jobs", expired["job_id"]))["status"] == "EXPIRED"
-    assert (await repo.get("ops.jobs", delayed["job_id"]))["status"] == "QUEUED"
+    await repo.fail_job(text_field(present(retry), "job_id"), "actual final failure")
+    assert (present(await repo.get("ops.jobs", text_field(present(retry), "job_id"))))["status"] == "FAILED"
+    assert (present(await repo.get("ops.jobs", text_field(present(expired), "job_id"))))[
+        "status"
+    ] == "EXPIRED"
+    assert (present(await repo.get("ops.jobs", text_field(present(delayed), "job_id"))))["status"] == "QUEUED"
     assert await repo.claim_job() is None
 
 
@@ -235,13 +255,15 @@ async def test_event_lock_serializes_increment(repo: StorageBackend) -> None:
 
     async def increment() -> None:
         async with repo.lock("event:event"):
-            row = await repo.get("evt.events", "event")
+            row = present(await repo.get("evt.events", "event"))
+            counter = row["counter"]
+            assert isinstance(counter, int)
             await asyncio.sleep(0)
-            row["counter"] += 1
+            row["counter"] = counter + 1
             await repo.put("evt.events", "event", complete_fixture_record("evt.events", row))
 
     await asyncio.gather(*[increment() for _ in range(10)])
-    assert (await repo.get("evt.events", "event"))["counter"] == 10
+    assert (present(await repo.get("evt.events", "event")))["counter"] == 10
 
 
 @pytest.mark.integration
@@ -254,7 +276,7 @@ async def test_postgres_reopen_keeps_jobs_and_typed_columns(repo: StorageBackend
     await repo.close()
     await repo.open()
     await repo.recover_jobs()
-    assert (await repo.get("ops.jobs", job["job_id"]))["status"] == "QUEUED"
+    assert (present(await repo.get("ops.jobs", text_field(present(job), "job_id"))))["status"] == "QUEUED"
     async with repo.transaction():
         rows = await (
             await repo._conn().execute(
@@ -292,7 +314,7 @@ async def test_market_projection_update_and_retention(repo: StorageBackend) -> N
         complete_fixture_record("ana.market_truth", {"mta_id": mta, "token_id": token, "event_id": event}),
     )
     key = instrument + ":protected"
-    row = {
+    row: Record = {
         "instrument_id": instrument,
         "minute_start": iso(old),
         "buy_qty": "12.3",
@@ -310,9 +332,9 @@ async def test_market_projection_update_and_retention(repo: StorageBackend) -> N
         complete_fixture_record("mkt.flow_bars_1m", {**row, "minute_start": iso(old - timedelta(days=10))}),
     )
     await repo.prune_market(utcnow() - timedelta(days=90))
-    assert (await repo.get("mkt.flow_bars_1m", key))["buy_qty"] == "13.3"
+    assert (present(await repo.get("mkt.flow_bars_1m", key)))["buy_qty"] == "13.3"
     assert await repo.get("mkt.flow_bars_1m", stale_key) is None
-    assert (await repo.get("mkt.flow_bars_1m", key))["buy_usd"] == "24.6"
+    assert (present(await repo.get("mkt.flow_bars_1m", key)))["buy_usd"] == "24.6"
 
 
 async def test_indexed_range_pages_equal_timestamps_exclusive_end(repo: StorageBackend) -> None:
@@ -359,16 +381,20 @@ async def test_postgres_migrations_repeat_and_nested_temporal_projection(repo: S
     await repo.migrate()
     eid = new_id("evt")
     at = iso()
-    record = {"event_id": eid, "event_time": {"value": at, "precision": "EXACT", "quote": "evidence"}}
+    record: Record = {"event_id": eid, "event_time": {"value": at, "precision": "EXACT", "quote": "evidence"}}
     await repo.put("evt.events", eid, complete_fixture_record("evt.events", record))
     assert await repo.get("evt.events", eid) == record
     async with repo.transaction():
-        row = await (
-            await repo._conn().execute(
-                "SELECT event_time,event_time_prec FROM evt.events WHERE storage_key=%s", (eid,)
-            )
-        ).fetchone()
-    assert iso(row["event_time"]) == at
+        row = present(
+            await (
+                await repo._conn().execute(
+                    "SELECT event_time,event_time_prec FROM evt.events WHERE storage_key=%s", (eid,)
+                )
+            ).fetchone()
+        )
+    event_time = row["event_time"]
+    assert isinstance(event_time, datetime)
+    assert iso(event_time) == at
     assert row["event_time_prec"] == "EXACT"
 
 
@@ -378,8 +404,10 @@ async def test_decision_structured_condition_projection(repo: StorageBackend) ->
     await repo.put(
         "ana.market_truth", mid, complete_fixture_record("ana.market_truth", {"mta_id": mid, "event_id": eid})
     )
-    conditions = [{"cond_id": "cond-a", "role": "UPGRADE", "expr": {"metric": "dc.class", "value": "HIGH"}}]
-    row = {
+    conditions: list[JsonValue] = [
+        {"cond_id": "cond-a", "role": "UPGRADE", "expr": {"metric": "dc.class", "value": "HIGH"}}
+    ]
+    row: Record = {
         "dec_id": did,
         "event_id": eid,
         "mta_id": mid,
@@ -387,14 +415,16 @@ async def test_decision_structured_condition_projection(repo: StorageBackend) ->
         "trade_reasons": ["DATA_LOW"],
     }
     await repo.put("ana.decisions", did, complete_fixture_record("ana.decisions", row))
-    assert (await repo.get("ana.decisions", did))["conditions"] == conditions
+    assert (present(await repo.get("ana.decisions", did)))["conditions"] == conditions
     if isinstance(repo, PostgresRepository):
         async with repo.transaction():
-            result = await (
-                await repo._conn().execute(
-                    "SELECT conditions,trade_reasons FROM ana.decisions WHERE storage_key=%s", (did,)
-                )
-            ).fetchone()
+            result = present(
+                await (
+                    await repo._conn().execute(
+                        "SELECT conditions,trade_reasons FROM ana.decisions WHERE storage_key=%s", (did,)
+                    )
+                ).fetchone()
+            )
         assert result["conditions"] == ["cond-a"]
         assert result["trade_reasons"] == ["DATA_LOW"]
 
@@ -412,23 +442,29 @@ async def test_expired_source_escalations_follow_job_retention(repo: StorageBack
         )
     await repo.prune_jobs(utcnow() - timedelta(days=30))
     assert await repo.get("ops.source_escalations", expired) is None
-    assert (await repo.get("ops.source_escalations", active))["source_id"] == "S01"
+    assert (present(await repo.get("ops.source_escalations", active)))["source_id"] == "S01"
 
 
 async def test_terminal_job_retention_keeps_dependencies_and_pending(repo: StorageBackend) -> None:
     old = iso(utcnow() - timedelta(days=40))
     removable = await repo.enqueue("RETENTION_TEST", {}, new_id("idem"))
     needed = await repo.enqueue("RETENTION_TEST", {}, new_id("idem"))
-    active = await repo.enqueue("RETENTION_TEST", {"depends_on": needed["job_id"]}, new_id("idem"))
+    active = await repo.enqueue(
+        "RETENTION_TEST", {"depends_on": text_field(present(needed), "job_id")}, new_id("idem")
+    )
     for row in (removable, needed):
         row.update(status="DONE", finished_at=old)
-        await repo.put("ops.jobs", row["job_id"], complete_fixture_record("ops.jobs", row))
+        await repo.put(
+            "ops.jobs", text_field(present(row), "job_id"), complete_fixture_record("ops.jobs", row)
+        )
     active["run_after"] = old
-    await repo.put("ops.jobs", active["job_id"], complete_fixture_record("ops.jobs", active))
+    await repo.put(
+        "ops.jobs", text_field(present(active), "job_id"), complete_fixture_record("ops.jobs", active)
+    )
     assert await repo.prune_jobs(utcnow() - timedelta(days=30)) == 1
-    assert await repo.get("ops.jobs", removable["job_id"]) is None
-    assert await repo.get("ops.jobs", needed["job_id"])
-    assert (await repo.get("ops.jobs", active["job_id"]))["status"] == "QUEUED"
+    assert await repo.get("ops.jobs", text_field(present(removable), "job_id")) is None
+    assert await repo.get("ops.jobs", text_field(present(needed), "job_id"))
+    assert (present(await repo.get("ops.jobs", text_field(present(active), "job_id"))))["status"] == "QUEUED"
 
 
 async def test_preservation_before_market_truth_includes_beneficiary_and_benchmarks(
@@ -470,9 +506,11 @@ async def test_deployed_agent_role_select_only(repo: StorageBackend) -> None:
     import psycopg
 
     async with repo.transaction():
-        database = await (await repo._conn().execute("SELECT current_database() AS db")).fetchone()
+        database = present(await (await repo._conn().execute("SELECT current_database() AS db")).fetchone())
         assert database["db"] == "tank"
-        db = await (await repo._conn().execute("SELECT 1 FROM pg_database WHERE datname='tank'")).fetchone()
+        db = present(
+            await (await repo._conn().execute("SELECT 1 FROM pg_database WHERE datname='tank'")).fetchone()
+        )
         assert db is not None
         script = Path(__file__).resolve().parents[1] / "src" / "tank" / "agent_grants.sql"
         await repo._conn().execute(script.read_text(), prepare=False)
@@ -524,7 +562,7 @@ async def test_latest_before_strict_cutoff_and_control_records(repo: StorageBack
                 },
             ),
         )
-    row = await repo.latest_before("mkt.liq_obs", "ts", at, filters={"instrument_id": instrument})
+    row = present(await repo.latest_before("mkt.liq_obs", "ts", at, filters={"instrument_id": instrument}))
     assert row["qty_native"] == "1"
     assert (
         await repo.latest_before(
@@ -541,7 +579,7 @@ async def test_latest_before_strict_cutoff_and_control_records(repo: StorageBack
             {"backfill_id": bid, "status": "PENDING", "anchor": iso(), "result": {"instruments": []}},
         ),
     )
-    assert (await repo.get("mkt.backfill_runs", bid))["result"] == {"instruments": []}
+    assert (present(await repo.get("mkt.backfill_runs", bid)))["result"] == {"instruments": []}
 
 
 def test_decisive_fact_projection_requires_canonical_text() -> None:
@@ -645,7 +683,7 @@ async def test_sql_typed_completeness_and_serials(repo: StorageBackend) -> None:
                 (eid, Jsonb({"event_id": eid}), eid),
             )
     await repo.put("evt.events", eid, complete_fixture_record("evt.events", {"event_id": eid}))
-    ids = []
+    ids: list[int] = []
     for _ in range(2):
         key = new_id("state")
         await repo.put(
@@ -664,10 +702,16 @@ async def test_sql_typed_completeness_and_serials(repo: StorageBackend) -> None:
             immutable=True,
         )
         async with repo.transaction():
-            row = await (
-                await repo._conn().execute("SELECT id FROM evt.state_changes WHERE storage_key=%s", (key,))
-            ).fetchone()
-            ids.append(row["id"])
+            row = present(
+                await (
+                    await repo._conn().execute(
+                        "SELECT id FROM evt.state_changes WHERE storage_key=%s", (key,)
+                    )
+                ).fetchone()
+            )
+            identifier = row["id"]
+            assert isinstance(identifier, int)
+            ids.append(identifier)
     assert all(i > 0 for i in ids) and len(set(ids)) == 2
 
 
@@ -680,7 +724,7 @@ async def test_agent_new_connection_defaults_read_only(repo: StorageBackend) -> 
     from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
     async with repo.transaction():
-        database = await (await repo._conn().execute("SELECT current_database() AS db")).fetchone()
+        database = present(await (await repo._conn().execute("SELECT current_database() AS db")).fetchone())
         assert database["db"] == "tank"
         await repo._conn().execute(
             (
@@ -691,10 +735,12 @@ async def test_agent_new_connection_defaults_read_only(repo: StorageBackend) -> 
     parameters = conninfo_to_dict(repo.database_url)
     parameters["user"] = "tank_agent"
     parameters.pop("password", None)
-    connection = await psycopg.AsyncConnection.connect(make_conninfo(**parameters), autocommit=True)
+    connection = await psycopg.AsyncConnection.connect(
+        make_conninfo(**{key: str(value) for key, value in parameters.items()}), autocommit=True
+    )
     try:
-        row = await (await connection.execute("SHOW transaction_read_only")).fetchone()
-        assert row[0] == "on"
+        row = present(await (await connection.execute("SHOW transaction_read_only")).fetchone())
+        assert row is not None and row[0] == "on"
         await connection.execute("SELECT count(*) FROM evt.events")
         with pytest.raises(psycopg.errors.ReadOnlySqlTransaction):
             await connection.execute("DELETE FROM evt.events WHERE false")
@@ -770,8 +816,8 @@ async def test_late_arrivals_use_availability_not_original_receipt(repo: Storage
         )
     ]
     assert len(result) == 7 and len({r["qty_native"] for r in result}) == 7
-    assert all(parse_time(r["received_ts"]) < cutoff for r in result)
-    assert any(parse_time(r["ts"]) == cutoff for r in result)
+    assert all(parse_time(text_field(r, "received_ts")) < cutoff for r in result)
+    assert any(parse_time(text_field(r, "ts")) == cutoff for r in result)
     assert all(r["price"] == "1.234567890123456789" for r in result)
     retried = [
         r
@@ -856,8 +902,8 @@ async def test_lock_waiters_do_not_drain_the_pool(
     key = new_id("contended")
     held, release = asyncio.Event(), asyncio.Event()
     ready = asyncio.Event()
-    attempted = set()
-    waiters = []
+    attempted: set[asyncio.Task[None]] = set()
+    waiters: list[asyncio.Task[None]] = []
     transaction = repo.transaction
 
     @asynccontextmanager
@@ -878,7 +924,7 @@ async def test_lock_waiters_do_not_drain_the_pool(
             held.set()
             await release.wait()
 
-    order = []
+    order: list[int] = []
 
     async def waiter(n: int) -> None:
         async with repo.lock(key):
@@ -904,13 +950,17 @@ async def test_one_reaction_capture_runs_at_a_time_and_other_jobs_do_not_wait(re
         await repo.enqueue("REACTION_CAPTURE", {"n": n}, new_id("idem"), priority=0) for n in range(3)
     ]
     other = await repo.enqueue("DELIVER", {}, new_id("idem"), priority=3)
-    first = await repo.claim_job()
-    assert first["job_id"] == captures[0]["job_id"]
+    first = present(await repo.claim_job())
+    assert text_field(present(first), "job_id") == text_field(present(captures[0]), "job_id")
 
-    assert (await repo.claim_job())["job_id"] == other["job_id"]
+    assert text_field(present(present(await repo.claim_job())), "job_id") == text_field(
+        present(other), "job_id"
+    )
     assert await repo.claim_job() is None
-    await repo.finish_job(first["job_id"])
-    assert (await repo.claim_job())["job_id"] == captures[1]["job_id"]
+    await repo.finish_job(text_field(present(first), "job_id"))
+    assert text_field(present(present(await repo.claim_job())), "job_id") == text_field(
+        present(captures[1]), "job_id"
+    )
 
 
 @pytest.mark.integration
@@ -924,7 +974,7 @@ async def test_concurrent_claims_respect_the_capture_cap(repo: StorageBackend) -
     for _ in range(3):
         await repo.enqueue("DELIVER", {}, new_id("idem"), priority=3)
     claimed = [job for job in await asyncio.gather(*(repo.claim_job() for _ in range(8))) if job]
-    assert sorted(job["type"] for job in claimed) == ["DELIVER"] * 3 + ["REACTION_CAPTURE"]
+    assert sorted(text_field(job, "type") for job in claimed) == ["DELIVER"] * 3 + ["REACTION_CAPTURE"]
 
 
 async def test_due_captures_are_claimed_earliest_expiry_first(repo: StorageBackend) -> None:
@@ -947,10 +997,12 @@ async def test_due_captures_are_claimed_earliest_expiry_first(repo: StorageBacke
         run_after=iso(now - timedelta(minutes=5)),
         expires_at=iso(now + timedelta(minutes=20)),
     )
-    first = await repo.claim_job()
-    assert first["job_id"] == urgent["job_id"]
-    await repo.finish_job(first["job_id"])
-    assert (await repo.claim_job())["job_id"] == slack["job_id"]
+    first = present(await repo.claim_job())
+    assert text_field(present(first), "job_id") == text_field(present(urgent), "job_id")
+    await repo.finish_job(text_field(present(first), "job_id"))
+    assert text_field(present(present(await repo.claim_job())), "job_id") == text_field(
+        present(slack), "job_id"
+    )
 
 
 @pytest.mark.integration
@@ -967,7 +1019,7 @@ async def test_late_deliver_claim_is_logged_with_type_and_wait(
         "DELIVER", {}, new_id("idem"), priority=0, run_after=iso(utcnow() - timedelta(seconds=7))
     )
     with caplog.at_level(logging.INFO, logger="tank.storage"):
-        job = await repo.claim_job()
+        job = present(await repo.claim_job())
     assert job["type"] == "DELIVER"
     assert "type DELIVER" in caplog.text and "after run_after" in caplog.text
 
@@ -986,21 +1038,29 @@ async def test_captures_yield_to_event_analysis_unless_near_expiry(repo: Storage
     await _clear_queue(repo)
     now = utcnow()
     truth = await repo.enqueue("RUN_MARKET_TRUTH", {}, new_id("idem"), priority=1)
-    assert (await repo.claim_job())["job_id"] == truth["job_id"]
+    assert text_field(present(present(await repo.claim_job())), "job_id") == text_field(
+        present(truth), "job_id"
+    )
     slack = await repo.enqueue(
         "REACTION_CAPTURE", {}, new_id("idem"), priority=0, expires_at=iso(now + timedelta(hours=5))
     )
     deliver = await repo.enqueue("DELIVER", {}, new_id("idem"), priority=3)
 
-    assert (await repo.claim_job())["job_id"] == deliver["job_id"]
+    assert text_field(present(present(await repo.claim_job())), "job_id") == text_field(
+        present(deliver), "job_id"
+    )
     assert await repo.claim_job() is None
     urgent = await repo.enqueue(
         "REACTION_CAPTURE", {}, new_id("idem"), priority=0, expires_at=iso(now + timedelta(minutes=10))
     )
-    assert (await repo.claim_job())["job_id"] == urgent["job_id"]
-    await repo.finish_job(urgent["job_id"])
-    await repo.finish_job(truth["job_id"])
-    assert (await repo.claim_job())["job_id"] == slack["job_id"]
+    assert text_field(present(present(await repo.claim_job())), "job_id") == text_field(
+        present(urgent), "job_id"
+    )
+    await repo.finish_job(text_field(present(urgent), "job_id"))
+    await repo.finish_job(text_field(present(truth), "job_id"))
+    assert text_field(present(present(await repo.claim_job())), "job_id") == text_field(
+        present(slack), "job_id"
+    )
 
 
 async def test_captures_wait_for_a_fresh_event_card(repo: StorageBackend) -> None:
@@ -1032,19 +1092,21 @@ async def test_captures_wait_for_a_fresh_event_card(repo: StorageBackend) -> Non
         ),
         immutable=True,
     )
-    assert (await repo.claim_job())["job_id"] == capture["job_id"]
+    assert text_field(present(present(await repo.claim_job())), "job_id") == text_field(
+        present(capture), "job_id"
+    )
 
 
 async def test_memory_reads_return_isolated_values_and_see_own_writes_before_rollback() -> None:
     repo = MemoryRepository()
-    original = {"token_id": "a", "nested": {"values": [1]}}
+    original: Record = {"token_id": "a", "nested": {"values": [1]}}
     await repo.put("reg.tokens", "a", complete_fixture_record("reg.tokens", original))
-    fetched = await repo.get("reg.tokens", "a")
+    fetched = present(await repo.get("reg.tokens", "a"))
     listed = await repo.list("reg.tokens")
     scanned = [row async for row in repo.iter_all("reg.tokens")]
-    fetched["nested"]["values"].append(2)
-    listed[0]["nested"]["values"].append(3)
-    scanned[0]["nested"]["values"].append(4)
+    nested_values(fetched).append(2)
+    nested_values(listed[0]).append(3)
+    nested_values(scanned[0]).append(4)
     assert await repo.get("reg.tokens", "a") == original
     with pytest.raises(ValueError, match="rollback"):
         async with repo.transaction():
@@ -1053,9 +1115,9 @@ async def test_memory_reads_return_isolated_values_and_see_own_writes_before_rol
                 "a",
                 complete_fixture_record("reg.tokens", {"token_id": "a", "nested": {"values": [9]}}),
             )
-            assert (await repo.get("reg.tokens", "a"))["nested"]["values"] == [9]
-            assert (await repo.list("reg.tokens"))[0]["nested"]["values"] == [9]
-            assert [row["nested"]["values"] async for row in repo.iter_all("reg.tokens")] == [[9]]
+            assert nested_values(present(await repo.get("reg.tokens", "a"))) == [9]
+            assert nested_values((await repo.list("reg.tokens"))[0]) == [9]
+            assert [nested_values(row) async for row in repo.iter_all("reg.tokens")] == [[9]]
             raise ValueError("rollback")
     assert await repo.get("reg.tokens", "a") == original
 
@@ -1086,7 +1148,7 @@ async def test_memory_cancelled_reader_keeps_writer_exclusive_and_releases_waite
         return await repo.list("reg.tokens")
 
     owner = asyncio.create_task(writer())
-    readers = []
+    readers: list[asyncio.Task[Record | None] | asyncio.Task[list[Record]]] = []
     try:
         await asyncio.wait_for(held.wait(), 1)
         cancelled = asyncio.create_task(read_one())
@@ -1103,7 +1165,7 @@ async def test_memory_cancelled_reader_keeps_writer_exclusive_and_releases_waite
         release.set()
         await asyncio.wait_for(owner, 1)
         assert await asyncio.wait_for(waiting, 1) == [{"token_id": "a", "value": "committed"}]
-        assert (await asyncio.wait_for(repo.get("reg.tokens", "a"), 1))["value"] == "committed"
+        assert present(await asyncio.wait_for(repo.get("reg.tokens", "a"), 1))["value"] == "committed"
     finally:
         release.set()
         for task in [owner, *readers]:
@@ -1172,12 +1234,12 @@ async def test_retention_policy_preserves_exact_windows_days_and_bundle_referenc
             ),
         )
     bundle_id = sha256(event_id)
-    bundle = {
+    bundle: Record = {
         "bundle_id": bundle_id,
         "cutoff": iso(anchor),
         "cutoff_prec": "EXACT",
         "event_id": event_id,
-        "capture_transition_refs": keys,
+        "capture_transition_refs": list(keys),
     }
     await repo.put("out.evidence_bundles", bundle_id, complete_fixture_record("out.evidence_bundles", bundle))
     counts = await repo.prune_market(utcnow() - timedelta(days=90))
@@ -1217,7 +1279,7 @@ async def test_legacy_wire_job_lifecycle_does_not_fabricate_provenance(repo: Sto
     assert await repo.enqueue("LEGACY", {"ignored": True}, idem_key) == snapshot
     claimed = await repo.claim_job()
     assert claimed is not None
-    assert claimed["job_id"] == job_id
+    assert text_field(present(claimed), "job_id") == job_id
     assert "run_after_prec" not in claimed
     await repo.fail_job(job_id, "retry", retry_after=0)
     retried = await repo.get("ops.jobs", job_id)
