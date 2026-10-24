@@ -54,4 +54,3 @@ All work ran in the isolated server worktree with Python 3.13.13 and the frozen 
 ## Remaining owned work
 
 Storage still has the legacy protocol, query wrappers and approximately fifteen query implementations to finish typing and audit. The complete owned test fixture/helper annotation audit remains open beyond the already migrated search/settings/time/backup/foundation tests. The utility implicit-clock and numeric-epoch audit noted above remains open. Final whole-branch verification must follow those changes. Existing SQL migrations and agent_grants.sql remain retained historical/security evidence; no migration or production schema change was introduced.
-

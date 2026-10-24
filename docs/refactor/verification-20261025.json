@@ -1,0 +1,60 @@
+{
+  "status": "verified checkpoint; global refactor incomplete",
+  "client_date": "2026-10-25",
+  "code_head": "12e469ec1101a1d3f84a8fb824ec25143b7f5585",
+  "scope": "Current collected Python unit/integration and expanded Node lanes; not exhaustive completion of all five requested refactor requirements.",
+  "python_unit": {
+    "passed": 1987,
+    "failed": 0,
+    "skipped": 0,
+    "wall_seconds": 60.66,
+    "p90_seconds_including_fixtures": 0.401,
+    "max_seconds_including_fixtures": 4.916
+  },
+  "python_integration": {
+    "collected": 346,
+    "passed": 346,
+    "failed": 0,
+    "skipped": 0,
+    "wall_seconds": 111.11,
+    "services": [
+      "owned PostgreSQL16",
+      "owned ClickHouse25.8",
+      "real local HTTP/process/Node/Go test prerequisites"
+    ]
+  },
+  "node": {
+    "local_unit_passed": 50,
+    "local_contract_passed": 21,
+    "failed": 0,
+    "skipped": 0,
+    "runtime": "24.22.0",
+    "typescript_strict": "passed"
+  },
+  "static_checks": {
+    "source_comment_policy": "passed",
+    "ruff": "passed",
+    "ruff_format": "passed",
+    "configured_mypy": "passed (87 source modules)"
+  },
+  "external_gates": {
+    "pull_request": "https://github.com/freQuensy23-coder/Tank/pull/39",
+    "ci": "requires fresh result on published current head",
+    "codex_review": "requires fresh pass on published current head"
+  },
+  "limitations": [
+    "Configured mypy and passing tests do not prove that all active functions are precisely typed.",
+    "Current source/model/fallback inventories still contain substantial unresolved work.",
+    "Expanded Node contracts are not hardware/VM qualification.",
+    "Production checkout, data and runtime were not modified."
+  ],
+  "reports": [
+    "integrated-6-result.json",
+    "integrated-6-unit.xml",
+    "integrated-6-integration.xml",
+    "integrated-6-unit-timing.log",
+    "integrated-6-integration-gate.log",
+    "integrated-6-node-unit.log",
+    "integrated-6-node-contract.log"
+  ]
+}
