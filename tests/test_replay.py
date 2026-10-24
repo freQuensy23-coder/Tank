@@ -2062,7 +2062,17 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
     from tank.replay import ReplayMarketReader, replay_agent_session
 
     start, trigger, cutoff = "2026-09-01T00:00:00Z", "2026-09-01T01:00:00Z", "2026-09-10T00:00:00Z"
-    expr = {"all": [{"metric": "event.state", "op": "==", "value": "APPROVED", "window": "W1H"}]}
+    expr = {
+        "all": [
+            {
+                "metric": "event.state",
+                "op": "==",
+                "value": "APPROVED",
+                "window": "W1H",
+                "persist": {"count": 1, "unit": "consecutive_windows"},
+            }
+        ]
+    }
     old = {
         "cond_id": "old-condition",
         "event_id": "event",
@@ -2371,7 +2381,14 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
                 event_id="event",
                 token_id="T",
                 action="WAIT",
-                conditions=[{"role": "UPGRADE", "expr": expr, "status": "ARMED"}],
+                conditions=[
+                    {
+                        "role": "UPGRADE",
+                        "human_text": "Approval must be verified before upgrading the watch",
+                        "expr": expr,
+                        "status": "ARMED",
+                    }
+                ],
             )
             if len(messages) > 1:
                 truths = await repo.list("ana.market_truth")
