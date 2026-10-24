@@ -28,7 +28,7 @@ from tank.market_codec import IdentityValue, StoredRow, StoredValue, _identity, 
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES
 from tank.models import Record
 from tank.settings import Settings
-from tank.util import JsonInput, TimeInput, canonical_json, iso, parse_time
+from tank.util import JsonInput, TimeInput, canonical_json, iso, parse_time, parse_utc_time
 
 MARKET_TABLES = {
     "mkt.klines_1m": "open_time",
@@ -309,6 +309,13 @@ def _ids(q: Query, instrument_ids: Sequence[str]) -> None:
     q.where(f"instrument_id IN {q.param(list(instrument_ids), 'Array(String)')}")
 
 
+def _response_timestamp(value: JsonValue) -> datetime:
+    """ClickHouse JSONEachRow DateTime64 columns declare UTC and omit the zone suffix."""
+    if not isinstance(value, str):
+        raise ValueError("ClickHouse timestamp response requires ISO date-time text")
+    return parse_utc_time(value)
+
+
 def _record(collection: str, row: Record) -> Record:
     """A ClickHouse row as the typed values a PostgreSQL row carries (then decode)."""
     from tank.market_codec import decode
@@ -319,7 +326,7 @@ def _record(collection: str, row: Record) -> Record:
         if value is None:
             out[name] = None
         elif kind == "timestamptz":
-            out[name] = _timestamp(value)
+            out[name] = _response_timestamp(value)
         elif kind == "jsonb":
             if not isinstance(value, str):
                 raise ValueError(f"{collection}.{name} requires encoded JSON")
@@ -371,7 +378,7 @@ async def _select(
     if not keys:
         return []
     selected_keys = [MarketSelectionKey.model_validate(row) for row in keys]
-    days = [parse_time(row.day) for row in selected_keys]
+    days = [parse_utc_time(row.day) for row in selected_keys]
     k = Query()
     k.where(
         f"instrument_id IN {k.param(sorted({row.instrument_id for row in selected_keys}), 'Array(String)')}"
@@ -619,9 +626,9 @@ async def market_dependency_head(
         )
         found[order] = {
             "storage_key": head.storage_key,
-            "recorded_at": iso(parse_time(head.recorded_at)),
+            "recorded_at": iso(parse_utc_time(head.recorded_at)),
             "semantic_fingerprint": head.fingerprint,
-            semantic_field: iso(parse_time(head.semantic_at)),
+            semantic_field: iso(parse_utc_time(head.semantic_at)),
         }
     return found
 
@@ -669,7 +676,7 @@ async def projection_page(
                 value = row[requested]
                 kind = columns.get(field)
                 if value is not None and kind == "timestamptz":
-                    value = iso(_timestamp(value))
+                    value = iso(_response_timestamp(value))
                 elif value is not None and kind == "jsonb":
                     value = decode_json(_text(row, requested))
                 elif value is not None and kind == "numeric":
@@ -679,7 +686,7 @@ async def projection_page(
                         raise ValueError(f"{collection}.{field} requires an array of text")
                     value = value if value else None
                 result[requested] = value
-            page.append((_timestamp(row["_cursor_time"]), _text(row, "_cursor_key"), result))
+            page.append((_response_timestamp(row["_cursor_time"]), _text(row, "_cursor_key"), result))
         return page
 
     return await asyncio.to_thread(convert) if len(rows) > 1000 else convert()
@@ -855,7 +862,7 @@ async def range_by_instrument_page(
     )
     records = await _decode(collection, rows)
     return [
-        (_text(row, "instrument_id"), rec, _text(row, "storage_key"), _timestamp(row[time_field]))
+        (_text(row, "instrument_id"), rec, _text(row, "storage_key"), _response_timestamp(row[time_field]))
         for row, rec in zip(rows, records, strict=True)
     ]
 

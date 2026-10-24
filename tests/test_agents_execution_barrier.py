@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from agent_source_fixtures import source_record_fixture
 
 from tank.agents.sessions import SessionService
 from tank.replay import semantic_verdict_output
@@ -48,7 +49,9 @@ async def seeded(repo, initial="accepted-message"):
         "messages": ["message"],
     }
     await repo.put("ops.agent_sessions", "s", session)
-    await repo.put("ingest.source_items", "item", {"item_id": "item", "extraction_status": "DONE"})
+    await repo.put(
+        "ingest.source_items", "item", source_record_fixture({"item_id": "item", "extraction_status": "DONE"})
+    )
     return session
 
 
@@ -282,7 +285,9 @@ async def test_message_lost_ack_reuses_durable_exact_body_after_source_changes()
     session = await seeded(repo)
     session.update(messages=[], message_log=[], active_message_id=None)
     await repo.put("ops.agent_sessions", "s", session)
-    await repo.put("ingest.source_items", "item", {"item_id": "item", "text": "Original source"})
+    await repo.put(
+        "ingest.source_items", "item", source_record_fixture({"item_id": "item", "text": "Original source"})
+    )
     bodies = []
     keys = []
 
@@ -307,7 +312,11 @@ async def test_message_lost_ack_reuses_durable_exact_body_after_source_changes()
         current = await repo.get("ops.agent_sessions", "s")
         assert current["message_log"][0]["turn_status"] == "ACCEPTING"
         assert not (await service.execution_barrier(current))["complete"]
-        await repo.put("ingest.source_items", "item", {"item_id": "item", "text": "Later enrichment"})
+        await repo.put(
+            "ingest.source_items",
+            "item",
+            source_record_fixture({"item_id": "item", "text": "Later enrichment"}),
+        )
         restarted = SessionService(repo, config(), None, http=http)
         restarted.resolve = resolve
         restarted.start_stream = lambda sid: None
@@ -619,7 +628,16 @@ async def test_native_completion_preserves_source_failures_without_failing_sessi
             await repo.delete("ingest.source_items", "item")
         else:
             await repo.put(
-                "ingest.source_items", "item", {"item_id": "item", "extraction_status": source_state}
+                "ingest.source_items",
+                "item",
+                source_record_fixture(
+                    {
+                        "item_id": "item",
+                        "extraction_status": source_state,
+                        "extraction_decision": "NO_EVENT",
+                        "extraction_reason": "OLD_REJECTION",
+                    }
+                ),
             )
         assert (await service.completed_turn("s"))["complete"]
         current = await repo.get("ops.agent_sessions", "s")
@@ -630,6 +648,13 @@ async def test_native_completion_preserves_source_failures_without_failing_sessi
             outcome
             == {"PENDING": "SKIPPED", "FAILED": "FAILED", "MISSING": "MISSING_SOURCE_ITEM"}[source_state]
         )
+        source = await repo.get("ingest.source_items", "item")
+        if source_state == "PENDING":
+            assert source is not None
+            assert source["extraction_decision"] is None
+            assert source["extraction_reason"] == "NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION"
+        elif source_state == "FAILED":
+            assert source is not None and source["extraction_reason"] == "OLD_REJECTION"
 
 
 @pytest.mark.parametrize("pending", [False, True])
