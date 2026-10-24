@@ -2,19 +2,20 @@
 
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 
 import zstandard
 
 from tank.contracts.source_items import CapturedItem
-from tank.util import TimeInput, new_id, parse_time, sha256
+from tank.util import new_id, parse_iso_time, sha256
 
 
-def raw_item_path(data_dir: str | Path, source_id: str, item_id: str, observed_at: TimeInput) -> Path:
+def raw_item_path(data_dir: str | Path, source_id: str, item_id: str, observed_at: datetime | str) -> Path:
     for name, value in (("source_id", source_id), ("item_id", item_id)):
         if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", value):
             raise ValueError(f"Invalid raw-item {name}")
-    observed = parse_time(observed_at)
+    observed = parse_iso_time(observed_at)
     return (
         Path(data_dir).resolve()
         / "raw"
@@ -44,7 +45,7 @@ def _sync_hierarchy(directory: Path, data_dir: str | Path) -> None:
 
 
 def write_raw_item(
-    data_dir: str | Path, source_id: str, item_id: str, observed_at: TimeInput, payload: bytes
+    data_dir: str | Path, source_id: str, item_id: str, observed_at: datetime | str, payload: bytes
 ) -> tuple[str, str]:
     """Return only after exact bytes and their directory entries are durable.
 
