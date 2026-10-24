@@ -7,6 +7,7 @@ import pytest
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
+from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.telegram_inbox import (
     CARD_CHANNEL,
@@ -1061,7 +1062,13 @@ async def test_fired_agent_watch_wakes_the_session_that_armed_it() -> None:
             "expr": {"metric": "event.contradiction_fatal", "window": "W1H", "op": "==", "value": True},
         },
     )
-    scheduler = Scheduler(repo, SimpleNamespace(), None, SimpleNamespace(assess=AsyncMock(return_value={})))
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        SimpleNamespace(assess=AsyncMock(return_value={})),
+        thresholds=Settings(_env_file=None).thresholds(),
+    )
     await scheduler.eval_conditions({"cutoff": iso(now)})
     jobs = await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
     assert (

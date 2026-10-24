@@ -5,6 +5,7 @@ import pytest
 from delivery_support import delivery_job
 
 from tank.delivery import DeliveryError, DeliveryService
+from tank.settings import Settings
 from tank.storage import MemoryRepository
 
 
@@ -657,7 +658,7 @@ async def test_first_sent_persists_alerted_until_subsequent_scheduler_transition
 
     repo = await setup_repo()
     await repo.put("evt.events", "e", {"event_id": "e", "lifecycle": "ANALYZING", "known_to_us_at": iso()})
-    settings = SimpleNamespace(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = Settings(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2")
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda r: httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
@@ -667,7 +668,9 @@ async def test_first_sent_persists_alerted_until_subsequent_scheduler_transition
             delivery_job({"alert_id": "a", "version": 1})
         )
     assert (await repo.get("evt.events", "e"))["lifecycle"] == "ALERTED"
-    await Scheduler(repo, SimpleNamespace(), None, None).lifecycle(utcnow())
+    await Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds()).lifecycle(
+        utcnow()
+    )
     event = await repo.get("evt.events", "e")
     assert event["lifecycle"] == "MONITORING" and event["monitoring_at"] and event["alerted_at"]
 

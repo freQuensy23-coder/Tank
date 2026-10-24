@@ -3,12 +3,16 @@
 import asyncio
 import contextlib
 import logging
-from collections.abc import Mapping
-from datetime import UTC, timedelta
+from collections.abc import Awaitable, Callable, Mapping
+from datetime import UTC, date, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
+from pathlib import Path
 
 from pydantic import JsonValue
 
+from tank.contracts import DomainModel
+from tank.contracts.configuration import Thresholds
+from tank.settings import Settings
 from tank.time_precision import chosen_boundary, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import iso, new_id, parse_time, utcnow
 
@@ -93,27 +97,39 @@ def compare(actual, op, target):
     raise ValueError(f"Unsupported watch operator: {op}")
 
 
+class BackupFileIdentity(DomainModel):
+    device: int
+    inode: int
+    size: int
+    modified_ns: int
+
+
+class BackupIdentity(DomainModel):
+    directory: str
+    day: date
+    manifest: BackupFileIdentity | None
+    complete: BackupFileIdentity | None
+
+
 class Scheduler:
-    def __init__(self, repo, settings, market, truth):
+    def __init__(
+        self, repo, settings: Settings, market, truth, *, thresholds: Thresholds | None = None
+    ) -> None:
         self.repo, self.settings, self.market, self.truth = repo, settings, market, truth
-        self.background = {}
+        self.thresholds = settings.thresholds() if thresholds is None else thresholds
+        self.background: dict[str, asyncio.Task[None]] = {}
         self.closing = False
-        self._verified_backups = {}
+        self._verified_backups: set[BackupIdentity] = set()
         self._reaction_slots = asyncio.Semaphore(REACTION_MEASUREMENT_SLOTS)
 
-    def threshold(self, name, fixture_default):
-        from tank.settings import threshold
-
-        return threshold(self.settings, name, fixture_default)
-
-    def launch(self, name, operation):
+    def launch(self, name: str, operation: Callable[[], Awaitable[JsonValue]]) -> None:
         if self.closing:
             return
         previous = self.background.get(name)
         if previous is not None and not previous.done():
             return
 
-        async def guarded():
+        async def guarded() -> None:
             try:
                 await operation()
             except asyncio.CancelledError:
@@ -124,14 +140,14 @@ class Scheduler:
         task = asyncio.create_task(guarded(), name="scheduler-" + name)
         self.background[name] = task
 
-        def completed(finished):
+        def completed(finished: asyncio.Task[None]) -> None:
 
             if self.background.get(name) is finished:
                 self.background.pop(name)
 
         task.add_done_callback(completed)
 
-    async def close(self):
+    async def close(self) -> None:
         self.closing = True
         tasks = tuple(self.background.values())
         for task in tasks:
@@ -207,7 +223,7 @@ class Scheduler:
         self.launch("scout", lambda: self.detect_scout_hooks(now))
         if self.market is not None:
             self.launch("late-reactions", lambda: self.detect_late_data(now))
-        heartbeat_hour, heartbeat_minute = map(int, str(self.threshold("heartbeat_utc", "08:00")).split(":"))
+        heartbeat_hour, heartbeat_minute = map(int, str(self.thresholds.heartbeat_utc).split(":"))
         if (now.hour, now.minute) >= (heartbeat_hour, heartbeat_minute):
             await self.heartbeat(now)
         self.launch("backup", lambda: self.maintenance(now))
@@ -431,10 +447,10 @@ class Scheduler:
         async for call in self.repo.iter_range(
             "ana.calls",
             "opened_at",
-            end=now - timedelta(days=self.threshold("call_expiry_days", 7)) + timedelta(microseconds=1),
+            end=now - timedelta(days=self.thresholds.call_expiry_days) + timedelta(microseconds=1),
             filters={"status": "OPEN"},
         ):
-            if parse_time(call["opened_at"]) + timedelta(days=self.threshold("call_expiry_days", 7)) <= now:
+            if parse_time(call["opened_at"]) + timedelta(days=self.thresholds.call_expiry_days) <= now:
                 async with self.repo.lock("event:" + call["event_id"]):
                     event = await self.repo.get("evt.events", call["event_id"])
                     if not event:
@@ -1077,7 +1093,7 @@ class Scheduler:
             "token_id": payload["token_id"],
             **end_stamp.fields("cutoff"),
         }
-        knobs = self.settings.load_config("thresholds") if hasattr(self.settings, "load_config") else {}
+        knobs = self.thresholds.model_dump(mode="json")
         await self._yield_to_market_truth(payload, end)
         truth = await asyncio.to_thread(
             compute_market_truth,
@@ -1459,7 +1475,7 @@ class Scheduler:
         hot = [row async for row in self.repo.iter_all("mkt.hot_tokens")]
         tokens = {r["token_id"] for r in hot}
         for row in sorted(hot, key=lambda r: (r.get("priority", 0), r["since"])):
-            if len(tokens) <= self.threshold("hot_token_cap", 15):
+            if len(tokens) <= self.thresholds.hot_token_cap:
                 break
             if row["token_id"] in tokens:
                 await self.market.demote(row["token_id"])
@@ -1538,19 +1554,26 @@ class Scheduler:
             )
 
     @staticmethod
-    def backup_identity(directory, day):
+    def backup_identity(directory: str | Path, day: date) -> BackupIdentity:
         from pathlib import Path
 
         directory = Path(directory).resolve()
 
-        def identity(name):
+        def identity(name: str) -> BackupFileIdentity | None:
             try:
                 stat = (directory / name).stat()
             except FileNotFoundError:
                 return None
-            return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+            return BackupFileIdentity(
+                device=stat.st_dev, inode=stat.st_ino, size=stat.st_size, modified_ns=stat.st_mtime_ns
+            )
 
-        return (str(directory), day, identity("manifest.json"), identity("COMPLETE"))
+        return BackupIdentity(
+            directory=str(directory),
+            day=day,
+            manifest=identity("manifest.json"),
+            complete=identity("COMPLETE"),
+        )
 
     async def maintenance(self, now, *, force=False, prune=True):
         import os
@@ -1558,24 +1581,23 @@ class Scheduler:
         from pathlib import Path
         from urllib.parse import unquote, urlsplit
 
-        backup_dir = getattr(self.settings, "backup_dir", None)
+        backup_dir = self.settings.backup_dir
         if backup_dir is None:
             raise ValueError("TANK_BACKUP_DIR must point to the operator external backup disk")
-        if not force and now.hour < getattr(self.settings, "backup_hour_utc", 2):
+        if not force and now.hour < self.settings.backup_hour_utc:
             return {"status": "deferred", "reason": "before configured backup hour"}
         target = Path(backup_dir)
         if not target.is_dir():
             raise ValueError("Configured external backup directory is unavailable")
         final = target / f"tank-{now.date()}"
         cache_key = self.backup_identity(final, now.date())
-        self._verified_backups = {
-            key: manifest for key, manifest in self._verified_backups.items() if key[1] == now.date()
-        }
+        self._verified_backups = {key for key in self._verified_backups if key.day == now.date()}
         if (final / "COMPLETE").exists():
             if force or cache_key not in self._verified_backups:
-                self._verified_backups[cache_key] = await asyncio.to_thread(
+                await asyncio.to_thread(
                     verify_backup, final, protected=protected_evidence_paths(self.settings)
                 )
+                self._verified_backups.add(cache_key)
             if prune:
                 await self.retention(now, final)
             await self.prune_snapshots(target)
@@ -1620,7 +1642,7 @@ class Scheduler:
                 raise RuntimeError(f"Nightly pg_dump failed with status {proc.returncode}")
 
         await dump_database(self.settings.database_url, "tank.dump")
-        await dump_database(getattr(self.settings, "openma_database_url", "postgresql:///oma"), "oma.dump")
+        await dump_database(self.settings.openma_database_url, "oma.dump")
         data_root = Path(self.settings.data_dir).resolve()
         if target.resolve().is_relative_to(data_root):
             raise ValueError("Backup destination must be outside live data directory")
@@ -1679,7 +1701,7 @@ class Scheduler:
 
         copy_task = asyncio.create_task(asyncio.to_thread(copy_evidence))
         try:
-            manifest = await asyncio.shield(copy_task)
+            await asyncio.shield(copy_task)
         except asyncio.CancelledError:
             cancelled.set()
             await asyncio.gather(copy_task, return_exceptions=True)
@@ -1689,7 +1711,7 @@ class Scheduler:
         if final.exists():
             raise RuntimeError("Incomplete backup destination already exists")
         staging.rename(final)
-        self._verified_backups[self.backup_identity(final, now.date())] = manifest
+        self._verified_backups.add(self.backup_identity(final, now.date()))
         if prune:
             await self.retention(now, final)
         await self.prune_snapshots(target)
@@ -1700,7 +1722,7 @@ class Scheduler:
         from tank.backup import prune_backup_snapshots
 
         removed = await asyncio.to_thread(
-            prune_backup_snapshots, target, int(self.threshold("backup_snapshots_kept", 3))
+            prune_backup_snapshots, target, int(self.thresholds.backup_snapshots_kept)
         )
         if removed:
             log.info("Removed old backup snapshots: %s", ", ".join(removed))
@@ -1715,13 +1737,13 @@ class Scheduler:
         import json
 
         market_cutoff = offset_schedule(
-            collection_clock(now), -timedelta(days=self.threshold("base_retention_days", 90))
+            collection_clock(now), -timedelta(days=self.thresholds.base_retention_days)
         )
         jobs_cutoff = offset_schedule(
-            collection_clock(now), -timedelta(days=self.threshold("jobs_retention_days", 30))
+            collection_clock(now), -timedelta(days=self.thresholds.jobs_retention_days)
         )
-        book_cutoff = parse_time(now) - timedelta(hours=self.threshold("book_summary_retention_hours", 72))
-        trades_cutoff = parse_time(now) - timedelta(days=self.threshold("trades_retention_days", 30))
+        book_cutoff = parse_time(now) - timedelta(hours=self.thresholds.book_summary_retention_hours)
+        trades_cutoff = parse_time(now) - timedelta(days=self.thresholds.trades_retention_days)
         await self.repo.prune_market(
             market_cutoff.value, book_before=book_cutoff, trades_before=trades_cutoff
         )
@@ -1776,11 +1798,11 @@ class Scheduler:
                     not event.get("next_milestone")
                     or event["next_milestone"].get("status") in {"CONFIRMED", "VERIFIED", "FAILED", "MISSED"}
                 )
-                and now - parse_time(last) >= timedelta(days=self.threshold("event_close_days", 7))
+                and now - parse_time(last) >= timedelta(days=self.thresholds.event_close_days)
             )
             or state == "COOLDOWN"
             and now - parse_time(event.get("cooldown_at", last))
-            >= timedelta(days=self.threshold("event_close_days", 7))
+            >= timedelta(days=self.thresholds.event_close_days)
         ):
             await self.repo.put(
                 "evt.events",

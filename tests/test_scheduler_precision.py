@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tank.scheduler import Scheduler
+from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.util import parse_time
 
@@ -36,7 +37,7 @@ def test_selected_event_anchor_preserves_provenance(field, extra, kind, precisio
 async def test_tick_preserves_source_milestone_and_offset_job_precision() -> None:
     repo = MemoryRepository()
     now = parse_time(STAMP)
-    scheduler = Scheduler(repo, SimpleNamespace(), None, None)
+    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
     scheduler.launch = lambda *args: None
     scheduler.expire_calls = AsyncMock()
     scheduler.demote = AsyncMock()
@@ -84,7 +85,11 @@ async def test_reaction_windows_inherit_anchor_and_capture_clock_is_collection(
     repo = MemoryRepository()
     market = SimpleNamespace(snapshot=AsyncMock(return_value={}))
     scheduler = Scheduler(
-        repo, SimpleNamespace(config_version="fixture", code_version="fixture"), market, None
+        repo,
+        Settings(config_version="fixture", code_version="fixture"),
+        market,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
     )
     anchor = {"type": "T1", "ts": STAMP}
     if precision:
@@ -114,7 +119,7 @@ async def test_retention_json_records_clock_and_offset_cutoffs(tmp_path: Path) -
     repo = SimpleNamespace(
         prune_market=AsyncMock(), prune_jobs=AsyncMock(), get=AsyncMock(return_value=None), put=AsyncMock()
     )
-    scheduler = Scheduler(repo, SimpleNamespace(), None, None)
+    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
     await scheduler.retention(parse_time(STAMP), tmp_path)
     metadata = json.loads((tmp_path / "RETENTION_COMPLETE.json").read_text())
     assert metadata["completed_at_prec"] == "COLLECTION_ONLY"
@@ -125,7 +130,13 @@ async def test_retention_json_records_clock_and_offset_cutoffs(tmp_path: Path) -
 @pytest.mark.asyncio
 async def test_legacy_condition_cutoff_stays_explicit_unknown() -> None:
     repo = MemoryRepository()
-    scheduler = Scheduler(repo, SimpleNamespace(), None, SimpleNamespace(assess=AsyncMock(return_value={})))
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        SimpleNamespace(assess=AsyncMock(return_value={})),
+        thresholds=Settings(_env_file=None).thresholds(),
+    )
     await repo.put("evt.events", "e", {"event_id": "e"})
     await repo.put(
         "ana.watch_conditions",
@@ -154,9 +165,10 @@ async def test_provenance_only_addition_does_not_create_late_data_revision(
     repo = MemoryRepository()
     scheduler = Scheduler(
         repo,
-        SimpleNamespace(config_version="fixture", code_version="fixture"),
+        Settings(config_version="fixture", code_version="fixture"),
         SimpleNamespace(snapshot=AsyncMock(return_value={})),
         None,
+        thresholds=Settings(_env_file=None).thresholds(),
     )
     original = await scheduler.reaction_capture(
         {

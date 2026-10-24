@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tank.scheduler import Scheduler
+from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.time_precision import chosen_boundary
 from tank.util import iso, parse_time
@@ -16,7 +17,7 @@ NOW = parse_time("2026-10-18T12:00:00Z")
 
 
 def quiet_scheduler(repo):
-    scheduler = Scheduler(repo, SimpleNamespace(), None, None)
+    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
     scheduler.launch = lambda *args: None
     scheduler.expire_calls = AsyncMock()
     scheduler.demote = AsyncMock()
@@ -37,8 +38,10 @@ async def test_verified_backup_is_cached_per_process_day_but_force_and_restart_r
 
     calls = []
     monkeypatch.setattr("tank.scheduler.verify_backup", lambda path, **kwargs: calls.append(path))
-    settings = SimpleNamespace(backup_dir=tmp_path)
-    scheduler = Scheduler(MemoryRepository(), settings, None, None)
+    settings = Settings(backup_dir=tmp_path)
+    scheduler = Scheduler(
+        MemoryRepository(), settings, None, None, thresholds=Settings(_env_file=None).thresholds()
+    )
     scheduler.retention = AsyncMock()
     for _ in range(3):
         await scheduler.maintenance(NOW)
@@ -46,7 +49,9 @@ async def test_verified_backup_is_cached_per_process_day_but_force_and_restart_r
     assert scheduler.retention.await_count == 3
     await scheduler.maintenance(NOW, force=True)
     assert calls == [final, final]
-    restarted = Scheduler(MemoryRepository(), settings, None, None)
+    restarted = Scheduler(
+        MemoryRepository(), settings, None, None, thresholds=Settings(_env_file=None).thresholds()
+    )
     await restarted.maintenance(NOW, prune=False)
     assert calls == [final, final, final]
 
@@ -66,7 +71,13 @@ async def test_failed_backup_verification_never_enters_cache(
         raise ValueError("checksum mismatch")
 
     monkeypatch.setattr("tank.scheduler.verify_backup", fail)
-    scheduler = Scheduler(MemoryRepository(), SimpleNamespace(backup_dir=tmp_path), None, None)
+    scheduler = Scheduler(
+        MemoryRepository(),
+        Settings(backup_dir=tmp_path),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+    )
     scheduler.retention = AsyncMock()
     for _ in range(2):
         with pytest.raises(ValueError, match="checksum"):
@@ -78,7 +89,7 @@ async def test_failed_backup_verification_never_enters_cache(
 @pytest.mark.asyncio
 async def test_expired_milestone_is_timer_missed_not_failed_source_outcome() -> None:
     repo = MemoryRepository()
-    scheduler = Scheduler(repo, SimpleNamespace(), None, None)
+    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
     await repo.put(
         "evt.events",
         "e",
@@ -131,7 +142,7 @@ async def test_terminal_capture_is_recorded_as_gap_and_not_resurrected_or_claime
     await scheduler.tick(NOW)
     assert not await repo.list("ops.jobs", filters={"idem_key": "e:T:POST_72H"})
 
-    real_scheduler = Scheduler(repo, SimpleNamespace(), None, None)
+    real_scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
     real_scheduler.analysis_tokens = AsyncMock(return_value={"T"})
     await real_scheduler.lifecycle(NOW)
     assert (await repo.get("evt.events", "e"))["lifecycle"] == "MONITORING"
@@ -174,7 +185,7 @@ async def test_checkpoint_expiry_does_not_slide_on_later_ticks_and_scans_are_bat
 async def test_conditions_share_truth_for_identical_event_token_cutoff() -> None:
     repo = MemoryRepository()
     truth = SimpleNamespace(assess=AsyncMock(return_value={"move_class": "SPOT_LED_ACCUMULATION"}))
-    scheduler = Scheduler(repo, SimpleNamespace(), None, truth)
+    scheduler = Scheduler(repo, Settings(), None, truth, thresholds=Settings(_env_file=None).thresholds())
     await repo.put("evt.events", "e", {"event_id": "e"})
     for identifier in ("one", "two"):
         await repo.put(
@@ -206,7 +217,13 @@ async def test_backup_cache_reverifies_replaced_manifest_identity(
     monkeypatch.setattr(
         "tank.scheduler.verify_backup", lambda path, **kwargs: calls.append(path) or {"files": {}}
     )
-    scheduler = Scheduler(MemoryRepository(), SimpleNamespace(backup_dir=tmp_path), None, None)
+    scheduler = Scheduler(
+        MemoryRepository(),
+        Settings(backup_dir=tmp_path),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+    )
     await scheduler.maintenance(NOW, prune=False)
     await scheduler.maintenance(NOW, prune=False)
     assert len(calls) == 1
@@ -231,7 +248,7 @@ async def test_selective_condition_union_never_calls_full_assess_or_persists_mis
             }
         ),
     )
-    scheduler = Scheduler(repo, SimpleNamespace(), None, truth)
+    scheduler = Scheduler(repo, Settings(), None, truth, thresholds=Settings(_env_file=None).thresholds())
     await repo.put("evt.events", "e", {"event_id": "e"})
     for identifier, metric in (("one", "price.close_vs_level"), ("two", "mt.move_class")):
         await repo.put(
@@ -279,7 +296,7 @@ async def test_closed_hour_completion_or_correction_is_rechecked_without_double_
     truth = SimpleNamespace(
         condition_values=selective, assess=AsyncMock(side_effect=AssertionError("no full truth"))
     )
-    scheduler = Scheduler(repo, SimpleNamespace(), None, truth)
+    scheduler = Scheduler(repo, Settings(), None, truth, thresholds=Settings(_env_file=None).thresholds())
     await repo.put("evt.events", "e", {"event_id": "e"})
     await repo.put(
         "ana.watch_conditions",
@@ -329,7 +346,13 @@ async def test_late_correction_of_preceding_closed_hour_cannot_false_fire() -> N
             "_condition_evaluation": {"request_key": str(values)},
         }
 
-    scheduler = Scheduler(repo, SimpleNamespace(), None, SimpleNamespace(condition_values=selective))
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        SimpleNamespace(condition_values=selective),
+        thresholds=Settings(_env_file=None).thresholds(),
+    )
     await repo.put("evt.events", "e", {"event_id": "e"})
     await repo.put(
         "ana.watch_conditions",

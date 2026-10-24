@@ -2,12 +2,12 @@
 
 import asyncio
 from datetime import timedelta
-from types import SimpleNamespace
 
 import pytest
 
 import tank.scheduler as scheduler_module
 from tank.scheduler import Scheduler
+from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.util import utcnow
 
@@ -30,7 +30,7 @@ async def test_capture_waits_while_market_truth_runs_and_logs_it(
         await real_sleep(0)
 
     monkeypatch.setattr(scheduler_module.asyncio, "sleep", fast_sleep)
-    scheduler = Scheduler(repo, SimpleNamespace(), None, None)
+    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
     payload = {"event_id": "EVT-1", "token_id": "bitcoin:BTC", "checkpoint": "POST_1H"}
     with caplog.at_level(logging.INFO, logger="tank.scheduler"):
         await scheduler._yield_to_market_truth(payload, utcnow())
@@ -47,6 +47,6 @@ async def test_capture_near_expiry_does_not_yield(monkeypatch: pytest.MonkeyPatc
         raise AssertionError("a capture near its expiry must not wait")
 
     monkeypatch.setattr(scheduler_module.asyncio, "sleep", no_sleep)
-    scheduler = Scheduler(repo, SimpleNamespace(), None, None)
+    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
     checkpoint = utcnow() - timedelta(hours=5, minutes=45)
     await scheduler._yield_to_market_truth({"event_id": "EVT-1"}, checkpoint)

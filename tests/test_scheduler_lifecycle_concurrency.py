@@ -2,11 +2,11 @@
 
 import asyncio
 from datetime import timedelta
-from types import SimpleNamespace
 
 import pytest
 
 from tank.scheduler import Scheduler
+from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.util import iso, utcnow
 
@@ -19,7 +19,7 @@ async def test_lifecycle_rereads_candidate_after_concurrent_state_update(
     now = utcnow()
     original = {"event_id": "e", "lifecycle": "TRACKED", "known_to_us_at": iso(now - timedelta(days=8))}
     await repo.put("evt.events", "e", original)
-    scheduler = Scheduler(repo, SimpleNamespace(), None, None)
+    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
 
     async def stale_candidates(*args, **kwargs):
         async with repo.lock("event:e"), repo.transaction():
@@ -42,7 +42,7 @@ async def test_lifecycle_cannot_overwrite_update_between_predicate_read_and_writ
     now = utcnow()
     original = {"event_id": "e", "lifecycle": "TRACKED", "known_to_us_at": iso(now - timedelta(days=8))}
     await repo.put("evt.events", "e", original)
-    scheduler = Scheduler(repo, SimpleNamespace(), None, None)
+    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
     read_started, release_read, update_attempted = (asyncio.Event() for _ in range(3))
     list_latest = repo.list_latest
 
@@ -89,5 +89,7 @@ async def test_fresh_observation_keeps_tracked_event_open() -> None:
         "fresh",
         {"observation_id": "fresh", "event_id": "e", "observed_at": iso(now)},
     )
-    await Scheduler(repo, SimpleNamespace(), None, None).lifecycle(now)
+    await Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds()).lifecycle(
+        now
+    )
     assert await repo.get("evt.events", "e") == event

@@ -73,7 +73,9 @@ async def test_active_events_and_lifecycle_reach_late_history_and_checkpoint_pag
             {"event_id": "zz", "token_id": token, "checkpoint": "POST_72H"},
             immutable=True,
         )
-    scheduler = Scheduler(repo, Settings(data_dir=tmp_path), None, None)
+    scheduler = Scheduler(
+        repo, Settings(data_dir=tmp_path), None, None, thresholds=Settings(_env_file=None).thresholds()
+    )
     assert {e["event_id"] async for e in scheduler.active_events(now)} == {"zz", *(f"z{i}" for i in range(5))}
     await scheduler.lifecycle(now)
     for i in range(5):
@@ -107,7 +109,9 @@ async def test_heartbeat_counts_all_pages_with_time_bounds(tmp_path: Path) -> No
         await repo.put("ops.llm_usage", str(i), {"at": iso(now - timedelta(hours=1)), "cost_usd": "1.25"})
     await repo.put("ops.llm_usage", "unknown", {"at": iso(now), "cost_usd": None})
     await repo.put("ops.llm_usage", "old", {"at": iso(now - timedelta(days=2)), "cost_usd": "1000"})
-    await Scheduler(repo, Settings(data_dir=tmp_path), None, None).heartbeat(now)
+    await Scheduler(
+        repo, Settings(data_dir=tmp_path), None, None, thresholds=Settings(_env_file=None).thresholds()
+    ).heartbeat(now)
     notice = await repo.get("out.ops_notices", f"heartbeat_{now.date()}")
     assert notice["analysis_backlog"] == {"queued": 5, "running": 5}
     assert notice["queue_lag_s"] == 5
@@ -119,7 +123,9 @@ async def test_heartbeat_counts_all_pages_with_time_bounds(tmp_path: Path) -> No
 async def test_scout_recent_truth_pages_and_checkpoint_resume(tmp_path: Path) -> None:
     repo = SmallPageRepository()
     now = utcnow().replace(microsecond=0)
-    scheduler = Scheduler(repo, Settings(data_dir=tmp_path), None, None)
+    scheduler = Scheduler(
+        repo, Settings(data_dir=tmp_path), None, None, thresholds=Settings(_env_file=None).thresholds()
+    )
     for i in range(12):
         await repo.put(
             "ana.market_truth",
