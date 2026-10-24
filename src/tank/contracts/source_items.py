@@ -81,6 +81,7 @@ class SourceText(DomainModel):
 
 
 class DiscoveryBase(SourceText):
+    author: str | None = None
     source_id: str
     external_id: str
     url: str
@@ -291,6 +292,25 @@ class CapturedItem(DomainModel):
             **self.capture.model_dump(mode="json"),
             **collection_clock(self.capture.observed_at).fields("observed_at"),
         }
+
+
+def captured_item(source_id: str, wire: Mapping[str, JsonValue]) -> CapturedItem:
+    """Decode the flat capture/checkpoint wire without weakening required capture evidence."""
+    capture_fields = {
+        "item_id",
+        "feed",
+        "raw_ref",
+        "raw_sha256",
+        "discovery_config_version",
+        "discovery_code_version",
+    }
+    material = discovered_item(
+        source_id, {name: value for name, value in wire.items() if name not in capture_fields}
+    )
+    evidence = CaptureEvidence.model_validate(
+        {name: wire[name] for name in (*capture_fields, "observed_at") if name in wire}
+    )
+    return CapturedItem(discovery=material.discovery, capture=evidence)
 
 
 class RawSourceReference(DomainModel):
@@ -618,27 +638,27 @@ class SourceLifecycle(SourceExtractionFields):
 
 
 class ArticleSourceItem(SourceLifecycle, ArticleDiscovery):
-    pass
+    author: str = Field(min_length=1)
 
 
 class FederalRegisterSourceItem(SourceLifecycle, FederalRegisterDiscovery):
-    pass
+    author: str = Field(min_length=1)
 
 
 class ExchangeAnnouncementSourceItem(SourceLifecycle, ExchangeAnnouncementDiscovery):
-    pass
+    author: str = Field(min_length=1)
 
 
 class InstrumentSourceItem(SourceLifecycle, InstrumentDiscovery):
-    pass
+    author: str = Field(min_length=1)
 
 
 class GovernanceSourceItem(SourceLifecycle, GovernanceDiscovery):
-    pass
+    author: str = Field(min_length=1)
 
 
 class SocialSourceItem(SourceLifecycle, SocialDiscovery):
-    pass
+    author: str = Field(min_length=1)
 
 
 type FeedSourceItem = (
@@ -649,6 +669,36 @@ type FeedSourceItem = (
     | GovernanceSourceItem
     | SocialSourceItem
 )
+
+
+def captured_source_item(captured: CapturedItem, lifecycle: SourceLifecycle) -> FeedSourceItem:
+    """Assemble the inherited aggregate from validated material and workflow facts."""
+    material = captured.discovery
+    evidence = captured.capture
+    if (
+        lifecycle.item_id != evidence.item_id
+        or lifecycle.feed != evidence.feed
+        or lifecycle.raw_ref != evidence.raw_ref
+        or lifecycle.raw_sha256 != evidence.raw_sha256
+        or lifecycle.observed_at != evidence.observed_at
+    ):
+        raise ValueError("Source lifecycle conflicts with its captured evidence")
+    document: dict[str, JsonValue | SourceProcessing] = {
+        **material.model_dump(mode="json", by_alias=True, exclude_unset=True),
+        **lifecycle.model_dump(mode="json", exclude={"processing"}, exclude_unset=True),
+        "processing": lifecycle.processing,
+    }
+    if isinstance(material, FederalRegisterDiscovery):
+        return FederalRegisterSourceItem.model_validate(document)
+    if isinstance(material, ExchangeAnnouncementDiscovery):
+        return ExchangeAnnouncementSourceItem.model_validate(document)
+    if isinstance(material, InstrumentDiscovery):
+        return InstrumentSourceItem.model_validate(document)
+    if isinstance(material, GovernanceDiscovery):
+        return GovernanceSourceItem.model_validate(document)
+    if isinstance(material, SocialDiscovery):
+        return SocialSourceItem.model_validate(document)
+    return ArticleSourceItem.model_validate(document)
 
 
 def _source_processing(record: Mapping[str, JsonValue]) -> SourceProcessing:
@@ -735,6 +785,28 @@ class WebEvidenceItem(GenerationProvenance, SourceText, SourceExtractionFields):
     observed_at_prec_reason: None
     observed_at_precision: Literal["COLLECTION_ONLY"] | None = None
     source_class: SourceClass
+    observation_count: int | None = Field(default=None, ge=1)
+    observed_feeds: list[str] | None = None
+
+    @model_validator(mode="after")
+    def consistent_observations(self) -> Self:
+        if (self.observation_count is None) != (self.observed_feeds is None):
+            raise ValueError("Web source observation count and feeds must be declared together")
+        if self.observed_feeds is not None and (
+            len(self.observed_feeds) != self.observation_count
+            or len(set(self.observed_feeds)) != len(self.observed_feeds)
+            or self.feed not in self.observed_feeds
+        ):
+            raise ValueError("Web source observations conflict with their captured origin")
+        return self
+
+    def observe(self, feed: str) -> Self:
+        known = self.observed_feeds if self.observed_feeds is not None else [self.feed]
+        if feed in known:
+            return self
+        return type(self).model_validate(
+            self.model_copy(update={"observation_count": len(known) + 1, "observed_feeds": [*known, feed]})
+        )
 
     @model_validator(mode="after")
     def evidence_origin(self) -> Self:

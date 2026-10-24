@@ -402,3 +402,124 @@ def test_publisher_authority_requires_declared_capture_feed() -> None:
     )
     with pytest.raises(ValidationError, match="feed"):
         resolve_author_organization(source, {"url": "https://example.org/release"}, {})
+
+
+@pytest.mark.asyncio
+async def test_missing_provider_limits_prevents_source_service_start(tmp_path: Path) -> None:
+    from tank.settings import Settings
+    from tank.sources import SourceService
+
+    class MissingProviderLimits(Settings):
+        def load_config(self, name: str) -> dict[str, JsonValue]:
+            configuration = super().load_config(name)
+            if name == "api_limits":
+                del configuration["limits"]
+            return configuration
+
+    repo = MemoryRepository()
+    settings = MissingProviderLimits(data_dir=tmp_path, ops_progress_enabled=False)
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(ValidationError, match="limits"):
+            SourceService(repo, settings, http=http)
+    assert await repo.list("ops.jobs") == []
+    assert await repo.list("ingest.source_items") == []
+
+
+@pytest.mark.asyncio
+async def test_feed_duplicate_of_web_evidence_counts_feeds_without_replacing_origin(tmp_path: Path) -> None:
+    from test_sources import captured
+
+    from tank.contracts.source_items import WebEvidenceItem, parse_source_item
+    from tank.event_tools import EventToolService
+    from tank.settings import Settings
+    from tank.sources import SourceService
+
+    repo = MemoryRepository()
+    settings = Settings(data_dir=tmp_path, ops_progress_enabled=False)
+    tools = EventToolService(repo, settings, None, None)
+    original = await tools.save_web(
+        "https://example.org/original",
+        "Shared independently observed facts",
+        "",
+        {},
+        raw_bytes=b"<article>Shared independently observed facts</article>",
+        media_type="text/html",
+    )
+    original_raw = Path(original["raw_ref"])
+    original_bytes = original_raw.read_bytes()
+    async with httpx.AsyncClient() as http:
+        service = SourceService(repo, settings, http=http)
+        for external_id in ("feed-first", "feed-repeat"):
+            incoming = captured(
+                service,
+                "S30",
+                {
+                    "external_id": external_id,
+                    "title": "",
+                    "text": "Shared independently observed facts",
+                    "feed": "https://example.org/independent-feed",
+                },
+            )
+            candidate_raw = Path(incoming["raw_ref"])
+            result = await service.ingest(service.sources["S30"], incoming)
+            assert result["item_id"] == original["item_id"]
+            assert not candidate_raw.exists()
+    stored = await repo.get("ingest.source_items", original["item_id"])
+    assert stored is not None
+    web = parse_source_item(stored)
+    assert isinstance(web, WebEvidenceItem)
+    assert web.observation_count == 2
+    assert web.observed_feeds == ["web:page", "https://example.org/independent-feed"]
+    assert web.feed == "web:page" and web.raw_ref == str(original_raw)
+    assert web.raw_sha256 == original["raw_sha256"]
+    assert original_raw.read_bytes() == original_bytes
+    assert await repo.list("ops.jobs") == []
+    assert len(await repo.list("ingest.source_items")) == 1
+
+
+@pytest.mark.asyncio
+async def test_duplicate_ingestion_cannot_delete_foreign_raw_evidence(tmp_path: Path) -> None:
+    from test_sources import captured
+
+    from tank.settings import Settings
+    from tank.sources import SourceService
+
+    repo = MemoryRepository()
+    async with httpx.AsyncClient() as http:
+        service = SourceService(repo, Settings(data_dir=tmp_path, ops_progress_enabled=False), http=http)
+        first = captured(service, "S30", {"external_id": "first", "title": "Title", "text": "Same facts"})
+        await service.ingest(service.sources["S30"], first)
+        foreign = tmp_path / "unrelated-evidence"
+        foreign.write_bytes(b"Preserve this independently owned evidence")
+        candidate = captured(
+            service,
+            "S30",
+            {
+                "external_id": "second",
+                "title": "Title",
+                "text": "Same facts",
+            },
+        )
+        candidate["raw_ref"] = str(foreign)
+        with pytest.raises(ValueError, match="does not belong"):
+            await service.ingest(service.sources["S30"], candidate)
+        assert foreign.read_bytes() == b"Preserve this independently owned evidence"
+        assert len(await repo.list("ingest.source_items")) == 1
+
+
+@pytest.mark.asyncio
+async def test_ingestion_cannot_invent_a_missing_capture_clock(tmp_path: Path) -> None:
+    from test_sources import captured
+
+    from tank.settings import Settings
+    from tank.sources import SourceService
+
+    repo = MemoryRepository()
+    async with httpx.AsyncClient() as http:
+        service = SourceService(repo, Settings(data_dir=tmp_path, ops_progress_enabled=False), http=http)
+        incoming = captured(service, "S30", {"external_id": "entry", "title": "Title", "text": "Facts"})
+        del incoming["observed_at"]
+        with pytest.raises(ValidationError, match="observed_at"):
+            await service.ingest(service.sources["S30"], incoming)
+    assert await repo.list("ingest.source_items") == []
+    assert await repo.list("ops.jobs") == []

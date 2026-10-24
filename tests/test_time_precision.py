@@ -1,8 +1,9 @@
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from tank.time_precision import chosen_boundary, collection_clock, offset_schedule, propagate_timestamp
+from tank.util import EpochInput, EpochUnit, clock_iso, iso, parse_epoch, parse_utc_time
 
 AT = "2026-10-18T00:00:00Z"
 
@@ -138,3 +139,35 @@ def test_bucket_edge_cannot_upgrade_or_conflict_with_precision(precision: str | 
             },
             "ts",
         )
+
+
+@pytest.mark.parametrize(
+    "value,unit",
+    [
+        (1700000000.123456, "s"),
+        ("1700000000123.456", "ms"),
+        (1700000000123456, "us"),
+    ],
+)
+def test_declared_epoch_units_preserve_existing_microsecond_rounding(
+    value: EpochInput, unit: EpochUnit
+) -> None:
+    assert iso(parse_epoch(value, unit=unit)) == "2023-11-14T22:13:20.123456Z"
+
+
+@pytest.mark.parametrize("value", [True, False, float("nan"), float("inf"), "NaN"])
+def test_declared_epoch_rejects_boolean_and_nonfinite_values(value: EpochInput) -> None:
+    with pytest.raises(ValueError):
+        parse_epoch(value, unit="s")
+
+
+def test_explicit_utc_decoder_preserves_zone_less_transport_contract() -> None:
+    expected = datetime(2026, 10, 24, 12, tzinfo=UTC)
+    assert parse_utc_time("2026-10-24 12:00:00") == expected
+    assert parse_utc_time(datetime(2026, 10, 24, 12)) == expected
+
+
+def test_explicit_processing_clock_is_separate_from_formatting(monkeypatch: pytest.MonkeyPatch) -> None:
+    fixed = datetime(2026, 10, 24, 12, tzinfo=UTC)
+    monkeypatch.setattr("tank.util.utcnow", lambda: fixed)
+    assert clock_iso() == "2026-10-24T12:00:00Z"

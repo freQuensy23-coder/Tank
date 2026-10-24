@@ -2,20 +2,31 @@
 
 import asyncio
 import os
-from types import SimpleNamespace
+from collections.abc import AsyncIterator
+from datetime import datetime
+from decimal import Decimal
+from typing import Literal
 
+import httpx
 import pytest
+from agent_source_fixtures import pipeline_settings_fixture, source_item_fixture, source_record_fixture
+from postgres_helpers import PostgresTemplate
 from pydantic import JsonValue
 
 from tank.agents.jev import JevState
 from tank.agents.pipeline import Pipeline
+from tank.agents.pipeline_contracts import ClassificationName, JevScoreRecord, RoutingCandidate
+from tank.contracts.repository import Collection
+from tank.contracts.source_items import FeedSourceItem
+from tank.ops_progress import DisabledSourceProgress
+from tank.storage import PostgresRepository
 from tank.util import iso, new_id
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 
 @pytest.fixture
-async def isolated_routing_repo(postgres_template):
+async def isolated_routing_repo(postgres_template: PostgresTemplate) -> AsyncIterator[PostgresRepository]:
     url = os.getenv("TANK_TEST_DATABASE_URL")
     if not url:
         pytest.skip("Requires an explicitly configured PostgreSQL test connection")
@@ -25,16 +36,17 @@ async def isolated_routing_repo(postgres_template):
 
 @pytest.mark.asyncio
 async def test_independent_routing_calls_overlap_preserve_source_updates_and_deduplicate(
-    isolated_routing_repo,
+    isolated_routing_repo: PostgresRepository,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = isolated_routing_repo
     marker, at = new_id("ROUTING-TEST"), iso()
     entity = marker + "-entity"
-    config = {
+    config: dict[str, dict[str, JsonValue]] = {
         "registry": {"entities": [{"entity_id": entity, "aliases": [marker]}]},
         "thresholds": {"routing_cutoff": 0.8, "routing_window_days": 3},
     }
-    opts = SimpleNamespace(load_config=config.__getitem__, config_version="test", code_version="test")
+    opts = pipeline_settings_fixture(config)
     event = marker + "-event"
     await repo.put(
         "evt.events",
@@ -42,7 +54,7 @@ async def test_independent_routing_calls_overlap_preserve_source_updates_and_ded
         {
             "event_id": event,
             "statement": marker,
-            "entities": [entity],
+            "entities": list[JsonValue]([entity]),
             "theme_tags": [],
             "public_at": at,
             "public_at_precision": "EXACT",
@@ -55,6 +67,7 @@ async def test_independent_routing_calls_overlap_preserve_source_updates_and_ded
             "timing_confidence": "HIGH",
             "best_source_class": "PRIMARY",
             "lifecycle": "ANALYZING",
+            "tokens_mentioned": [],
         },
     )
     identifiers = [
@@ -64,21 +77,23 @@ async def test_independent_routing_calls_overlap_preserve_source_updates_and_ded
         await repo.put(
             "ingest.source_items",
             item_id,
-            {
-                "item_id": item_id,
-                "source_id": "TEST",
-                "feed": "test",
-                "external_id": item_id,
-                "text": marker if item_id in identifiers[:3] else "Unrelated no matching identity",
-                "observed_at": at,
-                "published_prec": "COLLECTION_ONLY",
-                "raw_ref": "/test/raw",
-                "raw_sha256": "a" * 64,
-                "content_hash": "b" * 64,
-                "source_class": "PRIMARY",
-                "relevance": {"decision": "ALWAYS"},
-                "extraction_status": "PENDING",
-            },
+            source_record_fixture(
+                {
+                    "item_id": item_id,
+                    "source_id": "S01",
+                    "feed": "test",
+                    "external_id": item_id,
+                    "text": marker if item_id in identifiers[:3] else "Unrelated no matching identity",
+                    "observed_at": at,
+                    "published_prec": "COLLECTION_ONLY",
+                    "raw_ref": "/test/raw",
+                    "raw_sha256": "a" * 64,
+                    "content_hash": "b" * 64,
+                    "source_class": "PRIMARY",
+                    "relevance": {"decision": "ALWAYS"},
+                    "extraction_status": "PENDING",
+                }
+            ),
         )
     session = marker + "-session"
     await repo.put(
@@ -95,12 +110,12 @@ async def test_independent_routing_calls_overlap_preserve_source_updates_and_ded
             "last_event_seq": 0,
         },
     )
-    pipe = Pipeline(repo, opts, http=object())
+    pipe = Pipeline(repo, opts, progress=DisabledSourceProgress())
     arrived, release, both_blocked = set(), asyncio.Event(), asyncio.Event()
 
-    async def score(item: dict[str, JsonValue], name: str, state: JevState) -> float:
+    async def score(item: FeedSourceItem, name: ClassificationName, state: JevState) -> float:
         assert state.event is not None and state.event.statement == marker
-        item_id = item["item_id"]
+        item_id = item.item_id
         assert isinstance(item_id, str)
         arrived.add(item_id)
         if len(arrived) == 2:
@@ -108,48 +123,58 @@ async def test_independent_routing_calls_overlap_preserve_source_updates_and_ded
         await release.wait()
         return 0.95
 
-    pipe.score = score
+    monkeypatch.setattr(pipe, "score", score)
     try:
         async with asyncio.timeout(5):
-            tasks = [asyncio.create_task(pipe.route_item({"item_id": i})) for i in identifiers[:2]]
+            tasks = [asyncio.create_task(pipe.route_item_wire({"item_id": i})) for i in identifiers[:2]]
             try:
                 await both_blocked.wait()
                 async with repo.lock("ingest-dedup"):
                     latest = await repo.get("ingest.source_items", identifiers[0])
+                    assert latest is not None
                     await repo.put(
-                        "ingest.source_items", identifiers[0], {**latest, "new_observation": "preserved"}
+                        "ingest.source_items",
+                        identifiers[0],
+                        source_record_fixture({**latest, "extraction_reason": "preserved"}),
                     )
 
-                unrelated = await pipe.route_item({"item_id": identifiers[3]})
+                unrelated = await pipe.route_item_wire({"item_id": identifiers[3]})
                 assert unrelated["routing_message"] == {"kind": "NEW_ITEM", "item_id": identifiers[3]}
                 new_one, new_two = await asyncio.gather(
-                    *(pipe.route_item({"item_id": identifiers[4]}) for _ in range(2))
+                    *(pipe.route_item_wire({"item_id": identifiers[4]}) for _ in range(2))
                 )
                 assert new_one == new_two
-                assert "reservation_id" not in new_one["route"]
+                new_route = new_one["route"]
+                assert isinstance(new_route, dict)
+                assert "reservation_id" not in new_route
                 release.set()
                 first, second = await asyncio.gather(*tasks)
             finally:
                 release.set()
                 await asyncio.gather(*tasks, return_exceptions=True)
         assert first["route_event_id"] == second["route_event_id"] == event
-        assert first["new_observation"] == "preserved"
+        assert first["extraction_reason"] == "preserved"
         score_calls = 0
 
-        async def duplicate_score(*args):
+        async def duplicate_score(item: FeedSourceItem, name: ClassificationName, state: JevState) -> float:
             nonlocal score_calls
             score_calls += 1
             await asyncio.sleep(0.02)
             return 0.95
 
-        pipe.score = duplicate_score
-        one, two = await asyncio.gather(*(pipe.route_item({"item_id": identifiers[2]}) for _ in range(2)))
+        monkeypatch.setattr(pipe, "score", duplicate_score)
+        one, two = await asyncio.gather(
+            *(pipe.route_item_wire({"item_id": identifiers[2]}) for _ in range(2))
+        )
         assert one == two and score_calls == 1
         jobs = await repo.list("ops.jobs", filters={"idem_key": identifiers[2] + ":ITEM_ADDED"})
         assert len(jobs) == 1
         new_jobs = await repo.list("ops.jobs", filters={"idem_key": identifiers[4] + ":NEW_ITEM"})
         assert len(new_jobs) == 1
-        assert not any("reservation_id" in row["routing_message"] for row in (first, second, one, two))
+        for row in (first, second, one, two):
+            message = row["routing_message"]
+            assert isinstance(message, dict)
+            assert "reservation_id" not in message
     finally:
         await repo.close()
 
@@ -157,11 +182,11 @@ async def test_independent_routing_calls_overlap_preserve_source_updates_and_ded
 @pytest.mark.asyncio
 @pytest.mark.parametrize("interruption", ["failure", "cancellation"])
 async def test_parallel_candidate_scores_survive_retry_without_partial_winner(
-    interruption, isolated_routing_repo
+    interruption: Literal["failure", "cancellation"],
+    isolated_routing_repo: PostgresRepository,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import json
-
-    import httpx
 
     repo = isolated_routing_repo
     marker, at = new_id("ROUTE-PAIRS"), iso()
@@ -169,35 +194,43 @@ async def test_parallel_candidate_scores_survive_retry_without_partial_winner(
     await repo.put(
         "ingest.source_items",
         item_id,
-        {
-            "item_id": item_id,
-            "source_id": "TEST",
-            "feed": "test",
-            "external_id": item_id,
-            "text": marker,
-            "observed_at": at,
-            "published_prec": "COLLECTION_ONLY",
-            "raw_ref": "/test/raw",
-            "raw_sha256": "a" * 64,
-            "content_hash": "b" * 64,
-            "source_class": "PRIMARY",
-            "relevance": {"decision": "ALWAYS"},
-            "extraction_status": "PENDING",
-        },
+        source_record_fixture(
+            {
+                "item_id": item_id,
+                "source_id": "S01",
+                "feed": "test",
+                "external_id": item_id,
+                "text": marker,
+                "observed_at": at,
+                "published_prec": "COLLECTION_ONLY",
+                "raw_ref": "/test/raw",
+                "raw_sha256": "a" * 64,
+                "content_hash": "b" * 64,
+                "source_class": "PRIMARY",
+                "relevance": {"decision": "ALWAYS"},
+                "extraction_status": "PENDING",
+            }
+        ),
     )
-    config = {"registry": {}, "thresholds": {"routing_cutoff": 0.8}}
-    opts = SimpleNamespace(
-        load_config=config.__getitem__,
-        config_version="test",
-        code_version="test",
-        openrouter_api_key="FAKE-offline-key",
-        jev_provider="openrouter",
-    )
-    candidates = tuple({"event_id": marker + "-" + key, "statement": key} for key in ("a", "b", "c"))
-    arrived, calls, ready = set(), {}, asyncio.Event()
+    config: dict[str, dict[str, JsonValue]] = {"registry": {}, "thresholds": {"routing_cutoff": 0.8}}
+    opts = pipeline_settings_fixture(config)
+    candidates = [
+        RoutingCandidate(
+            event_id=marker + "-" + key,
+            statement=key,
+            lifecycle="ANALYZING",
+            entities=[],
+            tokens_mentioned=[],
+            event_state="RUMOR",
+        )
+        for key in ("a", "b", "c")
+    ]
+    arrived: set[str] = set()
+    calls: dict[str, int] = {}
+    ready = asyncio.Event()
     retry = False
 
-    async def transport(request: pytest.FixtureRequest):
+    async def transport(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         key = body["state"]["event"]["statement"]
         calls[key] = calls.get(key, 0) + 1
@@ -220,14 +253,14 @@ async def test_parallel_candidate_scores_survive_retry_without_partial_winner(
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-        pipe = Pipeline(repo, opts, http=http)
+        pipe = Pipeline(repo, opts, progress=DisabledSourceProgress(), http=http)
 
-        async def fixed_candidates(*args):
+        async def fixed_candidates(identities: set[str], since: str, now: datetime) -> list[RoutingCandidate]:
             return candidates
 
-        pipe._candidate_events = fixed_candidates
+        monkeypatch.setattr(pipe, "_candidate_events", fixed_candidates)
         try:
-            attempt = asyncio.create_task(pipe.route_item({"item_id": item_id}))
+            attempt = asyncio.create_task(pipe.route_item_wire({"item_id": item_id}))
             async with asyncio.timeout(5):
                 await ready.wait()
                 if interruption == "cancellation":
@@ -239,16 +272,19 @@ async def test_parallel_candidate_scores_survive_retry_without_partial_winner(
                 else:
                     with pytest.raises(httpx.HTTPStatusError):
                         await attempt
-            assert "routing_message" not in await repo.get("ingest.source_items", item_id)
+            current = await repo.get("ingest.source_items", item_id)
+            assert current is not None and "routing_message" not in current
             assert not await repo.list("ops.jobs", filters={"idem_key": item_id + ":ITEM_ADDED"})
             assert len(await repo.list("ops.llm_usage", filters={"item_id": item_id})) == 2
             retry = True
             async with asyncio.timeout(5):
                 result, duplicate = await asyncio.gather(
-                    *(pipe.route_item({"item_id": item_id}) for _ in range(2))
+                    *(pipe.route_item_wire({"item_id": item_id}) for _ in range(2))
                 )
             assert result == duplicate and result["route_event_id"] == marker + "-a"
-            assert list(result["routing_scores"]) == [event["event_id"] for event in candidates]
+            routing_scores = result["routing_scores"]
+            assert isinstance(routing_scores, dict)
+            assert list(routing_scores) == [event.event_id for event in candidates]
             assert calls == {"a": 1, "b": 2, "c": 1}
             assert len(await repo.list("ops.jobs", filters={"idem_key": item_id + ":ITEM_ADDED"})) == 1
         finally:
@@ -257,7 +293,7 @@ async def test_parallel_candidate_scores_survive_retry_without_partial_winner(
 
 @pytest.mark.asyncio
 async def test_candidate_window_equal_batch_clock_is_inclusive_without_future_rows(
-    isolated_routing_repo,
+    isolated_routing_repo: PostgresRepository,
 ) -> None:
     from datetime import timedelta
 
@@ -277,21 +313,23 @@ async def test_candidate_window_equal_batch_clock_is_inclusive_without_future_ro
             await repo.put(
                 "ingest.source_items",
                 key,
-                {
-                    "item_id": key,
-                    "source_id": "TEST",
-                    "feed": "test",
-                    "external_id": key,
-                    "text": marker,
-                    "observed_at": iso(at),
-                    "published_prec": "COLLECTION_ONLY",
-                    "raw_ref": "/test/raw",
-                    "raw_sha256": "a" * 64,
-                    "content_hash": "b" * 64,
-                    "source_class": "PRIMARY",
-                    "relevance": {"decision": "ALWAYS"},
-                    "extraction_status": "PENDING",
-                },
+                source_record_fixture(
+                    {
+                        "item_id": key,
+                        "source_id": "S01",
+                        "feed": "test",
+                        "external_id": key,
+                        "text": marker,
+                        "observed_at": iso(at),
+                        "published_prec": "COLLECTION_ONLY",
+                        "raw_ref": "/test/raw",
+                        "raw_sha256": "a" * 64,
+                        "content_hash": "b" * 64,
+                        "source_class": "PRIMARY",
+                        "relevance": {"decision": "ALWAYS"},
+                        "extraction_status": "PENDING",
+                    }
+                ),
             )
             await repo.put(
                 "evt.events",
@@ -299,7 +337,7 @@ async def test_candidate_window_equal_batch_clock_is_inclusive_without_future_ro
                 {
                     "event_id": key,
                     "statement": key,
-                    "entities": [marker],
+                    "entities": list[JsonValue]([marker]),
                     "theme_tags": [],
                     "public_at": iso(at),
                     "public_at_precision": "EXACT",
@@ -312,6 +350,7 @@ async def test_candidate_window_equal_batch_clock_is_inclusive_without_future_ro
                     "timing_confidence": "HIGH",
                     "best_source_class": "PRIMARY",
                     "lifecycle": "ANALYZING",
+                    "tokens_mentioned": [],
                 },
             )
             await repo.put(
@@ -328,9 +367,11 @@ async def test_candidate_window_equal_batch_clock_is_inclusive_without_future_ro
                     "last_event_seq": 0,
                 },
             )
-        opts = SimpleNamespace()
-        events = await Pipeline(repo, opts, http=object())._candidate_events({marker}, iso(since), now)
-        assert [event["event_id"] for event in events] == [marker + "a_lower", marker + "z_equal"]
+        opts = pipeline_settings_fixture({"registry": {}, "thresholds": {}})
+        events = await Pipeline(repo, opts, progress=DisabledSourceProgress())._candidate_events(
+            {marker}, iso(since), now
+        )
+        assert [event.event_id for event in events] == [marker + "a_lower", marker + "z_equal"]
     finally:
         await repo.close()
 
@@ -338,23 +379,18 @@ async def test_candidate_window_equal_batch_clock_is_inclusive_without_future_ro
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reported_cost", [None, 0, 0.123456789])
 async def test_jev_billed_cost_or_explicit_unknown_persists_under_sql_contract(
-    reported_cost, isolated_routing_repo
+    reported_cost: float | None, isolated_routing_repo: PostgresRepository
 ) -> None:
     """Real SQL constraints accept unknown billing only with its canonical reason."""
-    import httpx
 
     repo = isolated_routing_repo
-    opts = SimpleNamespace(
-        openrouter_api_key="FAKE_TEST_KEY",
-        config_version="test-config",
-        code_version="test-code",
-    )
-    item = {"item_id": new_id("COST-TEST"), "source_id": "S30", "text": "Ethereum news"}
+    opts = pipeline_settings_fixture({"registry": {}, "thresholds": {}})
+    item = source_item_fixture(new_id("COST-TEST"), source_id="S30", text="Ethereum news")
     calls = []
 
-    def transport(request: pytest.FixtureRequest):
+    def transport(request: httpx.Request) -> httpx.Response:
         calls.append(request)
-        usage = {"input_tokens": 10}
+        usage: dict[str, JsonValue] = {"input_tokens": 10}
         if reported_cost is not None:
             usage["cost"] = reported_cost
         return httpx.Response(
@@ -367,20 +403,18 @@ async def test_jev_billed_cost_or_explicit_unknown_persists_under_sql_contract(
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-        pipeline = Pipeline(repo, opts, http=http)
+        pipeline = Pipeline(repo, opts, progress=DisabledSourceProgress(), http=http)
         assert await pipeline.score(item, "relevant", pipeline.state(item)) == 0.9
         assert await pipeline.score(item, "relevant", pipeline.state(item)) == 0.9
     assert len(calls) == 1
-    records = await repo.list("ops.llm_usage", filters={"item_id": item["item_id"]})
+    records = await repo.list("ops.llm_usage", filters={"item_id": item.item_id})
     assert len(records) == 1
-    row = records[0]
-    assert row["billing_basis"] == "OPENCODE_REPORTED"
+    row = Collection("ops.llm_usage", JevScoreRecord).decode(records[0])
+    assert row.billing_basis == "OPENCODE_REPORTED"
     if reported_cost is None:
-        assert row["cost_usd"] is None
-        assert (
-            row["missing_fields"]["cost_usd"] == row["cost_reason"] == "OpenCode does not report usage.cost"
-        )
+        assert row.cost_usd is None
+        assert row.missing_fields.cost_usd == row.cost_reason == "OpenCode does not report usage.cost"
     else:
-        assert row["cost_usd"] == str(reported_cost)
-        assert row["cost_reason"] is None
-        assert "cost_usd" not in row["missing_fields"]
+        assert row.cost_usd == Decimal(str(reported_cost))
+        assert row.cost_reason is None
+        assert row.missing_fields.cost_usd is None
