@@ -19,6 +19,10 @@ from tank.market.capture_contracts import (
 from tank.time_precision import Timestamp
 
 
+class CaptureInvariantError(RuntimeError):
+    pass
+
+
 class CaptureClock(Protocol):
     def now(self) -> datetime: ...
     def monotonic(self) -> float: ...

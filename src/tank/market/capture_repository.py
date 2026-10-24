@@ -23,14 +23,11 @@ from tank.market.capture_contracts import (
     RepairEnvelope,
     RepairRequest,
 )
+from tank.market.capture_ports import CaptureInvariantError
 from tank.time_precision import Timestamp
 from tank.util import parse_time
 
 type CaptureWriteCollection = Literal["mkt.hot_tokens", "mkt.backfill_runs", "mkt.capture_requests"]
-
-
-class CaptureInvariantError(RuntimeError):
-    pass
 
 
 class CaptureDocumentStore(DocumentStore, Protocol):
