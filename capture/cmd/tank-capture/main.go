@@ -282,9 +282,14 @@ func serveHealth(addr string, h *healthState, log *slog.Logger) *http.Server {
 	})
 	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
 		ok, reason := h.healthy()
-		status := map[string]any{"healthy": ok, "reason": reason}
+		status := struct {
+			Healthy bool            `json:"healthy"`
+			Reason  string          `json:"reason"`
+			Capture *capture.Status `json:"capture,omitempty"`
+		}{Healthy: ok, Reason: reason}
 		if svc, _ := h.get(); svc != nil {
-			status["capture"] = svc.Status()
+			value := svc.Status()
+			status.Capture = &value
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(status)

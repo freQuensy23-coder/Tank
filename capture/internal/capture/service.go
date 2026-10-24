@@ -161,7 +161,16 @@ func (s *Service) LastFlush() time.Time {
 	return time.Time{}
 }
 
-func (s *Service) Status() map[string]any {
+type Status struct {
+	HotTokens        []string `json:"hot_tokens"`
+	StreamGroups     int      `json:"stream_groups"`
+	Members          int      `json:"members"`
+	MembersConnected int      `json:"members_connected"`
+	LastFlush        string   `json:"last_flush"`
+	LastFlushError   string   `json:"last_flush_error,omitempty"`
+}
+
+func (s *Service) Status() Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	connected := 0
@@ -175,12 +184,12 @@ func (s *Service) Status() map[string]any {
 		hot = append(hot, t)
 	}
 	sort.Strings(hot)
-	status := map[string]any{
-		"hot_tokens": hot, "stream_groups": len(s.groups), "members": len(s.members),
-		"members_connected": connected, "last_flush": pytime.ISO(s.LastFlush()),
+	status := Status{
+		HotTokens: hot, StreamGroups: len(s.groups), Members: len(s.members),
+		MembersConnected: connected, LastFlush: pytime.ISO(s.LastFlush()),
 	}
 	if err, ok := s.flushErr.Load().(string); ok && err != "" {
-		status["last_flush_error"] = err
+		status.LastFlushError = err
 	}
 	return status
 }
