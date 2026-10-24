@@ -138,7 +138,7 @@ class ClickHouse:
         )
         if parts.scheme not in {"http", "https"} or parts.hostname is None:
             raise ValueError("ClickHouse URL requires an HTTP(S) scheme and host")
-        netloc = parts.hostname + (f":{parts.port}" if parts.port else "")
+        netloc = parts.hostname + (f":{parts.port}" if parts.port is not None else "")
         self.base = urlunsplit((parts.scheme, netloc, "/", "", ""))
         self.http = httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) if http is None else http
 
@@ -154,8 +154,9 @@ class ClickHouse:
             "use_skip_indexes_if_final": "0",
             "max_query_size": str(256 << 20),
         }
-        for name, (value, _) in (params or {}).items():
-            request["param_" + name] = value
+        if params is not None:
+            for name, (value, _) in params.items():
+                request["param_" + name] = value
         response = await self.http.post(
             self.base,
             params=request,

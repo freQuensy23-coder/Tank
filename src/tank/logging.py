@@ -10,7 +10,7 @@ _KNOWN_SECRETS: set[str] = set()
 
 
 def redact_text(value: str, secrets: tuple[str, ...] = ()) -> str:
-    text = str(value)
+    text = value
     for secret in sorted((s for s in secrets if s), key=len, reverse=True):
         text = text.replace(secret, "[REDACTED]")
     text = re.sub(r"(https?://api\.telegram\.org/bot)[^/\s]+", r"\1[REDACTED]", text)

@@ -255,3 +255,12 @@ def test_frozen_config_is_parsed_once_and_callers_get_copies(
     assert frozen.load_config("registry") == {"tokens": [{"token_id": "T"}]}
     unfrozen = Settings(_env_file=None, config_dir=config)
     assert unfrozen.load_config("registry") == {"tokens": []}
+
+
+def test_explicit_empty_codex_home_is_not_replaced_with_a_personal_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", "")
+    monkeypatch.delenv("TANK_CODEX_AUTH_PATH", raising=False)
+    with pytest.raises(ValueError, match="nonempty directory"):
+        Settings(_env_file=None)
