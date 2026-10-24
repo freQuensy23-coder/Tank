@@ -1,10 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
 import { setup } from './fakes.mjs';
 import { trustedLegacyBuild } from '../../../vendor/openma/packages/control-plane-node/src/lib/tank-retained/legacy-build-provenance.ts';
 import { resolveLegacyProvenance, retainedCompatibility } from '../../../vendor/openma/packages/control-plane-node/src/lib/tank-retained/legacy-provenance.ts';
 import { stableDigest } from '../../../vendor/openma/packages/control-plane-node/src/lib/tank-retained/runtime-identity.ts';
-import { assertLegacyNativeConfiguration } from '../../../vendor/openma/packages/control-plane-node/src/lib/tank-retained/legacy-native-provenance.ts';
+import { assertLegacyNativeConfiguration, readNativeLegacyConfiguration } from '../../../vendor/openma/packages/control-plane-node/src/lib/tank-retained/legacy-native-provenance.ts';
 
 const image = value => 'sha256:' + value.repeat(64);
 const identity = value => ({ version: 2, image: image(value), compatibility: { scope: image('c'), network: image('d'), databasePolicy: image('e') } });
@@ -235,11 +239,11 @@ test('unknown historical runtime identities and every altered protected fingerpr
   }
 });
 
-function nativeLegacyRecord(allocation) {
+function nativeLegacyRecord() {
   return { id: 'test-native-id', name: 'test-native-owner', options: {
     cpus: 2, memory_mib: 2048, rootfs: { RootfsPath: '/opt/test-oci' },
     volumes: [{ host_path: '/owned/test-output', guest_path: '/mnt/session/outputs', read_only: false }],
-    network: { Enabled: { allow_net: [] } }, env: [], secrets: [], ports: [],
+    network: { Enabled: { allow_net: [] } }, env: [], secrets: [], ports: [], auto_remove: false, detach: true, working_dir: '/workspace',
     advanced: { security: { jailer_enabled: false, seccomp_enabled: false, uid: 65534, gid: 65534,
       new_pid_ns: true, new_net_ns: false, chroot_base: '/srv/boxlite', chroot_enabled: true,
       close_fds: true, sanitize_env: true, env_allowlist: ['RUST_LOG'],
@@ -250,7 +254,7 @@ function nativeLegacyRecord(allocation) {
 }
 
 test('legacy native provenance binds exact id, ownership, CPU, RAM, rootfs, mounts, network and security records', () => {
-  const allocation = legacyInputs().allocation, record = nativeLegacyRecord(allocation);
+  const allocation = legacyInputs().allocation, record = nativeLegacyRecord();
   assert.doesNotThrow(() => assertLegacyNativeConfiguration(record, 'test-native-id', 'test-native-owner', allocation));
   const mutations = [
     value => value.id = 'foreign-id', value => value.name = 'foreign-owner', value => value.options.cpus = 4,
@@ -265,4 +269,29 @@ test('legacy native provenance binds exact id, ownership, CPU, RAM, rootfs, moun
   }
   assert.throws(() => assertLegacyNativeConfiguration(null, 'test-native-id', 'test-native-owner', allocation), /runtime_ownership/);
 });
+
+test('native legacy lookup reads the exact durable configuration without creating or mutating the catalog', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'tank-legacy-native-'));
+  const previous = process.env.BOXLITE_HOME;
+  try {
+    process.env.BOXLITE_HOME = directory;
+    await assert.rejects(readNativeLegacyConfiguration('test-native-id'), /native_configuration/);
+    await mkdir(join(directory, 'db'));
+    const database = new DatabaseSync(join(directory, 'db', 'boxlite.db'));
+    try {
+      database.exec('CREATE TABLE box_config (id TEXT PRIMARY KEY, name TEXT, json TEXT)');
+      const record = nativeLegacyRecord();
+      database.prepare('INSERT INTO box_config VALUES (?, ?, ?)').run(record.id, record.name, JSON.stringify(record));
+      assert.deepEqual(await readNativeLegacyConfiguration(record.id), record);
+      assert.equal(await readNativeLegacyConfiguration('foreign-native-id'), null);
+      database.prepare('UPDATE box_config SET name = ? WHERE id = ?').run('foreign-owner', record.id);
+      await assert.rejects(readNativeLegacyConfiguration(record.id), /native_configuration/);
+      assert.equal(database.prepare('SELECT count(*) AS count FROM box_config').get().count, 1);
+    } finally { database.close(); }
+  } finally {
+    if (previous === undefined) delete process.env.BOXLITE_HOME; else process.env.BOXLITE_HOME = previous;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 

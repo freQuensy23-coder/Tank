@@ -842,28 +842,30 @@ export class SqlSessionExecutionStore
   }
 
   private async retryImagePreflight(input: {
-    fence: SessionExecutionFence; settledAt: string; outcome: string; failure?: string;
-  }, settledAt: number): Promise<SettleSessionExecutionResult | null> {
+    fence: SessionExecutionFence;
+  }, settledAt: number, expired = false): Promise<SettleSessionExecutionResult | null> {
     const saved = await this.sql.prepare(`SELECT after_event_id FROM managed_session_image_recoveries
       WHERE workspace_id = ? AND execution_id = ?`).bind(input.fence.workspaceId, input.fence.executionId).first<{ after_event_id: string }>();
     if (!saved) return null;
     const snapshot = await loadSessionContinuationSnapshot(this.sql, input.fence);
     const execution = snapshot.executions.find(row => row.id === input.fence.executionId);
-    const boundary = imageRecoveryRetryBoundary(snapshot, input.fence.executionId);
-    if (!boundary || !execution) return null;
+    const boundary = imageRecoveryRetryBoundary(snapshot, input.fence.executionId, expired);
+    if (!boundary || !execution || execution.state !== 'running') return null;
     const proof = JSON.stringify({ afterEventId: execution.imageRecoveryAfterEventId,
-      interruptRequestedAt: execution.imageRecoveryInterruptRequestedAt, retryAfterEventId: boundary });
+      interruptRequestedAt: execution.imageRecoveryInterruptRequestedAt,
+      retryAfterEventId: boundary === execution.imageRecoveryAfterEventId ? undefined : boundary });
     const result = await this.sql.batch<ExecutionRow>([
       this.sql.prepare(`UPDATE managed_session_executions SET state = 'failed', settled_at_ms = ?,
         failure = 'retained_configuration_changed', attempt_count = CASE WHEN attempt_count > 0 THEN attempt_count - 1 ELSE 0 END,
         revision = revision + 1
         WHERE workspace_id = ? AND id = ? AND session_id = ? AND revision = ?
           AND state = 'running' AND attempt_id = ? AND owner_id = ? AND generation = ?
-          AND interrupt_requested_at_ms IS NULL AND lease_expires_at_ms > ? AND deadline_at_ms > ?
+          AND interrupt_requested_at_ms IS NULL AND lease_expires_at_ms ${expired ? '<=' : '>'} ? AND deadline_at_ms > ?
           AND EXISTS (SELECT 1 FROM managed_sessions WHERE workspace_id = ? AND id = ? AND revision = ? AND archived_at IS NULL)
+          AND EXISTS (SELECT 1 FROM managed_session_image_recoveries WHERE workspace_id = ? AND execution_id = ? AND after_event_id = ?)
         RETURNING ${columns()}`).bind(settledAt, input.fence.workspaceId, input.fence.executionId, input.fence.sessionId,
         execution.revision, input.fence.attemptId, input.fence.ownerId, input.fence.generation, settledAt, settledAt,
-        input.fence.workspaceId, input.fence.sessionId, snapshot.revision),
+        input.fence.workspaceId, input.fence.sessionId, snapshot.revision, input.fence.workspaceId, input.fence.executionId, saved.after_event_id),
       this.sql.prepare(`UPDATE managed_session_image_recoveries SET after_event_id = ?
         WHERE workspace_id = ? AND execution_id = ? AND after_event_id = ?
           AND EXISTS (SELECT 1 FROM managed_session_executions WHERE workspace_id = ? AND id = ? AND session_id = ?
@@ -1112,6 +1114,14 @@ export class SqlSessionExecutionStore
           "state IN ('queued', 'running') AND deadline_at_ms <= ?",
           [now],
         );
+        const recoveries = await this.sql.prepare(`SELECT ${columns()} FROM managed_session_executions
+          WHERE state = 'running' AND lease_expires_at_ms <= ? AND deadline_at_ms > ? AND interrupt_requested_at_ms IS NULL
+            AND EXISTS (SELECT 1 FROM managed_session_image_recoveries AS recovery
+              WHERE recovery.workspace_id = managed_session_executions.workspace_id AND recovery.execution_id = managed_session_executions.id)
+          LIMIT 100`).bind(now, now).all<ExecutionRow>();
+        for (const row of recoveries.results ?? []) {
+          await this.retryImagePreflight({ fence: toFence(row) }, now, true);
+        }
         await this.terminalizeMatching(
           now,
           "execution attempt limit exhausted",

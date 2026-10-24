@@ -122,3 +122,15 @@ test('a retry boundary containing model/tool effects or a pre-recovery interrupt
   assert.equal(planSessionContinuation(interrupted, 'input-old').mode, 'failure');
 });
 
+test('owner death before model execution retains a retryable boundary but never converts model effects to preflight', () => {
+  const snapshot = recover(fixture());
+  assert.equal(imageRecoveryRetryBoundary(snapshot, 'input-old', true), 'failed-idle');
+  snapshot.orderedEvents.push({ event: { id: 'preflight-running', type: 'session.status_running' }, executionId: 'input-old', position: { revision: 3, index: 0 } });
+  assert.equal(imageRecoveryRetryBoundary(snapshot, 'input-old', true), 'preflight-running');
+  snapshot.executions[0].imageRecoveryRetryAfterEventId = 'preflight-running';
+  assert.equal(planSessionContinuation(structuredClone(snapshot), 'input-old').mode, 'model');
+  snapshot.orderedEvents.push({ event: { id: 'model-started', type: 'span.model_request_start' }, executionId: 'input-old', position: { revision: 4, index: 0 } });
+  assert.equal(imageRecoveryRetryBoundary(snapshot, 'input-old', true), null);
+});
+
+

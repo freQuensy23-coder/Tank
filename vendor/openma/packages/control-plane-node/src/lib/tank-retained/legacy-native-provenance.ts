@@ -16,6 +16,7 @@ export async function readNativeLegacyConfiguration(runtimeId: string): Promise<
       const row = database.prepare('SELECT id, name, json FROM box_config WHERE id = ?').get(runtimeId) as { id: string; name: string; json: string } | undefined;
       if (!row) return null;
       const configuration = JSON.parse(row.json);
+      if (configuration.id !== row.id || configuration.name !== row.name) throw Error('retained_legacy_native_record_identity_mismatch');
       return { id: row.id, name: row.name, options: configuration.options };
     } finally { database.close(); }
   } catch { throw Error('retained_legacy_provider_provenance_missing:native_configuration'); }
@@ -44,6 +45,15 @@ export function assertLegacyNativeConfiguration(record: NativeLegacyConfiguratio
   equals(options.env, [], 'environment');
   equals(options.secrets, [], 'secrets');
   equals(options.ports, [], 'ports');
+  if ('mounts' in options) equals(options.mounts, [], 'mounts');
+  if ('inbound_network' in options) equals(options.inbound_network, 'Disabled', 'network');
+  equals(options.auto_remove, false, 'retention');
+  equals(options.detach, true, 'retention');
+  if (options.auto_delete != null) equals(options.auto_delete, 0, 'retention');
+  equals(options.working_dir, '/workspace', 'working_directory');
+  for (const field of ['entrypoint', 'cmd', 'user']) {
+    if (options[field] != null) fail('process_configuration');
+  }
   equals(options.advanced, {
     security: {
       jailer_enabled: allocation.security?.jailerEnabled ?? true, seccomp_enabled: allocation.security?.seccompEnabled ?? true,

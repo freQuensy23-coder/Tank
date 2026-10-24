@@ -235,11 +235,11 @@ export function imageMismatchRecoveryBoundary(snapshot: ContinuationSnapshot, cu
   }
   return output.at(-1)!.event.id;
 }
-function retryableImagePreflight(entries: OrderedSessionEvent[], row: ContinuationExecution): boolean {
+function retryableImagePreflight(entries: OrderedSessionEvent[], row: ContinuationExecution, allowUnfinished = false): boolean {
   if (entries.some(entry => entry.event.type === 'user.interrupt'
       && (entry.event.sessionThreadId == null || entry.event.sessionThreadId === row.laneId))) return false;
   const output = entries.filter(entry => entry.executionId === row.id);
-  return output.length > 0 && output.some(entry => entry.event.type === 'session.error') && output.every(entry => {
+  return output.length > 0 && (allowUnfinished || output.some(entry => entry.event.type === 'session.error')) && output.every(entry => {
     if (entry.executionMetadata?.progress) return false;
     const event = entry.event;
     if (event.type === 'session.error') return /^(?:retained_configuration_changed(?::[a-zA-Z,]+)?|retained_legacy_provenance_missing:[a-zA-Z0-9_;]+|retained_legacy_provider_provenance_missing(?::[a-z_]+)?|retained_image_provenance_missing:[a-z_]+|retained_image_(?:blob_invalid|descriptor_invalid|index_invalid|config_invalid|selection_ambiguous)|retained_upgrade_transfer_failed:[a-z_]+|retained_resource_busy|retained_runtime_missing)$/.test(event.error.message);
@@ -247,13 +247,18 @@ function retryableImagePreflight(entries: OrderedSessionEvent[], row: Continuati
     return ['session.status_running', 'session.status_rescheduled'].includes(event.type);
   });
 }
-export function imageRecoveryRetryBoundary(snapshot: ContinuationSnapshot, currentId: string): string | null {
+export function imageRecoveryRetryBoundary(snapshot: ContinuationSnapshot, currentId: string, allowUnfinished = false): string | null {
   if (snapshot.invalidReason) return null;
   const row = snapshot.executions.find(execution => execution.id === currentId);
   if (!row?.imageRecoveryAfterEventId || row.interruptRequestedAt !== null) return null;
-  try { recoverImagePreflight(snapshot); } catch (error) { if (error instanceof ContinuationProtocolError) return null; throw error; }
+  try { assertTrustedJournalOrder(snapshot); recoverImagePreflight(snapshot); } catch (error) { if (error instanceof ContinuationProtocolError) return null; throw error; }
   const boundary = snapshot.orderedEvents.findIndex(entry => entry.event.id === row.imageRecoveryAfterEventId && entry.executionId === currentId);
   const suffix = snapshot.orderedEvents.slice(boundary + 1);
+  if (allowUnfinished && suffix.every(entry => entry.executionId !== currentId
+      ? entry.event.type !== 'user.interrupt' || (entry.event.sessionThreadId != null && entry.event.sessionThreadId !== row.laneId)
+      : !entry.executionMetadata?.progress && ['session.status_running', 'session.status_rescheduled'].includes(entry.event.type))) {
+    return suffix.findLast(entry => entry.executionId === currentId)?.event.id ?? row.imageRecoveryAfterEventId;
+  }
   if (!retryableImagePreflight(suffix, row)) return null;
   return suffix.findLast(entry => entry.executionId === currentId)!.event.id;
 }
@@ -271,7 +276,7 @@ function recoverImagePreflight(snapshot: ContinuationSnapshot): ContinuationSnap
     let end = boundary;
     if (row.imageRecoveryRetryAfterEventId) {
       end = snapshot.orderedEvents.findIndex(entry => entry.event.id === row.imageRecoveryRetryAfterEventId && entry.executionId === row.id);
-      if (end <= boundary || !retryableImagePreflight(snapshot.orderedEvents.slice(boundary + 1, end + 1), row)) throw new ContinuationProtocolError('Image recovery retry boundary contains effects or unrelated failure');
+      if (end <= boundary || !retryableImagePreflight(snapshot.orderedEvents.slice(boundary + 1, end + 1), row, true)) throw new ContinuationProtocolError('Image recovery retry boundary contains effects or unrelated failure');
     }
     snapshot.orderedEvents.slice(0, end + 1).filter(entry => entry.executionId === row.id).forEach(entry => removed.add(entry));
   }
