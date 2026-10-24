@@ -18,9 +18,9 @@ import certifi
 import httpx
 
 import tank.sources.parsers as parsers
+from tank.contracts.sources import HttpFetchPlan, SourceConfiguration, SourceDefinition
 from tank.ops_progress import item_progress
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
-from tank.sources.configuration import HttpFetchPlan, SourceConfiguration, SourceDefinition
 from tank.sources.rate_limits import shared_request_budgets
 from tank.sources.xsensor import XSensor
 from tank.util import TimeInput, iso, parse_time, sha256, utcnow

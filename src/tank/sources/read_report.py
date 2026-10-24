@@ -10,7 +10,7 @@ from typing import Protocol
 from pydantic import Field, JsonValue
 
 from tank.contracts import DomainModel
-from tank.sources.configuration import SourceConfiguration, SourceDefinition
+from tank.contracts.sources import SourceConfiguration, SourceDefinition
 from tank.util import iso
 
 LIMIT = 0.01

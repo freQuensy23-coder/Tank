@@ -5,8 +5,8 @@ from functools import cache
 
 from pydantic import JsonValue
 
+from tank.contracts.sources import HttpFetchPlan, SourceConfiguration, SourceDefinition, SourceFeed
 from tank.settings import Settings
-from tank.sources.configuration import HttpFetchPlan, SourceConfiguration, SourceDefinition, SourceFeed
 
 
 @cache

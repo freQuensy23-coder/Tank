@@ -112,8 +112,8 @@ def test_read_window_rejects_counter_resets_and_aggregates_details() -> None:
 
 
 def test_source_configuration_requires_adapter_inputs_and_unique_identities() -> None:
+    from tank.contracts.sources import SourceConfiguration, SourceFeed
     from tank.settings import Settings
-    from tank.sources.configuration import SourceConfiguration, SourceFeed
 
     configuration = SourceConfiguration.model_validate(Settings().load_config("sources"))
     with pytest.raises(ValidationError, match="duplicate source IDs"):

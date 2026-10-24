@@ -9,10 +9,10 @@ from typing import Protocol
 
 from pydantic import JsonValue
 
+from tank.contracts.sources import SourceDefinition, SourceFeed
 from tank.ops_cards import plain
 from tank.ops_progress import enabled
 from tank.settings import Settings
-from tank.sources.configuration import SourceDefinition, SourceFeed
 from tank.sources.errors import (
     AccountEntryError,
     EntryErrorMarker,

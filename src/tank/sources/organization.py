@@ -2,7 +2,7 @@
 
 from urllib.parse import urlparse
 
-from tank.sources.configuration import SourceDefinition, SourceFeed
+from tank.contracts.sources import SourceDefinition, SourceFeed
 
 
 def _retained_publisher_organization(source: SourceDefinition, item, feeds: list[SourceFeed]) -> str | None:

@@ -16,8 +16,8 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import httpx
 
 import tank.sources.parsers as parsers
+from tank.contracts.sources import HttpFetchPlan, SourceDefinition, SourceFeed
 from tank.ops_entry_errors import report_entry_errors
-from tank.sources.configuration import HttpFetchPlan, SourceDefinition, SourceFeed
 from tank.util import TimeInput, new_id, parse_time, sha256
 
 log = logging.getLogger(__name__)

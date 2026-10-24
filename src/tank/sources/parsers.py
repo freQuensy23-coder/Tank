@@ -11,7 +11,7 @@ import feedparser
 from pydantic import JsonValue
 from selectolax.parser import HTMLParser
 
-from tank.sources.configuration import FeedParsingSpec
+from tank.contracts.sources import FeedParsingSpec
 from tank.time_precision import Timestamp
 from tank.util import iso, sha256
 
