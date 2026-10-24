@@ -85,3 +85,38 @@ async def test_cancelled_waiter_does_not_lose_capacity_or_reorder_priority():
     assert gate.active == 0
     async with gate.enter():
         assert gate.active == 1
+
+
+@pytest.mark.parametrize("price,quantity", [(True, "1"), ("NaN", "1"), ("1", "Infinity"), ("1", "-1")])
+def test_order_book_rejects_invalid_level_quantities(price, quantity):
+    from tank.market.book_contracts import BookLevel
+
+    with pytest.raises(ValueError):
+        BookLevel.from_wire(price, quantity)
+
+
+def test_order_book_preserves_decimal_checksum_spelling_and_unavailable_usd():
+    from tank.market.book_contracts import BookLevel
+    from tank.market.books import OrderBook
+
+    level = BookLevel.from_wire(Decimal("0.00000010"), Decimal("0.0100"))
+    assert (level.price_spelling, level.quantity_spelling) == ("0.00000010", "0.0100")
+    book = OrderBook(
+        {
+            "instrument_id": "coinbase:BTC",
+            "token_id": "bitcoin:BTC",
+            "venue": "coinbase",
+            "market_type": "SPOT",
+            "venue_symbol": "BTC-USDT",
+            "quote_asset": "USDT",
+        }
+    )
+    book.snapshot([["99", "2"], ["95", "3"]], [["101", "4"], ["105", "5"]], sequence=1, ts=1781654400000)
+    summary = book.summary(received_ts=1781654400012)
+    assert summary["quote_usd_rate"] is None
+    assert summary["depth"]["bid"]["p1"]["native"] == "2"
+    assert summary["depth"]["bid"]["p1"]["usd"] is None
+    frozen = book.frozen()
+    book.update([["99", "0"]], [], sequence=2, ts=1781654400013)
+    assert frozen.summary()["best_bid"] == "99"
+    assert book.summary()["best_bid"] == "95"
