@@ -251,7 +251,10 @@ async def test_real_source_record_roundtrips_and_validates_processing_transition
     from tank.contracts.source_items import (
         ClassifiedRelevance,
         ClassifiedSource,
+        CompletedExtraction,
+        PendingExtraction,
         RoutedSource,
+        SkippedExtraction,
         SourceRoute,
         SourceRoutingMessage,
         parse_feed_source_item,
@@ -322,7 +325,24 @@ async def test_real_source_record_roundtrips_and_validates_processing_transition
     reloaded = await records.get(item.item_id)
     assert reloaded is not None
     assert reloaded.model_dump(mode="json") == routed.storage_record()
-    completed = routed.with_extraction("DONE")
+    rejected = routed.with_extraction(
+        SkippedExtraction(
+            status="SKIPPED",
+            decision="NO_EVENT",
+            reason="The previous attempt found no event",
+        )
+    )
+    await records.put(item.item_id, SourceItemDocument(rejected))
+    prior = await records.get(item.item_id)
+    assert prior is not None and prior.root.extraction_decision == "NO_EVENT"
+    retried = rejected.with_extraction(PendingExtraction(status="PENDING"))
+    assert retried.extraction_decision is None and retried.extraction_reason is None
+    completed = rejected.with_extraction(CompletedExtraction(status="DONE"))
+    await records.put(item.item_id, SourceItemDocument(completed))
+    successful = await records.get(item.item_id)
+    assert successful is not None
+    assert successful.root.extraction_decision is None and successful.root.extraction_reason is None
+    assert successful.root.raw_ref == item.raw_ref
     assert isinstance(completed.processing, RoutedSource)
     assert completed.processing.route_event_id == "event-1"
     with pytest.raises(ValidationError, match="item identity conflicts"):
@@ -331,7 +351,7 @@ async def test_real_source_record_roundtrips_and_validates_processing_transition
 
 @pytest.mark.asyncio
 async def test_real_web_evidence_record_roundtrips_without_feed_source_assumptions(tmp_path: Path) -> None:
-    from tank.contracts.source_items import WebEvidenceItem, parse_source_item
+    from tank.contracts.source_items import CompletedExtraction, WebEvidenceItem, parse_source_item
     from tank.event_tools import EventToolService
     from tank.settings import Settings
 
@@ -352,4 +372,16 @@ async def test_real_web_evidence_record_roundtrips_without_feed_source_assumptio
 
     assert SourceItemDocument(item).model_dump(mode="json") == record
     assert item.raw_size_bytes == len(b"<article>Verified public document text</article>")
-    assert item.with_extraction("DONE").raw_sha256 == item.raw_sha256
+    assert item.with_extraction(CompletedExtraction(status="DONE")).raw_sha256 == item.raw_sha256
+
+
+@pytest.mark.parametrize("identity", ["", " ", "event id"])
+def test_route_and_message_context_cannot_use_empty_or_whitespace_identities(identity: str) -> None:
+    from tank.contracts.source_items import SourceRoute, SourceRoutingMessage
+
+    with pytest.raises(ValidationError):
+        SourceRoute(decision="ADDED", event_id=identity, p_same=0.9)
+    with pytest.raises(ValidationError):
+        SourceRoutingMessage(kind="ITEM_ADDED", item_id="item-1", event_id=identity)
+    with pytest.raises(ValidationError):
+        SourceRoutingMessage(kind="NEW_ITEM", item_id="item-1", session_id=identity)
