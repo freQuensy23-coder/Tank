@@ -211,7 +211,9 @@ type BackfillRun = Annotated[
 
 
 class BackfillEnvelope(RootModel[BackfillRun]):
-    model_config = ConfigDict(strict=True, frozen=True, validate_default=True)
+    model_config = ConfigDict(
+        strict=True, frozen=True, validate_default=True, allow_inf_nan=False, revalidate_instances="always"
+    )
 
 
 class InstrumentRepairCounts(DomainModel):
@@ -340,7 +342,9 @@ type RepairRequest = Annotated[
 
 
 class RepairEnvelope(RootModel[RepairRequest]):
-    model_config = ConfigDict(strict=True, frozen=True, validate_default=True)
+    model_config = ConfigDict(
+        strict=True, frozen=True, validate_default=True, allow_inf_nan=False, revalidate_instances="always"
+    )
 
 
 class CaptureReadiness(DomainModel):
