@@ -72,3 +72,18 @@ def test_inventory_reports_import_cycles_without_importing_modules(
     report = inventory_module.inventory(tmp_path)
     assert report.imports == {"tank.a": ["tank.b"], "tank.b": ["tank.a"]}
     assert report.cycles == [["tank.a", "tank.b"]]
+
+
+def test_inventory_distinguishes_trivial_assertions_from_observed_calls(
+    inventory_module: ModuleType, tmp_path: Path
+) -> None:
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/assertions.py").write_text(
+        "def proof(value, observe):\n"
+        "    assert True\n"
+        "    assert value == value\n"
+        "    assert observe() == observe()\n"
+    )
+    report = inventory_module.inventory(tmp_path)
+    assertions = [(item.kind, item.expression) for item in report.findings if item.kind.startswith("assert_")]
+    assert assertions == [("assert_constant", "True"), ("assert_self_comparison", "value == value")]

@@ -19,6 +19,8 @@ Kind = Literal[
     "fallback",
     "dictionary",
     "dynamic_go",
+    "assert_constant",
+    "assert_self_comparison",
 ]
 EXCLUDED = frozenset(
     {
@@ -127,6 +129,18 @@ class Scan(ast.NodeVisitor):
 
     def visit_Dict(self, node: ast.Dict) -> None:
         self.record(node, "dictionary", ast.unparse(node))
+        self.generic_visit(node)
+
+    def visit_Assert(self, node: ast.Assert) -> None:
+        if isinstance(node.test, ast.Constant):
+            self.record(node, "assert_constant", ast.unparse(node.test))
+        if isinstance(node.test, ast.Compare) and len(node.test.comparators) == 1:
+            left = node.test.left
+            right = node.test.comparators[0]
+            if not any(
+                isinstance(child, ast.Call) for value in (left, right) for child in ast.walk(value)
+            ) and ast.dump(left) == ast.dump(right):
+                self.record(node, "assert_self_comparison", ast.unparse(node.test))
         self.generic_visit(node)
 
     def visit_Subscript(self, node: ast.Subscript) -> None:
