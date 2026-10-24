@@ -8,7 +8,16 @@ import random
 import time
 import weakref
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Collection, Iterable, Iterator, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Collection,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from contextvars import ContextVar
 from datetime import datetime, timedelta
@@ -492,7 +501,7 @@ class RepositoryQueries(ABC):
 
     async def iter_all(
         self, collection: str, *, filters: Record | None = None, batch_size: int = 1000
-    ) -> AsyncIterator[Record]:
+    ) -> AsyncGenerator[Record]:
         async for row in _iter_all(self._backend(), collection, filters=filters, batch_size=batch_size):
             yield row
 

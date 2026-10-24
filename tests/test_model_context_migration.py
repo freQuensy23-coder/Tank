@@ -6,6 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from agent_source_fixtures import source_record_fixture
 
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
 from tank.agents.sessions import SessionService
@@ -41,10 +42,12 @@ async def legacy(tmp_path: Path):
         "prompt_version": sha256("legacy snapshot"),
         "prompt_version_basis": "RESOLVED_SESSION_AGENT_SNAPSHOT",
         "messages": ["old_message"],
-        "message_log": [{"message_id": "old_message", "payload": payload, "turn_status": "DONE"}],
+        "message_log": [
+            {"message_id": "old_message", "payload": payload, "turn_status": "DONE", "retry_count": 0}
+        ],
         "last_payload": payload,
     }
-    await repo.put("ingest.source_items", item["item_id"], item)
+    await repo.put("ingest.source_items", item["item_id"], source_record_fixture(item))
     await repo.put("evt.events", event["event_id"], event)
     await repo.put("ops.agent_sessions", session["session_id"], session)
     return repo, settings, session, item, event
@@ -145,7 +148,7 @@ async def test_old_description_call_in_a_legacy_turn_is_refused_once_and_the_id_
     session["message_log"][0]["turn_status"] = "RUNNING"
     item.update(source_id="S01", source_class="PRIMARY")
     event.update(certainty="HIGH", event_state="LIVE", lifecycle="MONITORING", state_verified=True)
-    await repo.put("ingest.source_items", item["item_id"], item)
+    await repo.put("ingest.source_items", item["item_id"], source_record_fixture(item))
     await repo.put("evt.events", event["event_id"], event)
     await repo.put("ops.agent_sessions", session["session_id"], session)
     count = 0

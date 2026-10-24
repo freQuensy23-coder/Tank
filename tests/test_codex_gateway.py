@@ -748,3 +748,27 @@ async def test_nonstream_preserves_actual_json_success_response(gateway_factory:
     async with gateway_factory(provider) as (_, client, _):
         response = await client.post("/v1/responses", json=body(stream=False))
         assert response.status_code == 200 and response.json() == result
+
+
+@pytest.mark.integration
+async def test_credentials_without_expiry_and_naive_refresh_clock_refresh_before_forwarding(
+    gateway_factory: GatewayFactory,
+) -> None:
+    refreshed = jwt()
+    calls: list[str] = []
+
+    def provider(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        if str(request.url) == TOKEN_URL:
+            return httpx.Response(200, json={"access_token": refreshed, "refresh_token": "FAKE-rotated"})
+        assert request.headers["authorization"] == "Bearer " + refreshed
+        return httpx.Response(200, json={"id": "resp_clock"})
+
+    document = auth_document(jwt(exp=None))
+    document["last_refresh"] = "2099-01-01T00:00:00"
+    async with gateway_factory(provider, document) as (_, client, path):
+        response = await client.post("/v1/responses", json=body())
+        assert response.status_code == 200
+        assert calls == [TOKEN_URL, RESPONSES_URL]
+        stored = json.loads(path.read_text())
+        assert stored["last_refresh"].endswith("Z")

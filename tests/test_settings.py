@@ -161,8 +161,8 @@ def test_readiness_checks_opencode_key(tmp_path: Path) -> None:
     from tank.cli import readiness_checks
 
     settings = Settings(_env_file=None, opencode_api_key="FAKE-ready-key")
-    checks = {row["check"]: row for row in readiness_checks(settings)}
-    assert checks["opencode_api_key"]["ok"]
+    checks = {row.check: row for row in readiness_checks(settings)}
+    assert checks["opencode_api_key"].ok
     assert "jev_provider" not in checks
     assert "typesafe_api_key" not in checks
     assert "FAKE-ready-key" not in str(checks)
@@ -205,11 +205,11 @@ def test_user_agent_and_chats_from_configuration(tmp_path: Path) -> None:
     )
     assert frozen.user_agent == "TankV0/1.0 (ops@example.org)"
     assert (frozen.telegram_alerts_chat, frozen.telegram_ops_chat) == ("-1001", "-1002")
-    checks = {row["check"]: row for row in readiness_checks(frozen)}
-    assert checks["user_agent_contact"]["ok"] and checks["apify_api_token"]["ok"]
+    checks = {row.check: row for row in readiness_checks(frozen)}
+    assert checks["user_agent_contact"].ok and checks["apify_api_token"].ok
     assert "x_list_id" not in checks
     legacy = frozen.model_copy(update={"user_agent": "TankV0/1.0 contact=ops@example.org"})
-    assert not {row["check"]: row for row in readiness_checks(legacy)}["user_agent_contact"]["ok"]
+    assert not {row.check: row for row in readiness_checks(legacy)}["user_agent_contact"].ok
 
 
 def test_database_urls_from_the_role_passwords(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -237,9 +237,14 @@ def test_frozen_config_is_parsed_once_and_callers_get_copies(
     config.mkdir()
     (config / "registry.yaml").write_text("tokens:\n- token_id: T\n")
     frozen = resolve_versions(Settings(_env_file=None, config_dir=config, data_dir=tmp_path / "data"))
-    calls = []
-    original = yaml.load
-    monkeypatch.setattr(module.yaml, "load", lambda *a, **k: calls.append(1) or original(*a, **k))
+    calls: list[int] = []
+
+    class CountingLoader(yaml.SafeLoader):
+        def __init__(self, stream: bytes | str) -> None:
+            calls.append(1)
+            super().__init__(stream)
+
+    monkeypatch.setattr(module, "_YAML_LOADER", CountingLoader)
     first = frozen.load_config("registry")
     tokens = first["tokens"]
     assert isinstance(tokens, list)

@@ -98,6 +98,11 @@ def test_doctor_distinguishes_syntax_from_deployment_and_never_prints_secrets(tm
     config_dir.mkdir()
     for name in ("sources", "registry", "semantics", "dependency_map", "thresholds", "openma"):
         (config_dir / (name + ".yaml")).write_text("{}\n")
+    (config_dir / "openma.yaml").write_text(
+        json.dumps(
+            {"agent_id": None, "scout_agent_id": None, "environment_id": None, "replay_environment_id": None}
+        )
+    )
     settings = Settings(
         config_dir=config_dir,
         openma_api_key="sensitive-secret",
@@ -105,13 +110,13 @@ def test_doctor_distinguishes_syntax_from_deployment_and_never_prints_secrets(tm
         user_agent="Tank contact not configured",
     )
     checks = readiness_checks(settings)
-    by_name = {r["check"]: r["ok"] for r in checks}
+    by_name = {r.check: r.ok for r in checks}
     assert by_name["openma_syntax"]
     assert not by_name["openma_agent_id"] and not by_name["openma_scout_agent_id"]
     assert not by_name["openma_environment_id"] and not by_name["openma_replay_environment_id"]
     assert by_name["openma_api_key"]
     assert not by_name["user_agent_contact"] and not by_name["apify_api_token"]
-    assert "sensitive-secret" not in json.dumps(checks)
+    assert "sensitive-secret" not in json.dumps([check.model_dump(mode="json") for check in checks])
 
 
 def test_source_check_network_probes_are_explicit(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -662,27 +667,27 @@ def test_doctor_only_checks_fake_subscription_auth_presence_and_internal_key(
     original_bytes = Path.read_bytes
     original_text = Path.read_text
 
-    def read_bytes(path, *args, **kwargs):
+    def read_bytes(path: Path) -> bytes:
         if path == auth:
             raise AssertionError("Doctor must not read sign-in contents")
-        return original_bytes(path, *args, **kwargs)
+        return original_bytes(path)
 
-    def read_text(path, *args, **kwargs):
+    def read_text(
+        path: Path, encoding: str | None = None, errors: str | None = None, newline: str | None = None
+    ) -> str:
         if path == auth:
             raise AssertionError("Doctor must not read sign-in contents")
-        return original_text(path, *args, **kwargs)
+        return original_text(path, encoding=encoding, errors=errors, newline=newline)
 
     monkeypatch.setattr(Path, "read_bytes", read_bytes)
     monkeypatch.setattr(Path, "read_text", read_text)
-    settings = SimpleNamespace(
-        codex_auth_path=auth,
-        codex_gateway_key="fake-internal-secret",
-        load_config=lambda name: {},
-    )
+    from tank.settings import Settings
+
+    settings = Settings(codex_auth_path=auth, codex_gateway_key="fake-internal-secret")
     checks = readiness_checks(settings)
-    indexed = {r["check"]: r["ok"] for r in checks}
+    indexed = {r.check: r.ok for r in checks}
     assert indexed["codex_auth_file_present"] and indexed["codex_gateway_key"]
-    assert "fake-internal-secret" not in json.dumps(checks)
+    assert "fake-internal-secret" not in json.dumps([check.model_dump(mode="json") for check in checks])
 
 
 @pytest.mark.asyncio

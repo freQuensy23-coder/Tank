@@ -36,6 +36,11 @@ from tank.agents.wire import tool_wire_result
 from tank.agents.workflow import SOURCE_COMPLETION_VERSION
 from tank.contracts.json import decode_json
 from tank.contracts.provenance import AgentProvenance
+from tank.contracts.source_items import (
+    FailedExtraction,
+    SkippedExtraction,
+)
+from tank.contracts.source_repository import SourceExtractionRepository
 from tank.delivery import DeliveryDeferred
 from tank.openma_sync import agent_tools
 from tank.ops_progress import session_progress
@@ -105,6 +110,7 @@ class AdmissionDeferred(Exception):
 class SessionService:
     def __init__(self, repo, settings, tool_dispatch, *, http=None, stream_http=None):
         self.repo, self.settings, self.tool_dispatch = repo, settings, tool_dispatch
+        self.source_extraction = SourceExtractionRepository(repo)
         self.http = http or httpx.AsyncClient(timeout=REST_TIMEOUT_S)
         self.owns_http = http is None
 
@@ -1064,13 +1070,15 @@ class SessionService:
                     message["turn_status"] = "DONE"
                 payload = message.get("payload", {})
                 if payload.get("kind") in {"NEW_ITEM", "ITEM_ADDED"} and payload.get("item_id"):
-                    item = await self.repo.get("ingest.source_items", payload["item_id"])
-                    if item and item.get("extraction_status") in {None, "PENDING", "RUNNING"}:
-                        item.update(
-                            extraction_status="SKIPPED",
-                            extraction_reason="NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION",
-                        )
-                        await self.repo.put("ingest.source_items", item["item_id"], item)
+                    await self.source_extraction.transition(
+                        payload["item_id"],
+                        frozenset({"PENDING", "RUNNING"}),
+                        SkippedExtraction(
+                            status="SKIPPED",
+                            decision=None,
+                            reason="NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION",
+                        ),
+                    )
             current["active_message_id"] = None
             current["runtime_status"] = "IDLE"
             outcomes = await self.source_completion_snapshot(current)
@@ -1865,10 +1873,11 @@ class SessionService:
                     failed_payload = (active or {}).get("payload") or session.get("last_payload") or {}
                     item_id = failed_payload.get("item_id") or session.get("item_id")
                     if item_id:
-                        item = await self.repo.get("ingest.source_items", item_id)
-                        if item and item.get("extraction_status") == "PENDING":
-                            item["extraction_status"] = "FAILED"
-                            await self.repo.put("ingest.source_items", item_id, item)
+                        await self.source_extraction.transition(
+                            item_id,
+                            frozenset({"PENDING"}),
+                            FailedExtraction(status="FAILED", reason="NATIVE_TURN_FAILED"),
+                        )
             elif kind == "session.status_terminated":
                 session["status"] = "ENDED"
                 session["runtime_status"] = "IDLE"
