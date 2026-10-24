@@ -1,6 +1,9 @@
-<!-- Tank's ClickHouse (HLD §7.1): exchange market series and prints. Memory and caches are
-     ClickHouse's defaults for the host; none of the system log tables, which would otherwise grow. -->
+<!-- Tank's ClickHouse (HLD §7.1): exchange market series and prints. The server takes at most
+     40% of the host's RAM so PostgreSQL, Tank, capture and the agent sandboxes keep theirs; a query
+     over its own limit fails instead of the server being killed. query_log is kept 3 days to find
+     heavy queries; the other system log tables are off. -->
 <clickhouse>
+    <max_server_memory_usage_to_ram_ratio>0.4</max_server_memory_usage_to_ram_ratio>
     <logger>
         <level>warning</level>
         <size>50M</size>
@@ -9,7 +12,12 @@
     <asynchronous_metric_log remove="1"/>
     <metric_log remove="1"/>
     <query_thread_log remove="1"/>
-    <query_log remove="1"/>
+    <query_log replace="1">
+        <database>system</database>
+        <table>query_log</table>
+        <engine>ENGINE = MergeTree PARTITION BY event_date ORDER BY event_time TTL event_date + INTERVAL 3 DAY</engine>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </query_log>
     <query_views_log remove="1"/>
     <part_log remove="1"/>
     <session_log remove="1"/>
