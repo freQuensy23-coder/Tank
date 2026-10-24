@@ -1,7 +1,9 @@
+import os
 from datetime import datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from postgres_helpers import PostgresTemplate
 from pydantic import ValidationError
 
 from tank.market.capture_contracts import (
@@ -219,3 +221,41 @@ async def test_escalation_and_demotion_append_real_tier_history_and_keep_obligat
     assert [row.tier for row in history] == ["HOT", "BASE"]
     assert [row.transition_seq for row in history] == [1, 2]
     assert len(await app.repository.backfills("TOKEN-test", "EVT-test")) == 1
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+async def test_capture_control_requests_round_trip_actual_postgres(
+    postgres_template: PostgresTemplate,
+) -> None:
+    async with postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as store:
+        repo = CaptureRepository(
+            store, config_version="cfg-test", code_version="code-test", secrets=lambda: ()
+        )
+        backfill = await repo.request_backfill(
+            NewBackfillRequest(
+                backfill_id="BF-peer",
+                event_id="EVT-peer",
+                token_id="TOKEN-peer",
+                anchor=observed(),
+                requested_at=observed(),
+            )
+        )
+        assert backfill.status == "PENDING"
+        assert backfill.started_at is None
+        assert backfill.recorded_at == observed().value
+        queued = await repo.request_repair(
+            NewRepairRequest(
+                request_id="REQ-peer",
+                token_id="TOKEN-peer",
+                start=observed(),
+                end=observed("2026-10-25T00:01:00Z"),
+                requested_at=observed(),
+                deadline=observed("2026-10-25T00:00:20Z"),
+                budget_s=Decimal("20"),
+            )
+        )
+        assert isinstance(queued, RepairPending)
+        assert queued.budget_s == "20"
+        assert queued.started_at is None
+        assert await repo.repair("REQ-peer") == queued
