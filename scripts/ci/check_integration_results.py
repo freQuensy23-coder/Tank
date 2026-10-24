@@ -5,8 +5,12 @@ import json
 import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from integration_shard import parse_shard, shard_for
+if TYPE_CHECKING:
+    from scripts.ci.integration_shard import parse_shard, shard_for
+else:
+    from integration_shard import parse_shard, shard_for
 from pydantic import BaseModel, ConfigDict, RootModel
 
 
