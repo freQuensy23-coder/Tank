@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
+from tank.market.capture_contracts import CaptureReadiness
 from tank.runtime import Runtime
 from tank.runtime_contracts import MarketTruthJob
 from tank.storage import MemoryRepository
@@ -56,7 +57,17 @@ async def test_market_job_preserves_its_declared_cutoff_precision(precision) -> 
     runtime = object.__new__(Runtime)
     runtime.repo = repo
     runtime.market = SimpleNamespace(
-        capture_readiness=AsyncMock(return_value={"status": "COMPLETE"}), repair_windows=AsyncMock()
+        capture_readiness=AsyncMock(
+            return_value=CaptureReadiness(
+                event_id="event",
+                token_id="token",
+                status="COMPLETE",
+                reason=None,
+                backfill_id="capture",
+                anchor="2026-10-18T12:00:00Z",
+            )
+        ),
+        repair_windows=AsyncMock(),
     )
     reference = MarketTruthAssessmentRef.model_validate(
         {"mta_id": "actual-result", "event_id": "event", "token_id": "token", **cutoff.fields("cutoff")}

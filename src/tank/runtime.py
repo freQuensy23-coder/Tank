@@ -137,11 +137,11 @@ class Runtime:
             raise ValueError("Market truth event does not exist")
         anchor = event_anchor(event)
         prerequisite = await self.market.capture_readiness(
-            payload.event_id, payload.token_id, anchor=anchor.value
+            payload.event_id, payload.token_id, anchor=anchor.timestamp
         )
-        if prerequisite["status"] not in {"PENDING", "RUNNING", "COMPLETE", "PARTIAL", "FAILED"}:
+        if prerequisite.status not in {"PENDING", "RUNNING", "COMPLETE", "PARTIAL", "FAILED"}:
             raise RuntimeError("Required durable event capture was not scheduled")
-        if prerequisite["status"] in {"PENDING", "RUNNING"}:
+        if prerequisite.status in {"PENDING", "RUNNING"}:
             await self.market.wait_capture(payload.event_id, payload.token_id, timeout_s=CAPTURE_WAIT_S)
         cutoff = (
             Timestamp(
@@ -279,7 +279,7 @@ class Runtime:
                 self.active_jobs.discard(job["job_id"])
 
     async def terminal_delivery_failure(self, job, reason):
-        await job_failure_progress(self.repo, getattr(self, "settings", None), job, reason)
+        await job_failure_progress(self.repo, self.settings, job, reason)
         if job["type"] == "DELIVER":
             await self.delivery.terminal_failure(job["payload"], reason, job.get("attempts"))
         if job["type"] == "AGENT_MESSAGE" and job["payload"].get("kind") == "USER_QUESTION":
@@ -306,7 +306,7 @@ class Runtime:
                 async for job in self.repo.iter_all("ops.jobs", filters={"type": kind, "status": status}):
                     if not job.get("ops_progress_recorded_at"):
                         await job_failure_progress(
-                            self.repo, getattr(self, "settings", None), job, job.get("last_error") or status
+                            self.repo, self.settings, job, job.get("last_error") or status
                         )
                         await self.repo.put(
                             "ops.jobs",
