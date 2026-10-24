@@ -4,7 +4,8 @@ from datetime import timedelta
 from decimal import Decimal as D
 from itertools import pairwise
 
-from tank.market.normalize import precise, timestamp_fields
+from tank.market.normalize import timestamp_fields
+from tank.market.precision import precise
 from tank.time_precision import collection_clock, propagate_timestamp
 from tank.util import iso, jsonable, parse_time
 

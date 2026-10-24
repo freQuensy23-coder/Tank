@@ -2,11 +2,11 @@
 
 from bisect import bisect_right
 from datetime import datetime, timedelta
-from decimal import Decimal, localcontext
-from functools import wraps
-from inspect import iscoroutinefunction
+from decimal import Decimal
 
+from tank.market.errors import SemanticError
 from tank.market.funding import FundingObservation
+from tank.market.precision import precise
 from tank.time_precision import collection_clock, propagate_timestamp
 from tank.util import canonical_json, iso, jsonable, parse_time
 
@@ -56,32 +56,7 @@ def quote_usd_rate(instrument, at):
     return rate, as_of
 
 
-def precise(function):
-    """Preserve full EVM-scale quantities/products without the default28digit rounding."""
-    if iscoroutinefunction(function):
-
-        @wraps(function)
-        async def asynchronous(*args, **kwargs):
-            with localcontext() as ctx:
-                ctx.prec = 100
-                return await function(*args, **kwargs)
-
-        return asynchronous
-
-    @wraps(function)
-    def synchronous(*args, **kwargs):
-        with localcontext() as ctx:
-            ctx.prec = 100
-            return function(*args, **kwargs)
-
-    return synchronous
-
-
 D = Decimal
-
-
-class SemanticError(ValueError):
-    pass
 
 
 def decimal(value):

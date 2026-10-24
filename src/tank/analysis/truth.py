@@ -15,6 +15,7 @@ import threading
 from array import array
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
+from collections.abc import Callable
 from contextvars import ContextVar
 from copy import deepcopy
 from datetime import timedelta
@@ -83,9 +84,9 @@ def exact_context(*values):
         getcontext().prec = max(getcontext().prec, 2 * span + 32)
 
 
-def precise(function):
+def precise[**P, R](function: Callable[P, R]) -> Callable[P, R]:
     @wraps(function)
-    def wrapped(*args, **kwargs):
+    def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
         with localcontext() as context:
             context.prec = 128
             return function(*args, **kwargs)

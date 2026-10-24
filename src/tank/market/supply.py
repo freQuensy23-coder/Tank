@@ -4,7 +4,8 @@ import time
 from datetime import timedelta
 from decimal import Decimal as D
 
-from tank.market.normalize import SemanticError, precise
+from tank.market.errors import SemanticError
+from tank.market.precision import async_precise, precise
 from tank.time_precision import collection_clock, propagate_timestamp
 from tank.util import iso, parse_time, sha256, utcnow
 
@@ -190,7 +191,7 @@ class SupplyCapture:
             raise SemanticError("Etherscan proxy error")
         return raw["result"]
 
-    @precise
+    @async_precise
     async def inventory(self, token):
         contracts = token.get("contracts", [])
         if not contracts:
@@ -338,7 +339,7 @@ class SupplyCapture:
             unsupported_venues=["coinbase", "bybit", "kraken"],
         )
 
-    @precise
+    @async_precise
     async def lending(self, token):
         now = utcnow()
         cached = getattr(self.market, "_lend_cache", None)
@@ -411,7 +412,7 @@ class SupplyCapture:
             reason=None if matched else "NO_MATCHED_LENDING_POOLS",
         )
 
-    @precise
+    @async_precise
     async def chain_liquidity(self, token):
         chains = (
             token.get("settlement_chains")
@@ -448,7 +449,7 @@ class SupplyCapture:
                 )
             await self.record(token, "CHAIN_LIQUIDITY", available=bool(values), chain=chain, series=values)
 
-    @precise
+    @async_precise
     async def fundamentals(self, token):
         if token.get("fundamentals_status") == "NOT_SUPPORTED":
             return await self.record(

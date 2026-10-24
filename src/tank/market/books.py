@@ -11,7 +11,9 @@ from typing import Literal, Self
 from pydantic import JsonValue, TypeAdapter
 
 from tank.market.book_contracts import BookInstrument, BookLevel, BookSummary, Number
-from tank.market.normalize import SemanticError, precise, timestamp_fields
+from tank.market.errors import SemanticError
+from tank.market.normalize import timestamp_fields
+from tank.market.precision import precise
 from tank.time_precision import collection_clock
 from tank.util import iso
 
