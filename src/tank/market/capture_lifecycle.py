@@ -246,7 +246,7 @@ class CaptureLifecycle:
         async with self.repository.hot_set_lock(), self.repository.transaction():
             event = await self.repository.get_event_context(event_id)
             if event is None:
-                raise CaptureInvariantError("Market escalation references a missing event")
+                raise ValueError("Market escalation references a missing event")
             assessment = await self.repository.current_assessment(event)
             priorities = {"LOW": 1, "MATERIAL": 2, "MAJOR": 3, "STRUCTURAL_SHOCK": 4}
             event_priority = 1 if assessment is None else priorities[assessment.assessment_class]

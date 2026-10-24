@@ -28,6 +28,7 @@ def test_market_redaction_covers_nested_keys_and_values_and_current_credentials(
 def setup(tmp_path: Path):
     config = tmp_path / "config"
     config.mkdir()
+    (config / "thresholds.yaml").write_bytes(Settings().read_config_bytes("thresholds.yaml"))
 
     def inst(token, symbol):
         return {
@@ -212,13 +213,26 @@ async def test_hot_escalation_priority_age_repeat_and_event_specific_demote(setu
     repo, settings, _inst = setup
     http = httpx.AsyncClient()
     service = MarketService(repo, settings, http=http)
-    service.thresholds["hot_token_cap"] = 1
+    thresholds = settings.load_config("thresholds")
+    thresholds["hot_token_cap"] = 1
+    (settings.config_dir / "thresholds.yaml").write_text(yaml.safe_dump(thresholds))
+    service = MarketService(repo, settings, http=http)
     await repo.put(
         "evt.events",
         "old",
         {"event_id": "old", "public_at": "2026-10-10T00:00:00Z", "current_ems_id": "major"},
     )
-    await repo.put("evt.ems_assessments", "major", {"ems_id": "major", "event_id": "old", "class": "MAJOR"})
+    await repo.put(
+        "evt.ems_assessments",
+        "major",
+        {
+            "ems_id": "major",
+            "event_id": "old",
+            "class": "MAJOR",
+            "version": 1,
+            "cutoff": "2026-10-10T00:00:00Z",
+        },
+    )
     await service.escalate("old", ["test:ABC"])
     original = await repo.get("mkt.hot_tokens", "test:ABC:old")
     await service.escalate("old", ["test:ABC"])
@@ -233,12 +247,22 @@ async def test_hot_escalation_priority_age_repeat_and_event_specific_demote(setu
         {"event_id": "new", "public_at": "2026-10-11T00:00:00Z", "current_ems_id": "shock"},
     )
     await repo.put(
-        "evt.ems_assessments", "shock", {"ems_id": "shock", "event_id": "new", "class": "STRUCTURAL_SHOCK"}
+        "evt.ems_assessments",
+        "shock",
+        {
+            "ems_id": "shock",
+            "event_id": "new",
+            "class": "STRUCTURAL_SHOCK",
+            "version": 1,
+            "cutoff": "2026-10-11T00:00:00Z",
+        },
     )
     await service.escalate("new", ["bitcoin:BTC"])
     hot = await repo.list("mkt.hot_tokens")
     assert len(hot) == 1 and hot[0]["token_id"] == "bitcoin:BTC"
-    service.thresholds["hot_token_cap"] = 2
+    thresholds["hot_token_cap"] = 2
+    (settings.config_dir / "thresholds.yaml").write_text(yaml.safe_dump(thresholds))
+    service = MarketService(repo, settings, http=http)
     await service.escalate("old", ["bitcoin:BTC"])
     await service.demote("bitcoin:BTC", "old")
     assert len(await repo.list("mkt.hot_tokens")) == 1
@@ -264,7 +288,7 @@ async def test_capture_tier_uses_durable_activation_and_demotion_history_not_fut
     repo, settings, inst = setup
     perp = add_perp_instrument(settings, inst)
     clock = parse_time("2026-06-17T11:00:00Z")
-    monkeypatch.setattr(module, "iso", lambda value=None: iso(clock if value is None else value))
+    monkeypatch.setattr(module, "utcnow", lambda: clock)
     async with httpx.AsyncClient() as http:
         service = MarketService(repo, settings, http=http)
         token = inst["token_id"]
@@ -350,12 +374,12 @@ async def test_actual_producer_tier_metadata_controls_90second_oi_and_funding_fr
     await repo.put(
         "mkt.hot_tokens",
         spot["token_id"] + ":event",
-        {"token_id": spot["token_id"], "event_id": "event", "since": stamp},
+        {"token_id": spot["token_id"], "event_id": "event", "since": stamp, "priority": 2},
     )
     import tank.market.service as service_module
 
     clock = cutoff - timedelta(seconds=1)
-    monkeypatch.setattr(service_module, "iso", lambda value=None: iso(clock if value is None else value))
+    monkeypatch.setattr(service_module, "utcnow", lambda: clock)
     await service._record_capture_tier(spot["token_id"], "HOT", "TEST_ACTUAL_POLICY_ACTIVATED")
     hot_snapshot = await service.snapshot(spot["token_id"], cutoff)
     assert hot_snapshot["capture_tier"] == hot_snapshot["capture_metadata"]["tier"] == "HOT"
@@ -433,28 +457,35 @@ async def test_capture_wait_is_bounded_and_late_completion_supersedes_timeout(se
 
     repo, settings, inst = setup
     service = MarketService(repo, settings)
-    row = {
-        "backfill_id": "BF-wait",
-        "event_id": "E-wait",
-        "token_id": inst["token_id"],
-        "anchor": iso(),
-        "started_at": iso(),
-        "status": "RUNNING",
-        "reason": "PENDING",
-    }
-    await repo.put("mkt.backfill_runs", row["backfill_id"], row)
+    from tank.market.capture import event_anchor
+
+    event = {"event_id": "E-wait", "public_at": iso(), "public_at_prec": "EXACT"}
+    await repo.put("evt.events", "E-wait", event)
+    run = await service._schedule_event_backfill("E-wait", inst["token_id"], event_anchor(event).timestamp)
+    row = await repo.get("mkt.backfill_runs", run.backfill_id)
+    row.update(
+        status="RUNNING", started_at=iso(), started_at_prec="COLLECTION_ONLY", started_at_prec_reason=None
+    )
+    await repo.put("mkt.backfill_runs", run.backfill_id, row)
     waited = await service.wait_capture("E-wait", inst["token_id"], timeout_s=0)
-    assert waited["status"] == "INCOMPLETE" and waited["reason"] == "BOUNDED_PREREQUISITE_WAIT_EXPIRED"
+    assert waited.status == "INCOMPLETE" and waited.reason == "BOUNDED_PREREQUISITE_WAIT_EXPIRED"
 
     async def finish() -> None:
         await asyncio.sleep(0.01)
-        row.update(status="COMPLETE", reason=None)
+        row.update(
+            status="COMPLETE",
+            reason=None,
+            finished_at=iso(),
+            finished_at_prec="COLLECTION_ONLY",
+            finished_at_prec_reason=None,
+            result={"instruments": [], "benchmark_klines": []},
+        )
         await repo.put("mkt.backfill_runs", row["backfill_id"], row)
 
     worker = asyncio.create_task(finish())
     done = await service.wait_capture("E-wait", inst["token_id"], timeout_s=1)
     await worker
-    assert done["status"] == "COMPLETE" and done["reason"] is None
+    assert done.status == "COMPLETE" and done.reason is None
     snapshot = await service.snapshot(inst["token_id"], iso())
     assert snapshot["capture_status"]["status"] == "COMPLETE"
     assert snapshot["capture_status"]["bounded_wait_s"] > 0
