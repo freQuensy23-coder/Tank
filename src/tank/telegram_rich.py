@@ -80,12 +80,12 @@ class RichMessage(DomainModel):
 class IncomingCell(BaseModel):
     """Telegram layout extensions do not participate in text matching."""
 
-    model_config = ConfigDict(strict=True, extra="ignore")
+    model_config = ConfigDict(strict=True, extra="ignore", hide_input_in_errors=True)
     text: JsonValue
 
 
 class IncomingListItem(BaseModel):
-    model_config = ConfigDict(strict=True, extra="ignore")
+    model_config = ConfigDict(strict=True, extra="ignore", hide_input_in_errors=True)
     label: str = ""
     blocks: list["IncomingBlock"]
 
@@ -93,7 +93,7 @@ class IncomingListItem(BaseModel):
 class IncomingBlock(BaseModel):
     """Validated wire projection, separate from approved outgoing content."""
 
-    model_config = ConfigDict(strict=True, extra="ignore")
+    model_config = ConfigDict(strict=True, extra="ignore", hide_input_in_errors=True)
     type: str
     text: JsonValue = None
     expression: JsonValue = None
@@ -117,7 +117,7 @@ class IncomingBlock(BaseModel):
 
 
 class IncomingRichMessage(BaseModel):
-    model_config = ConfigDict(strict=True, extra="ignore")
+    model_config = ConfigDict(strict=True, extra="ignore", hide_input_in_errors=True)
     blocks: list[IncomingBlock]
 
 

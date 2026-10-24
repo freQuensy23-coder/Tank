@@ -79,6 +79,14 @@ def _iso_datetime(value: datetime | str) -> datetime:
         raise ValueError("Invalid ISO timestamp") from None
 
 
+def parse_iso_time(value: datetime | str) -> datetime:
+    """Decode an ISO timestamp with a declared timezone; never infer epoch units or zone."""
+    parsed = _iso_datetime(value)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("Timestamp requires an explicit timezone")
+    return parsed.astimezone(UTC)
+
+
 def parse_utc_time(value: datetime | str) -> datetime:
     """Decode a format whose boundary explicitly declares that zone-less values mean UTC."""
     parsed = _iso_datetime(value)

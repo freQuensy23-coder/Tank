@@ -23,7 +23,7 @@ from tank.sources.errors import (
     parse_entry_error,
 )
 from tank.time_precision import Timestamp, collection_clock, offset_schedule
-from tank.util import TimeInput, iso, parse_time, sha256
+from tank.util import TimeInput, clock_iso, parse_time, sha256
 
 REASONS = {
     "ENTRY_WITHOUT_ID_OR_URL": "Запись без идентификатора и ссылки",
@@ -172,7 +172,7 @@ async def report_entry_errors(
             "keys": [key for key in sorted(fresh)],
         }
         notice_id = "entry_errors_" + sha256(poll_identity)
-        created_at = iso()
+        created_at = clock_iso()
         stamp = collection_clock(created_at)
         for key, error in fresh.items():
             marker = EntryErrorMarker(

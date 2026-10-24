@@ -4,7 +4,7 @@ import pytest
 
 from tank.models import Record
 from tank.time_precision import chosen_boundary, collection_clock, offset_schedule, propagate_timestamp
-from tank.util import EpochInput, EpochUnit, clock_iso, iso, parse_epoch, parse_utc_time
+from tank.util import EpochInput, EpochUnit, clock_iso, iso, parse_epoch, parse_iso_time, parse_utc_time
 
 AT = "2026-10-18T00:00:00Z"
 
@@ -172,3 +172,15 @@ def test_explicit_processing_clock_is_separate_from_formatting(monkeypatch: pyte
     fixed = datetime(2026, 10, 24, 12, tzinfo=UTC)
     monkeypatch.setattr("tank.util.utcnow", lambda: fixed)
     assert clock_iso() == "2026-10-24T12:00:00Z"
+
+
+def test_iso_decoder_requires_a_declared_timezone() -> None:
+    expected = datetime(2026, 10, 24, 12, 3, 4, 123456, tzinfo=UTC)
+    assert parse_iso_time("2026-10-24T14:03:04.123456+02:00") == expected
+    assert parse_iso_time(expected) == expected
+    with pytest.raises(ValueError, match="explicit timezone"):
+        parse_iso_time("2026-10-24 12:03:04.123456")
+    with pytest.raises(ValueError, match="explicit timezone"):
+        parse_iso_time(datetime(2026, 10, 24, 12))
+    with pytest.raises(ValueError, match="explicit epoch unit"):
+        parse_iso_time("1700000000000")

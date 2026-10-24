@@ -18,6 +18,7 @@ from tank.retention import BenchmarkToken, RetentionEvidence, benchmark_token_id
 from tank.settings import Settings
 from tank.storage import ImmutableRecordError, MemoryRepository
 from tank.time_precision import Timestamp, propagate_timestamp
+from tank.util import JsonInput
 
 
 class Observation(DomainModel):
@@ -394,3 +395,26 @@ def test_clickhouse_utc_transport_timestamp_requires_text_and_preserves_microsec
         _response_timestamp(1700000000000)
     with pytest.raises(ValueError, match="explicit epoch unit"):
         _response_timestamp("1700000000000")
+
+
+@pytest.mark.parametrize(
+    "value", [1700000000000, "1700000000000", "2026-10-24 12:00:00", datetime(2026, 10, 24, 12)]
+)
+async def test_market_persistence_does_not_guess_timestamp_units_or_timezones(value: JsonInput) -> None:
+    store = MemoryRepository()
+    row: dict[str, JsonInput] = {
+        "instrument_id": "A",
+        "open_time": value,
+        "open_time_prec": "EXACT",
+        "recorded_at": "2026-10-24T12:01:00Z",
+        "recorded_at_prec": "COLLECTION_ONLY",
+        "interval_s": 60,
+        "o": "1",
+        "h": "1",
+        "l": "1",
+        "c": "1",
+        "complete": True,
+    }
+    with pytest.raises(ValueError):
+        await store.put_market_batch("mkt.klines_1m", [row], keys=["invalid"])
+    assert await store.get("mkt.klines_1m", "invalid") is None

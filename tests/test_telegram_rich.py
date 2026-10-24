@@ -192,3 +192,15 @@ def test_presentation_rejects_missing_score_dimensions_and_malformed_blocks() ->
         score_table(data)
     with pytest.raises(ValidationError, match="table requires cells"):
         rich_message_text({"blocks": [{"type": "table"}]})
+
+
+def test_incoming_rich_validation_does_not_echo_private_wire_content() -> None:
+    from pydantic import ValidationError
+
+    from tank.telegram_rich import rich_message_text
+
+    marker = "synthetic-private-forwarded-message-content"
+    with pytest.raises(ValidationError) as failure:
+        rich_message_text({"blocks": [{"type": "table", "cells": marker}]})
+    assert marker not in str(failure.value)
+    assert "input_value" not in str(failure.value)

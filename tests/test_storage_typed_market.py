@@ -1,24 +1,31 @@
 """§14 typed market storage: ClickHouse behind the database repository equals the memory double."""
 
 import os
+from collections.abc import AsyncIterator
 
 import pytest
+from foundation_helpers import object_field, present, text_field
+from postgres_helpers import PostgresTemplate
+from pydantic import JsonValue
+
+from tank.models import Record
+from tank.storage import PostgresRepository, StorageBackend
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 
 @pytest.fixture
-async def typed_repo(postgres_template):
+async def typed_repo(postgres_template: PostgresTemplate) -> AsyncIterator[PostgresRepository]:
     dsn = os.getenv("TANK_TEST_DATABASE_URL")
     if not dsn or not os.getenv("CLICKHOUSE_TEST_URL"):
-        pytest.skip(
+        pytest.fail(
             "TANK_TEST_DATABASE_URL and CLICKHOUSE_TEST_URL required; creates owned disposable databases"
         )
     async with postgres_template.repository(dsn) as repo:
         yield repo
 
 
-def flow(at="2026-10-18T00:00:00Z"):
+def flow(at: str = "2026-10-18T00:00:00Z") -> Record:
     return {
         "instrument_id": "test:BTC",
         "token_id": "BTC",
@@ -38,10 +45,10 @@ def flow(at="2026-10-18T00:00:00Z"):
     }
 
 
-async def test_ticker_partial_point_merge_and_read_queries(typed_repo) -> None:
+async def test_ticker_partial_point_merge_and_read_queries(typed_repo: StorageBackend) -> None:
     repo = typed_repo
     await repo.migrate()
-    a = {
+    a: Record = {
         "instrument_id": "test:BTC",
         "token_id": "BTC",
         "ts": "2026-10-18T00:00:00Z",
@@ -49,7 +56,7 @@ async def test_ticker_partial_point_merge_and_read_queries(typed_repo) -> None:
         "field_sources": {"mark_price": {"as_of": "2026-10-18T00:00:00Z", "source_path": "ws"}},
     }
     await repo.put_market_batch("mkt.tickers_24h", [a], keys=["ws"])
-    b = {
+    b: Record = {
         "instrument_id": "test:BTC",
         "token_id": "BTC",
         "ts": a["ts"],
@@ -58,17 +65,21 @@ async def test_ticker_partial_point_merge_and_read_queries(typed_repo) -> None:
     }
     rows = await repo.put_market_batch("mkt.tickers_24h", [b], keys=["rest"])
     assert len(rows) == 1 and rows[0]["mark_price"] == "10" and rows[0]["index_price"] == "11"
-    assert set(rows[0]["field_sources"]) == {"mark_price", "index_price"}
+    assert set(object_field(rows[0], "field_sources")) == {"mark_price", "index_price"}
     assert len(await repo.latest_market_records("mkt.tickers_24h")) == 1
     assert (
-        await repo.latest_before("mkt.tickers_24h", "ts", "2026-10-18T00:01:00Z", filters={"token_id": "BTC"})
+        present(
+            await repo.latest_before(
+                "mkt.tickers_24h", "ts", "2026-10-18T00:01:00Z", filters={"token_id": "BTC"}
+            )
+        )
     )["mark_price"] == "10"
 
 
-async def test_funding_source_merge_survives_partial_restart(typed_repo) -> None:
+async def test_funding_source_merge_survives_partial_restart(typed_repo: StorageBackend) -> None:
     repo = typed_repo
     await repo.migrate()
-    base = {
+    base: Record = {
         "instrument_id": "test:BTC",
         "token_id": "BTC",
         "kind": "CURRENT_ESTIMATE",
@@ -79,11 +90,11 @@ async def test_funding_source_merge_survives_partial_restart(typed_repo) -> None
         "rate_8h_eq": "0.01",
         "capture_source": "WEBSOCKET",
     }
-    ws = dict(base, source_path="ws", received_ts="2026-10-18T00:00:01Z")
+    ws: Record = dict(base, source_path="ws", received_ts="2026-10-18T00:00:01Z")
     await repo.put_market_batch(
         "mkt.funding_obs", [dict(ws, source_observations={"WEBSOCKET": ws})], keys=["ws"]
     )
-    rest = dict(
+    rest: Record = dict(
         base,
         rate="0.02",
         rate_8h_eq="0.02",
@@ -97,9 +108,12 @@ async def test_funding_source_merge_survives_partial_restart(typed_repo) -> None
         )
     )[0]
     assert result["rate"] == "0.01" and result["capture_source"] == "WEBSOCKET"
-    assert set(result["source_observations"]) == {"WEBSOCKET", "PUBLIC_REST"}
-    assert result["source_observations"]["WEBSOCKET"]["received_ts"] == ws["received_ts"]
-    assert result["source_disagreement"]["present"] is True
+    assert set(object_field(result, "source_observations")) == {"WEBSOCKET", "PUBLIC_REST"}
+    assert (
+        object_field(object_field(result, "source_observations"), "WEBSOCKET")["received_ts"]
+        == ws["received_ts"]
+    )
+    assert object_field(result, "source_disagreement")["present"] is True
 
 
 async def test_memory_market_batch_uses_same_typed_contract() -> None:
@@ -108,15 +122,17 @@ async def test_memory_market_batch_uses_same_typed_contract() -> None:
     repo = MemoryRepository()
     rows = await repo.put_market_batch("mkt.flow_bars_1m", [flow(), flow()], keys=["a", "b"])
     assert len(rows) == 1
-    assert (await repo.get("mkt.flow_bars_1m", "b"))["first_trade"] == flow()["first_trade"]
+    assert (present(await repo.get("mkt.flow_bars_1m", "b")))["first_trade"] == flow()["first_trade"]
     assert await repo.put_market_batch("mkt.flow_bars_1m", [flow()], keys=["b"]) == []
 
 
 @pytest.mark.parametrize("reverse", [False, True])
-async def test_same_batch_funding_and_ticker_equal_sequential(typed_repo, reverse) -> None:
+async def test_same_batch_funding_and_ticker_equal_sequential(
+    typed_repo: StorageBackend, reverse: bool
+) -> None:
     repo = typed_repo
     await repo.migrate()
-    base = {
+    base: Record = {
         "instrument_id": "batch:BTC",
         "token_id": "BTC",
         "kind": "CURRENT_ESTIMATE",
@@ -124,7 +140,7 @@ async def test_same_batch_funding_and_ticker_equal_sequential(typed_repo, revers
         "metric_key": "funding",
         "interval_h": "8",
     }
-    rest = dict(
+    rest: Record = dict(
         base,
         rate="0.02",
         rate_8h_eq="0.02",
@@ -132,7 +148,7 @@ async def test_same_batch_funding_and_ticker_equal_sequential(typed_repo, revers
         source_path="rest",
         received_ts="2026-10-18T00:00:01Z",
     )
-    ws = dict(
+    ws: Record = dict(
         base,
         rate="0.01",
         rate_8h_eq="0.01",
@@ -140,7 +156,7 @@ async def test_same_batch_funding_and_ticker_equal_sequential(typed_repo, revers
         source_path="ws",
         received_ts="2026-10-18T00:00:02Z",
     )
-    packets = [
+    packets: list[Record] = [
         dict(rest, source_observations={"PUBLIC_REST": rest}),
         dict(ws, source_observations={"WEBSOCKET": ws}),
     ]
@@ -148,8 +164,8 @@ async def test_same_batch_funding_and_ticker_equal_sequential(typed_repo, revers
         packets.reverse()
     batched = (await repo.put_market_batch("mkt.funding_obs", packets, keys=["one", "two"]))[0]
     assert batched["rate"] == "0.01"
-    assert set(batched["source_observations"]) == {"PUBLIC_REST", "WEBSOCKET"}
-    assert batched["source_disagreement"]["present"] is True
+    assert set(object_field(batched, "source_observations")) == {"PUBLIC_REST", "WEBSOCKET"}
+    assert object_field(batched, "source_disagreement")["present"] is True
     await repo.delete("mkt.funding_obs", "two")
     for i, packet in enumerate(packets):
         await repo.put_market_batch("mkt.funding_obs", [packet], keys=[str(i)])
@@ -167,7 +183,7 @@ async def test_same_batch_funding_and_ticker_equal_sequential(typed_repo, revers
         "received_ts",
     ):
         assert batched[field] == sequential[field]
-    a = {
+    a: Record = {
         "instrument_id": "batch:BTC",
         "token_id": "BTC",
         "ts": base["as_of"],
@@ -180,7 +196,7 @@ async def test_same_batch_funding_and_ticker_equal_sequential(typed_repo, revers
             }
         },
     }
-    b = {
+    b: Record = {
         "instrument_id": "batch:BTC",
         "token_id": "BTC",
         "ts": base["as_of"],
@@ -199,7 +215,7 @@ async def test_same_batch_funding_and_ticker_equal_sequential(typed_repo, revers
             },
         },
     }
-    ticker_packets = [a, b]
+    ticker_packets: list[Record] = [a, b]
     if reverse:
         ticker_packets.reverse()
     batched = (
@@ -222,13 +238,13 @@ async def test_same_batch_funding_and_ticker_equal_sequential(typed_repo, revers
 
 
 @pytest.mark.parametrize("reverse", [False, True])
-async def test_same_batch_point_fold_memory(reverse) -> None:
+async def test_same_batch_point_fold_memory(reverse: bool) -> None:
     from tank.storage import MemoryRepository
 
     await test_same_batch_funding_and_ticker_equal_sequential(MemoryRepository(), reverse)
 
 
-async def test_typed_retention_preserves_major_day_and_prunes_expired(typed_repo) -> None:
+async def test_typed_retention_preserves_major_day_and_prunes_expired(typed_repo: StorageBackend) -> None:
     from datetime import timedelta
 
     from test_storage import complete_fixture_record
@@ -257,15 +273,17 @@ async def test_typed_retention_preserves_major_day_and_prunes_expired(typed_repo
     await repo.put_market_batch("mkt.flow_bars_1m", [preserved, expired], keys=["protected", "expired"])
     assert any(token == "BTC" for token, _, _ in await repo.preserved_market_windows())
     counts = await repo.prune_market(utcnow() - timedelta(days=90))
-    assert counts["clickhouse_partitions_dropped"]["mkt.flow_bars_1m"] == 1
+    partitions = counts["clickhouse_partitions_dropped"]
+    assert isinstance(partitions, dict)
+    assert partitions["mkt.flow_bars_1m"] == 1
     assert await repo.get("mkt.flow_bars_1m", "protected") is not None
     assert await repo.get("mkt.flow_bars_1m", "expired") is None
 
 
 def test_typed_timestamp_alias_validation_and_unknown_policy() -> None:
-    from tank.market_storage import decode, encode
+    from tank.market_codec import decode, encode
 
-    sample = {
+    sample: Record = {
         "instrument_id": "x",
         "kind": "SETTLED",
         "as_of": "2026-10-18T00:00:00Z",
@@ -298,35 +316,45 @@ def test_typed_timestamp_alias_validation_and_unknown_policy() -> None:
     )
 
 
-async def exercise_dependency_head(repo) -> None:
+async def exercise_dependency_head(repo: StorageBackend) -> None:
     await repo.migrate()
-    source = dict(
+    source: Record = dict(
         flow("2026-10-18T00:00:00Z"),
         recorded_at="2026-10-18T00:01:00Z",
         boundary_segments=[{"evidence": "x" * 10000}],
     )
-    newer = dict(flow("2026-10-18T01:00:00Z"), recorded_at="2026-10-18T01:01:00Z")
-    unrelated = dict(
+    newer: Record = dict(flow("2026-10-18T01:00:00Z"), recorded_at="2026-10-18T01:01:00Z")
+    unrelated: Record = dict(
         flow("2026-10-18T00:00:00Z"), instrument_id="unowned:BTC", recorded_at="2026-10-18T04:00:00Z"
     )
-    future = dict(flow("2026-10-18T03:00:00Z"), recorded_at="2026-10-18T05:00:00Z")
+    future: Record = dict(flow("2026-10-18T03:00:00Z"), recorded_at="2026-10-18T05:00:00Z")
     await repo.put_market_batch(
         "mkt.flow_bars_1m", [source, newer, unrelated, future], keys=["older", "newer", "unowned", "future"]
     )
-    options = {
-        "start": "2026-10-18T00:00:00Z",
-        "filters": {"token_id": "BTC"},
-        "instrument_ids": ["test:BTC", "other:BTC"],
-        "assembled_at": "2026-10-18T06:00:00Z",
-    }
-    before = await repo.market_dependency_head(
-        "mkt.flow_bars_1m", "minute_start", "2026-10-18T02:00:00Z", **options
+    before = present(
+        await repo.market_dependency_head(
+            "mkt.flow_bars_1m",
+            "minute_start",
+            "2026-10-18T02:00:00Z",
+            start="2026-10-18T00:00:00Z",
+            filters={"token_id": "BTC"},
+            instrument_ids=["test:BTC", "other:BTC"],
+            assembled_at="2026-10-18T06:00:00Z",
+        )
     )
     assert before["storage_key"] == "newer"
-    correction = dict(source, buy_qty="2", recorded_at="2026-10-18T02:30:00Z")
+    correction: Record = dict(source, buy_qty="2", recorded_at="2026-10-18T02:30:00Z")
     await repo.put_market_batch("mkt.flow_bars_1m", [correction], keys=["older"])
-    after = await repo.market_dependency_head(
-        "mkt.flow_bars_1m", "minute_start", "2026-10-18T02:00:00Z", **options
+    after = present(
+        await repo.market_dependency_head(
+            "mkt.flow_bars_1m",
+            "minute_start",
+            "2026-10-18T02:00:00Z",
+            start="2026-10-18T00:00:00Z",
+            filters={"token_id": "BTC"},
+            instrument_ids=["test:BTC", "other:BTC"],
+            assembled_at="2026-10-18T06:00:00Z",
+        )
     )
     assert after["storage_key"] == "older" and after != before
     assert set(after) == {"storage_key", "recorded_at", "semantic_fingerprint", "minute_start"}
@@ -334,7 +362,10 @@ async def exercise_dependency_head(repo) -> None:
         "mkt.flow_bars_1m",
         "minute_start",
         "2026-10-18T02:00:00Z",
-        **(options | {"assembled_at": "2026-10-18T02:00:00Z"}),
+        start="2026-10-18T00:00:00Z",
+        filters={"token_id": "BTC"},
+        instrument_ids=["test:BTC", "other:BTC"],
+        assembled_at="2026-10-18T02:00:00Z",
     )
     assert frozen == before
     assert (
@@ -347,14 +378,17 @@ async def exercise_dependency_head(repo) -> None:
         "mkt.flow_bars_1m",
         "minute_start",
         "2026-10-18T02:00:00Z",
-        **(options | {"start": "2026-10-18T00:30:00Z"}),
+        start="2026-10-18T00:30:00Z",
+        filters={"token_id": "BTC"},
+        instrument_ids=["test:BTC", "other:BTC"],
+        assembled_at="2026-10-18T06:00:00Z",
     )
     assert scoped == before
     with pytest.raises(ValueError):
         await repo.market_dependency_head("mkt.flow_bars_1m", "not_a_clock", "2026-10-18T02:00:00Z")
 
 
-async def test_market_dependency_head_clickhouse(typed_repo) -> None:
+async def test_market_dependency_head_clickhouse(typed_repo: StorageBackend) -> None:
     await exercise_dependency_head(typed_repo)
 
 
@@ -364,7 +398,7 @@ async def test_market_dependency_head_memory() -> None:
     await exercise_dependency_head(MemoryRepository())
 
 
-async def exercise_bounded_latest_market_records(repo) -> None:
+async def exercise_bounded_latest_market_records(repo: StorageBackend) -> None:
     await repo.migrate()
     rows = [
         dict(flow("2026-10-18T00:00:00Z"), recorded_at="2026-10-18T00:01:00Z"),
@@ -382,22 +416,31 @@ async def exercise_bounded_latest_market_records(repo) -> None:
         dict(flow("2026-10-17T01:00:00Z"), instrument_id="expired:BTC", recorded_at="2026-10-17T01:01:00Z"),
     ]
     await repo.put_market_batch("mkt.flow_bars_1m", rows, keys=[str(i) for i in range(len(rows))])
-    options = {
-        "time_field": "minute_start",
-        "group_by": ("instrument_id",),
-        "filters": {"complete": True},
-        "cutoff": "2026-10-18T02:00:00Z",
-        "assembled_at": "2026-10-18T01:30:00Z",
-        "start": "2026-10-18T00:00:00Z",
+    result = {
+        r["instrument_id"]: r
+        for r in await repo.latest_market_records(
+            "mkt.flow_bars_1m",
+            time_field="minute_start",
+            group_by=("instrument_id",),
+            filters={"complete": True},
+            cutoff="2026-10-18T02:00:00Z",
+            assembled_at="2026-10-18T01:30:00Z",
+            start="2026-10-18T00:00:00Z",
+        )
     }
-    result = {r["instrument_id"]: r for r in await repo.latest_market_records("mkt.flow_bars_1m", **options)}
     assert set(result) == {"test:BTC", "legacy:BTC"}
     assert result["test:BTC"]["minute_start"] == "2026-10-18T01:00:00Z"
     assert result["legacy:BTC"]["recorded_at"] is None
     later = {
         r["instrument_id"]: r
         for r in await repo.latest_market_records(
-            "mkt.flow_bars_1m", **(options | {"assembled_at": "2026-10-18T06:00:00Z"})
+            "mkt.flow_bars_1m",
+            time_field="minute_start",
+            group_by=("instrument_id",),
+            filters={"complete": True},
+            cutoff="2026-10-18T02:00:00Z",
+            assembled_at="2026-10-18T06:00:00Z",
+            start="2026-10-18T00:00:00Z",
         )
     }
     assert later["test:BTC"]["minute_start"] == "2026-10-18T01:30:00Z"
@@ -409,38 +452,71 @@ async def exercise_bounded_latest_market_records(repo) -> None:
     }
     assert unbounded["test:BTC"]["minute_start"] == "2026-10-18T03:00:00Z"
     scoped = await repo.latest_market_records(
-        "mkt.flow_bars_1m", **options, instrument_ids=["test:BTC", "test:BTC", "missing"]
+        "mkt.flow_bars_1m",
+        time_field="minute_start",
+        group_by=("instrument_id",),
+        filters={"complete": True},
+        cutoff="2026-10-18T02:00:00Z",
+        assembled_at="2026-10-18T01:30:00Z",
+        start="2026-10-18T00:00:00Z",
+        instrument_ids=["test:BTC", "test:BTC", "missing"],
     )
     assert scoped == [result["test:BTC"]]
-    assert await repo.latest_market_records("mkt.flow_bars_1m", **options, instrument_ids=[]) == []
+    assert (
+        await repo.latest_market_records(
+            "mkt.flow_bars_1m",
+            time_field="minute_start",
+            group_by=("instrument_id",),
+            filters={"complete": True},
+            cutoff="2026-10-18T02:00:00Z",
+            assembled_at="2026-10-18T01:30:00Z",
+            start="2026-10-18T00:00:00Z",
+            instrument_ids=[],
+        )
+        == []
+    )
     scoped_groups = await repo.latest_market_records(
         "mkt.flow_bars_1m",
-        **(options | {"group_by": ("instrument_id", "token_id")}),
+        time_field="minute_start",
+        group_by=("instrument_id", "token_id"),
+        filters={"complete": True},
+        cutoff="2026-10-18T02:00:00Z",
+        assembled_at="2026-10-18T01:30:00Z",
+        start="2026-10-18T00:00:00Z",
         instrument_ids=["test:BTC"],
     )
     assert scoped_groups == scoped
     exact = await repo.latest_market_records(
         "mkt.flow_bars_1m",
-        **(
-            options
-            | {
-                "filters": {
-                    "complete": True,
-                    "quote_volume": None,
-                    "buy_qty": "1.00000000000000000001",
-                    "size_buckets": {},
-                }
-            }
-        ),
+        time_field="minute_start",
+        group_by=("instrument_id",),
+        filters={
+            "complete": True,
+            "quote_volume": None,
+            "buy_qty": "1.00000000000000000001",
+            "size_buckets": {},
+        },
+        cutoff="2026-10-18T02:00:00Z",
+        assembled_at="2026-10-18T01:30:00Z",
+        start="2026-10-18T00:00:00Z",
         instrument_ids=["test:BTC"],
     )
     assert exact == scoped
-    for invalid in ("test:BTC", [123]):
+    for invalid in ("test:BTC",):
         with pytest.raises(ValueError, match="instrument_ids"):
-            await repo.latest_market_records("mkt.flow_bars_1m", **options, instrument_ids=invalid)
+            await repo.latest_market_records(
+                "mkt.flow_bars_1m",
+                time_field="minute_start",
+                group_by=("instrument_id",),
+                filters={"complete": True},
+                cutoff="2026-10-18T02:00:00Z",
+                assembled_at="2026-10-18T01:30:00Z",
+                start="2026-10-18T00:00:00Z",
+                instrument_ids=invalid,
+            )
 
 
-async def test_latest_market_records_bounds_clickhouse(typed_repo) -> None:
+async def test_latest_market_records_bounds_clickhouse(typed_repo: StorageBackend) -> None:
     await exercise_bounded_latest_market_records(typed_repo)
 
 
@@ -461,7 +537,7 @@ async def test_dependency_heads_cover_advancing_semantic_boundaries() -> None:
     ]
     await repo.put_market_batch("mkt.flow_bars_1m", rows, keys=["old-corrected", "middle", "future-eligible"])
 
-    async def head(cutoff, order, start="2026-10-18T00:00:00Z"):
+    async def head(cutoff: str, order: str, start: str = "2026-10-18T00:00:00Z") -> Record | None:
         return await repo.market_dependency_head(
             "mkt.flow_bars_1m",
             "minute_start",
@@ -475,21 +551,27 @@ async def test_dependency_heads_cover_advancing_semantic_boundaries() -> None:
     assert await head("2026-10-18T01:30:00Z", "availability") == await head(
         "2026-10-18T02:30:00Z", "availability"
     )
-    assert (await head("2026-10-18T01:30:00Z", "semantic_latest"))["storage_key"] == "middle"
-    assert (await head("2026-10-18T02:30:00Z", "semantic_latest"))["storage_key"] == "future-eligible"
-    assert (await head("2026-10-18T02:30:00Z", "semantic_earliest"))["storage_key"] == "old-corrected"
-    assert (await head("2026-10-18T02:30:00Z", "semantic_earliest", start="2026-10-18T00:30:00Z"))[
+    assert (present(await head("2026-10-18T01:30:00Z", "semantic_latest")))["storage_key"] == "middle"
+    assert (present(await head("2026-10-18T02:30:00Z", "semantic_latest")))[
+        "storage_key"
+    ] == "future-eligible"
+    assert (present(await head("2026-10-18T02:30:00Z", "semantic_earliest")))[
+        "storage_key"
+    ] == "old-corrected"
+    assert (present(await head("2026-10-18T02:30:00Z", "semantic_earliest", start="2026-10-18T00:30:00Z")))[
         "storage_key"
     ] == "middle"
     with pytest.raises(ValueError, match="Unsupported"):
         await head("2026-10-18T02:30:00Z", "arbitrary SQL")
 
 
-async def exercise_compact_market_projection(repo) -> None:
+async def exercise_compact_market_projection(repo: StorageBackend) -> None:
     await repo.migrate()
 
-    def candle(iid, minute, close="1.2345678901234567890123456789", **updates):
-        return {
+    def candle(
+        iid: str, minute: int, close: str = "1.2345678901234567890123456789", **updates: JsonValue
+    ) -> Record:
+        record: Record = {
             "instrument_id": iid,
             "token_id": "BTC",
             "open_time": f"2026-10-18T00:{minute:02d}:00Z",
@@ -503,7 +585,8 @@ async def exercise_compact_market_projection(repo) -> None:
             "complete": True,
             "recorded_at": "2026-10-18T00:06:00Z",
             "recorded_at_prec": "COLLECTION_ONLY",
-        } | updates
+        }
+        return record | updates
 
     rows = [
         candle("A", 0),
@@ -546,7 +629,7 @@ async def exercise_compact_market_projection(repo) -> None:
     ] == []
 
 
-async def test_compact_market_projection_clickhouse(typed_repo) -> None:
+async def test_compact_market_projection_clickhouse(typed_repo: StorageBackend) -> None:
     await exercise_compact_market_projection(typed_repo)
 
 
@@ -557,9 +640,9 @@ async def test_compact_market_projection_memory() -> None:
 
 
 def test_oi_anchor_is_named_and_scoped_not_generic_extra() -> None:
-    from tank.market_storage import decode, encode
+    from tank.market_codec import decode, encode
 
-    sample = {"ts": "2026-10-18T10:00:00Z", "ts_prec": "BUCKET(300s)", "ts_bucket_anchor": "END"}
+    sample: Record = {"ts": "2026-10-18T10:00:00Z", "ts_prec": "BUCKET(300s)", "ts_bucket_anchor": "END"}
     assert decode("mkt.oi_obs", encode("mkt.oi_obs", sample))["ts_bucket_anchor"] == "END"
     with pytest.raises(ValueError, match="Unknown typed market field"):
         encode("mkt.liq_obs", sample)
@@ -567,7 +650,7 @@ def test_oi_anchor_is_named_and_scoped_not_generic_extra() -> None:
         encode("mkt.oi_obs", dict(sample, ts_bucket_anchor="GUESSED"))
 
 
-async def _unproven_writes_keep_complete_bars(repo) -> None:
+async def _unproven_writes_keep_complete_bars(repo: StorageBackend) -> None:
     proven = flow()
     await repo.put_market_batch("mkt.flow_bars_1m", [proven], keys=["bar"])
 
@@ -578,12 +661,12 @@ async def _unproven_writes_keep_complete_bars(repo) -> None:
             )
             == []
         )
-        assert (await repo.get("mkt.flow_bars_1m", "bar"))["complete"] is True
+        assert (present(await repo.get("mkt.flow_bars_1m", "bar")))["complete"] is True
 
-    lost = dict(proven, complete=False, gap_reason="STREAM_DISCONNECTED: keepalive ping timeout")
+    lost: Record = dict(proven, complete=False, gap_reason="STREAM_DISCONNECTED: keepalive ping timeout")
     assert len(await repo.put_market_batch("mkt.flow_bars_1m", [lost], keys=["bar"])) == 1
-    stored = await repo.get("mkt.flow_bars_1m", "bar")
-    assert stored["complete"] is False and stored["gap_reason"].startswith("STREAM_DISCONNECTED")
+    stored = present(await repo.get("mkt.flow_bars_1m", "bar"))
+    assert stored["complete"] is False and text_field(stored, "gap_reason").startswith("STREAM_DISCONNECTED")
 
     assert len(await repo.put_market_batch("mkt.flow_bars_1m", [proven], keys=["bar"])) == 1
 
@@ -594,12 +677,12 @@ async def test_unproven_flow_bar_never_replaces_a_complete_one_memory() -> None:
     await _unproven_writes_keep_complete_bars(MemoryRepository())
 
 
-async def test_unproven_flow_bar_never_replaces_a_complete_one_clickhouse(typed_repo) -> None:
+async def test_unproven_flow_bar_never_replaces_a_complete_one_clickhouse(typed_repo: StorageBackend) -> None:
     await typed_repo.migrate()
     await _unproven_writes_keep_complete_bars(typed_repo)
 
 
-async def test_dependency_heads_in_one_round_trip_equal_single_heads(typed_repo) -> None:
+async def test_dependency_heads_in_one_round_trip_equal_single_heads(typed_repo: StorageBackend) -> None:
     from tank.market_storage import market_dependency_head
 
     await typed_repo.migrate()
@@ -607,18 +690,30 @@ async def test_dependency_heads_in_one_round_trip_equal_single_heads(typed_repo)
     rows[1]["recorded_at"] = "2026-10-18T00:05:00Z"
     await typed_repo.put_market_batch("mkt.flow_bars_1m", rows)
     args = ("mkt.flow_bars_1m", "minute_start", "2026-10-18T00:03:00Z")
-    kwargs = {
-        "start": "2026-10-18T00:00:00Z",
-        "filters": {"instrument_id": "test:BTC"},
-        "assembled_at": "2026-10-18T01:00:00Z",
-    }
     orders = ("availability", "semantic_latest", "semantic_earliest")
-    batched = await market_dependency_head(typed_repo, *args, **kwargs, orders=orders)
-    assert batched == {o: await market_dependency_head(typed_repo, *args, **kwargs, order=o) for o in orders}
-    assert batched["availability"]["minute_start"] == "2026-10-18T00:01:00Z"
+    batched = await market_dependency_head(
+        typed_repo,
+        *args,
+        start="2026-10-18T00:00:00Z",
+        filters={"instrument_id": "test:BTC"},
+        assembled_at="2026-10-18T01:00:00Z",
+        orders=orders,
+    )
+    assert batched == {
+        o: await market_dependency_head(
+            typed_repo,
+            *args,
+            start="2026-10-18T00:00:00Z",
+            filters={"instrument_id": "test:BTC"},
+            assembled_at="2026-10-18T01:00:00Z",
+            order=o,
+        )
+        for o in orders
+    }
+    assert present(batched["availability"])["minute_start"] == "2026-10-18T00:01:00Z"
 
 
-async def test_batched_range_read_gives_the_loop_turns_while_it_decodes(typed_repo) -> None:
+async def test_batched_range_read_gives_the_loop_turns_while_it_decodes(typed_repo: StorageBackend) -> None:
     import asyncio
     from datetime import timedelta
 
@@ -656,14 +751,14 @@ async def test_batched_range_read_gives_the_loop_turns_while_it_decodes(typed_re
     assert turns[0] - before >= 2
 
 
-async def test_kline_days_recorded_since_match_memory_on_clickhouse(typed_repo) -> None:
+async def test_kline_days_recorded_since_match_memory_on_clickhouse(typed_repo: StorageBackend) -> None:
     from tank.market_storage import market_kline_days_recorded_since
     from tank.storage import MemoryRepository
     from tank.util import parse_time
 
     await typed_repo.migrate()
 
-    def candle(iid, opened, recorded_at):
+    def candle(iid: str, opened: str, recorded_at: str) -> Record:
         return {
             "instrument_id": iid,
             "token_id": "BTC",
@@ -695,7 +790,9 @@ async def test_kline_days_recorded_since_match_memory_on_clickhouse(typed_repo) 
     assert found == {("A", parse_time("2026-10-16T00:00:00Z")), ("B", parse_time("2026-10-17T00:00:00Z"))}
 
 
-async def test_sampled_history_decodes_json_rows_off_the_loop_on_clickhouse(typed_repo) -> None:
+async def test_sampled_history_decodes_json_rows_off_the_loop_on_clickhouse(
+    typed_repo: StorageBackend,
+) -> None:
     from tank.market_storage import sampled_market_history
     from tank.storage import MemoryRepository
 
@@ -704,7 +801,7 @@ async def test_sampled_history_decodes_json_rows_off_the_loop_on_clickhouse(type
     memory = MemoryRepository()
     for repo in (typed_repo, memory):
         await repo.put_market_batch("mkt.flow_bars_1m", rows, keys=[str(i) for i in range(len(rows))])
-    args = (
+    args: tuple[str, str, list[str], list[str], str, str, int] = (
         "mkt.flow_bars_1m",
         "minute_start",
         [],
@@ -721,7 +818,7 @@ async def test_sampled_history_decodes_json_rows_off_the_loop_on_clickhouse(type
     assert sampled[0]["first_trade"] == {"price": "123.456789012345678901"}
 
 
-async def test_rows_recorded_since_match_memory_on_clickhouse(typed_repo) -> None:
+async def test_rows_recorded_since_match_memory_on_clickhouse(typed_repo: StorageBackend) -> None:
     from tank.market_storage import market_rows_recorded_since
     from tank.storage import MemoryRepository
 
