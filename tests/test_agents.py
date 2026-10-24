@@ -591,6 +591,11 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
             },
             immutable=True,
         )
+        armed = await repo.list("ana.watch_conditions", filters={"event_id": "evt_1", "status": "ARMED"})
+        assert armed
+        assert not await service.can_archive(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
+        for condition in armed:
+            await repo.put("ana.watch_conditions", condition["cond_id"], {**condition, "status": "EXPIRED"})
         assert await service.can_archive(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
 
 

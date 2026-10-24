@@ -16,9 +16,11 @@ from test_telegram_followups import (
 from tank.agents import SessionService
 from tank.storage import MemoryRepository
 from tank.telegram_inbox import (
-    OPS_ENDED_TEXT,
-    OPS_NO_SESSION_TEXT,
+    EARLY_ARCHIVED_TEXT,
+    OPS_JEV_TEXT,
+    OPS_NOT_RECEIVED_TEXT,
     OPS_UNMATCHED_TEXT,
+    OPS_WAITING_TEXT,
     TelegramInbox,
     question_id_for,
     question_message,
@@ -157,7 +159,47 @@ async def test_ops_reply_about_analyzed_unpublished_item_continues_its_session_a
     assert answers.sent[0]["reply_parameters"]["message_id"] == 30
 
 
-async def test_ops_reply_about_filtered_item_answers_with_recorded_facts_only():
+async def answer_in_ops(repo, question_id):
+    answers = FakeTelegram()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(answers)) as http:
+        inbox = TelegramInbox(
+            repo, SimpleNamespace(telegram_token="test", telegram_alerts_chat=ALERTS), http=http
+        )
+        await inbox.answer({"question_id": question_id})
+    return answers.sent
+
+
+async def test_ops_reply_about_published_item_continues_its_session_and_answers_in_ops():
+    repo = MemoryRepository()
+    await seed(repo)
+    await item(repo, "itm_1", stages=[("ALERT_SENT", "")])
+    await repo.put("evt.event_observations", "obs_1", {"item_id": "itm_1", "event_id": "evt_1"})
+    await ops_card(repo, "itm_1", 702)
+    telegram = FakeTelegram([{"update_id": 1, "message": ops_reply(33, 702)}])
+    await run_inbox(repo, telegram, now=NOW)
+    assert telegram.sent == []
+    question_id = question_id_for(OPS, 33)
+    question = await repo.get("out.user_questions", question_id)
+    assert question["session_id"] == "ses_1" and question["chat_id"] == OPS
+    assert question["reference"]["kind"] == "OPS_CARD" and question["reference"]["item_id"] == "itm_1"
+    assert "Tank Ops" in question_message(question) and "не публиковалась" not in question_message(question)
+    jobs = await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
+    assert [job["payload"] for job in jobs] == [
+        {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
+    ]
+    posts = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(openma(posts, []))) as http:
+        service = SessionService(repo, session_settings(), None, http=http)
+        service.start_stream = lambda sid: None
+        await service.send_message(jobs[0]["payload"])
+    assert posts[0][0] == "/v1/sessions/ses_1/events"
+    await record_answer(repo, question_id, "Карточка вышла, токен AAVE.", status="ANSWERED")
+    sent = await answer_in_ops(repo, question_id)
+    assert [(row["chat_id"], row["text"]) for row in sent] == [(OPS, "Карточка вышла, токен AAVE.")]
+    assert sent[0]["reply_parameters"]["message_id"] == 33
+
+
+async def test_ops_reply_about_jev_filtered_item_states_only_the_reason():
     repo = MemoryRepository()
     await seed(repo)
     await item(
@@ -183,52 +225,73 @@ async def test_ops_reply_about_filtered_item_answers_with_recorded_facts_only():
     )
     telegram = FakeTelegram([{"update_id": 1, "message": ops_reply(31, 701)}])
     await run_inbox(repo, telegram, now=NOW)
-    assert len(telegram.sent) == 1
-    reply = telegram.sent[0]
-    assert reply["chat_id"] == OPS and reply["reply_parameters"]["message_id"] == 31
-    assert reply["text"].startswith(OPS_NO_SESSION_TEXT)
-    for fact in ("Отсеяно Jev", "релевантность 1%", "порог 30%", "Остановлен фильтром Jev", "itm_3"):
-        assert fact in reply["text"]
-    assert "2027-01-15 08:01:00 UTC" in reply["text"] and "2027-01-15 07:59:00 UTC" in reply["text"]
+    assert [(row["chat_id"], row["text"]) for row in telegram.sent] == [(OPS, OPS_JEV_TEXT)]
+    assert telegram.sent[0]["reply_parameters"]["message_id"] == 31
+    for fact in ("релевантность", "порог", "UTC", "itm_3", "Заголовок"):
+        assert fact not in telegram.sent[0]["text"]
     assert not await repo.list("out.user_questions")
     assert not await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
     row = await repo.get("ops.telegram_messages", f"{OPS}:31")
-    assert row["status"] == "FACTS" and row["reason"] == "NO_ANALYST_SESSION"
+    assert row["status"] == "NO_SESSION" and row["reason"] == "JEV_REJECTED"
     telegram.updates.append({"update_id": 2, "message": ops_reply(32, 1001, text="А какой был порог?")})
     await run_inbox(repo, telegram, now=NOW)
-    assert len(telegram.sent) == 2 and telegram.sent[1]["text"].startswith(OPS_NO_SESSION_TEXT)
+    assert [row["text"] for row in telegram.sent] == [OPS_JEV_TEXT, OPS_JEV_TEXT]
     assert telegram.sent[1]["reply_parameters"]["message_id"] == 32
 
 
-async def test_ops_reply_about_ended_session_states_facts_and_that_it_is_closed():
+@pytest.mark.parametrize(
+    "stages,reason,text",
+    [
+        ([("RECEIVED", ""), ("AGENT_QUEUED", "")], "NOT_YET_RECEIVED", OPS_WAITING_TEXT),
+        (
+            [("RECEIVED", ""), ("PROCESSING_EXPIRED", "")],
+            "PROCESSING_EXPIRED",
+            OPS_NOT_RECEIVED_TEXT.format(stage="истёк срок обработки"),
+        ),
+    ],
+)
+async def test_ops_reply_about_item_that_never_reached_an_agent_states_why(stages, reason, text):
+    repo = MemoryRepository()
+    await seed(repo)
+    await item(repo, "itm_5", stages=stages)
+    await ops_card(repo, "itm_5", 705)
+    telegram = FakeTelegram([{"update_id": 1, "message": ops_reply(36, 705)}])
+    await run_inbox(repo, telegram, now=NOW)
+    assert [row["text"] for row in telegram.sent] == [text]
+    assert (await repo.get("ops.telegram_messages", f"{OPS}:36"))["reason"] == reason
+    assert not await repo.list("out.user_questions")
+
+
+@pytest.mark.parametrize("retention", [True, False])
+async def test_ops_reply_about_archived_session_gets_only_the_reason(retention):
     repo = MemoryRepository()
     await seed(repo)
     await item(repo, "itm_4", stages=[("AGENT_REJECTED", "NO_EVENT")])
     await analyst_session(repo, "ses_4", None, "itm_4", status="ENDED")
+    if retention:
+        session = await repo.get("ops.agent_sessions", "ses_4")
+        session.update(archive_reason="RETENTION", archive_keep_days=7)
+        await repo.put("ops.agent_sessions", "ses_4", session)
     await ops_card(repo, "itm_4", 704)
     telegram = FakeTelegram([{"update_id": 1, "message": ops_reply(34, 704)}])
     await run_inbox(repo, telegram, now=NOW)
-    assert telegram.sent[0]["text"].startswith(OPS_ENDED_TEXT)
-    assert not await repo.list("out.user_questions")
-    assert (await repo.get("ops.telegram_messages", f"{OPS}:34"))["reason"] == "SESSION_ENDED"
-
-
-async def test_ops_reply_about_published_item_points_to_the_alerts_card():
-    repo = MemoryRepository()
-    await seed(repo)
-    await item(repo, "itm_1", stages=[("ALERT_SENT", "")])
-    await repo.put("evt.event_observations", "obs_1", {"item_id": "itm_1", "event_id": "evt_1"})
-    await ops_card(repo, "itm_1", 702)
-    telegram = FakeTelegram([{"update_id": 1, "message": ops_reply(33, 702)}])
-    await run_inbox(repo, telegram, now=NOW)
-    assert len(telegram.sent) == 1
-    assert "https://t.me/c/500/55" in telegram.sent[0]["text"]
-    assert "Alerts" in telegram.sent[0]["text"]
-    assert telegram.sent[0]["chat_id"] == OPS
-    assert not await repo.list("out.user_questions")
-    assert not await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
-    row = await repo.get("ops.telegram_messages", f"{OPS}:33")
-    assert row["status"] == "REDIRECTED" and row["alert_id"] == "a"
+    assert telegram.sent == []
+    question_id = question_id_for(OPS, 34)
+    assert (await repo.get("out.user_questions", question_id))["session_id"] == "ses_4"
+    posts = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(openma(posts, []))) as http:
+        service = SessionService(repo, session_settings(), None, http=http)
+        payload = {"kind": "USER_QUESTION", "session_id": "ses_4", "question_id": question_id}
+        assert await service.send_message(payload) is None
+    assert posts == []
+    expected = (
+        "Продолжить нельзя: сессия агента по этому сообщению закрыта после 7 дней без сообщений."
+        if retention
+        else EARLY_ARCHIVED_TEXT
+    )
+    sent = await answer_in_ops(repo, question_id)
+    assert [(row["chat_id"], row["text"]) for row in sent] == [(OPS, expected)]
+    assert sent[0]["reply_parameters"]["message_id"] == 34
 
 
 async def test_ops_messages_that_are_not_replies_to_tank_are_ignored():
@@ -274,12 +337,13 @@ async def test_ops_follow_ups_survive_restart_and_redelivery_without_double_answ
     telegram = FakeTelegram(updates)
     await run_inbox(repo, telegram, now=NOW)
     await repo.delete("ops.source_checkpoints", "telegram:bot-updates")
-    facts = await repo.get("ops.telegram_messages", f"{OPS}:31")
-    await repo.put("ops.telegram_messages", f"{OPS}:31", {**facts, "status": "RECEIVED"})
+    reason = await repo.get("ops.telegram_messages", f"{OPS}:31")
+    await repo.put("ops.telegram_messages", f"{OPS}:31", {**reason, "status": "RECEIVED"})
     await run_inbox(repo, telegram, now=NOW + 1)
     await run_inbox(repo, telegram, now=NOW + 2)
     assert len(telegram.sent) == 1
-    assert (await repo.get("ops.telegram_messages", f"{OPS}:31"))["status"] == "FACTS"
+    assert (await repo.get("ops.telegram_messages", f"{OPS}:31"))["status"] == "NO_SESSION"
+    assert [row["text"] for row in telegram.sent] == [OPS_JEV_TEXT]
     assert len(await repo.list("out.user_questions")) == 1
     assert len(await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})) == 1
 

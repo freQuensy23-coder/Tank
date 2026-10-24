@@ -99,16 +99,9 @@ class Scheduler:
         self._reaction_slots = asyncio.Semaphore(REACTION_MEASUREMENT_SLOTS)
 
     def threshold(self, name, fixture_default):
-        if not hasattr(self.settings, "load_config"):
-            return fixture_default
-        thresholds = self.settings.load_config("thresholds")
-        if name not in thresholds:
-            from tank.settings import Settings
+        from tank.settings import threshold
 
-            if isinstance(self.settings, Settings):
-                raise ValueError("Missing scheduler threshold: " + name)
-            return fixture_default
-        return thresholds[name]
+        return threshold(self.settings, name, fixture_default)
 
     def launch(self, name, operation):
         if self.closing:
