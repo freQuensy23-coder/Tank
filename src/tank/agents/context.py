@@ -146,6 +146,55 @@ PREFIXES = (
     ("PRP-", "proposal"),
 )
 OPEN_LIFECYCLES_EXCLUDED = {"CLOSED", "MERGED", "INVALIDATED"}
+CONTEXT_TRANSITION = {
+    False: (
+        "Tank changed its tool contract. Follow the current tool definitions and this note over earlier tool "
+        "instructions and skill text that cite records by description. Tool arguments name records only by ID. "
+        "Registry objects now read «Name · key» (World (WLD) · world:WLD, Uniswap · uniswap): token_id, token_ids, "
+        "entity_id, instrument_id and source_id take the key after « · »; an entity or token outside the registry "
+        "is named (entities[].name, token_names, entity_name, token_name). "
+        "Finding record IDs for tool arguments, with read-only SQL in your sandbox "
+        '(psql "$TANK_DB_URL" -Atc "<query>"): '
+        "«Source document by URL»: SELECT item_id, observed_at, document->>'evidence_kind' FROM "
+        "ingest.source_items WHERE url = '<url>' ORDER BY observed_at DESC (a page read with fetch_page is its own "
+        "WEB document). "
+        "«Claims of an event»: SELECT claim_id, quote, subject, predicate, object, verified FROM evt.claims WHERE "
+        "document->>'event_id' = '<event_id>' ORDER BY claim_id; the current event: SELECT e.event_id, e.statement "
+        "FROM evt.events e JOIN evt.event_observations o ON o.event_id = e.event_id JOIN ingest.source_items i ON "
+        "i.item_id = o.item_id WHERE i.url = '<incoming URL>'. "
+        "«Events by statement, time or token»: SELECT event_id, statement, public_at, lifecycle FROM evt.events "
+        "WHERE strpos(lower(statement), lower('<words>')) > 0 AND lifecycle NOT IN ('CLOSED', 'MERGED', "
+        "'INVALIDATED') ORDER BY known_to_us_at DESC LIMIT 20. "
+        "«Watch conditions of an event»: SELECT cond_id, token_id, document->>'human_text', document->'expr' FROM "
+        "ana.watch_conditions WHERE event_id = '<event_id>' AND status = 'ARMED'. "
+        "«Registry keys»: reg.tokens (token_id, symbol), reg.entities and reg.entity_aliases (entity_id, alias), "
+        "reg.instruments (instrument_id), reg.sources (source_id, name). "
+        "The current event, the incoming source and the current proposal stay implicit. A claim quoted from the "
+        "incoming source needs no evidence; a quote from another document cites {item_id, quote}. Assessment and "
+        "beneficiary evidence, criterion_claim_id and supersedes_claim_ids are claim IDs of the current event; "
+        "merge_into takes the earlier event's event_id; DISARM takes cond_id. Tank refuses an unknown ID, one of "
+        "the wrong kind or one outside the tool's scope, and names the argument."
+    ),
+    True: (
+        "Tank changed its tool contract. Follow the current tool definitions and this note over earlier "
+        "instructions that cite records by description. record_review cites evidence only by ID - {claim_id}, "
+        "{event_id} or {item_id} - and names a duplicate in duplicate_of by its proposal ID; the current proposal "
+        "stays implicit. Registry objects read «Name · key»; search_tank_items.source_ids take the key after « · ». "
+        "Your sandbox shell is now enabled, only for read-only SQL lookups of record IDs "
+        '(psql "$TANK_DB_URL" -Atc "<query>"); this replaces the earlier rule to use only web_search, '
+        "search_tank_items and record_review. Finding record IDs: "
+        "«Proposals by subject»: SELECT prp_id, concept_name, document->'evidence' FROM scout.expansion_proposals "
+        "WHERE human_action IS NULL AND strpos(lower(concept_name), lower('<words>')) > 0 ORDER BY prp_id. "
+        "«Source document by URL»: SELECT item_id, observed_at, title FROM ingest.source_items WHERE url = '<url>' "
+        "ORDER BY observed_at DESC. "
+        "«Events by statement, time or token»: SELECT event_id, statement, public_at FROM evt.events WHERE "
+        "strpos(lower(statement), lower('<words>')) > 0 ORDER BY known_to_us_at DESC LIMIT 20. "
+        "«Claims of an event»: SELECT claim_id, quote, subject, predicate, object FROM evt.claims WHERE "
+        "document->>'event_id' = '<event_id>' ORDER BY claim_id. "
+        "«Registry keys»: SELECT source_id, name FROM reg.sources. "
+        "Tank refuses an unknown ID or one of the wrong kind, and names the argument."
+    ),
+}
 
 
 def identifier_field(key):
@@ -652,7 +701,10 @@ class ModelContext:
                 "instrument": self.instruments,
                 "source": self.sources,
             }[kind]
-            if value not in known:
+            registered = value in known or (
+                kind == "source" and await self.repo.get("reg.sources", value) is not None
+            )
+            if not registered:
                 raise ValueError(f"{path}: not a {REGISTRY[kind]}. {self.lookup(kind)}")
             return
         table, label = RECORDS[kind]

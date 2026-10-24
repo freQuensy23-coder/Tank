@@ -486,6 +486,13 @@ async def test_registry_objects_are_shown_with_their_key_and_the_key_is_what_too
     }
 
 
+async def test_a_source_registered_only_in_the_database_is_accepted(context):
+    repo, settings, session, _ = context
+    await repo.put("reg.sources", "S99", {"source_id": "S99", "name": "Replay-only source"})
+    arguments = {"query": "x", "source_ids": ["S99"]}
+    assert await ModelContext(repo, settings, session).arguments("search_tank_items", arguments) == arguments
+
+
 async def test_no_id_guards_strip_record_ids_but_keep_registry_keys(context):
     repo, settings, session, item = context
     boundary = ModelContext(repo, settings, session)

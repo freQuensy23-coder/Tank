@@ -18,7 +18,7 @@ import httpx
 from httpx_sse import aconnect_sse
 
 from tank.agents import workflow
-from tank.agents.context import CONTEXT_VERSION, ModelContext
+from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.security import redact_tool_arguments
 from tank.agents.wire import tool_wire_result
@@ -79,13 +79,6 @@ SESSION_ADMISSION_FIELDS = (
 )
 JOB_ADMISSION_FIELDS = ("job_id", "status", "priority", "payload", "slot_waiting_since", "slot_admitted")
 BUSY_RUNTIME_STATES = {"PENDING", "RUNNING", "REQUIRES_ACTION"}
-CONTEXT_TRANSITION = (
-    "Use the current tool definitions instead of earlier tool instructions. "
-    "Tool arguments now name records only by their IDs, never by descriptions: item_id, event_id, claim_id, "
-    "cond_id and proposal_id come from read-only SQL as your skill shows; token_id, entity_id, instrument_id "
-    "and source_id are the registry keys shown after « · » next to names (Name · key). The current event, "
-    "the incoming source and the current proposal stay implicit."
-)
 
 
 class AdmissionDeferred(Exception):
@@ -490,6 +483,17 @@ class SessionService:
             current.update(self.clock_timestamp().fields("tools_synced_at"))
             await self.repo.put("ops.agent_sessions", sid, current)
 
+    async def transition_note(self, sid):
+        """The ID-contract note for a turn that began before its session switched: delivered once, because
+        a switched session keeps its earlier skill text and learns the lookups only from this note."""
+        async with self.repo.lock("session:" + sid):
+            current = await self.repo.get("ops.agent_sessions", sid)
+            if current is None or current.get("context_note_version") == CONTEXT_VERSION:
+                return None
+            current["context_note_version"] = CONTEXT_VERSION
+            await self.repo.put("ops.agent_sessions", sid, current)
+        return CONTEXT_TRANSITION[bool(current.get("proposal_id"))]
+
     async def prepare_attachments(self, session, question):
         question = copy.deepcopy(question)
         for index, item in enumerate(question.get("attachments") or [], 1):
@@ -593,8 +597,9 @@ class SessionService:
                 raise DeliveryDeferred(offset_schedule(collection_clock(), timedelta(seconds=30)))
             session = await self.repo.get("ops.agent_sessions", sid)
         content = await ModelContext(self.repo, self.settings, session).message(payload, item)
+        note = CONTEXT_TRANSITION[bool(session.get("proposal_id"))]
         if migrating:
-            content["context_update"] = CONTEXT_TRANSITION
+            content["context_update"] = note
         async with self.send_locks.setdefault(sid, asyncio.Lock()):
             async with self.repo.lock("session:" + sid):
                 session = await self.repo.get("ops.agent_sessions", sid)
@@ -618,7 +623,7 @@ class SessionService:
                             raise KeyError(payload["question_id"])
                         text = question_message(await self.prepare_attachments(session, question))
                         if migrating:
-                            text = CONTEXT_TRANSITION + "\n\n" + text
+                            text = note + "\n\n" + text
                     body = {
                         "type": "user.message",
                         "content": [{"type": "text", "text": text}],
@@ -639,6 +644,8 @@ class SessionService:
                         ),
                     }
                     session.setdefault("message_log", []).append(intent)
+                    if migrating:
+                        session["context_note_version"] = CONTEXT_VERSION
                 session["last_message"] = copy.deepcopy(intent["body"])
                 session["last_payload"] = copy.deepcopy(intent["payload"])
                 if not session.get("active_message_id"):
@@ -1501,11 +1508,12 @@ class SessionService:
         projected = await ModelContext(self.repo, self.settings, current).result(
             stored["tool"], stored["result"]
         )
-        if self.legacy_contract(session):
+        note = await self.transition_note(sid) if self.legacy_contract(session) else None
+        if note:
             projected = (
-                dict(projected, context_update=CONTEXT_TRANSITION)
+                dict(projected, context_update=note)
                 if isinstance(projected, dict)
-                else {"result": projected, "context_update": CONTEXT_TRANSITION}
+                else {"result": projected, "context_update": note}
             )
         body = {
             "type": "user.custom_tool_result",

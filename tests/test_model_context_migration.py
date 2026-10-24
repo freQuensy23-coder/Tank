@@ -6,7 +6,7 @@ import json
 import httpx
 import pytest
 
-from tank.agents.context import CONTEXT_VERSION, ModelContext
+from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
 from tank.agents.sessions import SessionService
 from tank.delivery import DeliveryDeferred
 from tank.event_tools import EventToolService
@@ -121,9 +121,18 @@ async def test_legacy_callbacks_upgrade_before_delivery_and_new_turns_reject_ids
     posts = [row for row in native.requests if row[0] == "POST"]
     assert [row[1] for row in posts] == ["/v1/sessions/session_legacy", "/v1/sessions/session_legacy/events"]
     text = posts[-1][2]["events"][0]["content"][0]["text"]
-    assert "context_update" in text and "by their IDs" in text
-    assert event["event_id"] not in text and item["item_id"] not in text
     scout = kind == "SCOUT_REVIEW"
+    assert json.loads(text)["context_update"] == CONTEXT_TRANSITION[scout]
+    for lookup in (
+        "«Claims of an event»",
+        "«Events by statement, time or token»",
+        "«Source document by URL»",
+    ):
+        assert lookup in text
+    assert ("Your sandbox shell is now enabled" in text) is scout
+    assert ("Finding record IDs for tool arguments" in text) is not scout
+    assert current["context_note_version"] == CONTEXT_VERSION
+    assert event["event_id"] not in text and item["item_id"] not in text
     assert native.tools == agent_tools(settings, "tank-scout-reviewer" if scout else "tank-event-analyst")
     assert native.tools[0]["default_config"]["enabled"] is not scout
     assert ({"name": "bash", "enabled": True} in native.tools[0]["configs"]) is scout
@@ -193,7 +202,8 @@ async def test_old_description_call_in_a_legacy_turn_is_refused_once_and_the_id_
         result_posts = [row[2]["events"][0] for row in native.requests if row[1].endswith("/events")]
         assert result_posts == [frozen, frozen]
         text = frozen["content"][0]["text"]
-        assert "context_update" in text and "pass item_id" in text and event["event_id"] not in text
+        assert "pass item_id" in text and event["event_id"] not in text
+        assert json.loads(text)["context_update"] == CONTEXT_TRANSITION[False]
         new = {
             "id": "new_call",
             "name": "add_observation",
@@ -209,6 +219,7 @@ async def test_old_description_call_in_a_legacy_turn_is_refused_once_and_the_id_
             0
         ]["text"]
         assert "Live" in text and claims[0]["claim_id"] not in text and observations[0]["obs_id"] not in text
+        assert "context_update" not in text
     bound = await ModelContext(repo, settings, current).arguments("get_decision", {"token_id": "world:WLD"})
     assert bound == {"token_id": "world:WLD", "event_id": event["event_id"]}
 
