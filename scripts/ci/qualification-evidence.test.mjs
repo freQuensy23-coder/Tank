@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { requiredNativeCases, verifyAcceptance } from './check-sandbox-acceptance.mjs';
 
 const expected = { sourceSha: 'a'.repeat(40), runId: '123' };
-const fixture = () => ({ schema: 'tank.native-managed-upgrade.v1', ...expected, cases: requiredNativeCases.map(name => ({ case: name, status: 'PASS' })), unproved: [], fullyQualified: true });
+const fixture = () => ({ schema: 'tank.native-managed-upgrade.v1', ...expected, cases: requiredNativeCases.map(name => ({ case: name, status: 'PASS', receipt: name + '.json', receiptSha256: 'c'.repeat(64) })), unproved: [], fullyQualified: true });
 test('qualification gate accepts only the complete exact-head native inventory', () => {
   assert.doesNotThrow(() => verifyAcceptance(fixture(), expected));
   for (const alter of [
@@ -13,6 +13,8 @@ test('qualification gate accepts only the complete exact-head native inventory',
     row => { row.cases.push(row.cases[0]); },
     row => { row.cases[0].status = 'SKIP'; },
     row => { row.cases[0].status = 'FAIL'; },
+    row => { row.cases[0].receipt = '../wrong.json'; },
+    row => { delete row.cases[0].receiptSha256; },
     row => { row.fullyQualified = false; },
     row => { row.unproved.push('lease-loss'); },
   ]) {

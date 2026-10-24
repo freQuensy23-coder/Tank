@@ -124,7 +124,7 @@ for (const [index, scenario] of scenarios.entries()) {
     });
   };
   const api = async (path, body, method = body === undefined ? 'GET' : 'POST') => {
-    const response = await fetch(base + path, { method, headers: { 'x-api-key': credentials.OMA_API_KEY, 'anthropic-beta': 'managed-agents-2026-04-01,files-api-2025-04-14', ...(body === undefined || body instanceof FormData ? {} : { 'content-type': 'application/json' }) }, body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body), signal: AbortSignal.timeout(path.endsWith('/archive') ? 180000 : 15000) });
+    const response = await fetch(base + path, { method, headers: { 'x-api-key': credentials.OMA_API_KEY, 'anthropic-beta': 'managed-agents-2026-04-01,files-api-2025-04-14,agent-memory-2026-07-22', ...(body === undefined || body instanceof FormData ? {} : { 'content-type': 'application/json' }) }, body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body), signal: AbortSignal.timeout(path.endsWith('/archive') ? 180000 : 15000) });
     const text = await response.text();
     assert.ok(response.ok, `Managed API ${method} ${path}: ${response.status} ${sanitized(text)}`);
     return JSON.parse(text);
@@ -150,6 +150,7 @@ for (const [index, scenario] of scenarios.entries()) {
     });
   };
   const stop = () => { docker(['stop', '--time', '45', activeService], { timeout: 60000 }); docker(['rm', activeService]); };
+  const nativeCatalog = () => JSON.parse(docker(['exec', activeService, 'node', '--input-type=module', '-e', "import {DatabaseSync} from 'node:sqlite';import {createHash} from 'node:crypto';const db=new DatabaseSync(process.env.BOXLITE_HOME+'/db/boxlite.db',{readOnly:true});console.log(JSON.stringify(db.prepare('SELECT id,name,json FROM box_config ORDER BY id').all().map(row=>({id:row.id,name:row.name,configurationSha256:createHash('sha256').update(row.json).digest('hex'),options:JSON.parse(row.json).options}))));db.close();"]));
   let latestHistory = [];
   const events = async id => {
     const collected = [];
@@ -193,6 +194,7 @@ for (const [index, scenario] of scenarios.entries()) {
     receipt.initialInput = await send('A');
     const initialHistory = await waitFor('actual A guest file/browser execution', async () => { const rows = await events(session.id); if (rows.some(row => row.type === 'session.error')) throw Object.assign(Error(JSON.stringify(rows.filter(row => row.type === 'session.error'))), { fatal: true }); return receipts(rows).length >= 1 && rows.some(row => row.type === 'session.status_idle' && row.stop_reason?.type === 'end_turn') ? rows : null; }, 600);
     receipt.before = publication();
+    receipt.nativeBefore = nativeCatalog();
     const memoryBindings = runtimeId => JSON.parse(docker(['exec', activeService, 'node', '--input-type=module', '-e', "import {DatabaseSync} from 'node:sqlite';const db=new DatabaseSync(process.env.BOXLITE_HOME+'/db/boxlite.db',{readOnly:true});const row=db.prepare('SELECT id,name,json FROM box_config WHERE id=?').get(process.argv[1]);if(!row)throw Error('missing actual native catalog row');const data=JSON.parse(row.json);if(data.id!==row.id||data.name!==row.name)throw Error('actual native catalog identity mismatch');console.log(JSON.stringify(data.options.volumes.filter(v=>v.guest_path.startsWith('/mnt/memory/'))));db.close();", runtimeId]));
     receipt.memoryBefore = await waitFor('A writable-memory synchronization through Managed API', async () => { const value = await memoryContent(); return value.content === 'seed:' + nonce + '\nA' ? value : null; });
     receipt.memoryBindingsBefore = memoryBindings(receipt.before.handle.runtimeId);
@@ -242,6 +244,8 @@ for (const [index, scenario] of scenarios.entries()) {
         control('/release', {});
         await archived;
         receipt.archived = await waitFor('owned native archival and replacement fencing', () => { const value = publication(); return value.state === 'archived' ? value : null; }, 180);
+        receipt.nativeAfterArchive = nativeCatalog();
+        assert.deepEqual(receipt.nativeAfterArchive, [], 'archival retained owned source/target native configurations');
         const afterArchive = await events(session.id);
         for (let index = 0; index < initialHistory.length; index++) assert.deepEqual(afterArchive[index], initialHistory[index]);
         assert.deepEqual(receipts(afterArchive).map(row => row.phase), ['A'], 'archived race reached model/tool effects');
@@ -252,11 +256,12 @@ for (const [index, scenario] of scenarios.entries()) {
     }
     const history = await waitFor('same-session B upgrade and queued-input completion', async () => { const rows = await events(session.id); return receipts(rows).length >= 3 && rows.filter(row => row.type === 'session.status_idle' && row.stop_reason?.type === 'end_turn').length >= 2 ? rows : null; }, 600);
     receipt.after = publication();
+    receipt.nativeAfter = nativeCatalog();
     if (receipt.committedBeforeLostAck) assert.deepEqual(receipt.after.handle, receipt.committedBeforeLostAck.handle, 'lost publication acknowledgement caused a second replacement');
     if (scenario === 'lease-concurrent') {
       receipt.ownerAfterPartition = JSON.parse(sql("SELECT row_to_json(r) FROM (SELECT generation,owner_id,expires_at_ms FROM runtime_resource_fences) r"));
       assert.ok(Number(receipt.ownerAfterPartition.generation) > Number(receipt.ownerBeforePartition.generation), 'expired owner was not fenced by a new generation');
-      assert.equal(JSON.parse(sql("SELECT COALESCE(json_agg(id), '[]'::json) FROM managed_session_executions WHERE state IN ('running','queued')")).length, 0, 'competing worker left duplicate live execution');
+      await waitFor('both queued inputs durably settled under competing resumes', () => JSON.parse(sql("SELECT COALESCE(json_agg(id), '[]'::json) FROM managed_session_executions WHERE state IN ('running','queued')")).length === 0);
     }
     receipt.memoryAfter = await waitFor('B writable-memory synchronization through Managed API', async () => { const value = await memoryContent(); return value.content === 'seed:' + nonce + '\nA\nB-first\nB-second' ? value : null; });
     receipt.memoryBindingsAfter = memoryBindings(receipt.after.handle.runtimeId);
@@ -277,6 +282,8 @@ for (const [index, scenario] of scenarios.entries()) {
     assert.deepEqual(receipts(history).at(-1).effects, ['A', 'B-first', 'B-second']);
     receipt.guestReceipts = receipts(history);
     receipt.providerObservations = JSON.parse(docker(['exec', names.provider, 'node', '-e', "fetch('http://127.0.0.1:9000/observations',{headers:{'x-api-key':process.env.QUALIFICATION_PROVIDER_KEY}}).then(r=>r.json()).then(v=>console.log(JSON.stringify(v)))"]));
+    assert.equal(receipt.providerObservations.filter(row => row.kind === 'tool_use').length, 3, 'model reissued or skipped a native tool effect');
+    assert.equal(new Set(receipt.providerObservations.filter(row => row.kind === 'tool_use').map(row => row.commandSha256)).size, 3);
     assert.ok(receipt.providerObservations.some(row => row.upgradedNoticePresent), 'Continuing agent did not actually receive the runtime upgrade notice');
     receipt.guestReceiptCount = receipts(history).length;
     receipt.status = 'PASS';
@@ -338,6 +345,13 @@ for (const [index, scenario] of scenarios.entries()) {
 const happyRounds = observations.filter(row => row.scenario.startsWith('happy-'));
 additionalCases.push({ case: 'writable-memory-restart-A-to-B', sourceSha, status: happyRounds.length === 2 && happyRounds.every(row => row.status === 'PASS' && row.memoryVerified) ? 'PASS' : 'FAIL', rounds: happyRounds.map(row => ({ case: row.case, memoryStoreId: row.memoryStoreId, bindingsBefore: row.memoryBindingsBefore, bindingsAfter: row.memoryBindingsAfter, verified: row.memoryVerified === true })) });
 await rm(privateDirectory, { recursive: true, force: true });
-for (const row of additionalCases) await writeFile(join(evidence, row.case + '.json'), JSON.stringify(row, null, 2) + '\n');
-await writeFile(join(evidence, 'native-summary.json'), JSON.stringify({ schema: 'tank.native-managed-upgrade.v1', sourceSha, runId: process.env.GITHUB_RUN_ID, cases: [...observations, ...additionalCases].map(row => ({ case: row.case, status: row.status })), fullyQualified: false, unproved: ['legacy-native-publication', ...observations.filter(row => row.status !== 'PASS').map(row => row.case)] }, null, 2) + '\n');
+const cases = [];
+for (const row of [...observations, ...additionalCases]) {
+  row.runId = process.env.GITHUB_RUN_ID;
+  const receipt = row.case + '.json';
+  const bytes = JSON.stringify(row, null, 2) + '\n';
+  await writeFile(join(evidence, receipt), bytes, { flag: 'wx' });
+  cases.push({ case: row.case, status: row.status, receipt, receiptSha256: createHash('sha256').update(bytes).digest('hex') });
+}
+await writeFile(join(evidence, 'native-summary.json'), JSON.stringify({ schema: 'tank.native-managed-upgrade.v1', sourceSha, runId: process.env.GITHUB_RUN_ID, cases, fullyQualified: false, unproved: ['legacy-native-publication', ...observations.filter(row => row.status !== 'PASS').map(row => row.case)] }, null, 2) + '\n', { flag: 'wx' });
 assert.equal(observations.filter(row => row.status === 'PASS').length, scenarios.length, 'Every actual native scenario must complete');
