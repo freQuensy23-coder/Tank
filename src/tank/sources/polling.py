@@ -762,9 +762,9 @@ class SourcePoller:
                 if payload is None:
                     raise ValueError("Binance article returned 304 without a durable source item")
                 detail_object = json.loads(payload)["data"]
-                if not item.get("published_at") and detail_object.get("publishDate"):
+                if item.get("published_at") is None and detail_object.get("publishDate") is not None:
                     item.update(
-                        parsers.timestamp_fields(detail_object["publishDate"]),
+                        parsers.timestamp_fields(detail_object["publishDate"], epoch_unit="ms"),
                         published_at_basis="BINANCE_CMS_DETAIL_PUBLISH_DATE",
                     )
                 item["text"] = parsers.binance_body(detail_object.get("body", ""))

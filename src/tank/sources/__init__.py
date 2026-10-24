@@ -6,6 +6,7 @@ persists probability/model provenance; source ingestion never guesses relevance.
 """
 
 import asyncio
+import math
 import re
 import ssl
 from collections.abc import Mapping
@@ -168,7 +169,7 @@ class SourceService:
                 if response.status_code == 304:
                     return None, state
                 payload = response.content
-                received_at = iso()
+                received_at = iso(self.now())
                 digest = sha256(payload)
 
                 if re.fullmatch(r"S\d{2}:\d+", key):
@@ -201,13 +202,17 @@ class SourceService:
                         retry = exc.response.headers.get("retry-after")
                         if retry:
                             try:
-                                delay = max(delay, float(retry))
+                                retry_seconds = float(retry)
+                                if not math.isfinite(retry_seconds) or retry_seconds < 0:
+                                    raise ValueError("Invalid retry delay")
+                                delay = max(delay, retry_seconds)
                             except ValueError:
-                                with suppress(ValueError, TypeError):
-                                    delay = max(
-                                        delay,
-                                        (parse_time(parsers.published(retry)) - utcnow()).total_seconds(),
-                                    )
+                                retry_at = parsers.published(retry)
+                                if retry_at is not None:
+                                    with suppress(ValueError, TypeError):
+                                        delay = max(
+                                            delay, (parse_time(retry_at) - self.now()).total_seconds()
+                                        )
                     await asyncio.sleep(delay)
         if error is None:
             raise RuntimeError("Source fetch exhausted retries without a recorded failure")

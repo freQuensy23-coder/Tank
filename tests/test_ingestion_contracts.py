@@ -523,3 +523,18 @@ async def test_ingestion_cannot_invent_a_missing_capture_clock(tmp_path: Path) -
             await service.ingest(service.sources["S30"], incoming)
     assert await repo.list("ingest.source_items") == []
     assert await repo.list("ops.jobs") == []
+
+
+def test_configured_source_intervals_preserve_canonical_json_and_reject_boolean() -> None:
+    from tank.contracts.sources import SourceConfiguration, SourceDefinition
+    from tank.settings import Settings
+    from tank.util import canonical_json
+
+    raw = Settings().load_config("sources")
+    configured = SourceConfiguration.model_validate(raw)
+    assert canonical_json(configured.model_dump(mode="json", exclude_unset=True)) == canonical_json(raw)
+    first = configured.sources[0]
+    invalid = first.model_dump(mode="json", exclude_unset=True)
+    invalid["interval_s"] = True
+    with pytest.raises(ValidationError, match="interval_s"):
+        SourceDefinition.model_validate(invalid)
