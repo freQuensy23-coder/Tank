@@ -112,6 +112,7 @@ type SafeAllocationOptions = Omit<
 export interface BoxLiteProviderOptions {
   providerId: BoxLiteManagedProviderId;
   image: string;
+  runtimeName?(context: SandboxFactoryContext): string;
   client?: BoxLiteClientPort;
   connection?:
     | { type: "embedded"; homeDir?: string }
@@ -489,7 +490,7 @@ function createBoxLiteProviderWithClient(
       }
       acquisition.signal.throwIfAborted();
       const sdk = await client();
-      const name = stableName(options.providerId, context.sessionId);
+      const name = options.runtimeName?.(context) ?? stableName(options.providerId, context.sessionId);
       const extra = await options.allocationOptions?.({ ...acquisition, name }) ?? {};
       acquisition.signal.throwIfAborted();
       const result = await sdk.getOrCreate({
@@ -525,10 +526,11 @@ function createBoxLiteProviderWithClient(
       const sdk = await client();
       const box = await sdk.get(handle.runtimeId);
       if (box === null) throw new Error(`BoxLite runtime not found: ${handle.runtimeId}`);
-      const name = stableName(options.providerId, context.sessionId);
+      const name = options.runtimeName?.(context) ?? stableName(options.providerId, context.sessionId);
       validateBox(box, name);
       await ensureRunning(box);
-      await ensureWorkspace(box);
+      const workspace = await executeAndCollect(box, '/bin/test', ['-d', '/workspace', '-a', '!', '-L', '/workspace'], [], 30, '/');
+      if (workspace.exitCode !== 0) throw new Error('retained_workspace_missing');
       acquisition?.signal.throwIfAborted();
       return runtime(sdk, box, name);
     },
@@ -590,7 +592,7 @@ export function createBoxLiteManagedRuntime(options: BoxLiteManagedRuntimeOption
       const sdk = await client();
       const box = await sdk.get(lease.runtimeId);
       if (box === null) return;
-      validateBox(box, stableName(options.providerId, context.sessionId));
+      validateBox(box, options.runtimeName?.(context) ?? stableName(options.providerId, context.sessionId));
       await sdk.remove(lease.runtimeId, true);
     },
     drivers: ["ama_worker"],

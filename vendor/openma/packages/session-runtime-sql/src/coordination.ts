@@ -1,6 +1,6 @@
 import { encodeSessionEventDocument, type ExecutionProgressReceipt } from '@open-managed-agents/session-runtime-contract/history';
 import type { YieldSessionExecutionProgress, YieldSessionExecutionProgressResult } from '@open-managed-agents/session-runtime-contract/coordination';
-import { planSessionContinuation, resultCallId, verifiedProgress, type ContinuationSnapshot } from '@open-managed-agents/session-runtime-contract/continuation';
+import { imageMismatchRecoveryBoundary, planSessionContinuation, resultCallId, verifiedProgress, type ContinuationSnapshot } from '@open-managed-agents/session-runtime-contract/continuation';
 import { loadSessionContinuationSnapshot, SessionContinuationMissingError } from './continuation';
 import type {
   AdmitSessionExecution,
@@ -69,6 +69,11 @@ const schemaStatements = [
     holder_execution_id VARCHAR(191),
     PRIMARY KEY (workspace_id, session_id)
   )`,
+  `CREATE TABLE IF NOT EXISTS managed_session_image_recoveries (
+    workspace_id VARCHAR(191) NOT NULL, execution_id VARCHAR(191) NOT NULL,
+    after_event_id TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, execution_id)
+  )`,
 ] as const;
 
 export const sessionExecutionCoordinatorSqlSchema =
@@ -86,6 +91,8 @@ export async function ensureSessionExecutionClaimLockSchema(
   await sql.exec(schemaStatements[3] + (dialect === "mysql"
     ? " ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     : ""));
+  await sql.exec(schemaStatements[4] + (dialect === "mysql"
+    ? " ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci" : ""));
   await upgradeSessionClaimLockColumns(sql, dialect);
 }
 
@@ -474,7 +481,10 @@ export class SqlSessionExecutionStore
       WHERE (CAST(? AS VARCHAR(191)) IS NULL OR workspace_id = ?)
         AND (CAST(? AS VARCHAR(191)) IS NULL OR session_id = ?)
         AND (CAST(? AS VARCHAR(191)) IS NULL OR lane_id = ?)
-        AND (state = 'queued' OR (state = 'running' AND lease_expires_at_ms <= ? AND owner_id <> ?))
+        AND (state = 'queued' OR (state = 'running' AND lease_expires_at_ms <= ? AND owner_id <> ?)
+          OR (state = 'failed' AND failure = 'retained_configuration_changed' AND interrupt_requested_at_ms IS NULL
+            AND NOT EXISTS (SELECT 1 FROM managed_session_image_recoveries AS recovery
+              WHERE recovery.workspace_id = managed_session_executions.workspace_id AND recovery.execution_id = managed_session_executions.id)))
         AND attempt_count < max_attempts AND deadline_at_ms > ?
       ORDER BY admitted_at_ms, id`).bind(input.workspaceId ?? null, input.workspaceId ?? null, input.sessionId ?? null, input.sessionId ?? null, input.laneId ?? null, input.laneId ?? null, claimedAt, input.ownerId, claimedAt).all<ExecutionRow>();
     const ordered = (candidates.results ?? []).map(row => ({
@@ -505,12 +515,16 @@ export class SqlSessionExecutionStore
           .bind(claimedAt, row.workspace_id, row.id, row.revision, claimedAt, input.ownerId, row.workspace_id, row.session_id).run();
         continue;
       }
-      const plan = planSessionContinuation(snapshot, row.id);
-      if (plan.mode === 'blocked')
+      const imageRecoveryAfterEventId = row.state === 'failed' ? imageMismatchRecoveryBoundary(snapshot, row.id) : null;
+      if (row.state === 'failed' && !imageRecoveryAfterEventId) continue;
+      const planning = imageRecoveryAfterEventId ? { ...snapshot, executions: snapshot.executions.map(execution => execution.id === row.id
+        ? { ...execution, state: 'queued' as const, imageRecoveryAfterEventId } : execution) } : snapshot;
+      const plan = planSessionContinuation(planning, row.id);
+      if (plan.mode === 'blocked' || (imageRecoveryAfterEventId && plan.mode === 'failure'))
         continue;
       return {
         workspace_id: row.workspace_id, session_id: row.session_id, id: row.id,
-        revision: row.revision, continuation: snapshot, lane_id: row.lane_id, serial
+        revision: row.revision, continuation: snapshot, lane_id: row.lane_id, serial, imageRecoveryAfterEventId
       };
     }
     return null;
@@ -580,6 +594,7 @@ export class SqlSessionExecutionStore
     continuation?: ContinuationSnapshot;
     lane_id?: string;
     serial?: boolean;
+    imageRecoveryAfterEventId?: string | null;
   }): Promise<ClaimSessionExecutionResult | null> {
     const claimToken = crypto.randomUUID();
     await this.sql.prepare(`
@@ -612,6 +627,12 @@ export class SqlSessionExecutionStore
         version: nextVersion,
         holderId: candidate.id,
       }),
+      ...(candidate.imageRecoveryAfterEventId ? [this.sql.prepare(`
+        INSERT INTO managed_session_image_recoveries (workspace_id, execution_id, after_event_id)
+        SELECT workspace_id, id, ? FROM managed_session_executions
+          WHERE workspace_id = ? AND id = ? AND state = 'running' AND attempt_id = ? AND owner_id = ?
+        ON CONFLICT (workspace_id, execution_id) DO NOTHING
+      `).bind(candidate.imageRecoveryAfterEventId, candidate.workspace_id, candidate.id, input.attemptId, input.ownerId)] : []),
     ]);
     if ((results[0]?.meta.changes ?? 0) !== 1)
       return null;
@@ -627,6 +648,7 @@ export class SqlSessionExecutionStore
     continuation?: ContinuationSnapshot;
     lane_id?: string;
     serial?: boolean;
+    imageRecoveryAfterEventId?: string | null;
   }): Promise<ClaimSessionExecutionResult | null> {
     const revision = safeInteger(candidate.revision, "execution revision");
     const row = await this.executionClaimStatement(input, claimedAt, candidate, revision).first<ExecutionRow>();
@@ -640,6 +662,7 @@ export class SqlSessionExecutionStore
     continuation?: ContinuationSnapshot;
     lane_id?: string;
     serial?: boolean;
+    imageRecoveryAfterEventId?: string | null;
   }, revision: number, lock?: {
     workspaceId: string;
     sessionId: string;
@@ -657,7 +680,8 @@ export class SqlSessionExecutionStore
              settled_at_ms = NULL, failure = NULL, revision = revision + 1
        WHERE workspace_id = ? AND id = ? AND revision = ?
          AND (state = 'queued' OR (state = 'running'
-           AND lease_expires_at_ms <= ? AND owner_id <> ?))
+           AND lease_expires_at_ms <= ? AND owner_id <> ?)
+           ${candidate.imageRecoveryAfterEventId ? "OR (state = 'failed' AND failure = 'retained_configuration_changed' AND interrupt_requested_at_ms IS NULL)" : ''})
          AND attempt_count < max_attempts
          AND deadline_at_ms > ?
          ${candidate.continuation ? `AND EXISTS (

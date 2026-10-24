@@ -69,11 +69,11 @@ import { nodeSessionLifecycle } from "../lib/node-session-lifecycle.js";
 import { SqlSessionResourceSecretSource } from "@open-managed-agents/session-resource-store-sql";
 
 import { rm, readFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
 import { ensureRuntimeResourceFenceSchema, SqlRuntimeResourceFencePort, SqlRuntimeOrphanPort } from "@open-managed-agents/runtime-resource-fence-sql";
 import * as retainedBoxLiteProvider from "@open-managed-agents/managed-runtime-boxlite";
 import { verifyReplayEvidence } from "@open-managed-agents/sandbox-adapter-litebox";
 import { validateReplayAttachment } from "../lib/tank-retained/replay-attachment.js";
+import { executableImageIdentity, stableDigest } from "../lib/tank-retained/runtime-identity.js";
 import { NodeRetainedLifecycle, type AttachableSandbox } from "../lib/tank-retained/node-lifecycle.js";
 import { join } from "node:path";
 import { nanoid } from "nanoid";
@@ -347,11 +347,7 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
       withDefaultConfig(): unknown;
     };
   };
-  const stableDigest = (value: unknown): string => {
-    const normalize = (item: unknown): unknown => Array.isArray(item) ? item.map(normalize)
-      : item !== null && typeof item === "object" ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)).map(([name, child]) => [name, normalize(child)])) : item;
-    return "sha256:" + createHash("sha256").update(JSON.stringify(normalize(value))).digest("hex");
-  };
+  const retainedImageIdentities = new Map<string, Promise<string>>();
   const retainedLifecycle = new NodeRetainedLifecycle({
     fences: new SqlRuntimeResourceFencePort(sql), orphans: new SqlRuntimeOrphanPort(sql), providerModule: retainedBoxLiteProvider,
     client: retainedSdk.JsBoxlite.withDefaultConfig(), ownerId: config.execution.ownerId, leaseTtlMs: 30000,
@@ -382,6 +378,31 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
         resources: domain.session.resources, skills: domain.session.agent.skills, environmentName: domain.environment.name, environment: domain.environment.config, allocation, rootfsIndex,
         databasePolicy: database ? { host: database.hostname, port: database.port, database: database.pathname, role: database.username } : null
       });
+    },
+    identity: async (context, allocation) => {
+      const domain = context as typeof context & {
+        session: { resources: unknown; agent: { skills: unknown }; metadata: Record<string, string> };
+        environment: { config: unknown; name: string };
+      };
+      await validateReplayAttachment(domain, allocation, verifyReplayEvidence, process.env.TANK_REPLAY_EVIDENCE_ROOT);
+      if (!allocation.rootfsPath) throw Error("retained_image_provenance_missing:oci_layout_required");
+      let image = retainedImageIdentities.get(allocation.rootfsPath);
+      if (!image) {
+        image = executableImageIdentity(allocation.rootfsPath);
+        retainedImageIdentities.set(allocation.rootfsPath, image);
+      }
+      const databaseUrl = domain.environment.name === "tank-replay" ? process.env.TANK_SANDBOX_REPLAY_DB_URL : process.env.TANK_SANDBOX_DB_URL;
+      const database = databaseUrl ? new URL(databaseUrl) : null;
+      const { image: imageReference, rootfsPath, name, volumes, network, security, ...runtimeResources } = allocation;
+      const components = {
+        runtimeAbi: "c4afefbdddba3e6f05634a3bb5a46db20d5636413f4f24909b2abcdfa8fa8654",
+        scope: [context.workspaceId, context.environment.id, context.sessionId],
+        resources: domain.session.resources, skills: domain.session.agent.skills,
+        environmentName: domain.environment.name, environment: domain.environment.config,
+        runtimeResources, mounts: volumes, network, security,
+        databasePolicy: database ? { host: database.hostname, port: database.port, database: database.pathname, role: database.username } : null,
+      };
+      return { version: 2, image: await image, compatibility: Object.fromEntries(Object.entries(components).map(([key, value]) => [key, stableDigest(value)])) };
     },
   });
   await retainedLifecycle.reconcileOrphans();
@@ -499,6 +520,7 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
         sandbox,
         runtimeGeneration,
       });
+      if ("prepareRetainedRuntime" in sandbox) await (sandbox as typeof sandbox & { prepareRetainedRuntime(): Promise<void> }).prepareRetainedRuntime();
     },
     synchronizeSandbox: async ({ workspaceId, session, sandbox, runtimeGeneration, executionFence, }) => {
       await sandbox.synchronizeMemoryStores?.();
@@ -619,7 +641,9 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
           .app({ workspaceId: input.workspaceId })
           .port(managedAgentsPortTokens.skillVersions))
         : undefined;
+      const runtimeUpgradeNotice = retainedLifecycle.upgradeNotice({ ...input, sessionId: input.session.id });
       const platformReminders = [
+        ...(runtimeUpgradeNotice ? [runtimeUpgradeNotice] : []),
         ...(assemblySkills ? [] : buildNodeManagedSkillReminders(input.session)),
         ...buildNodeManagedAppendablePromptReminders(input.session),
       ];

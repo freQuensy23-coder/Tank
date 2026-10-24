@@ -1,5 +1,9 @@
 import { copyGuestFileIn, copyGuestFileOut } from './guest-file-io.js';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { workspaceTransferProgram } from './workspace-transfer.js';
 import type { Fence, Handle, Provider, RetainedRuntime, Scope } from './retained-session.js';
 
 type Process = {
@@ -29,7 +33,7 @@ interface PublicProvider {
   resume(handle: Handle, context: { sessionId: string; workdir: string }, env: Record<string, string>, acquisition: Acquisition): Promise<BoxLiteRuntime>;
 }
 export interface PinnedBoxLiteModule {
-  createBoxLiteProvider(options: { providerId: 'litebox'; image: string }): PublicProvider;
+  createBoxLiteProvider(options: { providerId: 'litebox'; image: string; runtimeName?: (context: { sessionId: string; workdir: string }) => string }): PublicProvider;
   createBoxLiteManagedRuntime(options: { providerId: 'litebox'; image: string; leaseTtlMs: number }): {
     sandbox: { reap(input: { scope: Scope; lease: Handle; reason: 'completed' }): Promise<void> };
   };
@@ -98,6 +102,19 @@ export function pinnedBoxLiteProvider(input: {
       artifact: { type: 'image', reference: input.allocation.image } },
   });
   const expectedName = (scope: Scope) => 'oma-' + createHash('sha256').update(`litebox:${scope.sessionId}`).digest('hex').slice(0, 32);
+  const upgradePrefix = (scope: Scope) => 'oma-' + createHash('sha256').update(JSON.stringify(scope)).digest('hex').slice(0, 32) + '-upgrade-';
+  const ownershipName = (handle: Handle, scope: Scope): string => {
+    if (!handle.ownershipName) return expectedName(scope);
+    if (!handle.ownershipName.startsWith(upgradePrefix(scope)) || !/^[a-f0-9]{32}$/.test(handle.ownershipName.slice(upgradePrefix(scope).length))) throw Error('retained_cleanup_ownership_mismatch');
+    return handle.ownershipName;
+  };
+  const publicProvider = (handle: Handle, scope: Scope) => handle.ownershipName
+    ? input.module.createBoxLiteProvider({ ...options, runtimeName: () => ownershipName(handle, scope) }) : provider;
+  const decorate = (runtime: BoxLiteRuntime, name: string): BoxLiteRuntime => {
+    const handle = runtime.runtimeHandle();
+    runtime.runtimeHandle = () => ({ ...handle, ownershipName: name });
+    return runtime;
+  };
   const stopExactPublished = async (handle: Handle, scope: Scope, fence: Fence) => {
     await current(fence);
     const freshClient = client as unknown as { get(id: string): Promise<null | {
@@ -106,7 +123,7 @@ export function pinnedBoxLiteProvider(input: {
     const box = await freshClient.get(handle.runtimeId);
     if (!box) return;
     const info = box.info();
-    if (box.id !== handle.runtimeId || info.id !== handle.runtimeId || info.name !== expectedName(scope)) throw Error('retained_cleanup_ownership_mismatch');
+    if (box.id !== handle.runtimeId || info.id !== handle.runtimeId || info.name !== ownershipName(handle, scope)) throw Error('retained_cleanup_ownership_mismatch');
     await current(fence);
     if (info.state.running) await box.stop();
   };
@@ -148,19 +165,78 @@ export function pinnedBoxLiteProvider(input: {
         throw error;
       }
     },
+    async validateLegacy(handle, scope, fence, signal) {
+      signal.throwIfAborted(); await current(fence);
+      const info = await inspect(handle.runtimeId);
+      if (!info || info.id !== handle.runtimeId || info.name !== expectedName(scope)) throw Error('retained_legacy_provider_provenance_missing:runtime_ownership');
+      await current(fence);
+    },
+    async replacementIntent(_source, _identity, scope, fence, signal) {
+      signal.throwIfAborted(); await current(fence);
+      const name = upgradePrefix(scope) + randomUUID().replaceAll('-', '');
+      if (await inspect(name)) throw Error('retained_unpublished_runtime_exists');
+      return { provider: 'litebox', runtimeId: name, ownershipName: name };
+    },
+    async replace(journal, scope, fence, signal, assertCurrent) {
+      const name = ownershipName(journal.target, scope);
+      if (!journal.target.ownershipName || journal.target.runtimeId !== name) throw Error('retained_upgrade_intent_invalid');
+      await assertCurrent();
+      if (await inspect(name)) throw Error('retained_upgrade_target_exists');
+      const directory = await mkdtemp(join(tmpdir(), 'tank-runtime-upgrade-'));
+      const hostArchive = join(directory, 'workspace.tar');
+      const guestArchive = '/tmp/tank-runtime-upgrade-' + randomUUID() + '.tar';
+      const allowed = JSON.stringify((input.allocation.volumes ?? []).map(volume => volume.guestPath));
+      let source: BoxLiteRuntime | undefined, replacement: BoxLiteRuntime | undefined;
+      try {
+        source = await this.resume(journal.source, scope, fence, signal);
+        await assertCurrent();
+        const original = new RetainedBoxOperations(async operation => { await assertCurrent(); return operation(source!); });
+        const exported = await original.exec('python3', ['-c', workspaceTransferProgram, 'export', guestArchive, allowed, '/workspace'], undefined, { cwd: '/', timeoutSecs: 120 });
+        if (exported.exitCode !== 0 || !/^[a-f0-9]{64}$/.test(exported.stdout.trim())) throw Error('retained_upgrade_transfer_failed:workspace_export');
+        await original.copyOut(guestArchive, hostArchive);
+        await original.exec('rm', ['-f', guestArchive], undefined, { cwd: '/' });
+        await assertCurrent();
+        await source.suspend({ kind: 'filesystem' }); source = undefined;
+        await assertCurrent();
+        const selectedProvider = publicProvider(journal.target, scope);
+        replacement = decorate(await selectedProvider.create({ sessionId: scope.sessionId, workdir: '/workspace' }, {}, acquisition(scope, fence, signal)), name);
+        const info = await inspect(name);
+        if (!info || info.id !== replacement.runtimeHandle().runtimeId || info.name !== name) throw Error('retained_upgrade_target_ownership_invalid');
+        await assertCurrent();
+        const target = new RetainedBoxOperations(async operation => { await assertCurrent(); return operation(replacement!); });
+        await target.copyIn(hostArchive, guestArchive);
+        const imported = await target.exec('python3', ['-c', workspaceTransferProgram, 'import', guestArchive, allowed, '/workspace'], undefined, { cwd: '/', timeoutSecs: 120 });
+        if (imported.exitCode !== 0 || imported.stdout.trim() !== exported.stdout.trim()) throw Error('retained_upgrade_transfer_failed:workspace_validation');
+        const removed = await target.exec('rm', ['-f', guestArchive], undefined, { cwd: '/' });
+        if (removed.exitCode !== 0) throw Error('retained_upgrade_transfer_failed:archive_cleanup');
+        await assertCurrent();
+        return replacement;
+      } catch (error) {
+        if (await input.isCurrent?.(fence)) {
+          await Promise.allSettled([source?.suspend({ kind: 'filesystem' }), replacement?.suspend({ kind: 'filesystem' })]);
+        }
+        if (error instanceof Error && /retained_|lease|abort/i.test(error.message)) throw error;
+        throw Error('retained_upgrade_transfer_failed:provider_io');
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
     async resume(handle, scope, fence, signal) {
       const info = await inspect(handle.runtimeId);
       if (!info) throw Error('retained_runtime_missing');
       const context = { sessionId: scope.sessionId, workdir: '/workspace' };
+      const selectedProvider = publicProvider(handle, scope);
+      if (handle.ownershipName && (info.id !== handle.runtimeId || info.name !== ownershipName(handle, scope))) throw Error('retained_cleanup_ownership_mismatch');
       await current(fence);
       try {
       if (info.state.running) {
-        const previous = await provider.resume(handle, context, {}, acquisition(scope, fence, signal));
+        const previous = await selectedProvider.resume(handle, context, {}, acquisition(scope, fence, signal));
         await current(fence);
         await previous.suspend({ kind: 'filesystem' });
         await current(fence);
       }
-      return await provider.resume(handle, context, {}, acquisition(scope, fence, signal));
+      const resumed = await selectedProvider.resume(handle, context, {}, acquisition(scope, fence, signal));
+      return handle.ownershipName ? decorate(resumed, handle.ownershipName) : resumed;
       } catch (error) {
         try { await stopExactPublished(handle, scope, fence); }
         catch { throw Error('retained_resume_cleanup_failed'); }
@@ -169,7 +245,14 @@ export function pinnedBoxLiteProvider(input: {
     },
     async reap(handle, scope, fence, signal) {
       signal.throwIfAborted(); await current(fence);
-      await resource.sandbox.reap({ scope, lease: handle, reason: 'completed' });
+      if (handle.ownershipName) {
+        const name = ownershipName(handle, scope);
+        const info = await inspect(handle.runtimeId);
+        if (!info) return;
+        if (info.name !== name || (handle.runtimeId !== name && info.id !== handle.runtimeId)) throw Error('retained_cleanup_ownership_mismatch');
+        await current(fence);
+        await client.remove(info.id, true);
+      } else await resource.sandbox.reap({ scope, lease: handle, reason: 'completed' });
     },
   };
 }

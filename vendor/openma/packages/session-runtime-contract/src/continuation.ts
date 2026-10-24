@@ -9,6 +9,7 @@ export interface ContinuationExecution {
   events: SentSessionEvent[];
   attemptCount: number;
   interruptRequestedAt: string | null;
+  imageRecoveryAfterEventId?: string;
 }
 export interface ContinuationSnapshot {
   invalidReason?: string;
@@ -208,11 +209,47 @@ function earlierNewWork(snapshot: ContinuationSnapshot, row: ContinuationExecuti
   return prior.some(other => other.laneId === row.laneId && ['queued', 'running'].includes(other.state) &&
     remainingInputs(snapshot, other).some(e => resultCallId(e) === undefined));
 }
+export function imageMismatchRecoveryBoundary(snapshot: ContinuationSnapshot, currentId: string): string | null {
+  if (snapshot.invalidReason) return null;
+  assertTrustedJournalOrder(snapshot);
+  const row = snapshot.executions.find(execution => execution.id === currentId);
+  if (!row || row.interruptRequestedAt !== null || row.state !== 'failed' || row.imageRecoveryAfterEventId
+      || !actionableInputs(row).length) return null;
+  const output = snapshot.orderedEvents.filter(entry => entry.executionId === currentId);
+  if (!output.length || !output.some(entry => entry.event.type === 'session.error')) return null;
+  const first = snapshot.orderedEvents.indexOf(output[0]!);
+  if (snapshot.orderedEvents.slice(first).some(entry => entry.event.type === 'user.interrupt'
+      && (entry.event.sessionThreadId == null || entry.event.sessionThreadId === row.laneId))) return null;
+  for (const entry of output) {
+    if (entry.executionMetadata?.progress) return null;
+    const event = entry.event;
+    if (event.type === 'session.error') {
+      if (event.error.message !== 'retained_configuration_changed') return null;
+    } else if (event.type === 'session.status_idle') {
+      if (event.stopReason.type !== 'retries_exhausted') return null;
+    } else if (!['session.status_running', 'session.status_rescheduled'].includes(event.type)) return null;
+  }
+  return output.at(-1)!.event.id;
+}
+function recoverImagePreflight(snapshot: ContinuationSnapshot): ContinuationSnapshot {
+  const removed = new Set<OrderedSessionEvent>();
+  for (const row of snapshot.executions) {
+    if (!row.imageRecoveryAfterEventId) continue;
+    const boundary = snapshot.orderedEvents.findIndex(entry => entry.event.id === row.imageRecoveryAfterEventId && entry.executionId === row.id);
+    if (boundary < 0) throw new ContinuationProtocolError('Image recovery boundary is missing');
+    const prefix = snapshot.orderedEvents.slice(0, boundary + 1);
+    const proof = { ...snapshot, orderedEvents: prefix, executions: snapshot.executions.map(other => other.id === row.id
+      ? { ...other, state: 'failed' as const, imageRecoveryAfterEventId: undefined } : other) };
+    if (imageMismatchRecoveryBoundary(proof, row.id) !== row.imageRecoveryAfterEventId) throw new ContinuationProtocolError('Image recovery preflight contains effects or unrelated failure');
+    prefix.filter(entry => entry.executionId === row.id).forEach(entry => removed.add(entry));
+  }
+  return removed.size ? { ...snapshot, orderedEvents: snapshot.orderedEvents.filter(entry => !removed.has(entry)) } : snapshot;
+}
 export function planSessionContinuation(snapshot: ContinuationSnapshot, currentId: string): ContinuationPlan {
   try {
     if (snapshot.invalidReason)
       throw new ContinuationProtocolError(snapshot.invalidReason);
-    return planContinuation(snapshot, currentId);
+    return planContinuation(recoverImagePreflight(snapshot), currentId);
   }
   catch (error) {
     if (!(error instanceof ContinuationProtocolError))
