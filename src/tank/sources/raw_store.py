@@ -6,10 +6,10 @@ from pathlib import Path
 
 import zstandard
 
-from tank.util import new_id, parse_time, sha256
+from tank.util import TimeInput, new_id, parse_time, sha256
 
 
-def raw_item_path(data_dir, source_id, item_id, observed_at):
+def raw_item_path(data_dir: str | Path, source_id: str, item_id: str, observed_at: TimeInput) -> Path:
     for name, value in (("source_id", source_id), ("item_id", item_id)):
         if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", value):
             raise ValueError(f"Invalid raw-item {name}")
@@ -24,7 +24,7 @@ def raw_item_path(data_dir, source_id, item_id, observed_at):
     )
 
 
-def _sync_directory(path):
+def _sync_directory(path: Path) -> None:
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
         os.fsync(descriptor)
@@ -32,7 +32,7 @@ def _sync_directory(path):
         os.close(descriptor)
 
 
-def _sync_hierarchy(directory, data_dir):
+def _sync_hierarchy(directory: Path, data_dir: str | Path) -> None:
 
     boundary = Path(data_dir).resolve().parent
     while True:
@@ -42,7 +42,9 @@ def _sync_hierarchy(directory, data_dir):
         directory = directory.parent
 
 
-def write_raw_item(data_dir, source_id, item_id, observed_at, payload):
+def write_raw_item(
+    data_dir: str | Path, source_id: str, item_id: str, observed_at: TimeInput, payload: bytes
+) -> tuple[str, str]:
     """Return only after exact bytes and their directory entries are durable.
 
     An exception leaves no permission to persist the returned reference. A file
