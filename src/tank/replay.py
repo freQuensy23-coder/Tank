@@ -10,14 +10,43 @@ QUEUED without a historical receipt, transport, or delivery acceptance claim.
 import copy
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
+from typing import Self
 
+from pydantic import JsonValue
+
+from tank.contracts import DomainModel
+from tank.contracts.source_items import SourceRelevance
 from tank.market_schema import MARKET_COLUMNS
 from tank.time_precision import Timestamp, interval_bounds, propagate_timestamp
 from tank.util import canonical_json, iso, parse_time
+
+
+class ReplaySourcePolicy(DomainModel):
+    """Only metadata actually captured is eligible to select replay ingestion policy."""
+
+    source_id: str | None
+    subtype: str | None
+    author_role: str | None
+
+    @classmethod
+    def from_captured(cls, record: Mapping[str, JsonValue]) -> Self:
+        return cls.model_validate(
+            {
+                "source_id": record.get("source_id"),
+                "subtype": record.get("subtype"),
+                "author_role": record.get("author_role"),
+            }
+        )
+
+    def initial_relevance(self) -> SourceRelevance:
+        from tank.sources.policy import initial_relevance
+
+        return initial_relevance(self.source_id, self.subtype, self.author_role)
 
 
 class ReplayError(ValueError):
@@ -1523,11 +1552,10 @@ async def replay_agent_session(
                         if not fresh or not (
                             "relevance" in fresh or fresh.get("relevance_decision") is not None
                         ):
-                            from tank.sources.policy import initial_relevance
-
-                            record["relevance"] = initial_relevance(
-                                record["source_id"], record.get("subtype"), record.get("author_role")
-                            ).model_dump(mode="json", exclude_unset=True)
+                            policy = ReplaySourcePolicy.from_captured(record)
+                            record["relevance"] = policy.initial_relevance().model_dump(
+                                mode="json", exclude_unset=True
+                            )
                         if fresh:
                             for field in ("observed_at", "published_at", "public_at", "fetched_at"):
                                 if field in record and record[field] != fresh.get(field):
