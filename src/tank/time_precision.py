@@ -86,7 +86,7 @@ def normalize_precision(precision: str | None, *, bucket_size: BucketSize | None
         return None
     supplied = _size(bucket_size) if bucket_size is not None else None
     if embedded is None and precision != "BUCKET":
-        raise ValueError(f"Unsupported timestamp precision: {precision}")
+        raise ValueError("Unsupported timestamp precision")
     if embedded is not None and supplied is not None and _duration(embedded) != _duration(supplied):
         raise ValueError("Conflicting bucket duration declarations")
     duration = embedded or supplied

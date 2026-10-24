@@ -10,7 +10,9 @@ class JsonDocument(RootModel[JsonValue]):
 
     @classmethod
     def validate_value(cls, value: JsonValue) -> JsonValue:
-        return cls.model_validate(value, strict=True).root
+        validated = cls.model_validate(value, strict=True).root
+        _require_finite(validated)
+        return validated
 
 
 def _require_finite(value: JsonValue) -> None:
@@ -32,5 +34,4 @@ def decode_json(payload: str | bytes | bytearray) -> JsonValue:
 
 def encode_json(value: JsonValue) -> bytes:
     validated = JsonDocument.validate_value(value)
-    _require_finite(validated)
     return JsonDocument(validated).model_dump_json(warnings="error").encode()
