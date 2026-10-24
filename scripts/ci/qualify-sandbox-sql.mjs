@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { requiredSqlCases } from './sql-qualification-cases.mjs';
 
 assert.equal(process.env.GITHUB_ACTIONS, 'true');
 const directory = process.env.TANK_QUALIFICATION_EVIDENCE;
@@ -23,7 +24,7 @@ async function suite(dialect, url) {
   if (result.stderr) console.error(result.stderr.replaceAll(password, '[TEST_SECRET]'));
   const names = [...xml.matchAll(/<testcase\b[^>]*\bname="([^"]+)"/g)].map(match => match[1]);
   const rejected = /<(?:failure|error|skipped)\b/.test(xml);
-  const valid = result.status === 0 && names.length === 7 && new Set(names).size === 7 && !rejected;
+  const valid = result.status === 0 && JSON.stringify([...names].sort()) === JSON.stringify([...requiredSqlCases].sort()) && !rejected;
   observations.push({ dialect, exitCode: result.status, cases: names, valid, rejected, signal: result.signal });
   if (!valid) process.exitCode = 1;
   console.log(JSON.stringify(observations.at(-1)));

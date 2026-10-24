@@ -28,7 +28,7 @@ async function waitFor(label, predicate, seconds = 180) {
   const deadline = performance.now() + seconds * 1000;
   let last;
   while (performance.now() < deadline) {
-    try { const value = await predicate(); if (value) return value; } catch (error) { last = error; }
+    try { const value = await predicate(); if (value) return value; } catch (error) { if (error.fatal) throw error; last = error; }
     await new Promise(done => setTimeout(done, 250));
   }
   throw Error(label + ' deadline exceeded' + (last ? ': ' + sanitized(last.message) : ''));
@@ -119,7 +119,11 @@ for (let round = 1; round <= 2; round++) {
     const address = JSON.parse(docker(['inspect', '--format', '{{json .NetworkSettings.Networks}}', names.service]))[names.network]?.IPAddress;
     assert.match(address ?? '', /^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)/, 'candidate must have an owned private bridge address');
     base = 'http://' + address + ':8787';
-    await waitFor('candidate Managed API health', async () => (await fetch(base + '/health', { signal: AbortSignal.timeout(2000) })).ok);
+    await waitFor('candidate Managed API health', async () => {
+      const state = JSON.parse(docker(['inspect', '--format', '{{json .State}}', names.service]));
+      if (!state.Running) throw Object.assign(Error('Shipping OpenMA service exited before health: ' + JSON.stringify({ exitCode: state.ExitCode, error: state.Error, oomKilled: state.OOMKilled })), { fatal: true });
+      return (await fetch(base + '/health', { signal: AbortSignal.timeout(2000) })).ok;
+    });
   };
   const stop = () => { docker(['stop', '--time', '45', names.service], { timeout: 60000 }); docker(['rm', names.service]); };
   const events = async id => {
@@ -155,7 +159,7 @@ for (let round = 1; round <= 2; round++) {
     await api('/v1/sessions/' + session.id + '/resources', { type: 'file', file_id: file.id, mount_path: '/workspace/upload.bin' });
     const send = phase => api('/v1/sessions/' + session.id + '/events', { events: [{ type: 'user.message', content: [{ type: 'text', text: 'TANK_QUALIFICATION_COMMAND:' + Buffer.from(guestCommand(phase, nonce, uploadedHash)).toString('base64') }] }] });
     receipt.initialInput = await send('A');
-    const initialHistory = await waitFor('actual A guest file/browser execution', async () => { const rows = await events(session.id); if (rows.some(row => row.type === 'session.error')) throw Error(JSON.stringify(rows.filter(row => row.type === 'session.error'))); return receipts(rows).length >= 1 && rows.some(row => row.type === 'session.status_idle' && row.stop_reason?.type === 'end_turn') ? rows : null; }, 600);
+    const initialHistory = await waitFor('actual A guest file/browser execution', async () => { const rows = await events(session.id); if (rows.some(row => row.type === 'session.error')) throw Object.assign(Error(JSON.stringify(rows.filter(row => row.type === 'session.error'))), { fatal: true }); return receipts(rows).length >= 1 && rows.some(row => row.type === 'session.status_idle' && row.stop_reason?.type === 'end_turn') ? rows : null; }, 600);
     receipt.before = publication();
     receipt.historyBefore = initialHistory.map(row => ({ id: row.id, sha256: createHash('sha256').update(JSON.stringify(row)).digest('hex') }));
     await stop();
