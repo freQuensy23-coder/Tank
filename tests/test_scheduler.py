@@ -1740,3 +1740,31 @@ async def test_latest_revision_is_read_as_metadata_not_the_whole_row() -> None:
     repo.get = no_full_get
     latest = await scheduler._latest_reaction_revision(row)
     assert latest["revision"] == 2 and latest["data_fingerprint"] == "fp" and "market_truth" not in latest
+
+
+@pytest.mark.asyncio
+async def test_failed_capture_job_of_this_event_records_a_gap_and_other_events_jobs_do_not():
+    import asyncio
+
+    repo = MemoryRepository()
+    now = utcnow()
+    event = {"event_id": "evt-1", "public_at": iso(now - timedelta(hours=2)), "public_at_prec": "EXACT"}
+    scheduler = Scheduler(repo, SimpleNamespace(), object(), None)
+    scheduler.latest_assessment = AsyncMock(return_value={"class": "MAJOR"})
+    scheduler.analysis_tokens = AsyncMock(return_value={"token:T"})
+    scheduler.reaction_capture = AsyncMock()
+    try:
+        await scheduler.ensure_reactions(event, now=now)
+        await asyncio.gather(*scheduler.background.values())
+        for job in await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"}):
+            failed = job["payload"]["checkpoint"] == "POST_15M"
+            await repo.put("ops.jobs", job["job_id"], {**job, "status": "FAILED" if failed else "QUEUED"})
+        await repo.enqueue("REACTION_CAPTURE", {"event_id": "evt-10"}, "evt-10:token:T:POST_1H", priority=2)
+        other = (await repo.list("ops.jobs", filters={"idem_key": "evt-10:token:T:POST_1H"}))[0]
+        await repo.put("ops.jobs", other["job_id"], {**other, "status": "FAILED"})
+        await scheduler.ensure_reactions(event, now=now)
+        gaps = await repo.list("ops.scheduler_checkpoints", filters={"kind": "REACTION_CAPTURE_GAP"})
+        assert [(g["state"]["event_id"], g["state"]["checkpoint"]) for g in gaps] == [("evt-1", "POST_15M")]
+        assert len(await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})) == 6
+    finally:
+        await scheduler.close()
