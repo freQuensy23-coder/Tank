@@ -22,8 +22,7 @@ COPY --from=build /out/tank-capture /tank-capture
 COPY --from=build /out/config/ /config/
 ENV TANK_CONFIG_DIR=/config \
     TANK_CAPTURE_HEALTH_ADDR=:8791 \
-    TANK_CLICKHOUSE_URL=http://tank@clickhouse:8123 \
-    GOMEMLIMIT=1400MiB
+    TANK_CLICKHOUSE_URL=http://tank@clickhouse:8123
 USER 1000:1000
 HEALTHCHECK --interval=15s --timeout=5s --retries=4 --start-period=60s CMD ["/tank-capture", "healthcheck"]
 ENTRYPOINT ["/tank-capture"]
