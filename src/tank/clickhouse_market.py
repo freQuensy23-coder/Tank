@@ -247,6 +247,10 @@ class Query:
         self.params: dict[str, tuple[str, str]] = {}
 
     def param(self, value: QueryValue, kind: str) -> str:
+        if kind == DT:
+            if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal, datetime)):
+                raise ValueError("DateTime64 parameter requires a timestamp scalar")
+            value = _timestamp(value)
         if isinstance(value, (list, tuple)):
             return "(" + (_literal(value)[1:-1] or "NULL") + ")"
         name = f"p{len(self.params)}"
@@ -990,7 +994,7 @@ async def put_batch(
     merge into the stored row, and an unchanged fingerprint is not written again."""
     from tank.market_codec import _prepare_records, _unproves, decode, merge_point
 
-    unique = _prepare_records(collection, records, keys, MARKET_COLUMNS[collection], False)
+    unique = _prepare_records(collection, records, keys)
     if not unique:
         return []
     identity = MARKET_IDENTITIES[collection]

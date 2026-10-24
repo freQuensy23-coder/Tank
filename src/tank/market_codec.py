@@ -281,16 +281,9 @@ def _prepare_records(
     collection: str,
     records: Sequence[Mapping[str, JsonInput]],
     keys: Sequence[str] | None,
-    columns: Mapping[str, str],
-    migration_target: bool,
 ) -> dict[str, StoredRow]:
     """Encoded, de-duplicated and fingerprinted batch records by storage key (no I/O)."""
     encoded = [encode(collection, r) for r in records]
-    if migration_target:
-        for row in encoded:
-            unsupported = [name for name, value in row.items() if name not in columns and value is not None]
-            if unsupported:
-                raise ValueError(f"Non-null fields unavailable in migration target: {unsupported}")
     if keys is None:
         if "storage_key" in MARKET_IDENTITIES[collection]:
             raise ValueError(f"{collection} requires explicit storage keys")

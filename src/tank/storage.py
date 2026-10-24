@@ -553,6 +553,7 @@ class MemoryRepository(QueueMixin):
 
     def __init__(self) -> None:
         self._data: dict[str, dict[str, Record]] = {}
+        self._market_write_clock: dict[tuple[str, str | None, str | None], datetime] = {}
         self._immutable: set[tuple[str, str]] = set()
         self._mutex = asyncio.Lock()
         self._owner: TaskOwner | None = None
@@ -976,6 +977,7 @@ class PostgresRepository(QueueMixin):
 
     def __init__(self, database_url: str) -> None:
         self.database_url = database_url
+        self._market_write_clock: dict[tuple[str, str | None, str | None], datetime] = {}
         self._last_deferral: tuple[float, int, tuple[str, ...]] | None = None
         self._pool: AsyncConnectionPool[AsyncConnection[StoredRow]] | None = None
         self._connection: ContextVar[

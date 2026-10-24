@@ -11,7 +11,7 @@ from tank.contracts.job_repository import JobRepository
 from tank.contracts.repository import Collection, Repository
 from tank.contracts.score import ScoreAssessment, ScoreAssessmentView, ScoreDimension, ScoreDimensions
 from tank.market_codec import _prepare_records, encode, merge_point
-from tank.market_schema import MARKET_COLUMNS
+from tank.market_storage import market_range_by_instrument, market_rows_recorded_since
 from tank.settings import Settings
 from tank.storage import ImmutableRecordError, MemoryRepository
 from tank.time_precision import Timestamp, propagate_timestamp
@@ -98,13 +98,7 @@ def test_market_codec_rejects_coerced_scalars(field: str, value: str | bool) -> 
 
 def test_market_codec_requires_real_identity_instead_of_empty_key_parts() -> None:
     with pytest.raises(ValueError, match="Missing typed market identity"):
-        _prepare_records(
-            "mkt.oi_obs",
-            [{"instrument_id": "btc", "ts": "2026-10-24T00:00:00Z"}],
-            None,
-            MARKET_COLUMNS["mkt.oi_obs"],
-            False,
-        )
+        _prepare_records("mkt.oi_obs", [{"instrument_id": "btc", "ts": "2026-10-24T00:00:00Z"}], None)
 
 
 def test_market_codec_does_not_treat_invalid_source_metadata_as_absent() -> None:
@@ -233,3 +227,44 @@ def test_json_codec_errors_omit_raw_invalid_document() -> None:
         decode_json('{"token":"' + secret + '", broken}')
     assert secret not in str(failure.value)
     assert "Invalid JSON" in str(failure.value)
+
+
+async def test_memory_market_reads_return_real_persisted_keys() -> None:
+    store = MemoryRepository()
+    row = {
+        "instrument_id": "A",
+        "open_time": "2026-10-24T00:00:00Z",
+        "open_time_prec": "EXACT",
+        "recorded_at": "2026-10-24T00:01:00Z",
+        "recorded_at_prec": "COLLECTION_ONLY",
+        "o": "1",
+        "h": "1",
+        "l": "1",
+        "c": "1",
+        "volume_native": "1",
+        "interval_s": 60,
+        "complete": True,
+    }
+    await store.put_market_batch("mkt.klines_1m", [row], keys=["physical-key"])
+    keys: dict[str, list[str]] = {}
+    result = await market_range_by_instrument(
+        store,
+        "mkt.klines_1m",
+        "open_time",
+        ["A"],
+        "2026-10-24T00:00:00Z",
+        "2026-10-24T01:00:00Z",
+        keys_out=keys,
+    )
+    assert len(result["A"]) == 1
+    assert keys == {"A": ["physical-key"]}
+    changed = await market_rows_recorded_since(
+        store,
+        "mkt.klines_1m",
+        "open_time",
+        ["A"],
+        "2026-10-24T00:00:00Z",
+        "2026-10-24T00:00:00Z",
+        "2026-10-24T01:00:00Z",
+    )
+    assert [entry[2] for entry in changed] == ["physical-key"]

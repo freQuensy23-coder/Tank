@@ -1,21 +1,135 @@
 """Typed market encoding and batched SQL writes (§14)."""
 
 import asyncio
-import json
-from datetime import timedelta
+import copy
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
+from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Literal, Protocol, Self, TypeIs, overload
 
-from tank.market_codec import _prepare_records, _unproves, decode, merge_point
+from psycopg import AsyncConnection, AsyncCursor, sql
+from psycopg.types.json import Jsonb
+
+from tank import clickhouse_market as chm
+from tank.contracts.json import decode_json, encode_json
+from tank.market_codec import (
+    IdentityValue,
+    StoredRow,
+    StoredValue,
+    _prepare_records,
+    _timestamp,
+    _unproves,
+    decode,
+    merge_point,
+)
 from tank.market_codec import encode as encode
 from tank.market_codec import semantic_fingerprint as semantic_fingerprint
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES
-from tank.util import iso, parse_time, utcnow
+from tank.models import Record
+from tank.util import JsonInput, TimeInput, iso, jsonable, parse_time, utcnow
+
+type SQLParameter = StoredValue | Jsonb | Sequence[SQLParameter]
 
 
-async def put_market_batch(self, collection, records, *, keys=None):
+class MarketReader(Protocol):
+    @property
+    def backend(self) -> Literal["memory", "postgres"]: ...
+
+    clickhouse: chm.ClickHouse | None
+    _market_write_clock: dict[tuple[str, str | None, str | None], datetime]
+
+    def transaction(self) -> AbstractAsyncContextManager[Self]: ...
+
+    def _exact_predicate(
+        self, collection: str, filters: Record | None
+    ) -> tuple[list[sql.Composable], list[SQLParameter]]: ...
+
+    def iter_all(
+        self, collection: str, *, filters: Record | None = None, batch_size: int = 1000
+    ) -> AsyncIterator[Record]: ...
+
+    def page_range(
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: Record | None = None,
+        limit: int = 1000,
+        after: tuple[TimeInput, str] | None = None,
+    ) -> Awaitable[list[tuple[Record, tuple[str, str]]]]: ...
+
+    def iter_range(
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: Record | None = None,
+        batch_size: int = 10000,
+    ) -> AsyncIterator[Record]: ...
+
+    def iter_late_arrivals(
+        self,
+        collection: str,
+        arrival_field: str,
+        market_field: str,
+        *,
+        since: TimeInput | None = None,
+        end: TimeInput | None = None,
+        market_end: TimeInput,
+        filters: Record | None = None,
+        batch_size: int = 1000,
+    ) -> AsyncIterator[Record]: ...
+
+    def iter_market_projection(
+        self,
+        collection: str,
+        fields: Sequence[str],
+        time_field: str,
+        *,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: Record | None = None,
+        instrument_ids: Collection[str] | None = None,
+        assembled_at: TimeInput | None = None,
+        batch_size: int = 1000,
+    ) -> AsyncIterator[Record]: ...
+
+
+class MemoryMarketStore(MarketReader, Protocol):
+    @property
+    def backend(self) -> Literal["memory"]: ...
+
+    _data: dict[str, dict[str, Record]]
+
+
+class PostgresMarketStore(MarketReader, Protocol):
+    @property
+    def backend(self) -> Literal["postgres"]: ...
+
+    def _conn(self) -> AsyncConnection[StoredRow]: ...
+
+
+type MarketStore = MemoryMarketStore | PostgresMarketStore
+
+
+def _is_memory(store: MarketStore) -> TypeIs[MemoryMarketStore]:
+    return store.backend == "memory"
+
+
+async def put_market_batch(
+    self: MarketStore,
+    collection: str,
+    records: Sequence[Mapping[str, JsonInput]],
+    *,
+    keys: Sequence[str] | None = None,
+) -> list[Record]:
     records = list(records)
     keys = None if keys is None else list(keys)
-    from tank import clickhouse_market as chm
 
     if (ch := chm.client(self, collection)) is not None:
         changed = []
@@ -24,7 +138,7 @@ async def put_market_batch(self, collection, records, *, keys=None):
             changed += await chm.put_batch(ch, collection, records[at : at + WRITE_CHUNK], part)
         _note_writes(self, collection, changed)
         return changed
-    if self.backend == "memory" or len(records) <= WRITE_CHUNK:
+    if _is_memory(self) or len(records) <= WRITE_CHUNK:
         return await _put_market_batch(self, collection, records, keys=keys)
 
     changed = []
@@ -41,21 +155,24 @@ WRITE_CHUNK = 500
 LEVELS = ("bids", "asks")
 
 
-def _note_writes(self, collection, rows):
+def _note_writes(self: MarketReader, collection: str, rows: Sequence[Record]) -> None:
     """When rows of a scope last changed: a dependency head that saw every row recorded by
     its assembly clock stays valid for a later clock until its scope is written again."""
     if not rows:
         return
-    clock = self.__dict__.setdefault("_market_write_clock", {})
+    clock = self._market_write_clock
     now = utcnow()
     clock[collection, None, None] = now
     for row in rows:
         for scope in ("instrument_id", "token_id"):
-            if row.get(scope) is not None:
-                clock[collection, scope, row[scope]] = now
+            identity = row.get(scope)
+            if identity is not None:
+                if not isinstance(identity, str):
+                    raise ValueError(f"{scope} requires text")
+                clock[collection, scope, identity] = now
 
 
-def _json_as_text(cursor):
+def _json_as_text(cursor: AsyncCursor[StoredRow]) -> AsyncCursor[StoredRow]:
     """A cursor whose json/jsonb columns arrive as text, to be parsed off the event loop."""
     from psycopg.types.string import TextLoader
 
@@ -64,37 +181,54 @@ def _json_as_text(cursor):
     return cursor
 
 
-def _load_json(collection, row):
+def _load_json(collection: str, row: StoredRow) -> StoredRow:
     """Worker thread: parse the jsonb columns of a row read through _json_as_text."""
     for name, kind in MARKET_COLUMNS[collection].items():
-        if kind == "jsonb" and isinstance(row.get(name), str):
-            row[name] = json.loads(row[name])
+        value = row.get(name)
+        if kind == "jsonb" and isinstance(value, str):
+            row[name] = decode_json(value)
     return row
 
 
-async def _put_market_batch(self, collection, records, *, keys=None, _columns=None):
+def _instrument_rows(collection: str, rows: Sequence[StoredRow]) -> list[tuple[str, Record, str]]:
+    return [
+        (
+            _text(row, "instrument_id"),
+            decode(collection, _load_json(collection, row)),
+            _text(row, "storage_key"),
+        )
+        for row in rows
+    ]
 
-    columns = MARKET_COLUMNS[collection] if _columns is None else _columns
-    from psycopg import sql
+
+async def _put_market_batch(
+    self: MarketStore,
+    collection: str,
+    records: Sequence[Mapping[str, JsonInput]],
+    *,
+    keys: Sequence[str] | None = None,
+) -> list[Record]:
+
+    columns = MARKET_COLUMNS[collection]
 
     records = list(records)
     if not records:
         return []
-    if self.backend == "memory":
-        unique = _prepare_records(collection, records, keys, columns, _columns is not None)
+    if _is_memory(self):
+        unique = _prepare_records(collection, records, keys)
         changed = []
         async with self.transaction():
-            rows = self._data.setdefault(collection, {})
+            memory_rows = self._data.setdefault(collection, {})
             for key, row in unique.items():
                 value = decode(collection, row)
-                previous = key if key in rows else None
-                if key not in rows:
+                previous = key if key in memory_rows else None
+                if key not in memory_rows:
                     identity = tuple(value.get(n) for n in MARKET_IDENTITIES[collection])
                     previous = (
                         next(
                             (
                                 k
-                                for k, v in rows.items()
+                                for k, v in memory_rows.items()
                                 if tuple(v.get(n) for n in MARKET_IDENTITIES[collection]) == identity
                             ),
                             None,
@@ -102,23 +236,24 @@ async def _put_market_batch(self, collection, records, *, keys=None, _columns=No
                         if "storage_key" not in MARKET_IDENTITIES[collection]
                         else None
                     )
-                old = rows.get(previous, {})
-                if old and collection in ("mkt.funding_obs", "mkt.tickers_24h"):
+                old = None if previous is None else memory_rows[previous]
+                if old is not None and collection in ("mkt.funding_obs", "mkt.tickers_24h"):
                     value = merge_point(collection, old, value)
-                if old.get("semantic_fingerprint") != value["semantic_fingerprint"] and not _unproves(
-                    collection, old, value
+                if old is None or (
+                    old.get("semantic_fingerprint") != value["semantic_fingerprint"]
+                    and not _unproves(collection, old, value)
                 ):
                     if previous is not None and previous != key:
-                        rows.pop(previous)
-                    rows[key] = value
+                        memory_rows.pop(previous)
+                    memory_rows[key] = value
                     changed.append(value.copy())
         _note_writes(self, collection, changed)
         return changed
     names = ["storage_key", *columns]
 
-    def prepare():
+    def prepare() -> list[list[StoredValue]]:
 
-        unique = _prepare_records(collection, records, keys, columns, _columns is not None)
+        unique = _prepare_records(collection, records, keys)
         arrays = []
         for name in names:
             kind = "text" if name == "storage_key" else columns[name]
@@ -126,7 +261,9 @@ async def _put_market_batch(self, collection, records, *, keys=None, _columns=No
             for key, row in unique.items():
                 value = key if name == "storage_key" else row.get(name)
                 values.append(
-                    json.dumps(value) if kind in ("jsonb", "text[]") and value is not None else value
+                    encode_json(jsonable(value)).decode()
+                    if kind in ("jsonb", "text[]") and value is not None
+                    else value
                 )
             arrays.append(values)
         return arrays
@@ -174,24 +311,42 @@ async def _put_market_batch(self, collection, records, *, keys=None, _columns=No
     return changed
 
 
+def _text(row: Mapping[str, StoredValue], field: str) -> str:
+    value = row[field]
+    if not isinstance(value, str):
+        raise ValueError(f"{field} requires text")
+    return value
+
+
+def _group_value(value: StoredValue) -> IdentityValue | None:
+    if value is None or isinstance(value, (str, int, float, datetime, Decimal)):
+        return value
+    raise ValueError("Market groups require scalar values")
+
+
+def _decimal(value: StoredValue) -> Decimal:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+        raise ValueError("Market numeric evidence requires a decimal scalar")
+    return Decimal(str(value))
+
+
 async def latest_market_records(
-    self,
-    collection,
+    self: MarketStore,
+    collection: str,
     *,
-    group_by=("instrument_id",),
-    time_field="ts",
-    filters=None,
-    cutoff=None,
-    assembled_at=None,
-    start=None,
-    instrument_ids=None,
-):
+    group_by: Sequence[str] = ("instrument_id",),
+    time_field: str = "ts",
+    filters: Record | None = None,
+    cutoff: TimeInput | None = None,
+    assembled_at: TimeInput | None = None,
+    start: TimeInput | None = None,
+    instrument_ids: Collection[str] | None = None,
+) -> list[Record]:
     """Latest point per typed group after applying semantic/availability bounds.
 
     Unknown legacy recorded_at remains visible for consumers to classify as unknown/stale;
     this read does not invent historical availability or precision.
     """
-    from psycopg import sql
 
     columns = MARKET_COLUMNS.get(collection)
     if columns is None or not group_by:
@@ -213,7 +368,6 @@ async def latest_market_records(
     cutoff = parse_time(cutoff) if cutoff is not None else None
     start = parse_time(start) if start is not None else None
     assembled_at = parse_time(assembled_at) if assembled_at is not None else None
-    from tank import clickhouse_market as chm
 
     if (ch := chm.client(self, collection)) is not None:
         return await chm.latest_market_records(
@@ -235,13 +389,13 @@ async def latest_market_records(
     if assembled_at is not None:
         clauses.append(sql.SQL("(recorded_at IS NULL OR recorded_at<=%s)"))
         args.append(assembled_at)
-    if self.backend == "memory":
-        grouped = {}
+    if _is_memory(self):
+        grouped: dict[tuple[IdentityValue | None, ...], Record] = {}
         async for row in self.iter_all(collection, filters=filters):
             if instrument_ids is not None and row.get("instrument_id") not in instrument_ids:
                 continue
-            at = parse_time(row[time_field]) if row.get(time_field) is not None else None
-            arrival = parse_time(row["recorded_at"]) if row.get("recorded_at") is not None else None
+            at = _timestamp(row[time_field]) if row.get(time_field) is not None else None
+            arrival = _timestamp(row["recorded_at"]) if row.get("recorded_at") is not None else None
             if (
                 cutoff is not None
                 and (at is None or at > cutoff)
@@ -252,14 +406,14 @@ async def latest_market_records(
                 and arrival > assembled_at
             ):
                 continue
-            key = tuple(row.get(k) for k in group_by)
+            key = tuple(_group_value(row.get(k)) for k in group_by)
             previous = grouped.get(key)
 
             if (
                 previous is None
                 or (
                     at is not None
-                    and (previous.get(time_field) is None or at >= parse_time(previous[time_field]))
+                    and (previous.get(time_field) is None or at >= _timestamp(previous[time_field]))
                 )
                 or at is None
                 and previous.get(time_field) is None
@@ -302,19 +456,51 @@ async def latest_market_records(
     return [decode(collection, row) for row in rows]
 
 
+@overload
 async def market_dependency_head(
-    self,
-    collection,
-    semantic_field,
-    cutoff,
+    self: MarketStore,
+    collection: str,
+    semantic_field: str,
+    cutoff: TimeInput,
     *,
-    start=None,
-    filters=None,
-    instrument_ids=None,
-    assembled_at=None,
-    order="availability",
-    orders=None,
-):
+    start: TimeInput | None = None,
+    filters: Record | None = None,
+    instrument_ids: Collection[str] | None = None,
+    assembled_at: TimeInput | None = None,
+    order: str = "availability",
+    orders: None = None,
+) -> Record | None: ...
+
+
+@overload
+async def market_dependency_head(
+    self: MarketStore,
+    collection: str,
+    semantic_field: str,
+    cutoff: TimeInput,
+    *,
+    start: TimeInput | None = None,
+    filters: Record | None = None,
+    instrument_ids: Collection[str] | None = None,
+    assembled_at: TimeInput | None = None,
+    order: str = "availability",
+    orders: Collection[str],
+) -> dict[str, Record | None]: ...
+
+
+async def market_dependency_head(
+    self: MarketStore,
+    collection: str,
+    semantic_field: str,
+    cutoff: TimeInput,
+    *,
+    start: TimeInput | None = None,
+    filters: Record | None = None,
+    instrument_ids: Collection[str] | None = None,
+    assembled_at: TimeInput | None = None,
+    order: str = "availability",
+    orders: Collection[str] | None = None,
+) -> Record | dict[str, Record | None] | None:
     """Availability or semantic-boundary head within a scope, returning metadata only.
     With `orders`, every listed head comes from one round trip as {order: head}.
 
@@ -322,11 +508,17 @@ async def market_dependency_head(
     position in semantic history. Unknown legacy availability is explicitly excluded.
     Bounds are inclusive; an empty instrument scope never broadens into all instruments.
     """
-    from psycopg import sql
 
-    if any(o not in ("availability", "semantic_latest", "semantic_earliest") for o in orders or (order,)):
+    if orders is not None and not orders:
+        return {}
+    if any(
+        o not in ("availability", "semantic_latest", "semantic_earliest") for o in (order,) if orders is None
+    ) or (
+        orders is not None
+        and any(o not in ("availability", "semantic_latest", "semantic_earliest") for o in orders)
+    ):
         raise ValueError("Unsupported market dependency head order")
-    if orders is not None and self.backend == "memory":
+    if orders is not None and _is_memory(self):
         return {
             o: await market_dependency_head(
                 self,
@@ -365,23 +557,25 @@ async def market_dependency_head(
     start = parse_time(start) if start is not None else None
     assembled_at = parse_time(assembled_at) if assembled_at is not None else None
 
-    def metadata(row):
+    def metadata(row: Mapping[str, StoredValue]) -> Record:
         return {
-            "storage_key": row["storage_key"],
-            "recorded_at": iso(row["recorded_at"]),
-            "semantic_fingerprint": row.get("semantic_fingerprint"),
-            semantic_field: iso(row[semantic_field]),
+            "storage_key": _text(row, "storage_key"),
+            "recorded_at": iso(_timestamp(row["recorded_at"])),
+            "semantic_fingerprint": None
+            if row.get("semantic_fingerprint") is None
+            else _text(row, "semantic_fingerprint"),
+            semantic_field: iso(_timestamp(row[semantic_field])),
         }
 
-    if self.backend == "memory":
+    if _is_memory(self):
         self._exact_predicate(collection, filters)
-        selected = None
+        selected: tuple[tuple[datetime, str], Record] | None = None
         async with self.transaction():
             for key, row in self._data.get(collection, {}).items():
-                arrival, semantic = row.get("recorded_at"), row.get(semantic_field)
-                if arrival is None or semantic is None:
+                raw_arrival, raw_semantic = row.get("recorded_at"), row.get(semantic_field)
+                if raw_arrival is None or raw_semantic is None:
                     continue
-                arrival, semantic = parse_time(arrival), parse_time(semantic)
+                arrival, semantic = _timestamp(raw_arrival), _timestamp(raw_semantic)
                 if (
                     semantic > cutoff
                     or start is not None
@@ -401,7 +595,6 @@ async def market_dependency_head(
                 if selected is None or (candidate < selected[0] if ascending else candidate > selected[0]):
                     selected = (candidate, metadata(dict(row, storage_key=key)))
         return selected[1] if selected else None
-    from tank import clickhouse_market as chm
 
     if (ch := chm.client(self, collection)) is not None:
         wanted = [order] if orders is None else list(orders)
@@ -437,7 +630,7 @@ async def market_dependency_head(
             args.append(instrument_ids)
     wanted = [order] if orders is None else list(orders)
 
-    def head(o):
+    def head(o: str) -> sql.Composed:
         direction = sql.SQL("ASC" if o == "semantic_earliest" else "DESC")
         return sql.SQL(
             "(SELECT {} AS head,storage_key,recorded_at,semantic_fingerprint,{} FROM {} WHERE {}"
@@ -455,29 +648,28 @@ async def market_dependency_head(
     query = sql.SQL(" UNION ALL ").join(head(o) for o in wanted)
     async with self.transaction():
         rows = await (await self._conn().execute(query, args * len(wanted))).fetchall()
-    found = {row["head"]: metadata(row) for row in rows}
+    found = {_text(row, "head"): metadata(row) for row in rows}
     return found.get(order) if orders is None else {o: found.get(o) for o in wanted}
 
 
 async def iter_market_projection(
-    self,
-    collection,
-    fields,
-    time_field,
+    self: MarketStore,
+    collection: str,
+    fields: Sequence[str],
+    time_field: str,
     *,
-    start=None,
-    end=None,
-    filters=None,
-    instrument_ids=None,
-    assembled_at=None,
-    batch_size=1000,
-):
+    start: TimeInput | None = None,
+    end: TimeInput | None = None,
+    filters: Record | None = None,
+    instrument_ids: Collection[str] | None = None,
+    assembled_at: TimeInput | None = None,
+    batch_size: int = 1000,
+) -> AsyncIterator[Record]:
     """Stream explicitly selected typed columns, never full market records.
 
     Semantic bounds are [start,end). Unknown legacy availability is retained explicitly.
     Each keyset page releases its connection before yielding any projected row.
     """
-    from psycopg import sql
 
     columns = MARKET_COLUMNS.get(collection)
     aliases = MARKET_ALIASES.get(collection, {})
@@ -506,20 +698,19 @@ async def iter_market_projection(
 
     self._exact_predicate(collection, filters)
 
-    def project(row, key):
+    def project(row: Record, key: str) -> Record:
         result = {}
         for requested, field in selected.items():
             value = key if field == "storage_key" else row.get(field)
             kind = columns.get(field)
             if value is not None and kind == "timestamptz":
-                value = iso(value)
+                value = iso(_timestamp(value))
             elif value is not None and kind == "numeric":
                 value = str(value)
-            result[requested] = value
+            result[requested] = jsonable(value)
         return result
 
     after = None
-    from tank import clickhouse_market as chm
 
     ch = chm.client(self, collection)
     while True:
@@ -537,7 +728,7 @@ async def iter_market_projection(
                 after=after,
                 limit=batch_size,
             )
-        elif self.backend == "postgres":
+        elif not _is_memory(self):
             clauses, args = self._exact_predicate(collection, filters)
             clauses.append(sql.SQL("{} IS NOT NULL").format(sql.Identifier(time_field)))
             for bound, operator in ((start, ">="), (end, "<")):
@@ -569,19 +760,19 @@ async def iter_market_projection(
             async with self.transaction():
                 raw = await (await self._conn().execute(query, [*args, batch_size])).fetchall()
 
-            def convert(raw=raw):
+            def convert(raw: Sequence[StoredRow] = raw) -> list[tuple[datetime, str, Record]]:
                 page = []
                 for row in raw:
-                    result = {}
+                    result: Record = {}
                     for requested, field in selected.items():
                         value = row[requested]
                         kind = columns.get(field)
                         if value is not None and kind == "timestamptz":
-                            value = iso(value)
+                            value = iso(_timestamp(value))
                         elif value is not None and kind == "numeric":
                             value = str(value)
-                        result[requested] = value
-                    page.append((row["_cursor_time"], row["_cursor_key"], result))
+                        result[requested] = jsonable(value)
+                    page.append((_timestamp(row["_cursor_time"]), _text(row, "_cursor_key"), result))
                 return page
 
             page = await asyncio.to_thread(convert) if len(raw) > YIELD_ROWS else convert()
@@ -589,8 +780,8 @@ async def iter_market_projection(
             page = []
             async with self.transaction():
                 for key, row in self._data.get(collection, {}).items():
-                    at = parse_time(row[time_field]) if row.get(time_field) is not None else None
-                    arrival = parse_time(row["recorded_at"]) if row.get("recorded_at") is not None else None
+                    at = _timestamp(row[time_field]) if row.get(time_field) is not None else None
+                    arrival = _timestamp(row["recorded_at"]) if row.get("recorded_at") is not None else None
                     if (
                         at is None
                         or start is not None
@@ -618,7 +809,13 @@ async def iter_market_projection(
         after = page[-1][:2]
 
 
-async def market_series_counts(self, instrument_ids, start, cutoff, assembled_at=None):
+async def market_series_counts(
+    self: MarketStore,
+    instrument_ids: Collection[str],
+    start: TimeInput,
+    cutoff: TimeInput,
+    assembled_at: TimeInput | None = None,
+) -> dict[str, int]:
     """Count complete finite positive closes of closed native 1m bars per instrument."""
     if isinstance(instrument_ids, (str, bytes)):
         raise TypeError("instrument_ids must be identifiers")
@@ -631,7 +828,6 @@ async def market_series_counts(self, instrument_ids, start, cutoff, assembled_at
         return counts
     start, cutoff = parse_time(start), parse_time(cutoff)
     assembled_at = parse_time(assembled_at) if assembled_at is not None else None
-    from tank import clickhouse_market as chm
 
     if (ch := chm.client(self, "mkt.klines_1m")) is not None:
         counts.update(await chm.market_series_counts(ch, instrument_ids, start, cutoff, assembled_at))
@@ -646,45 +842,51 @@ async def market_series_counts(self, instrument_ids, start, cutoff, assembled_at
         instrument_ids=instrument_ids,
         assembled_at=assembled_at,
     ):
-        close = Decimal(row["c"]) if row["c"] is not None else None
+        close = _decimal(row["c"]) if row["c"] is not None else None
         if (
             close is not None
             and close.is_finite()
             and close > 0
-            and parse_time(row["open_time"]) + timedelta(seconds=60) <= cutoff
+            and _timestamp(row["open_time"]) + timedelta(seconds=60) <= cutoff
         ):
-            counts[row["instrument_id"]] += 1
+            counts[_text(row, "instrument_id")] += 1
     return counts
 
 
-async def latest_market_trades(repo, instrument_ids, *, start):
+async def latest_market_trades(
+    repo: MarketStore, instrument_ids: Collection[str], *, start: TimeInput
+) -> list[Record]:
     """Newest flow bar holding a print, per instrument: its `last_trade` resumes capture."""
     instrument_ids = sorted(set(instrument_ids))
     start = parse_time(start)
     if not instrument_ids:
         return []
-    from tank import clickhouse_market as chm
 
     if (ch := chm.client(repo, "mkt.flow_bars_1m")) is not None:
         return await chm.latest_market_trades(ch, instrument_ids, start)
-    latest = {}
+    latest: dict[str, Record] = {}
     async for row in repo.iter_all("mkt.flow_bars_1m"):
-        iid = row.get("instrument_id")
-        if iid not in instrument_ids or not row.get("last_trade") or parse_time(row["minute_start"]) < start:
+        iid = _text(row, "instrument_id")
+        if iid not in instrument_ids or not row.get("last_trade") or _timestamp(row["minute_start"]) < start:
             continue
-        if iid not in latest or parse_time(row["minute_start"]) > parse_time(latest[iid]["minute_start"]):
+        if iid not in latest or _timestamp(row["minute_start"]) > _timestamp(latest[iid]["minute_start"]):
             latest[iid] = row
     return [{"instrument_id": iid, "last_trade": row["last_trade"]} for iid, row in sorted(latest.items())]
 
 
-async def market_series_day_counts(repo, instrument_ids, start, end, assembled_at=None):
+async def market_series_day_counts(
+    repo: MarketStore,
+    instrument_ids: Collection[str],
+    start: TimeInput,
+    end: TimeInput,
+    assembled_at: TimeInput | None = None,
+) -> dict[tuple[str, datetime], int]:
     """Complete finite positive 1m closes per (instrument, UTC day) for whole days in [start, end)."""
     instrument_ids = sorted(set(instrument_ids))
     start, end = parse_time(start), parse_time(end)
-    counts = {}
+    counts: dict[tuple[str, datetime], int] = {}
     if not instrument_ids or start >= end:
         return counts
-    from tank import clickhouse_market as chm
 
     if (ch := chm.client(repo, "mkt.klines_1m")) is not None:
         return await chm.market_series_day_counts(
@@ -700,69 +902,72 @@ async def market_series_day_counts(repo, instrument_ids, start, end, assembled_a
         instrument_ids=instrument_ids,
         assembled_at=assembled_at,
     ):
-        close = Decimal(row["c"]) if row["c"] is not None else None
-        opened = parse_time(row["open_time"])
+        close = _decimal(row["c"]) if row["c"] is not None else None
+        opened = _timestamp(row["open_time"])
         if close is not None and close.is_finite() and close > 0 and opened < end:
             day = opened.replace(hour=0, minute=0, second=0, microsecond=0)
-            counts[row["instrument_id"], day] = counts.get((row["instrument_id"], day), 0) + 1
+            counts[_text(row, "instrument_id"), day] = counts.get((_text(row, "instrument_id"), day), 0) + 1
     return counts
 
 
-async def market_kline_days_recorded_since(repo, since, end):
+async def market_kline_days_recorded_since(
+    repo: MarketStore, since: TimeInput, end: TimeInput
+) -> set[tuple[str, datetime]]:
     """(instrument, UTC day) of every 1m kline in [.., end) recorded at or after `since`."""
     since, end = parse_time(since), parse_time(end)
-    days = set()
-    from tank import clickhouse_market as chm
+    days: set[tuple[str, datetime]] = set()
 
     if (ch := chm.client(repo, "mkt.klines_1m")) is not None:
         return await chm.market_kline_days_recorded_since(ch, since, end)
     async for row in repo.iter_late_arrivals(
         "mkt.klines_1m", "recorded_at", "open_time", since=since, market_end=end
     ):
-        opened = parse_time(row["open_time"])
+        opened = _timestamp(row["open_time"])
         if opened < end:
-            days.add((row["instrument_id"], opened.replace(hour=0, minute=0, second=0, microsecond=0)))
+            days.add((_text(row, "instrument_id"), opened.replace(hour=0, minute=0, second=0, microsecond=0)))
     return days
 
 
-def _identity_key(collection, row):
-    """A row key for stores that do not return storage keys (the in-memory test double)."""
-    from tank.market_schema import MARKET_IDENTITIES
-
-    return "|".join(str(row.get(field)) for field in MARKET_IDENTITIES[collection])
-
-
 async def market_rows_recorded_since(
-    repo, collection, time_field, instrument_ids, since, start, end, filters=None
-):
+    repo: MarketStore,
+    collection: str,
+    time_field: str,
+    instrument_ids: Collection[str],
+    since: TimeInput,
+    start: TimeInput,
+    end: TimeInput,
+    filters: Record | None = None,
+) -> list[tuple[str, Record, str]]:
     """Rows of the instruments in [start, end) recorded at or after `since` (rewritten or
     late), as (instrument_id, record, key), JSON decoded in a worker thread."""
-    from psycopg import sql
 
     instrument_ids = sorted(set(instrument_ids))
     since, start, end = parse_time(since), parse_time(start), parse_time(end)
     if not instrument_ids or start >= end:
         return []
-    from tank import clickhouse_market as chm
 
     if (ch := chm.client(repo, collection)) is not None:
         return await chm.market_rows_recorded_since(
             ch, collection, time_field, instrument_ids, since, start, end, filters
         )
-    if repo.backend == "memory":
-        found = []
-        for iid in instrument_ids:
-            async for row in repo.iter_late_arrivals(
-                collection,
-                "recorded_at",
-                time_field,
-                since=since,
-                market_end=end,
-                filters=dict(filters or {}, instrument_id=iid),
-            ):
-                if start <= parse_time(row[time_field]) < end:
-                    found.append((iid, row, _identity_key(collection, row)))
-        return found
+    if _is_memory(repo):
+        found: list[tuple[str, Record, str]] = []
+        async with repo.transaction():
+            for key, row in repo._data.get(collection, {}).items():
+                iid = row.get("instrument_id")
+                arrival = row.get("recorded_at")
+                semantic = row.get(time_field)
+                if iid is None or arrival is None or semantic is None:
+                    continue
+                if not isinstance(iid, str):
+                    raise ValueError("instrument_id requires text")
+                if iid not in instrument_ids or _timestamp(arrival) < since:
+                    continue
+                if any(name not in row or row[name] != value for name, value in (filters or {}).items()):
+                    continue
+                if start <= _timestamp(semantic) < end:
+                    found.append((iid, copy.deepcopy(row), key))
+        return sorted(found, key=lambda entry: (entry[0], _timestamp(entry[1][time_field]), entry[2]))
 
     clauses = [
         sql.SQL("instrument_id = ANY(%s::text[])"),
@@ -770,7 +975,7 @@ async def market_rows_recorded_since(
         sql.SQL("{} >= %s").format(sql.Identifier(time_field)),
         sql.SQL("{} < %s").format(sql.Identifier(time_field)),
     ]
-    args = [instrument_ids, since, start, end]
+    args: list[SQLParameter] = [instrument_ids, since, start, end]
     if filters:
         extra, values = repo._exact_predicate(collection, filters)
         clauses.extend(extra)
@@ -785,11 +990,9 @@ async def market_rows_recorded_since(
     return await asyncio.to_thread(
         lambda: [
             (
-                row["instrument_id"],
-                decode(collection, _load_json(collection, row))
-                if collection in MARKET_COLUMNS
-                else row["document"],
-                row["storage_key"],
+                _text(row, "instrument_id"),
+                decode(collection, _load_json(collection, row)),
+                _text(row, "storage_key"),
             )
             for row in rows
         ]
@@ -797,38 +1000,47 @@ async def market_rows_recorded_since(
 
 
 async def sampled_market_history(
-    repo, collection, time_field, group_fields, instrument_ids, start, end, bucket_s
-):
+    repo: MarketStore,
+    collection: str,
+    time_field: str,
+    group_fields: Sequence[str],
+    instrument_ids: Collection[str],
+    start: TimeInput,
+    end: TimeInput,
+    bucket_s: int,
+) -> list[Record]:
     """The last point per (instrument, group, bucket_s bucket) in [start, end).
 
     Older history behind normal ranges is read at the base-tier cadence: denser hot
     points matter only near the event, which the caller reads in full.
     """
-    from psycopg import sql
 
     instrument_ids = sorted(set(instrument_ids))
     start, end = parse_time(start), parse_time(end)
     if not instrument_ids or start >= end:
         return []
-    from tank import clickhouse_market as chm
 
     if (ch := chm.client(repo, collection)) is not None:
         return await chm.sampled_market_history(
             ch, collection, time_field, group_fields, instrument_ids, start, end, bucket_s
         )
-    if repo.backend == "memory":
-        latest = {}
+    if _is_memory(repo):
+        latest: dict[tuple[IdentityValue | None, ...], Record] = {}
         for iid in instrument_ids:
             async for row in repo.iter_range(
                 collection, time_field, start=start, end=end, filters={"instrument_id": iid}
             ):
-                at = parse_time(row[time_field])
+                at = _timestamp(row[time_field])
                 if not start <= at < end:
                     continue
-                key = (iid, *(row.get(g) for g in group_fields), int(at.timestamp()) // bucket_s)
-                if key not in latest or at >= parse_time(latest[key][time_field]):
+                key = (
+                    iid,
+                    *(_group_value(row.get(g)) for g in group_fields),
+                    int(at.timestamp()) // bucket_s,
+                )
+                if key not in latest or at >= _timestamp(latest[key][time_field]):
                     latest[key] = row
-        return sorted(latest.values(), key=lambda r: r[time_field])
+        return sorted(latest.values(), key=lambda row: _timestamp(row[time_field]))
     groups = [sql.Identifier("instrument_id"), *map(sql.Identifier, group_fields)]
     bucket = sql.SQL("floor(extract(epoch from {}) / {})").format(
         sql.Identifier(time_field), sql.Literal(int(bucket_s))
@@ -850,25 +1062,26 @@ async def sampled_market_history(
 
     return await asyncio.to_thread(
         lambda: sorted(
-            (decode(collection, _load_json(collection, row)) for row in rows), key=lambda r: r[time_field]
+            (decode(collection, _load_json(collection, row)) for row in rows),
+            key=lambda row: _timestamp(row[time_field]),
         )
     )
 
 
 async def market_range_by_instrument(
-    repo,
-    collection,
-    time_field,
-    instrument_ids,
-    start,
-    end,
-    filters=None,
+    repo: MarketStore,
+    collection: str,
+    time_field: str,
+    instrument_ids: Collection[str],
+    start: TimeInput | None,
+    end: TimeInput | None,
+    filters: Record | None = None,
     *,
-    batch_size=1000,
-    keep=None,
-    level_rows=None,
-    keys_out=None,
-):
+    batch_size: int = 1000,
+    keep: Callable[[str, list[Record]], None] | None = None,
+    level_rows: int | None = None,
+    keys_out: dict[str, list[str]] | None = None,
+) -> dict[str, list[Record]]:
     """Rows of several instruments in [start, end), paged on one key for all of them.
 
     Per instrument the rows come in the order iter_range returns them for that instrument
@@ -879,13 +1092,11 @@ async def market_range_by_instrument(
     1k-row pages (wide rows: 500) bound the transient of one page and the loop time of its fetch.
     `keys_out`, a dict, receives each instrument's row keys in the order of its rows.
     """
-    from psycopg import sql
 
     instrument_ids = sorted(set(instrument_ids))
-    out = {iid: [] for iid in instrument_ids}
+    out: dict[str, list[Record]] = {iid: [] for iid in instrument_ids}
     if not instrument_ids:
         return out
-    from tank import clickhouse_market as chm
 
     if (ch := chm.client(repo, collection)) is not None:
         after = None
@@ -917,28 +1128,35 @@ async def market_range_by_instrument(
                 return out
             iid, _, key, at = page[-1]
             after = (iid, at, key)
-    if repo.backend == "memory":
+    if _is_memory(repo):
         for iid in instrument_ids:
-            async for row in repo.iter_range(
-                collection,
-                time_field,
-                start=start,
-                end=end,
-                filters=dict(filters or {}, instrument_id=iid),
-                batch_size=batch_size,
-            ):
-                out[iid].append(row)
-                if keys_out is not None:
-                    keys_out.setdefault(iid, []).append(_identity_key(collection, row))
-                if keep is not None:
-                    keep(iid, out[iid])
+            page_cursor: tuple[TimeInput, str] | None = None
+            while True:
+                memory_page = await repo.page_range(
+                    collection,
+                    time_field,
+                    start=start,
+                    end=end,
+                    filters=dict(filters or {}, instrument_id=iid),
+                    limit=batch_size,
+                    after=page_cursor,
+                )
+                for row, position in memory_page:
+                    out[iid].append(row)
+                    if keys_out is not None:
+                        keys_out.setdefault(iid, []).append(position[1])
+                    if keep is not None:
+                        keep(iid, out[iid])
+                if len(memory_page) < batch_size:
+                    break
+                page_cursor = memory_page[-1][1]
         return out
 
     clauses = [
         sql.SQL("{} IS NOT NULL").format(sql.Identifier(time_field)),
         sql.SQL("instrument_id = ANY(%s::text[])"),
     ]
-    args = [instrument_ids]
+    args: list[SQLParameter] = [instrument_ids]
     for op, bound in ((">=", start), ("<", end)):
         if bound is not None:
             clauses.append(sql.SQL("{} " + op + " %s").format(sql.Identifier(time_field)))
@@ -955,7 +1173,7 @@ async def market_range_by_instrument(
             map(sql.Identifier, ["storage_key", *(c for c in MARKET_COLUMNS[collection] if c not in LEVELS)])
         )
     )
-    keys = {iid: [] for iid in instrument_ids}
+    keys: dict[str, list[str]] = {iid: [] for iid in instrument_ids}
     after = None
     while True:
         page_clauses, page_args = list(clauses), list(args)
@@ -975,18 +1193,8 @@ async def market_range_by_instrument(
             await cursor.execute(query, [*page_args, batch_size])
             rows = await cursor.fetchall()
 
-        decoded = await asyncio.to_thread(
-            lambda rows=rows: [
-                (
-                    row["instrument_id"],
-                    decode(collection, _load_json(collection, row))
-                    if collection in MARKET_COLUMNS
-                    else row["document"],
-                    row["storage_key"],
-                )
-                for row in rows
-            ]
-        )
+        decoded = await asyncio.to_thread(_instrument_rows, collection, rows)
+
         for n, (iid, record, key) in enumerate(decoded, 1):
             out[iid].append(record)
             if level_rows is not None:
@@ -1000,7 +1208,7 @@ async def market_range_by_instrument(
         if len(rows) < batch_size:
             break
         last = rows[-1]
-        after = (last["instrument_id"], last[time_field], last["storage_key"])
+        after = (_text(last, "instrument_id"), _timestamp(last[time_field]), _text(last, "storage_key"))
     if level_rows is not None:
         query = sql.SQL(
             "SELECT storage_key, bids, asks FROM (SELECT storage_key, bids, asks, integrity_ok,"
@@ -1019,8 +1227,8 @@ async def market_range_by_instrument(
             found = await cursor.fetchall()
         levels = await asyncio.to_thread(
             lambda: {
-                row["storage_key"]: {
-                    name: json.loads(row[name]) if row[name] is not None else None for name in LEVELS
+                _text(row, "storage_key"): {
+                    name: decode_json(_text(row, name)) if row[name] is not None else None for name in LEVELS
                 }
                 for row in found
             }
