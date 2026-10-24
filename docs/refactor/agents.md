@@ -215,3 +215,11 @@ capture history, immutable previous results, exact repair windows and budgets.
 Both PARTIAL/FAILED cases pass in2.02s with real asyncio capture/repair workers,
 zero skips. All21 runtime unit cases pass in1.65s. Configured mypy passes both
 runtime modules. Typed direct service callers remain model-based.
+
+
+Controlled shutdown validates the precise JobRetryState projection before
+refunding a claimed attempt. It no longer performs arithmetic on a generic
+JSON field. A RUNNING job with no consumed attempt is explicitly inconsistent,
+rather than silently clamped to zero. The drain and last-attempt preservation
+cases pass, zero skips; configured runtime mypy passes against the queue-state
+contract.

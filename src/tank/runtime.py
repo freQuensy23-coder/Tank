@@ -12,6 +12,7 @@ from pydantic import JsonValue
 
 from tank.agents.sessions import ADMITTED_JOB_TYPES, AdmissionDeferred
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
+from tank.contracts.jobs import JobRetryState
 from tank.delivery import DeliveryDeferred, DeliveryService
 from tank.ops_progress import job_failure_progress
 from tank.runtime_contracts import EscalateTokensJob, MarketTruthJob
@@ -439,7 +440,10 @@ class Runtime:
                     try:
                         async with self.repo.lock("job:" + job_id):
                             job = await self.repo.get("ops.jobs", job_id)
-                            if job and job["status"] == "RUNNING":
+                            state = JobRetryState.from_document(job) if job is not None else None
+                            if job is not None and state is not None and state.status == "RUNNING":
+                                if state.attempts == 0:
+                                    raise RuntimeError("Running job has no consumed attempt to refund")
                                 interrupted_at = collection_clock(utcnow())
                                 await self.repo.put(
                                     "ops.jobs",
@@ -447,7 +451,7 @@ class Runtime:
                                     {
                                         **job,
                                         "status": "QUEUED",
-                                        "attempts": max(0, job["attempts"] - 1),
+                                        "attempts": state.attempts - 1,
                                         **interrupted_at.fields("run_after"),
                                         **interrupted_at.fields("interrupted_at"),
                                         "interruption_reason": "CONTROLLED_GENERATION_STOP",
