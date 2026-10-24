@@ -209,7 +209,7 @@ jobs:
         with:
           node-version: "24.22.0"
           package-manager-cache: false
-      - name: Prove real KVM_CREATE_VM with scoped hosted-runner access
+      - name: Prove real KVM_CREATE_VM using existing executor access
         run: node scripts/ci/kvm-preflight.mjs
         env:
           TANK_QUALIFICATION_EVIDENCE: ${{ runner.temp }}/sandbox-qualification
