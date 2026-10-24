@@ -167,6 +167,20 @@ test('owner death before model execution retains a retryable boundary but never 
   assert.equal(imageRecoveryRetryBoundary(snapshot, 'input-old', true), null);
 });
 
+for (const started of [false, true]) test(`refunded no-effects owner death remains pending after reopen (started=${started})`, () => {
+  const snapshot = recover(fixture());
+  snapshot.executions[0].state = 'failed';
+  if (started) {
+    snapshot.orderedEvents.push({ event: { id: 'owner-running', type: 'session.status_running' }, executionId: 'input-old', position: { revision: 3, index: 0 } });
+    snapshot.executions[0].imageRecoveryRetryAfterEventId = 'owner-running';
+  }
+  const pending = pendingImageRecoveries(structuredClone(snapshot), ['input-old']);
+  assert.equal(pending.executions[0].state, 'queued');
+  assert.equal(pending.executions[0].imageRecoveryRetryAfterEventId, started ? 'owner-running' : undefined);
+  assert.equal(planSessionContinuation(pending, 'input-old').mode, 'model');
+  assert.deepEqual(planSessionContinuation(pending, 'input-old').phaseInputIds, ['input-old']);
+});
+
 function siblingFixture() {
   const snapshot = { revision: 1, executions: [
     { id: 'declare', state: 'completed', events: [{ id: 'question', type: 'user.message', content: [] }] },
