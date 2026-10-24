@@ -36,11 +36,11 @@ def test_sealed_empty_run_binds_cutoff_and_rejects_reuse(tmp_path: Path) -> None
         assembled_at="2099-01-01T00:00:00Z", cutoff="2026-10-18T12:00:00Z", config={}, _records=[]
     )
     result = seal_replay_evidence(inputs, "RPL-test", tmp_path / "RPL-test", input_sha256="a" * 64)
-    assert result["manifest"]["files"] == []
-    assert result["manifest"]["format"] == "jsonl"
-    assert result["manifest"]["cutoff"] == inputs.cutoff
-    assert result["manifest"]["cutoff_prec"] is None
-    assert result["manifest"]["cutoff_prec_reason"]
+    assert result.manifest.files == []
+    assert result.manifest.to_wire()["format"] == "jsonl"
+    assert result.manifest.cutoff == inputs.cutoff
+    assert result.manifest.cutoff_prec is None
+    assert result.manifest.cutoff_prec_reason
     assert (tmp_path / "RPL-test.source-audit.json").exists()
     with pytest.raises(ReplayEvidenceError, match="immutable"):
         seal_replay_evidence(inputs, "RPL-test", tmp_path / "RPL-test", input_sha256="a" * 64)
@@ -65,10 +65,10 @@ def test_packet_prints_are_sealed_before_the_cutoff_only(tmp_path: Path) -> None
         ],
     )
     result = seal_replay_evidence(inputs, "RPL-prints", tmp_path / "RPL-prints", input_sha256="b" * 64)
-    (entry,) = result["manifest"]["files"]
-    assert entry["relative_path"] == entry["sha256"] + ".jsonl"
-    assert entry["row_count"] == 1
-    assert [row["trade_id"] for row in read_sealed(tmp_path / "RPL-prints", entry)] == ["1"]
+    (entry,) = result.manifest.files
+    assert entry.relative_path == entry.sha256 + ".jsonl"
+    assert entry.row_count == 1
+    assert [row["trade_id"] for row in read_sealed(tmp_path / "RPL-prints", entry.to_wire())] == ["1"]
 
 
 def test_conflicting_prints_of_one_identity_are_refused(tmp_path: Path) -> None:
@@ -113,11 +113,12 @@ def test_same_guest_directory_exposes_only_each_message_prefix(tmp_path: Path) -
     first = view.advance(propagate_timestamp({"at": "2026-10-17T12:00:00Z"}, "at"))
     inode = visible.stat().st_ino
     assert len(read_guest()) == 1
-    first_hash = first["manifest_sha256"]
+    first_hash = first.manifest_sha256
     view.advance(propagate_timestamp({"at": inputs.cutoff}, "at"))
     assert visible.stat().st_ino == inode
     assert len(read_guest()) == 2
-    assert view.capture["manifest_sha256"] != first_hash
+    assert view.capture.manifest_sha256 != first_hash
+    assert first.manifest_sha256 == first_hash
     assert len(view.receipts) == 2
 
 
@@ -132,6 +133,31 @@ def test_as_of_projection_waits_for_actual_receipt(tmp_path: Path) -> None:
         inputs, "RPL-receipt", tmp_path / "guest", tmp_path / "private", input_sha256="e" * 64
     )
     early = view.advance(propagate_timestamp({"at": "2026-10-18T12:00:00Z"}, "at"))
-    assert early["manifest"]["files"][0]["row_count"] == 0
+    assert early.manifest.files[0].row_count == 0
     late = view.advance(propagate_timestamp({"at": inputs.cutoff}, "at"))
-    assert late["manifest"]["files"][0]["row_count"] == 1
+    assert late.manifest.files[0].row_count == 1
+
+
+@pytest.mark.parametrize("assembled_at,expected", [(None, 0), ("2026-10-18T12:05:00Z", 1)])
+def test_late_archive_receipts_require_explicit_assembly_availability(
+    tmp_path: Path, assembled_at: str | None, expected: int
+) -> None:
+    original = print_row("archive", "2026-10-18T11:59:50Z", "2026-10-18T12:02:00Z")
+    original["record"]["provider_metadata"] = {"precise_quantity": "0.000000000000000001"}
+    inputs = SimpleNamespace(
+        cutoff="2026-10-18T12:01:00Z",
+        assembled_at=assembled_at,
+        _records=[original],
+    )
+    selected = propagate_timestamp({"at": "2026-10-18T12:00:00Z"}, "at")
+    sealed = seal_replay_evidence(
+        inputs,
+        "RPL-archive",
+        tmp_path / "view",
+        input_sha256="f" * 64,
+        cutoff=selected,
+    )
+    (entry,) = sealed.manifest.files
+    assert entry.row_count == expected
+    rows = read_sealed(tmp_path / "view", entry.to_wire())
+    assert rows == ([original["record"]] if expected else [])

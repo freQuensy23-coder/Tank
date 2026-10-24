@@ -1449,15 +1449,15 @@ async def replay_agent_session(
                     json={
                         "metadata": {
                             "tank_replay_run_id": run_id,
-                            "tank_replay_evidence_sha256": current["manifest_sha256"],
-                            "tank_replay_cutoff": current["manifest"]["cutoff"],
+                            "tank_replay_evidence_sha256": current.manifest_sha256,
+                            "tank_replay_cutoff": current.manifest.cutoff,
                         }
                     },
                 )
                 mapped = await repo.get("ops.agent_sessions", active_session_id)
                 mapped.update(
-                    replay_evidence_sha256=current["manifest_sha256"],
-                    replay_cutoff=current["manifest"]["cutoff"],
+                    replay_evidence_sha256=current.manifest_sha256,
+                    replay_cutoff=current.manifest.cutoff,
                 )
                 await repo.put("ops.agent_sessions", active_session_id, mapped)
 
@@ -1913,7 +1913,7 @@ async def replay_agent_session(
             "delivery_intents": [row async for row in repo.iter_all("ops.jobs", filters={"type": "DELIVER"})],
             "external_capture_gaps": reference_evidence_gaps(calls),
             "requested_external_captures_complete": not reference_evidence_gaps(calls),
-            "evidence_manifest_sha256": evidence_view.receipts[-1]["manifest_sha256"]
+            "evidence_manifest_sha256": evidence_view.receipts[-1].manifest_sha256
             if evidence_view and evidence_view.receipts
             else None,
         }
@@ -2013,8 +2013,8 @@ async def replay_agent_session(
                         replay_run_id=run_id,
                         **(
                             {
-                                "replay_evidence_sha256": evidence_capture["manifest_sha256"],
-                                "replay_cutoff": evidence_capture["manifest"]["cutoff"],
+                                "replay_evidence_sha256": evidence_capture.manifest_sha256,
+                                "replay_cutoff": evidence_capture.manifest.cutoff,
                             }
                             if evidence_capture
                             else {}
@@ -2136,8 +2136,8 @@ async def replay_agent_session(
                             )
                             if current_evidence:
                                 next_payload.update(
-                                    replay_evidence_sha256=current_evidence["manifest_sha256"],
-                                    replay_cutoff=current_evidence["manifest"]["cutoff"],
+                                    replay_evidence_sha256=current_evidence.manifest_sha256,
+                                    replay_cutoff=current_evidence.manifest.cutoff,
                                 )
                         else:
                             next_payload["session_id"] = sid
@@ -2190,8 +2190,16 @@ async def replay_agent_session(
                 )
             report = {
                 "replay_run_id": run_id,
-                "replay_evidence": evidence_capture,
-                "guest_prefix_receipts": evidence_view.receipts if evidence_view else [],
+                "replay_evidence": (
+                    evidence_view.capture.to_wire()
+                    if evidence_view is not None
+                    else evidence_capture.to_wire()
+                    if evidence_capture is not None
+                    else None
+                ),
+                "guest_prefix_receipts": [receipt.to_wire() for receipt in evidence_view.receipts]
+                if evidence_view
+                else [],
                 "session_id": sid,
                 "session_ids": session_ids,
                 "mode": "FRESH_OPENMA_SESSION",

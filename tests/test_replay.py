@@ -2538,11 +2538,9 @@ async def test_operational_initial_view_uses_same_earliest_revision_clock(
     async def terminal(path, repo, settings, tools, **kwargs):
         inputs = replay.load_inputs(path, settings)
         selected = replay.replay_message_timestamp(inputs, kwargs["initial_message"])
-        manifest = kwargs["evidence_capture"]["manifest"]
-        assert manifest["cutoff"] == selected.value == (later if explicit else first)
-        assert (
-            manifest["cutoff_prec"] == selected.precision == ("COLLECTION_ONLY" if explicit else "BUCKET(1s)")
-        )
+        manifest = kwargs["evidence_capture"].manifest
+        assert manifest.cutoff == selected.value == (later if explicit else first)
+        assert manifest.cutoff_prec == selected.precision == ("COLLECTION_ONLY" if explicit else "BUCKET(1s)")
         return {"status": "TEST_TERMINAL"}
 
     monkeypatch.setattr(replay, "replay_agent_session", terminal)
