@@ -357,6 +357,8 @@ Each requirement describes behavior the operator can observe or a test can check
 |---|---|
 | FR-P-01 | Tank MUST notify "Tank Ops" when a card cannot be delivered (§7.2). |
 | FR-P-02 | Tank MUST send a daily heartbeat to "Tank Ops" at 08:00 UTC: cards sent in 24 h, tokens under active analysis, analysis backlog, LLM spending. |
+| FR-P-03 | A reply in "Tank Alerts" or "Tank Ops" to a Tank message about an event or a material that an agent handled MUST continue that agent's session, with all its messages, files and history; the agent's answer MUST come back as a reply in the same chat. When no session can be continued (the material never reached an agent, or the session is closed), Tank MUST reply only with the reason; Tank never answers in the agent's place. |
+| FR-P-04 | An agent session MUST stay open for at least 7 days after its last message, and longer while something keeps it alive: an open call, an armed watch condition, unfinished work, a delivered card or a reader's question. |
 
 ---
 

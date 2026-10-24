@@ -26,9 +26,10 @@ from tank.delivery import DeliveryDeferred
 from tank.event_tools import validate_schema
 from tank.openma_sync import agent_tools
 from tank.ops_progress import session_progress
-from tank.telegram_inbox import DOCUMENT_LIMIT, question_message, record_answer
+from tank.settings import threshold
+from tank.telegram_inbox import DOCUMENT_LIMIT, closed_reason, question_message, record_answer
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
-from tank.util import canonical_json, iso, sha256
+from tank.util import canonical_json, iso, parse_time, sha256, utcnow
 
 REST_TIMEOUT_S = 30
 
@@ -69,7 +70,14 @@ def material_event(event):
     )
 
 
-SESSION_ADMISSION_FIELDS = ("session_id", "status", "runtime_status", "active_message_id", "followups_only")
+SESSION_ADMISSION_FIELDS = (
+    "session_id",
+    "status",
+    "runtime_status",
+    "active_message_id",
+    "followups_only",
+    "archive_after",
+)
 JOB_ADMISSION_FIELDS = ("job_id", "status", "priority", "payload", "slot_waiting_since", "slot_admitted")
 BUSY_RUNTIME_STATES = {"PENDING", "RUNNING", "REQUIRES_ACTION"}
 CONTEXT_TRANSITION = (
@@ -365,19 +373,14 @@ class SessionService:
         return session
 
     async def continuable(self, payload):
-        """An archived or natively terminated session cannot take a follow-up question."""
+        """A follow-up continues only a live session; otherwise the reader gets just the reason."""
         question_id = payload["question_id"]
         session = await self.repo.get("ops.agent_sessions", payload.get("session_id") or "")
-        if (
-            session is None
-            or session.get("termination_receipt")
-            or session.get("replay_run_id")
-            or getattr(self.settings, "replay", False)
-        ):
-            await record_answer(self.repo, question_id, None, status="NO_SESSION")
-            return False
-        if session.get("status") == "ENDED":
-            await record_answer(self.repo, question_id, None, status="ARCHIVED")
+        if getattr(self.settings, "replay", False):
+            session = None
+        closed = closed_reason(session)
+        if closed is not None:
+            await record_answer(self.repo, question_id, closed[1], status=closed[0])
             return False
         try:
             remote = await self.request("GET", f"sessions/{session['session_id']}")
@@ -395,8 +398,8 @@ class SessionService:
                     **self.clock_timestamp().fields("checked_at"),
                 }
                 await self.repo.put("ops.agent_sessions", session["session_id"], current)
-            status = "NO_SESSION" if remote.get("status") == "terminated" else "ARCHIVED"
-            await record_answer(self.repo, question_id, None, status=status)
+            status, text = closed_reason(current) or ("ARCHIVED", None)
+            await record_answer(self.repo, question_id, text, status=status)
             return False
         return True
 
@@ -595,9 +598,9 @@ class SessionService:
             async with self.repo.lock("session:" + sid):
                 session = await self.repo.get("ops.agent_sessions", sid)
                 if payload.get("kind") == "USER_QUESTION":
-                    if session.get("status") == "ENDED" or session.get("termination_receipt"):
-                        status = "NO_SESSION" if session.get("termination_receipt") else "ARCHIVED"
-                        await record_answer(self.repo, payload["question_id"], None, status=status)
+                    closed = closed_reason(session)
+                    if closed is not None:
+                        await record_answer(self.repo, payload["question_id"], closed[1], status=closed[0])
                         return None
                     self.reopen_for_question(session, payload, key)
                 if key in session.get("messages", []):
@@ -1995,6 +1998,10 @@ class SessionService:
         ]
         if any(call.get("status") == "OPEN" for call in calls):
             return False
+        async for _ in self.repo.iter_all(
+            "ana.watch_conditions", filters={"event_id": eid, "status": "ARMED"}
+        ):
+            return False
         tools = [row async for row in self.repo.iter_all("ops.tool_calls", filters={"session_id": sid})]
         if any(tool.get("status") == "PENDING" or not tool.get("returned_at") for tool in tools):
             return False
@@ -2064,17 +2071,60 @@ class SessionService:
                 archive = not unfinished and not any(
                     row.get("turn_status") == "PENDING" for row in session.get("message_log", [])
                 )
-            if archive and not getattr(self.settings, "replay", False) and await self.followable(session):
+            replay = getattr(self.settings, "replay", False)
+            if archive and not replay and await self.followable(session):
                 archive = False
                 if not session.get("followups_only"):
                     session["followups_only"] = True
                     await self.repo.put("ops.agent_sessions", sid, session)
+            elif archive and not replay:
+                keep = threshold(self.settings, "session_keep_days", 7)
+                last = await self.last_message_at(session)
+                due = last + timedelta(days=keep)
+                if utcnow() < due:
+                    archive = False
+                    retained = {
+                        **collection_clock(last).fields("last_message_at"),
+                        **collection_clock(due).fields("archive_after"),
+                    }
+                    if any(session.get(key) != value for key, value in retained.items()):
+                        session.update(retained)
+                        await self.repo.put("ops.agent_sessions", sid, session)
+                else:
+                    session.update(
+                        archive_reason="RETENTION",
+                        archive_keep_days=keep,
+                        **collection_clock(last).fields("last_message_at"),
+                    )
+            elif not archive and session.get("archive_after"):
+                for key in ("archive_after", "archive_after_prec", "archive_after_prec_reason"):
+                    session.pop(key, None)
+                await self.repo.put("ops.agent_sessions", sid, session)
             if archive:
                 await self.request("POST", f"sessions/{sid}/archive", json={})
-                session["status"] = "ENDED"
+                session.update(status="ENDED", **self.clock_timestamp().fields("archived_at"))
+                session.setdefault("archive_reason", "REPLAY" if replay else "RETENTION")
                 await self.repo.put("ops.agent_sessions", sid, session)
 
             return True
+
+    async def last_message_at(self, session):
+        """When the session last had a message: Tank's input, the agent's output or a reader's question.
+
+        The latest of the session opening, every message_log input (requested and sent), the last
+        stream event from the agent, and each follow-up question (asked, answered, delivered).
+        """
+        stamps = [session.get("opened_at"), session.get("last_event_at")]
+        for row in session.get("message_log", []):
+            stamps += [row.get("requested_at"), row.get("sent_at")]
+        async for question in self.repo.iter_all(
+            "out.user_questions", filters={"session_id": session["session_id"]}
+        ):
+            stamps += [question.get("asked_at"), question.get("answered_at"), question.get("delivered_at")]
+        known = [parse_time(value) for value in stamps if value]
+        if not known:
+            raise ValueError("Session has no recorded message time")
+        return max(known)
 
     async def followable(self, session):
         """A session whose card or answer reached Telegram stays open for reader follow-ups."""
@@ -2256,8 +2306,12 @@ class SessionService:
                 sid = session["session_id"]
                 settled = session.get("runtime_status") == "IDLE" and not session.get("active_message_id")
                 following = sid in self.tasks and not self.tasks[sid].done()
-
-                if settled and not following and (session.get("followups_only") or tick % IDLE_RECHECK_TICKS):
+                kept = bool(session.get("archive_after")) and parse_time(session["archive_after"]) > utcnow()
+                if (
+                    settled
+                    and not following
+                    and (session.get("followups_only") or kept or tick % IDLE_RECHECK_TICKS)
+                ):
                     continue
                 if await self.finish_if_idle(sid):
                     continue

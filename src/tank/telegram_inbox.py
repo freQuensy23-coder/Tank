@@ -43,31 +43,67 @@ ANSWER_CHANNEL = "telegram:answer"
 CARD_CHANNEL = "telegram:alerts"
 MEMBER_STATUSES = {"creator", "administrator", "member"}
 
-NO_SESSION_TEXT = (
-    "Не нашёл сессию для этого сообщения. Ответьте на карточку Tank или перешлите её боту вместе с вопросом."
-)
+NO_SESSION_TEXT = "Не нашёл сессию агента для этого сообщения. Ответьте на карточку Tank или перешлите её боту вместе с вопросом."
 HINT_TEXT = "Ответьте на карточку Tank или перешлите её боту вместе с вопросом."
 PROMPT_TEXT = "Какой вопрос по этой карточке? Ответьте на это сообщение."
-FAILED_TEXT = "Не удалось получить ответ агента на этот вопрос."
-ARCHIVED_TEXT = "Сессия этой карточки уже закрыта и архивирована, продолжить её нельзя."
+FAILED_TEXT = (
+    "Агент не ответил: ход сессии завершился ошибкой. Сессия сохранена, вопрос можно задать ещё раз."
+)
+GONE_TEXT = "Продолжить нельзя: сессии агента для этого сообщения больше нет."
+TERMINATED_TEXT = "Продолжить нельзя: сессия агента по этому сообщению прервана в OpenMA."
+ARCHIVED_TEXT = "Продолжить нельзя: сессия агента по этому сообщению закрыта и архивирована в OpenMA."
+KEPT_ARCHIVED_TEXT = "Продолжить нельзя: сессия агента по этому сообщению закрыта после {days} без сообщений."
+EARLY_ARCHIVED_TEXT = (
+    "Продолжить нельзя: сессия агента по этому сообщению закрыта сразу после разбора, "
+    "по прежнему правилу закрытия сессий."
+)
 EMPTY_TEXT = "Агент завершил ход без текстового ответа."
 OPS_CHANNEL = "telegram:ops"
 OPS_KIND = "OPS_CARD"
 OPS_UNMATCHED_TEXT = (
     "Не нашёл материал для этого сообщения. Ответьте на сообщение Tank Ops о конкретном материале."
 )
-OPS_NO_SESSION_TEXT = (
-    "Материал не дошёл до агента-аналитика, поэтому сессии, в которой можно задать вопрос, нет. "
-    "Ниже только записанные факты обработки; новый анализ по вопросу не запускается."
-)
-OPS_ENDED_TEXT = (
-    "Сессия аналитика по этому материалу уже закрыта и архивирована, продолжить её нельзя. "
-    "Ниже только записанные факты обработки."
-)
-OPS_PUBLISHED_TEXT = (
-    "По этому материалу опубликована карточка в Tank Alerts: {link}\n"
-    "Фоллоуапы по ней продолжаются в Alerts: ответьте на карточку там, и вопрос уйдёт в ту же сессию аналитика."
-)
+OPS_JEV_TEXT = "Продолжить нельзя: агент не получал этот материал, его отсеял фильтр Jev. Сессии по нему нет."
+OPS_WAITING_TEXT = "Продолжить пока нельзя: материал ещё не передан агенту, сессии по нему нет."
+OPS_NOT_RECEIVED_TEXT = "Продолжить нельзя: агент не получал этот материал ({stage}). Сессии по нему нет."
+OPS_LOST_TEXT = "Продолжить нельзя: не нашёл сессию агента, которая разбирала этот материал."
+WAITING_STAGES = {"RECEIVED", "JEV_PASSED", "JEV_BYPASSED", "AGENT_QUEUED"}
+STOPPING_STAGES = {"PROCESSING_FAILED", "PROCESSING_EXPIRED"}
+
+
+def days_text(days):
+    """A day count with its Russian plural form."""
+    days = int(days)
+    return f"{days} {'дня' if days % 10 == 1 and days % 100 != 11 else 'дней'}"
+
+
+def closed_reason(session):
+    """Why a follow-up cannot continue this session, or None while it is live: (status, reason text)."""
+    if session is None or session.get("replay_run_id"):
+        return "NO_SESSION", GONE_TEXT
+    remote = session.get("remote_state") or {}
+    if session.get("termination_receipt") or remote.get("status") == "terminated":
+        return "TERMINATED", TERMINATED_TEXT
+    if session.get("status") != "ENDED" and not remote.get("archived_at"):
+        return None
+    if session.get("archive_reason") == "RETENTION" and session.get("archive_keep_days"):
+        return "ARCHIVED", KEPT_ARCHIVED_TEXT.format(days=days_text(session["archive_keep_days"]))
+    if session.get("status") == "ENDED" and not session.get("archive_reason"):
+        return "ARCHIVED", EARLY_ARCHIVED_TEXT
+    return "ARCHIVED", ARCHIVED_TEXT
+
+
+def not_received_reason(item, history):
+    """Why no agent session took this material: (reason code, text). The text states only the reason."""
+    stages = [row["stage"] for row in history]
+    if (item.get("relevance") or {}).get("decision") == "SKIP" or "JEV_REJECTED" in stages:
+        return "JEV_REJECTED", OPS_JEV_TEXT
+    if "AGENT_ACCEPTED" in stages or any(stage not in WAITING_STAGES | STOPPING_STAGES for stage in stages):
+        return "SESSION_NOT_FOUND", OPS_LOST_TEXT
+    stopped = [stage for stage in stages if stage in STOPPING_STAGES]
+    if stopped:
+        return stopped[-1], OPS_NOT_RECEIVED_TEXT.format(stage=STAGES[stopped[-1]].lower())
+    return "NOT_YET_RECEIVED", OPS_WAITING_TEXT
 
 
 def plain(text):
@@ -121,8 +157,7 @@ def question_message(question):
     lines = [f"Пришёл фоллоуап через Telegram на сообщение с текстом:\n{reference}"]
     if target.get("kind") == OPS_KIND:
         lines.append(
-            f"Вопрос задан в чате Tank Ops о материале {target.get('item_id')}; "
-            "карточка по нему в Tank Alerts не публиковалась."
+            f"Вопрос задан в чате Tank Ops о материале {target.get('item_id')}; ответ уйдёт туда же."
         )
     lines.append(question.get("text") or "(без текста)")
     for item in question.get("attachments") or []:
@@ -169,10 +204,6 @@ def media(message):
     return None
 
 
-def stamp(value):
-    return parse_time(value).strftime("%Y-%m-%d %H:%M:%S UTC") if value else "время не записано"
-
-
 def question_id_for(chat_id, message_id):
     return "q_" + sha256({"chat_id": str(chat_id), "message_id": int(message_id)})[:32]
 
@@ -192,6 +223,7 @@ async def record_answer(repo, question_id, text, *, status):
                 status=status,
                 answer_status=status,
                 answer_text=text if status == "ANSWERED" and text else None,
+                reason_text=text if status != "ANSWERED" and text else None,
                 **collection_clock(utcnow()).fields("answered_at"),
             )
             await repo.put("out.user_questions", question_id, question)
@@ -679,19 +711,23 @@ class TelegramInbox:
         return None
 
     async def item_session(self, item_id, events):
-        """The live analyst session that took this material as NEW_ITEM or ITEM_ADDED, if any."""
+        """The agent session that took this material as NEW_ITEM or ITEM_ADDED, a live one first."""
+        found = []
         for field, value in [("item_id", item_id)] + [("event_id", event) for event in sorted(events)]:
             async for session in self.repo.iter_all("ops.agent_sessions", filters={field: value}):
-                if session.get("replay_run_id"):
+                if session.get("replay_run_id") or any(
+                    row["session_id"] == session["session_id"] for row in found
+                ):
                     continue
-                for entry in session.get("message_log", []):
-                    payload = entry.get("payload") or {}
-                    if (
-                        payload.get("kind") in {"NEW_ITEM", "ITEM_ADDED"}
-                        and payload.get("item_id") == item_id
-                    ):
-                        return session
-        return None
+                if any(
+                    (entry.get("payload") or {}).get("kind") in {"NEW_ITEM", "ITEM_ADDED"}
+                    and (entry.get("payload") or {}).get("item_id") == item_id
+                    for entry in session.get("message_log", [])
+                ):
+                    found.append(session)
+        return next((session for session in found if closed_reason(session) is None), None) or next(
+            iter(found), None
+        )
 
     async def item_events(self, item_id):
         events = {
@@ -713,68 +749,19 @@ class TelegramInbox:
             events.add(item["route_event_id"])
         return item, events
 
-    async def published_card(self, events):
-        """The latest Alerts card delivered for any of these events into the current Alerts chat."""
-        legacy = await self.legacy_chat()
-        latest = None
-        for event_id in sorted(events):
-            async for alert in self.repo.iter_metadata(
-                "out.alerts", ["alert_id", "version"], filters={"event_id": event_id}
-            ):
-                for delivery in await self.sent(
-                    CARD_CHANNEL, alert_id=alert["alert_id"], version=alert["version"]
-                ):
-                    if (delivery.get("chat_id") or legacy) != str(self.settings.telegram_alerts_chat):
-                        continue
-                    if latest is None or ops_cards.time_of(delivery, "at") > ops_cards.time_of(latest, "at"):
-                        latest = delivery
-        return latest
-
-    async def ops_facts(self, item_id, preface):
-        """What Tank recorded about a material, from the same snapshot its Ops card is rendered from."""
-        data = await ops_cards.snapshot(self.repo, item_id)
-        if data is None:
-            return None
-        lines = [preface, "", ops_cards.render(data)["text"], "", f"Материал: {item_id}"]
-        item = data["item"]
-        for field, label in (("published_at", "Опубликован источником"), ("observed_at", "Получен Tank")):
-            if item.get(field):
-                lines.append(f"{label}: {stamp(item[field])}")
-        if data["history"]:
-            lines.append("Ход обработки:")
-        for notice in data["history"]:
-            line = f"{stamp(notice.get('created_at'))} — {STAGES.get(notice['stage'], notice['stage'])}"
-            if notice.get("reason"):
-                line += f": {ops_cards.reason_text(notice['reason'])}"
-            lines.append(line)
-        return utf16_prefix("\n".join(lines), MESSAGE_LIMIT)
-
     async def ops_question(self, row, target):
-        """A reply in Tank Ops: point to the published card, ask the analyst session, or state the facts."""
+        """A reply in Tank Ops continues the agent session that handled the material, answered in Ops.
+
+        Published or not, the material's own session takes the question. When no session took the
+        material, the reader gets only the reason.
+        """
         item_id = target["item_id"]
         item, events = await self.item_events(item_id)
         if item is None:
             await self.notice(row, OPS_UNMATCHED_TEXT, "UNMATCHED", item_id=item_id)
             return
         session = await self.item_session(item_id, events)
-        if session and session.get("event_id"):
-            events.add(session["event_id"])
-        card = await self.published_card(events)
-        subject = {"item_id": item_id}
-        if card is not None:
-            chat = card.get("chat_id") or await self.legacy_chat()
-            link = ops_cards.telegram_link(chat, card["message_ref"]) or f"сообщение {card['message_ref']}"
-            await self.notice(
-                row,
-                OPS_PUBLISHED_TEXT.format(link=link),
-                "REDIRECTED",
-                subject=subject,
-                reason="PUBLISHED_IN_ALERTS",
-                item_id=item_id,
-                alert_id=card["alert_id"],
-            )
-            return
-        if session and session.get("status") != "ENDED" and not session.get("termination_receipt"):
+        if session is not None:
             await self.question(
                 row,
                 {
@@ -786,10 +773,16 @@ class TelegramInbox:
                 },
             )
             return
-        reason = "SESSION_ENDED" if session else "NO_ANALYST_SESSION"
-        text = await self.ops_facts(item_id, OPS_ENDED_TEXT if session else OPS_NO_SESSION_TEXT)
+        history = [
+            notice
+            async for notice in self.repo.iter_all(
+                "out.ops_notices", filters={"kind": "ITEM_PROGRESS", "subject_id": item_id}
+            )
+        ]
+        history.sort(key=lambda notice: (ops_cards.time_of(notice), notice["notice_id"]))
+        reason, text = not_received_reason(item, history)
         await self.notice(
-            row, text or OPS_UNMATCHED_TEXT, "FACTS", subject=subject, reason=reason, item_id=item_id
+            row, text, "NO_SESSION", subject={"item_id": item_id}, reason=reason, item_id=item_id
         )
 
     async def forwarded_target(self, message, bot):
@@ -1187,14 +1180,15 @@ class TelegramInbox:
         question = await self.repo.get("out.user_questions", payload["question_id"])
         if question is None:
             raise ValueError("Answer subject does not exist")
-        if question.get("answer_status") == "ANSWERED":
+        status = question.get("answer_status")
+        if status == "ANSWERED":
             text = question.get("answer_text") or EMPTY_TEXT
-        elif question.get("answer_status") == "NO_SESSION":
-            text = NO_SESSION_TEXT
-        elif question.get("answer_status") == "ARCHIVED":
-            text = ARCHIVED_TEXT
         else:
-            text = FAILED_TEXT
+            text = question.get("reason_text") or {
+                "NO_SESSION": GONE_TEXT,
+                "TERMINATED": TERMINATED_TEXT,
+                "ARCHIVED": ARCHIVED_TEXT,
+            }.get(status, FAILED_TEXT)
         parts = chunks(text)
         ledger = [
             row
