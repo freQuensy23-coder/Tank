@@ -11,12 +11,14 @@ from typing import Any, cast
 
 UTC = UTC
 
+type TimeInput = datetime | str | int | float | Decimal
+
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def parse_time(value: Any) -> datetime:
+def parse_time(value: TimeInput) -> datetime:
     if isinstance(value, datetime):
         return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
     if isinstance(value, (int, float, Decimal)) or (
@@ -31,11 +33,11 @@ def parse_time(value: Any) -> datetime:
     return parse_time(datetime.fromisoformat(str(value).replace("Z", "+00:00")))
 
 
-def iso(value: Any = None) -> str:
+def iso(value: TimeInput | None = None) -> str:
     return parse_time(value if value is not None else utcnow()).isoformat().replace("+00:00", "Z")
 
 
-def new_id(prefix: str, *, timestamp: Any = None, entropy: int | None = None) -> str:
+def new_id(prefix: str, *, timestamp: TimeInput | None = None, entropy: int | None = None) -> str:
     aliases = {
         "ITEM": "ITM",
         "EVENT": "EVT",

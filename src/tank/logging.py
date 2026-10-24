@@ -5,6 +5,8 @@ import re
 import traceback
 from urllib.parse import unquote, urlsplit
 
+from tank.settings import Settings
+
 _KNOWN_SECRETS: set[str] = set()
 
 
@@ -39,7 +41,7 @@ class CredentialFilter(logging.Filter):
         return True
 
 
-def configure_logging(settings=None) -> None:
+def configure_logging(settings: Settings | None = None) -> None:
     """Install filters before clients are constructed, without logging settings."""
     values = []
     if settings is not None:
@@ -51,11 +53,11 @@ def configure_logging(settings=None) -> None:
             "codex_gateway_key",
             "apify_api_token",
         ):
-            value = getattr(settings, name, None)
+            value = getattr(settings, name)
             if value:
                 values.append(str(value))
         for name in ("database_url", "openma_database_url"):
-            value = getattr(settings, name, None)
+            value = getattr(settings, name)
             if value:
                 password = urlsplit(str(value)).password
                 if password:
