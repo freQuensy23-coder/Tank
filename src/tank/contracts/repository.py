@@ -100,7 +100,9 @@ class Repository[T: BaseModel]:
         )
         return self._collection.decode(document)
 
-    async def list(self, *, filters: dict[str, JsonValue] | None = None, limit: int = 1000) -> builtins.list[T]:
+    async def list(
+        self, *, filters: dict[str, JsonValue] | None = None, limit: int = 1000
+    ) -> builtins.list[T]:
         documents = await self._store.list(self._collection.name, filters=filters, limit=limit)
         return [self._collection.decode(document) for document in documents]
 
