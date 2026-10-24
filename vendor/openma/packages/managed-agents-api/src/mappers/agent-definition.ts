@@ -13,7 +13,7 @@ import type {
   JsonValue,
 } from "@open-managed-agents/managed-agents-application";
 import type { AgentCreateBody } from "../contracts/agents";
-import { fromOpenMaAgentExtension } from "./openma-agent-extension";
+import { fromOpenMaAgentExtension } from "./openma-agent-extension.js";
 
 type WireMcpServer = NonNullable<AgentCreateBody["mcp_servers"]>[number];
 type WireMultiagent = Exclude<
