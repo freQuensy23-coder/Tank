@@ -98,8 +98,8 @@ class Runtime:
         self._bootstrap, self._validate = bootstrap, validate
         self.active_jobs: set[str] = set()
         self.handlers = {
-            "FILTER_ITEM": pipeline.filter_item,
-            "ROUTE_ITEM": pipeline.route_item,
+            "FILTER_ITEM": pipeline.filter_item_wire,
+            "ROUTE_ITEM": pipeline.route_item_wire,
             "AGENT_MESSAGE": sessions.send_message,
             "ESCALATE_TOKENS": self.escalate_wire,
             "RUN_MARKET_TRUTH": self.assess_wire,
