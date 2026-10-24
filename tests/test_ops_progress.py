@@ -383,3 +383,26 @@ async def test_progress_rejects_a_mismatched_subject_before_writing_notices() ->
     with pytest.raises(ValueError, match="conflicts"):
         await sink.record("subject-1", "RECEIVED")
     assert await notices(repo) == [] and await repo.list("ops.jobs") == []
+
+
+@pytest.mark.asyncio
+async def test_publication_reporting_rejects_missing_reason_before_notice() -> None:
+    from pydantic import ValidationError
+
+    from tank.contracts.progress import ProgressPreferences
+    from tank.ops_progress import tool_progress
+
+    repo = MemoryRepository()
+    await repo.put("ingest.source_items", "item", {"item_id": "item", "source_id": "S30"})
+    await repo.put("evt.event_observations", "observation", {"event_id": "event", "item_id": "item"})
+    with pytest.raises(ValidationError, match="reason"):
+        await tool_progress(
+            repo,
+            ProgressPreferences(ops_progress_enabled=True, replay=False),
+            "publish_card",
+            {"event_id": "event"},
+            {},
+            {"published": False},
+        )
+    assert await repo.list("out.ops_notices") == []
+    assert await repo.list("ops.jobs") == []

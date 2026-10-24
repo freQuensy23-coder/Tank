@@ -1,5 +1,6 @@
 """Durable, idempotent source processing notices for the operator channel."""
 
+from collections.abc import Mapping
 from datetime import timedelta
 
 from pydantic import JsonValue
@@ -14,6 +15,8 @@ from tank.contracts.progress import (
     ProgressSettings,
     ProgressStage,
     ProgressSubject,
+    PublicationProgressResult,
+    ToolProgressContext,
 )
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import iso, sha256
@@ -171,35 +174,72 @@ async def event_progress(
         )
 
 
-async def tool_progress(repo, settings, tool, arguments, context, result):
-    if not enabled(settings) or not isinstance(result, dict):
+async def tool_progress(
+    repo: EventProgressRepository,
+    settings: ProgressSettings,
+    tool: str,
+    arguments: Mapping[str, JsonValue],
+    context: Mapping[str, JsonValue],
+    result: JsonValue,
+) -> None:
+    if not enabled(settings) or tool not in {
+        "publish_card",
+        "set_beneficiaries",
+        "get_market_truth",
+        "get_decision",
+    }:
         return
-    event_id = arguments.get("event_id") or context.get("event_id")
+    if not isinstance(result, dict):
+        raise ValueError("Reported tool results must be JSON objects")
+    argument_context = ToolProgressContext.model_validate(
+        {name: arguments[name] for name in ("event_id",) if name in arguments}
+    )
+    call_context = ToolProgressContext.model_validate(
+        {name: context[name] for name in ("event_id", "call_id") if name in context}
+    )
+    event_id = argument_context.event_id
+    if event_id is None:
+        event_id = call_context.event_id
     if tool == "publish_card":
-        published = result.get("published")
-        reason = result.get("reason") or "UNKNOWN"
-        if published:
-            reason += f"; карточка {result['alert_id']} v{result['version']}"
-            if result.get("delivery_not_before"):
-                reason += f"; отправка не раньше {result['delivery_not_before']}"
+        detail = ProgressDetails.model_validate(
+            {
+                name: result[name]
+                for name in ("missing_market_truth", "missing_decisions", "publication_receipt")
+                if name in result
+            }
+        )
+        output = PublicationProgressResult.model_validate(
+            {
+                **{
+                    name: result[name]
+                    for name in ("published", "reason", "alert_id", "version", "delivery_not_before")
+                    if name in result
+                },
+                "details": detail,
+            }
+        )
+        reason = output.reason
+        if output.published:
+            reason += f"; карточка {output.alert_id} v{output.version}"
+            if output.delivery_not_before is not None:
+                reason += f"; отправка не раньше {output.delivery_not_before}"
         await event_progress(
             repo,
             settings,
             event_id,
-            "ALERT_QUEUED" if published else "PUBLICATION_BLOCKED",
+            "ALERT_QUEUED" if output.published else "PUBLICATION_BLOCKED",
             reason,
-            key=f"{result['alert_id']}:{result['version']}" if published else None,
-            details=ProgressDetails.model_validate(
-                {
-                    name: result[name]
-                    for name in ("missing_market_truth", "missing_decisions", "publication_receipt")
-                    if name in result
-                }
-            ),
+            key=f"{output.alert_id}:{output.version}" if output.published else None,
+            details=output.details,
         )
-    elif tool in {"set_beneficiaries", "get_market_truth", "get_decision"}:
+    else:
         await event_progress(
-            repo, settings, event_id, "ANALYSIS_UPDATED", tool, key=context.get("call_id") or sha256(result)
+            repo,
+            settings,
+            event_id,
+            "ANALYSIS_UPDATED",
+            tool,
+            key=call_context.call_id if call_context.call_id is not None else sha256(result),
         )
 
 

@@ -172,3 +172,23 @@ class ProgressNotice(DomainModel):
         record: dict[str, JsonValue] = self.model_dump(mode="json")
         record["details"] = self.details.storage_fields()
         return record
+
+
+class ToolProgressContext(DomainModel):
+    event_id: SourceContextId | None = None
+    call_id: SourceContextId | None = None
+
+
+class PublicationProgressResult(DomainModel):
+    published: bool
+    reason: str = Field(min_length=1)
+    alert_id: SourceContextId | None = None
+    version: int | None = Field(default=None, ge=1)
+    delivery_not_before: str | None = None
+    details: ProgressDetails
+
+    @model_validator(mode="after")
+    def publication_identity(self) -> Self:
+        if self.published and (self.alert_id is None or self.version is None):
+            raise ValueError("Published progress requires its card identity and version")
+        return self
