@@ -59,12 +59,34 @@ The node marker may require a prepared upstream package tree. The historical mar
 
 ## JavaScript and TypeScript
 
-The standalone local lanes require Node 24 or later:
+The current standalone lanes require exactly Node 24.22.0 on PATH, uv 0.11.7,
+and the pinned Python 3.13.13 environment. From a fresh repository checkout:
 
+    uv sync --python 3.13.13 --frozen --extra dev
+    npm ci --prefix scripts/typescript --ignore-scripts --no-audit --no-fund
+    export TANK_FILE_IO_TEST_PYTHON="$(uv run --python 3.13.13 --frozen --extra dev python -c 'import sys; print(sys.executable)')"
+    scripts/typescript/node_modules/.bin/tsc -p scripts/typescript/tsconfig.json
     node scripts/test-node.mjs local-unit
     node scripts/test-node.mjs local-contract
 
-The runner stages generated fixtures in an owned temporary directory. The contract lane is separate from the local unit lane. On Node 24.22.0, the local unit lane passed all 43 cases in 1.134s (p90 0.012735s, maximum 0.131806s); the local contract lane passed all 21 cases in 0.566s. Historical frozen test assets are evidence, not duplicate current unit runs.
+The Python path is required by the actual guest-file and nonce protocol tests in both
+lanes. The .mjs entrypoint imports the typed implementation in scripts/typescript; Node
+executes erasable TypeScript directly. The source resolver exercises the pinned OpenMA
+TypeScript files without modifying vendor source. The runner checks that every declared
+test path exists and requires a complete nonempty result with zero failures, skips,
+cancellations or todos. It uses normal Node test concurrency.
+
+At the 2026-10-24 typed-runner checkpoint, the local unit lane passed 50 cases and the
+contract lane passed 21, all with zero skips. The unit lane includes six inventory/result
+gate regressions. The full current file lists are declared in
+scripts/typescript/test-node.mts; counts may increase as meaningful contracts are added.
+
+Historical prepared-run evidence remains separate: an earlier Node 24.22.0 run recorded
+43 local unit cases in 1.134s (p90 0.012735s, maximum 0.131806s) and 21 contract cases in
+0.566s. The initial refactor CI lanes reached only six unit and seven contract cases
+because stale moved paths were silently unmatched; that green 13-case run did not prove
+the larger historical set. Frozen assets and historical counts are not duplicate current
+unit runs.
 
 Prepared upstream TypeScript suites use Vitest 4.1.4 and Node 24.22.0. All eight prepared suites passed 71 cases with zero skips: serial wall time 22.459s, case p90 0.567288s, maximum 2.064464s. The run preserved all 75 original source hashes and used 1 CPU, 1.5 GiB, no swap, and an isolated network namespace. These package contracts do not qualify a VM.
 

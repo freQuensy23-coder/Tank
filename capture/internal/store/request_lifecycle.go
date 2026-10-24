@@ -5,9 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyjson"
@@ -17,7 +14,19 @@ import (
 )
 
 type requestLifecycle interface {
-	patch() (map[string]any, error)
+	bindings() (requestBindings, error)
+}
+
+type requestBindings struct {
+	status      string
+	writeWriter bool
+	writer      string
+	writeReason bool
+	reason      *string
+	writeResult bool
+	result      *string
+	started     *time.Time
+	finished    *time.Time
 }
 
 type requestClaim struct {
@@ -25,18 +34,15 @@ type requestClaim struct {
 	started time.Time
 }
 
-func (u requestClaim) patch() (map[string]any, error) {
-	result := map[string]any{"status": "RUNNING", "writer": u.writer}
-	pytime.CollectionClock(u.started).Into(result, "started_at")
-	return result, nil
+func (u requestClaim) bindings() (requestBindings, error) {
+	return requestBindings{status: "RUNNING", writeWriter: true, writer: u.writer, started: &u.started}, nil
 }
 
 type requestExpiry struct{ finished time.Time }
 
-func (u requestExpiry) patch() (map[string]any, error) {
-	result := map[string]any{"status": "EXPIRED", "reason": "REQUEST_DEADLINE_PASSED"}
-	pytime.CollectionClock(u.finished).Into(result, "finished_at")
-	return result, nil
+func (u requestExpiry) bindings() (requestBindings, error) {
+	reason := "REQUEST_DEADLINE_PASSED"
+	return requestBindings{status: "EXPIRED", writeReason: true, reason: &reason, finished: &u.finished}, nil
 }
 
 type requestCompletion struct {
@@ -46,22 +52,55 @@ type requestCompletion struct {
 	finished pytime.Timestamp
 }
 
-func (u requestCompletion) patch() (map[string]any, error) {
-	var reason any
-	if u.reason != nil {
-		reason = *u.reason
+func (u requestCompletion) bindings() (requestBindings, error) {
+	finished, err := time.Parse(time.RFC3339Nano, u.finished.Value)
+	if err != nil {
+		return requestBindings{}, err
 	}
-	var result any
+	var result *string
 	if u.result != nil {
-		decoded, err := loadJSON(string(u.result))
-		if err != nil {
-			return nil, err
-		}
-		result = decoded
+		value := string(u.result)
+		result = &value
 	}
-	patch := map[string]any{"status": u.status, "reason": reason, "result": result}
-	u.finished.Into(patch, "finished_at")
-	return patch, nil
+	return requestBindings{status: u.status, writeReason: true, reason: u.reason, writeResult: true, result: result, finished: &finished}, nil
+}
+
+func (u requestBindings) fingerprint(row map[string]any) (string, error) {
+	merged := make(map[string]any, len(row)+10)
+	for key, value := range row {
+		merged[key] = value
+	}
+	merged["status"] = u.status
+	if u.writeWriter {
+		merged["writer"] = u.writer
+	}
+	if u.writeReason {
+		merged["reason"] = nil
+		if u.reason != nil {
+			merged["reason"] = *u.reason
+		}
+	}
+	if u.writeResult {
+		merged["result"] = nil
+		if u.result != nil {
+			value, err := loadJSON(*u.result)
+			if err != nil {
+				return "", err
+			}
+			merged["result"] = value
+		}
+	}
+	if u.started != nil {
+		merged["started_at"] = *u.started
+		merged["started_at_prec"] = pytime.CollectionOnly
+		merged["started_at_prec_reason"] = nil
+	}
+	if u.finished != nil {
+		merged["finished_at"] = *u.finished
+		merged["finished_at_prec"] = pytime.CollectionOnly
+		merged["finished_at_prec_reason"] = nil
+	}
+	return schema.Fingerprint(merged, requests), nil
 }
 
 func decodeRequestCompletion(row map[string]any) (requestCompletion, error) {
@@ -110,39 +149,29 @@ func (s *Store) applyRequestLifecycle(ctx context.Context, tx pgx.Tx, row map[st
 	if err != nil {
 		return nil, err
 	}
-	patch, err := update.patch()
+	bindings, err := update.bindings()
 	if err != nil {
 		return nil, err
 	}
-	encoded, err := schema.Encode(requests, patch)
+	fingerprint, err := bindings.fingerprint(row)
 	if err != nil {
 		return nil, err
 	}
-	merged := make(map[string]any, len(row)+len(encoded))
-	for key, value := range row {
-		merged[key] = value
-	}
-	for key, value := range encoded {
-		merged[key] = value
-	}
-	encoded["semantic_fingerprint"] = schema.Fingerprint(merged, requests)
-	fields := make([]string, 0, len(encoded))
-	for field := range encoded {
-		fields = append(fields, field)
-	}
-	sort.Strings(fields)
-	assignments := make([]string, len(fields))
-	arguments := []any{id}
-	for index, field := range fields {
-		kind := schema.Kind(requests, field)
-		value, err := pgText(requests, field, kind, encoded[field])
-		if err != nil {
-			return nil, err
-		}
-		arguments = append(arguments, value)
-		assignments[index] = quote(field) + "=$" + strconv.Itoa(index+2) + "::" + kind
-	}
-	rows, err := tx.Query(ctx, "UPDATE "+liveTable(requests)+" SET "+strings.Join(assignments, ",")+" WHERE request_id=$1 RETURNING "+selectList(requests, ""), arguments...)
+	rows, err := tx.Query(ctx, "UPDATE "+liveTable(requests)+`
+ SET status=$2::text,
+ writer=CASE WHEN $3::boolean THEN $4::text ELSE writer END,
+ reason=CASE WHEN $5::boolean THEN $6::text ELSE reason END,
+ result=CASE WHEN $7::boolean THEN $8::jsonb ELSE result END,
+ started_at=CASE WHEN $9::timestamptz IS NOT NULL THEN $9::timestamptz ELSE started_at END,
+ started_at_prec=CASE WHEN $9::timestamptz IS NOT NULL THEN 'COLLECTION_ONLY' ELSE started_at_prec END,
+ started_at_prec_reason=CASE WHEN $9::timestamptz IS NOT NULL THEN NULL ELSE started_at_prec_reason END,
+ finished_at=CASE WHEN $10::timestamptz IS NOT NULL THEN $10::timestamptz ELSE finished_at END,
+ finished_at_prec=CASE WHEN $10::timestamptz IS NOT NULL THEN 'COLLECTION_ONLY' ELSE finished_at_prec END,
+ finished_at_prec_reason=CASE WHEN $10::timestamptz IS NOT NULL THEN NULL ELSE finished_at_prec_reason END,
+ semantic_fingerprint=$11::text WHERE request_id=$1 RETURNING `+selectList(requests, ""),
+		id, bindings.status, bindings.writeWriter, bindings.writer,
+		bindings.writeReason, bindings.reason, bindings.writeResult, bindings.result,
+		bindings.started, bindings.finished, fingerprint)
 	if err != nil {
 		return nil, err
 	}
