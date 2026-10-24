@@ -13,6 +13,7 @@ const lanes = {
     "tests/openma/lifecycle/image-upgrade.test.mjs",
     "tests/openma/lifecycle/runtime-identity.test.mjs",
     "tests/openma/lifecycle/image-recovery.test.mjs",
+    "tests/openma/lifecycle/memory-bindings.test.mjs",
   ],
   "local-contract": [
     "deploy/openma_lifecycle/native-qualification.test.mjs",

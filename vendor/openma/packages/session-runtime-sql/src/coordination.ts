@@ -1,6 +1,6 @@
 import { encodeSessionEventDocument, type ExecutionProgressReceipt } from '@open-managed-agents/session-runtime-contract/history';
 import type { YieldSessionExecutionProgress, YieldSessionExecutionProgressResult } from '@open-managed-agents/session-runtime-contract/coordination';
-import { imageMismatchRecoveryBoundary, imageRecoveryRetryBoundary, lastMatching, planSessionContinuation, resultCallId, verifiedProgress, type ContinuationSnapshot } from '@open-managed-agents/session-runtime-contract/continuation';
+import { imageRecoveryRetryBoundary, lastMatching, pendingImageRecoveries, planSessionContinuation, resultCallId, verifiedProgress, type ContinuationSnapshot } from '@open-managed-agents/session-runtime-contract/continuation';
 import { loadSessionContinuationSnapshot, SessionContinuationMissingError } from './continuation';
 import type {
   AdmitSessionExecution,
@@ -513,18 +513,24 @@ export class SqlSessionExecutionStore
           .bind(claimedAt, row.workspace_id, row.id, row.revision, claimedAt, input.ownerId, row.workspace_id, row.session_id).run();
         continue;
       }
-      const previousRecovery = snapshot.executions.find(execution => execution.id === row.id);
-      const imageRecoveryAfterEventId = previousRecovery?.imageRecoveryAfterEventId ?? (row.state === 'failed' ? imageMismatchRecoveryBoundary(snapshot, row.id) : null);
-      if (row.state === 'failed' && !imageRecoveryAfterEventId) continue;
+      const eligible = (candidates.results ?? []).filter(candidate => candidate.workspace_id === row.workspace_id
+        && candidate.session_id === row.session_id && candidate.lane_id === row.lane_id && candidate.state === 'failed'
+        && snapshot.executions.some(execution => execution.id === candidate.id && execution.revision === Number(candidate.revision)));
+      let planning = pendingImageRecoveries(snapshot, eligible.map(candidate => candidate.id));
+      const recoveries = planning.executions.filter(execution => execution.state === 'queued'
+        && snapshot.executions.some(original => original.id === execution.id && original.state === 'failed'));
+      const previousRecovery = planning.executions.find(execution => execution.id === row.id);
+      const imageRecoveryAfterEventId = previousRecovery?.imageRecoveryAfterEventId;
+      if (row.state === 'failed' && previousRecovery?.state !== 'queued') continue;
       const imageRecoveryRetryAfterEventId = imageRecoveryRetryBoundary(snapshot, row.id) ?? previousRecovery?.imageRecoveryRetryAfterEventId;
-      const planning = imageRecoveryAfterEventId ? { ...snapshot, executions: snapshot.executions.map(execution => execution.id === row.id
-        ? { ...execution, state: 'queued' as const, imageRecoveryAfterEventId, imageRecoveryInterruptRequestedAt: null, imageRecoveryRetryAfterEventId } : execution) } : snapshot;
+      if (imageRecoveryAfterEventId) planning = { ...planning, executions: planning.executions.map(execution => execution.id === row.id
+        ? { ...execution, state: 'queued' as const, imageRecoveryRetryAfterEventId } : execution) };
       const plan = planSessionContinuation(planning, row.id);
-      if (plan.mode === 'blocked' || (imageRecoveryAfterEventId && plan.mode === 'failure'))
+      if (plan.mode === 'blocked' || (imageRecoveryAfterEventId && ['failure', 'noop'].includes(plan.mode)))
         continue;
       return {
         workspace_id: row.workspace_id, session_id: row.session_id, id: row.id,
-        revision: row.revision, continuation: snapshot, lane_id: row.lane_id, serial, imageRecoveryAfterEventId, imageRecoveryRetryAfterEventId
+        revision: row.revision, continuation: snapshot, lane_id: row.lane_id, serial, imageRecoveryAfterEventId, imageRecoveryRetryAfterEventId, recoveries
       };
     }
     return null;
@@ -596,6 +602,7 @@ export class SqlSessionExecutionStore
     serial?: boolean;
     imageRecoveryAfterEventId?: string | null;
     imageRecoveryRetryAfterEventId?: string;
+    recoveries?: ContinuationSnapshot['executions'];
   }): Promise<ClaimSessionExecutionResult | null> {
     const claimToken = crypto.randomUUID();
     await this.sql.prepare(`
@@ -635,6 +642,24 @@ export class SqlSessionExecutionStore
             AND interrupt_requested_at_ms IS NULL
         ON CONFLICT (workspace_id, execution_id) DO UPDATE SET after_event_id = excluded.after_event_id
       `).bind(JSON.stringify({ afterEventId: candidate.imageRecoveryAfterEventId, interruptRequestedAt: null, retryAfterEventId: candidate.imageRecoveryRetryAfterEventId }), candidate.workspace_id, candidate.id, input.attemptId, input.ownerId)] : []),
+      ...(candidate.recoveries ?? []).filter(recovery => recovery.id !== candidate.id).flatMap(recovery => [
+        this.sql.prepare(`INSERT INTO managed_session_image_recoveries (workspace_id, execution_id, after_event_id)
+          SELECT dependency.workspace_id, dependency.id, ? FROM managed_session_executions AS dependency
+          WHERE dependency.workspace_id = ? AND dependency.id = ? AND dependency.revision = ?
+            AND dependency.state = 'failed' AND dependency.failure = 'retained_configuration_changed'
+            AND dependency.interrupt_requested_at_ms IS NULL AND dependency.attempt_count < dependency.max_attempts AND dependency.deadline_at_ms > ?
+            AND EXISTS (SELECT 1 FROM managed_session_executions AS claimed WHERE claimed.workspace_id = ? AND claimed.id = ?
+              AND claimed.state = 'running' AND claimed.attempt_id = ? AND claimed.owner_id = ?)
+          ON CONFLICT (workspace_id, execution_id) DO UPDATE SET after_event_id = excluded.after_event_id`)
+          .bind(JSON.stringify({ afterEventId: recovery.imageRecoveryAfterEventId, interruptRequestedAt: null, retryAfterEventId: recovery.imageRecoveryRetryAfterEventId }),
+            candidate.workspace_id, recovery.id, recovery.revision, claimedAt, candidate.workspace_id, candidate.id, input.attemptId, input.ownerId),
+        this.sql.prepare(`UPDATE managed_session_executions SET state = 'queued', failure = NULL, settled_at_ms = NULL, revision = revision + 1
+          WHERE workspace_id = ? AND id = ? AND revision = ? AND state = 'failed' AND failure = 'retained_configuration_changed'
+            AND interrupt_requested_at_ms IS NULL AND attempt_count < max_attempts AND deadline_at_ms > ?
+            AND EXISTS (SELECT 1 FROM managed_session_executions AS claimed WHERE claimed.workspace_id = ? AND claimed.id = ?
+              AND claimed.state = 'running' AND claimed.attempt_id = ? AND claimed.owner_id = ?)`)
+          .bind(candidate.workspace_id, recovery.id, recovery.revision, claimedAt, candidate.workspace_id, candidate.id, input.attemptId, input.ownerId),
+      ]),
     ]);
     if ((results[0]?.meta.changes ?? 0) !== 1)
       return null;
@@ -652,6 +677,7 @@ export class SqlSessionExecutionStore
     serial?: boolean;
     imageRecoveryAfterEventId?: string | null;
     imageRecoveryRetryAfterEventId?: string;
+    recoveries?: ContinuationSnapshot['executions'];
   }): Promise<ClaimSessionExecutionResult | null> {
     const revision = safeInteger(candidate.revision, "execution revision");
     const row = await this.executionClaimStatement(input, claimedAt, candidate, revision).first<ExecutionRow>();

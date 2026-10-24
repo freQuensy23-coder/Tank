@@ -1,6 +1,7 @@
 const openmaSource = process.env.TANK_AUDIT_OPENMA_ROOT ? pathToFileURL(process.env.TANK_AUDIT_OPENMA_ROOT.replace(/\/?$/, '/')) : new URL('../../../vendor/openma/', import.meta.url);
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { Readable, Writable } from 'node:stream';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,6 +12,29 @@ const { pinnedBoxLiteProvider, RetainedBoxOperations } = await import(new URL('p
 const scope={workspaceId:'w',environmentId:'production',sessionId:'session',workId:'tank-retained-session-v1'};
 const fence={...scope,ownerId:'owner',generation:1,token:'FAKE_FENCE',expiresAt:'2099-01-01T00:00:00Z'};
 const signal=()=>new AbortController().signal;
+test('retained writable-memory resume proves every native host binding before opening the old runtime', async () => {
+  const name = 'oma-' + createHash('sha256').update(`litebox:${scope.sessionId}`).digest('hex').slice(0, 32);
+  const allocation = { image: 'pinned', volumes: [
+    { hostPath: '/owned/.openma-managed-memory-workspaces/w/session/generation/store/data', guestPath: '/mnt/memory/notes', readOnly: false },
+    { hostPath: '/owned/outputs', guestPath: '/mnt/session/outputs', readOnly: false },
+  ] };
+  const record = { id: 'owned', name, options: { volumes: allocation.volumes.map(volume => ({ host_path: volume.hostPath, guest_path: volume.guestPath, read_only: volume.readOnly })) } };
+  let resumes = 0;
+  const module = { createBoxLiteProvider() { return { async resume() { resumes++; return { runtimeHandle: () => ({ provider: 'litebox', runtimeId: 'owned' }) }; } }; },
+    createBoxLiteManagedRuntime() { return { sandbox: {} }; } };
+  const provider = pinnedBoxLiteProvider({ module, allocation, leaseTtlMs: 30000,
+    client: { async getInfo() { return { id: 'owned', name, state: { running: false } }; } }, readLegacyConfiguration: async () => record, isCurrent: async () => true });
+  await provider.resume({ provider: 'litebox', runtimeId: 'owned' }, scope, fence, signal());
+  assert.equal(resumes, 1);
+  for (const index of [0, 1]) {
+    record.options.volumes[index].host_path += '-foreign';
+    await assert.rejects(provider.resume({ provider: 'litebox', runtimeId: 'owned' }, scope, fence, signal()), /retained_memory_binding_unproven/);
+    record.options.volumes[index].host_path = allocation.volumes[index].hostPath;
+  }
+  record.options.volumes[0].read_only = true;
+  await assert.rejects(provider.resume({ provider: 'litebox', runtimeId: 'owned' }, scope, fence, signal()), /retained_memory_binding_unproven/);
+  assert.equal(resumes, 1);
+});
 test('public provider bridge resumes a fresh handle and reaps without resume or allocating secret env',async()=>{
   const calls=[];
   const module={

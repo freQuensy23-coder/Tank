@@ -289,6 +289,19 @@ function recoverImagePreflight(snapshot: ContinuationSnapshot): ContinuationSnap
   }
   return removed.size ? { ...snapshot, orderedEvents: snapshot.orderedEvents.filter(entry => !removed.has(entry)) } : snapshot;
 }
+export function pendingImageRecoveries(snapshot: ContinuationSnapshot, eligibleExecutionIds: readonly string[]): ContinuationSnapshot {
+  const eligible = new Set(eligibleExecutionIds);
+  return { ...snapshot, executions: snapshot.executions.map(row => {
+    if (row.state !== 'failed' || row.interruptRequestedAt !== null || !eligible.has(row.id)) return row;
+    if (row.imageRecoveryAfterEventId && row.imageRecoveryInterruptRequestedAt !== null) return row;
+    const boundary = row.imageRecoveryAfterEventId ?? imageMismatchRecoveryBoundary(snapshot, row.id);
+    if (!boundary) return row;
+    const pending = { ...row, state: 'queued' as const, imageRecoveryAfterEventId: boundary,
+      imageRecoveryInterruptRequestedAt: null, imageRecoveryRetryAfterEventId: imageRecoveryRetryBoundary(snapshot, row.id) ?? row.imageRecoveryRetryAfterEventId };
+    const proof = planSessionContinuation({ ...snapshot, executions: snapshot.executions.map(other => other.id === row.id ? pending : other) }, row.id);
+    return proof.mode === 'failure' ? row : pending;
+  }) };
+}
 export function planSessionContinuation(snapshot: ContinuationSnapshot, currentId: string): ContinuationPlan {
   try {
     if (snapshot.invalidReason)

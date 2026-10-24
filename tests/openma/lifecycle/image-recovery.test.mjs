@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { imageMismatchRecoveryBoundary, imageRecoveryRetryBoundary, planSessionContinuation } from '../../../vendor/openma/packages/session-runtime-contract/src/continuation.ts';
+import { imageMismatchRecoveryBoundary, imageRecoveryRetryBoundary, pendingImageRecoveries, planSessionContinuation } from '../../../vendor/openma/packages/session-runtime-contract/src/continuation.ts';
 
 function fixture() {
   const message = { id: 'input-old', type: 'user.message', content: [{ type: 'text', text: 'pending original input' }], processedAt: '2026-10-24T00:00:00Z' };
@@ -132,5 +132,60 @@ test('owner death before model execution retains a retryable boundary but never 
   snapshot.orderedEvents.push({ event: { id: 'model-started', type: 'span.model_request_start' }, executionId: 'input-old', position: { revision: 4, index: 0 } });
   assert.equal(imageRecoveryRetryBoundary(snapshot, 'input-old', true), null);
 });
+
+function siblingFixture() {
+  const snapshot = { revision: 1, executions: [
+    { id: 'declare', state: 'completed', events: [{ id: 'question', type: 'user.message', content: [] }] },
+    ...['X', 'Y'].map(call => ({ id: 'R' + call, state: 'failed', events: [{ id: 'result-' + call, type: 'user.custom_tool_result', customToolUseId: call,
+      content: [{ type: 'text', text: 'completed external effect ' + call }] }] })),
+  ].map(row => ({ ...row, laneId: 'sthr_primary', revision: 1, attemptCount: 1, interruptRequestedAt: null })), orderedEvents: [] };
+  const append = (executionId, event) => snapshot.orderedEvents.push({ event, executionId, position: { revision: snapshot.orderedEvents.length + 1, index: 0 } });
+  for (const id of ['X', 'Y']) append('declare', { id, type: 'agent.custom_tool_use', name: 'external-side-effect', input: {} });
+  append('declare', { id: 'declaration', type: 'session.status_idle', stopReason: { type: 'requires_action', eventIds: ['X', 'Y'] } });
+  for (const id of ['RX', 'RY']) {
+    append(id, { id: id + '-error', type: 'session.error', error: { message: 'retained_configuration_changed', retryStatus: 'exhausted' } });
+    append(id, { id: id + '-idle', type: 'session.status_idle', stopReason: { type: 'retries_exhausted' } });
+  }
+  return snapshot;
+}
+
+test('independently proven failed sibling callbacks remain pending and each enters committed intake before one continuation', () => {
+  const original = siblingFixture();
+  const one = pendingImageRecoveries(original, ['RX']);
+  assert.equal(planSessionContinuation(one, 'RX').mode, 'noop');
+  const snapshot = pendingImageRecoveries(original, ['RX', 'RY']);
+  assert.deepEqual(snapshot.executions.map(row => row.state), ['completed', 'queued', 'queued']);
+  assert.deepEqual(snapshot.executions.slice(1).map(row => row.imageRecoveryAfterEventId), ['RX-idle', 'RY-idle']);
+  const first = planSessionContinuation(snapshot, 'RX');
+  assert.equal(first.mode, 'intake');
+  assert.deepEqual(first.phaseInputIds, ['result-X']);
+  assert.deepEqual(first.remaining, ['Y']);
+  snapshot.executions[1].state = 'completed';
+  snapshot.orderedEvents.push({ executionId: 'RX', event: { id: 'RX-intake', type: 'session.status_idle', stopReason: { type: 'requires_action', eventIds: ['Y'] } },
+    position: { revision: 8, index: 0 } });
+  const restarted = structuredClone(snapshot);
+  const second = planSessionContinuation(restarted, 'RY');
+  assert.equal(second.mode, 'model');
+  assert.deepEqual(second.phaseInputIds, ['result-Y']);
+  assert.deepEqual(second.remaining, []);
+  assert.deepEqual(second.historyEvents.filter(event => event.type === 'user.custom_tool_result').map(event => event.id), ['result-X', 'result-Y']);
+  assert.deepEqual(second.historyEvents.filter(event => event.type === 'agent.custom_tool_use').map(event => event.id), ['X', 'Y']);
+  restarted.executions[2].state = 'running';
+  restarted.orderedEvents.push({ executionId: 'RY', event: { id: 'RY-done', type: 'session.status_idle', stopReason: { type: 'end_turn' } }, position: { revision: 9, index: 0 } });
+  assert.equal(planSessionContinuation(restarted, 'RY').mode, 'finalize');
+  assert.deepEqual(original.executions.map(row => row.state), ['completed', 'failed', 'failed']);
+});
+
+for (const reason of ['unrelated', 'effects', 'interrupt', 'retired']) test(`sibling dependency with ${reason} is never classified as recoverable pending work`, () => {
+  const snapshot = siblingFixture();
+  if (reason === 'unrelated') snapshot.orderedEvents.find(entry => entry.event.id === 'RY-error').event.error.message = 'permission denied';
+  if (reason === 'effects') snapshot.orderedEvents.push({ executionId: 'RY', event: { id: 'effect', type: 'agent.tool_use' }, position: { revision: 8, index: 0 } });
+  if (reason === 'interrupt') snapshot.executions[2].interruptRequestedAt = '2026-10-24T00:00:00Z';
+  const eligible = reason === 'retired' ? ['RX'] : ['RX', 'RY'];
+  const pending = pendingImageRecoveries(snapshot, eligible);
+  assert.equal(pending.executions[2].state, 'failed');
+  assert.equal(pending.executions[2].imageRecoveryAfterEventId, undefined);
+});
+
 
 

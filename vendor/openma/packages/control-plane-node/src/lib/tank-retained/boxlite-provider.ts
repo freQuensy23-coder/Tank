@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workspaceTransferProgram } from './workspace-transfer.js';
 import { transferWorkspaceArchive } from './workspace-chunks.js';
+import { stableDigest } from './runtime-identity.js';
 import { assertLegacyNativeConfiguration, readNativeLegacyConfiguration, validateLegacyNativeArtifact, type NativeLegacyConfiguration } from './legacy-native-provenance.js';
 import type { Fence, Handle, Provider, RetainedRuntime, Scope } from './retained-session.js';
 
@@ -237,6 +238,12 @@ export function pinnedBoxLiteProvider(input: {
     async resume(handle, scope, fence, signal) {
       const info = await inspect(handle.runtimeId);
       if (!info) throw Error('retained_runtime_missing');
+      if (input.allocation.volumes?.some(volume => !volume.readOnly && volume.hostPath.includes('/.openma-managed-memory-workspaces/'))) {
+        const record = await (input.readLegacyConfiguration ?? readNativeLegacyConfiguration)(info.id);
+        const volumes = input.allocation.volumes.map(volume => ({ host_path: volume.hostPath, guest_path: volume.guestPath, read_only: volume.readOnly ?? false }));
+        if (!record || record.id !== info.id || record.name !== ownershipName(handle, scope)
+            || stableDigest(record.options.volumes) !== stableDigest(volumes)) throw Error('retained_memory_binding_unproven');
+      }
       const context = { sessionId: scope.sessionId, workdir: '/workspace' };
       const selectedProvider = publicProvider(handle, scope);
       if (handle.ownershipName && (info.id !== handle.runtimeId || info.name !== ownershipName(handle, scope))) throw Error('retained_cleanup_ownership_mismatch');

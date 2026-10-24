@@ -31,7 +31,7 @@ import { agentUsesAssemblySkillMount } from "@open-managed-agents/agent/harness/
 import type { HarnessContext } from "@open-managed-agents/agent/harness/interface";
 
 import { buildCredentialRoutes as buildManagedCredentialRoutes, buildDeploymentRoutes as buildManagedDeploymentRoutes, buildDeploymentRunRoutes as buildManagedDeploymentRunRoutes, buildDreamRoutes as buildManagedDreamRoutes, buildEnvironmentRoutes as buildManagedEnvironmentRoutes, buildEnvironmentWorkRoutes as buildManagedEnvironmentWorkRoutes, buildFileRoutes as buildManagedFileRoutes, buildMemoryStoreRoutes as buildManagedMemoryStoreRoutes, buildMemoryRoutes as buildManagedMemoryRoutes, buildMemoryVersionRoutes as buildManagedMemoryVersionRoutes, buildModelRoutes as buildManagedModelRoutes, buildSkillRoutes as buildManagedSkillRoutes, buildSkillVersionRoutes as buildManagedSkillVersionRoutes, buildTunnelCertificateRoutes as buildManagedTunnelCertificateRoutes, buildTunnelRoutes as buildManagedTunnelRoutes, buildVaultRoutes as buildManagedVaultRoutes, buildUserProfileRoutes as buildManagedUserProfileRoutes } from "@open-managed-agents/managed-agents-api";
-import { SessionRuntimeHistoryApplicationService, SessionRuntimeProjectionApplicationService, type SessionEnvironmentSourcePort } from "@open-managed-agents/managed-agents-application";
+import { SessionRuntimeHistoryApplicationService, SessionRuntimeProjectionApplicationService, type Session, type SessionEnvironmentSourcePort } from "@open-managed-agents/managed-agents-application";
 import { bindPort, defineAppModule, providePort } from "@open-managed-agents/app";
 import { managedAgentsPortTokens } from "@open-managed-agents/app/managed-agents";
 import { deploymentAgentSourcePort, deploymentEnvironmentSourcePort, deploymentFileSourcePort, deploymentMemoryStoreSourcePort, deploymentSchedulePlannerPort, deploymentSessionLauncherPort, deploymentVaultSourcePort } from "@open-managed-agents/app/modules/deployments";
@@ -75,7 +75,8 @@ import { verifyReplayEvidence } from "@open-managed-agents/sandbox-adapter-liteb
 import { validateReplayAttachment } from "../lib/tank-retained/replay-attachment.js";
 import { executableImageIdentity, stableDigest } from "../lib/tank-retained/runtime-identity.js";
 import { NodeRetainedLifecycle, type AttachableSandbox, type Context } from "../lib/tank-retained/node-lifecycle.js";
-import type { Allocation } from "../lib/tank-retained/boxlite-provider.js";
+import type { Allocation, NativeBoxLiteClient } from "../lib/tank-retained/boxlite-provider.js";
+import { retainedMemoryGeneration } from "../lib/tank-retained/memory-bindings.js";
 import { retainedCompatibility, resolveLegacyProvenance, type LegacyFingerprintInputs } from "../lib/tank-retained/legacy-provenance.js";
 import { trustedLegacyBuild } from "../lib/tank-retained/legacy-build-provenance.js";
 import { join } from "node:path";
@@ -107,7 +108,7 @@ import { createManagedIdGenerator } from "../managed-ids.js";
 import type { NodeFoundation } from "./node-foundation.js";
 
 export async function createManagedNodeRuntime(foundation: NodeFoundation, components: NodeComponents, disposables: Disposables) {
-  const { config, toMarkdownProvider, logger, sql, managedAgentsPersistence, platformRootSecret, secrets, openAIAgentsSecrets, credentialService, sessionsService, filesService, modelCardsService, memoryBlobs, outputsRoot, sessionOutputs, sharedSessionOutputs, filesBlob, buildSandbox, resolveNodeModelCreds, buildNodeLanguageModel, } = foundation;
+  const { config, toMarkdownProvider, logger, sql, managedAgentsPersistence, platformRootSecret, secrets, openAIAgentsSecrets, credentialService, sessionsService, filesService, modelCardsService, memoryBlobs, memoryBlobLocalDir, outputsRoot, sessionOutputs, sharedSessionOutputs, filesBlob, buildSandbox, resolveNodeModelCreds, buildNodeLanguageModel, } = foundation;
   // ─── Official Managed Sessions composition ─────────────────────────────
   async function resolveNodeMcpProxyTarget(input: {
     tenantId: string;
@@ -366,9 +367,16 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
       databasePolicy: database ? { host: database.hostname, port: database.port, database: database.pathname, role: database.username } : null,
     };
   };
+  const retainedClient = retainedSdk.JsBoxlite.withDefaultConfig() as NativeBoxLiteClient;
   const retainedLifecycle = new NodeRetainedLifecycle({
     fences: new SqlRuntimeResourceFencePort(sql), orphans: new SqlRuntimeOrphanPort(sql), providerModule: retainedBoxLiteProvider,
-    client: retainedSdk.JsBoxlite.withDefaultConfig(), ownerId: config.execution.ownerId, leaseTtlMs: 30000,
+    client: retainedClient, ownerId: config.execution.ownerId, leaseTtlMs: 30000,
+    runtimeGeneration: async (context, candidate, proposed) => retainedMemoryGeneration({
+      scope: { workspaceId: context.workspaceId, environmentId: context.environment.id, sessionId: context.sessionId, workId: 'tank-retained-session-v1' },
+      candidate, proposed, resources: (context.session as Session).resources, memoryRoot: memoryBlobLocalDir,
+      inspect: id => retainedClient.getInfo(id),
+      getText: async key => (await memoryBlobs.getText(key))?.text ?? null,
+    }),
     assertExecutionCurrent: async (candidate) => {
       if (!candidate || !await isManagedSessionExecutionFenceActive(candidate as Parameters<typeof isManagedSessionExecutionFenceActive>[0]))
         throw new Error("Retained Session execution fence lost");
@@ -397,6 +405,9 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
   await retainedLifecycle.reconcileOrphans();
   const managedRuntimeRunner = new DefaultNodeManagedSessionRunner({
     retainedLifecycle: {
+      runtimeGeneration: input => input.session.resources.some(resource => resource.type === 'memory_store' && resource.access !== 'read_only')
+        ? retainedLifecycle.runtimeGeneration({ ...input, sessionId: input.session.id, executionFence: input.executionFence }, input.proposed)
+        : Promise.resolve(input.proposed),
       bind: input => {
         if (!("setRetainedBoxFactory" in input.sandbox))
           throw new Error("Retained lifecycle requires the LiteBox adapter");

@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { LegacyResolution } from './legacy-provenance.js';
 import { assertCompatible, stableDigest, type RuntimeIdentity } from './runtime-identity.js';
-import { RetainedSessionLifecycle, type Fences, type Options, type Scope } from './retained-session.js';
+import { RetainedSessionLifecycle, type Candidate, type Fences, type Options, type Scope } from './retained-session.js';
 import { RetainedBoxOperations, pinnedBoxLiteProvider, type Allocation, type BoxLiteRuntime, type PinnedBoxLiteModule } from './boxlite-provider.js';
 
 type Box = RetainedBoxOperations & { stop(): Promise<void> };
@@ -17,6 +17,7 @@ export interface Context {
   signal?: AbortSignal;
 }
 interface Lifetime { final: boolean; binds: number }
+type GenerationContext = Pick<Context, 'workspaceId' | 'sessionId' | 'session' | 'environment' | 'executionFence' | 'signal'>;
 interface Entry {
   lifetime: Lifetime; context: Context; controller?: RetainedSessionLifecycle<BoxLiteRuntime>;
   allocation?: Allocation; beginning?: Promise<void>; finalizing?: Promise<void>; started: boolean;
@@ -35,6 +36,7 @@ export interface NodeRetainedOptions {
   fingerprint(context: Context, allocation: Allocation): Promise<string>;
   identity?(context: Context, allocation: Allocation): Promise<RuntimeIdentity>;
   resolveLegacy?(context: Context, allocation: Allocation): Promise<(fingerprint: string) => LegacyResolution | null>;
+  runtimeGeneration?(context: GenerationContext, candidate: Candidate | null, proposed: string): Promise<string>;
   assertExecutionCurrent(fence: unknown): Promise<void>;
 }
 const key = (scope: Omit<Scope, 'workId'>) => JSON.stringify([scope.workspaceId, scope.environmentId, scope.sessionId]);
@@ -49,6 +51,24 @@ export class NodeRetainedLifecycle {
   private archives = new Map<string, Promise<void>>();
   private lifetimes = new Map<string, Lifetime>();
   constructor(options: NodeRetainedOptions) { this.options = options; }
+  async runtimeGeneration(context: GenerationContext, proposed: string): Promise<string> {
+    if (!this.options.runtimeGeneration) return proposed;
+    const scope = { ...scopeOf(context), workId: 'tank-retained-session-v1' };
+    if (this.lifetimes.get(key(scope))?.final) throw Error('retained_session_archiving');
+    context.signal?.throwIfAborted();
+    await this.options.assertExecutionCurrent(context.executionFence);
+    const acquired = await this.options.fences.acquire({ scope, ownerId: `${this.options.ownerId}:bindings:${randomUUID()}`, ttlMs: this.options.leaseTtlMs });
+    if (acquired.type !== 'acquired') throw Error('retained_resource_busy');
+    try {
+      const generation = await this.options.runtimeGeneration(context, acquired.publication?.workspaceCandidate ?? null, proposed);
+      context.signal?.throwIfAborted();
+      await this.options.assertExecutionCurrent(context.executionFence);
+      if (!await this.options.fences.isCurrent(acquired.fence)) throw Error('retained_fence_lost');
+      return generation;
+    } finally {
+      await this.options.fences.release({ fence: acquired.fence, reason: 'completed' });
+    }
+  }
   async reconcileOrphans(): Promise<void> {
     const queue = this.options.orphans;
     if (!queue) return;
