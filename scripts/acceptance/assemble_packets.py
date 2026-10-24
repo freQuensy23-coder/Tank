@@ -1,6 +1,6 @@
 """Re-assemble masked §11 acceptance packets from retained unmasked parents (tank-acceptance).
 
-    PYTHONPATH=/srv/tank/src /srv/tank/.venv/bin/python assemble_packets.py \
+    PYTHONPATH=src uv run --python 3.13.13 --frozen --extra dev python scripts/acceptance/assemble_packets.py \
         --fixtures F-17,F-24 --generation r91 [--from-generation r90] \
         [--code-version X --config-version Y] [--add-replacements '{"F-17": {"tether": "issuer-t"}}'] [--replace]
 
@@ -30,9 +30,18 @@ import yaml
 import zstandard
 
 ROOT = Path("/srv/tank")
-sys.path.insert(0, str(ROOT / "tests"))
+SOURCE_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(SOURCE_ROOT / "tests"))
+sys.path.insert(0, str(SOURCE_ROOT))
 import fixture_acceptance as fa
 
+from scripts.acceptance.masking_contracts import (
+    AssemblyError,
+    MaskInverseAmbiguity,
+    decode_exceptions,
+    leak_scan,
+    transform_pair,
+)
 from tank import fixture_reference as fr
 from tank.replay import _market_record, digest, load_inputs
 from tank.settings import Settings, resolve_versions
@@ -42,10 +51,6 @@ SECTIONS = ("dependency_map", "openma", "semantics", "sources", "thresholds")
 REPLAY = ROOT / "data/replay"
 LOG_SCRATCH = Path("/srv/tank-work/logs/tank-acceptance/assemble-scratch")
 FIXTURE_DIR = re.compile(r"acceptance-[A-Za-z0-9][A-Za-z0-9_.-]*/F-\d{2}")
-
-
-class AssemblyError(Exception):
-    pass
 
 
 def safe_remove(path) -> None:
@@ -103,101 +108,6 @@ def zjson(value):
     return zstandard.ZstdCompressor(level=12).compress((canonical_json(value) + "\n").encode())
 
 
-def transform_pair(replacements, sensitive):
-    """Exact-case substitution, identical to fixture_reference._host_identity_mask.transform."""
-
-    def build(inverse):
-        if not replacements:
-            return (lambda value: value), (lambda value: copy.deepcopy(value))
-        mapping = {v: k for k, v in replacements.items()} if inverse else dict(replacements)
-        exact = {replacements[k] if inverse else k for k in sensitive}
-        parts = sorted(mapping, key=len, reverse=True)
-        pattern = re.compile(
-            r"(?<!\w)(?:"
-            + "|".join(re.escape(k) if k in exact else "(?i:" + re.escape(k) + ")" for k in parts)
-            + r")(?!\w)"
-        )
-
-        def text(value):
-            return pattern.sub(
-                lambda m: mapping[
-                    next(k for k in parts if (k == m[0] if k in exact else k.casefold() == m[0].casefold()))
-                ],
-                value,
-            )
-
-        def tree(value):
-            if isinstance(value, str):
-                return text(value)
-            if isinstance(value, list):
-                return [tree(v) for v in value]
-            if isinstance(value, dict):
-                out = {text(k): tree(v) for k, v in value.items()}
-                if len(out) != len(value):
-                    raise AssemblyError("identity substitution collides JSON keys")
-                return out
-            return value
-
-        return text, tree
-
-    return build(False), build(True)
-
-
-TOKEN_ID = re.compile(r"[a-z0-9][a-z0-9._-]*:[A-Za-z0-9._-]+")
-
-
-def leak_scan(masked, replacements, venues=frozenset(), exceptions=None):
-    """Word-bounded, case-insensitive scan for source-side names/slugs (fails), with two exemptions
-    reported as warnings: lowercase technical venue ids (first segment of registry instrument ids,
-    preserved by every map's declared scope) and unbounded substrings (e.g. 'aavedao.eth')."""
-    base = set()
-    for key in replacements:
-        base.add(key)
-        if TOKEN_ID.fullmatch(key):
-            base.update(key.split(":"))
-    if not base:
-        return {}, []
-    names = sorted(
-        base | {n.replace(" ", sep) for n in base if " " in n for sep in ("-", "_")}, key=len, reverse=True
-    )
-    bounded = re.compile(r"(?<!\w)(?:" + "|".join(map(re.escape, names)) + r")(?!\w)", re.I)
-    loose = re.compile("|".join(map(re.escape, names)), re.I)
-    hits, warnings = {}, set()
-
-    def walk(value, path) -> None:
-        if isinstance(value, dict):
-            for k, v in value.items():
-                walk(k, path)
-                walk(v, path + [k])
-        elif isinstance(value, list):
-            for v in value:
-                walk(v, path)
-        elif isinstance(value, str):
-            where = "/".join(map(str, path[:2]))
-            spans = set()
-            allowed = []
-            if exceptions and path and path[-1] in exceptions["fields"]:
-                allowed = [
-                    x.span()
-                    for tok in [*exceptions["tokens"], *exceptions.get("masked_forms", [])]
-                    for x in re.finditer(re.escape(tok), value)
-                ]
-            for m in bounded.finditer(value):
-                spans.add(m.span())
-                if any(a <= m.start() and m.end() <= b for a, b in allowed):
-                    warnings.add(f"{where}:{m[0]} (declared technical-context exception)")
-                elif m[0] in venues:
-                    warnings.add(f"{where}:{m[0]} (technical venue id)")
-                else:
-                    hits.setdefault(f"{where}:{m[0]}", value[max(0, m.start() - 30) : m.end() + 30])
-            warnings.update(
-                f"{where}:{m[0].casefold()}" for m in loose.finditer(value) if m.span() not in spans
-            )
-
-    walk({k: v for k, v in masked.items() if k != "masking"}, [])
-    return hits, sorted(warnings)[:200]
-
-
 def registry_venues(registry):
     return frozenset(
         str(i.get("instrument_id", "")).split(":")[0]
@@ -220,7 +130,7 @@ def content_hash(record):
     ).hexdigest()
 
 
-ASSEMBLER_REVISION = 13
+ASSEMBLER_REVISION = 14
 SLUG_FIELDS = {"entity_id", "name"}
 HOST_MASK_FIXTURES = {"F-24", "F-25", "F-26", "F-27"}
 
@@ -604,7 +514,7 @@ def write_overlay(
     fundamentals = overlay / "fundamentals_evidence.json"
     if fundamentals.is_file():
         masked = mask_tree(json.loads(fundamentals.read_text()))
-        hits, _ = leak_scan(masked, replacements, venues, exceptions)
+        hits = leak_scan(masked, replacements, venues, decode_exceptions(exceptions)).hits
         if hits:
             raise AssemblyError(
                 f"fundamentals_evidence.json keeps original identities: {dict(list(hits.items())[:6])}"
@@ -636,6 +546,7 @@ def assemble(fixture, args, sections, code_version, out_root):
             "config_version": args.config_version,
             "config": digest({k: v.hex() for k, v in _capture(args.config_dir).items()}),
             "module": sha(fr.__file__),
+            "masking_module": sha(Path(__file__).with_name("masking_contracts.py")),
         }
     )
     receipt_path = out / "private/assembly.json"
@@ -965,14 +876,18 @@ def assemble(fixture, args, sections, code_version, out_root):
         if r["collection"] == "ingest.source_items"
     )
     pinned = ("input_sha256", "config_version", "code_version", "registry")
-    reversible = not slugs and inv({k: v for k, v in masked.items() if k not in pinned}) == {
-        k: v for k, v in parent.items() if k not in pinned
-    }
+    try:
+        reversible = not slugs and inv({k: v for k, v in masked.items() if k not in pinned}) == {
+            k: v for k, v in parent.items() if k not in pinned
+        }
+    except MaskInverseAmbiguity:
+        reversible = False
     if host_mask and not reversible and not slugs:
         raise AssemblyError(
             f"{fixture}: masked envelope is not exactly reversible (host identity admission requires it)"
         )
-    hits, warnings = leak_scan(masked, scan_names, venues, exceptions)
+    scan = leak_scan(masked, scan_names, venues, decode_exceptions(exceptions))
+    hits, warnings = scan.hits, scan.warnings
     if hits:
         raise AssemblyError(
             f"{fixture}: original identities remain in masked envelope: {dict(list(hits.items())[:8])}"
@@ -1196,15 +1111,15 @@ def verify(fixture, rel, out, reused):
     packet = read_json(out / "inputs/input.json.zst")
     private = read_json(out / "private/map.json")
     parent_registry = read_json(out / "private/original-packet.json.zst")["registry"]
-    hits, _ = leak_scan(
+    hits = leak_scan(
         packet,
         {
             **private["replacements"],
             **{r["original"]: r["masked"] for r in private.get("identifier_replacements", [])},
         },
         registry_venues(parent_registry),
-        private.get("declared_technical_context_exceptions"),
-    )
+        decode_exceptions(private.get("declared_technical_context_exceptions")),
+    ).hits
     result = {
         "reused_existing_build": reused,
         "check_ready": fa.check_ready(ROOT, case),
