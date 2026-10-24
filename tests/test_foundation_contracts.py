@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 
 import httpx
@@ -11,6 +12,7 @@ from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import InvalidJobClaim, JobEnvelope
 from tank.contracts.repository import Collection, Repository
 from tank.contracts.score import ScoreAssessment, ScoreAssessmentView, ScoreDimension, ScoreDimensions
+from tank.market.trade_contracts import FlowInstrument, QuoteUsdValuation
 from tank.market_codec import _prepare_records, encode, merge_point
 from tank.market_storage import market_range_by_instrument, market_rows_recorded_since
 from tank.models import Record
@@ -418,3 +420,37 @@ async def test_market_persistence_does_not_guess_timestamp_units_or_timezones(va
     with pytest.raises(ValueError):
         await store.put_market_batch("mkt.klines_1m", [row], keys=["invalid"])
     assert await store.get("mkt.klines_1m", "invalid") is None
+
+
+def test_trade_instrument_requires_declared_metadata_and_rejects_unclocked_history() -> None:
+    with pytest.raises(ValidationError):
+        FlowInstrument.model_validate(
+            {
+                "instrument_id": "A",
+                "token_id": "T",
+                "venue": "okx",
+                "market_type": "PERP_LINEAR",
+                "quote_asset": "USDT",
+            }
+        )
+    instrument = FlowInstrument(
+        instrument_id="A",
+        token_id="T",
+        venue="okx",
+        market_type="PERP_LINEAR",
+        quote_asset="USDT",
+        venue_symbol=None,
+        contract_multiplier=None,
+    )
+    assert instrument.contract_multiplier is None
+    with pytest.raises(ValidationError, match="actual sample clock"):
+        QuoteUsdValuation(rate=Decimal(1), as_of=None, basis="HISTORICAL_SAMPLE", unavailable_reason=None)
+    explicit = QuoteUsdValuation(
+        rate=Decimal("1.00001"),
+        as_of=None,
+        basis="EXPLICIT_UNCLOCKED_INPUT",
+        unavailable_reason=None,
+    )
+    assert explicit.rate == Decimal("1.00001") and explicit.as_of is None
+    with pytest.raises(ValidationError, match="requires its reason"):
+        QuoteUsdValuation(rate=None, as_of=None, basis="UNAVAILABLE", unavailable_reason=None)
