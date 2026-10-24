@@ -7,11 +7,28 @@ Producers choose the correct constructor; repositories must not assign source pr
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any
 
-from tank.util import iso, parse_time
+from pydantic import JsonValue
+
+from tank.util import TimeInput, iso, parse_time
+
+type BucketSize = str | timedelta | tuple[int | float | Decimal | str, str]
+type TimestampRecord = Mapping[str, JsonValue | datetime | Decimal]
+
+
+def _text(value: JsonValue | datetime | Decimal, field: str) -> str | None:
+    if value is None or isinstance(value, str):
+        return value
+    raise ValueError(f"{field} requires text")
+
+
+def _time(value: JsonValue | datetime | Decimal) -> TimeInput:
+    if isinstance(value, bool) or not isinstance(value, (datetime, str, int, float, Decimal)):
+        raise ValueError("Timestamp value must be a declared date or number")
+    return value
+
 
 CANONICAL_PRECISION_FIELDS = {"published_at": "published_prec"}
 _BUCKET = re.compile(r"^BUCKET\(([^()]+)\)$")
@@ -28,7 +45,7 @@ _FACTORS = {
 }
 
 
-def _size(value: Any) -> str:
+def _size(value: BucketSize) -> str:
     if isinstance(value, timedelta):
         value = (
             str(Decimal(value.days * 86400 + value.seconds) + Decimal(value.microseconds) / Decimal(1000000))
@@ -50,7 +67,7 @@ def _duration(value: str) -> Decimal:
     return Decimal(match[1]) * _FACTORS[match[2]]
 
 
-def normalize_precision(precision: str | None, *, bucket_size: Any = None) -> str | None:
+def normalize_precision(precision: str | None, *, bucket_size: BucketSize | None = None) -> str | None:
     """Normalize explicit supported legacy names; a bare BUCKET needs an explicit duration."""
     if precision is None or precision == "UNKNOWN":
         return None
@@ -91,7 +108,7 @@ class Timestamp:
     precision_reason: str | None = None
     bucket_anchor: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.value is not None:
             parse_time(self.value)
         if self.precision is None:
@@ -107,10 +124,10 @@ class Timestamp:
             if not self.precision or not _BUCKET.fullmatch(self.precision):
                 raise ValueError("Bucket anchor requires explicit bucket precision")
 
-    def fields(self, field: str, *, precision_field: str | None = None) -> dict[str, Any]:
+    def fields(self, field: str, *, precision_field: str | None = None) -> dict[str, str | int | None]:
         """Emit the original field plus its canonical precision and explicit unknown reason."""
         sibling = precision_field or CANONICAL_PRECISION_FIELDS.get(field, field + "_prec")
-        result: dict[str, Any] = {
+        result: dict[str, str | int | None] = {
             field: self.value,
             sibling: self.precision,
             sibling + "_reason": self.precision_reason,
@@ -132,14 +149,14 @@ class Timestamp:
         return result
 
 
-def collection_clock(value: Any = None, *, policy: str = "COLLECTION_ONLY") -> Timestamp:
+def collection_clock(value: TimeInput | None = None, *, policy: str = "COLLECTION_ONLY") -> Timestamp:
     """Call only where the producer actually observes a local collection/processing clock."""
     if policy != "COLLECTION_ONLY":
         raise ValueError("Collection-clock policy must be explicitly COLLECTION_ONLY")
     return Timestamp(iso(value), policy)
 
 
-def chosen_boundary(value: Any, *, precision: str, bucket_size: Any = None) -> Timestamp:
+def chosen_boundary(value: TimeInput, *, precision: str, bucket_size: BucketSize | None = None) -> Timestamp:
     """A caller-defined boundary, with caller-declared exactness or bucket duration."""
     normalized = normalize_precision(precision, bucket_size=bucket_size)
     if value is None or normalized is None or normalized == "COLLECTION_ONLY":
@@ -148,11 +165,11 @@ def chosen_boundary(value: Any, *, precision: str, bucket_size: Any = None) -> T
 
 
 def propagate_timestamp(
-    record: Mapping[str, Any],
+    record: TimestampRecord,
     field: str,
     *,
     precision_aliases: Sequence[str] = (),
-    bucket_size: Any = None,
+    bucket_size: BucketSize | None = None,
     missing_reason: str = "INCOMPLETE",
 ) -> Timestamp:
     """Copy precision with a selected timestamp; reject contradictory declared aliases.
@@ -163,21 +180,28 @@ def propagate_timestamp(
     Unknown legacy precision remains None with a reason; it never becomes EXACT.
     """
     if bucket_size is None and record.get(field + "_bucket_size_s") is not None:
-        bucket_size = (record[field + "_bucket_size_s"], "s")
+        size = record[field + "_bucket_size_s"]
+        if isinstance(size, bool) or not isinstance(size, (str, int, float, Decimal)):
+            raise ValueError("Bucket size must be a number of seconds")
+        bucket_size = (size, "s")
     raw = record.get(field)
-    declarations: list[Any] = []
+    declarations: list[str] = []
     anchors = []
     reason = None
+    value: JsonValue | datetime | Decimal
     if isinstance(raw, Mapping):
         value = raw.get("value", raw.get("ts"))
-        declarations.extend(raw[key] for key in ("precision", "prec") if raw.get(key) is not None)
-        reason = raw.get("precision_reason")
+        for key in ("precision", "prec"):
+            declaration = _text(raw.get(key), key)
+            if declaration is not None:
+                declarations.append(declaration)
+        reason = _text(raw.get("precision_reason"), "precision_reason")
         if raw.get("bucket_anchor") is not None:
-            anchors.append(raw["bucket_anchor"])
+            anchors.append(_text(raw["bucket_anchor"], "bucket_anchor"))
     else:
         value = raw
     if record.get(field + "_bucket_anchor") is not None:
-        anchors.append(record[field + "_bucket_anchor"])
+        anchors.append(_text(record[field + "_bucket_anchor"], "bucket_anchor"))
     if anchors and any(anchor != anchors[0] for anchor in anchors[1:]):
         raise ValueError(f"Conflicting timestamp bucket anchors for {field}")
     bucket_anchor = anchors[0] if anchors else None
@@ -185,8 +209,10 @@ def propagate_timestamp(
     names = dict.fromkeys((canonical, field + "_prec", field + "_precision", *precision_aliases))
     for name in names:
         if record.get(name) is not None:
-            declarations.append(record[name])
-        reason = reason or record.get(name + "_reason")
+            declaration = _text(record[name], name)
+            if declaration is not None:
+                declarations.append(declaration)
+        reason = reason or _text(record.get(name + "_reason"), name + "_reason")
     normalized = [normalize_precision(item, bucket_size=bucket_size) for item in declarations]
     if normalized and any(not _equivalent(normalized[0], item) for item in normalized[1:]):
         raise ValueError(f"Conflicting timestamp precision declarations for {field}")
@@ -199,10 +225,13 @@ def propagate_timestamp(
     ):
         bucket_anchor = "UNSPECIFIED"
     if value is None:
-        reason = reason or record.get(field + "_reason") or missing_reason
+        reason = reason or _text(record.get(field + "_reason"), field + "_reason") or missing_reason
         return Timestamp(None, "COLLECTION_ONLY" if precision == "COLLECTION_ONLY" else None, reason)
     return Timestamp(
-        iso(value), precision, None if precision is not None else reason or missing_reason, bucket_anchor
+        iso(_time(value)),
+        precision,
+        None if precision is not None else reason or missing_reason,
+        bucket_anchor,
     )
 
 
@@ -226,7 +255,7 @@ def bucket_duration(precision: str) -> timedelta:
     return timedelta(microseconds=int(microseconds))
 
 
-def interval_bounds(timestamp: Timestamp):
+def interval_bounds(timestamp: Timestamp) -> tuple[datetime | None, datetime | None]:
     """Preserve the provider's declared bucket edge; an unknown edge has no interval.
 
     Existing records without an edge retain their original start-bucket contract.

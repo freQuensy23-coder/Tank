@@ -71,7 +71,7 @@ async def test_pinned_engine_payload_parser_and_unmodified_result(monkeypatch: p
     monkeypatch.setenv("DDGS_PROXY", "http://forbidden.test:1")
     monkeypatch.setenv("HTTPS_PROXY", "http://forbidden.test:1")
 
-    def respond(request: pytest.FixtureRequest):
+    def respond(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         assert request.url == search.SEARCH_URL
         assert request.method == "POST"
@@ -88,7 +88,7 @@ async def test_pinned_engine_payload_parser_and_unmodified_result(monkeypatch: p
     monkeypatch.setitem(ENGINES, "text", {"forbidden": Forbidden})
     adapter, _ = service(search._search_sync)
     result = await adapter.search("official announcement")
-    assert result.results == [RESULT]
+    assert [hit.model_dump(mode="json") for hit in result.results] == [RESULT]
     assert result.attempts == 1
     assert len(requests) == 1
     assert calls == [("official announcement", {"backend": "duckduckgo", "max_results": 10})]
@@ -109,7 +109,7 @@ async def test_real_ddgs_preserves_block_and_retry_contract(
 ) -> None:
     requests = []
 
-    def respond(request: pytest.FixtureRequest):
+    def respond(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         return httpx.Response(status, text=html, headers={"Location": "https://forbidden.test"})
 
@@ -152,7 +152,7 @@ async def test_typed_library_timeout_and_ratelimit_retry_exactly(exception) -> N
 async def test_actual_http_timeout_preserved_without_hidden_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     starts = []
 
-    def respond(request: pytest.FixtureRequest) -> None:
+    def respond(request: httpx.Request) -> None:
         starts.append(timer.now)
         raise httpx.ReadTimeout("timeout", request=request)
 

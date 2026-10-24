@@ -15,6 +15,7 @@ import yaml
 from pydantic import AliasChoices, BaseModel, Field, JsonValue, PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from tank.contracts.configuration import Thresholds
 from tank.contracts.json import decode_json
 
 _PROCESS_CODE_VERSION: str | None = None
@@ -219,6 +220,9 @@ class Settings(BaseSettings):
 
     def read_config_json(self, relative: str) -> JsonValue:
         return decode_json(self.read_config_bytes(relative))
+
+    def thresholds(self) -> Thresholds:
+        return self.load_config_as("thresholds", Thresholds)
 
     def load_config_as[T: BaseModel](self, name: str, schema: type[T]) -> T:
         relative = name if name.endswith((".yaml", ".yml")) else name + ".yaml"

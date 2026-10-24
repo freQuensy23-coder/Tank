@@ -2,9 +2,15 @@
 
 from math import isfinite
 
-from pydantic import JsonValue, TypeAdapter
+from pydantic import ConfigDict, JsonValue, RootModel
 
-JSON_VALUE = TypeAdapter[JsonValue](JsonValue)
+
+class JsonDocument(RootModel[JsonValue]):
+    model_config = ConfigDict(strict=True)
+
+    @classmethod
+    def validate_value(cls, value: JsonValue) -> JsonValue:
+        return cls.model_validate(value, strict=True).root
 
 
 def _require_finite(value: JsonValue) -> None:
@@ -19,12 +25,12 @@ def _require_finite(value: JsonValue) -> None:
 
 
 def decode_json(payload: str | bytes | bytearray) -> JsonValue:
-    value = JSON_VALUE.validate_json(payload, strict=True)
+    value = JsonDocument.model_validate_json(payload, strict=True).root
     _require_finite(value)
     return value
 
 
 def encode_json(value: JsonValue) -> bytes:
-    validated = JSON_VALUE.validate_python(value, strict=True)
+    validated = JsonDocument.validate_value(value)
     _require_finite(validated)
-    return JSON_VALUE.dump_json(validated, warnings="error")
+    return JsonDocument(validated).model_dump_json(warnings="error").encode()

@@ -1,4 +1,3 @@
-import dataclasses
 import hashlib
 import json
 import secrets
@@ -7,9 +6,30 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
-from typing import Any, cast
+from typing import overload
+
+from pydantic import BaseModel, JsonValue
+
+from tank.contracts.json import JsonDocument
 
 UTC = UTC
+
+type JsonInput = (
+    str
+    | int
+    | float
+    | bool
+    | None
+    | datetime
+    | Decimal
+    | Enum
+    | Path
+    | BaseModel
+    | dict[str, JsonInput]
+    | list[JsonInput]
+    | tuple[JsonInput, ...]
+    | set[JsonInput]
+)
 
 type TimeInput = datetime | str | int | float | Decimal
 
@@ -74,33 +94,39 @@ def new_id(prefix: str, *, timestamp: TimeInput | None = None, entropy: int | No
     return prefix + "-" + "".join(reversed(chars))
 
 
-def jsonable(value: Any) -> Any:
-    if dataclasses.is_dataclass(value):
-        return jsonable(dataclasses.asdict(cast(Any, value)))
-    if hasattr(value, "model_dump"):
-        return jsonable(value.model_dump(mode="python"))
+@overload
+def jsonable(value: dict[str, JsonInput]) -> dict[str, JsonValue]: ...
+
+
+@overload
+def jsonable(value: JsonInput) -> JsonValue: ...
+
+
+def jsonable(value: JsonInput) -> JsonValue:
+    if isinstance(value, BaseModel):
+        return JsonDocument.validate_value(value.model_dump(mode="json", warnings="error"))
     if isinstance(value, dict):
-        return {str(k): jsonable(v) for k, v in value.items()}
+        return {key: jsonable(child) for key, child in value.items()}
     if isinstance(value, (list, tuple, set)):
-        return [jsonable(v) for v in value]
+        return [jsonable(child) for child in value]
     if isinstance(value, datetime):
         return iso(value)
     if isinstance(value, Decimal):
         return str(value)
     if isinstance(value, Enum):
-        return value.value
+        return JsonDocument.validate_value(value.value)
     if isinstance(value, Path):
         return str(value)
     return value
 
 
-def canonical_json(value: Any) -> str:
+def canonical_json(value: JsonInput) -> str:
     return json.dumps(
         jsonable(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
     )
 
 
-def sha256(value: Any) -> str:
+def sha256(value: JsonInput | bytes) -> str:
     payload = (
         value
         if isinstance(value, bytes)
