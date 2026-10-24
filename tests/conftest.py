@@ -9,11 +9,16 @@ import re
 import socket
 import sys
 import tempfile
+from collections.abc import AsyncIterator, Mapping, MutableMapping
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import pytest
 import pytest_asyncio
+
+if TYPE_CHECKING:
+    from postgres_helpers import PostgresTemplate
 
 pytest_plugins = (
     "test_market_service",
@@ -27,7 +32,7 @@ TEST_DATABASE_VARIABLES = frozenset(
 TEST_CLICKHOUSE = "CLICKHOUSE_TEST_URL"
 
 
-def scrub_inherited_environment(environment) -> None:
+def scrub_inherited_environment(environment: MutableMapping[str, str]) -> None:
     """Inspect names only; discard operator configuration without reading values."""
     for name in tuple(environment):
         upper = name.upper()
@@ -59,7 +64,7 @@ def scrub_inherited_environment(environment) -> None:
             del environment[name]
 
 
-def test_database_hosts(environment):
+def test_database_hosts(environment: Mapping[str, str]) -> set[str]:
     hosts = set()
     for name in (*TEST_DATABASE_VARIABLES, TEST_CLICKHOUSE):
         value = environment.get(name)
@@ -72,13 +77,18 @@ def test_database_hosts(environment):
         else:
             from psycopg.conninfo import conninfo_to_dict
 
-            for host in conninfo_to_dict(value).get("host", "").split(","):
+            configured = conninfo_to_dict(value).get("host")
+            if configured is None:
+                continue
+            if not isinstance(configured, str):
+                raise pytest.UsageError(f"{name} requires a text PostgreSQL host")
+            for host in configured.split(","):
                 if host and not host.startswith("/"):
                     hosts.add(host.casefold().rstrip("."))
     return hosts
 
 
-def check_test_databases(environment) -> None:
+def check_test_databases(environment: Mapping[str, str]) -> None:
     """Tests truncate and drop; they run only on dedicated tank_test_* databases.
 
     Each workstream uses its own database, e.g. tank_test_<session>, created on the
@@ -92,10 +102,10 @@ def check_test_databases(environment) -> None:
         if not value:
             continue
         try:
-            database = conninfo_to_dict(value).get("dbname") or ""
+            database = conninfo_to_dict(value).get("dbname")
         except psycopg.Error:
             raise pytest.UsageError(f"{name} is not a valid PostgreSQL URL") from None
-        if not database.startswith("tank_test"):
+        if not isinstance(database, str) or not database.startswith("tank_test"):
             raise pytest.UsageError(f"{name} must name a dedicated tank_test_* database, not {database!r}")
 
 
@@ -124,7 +134,7 @@ def _cleanup_home() -> None:
 
 atexit.register(_cleanup_home)
 _ALLOWED_DATABASE_HOSTS = test_database_hosts(os.environ)
-_ALLOWED_RESOLVED_IPS = set()
+_ALLOWED_RESOLVED_IPS: set[str] = set()
 _ORIGINAL_CONNECT = socket.socket.connect
 _ORIGINAL_CONNECT_EX = socket.socket.connect_ex
 _ORIGINAL_GETADDRINFO = socket.getaddrinfo
@@ -279,7 +289,7 @@ def _fresh_quote_usd_history(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(normalize, "QUOTE_USD_HISTORY", {})
 
 
-def pytest_addoption(parser) -> None:
+def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--postgres-schema-template",
         metavar="tank_test_NAME",
@@ -288,11 +298,14 @@ def pytest_addoption(parser) -> None:
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
-async def postgres_template(request: pytest.FixtureRequest):
+async def postgres_template(request: pytest.FixtureRequest) -> AsyncIterator["PostgresTemplate"]:
     """Create databases lazily; memory-only runs never inspect database settings."""
     from postgres_helpers import PostgresTemplate
 
-    owner = PostgresTemplate(schema_template=request.config.getoption("postgres_schema_template"))
+    schema_template = request.config.getoption("postgres_schema_template")
+    if schema_template is not None and not isinstance(schema_template, str):
+        raise pytest.UsageError("postgres schema template must be a database name")
+    owner = PostgresTemplate(schema_template=schema_template)
     try:
         yield owner
     finally:

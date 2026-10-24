@@ -14,7 +14,7 @@ import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from types import ModuleType
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -22,17 +22,18 @@ ROOT = Path(__file__).resolve().parents[1]
 CAPTURE = ROOT / "capture"
 
 
-def script(name: str) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / "capture" / (name + ".py"))
+if TYPE_CHECKING:
+    from scripts.capture import gen_schema
+else:
+    spec = importlib.util.spec_from_file_location("gen_schema", ROOT / "scripts/capture/gen_schema.py")
     assert spec is not None
     assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    gen_schema = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = gen_schema
+    spec.loader.exec_module(gen_schema)
 
 
 def test_go_schema_copy_matches_market_schema() -> None:
-    gen_schema = script("gen_schema")
     assert gen_schema.OUT.read_text() == gen_schema.render(), (
         "run: uv run python scripts/capture/gen_schema.py"
     )
