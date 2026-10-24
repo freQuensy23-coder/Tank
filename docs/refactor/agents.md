@@ -343,3 +343,12 @@ The standalone agents.classification.JevClassifier owns nongenerative provider c
 ClassificationIdentity and JevScoreRecord replace tuple/dictionary application records, including exact usage, missing-field reasons, model bindings, cost, timestamps and fingerprints. Question-name dictionaries are bounded provider wire namespaces, and registry indexes are explicitly keyed domain collections. MissingClassificationFields optional reason absence represents metrics actually reported by the provider; its serializer retains the existing omission wire convention. This checkpoint is inactive until Pipeline/calibration consumers are migrated; full source/session typing remains open.
 
 Validation: 27 offline Jev/classification contract cases passed in 1.54 seconds, including immutable cache reuse and rejection of a contradictory persisted source identity before another provider request. Strict mypy passed for classifier, score contracts, provider models and the new behavior test with real source imports. Pipeline activation remains separate.
+
+
+### Read-only routing separation (v2)
+
+agents.routing exposes a strict RoutingItem projection and pure item_state/item_view functions. RoutingSelector requires only a read-only get/iter_range port and an already validated RoutingRegistry. Calibration can now select and project events without queue mutation, provider transport or progress notification dependencies. RoutingItem.from_source projects canonical publisher source records; packet adapters must declare their own actual source metadata before constructing the projection.
+
+Missing identity hints and monitored author represent unavailable producer metadata. Text formatting omits empty presentation fields by design. Unknown registry display labels use their explicit identifier as a readable label while preserving identity; required source text, event lifecycle, source relevance and repository identities are never invented. Read-only candidate projection requires all actual event/session fields it consumes, rejects event/key mismatch, preserves inclusive batch timestamps, and excludes closed lifecycles.
+
+Validation: 15 focused routing/provider/classification cases passed in 1.66 seconds and strict mypy passed for the routing module/test. The seven real PostgreSQL routing concurrency cases passed in 2.98 seconds with complete synthetic records under the pending Pipeline activation. This commit only publishes the standalone selector; activation and caller migration remain separate.
