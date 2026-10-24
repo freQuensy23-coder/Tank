@@ -5,12 +5,14 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from tank.contracts import DomainModel
+from tank.contracts.job_repository import JobRepository
 from tank.contracts.repository import Collection, Repository
 from tank.contracts.score import ScoreAssessment, ScoreAssessmentView, ScoreDimension, ScoreDimensions
 from tank.market_codec import _prepare_records, encode, merge_point
 from tank.market_schema import MARKET_COLUMNS
 from tank.settings import Settings
 from tank.storage import ImmutableRecordError, MemoryRepository
+from tank.time_precision import Timestamp, propagate_timestamp
 
 
 class Observation(DomainModel):
@@ -142,3 +144,49 @@ def test_score_projection_keeps_complete_domain_metadata_out_of_display() -> Non
     assert "evidence" not in view.dims.magnitude.model_dump()
     assert assessment.dims.magnitude.evidence == ["claim-1"]
     assert assessment.dims.magnitude.caps_applied == ["C1"]
+
+
+def test_missing_occurrence_requires_declared_reason() -> None:
+    with pytest.raises(ValueError, match="explicit reason"):
+        Timestamp(None, "COLLECTION_ONLY")
+
+
+def test_timestamp_adapter_rejects_conflicting_value_aliases() -> None:
+    with pytest.raises(ValueError, match="Conflicting timestamp value aliases"):
+        propagate_timestamp(
+            {"ts": {"value": "2026-10-24T00:00:00Z", "ts": "2026-10-24T01:00:00Z"}},
+            "ts",
+        )
+
+
+async def test_typed_job_lifecycle_preserves_absent_metadata_and_real_clocks() -> None:
+    store = MemoryRepository()
+    jobs = JobRepository(store)
+    queued = await jobs.enqueue("TEST", {}, "one")
+    assert queued.status == "QUEUED"
+    assert queued.finished_at is None
+    claimed = await jobs.claim()
+    assert claimed is not None
+    assert claimed.status == "RUNNING"
+    await jobs.put(claimed.model_copy(update={"slot_admitted": True}))
+    stored = await store.get("ops.jobs", claimed.job_id)
+    assert stored is not None
+    assert stored["slot_admitted"] is True
+    assert "interrupted_at" not in stored
+    await jobs.finish(claimed.job_id)
+    finished = await jobs.get(claimed.job_id)
+    assert finished is not None
+    assert finished.status == "DONE"
+    assert finished.finished_at is not None
+    assert finished.finished_at_prec == "COLLECTION_ONLY"
+
+
+async def test_typed_job_adapter_refuses_fabricated_completion_before_write() -> None:
+    store = MemoryRepository()
+    jobs = JobRepository(store)
+    queued = await jobs.enqueue("TEST", {}, "one")
+    with pytest.raises(ValueError, match="completion clock"):
+        await jobs.put(queued.model_copy(update={"status": "DONE"}))
+    stored = await store.get("ops.jobs", queued.job_id)
+    assert stored is not None
+    assert stored["status"] == "QUEUED"

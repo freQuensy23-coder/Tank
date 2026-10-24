@@ -19,10 +19,10 @@ class Collection[T: BaseModel]:
     def decode(self, payload: Mapping[str, JsonValue]) -> T:
         return self.schema.model_validate_json(encode_json(dict(payload)), strict=True)
 
-    def encode(self, entity: T) -> dict[str, JsonValue]:
+    def encode(self, entity: T, *, exclude_unset: bool = False) -> dict[str, JsonValue]:
         if not isinstance(entity, self.schema):
             raise TypeError(f"{self.name} requires {self.schema.__name__}")
-        payload = entity.model_dump(mode="json", warnings="error")
+        payload = entity.model_dump(mode="json", warnings="error", exclude_unset=exclude_unset)
         self.decode(payload)
         return payload
 

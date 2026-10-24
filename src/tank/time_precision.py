@@ -20,7 +20,9 @@ type TimestampRecord = Mapping[str, JsonValue | datetime | Decimal]
 
 
 def _text(value: JsonValue | datetime | Decimal, field: str) -> str | None:
-    if value is None or isinstance(value, str):
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip():
         return value
     raise ValueError(f"{field} requires text")
 
@@ -127,8 +129,10 @@ class Timestamp(DomainModel):
     def validate_provenance(self) -> Self:
         if self.value is not None:
             parse_time(self.value)
+        if self.value is None and (self.precision_reason is None or not self.precision_reason.strip()):
+            raise ValueError("Missing occurrence requires an explicit reason")
         if self.precision is None:
-            if not self.precision_reason:
+            if self.precision_reason is None or not self.precision_reason.strip():
                 raise ValueError("Unknown precision requires an explicit reason")
         elif (self.value is None and self.precision != "COLLECTION_ONLY") or normalize_precision(
             self.precision
@@ -162,7 +166,7 @@ class Timestamp(DomainModel):
                     int(seconds) if seconds == seconds.to_integral_value() else str(seconds)
                 )
             if self.value is None:
-                result["published_at_reason"] = self.precision_reason or "INCOMPLETE"
+                result["published_at_reason"] = self.precision_reason
         return result
 
 
@@ -207,7 +211,9 @@ def propagate_timestamp(
     reason = None
     value: JsonValue | datetime | Decimal
     if isinstance(raw, Mapping):
-        value = raw.get("value", raw.get("ts"))
+        if "value" in raw and "ts" in raw and raw["value"] != raw["ts"]:
+            raise ValueError(f"Conflicting timestamp value aliases for {field}")
+        value = raw["value"] if "value" in raw else raw.get("ts")
         for key in ("precision", "prec"):
             declaration = _text(raw.get(key), key)
             if declaration is not None:
