@@ -221,7 +221,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
                     **collection_clock(utcnow()).fields("finished_at"),
                     "status": "PARTIAL",
                     "reason": "ONLY_REACTION_WINDOW_CAPTURED",
-                    "result": {"instruments": [{"instrument_id": inst["instrument_id"], "complete": False}]},
+                    "result": {"instruments": [], "benchmark_klines": []},
                 }
             ],
             keys=[key],

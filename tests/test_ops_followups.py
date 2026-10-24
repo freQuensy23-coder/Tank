@@ -155,7 +155,11 @@ async def test_ops_reply_about_analyzed_unpublished_item_continues_its_session_a
     answers = FakeTelegram()
     async with httpx.AsyncClient(transport=httpx.MockTransport(answers)) as http:
         inbox = TelegramInbox(
-            repo, SimpleNamespace(telegram_token="test", telegram_alerts_chat=ALERTS), http=http
+            repo,
+            SimpleNamespace(
+                telegram_token="test", telegram_alerts_chat=ALERTS, ops_progress_enabled=False, replay=False
+            ),
+            http=http,
         )
         await inbox.answer({"question_id": question_id})
     assert [(row["chat_id"], row["text"]) for row in answers.sent] == [(OPS, "Ниже порога MAJOR.")]
@@ -166,7 +170,11 @@ async def answer_in_ops(repo, question_id):
     answers = FakeTelegram()
     async with httpx.AsyncClient(transport=httpx.MockTransport(answers)) as http:
         inbox = TelegramInbox(
-            repo, SimpleNamespace(telegram_token="test", telegram_alerts_chat=ALERTS), http=http
+            repo,
+            SimpleNamespace(
+                telegram_token="test", telegram_alerts_chat=ALERTS, ops_progress_enabled=False, replay=False
+            ),
+            http=http,
         )
         await inbox.answer({"question_id": question_id})
     return answers.sent
@@ -374,7 +382,13 @@ async def test_alerts_follow_ups_are_unchanged_and_ops_needs_its_configured_chat
     ) as http:
         inbox = TelegramInbox(
             repo,
-            SimpleNamespace(telegram_token="test", telegram_alerts_chat=ALERTS, telegram_ops_chat=None),
+            SimpleNamespace(
+                telegram_token="test",
+                telegram_alerts_chat=ALERTS,
+                telegram_ops_chat=None,
+                ops_progress_enabled=False,
+                replay=False,
+            ),
             http=http,
         )
         await inbox.poll(timeout=0)
@@ -395,7 +409,11 @@ async def test_reply_to_an_ops_answer_continues_the_same_session(ref) -> None:
     await record_answer(repo, question_id_for(OPS, 30), "Ниже порога.", status="ANSWERED")
     async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
         await TelegramInbox(
-            repo, SimpleNamespace(telegram_token="test", telegram_alerts_chat=ALERTS), http=http
+            repo,
+            SimpleNamespace(
+                telegram_token="test", telegram_alerts_chat=ALERTS, ops_progress_enabled=False, replay=False
+            ),
+            http=http,
         ).answer({"question_id": question_id_for(OPS, 30)})
     telegram.updates.append({"update_id": 2, "message": ops_reply(35, ref, text="А какие токены?")})
     await run_inbox(repo, telegram, now=NOW)

@@ -5,6 +5,8 @@ from datetime import timedelta
 from pydantic import JsonValue
 
 from tank.contracts.progress import (
+    EventObservationSubject,
+    EventProgressRepository,
     ProgressDetails,
     ProgressIdentity,
     ProgressNotice,
@@ -143,11 +145,22 @@ class DisabledSourceProgress:
         return None
 
 
-async def event_progress(repo, settings, event_id, stage, reason="", *, key=None, details=None):
-    if not enabled(settings) or not event_id:
+async def event_progress(
+    repo: EventProgressRepository,
+    settings: ProgressSettings,
+    event_id: str | None,
+    stage: ProgressStage,
+    reason: str = "",
+    *,
+    key: str | None = None,
+    details: ProgressDetails | None = None,
+) -> None:
+    if not enabled(settings) or event_id is None:
         return
+    if not event_id or any(char.isspace() for char in event_id):
+        raise ValueError("Event progress requires a nonempty event identity")
     items = {
-        row["item_id"]
+        EventObservationSubject.model_validate(row).item_id
         async for row in repo.iter_metadata(
             "evt.event_observations", ["item_id"], filters={"event_id": event_id}
         )
