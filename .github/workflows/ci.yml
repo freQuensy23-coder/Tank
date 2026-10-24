@@ -112,6 +112,17 @@ jobs:
           src/tank/market_codec.py src/tank/clickhouse_market.py src/tank/models.py src/tank/market_schema.py
           src/tank/settings.py src/tank/util.py src/tank/time_precision.py src/tank/logging.py
           src/tank/backup.py src/tank/contracts
+      - name: Check completed foundation tests strictly
+        env:
+          MYPYPATH: src:tests
+        run: >-
+          uv run --frozen --extra dev mypy --config-file scripts/ci/mypy-foundation-tests.ini
+          tests/foundation_helpers.py tests/test_storage.py tests/test_storage_lifecycle.py
+          tests/test_storage_time_precision.py tests/test_storage_migration_lock.py tests/test_storage_memory_locks.py
+          tests/test_storage_typed_market.py tests/test_clickhouse_market.py tests/test_settings.py
+          tests/test_config.py tests/test_config_version.py tests/test_logging.py tests/test_backup_retention.py
+          tests/test_time_precision.py tests/test_search.py tests/test_offline_settings_defaults.py
+          tests/test_foundation_contracts.py
       - name: Check completed quality module families strictly
         env:
           MYPYPATH: src:tests
