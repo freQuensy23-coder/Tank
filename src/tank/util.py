@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import secrets
 import time
 from collections.abc import Mapping
@@ -7,7 +8,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
-from typing import overload
+from typing import Literal, overload
 
 from pydantic import BaseModel, JsonValue
 
@@ -36,8 +37,54 @@ type JsonInput = (
 type TimeInput = datetime | str | int | float | Decimal
 
 
+type EpochInput = str | int | float | Decimal
+type EpochUnit = Literal["s", "ms", "us"]
+_EPOCH_DIVISORS: dict[EpochUnit, int] = {"s": 1, "ms": 1000, "us": 1000000}
+
+
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def clock_iso() -> str:
+    """Observe the local processing clock explicitly, without formatting an absent value."""
+    return utcnow().isoformat().replace("+00:00", "Z")
+
+
+def parse_epoch(value: EpochInput, *, unit: EpochUnit) -> datetime:
+    """Decode a declared epoch unit with the existing float/fromtimestamp rounding."""
+    if isinstance(value, bool):
+        raise ValueError("Epoch timestamp must not be a boolean")
+    if unit not in _EPOCH_DIVISORS:
+        raise ValueError("Unsupported epoch timestamp unit")
+    try:
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError
+        return datetime.fromtimestamp(number / _EPOCH_DIVISORS[unit], UTC)
+    except (OSError, OverflowError, TypeError, ValueError):
+        raise ValueError("Invalid or out-of-range epoch timestamp") from None
+
+
+def _iso_datetime(value: datetime | str) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str):
+        raise ValueError("Timestamp requires an ISO date-time")
+    if value.replace(".", "", 1).lstrip("+-").isdigit():
+        raise ValueError("Numeric timestamps require an explicit epoch unit")
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError("Invalid ISO timestamp") from None
+
+
+def parse_utc_time(value: datetime | str) -> datetime:
+    """Decode a format whose boundary explicitly declares that zone-less values mean UTC."""
+    parsed = _iso_datetime(value)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def parse_time(value: TimeInput) -> datetime:
