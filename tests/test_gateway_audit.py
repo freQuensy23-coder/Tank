@@ -6,12 +6,12 @@ import json
 import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
-from types import SimpleNamespace
 
 import httpx
 import pytest
 
 from tank.codex_gateway import RESPONSES_URL, TOKEN_URL, CodexGateway
+from tank.settings import Settings
 
 
 def fake_jwt(exp=4102444800):
@@ -31,7 +31,8 @@ async def gateway(tmp_path: Path, handler, *, expired=False):
         },
     }
     path.write_text(json.dumps(original))
-    settings = SimpleNamespace(
+    settings = Settings(
+        _env_file=None,
         codex_auth_path=path,
         codex_gateway_key="AUDIT_INTERNAL",
         codex_gateway_host="127.0.0.1",
@@ -56,7 +57,7 @@ PAYLOAD = {"model": "gpt-6.1-sol", "input": "audit", "stream": True}
 @pytest.mark.integration
 @pytest.mark.parametrize("authorization", [b"Bearer WRONG", b"Bearer \xff"])
 async def test_auth_rejected_before_unfinished_request_body(tmp_path: Path, authorization) -> None:
-    def forbidden(request: pytest.FixtureRequest) -> None:
+    def forbidden(request: httpx.Request) -> None:
         pytest.fail("unauthorized call touched provider")
 
     async with gateway(tmp_path, forbidden) as (service, _, path, _):
@@ -84,7 +85,7 @@ async def test_concurrent_stale_401_does_not_rotate_new_refresh_again(tmp_path: 
     all_old = asyncio.Event()
     refreshed = asyncio.Event()
 
-    async def provider(request: pytest.FixtureRequest):
+    async def provider(request: httpx.Request):
         nonlocal old_requests, refreshes
         if str(request.url) == TOKEN_URL:
             refreshes += 1
@@ -115,7 +116,7 @@ async def test_concurrent_stale_401_does_not_rotate_new_refresh_again(tmp_path: 
 async def test_cancelled_refresh_caller_still_persists_provider_rotation(tmp_path: Path) -> None:
     exchange_started, exchange_finish = asyncio.Event(), asyncio.Event()
 
-    async def provider(request: pytest.FixtureRequest):
+    async def provider(request: httpx.Request):
         assert str(request.url) == TOKEN_URL
         exchange_started.set()
         await exchange_finish.wait()
@@ -138,7 +139,7 @@ async def test_cancelled_refresh_caller_still_persists_provider_rotation(tmp_pat
 @pytest.mark.integration
 @pytest.mark.parametrize("expiry", ["bad", True, -1, 1, float("nan"), float("inf")])
 async def test_bad_refresh_expiry_cannot_overwrite_valid_auth_document(tmp_path: Path, expiry) -> None:
-    def provider(request: pytest.FixtureRequest):
+    def provider(request: httpx.Request):
         assert str(request.url) == TOKEN_URL
         return httpx.Response(200, json={"access_token": fake_jwt(expiry), "refresh_token": "AUDIT_BAD_NEW"})
 
@@ -152,7 +153,7 @@ async def test_bad_refresh_expiry_cannot_overwrite_valid_auth_document(tmp_path:
 async def test_refresh_redirect_does_not_forward_credentials_or_location(tmp_path: Path) -> None:
     calls = []
 
-    def provider(request: pytest.FixtureRequest):
+    def provider(request: httpx.Request):
         calls.append(request)
         return httpx.Response(
             307, headers={"location": "https://attacker.invalid/", "set-cookie": "AUDIT_COOKIE"}
@@ -172,7 +173,7 @@ async def test_provider_cookie_jar_and_hop_headers_never_cross_boundary(
 ) -> None:
     monkeypatch.setenv("HTTPS_PROXY", "http://FAKE_PROXY_CREDENTIAL:FAKE_PASSWORD@127.0.0.1:1")
 
-    def provider(request: pytest.FixtureRequest):
+    def provider(request: httpx.Request):
         assert "cookie" not in request.headers and "proxy-authorization" not in request.headers
         return httpx.Response(
             429,
@@ -205,7 +206,7 @@ async def test_provider_cookie_jar_and_hop_headers_never_cross_boundary(
 async def test_malformed_nonstream_sse_fails_without_credentials_in_logs(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, data
 ) -> None:
-    def provider(request: pytest.FixtureRequest):
+    def provider(request: httpx.Request):
         return httpx.Response(
             200, headers={"content-type": "text/event-stream"}, content=b"data: " + data + b"\n\n"
         )
@@ -227,7 +228,7 @@ async def test_upstream_close_exception_cannot_print_oauth_credentials(
         async def aclose(self) -> None:
             raise RuntimeError("AUDIT_REFRESH_OLD provider close failed")
 
-    def provider(request: pytest.FixtureRequest):
+    def provider(request: httpx.Request):
         return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=BrokenClose())
 
     async with gateway(tmp_path, provider) as (_, client, _, _):
@@ -238,7 +239,7 @@ async def test_upstream_close_exception_cannot_print_oauth_credentials(
 
 @pytest.mark.integration
 async def test_supervisor_reload_rebinds_actual_gateway_and_shutdown_closes_port(tmp_path: Path) -> None:
-    from tank.runtime import RuntimeSupervisor
+    from tank.runtime_composition import RuntimeSupervisor
 
     auth = tmp_path / "synthetic-auth.json"
     auth.write_text(
@@ -246,7 +247,8 @@ async def test_supervisor_reload_rebinds_actual_gateway_and_shutdown_closes_port
             {"auth_mode": "chatgpt", "tokens": {"access_token": fake_jwt(), "account_id": "AUDIT_ACCOUNT"}}
         )
     )
-    first = SimpleNamespace(
+    first = Settings(
+        _env_file=None,
         codex_auth_path=auth,
         codex_gateway_key="AUDIT_OLD_INTERNAL",
         codex_gateway_host="127.0.0.1",
@@ -255,7 +257,7 @@ async def test_supervisor_reload_rebinds_actual_gateway_and_shutdown_closes_port
     )
     generations = []
 
-    def forbidden(request: pytest.FixtureRequest) -> None:
+    def forbidden(request: httpx.Request) -> None:
         pytest.fail("lifecycle preflight/start reached external provider")
 
     class Generation:
@@ -275,7 +277,7 @@ async def test_supervisor_reload_rebinds_actual_gateway_and_shutdown_closes_port
         async def close(self) -> None:
             await self.gateway.close()
 
-    candidate = None
+    candidate = first
     supervisor = RuntimeSupervisor(
         None, first, factory=Generation, validator=lambda settings: None, candidate_loader=lambda: candidate
     )
@@ -286,7 +288,7 @@ async def test_supervisor_reload_rebinds_actual_gateway_and_shutdown_closes_port
             await asyncio.sleep(0)
         await asyncio.wait_for(generations[0].gateway.ready.wait(), 1)
         port = generations[0].gateway.bound_port
-        candidate = SimpleNamespace(**{**vars(first), "codex_gateway_key": "", "config_version": "invalid"})
+        candidate = first.model_copy(update={"codex_gateway_key": "", "config_version": "invalid"})
         reload_requested.set()
 
         async def rejected_candidate_prepared() -> None:
@@ -296,9 +298,8 @@ async def test_supervisor_reload_rebinds_actual_gateway_and_shutdown_closes_port
         await asyncio.wait_for(rejected_candidate_prepared(), 1)
         assert generations[0].gateway.bound_port == port
         assert generations[1].gateway.bound_port is None
-        candidate = SimpleNamespace(
-            **{
-                **vars(first),
+        candidate = first.model_copy(
+            update={
                 "codex_gateway_port": port,
                 "codex_gateway_key": "AUDIT_NEW_INTERNAL",
                 "config_version": "new",
@@ -340,7 +341,7 @@ async def test_actual_pinned_pi_library_through_gateway_offline(tmp_path: Path) 
     assert json.loads((package / "package.json").read_text())["version"] == "1.1.0"
     observed = []
 
-    def provider(request: pytest.FixtureRequest):
+    def provider(request: httpx.Request):
         assert str(request.url) == RESPONSES_URL
         assert request.headers["authorization"] == "Bearer " + fake_jwt()
         assert request.headers["chatgpt-account-id"] == "AUDIT_ACCOUNT"

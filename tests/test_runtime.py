@@ -867,8 +867,13 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
         "semantics": {"metrics": {}},
         "thresholds": {},
     }
+    from tank.settings import Settings
+
+    complete_thresholds = Settings(_env_file=None).thresholds()
+    configs["thresholds"] = complete_thresholds.model_dump(mode="json")
     settings = SimpleNamespace(
         load_config=lambda name: configs[name],
+        thresholds=lambda: complete_thresholds,
         data_dir=tmp_path,
         config_version="fixture",
         code_version="fixture",
@@ -1022,7 +1027,7 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
     settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
     sent_requests = []
 
-    def send(request: pytest.FixtureRequest):
+    def send(request: httpx.Request):
         sent_requests.append(request)
         if len(sent_requests) == 1:
             return httpx.Response(503, json={"ok": False})
@@ -1094,7 +1099,7 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
         )
         older = await repo.enqueue(
             "DELIVER",
-            {"alert_id": aid, "version": 2},
+            {"alert_id": aid, "version": 2, "channel": "telegram:alerts"},
             f"{aid}:2",
             run_after=iso(base + timedelta(minutes=15)),
             max_attempts=5,
@@ -1102,7 +1107,11 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
         claimed_older = await repo.claim_job()
         assert claimed_older["job_id"] == older["job_id"]
         current = await repo.enqueue(
-            "DELIVER", {"alert_id": aid, "version": 3}, f"{aid}:3", run_after=iso(clock[0]), max_attempts=5
+            "DELIVER",
+            {"alert_id": aid, "version": 3, "channel": "telegram:alerts"},
+            f"{aid}:3",
+            run_after=iso(clock[0]),
+            max_attempts=5,
         )
         original_expiry = current["expires_at"]
         async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
@@ -1242,11 +1251,16 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
             "code_version": "fixture",
         }
         await repo.put("out.alerts", aid + ":1", alert, immutable=True)
-        job = await repo.enqueue("DELIVER", {"alert_id": aid, "version": 1}, aid + ":1", max_attempts=1)
+        job = await repo.enqueue(
+            "DELIVER",
+            {"alert_id": aid, "version": 1, "channel": "telegram:alerts"},
+            aid + ":1",
+            max_attempts=1,
+        )
         holder_task = asyncio.create_task(holder())
         await asyncio.wait_for(held.wait(), 2)
 
-        def transport(request: pytest.FixtureRequest):
+        def transport(request: httpx.Request):
             requests.append(request)
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
 

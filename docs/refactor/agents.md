@@ -190,7 +190,7 @@ dependency: its injected client is borrowed and its temporary clients use an
 exit stack. The composition root binds its scheduler and the session's Telegram
 sender before constructing the runtime. Shutdown closes owning services only.
 
-All21 runtime/reload/drain/precision unit cases pass in1.57s with explicit
+All 21 runtime/reload/drain/precision unit cases pass in 1.57 seconds with explicit
 required lifecycle fakes. Configured mypy passes both runtime modules; full
 strict runtime method migration remains open. CLI/E2E owners are coordinating
 the new build_supervisor import and explicit test construction.
@@ -212,8 +212,8 @@ assess service directly. Queued cutoffs carry explicit precision. The bounded
 external-capture integration cases hydrate persisted assessments through the
 typed job reference and still verify incomplete bounded waits, actual terminal
 capture history, immutable previous results, exact repair windows and budgets.
-Both PARTIAL/FAILED cases pass in2.02s with real asyncio capture/repair workers,
-zero skips. All21 runtime unit cases pass in1.65s. Configured mypy passes both
+Both PARTIAL/FAILED cases pass in 2.02 seconds with real asyncio capture/repair workers,
+zero skips. All 21 runtime unit cases pass in 1.65 seconds. Configured mypy passes both
 runtime modules. Typed direct service callers remain model-based.
 
 
@@ -230,7 +230,22 @@ and the provider boundary as strict models. State dictionaries are created
 only by explicit to_wire serialization for HTTP and canonical fingerprints.
 Optional context fields preserve the previous omission rules; exact wire
 projection tests verify the online/calibration question and state shapes stay
-unchanged.86 focused pipeline/provider/agent tests pass, zero skips,2.82s.
+unchanged.86 focused pipeline/provider/agent tests pass, zero skips, 2.82 seconds.
 SourceItem repository-domain migration remains coordinated with ingestion;
 raw source/config access inside Pipeline is not declared complete by this
 classification-input migration.
+
+
+The guarded actual integration run for all gateway-audit, runtime,
+session-admission and scout-PostgreSQL cases passes: 31 collected, 31 passed,
+zero skips, 35.27 seconds. This includes both database backends for delivery
+order/lock contention and admission cap ordering, both bounded-capture terminal
+states, the locked native Node gateway library, and gateway replacement on the
+same loopback port. Fixtures declare delivery channels and complete configured
+thresholds; supervisor fixtures use real Settings and the composition API.
+No timeout or outcome assertion was weakened.
+
+agents-inventory.json enumerates every owned Python function, line, missing
+annotation and dynamic-map usage. Remaining entries are implementation work,
+not blanket approved exceptions; it makes unfinished scope reviewable while
+the domain migrations continue.
