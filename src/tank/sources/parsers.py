@@ -69,6 +69,32 @@ class ParsedRows(list):
         self.wire_count = wire_count
 
 
+ENTRY_IDENTITY_FIELDS = {
+    "id": ("id", "guid", "document_number", "proposal_id"),
+    "title": ("title", "name", "headline"),
+    "link": ("link", "url", "html_url"),
+    "excerpt": ("summary", "abstract", "description", "body", "content"),
+}
+
+
+def entry_identity(entry):
+    """Stable digest and a short readable identity of a wire entry that did not become an item."""
+    fields = (
+        {str(k): v for k, v in dict(entry).items() if not str(k).endswith("_parsed")}
+        if isinstance(entry, dict)
+        else entry
+    )
+    identity = {}
+    if isinstance(fields, dict):
+        for label, names in ENTRY_IDENTITY_FIELDS.items():
+            for name in names:
+                value = fields.get(name)
+                if isinstance(value, (str, int)) and not isinstance(value, bool) and str(value).strip():
+                    identity[label] = " ".join(str(value).split())[:300]
+                    break
+    return {"entry_sha256": sha256(fields), "entry": identity}
+
+
 def feeds(payload, source_id, feed):
     parsed = feedparser.parse(payload)
     if not parsed.version:
@@ -83,7 +109,9 @@ def feeds(payload, source_id, feed):
         body = "\n".join(c.get("value", "") for c in e.get("content", [])) or e.get("summary", "")
         key = link if source_id == "S23" else e.get("id") or e.get("guid") or link
         if not key:
-            result.errors.append({"entry_index": index, "reason": "ENTRY_WITHOUT_ID_OR_URL"})
+            result.errors.append(
+                {"entry_index": index, "reason": "ENTRY_WITHOUT_ID_OR_URL", **entry_identity(e)}
+            )
             continue
         result.append(
             {
@@ -423,7 +451,12 @@ def json_items(payload, source_id):
             parsed.extend(normalized)
         except (KeyError, ValueError, TypeError) as exc:
             parsed.errors.append(
-                {"entry_index": index, "reason": "INVALID_PUBLISHER_ENTRY", "error": str(exc)}
+                {
+                    "entry_index": index,
+                    "reason": "INVALID_PUBLISHER_ENTRY",
+                    "error": str(exc),
+                    **entry_identity(row),
+                }
             )
     return parsed
 

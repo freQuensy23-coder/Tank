@@ -14,6 +14,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
+from tank.ops_entry_errors import report_entry_errors
 from tank.sources import parsers
 from tank.util import new_id, parse_time, sha256
 
@@ -600,7 +601,6 @@ class SourcePoller:
                     elif not current.get("last_success_at") and current["status"] == "HEALTHY":
                         current["status"] = "PENDING"
                     await self.save(key, current)
-                return {"items": 0, "errors": []}
             except Exception as exc:
                 async with self.lock(self.state_locks, key):
                     current = await self.state(key)
@@ -615,6 +615,15 @@ class SourcePoller:
                     )
                     await self.save(key, current)
                 return {"items": 0, "errors": [str(exc)]}
+            await report_entry_errors(
+                self.service.repo,
+                self.service.settings,
+                source,
+                feed,
+                acquired.get("entry_errors") or [],
+                acquired.get("fetched_at") or attempted,
+            )
+            return {"items": 0, "errors": []}
 
     def _empty_body(self, url, detail_state):
         return {
