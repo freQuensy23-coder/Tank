@@ -7,25 +7,37 @@ from collections import Counter
 from pathlib import Path
 
 from integration_shard import parse_shard, shard_for
+from pydantic import BaseModel, ConfigDict, RootModel
 
 
-def verify(reports: list[Path], collections: list[Path], shard: str | None = None) -> dict:
-    expected = json.loads(collections[0].read_text())
+class CollectedCase(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    classname: str
+    name: str
+    file: str
+
+
+class Collection(RootModel[list[CollectedCase]]):
+    pass
+
+
+def verify(reports: list[Path], collections: list[Path], shard: str | None = None) -> dict[str, int]:
+    expected = Collection.model_validate_json(collections[0].read_text()).root
     if not expected:
         raise ValueError("the expected integration collection is empty")
-    if any(json.loads(path.read_text()) != expected for path in collections[1:]):
+    if any(Collection.model_validate_json(path.read_text()).root != expected for path in collections[1:]):
         raise ValueError("integration shards collected different full case sets")
     if shard is not None:
         if len(reports) != 1 or len(collections) != 1:
             raise ValueError("a shard check requires exactly one report and collection")
         index, count = parse_shard(shard)
-        expected = [case for case in expected if shard_for(case["file"], count) == index]
+        expected = [case for case in expected if shard_for(case.file, count) == index]
     cases = [case for report in reports for case in ET.parse(report).getroot().findall(".//testcase")]
     if not cases or not expected:
         raise ValueError("the integration report or selected collection contains no cases")
     if any(case.find(tag) is not None for case in cases for tag in ("failure", "error", "skipped")):
         raise ValueError("integration requires zero failures, errors and skips")
-    expected_ids = Counter((case["classname"], case["name"]) for case in expected)
+    expected_ids = Counter((case.classname, case.name) for case in expected)
     actual_ids = Counter((case.get("classname"), case.get("name")) for case in cases)
     if expected_ids != actual_ids:
         raise ValueError("integration report does not match the full collected case set")

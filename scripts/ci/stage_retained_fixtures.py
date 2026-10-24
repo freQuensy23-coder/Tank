@@ -6,6 +6,8 @@ import json
 import tarfile
 from pathlib import Path, PurePosixPath
 
+from pydantic import BaseModel, ConfigDict, Field
+
 ROOT = Path(__file__).resolve().parents[2]
 BUNDLE = ROOT / "tests/fixtures/retained-market"
 
@@ -14,15 +16,33 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def stage(destination: Path) -> dict:
-    manifest = json.loads((BUNDLE / "manifest.json").read_text())
+class RetainedFile(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    path: str
+    bytes: int = Field(ge=0)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class Manifest(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    schema_version: int = Field(alias="schema")
+    data_files: int = Field(ge=0)
+    total_files: int = Field(ge=1)
+    archive_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    archive_bytes: int = Field(ge=1)
+    provenance: str
+    files: list[RetainedFile]
+
+
+def stage(destination: Path) -> dict[str, int | str]:
+    manifest = Manifest.model_validate_json((BUNDLE / "manifest.json").read_text())
     archive = BUNDLE / "captures.tar.gz"
-    if digest(archive.read_bytes()) != manifest["archive_sha256"]:
+    if digest(archive.read_bytes()) != manifest.archive_sha256:
         raise ValueError("retained archive checksum mismatch")
-    entries = {entry["path"]: entry for entry in manifest["files"]}
-    if len(entries) != len(manifest["files"]):
+    entries = {entry.path: entry for entry in manifest.files}
+    if len(entries) != len(manifest.files):
         raise ValueError("duplicate manifest paths")
-    staged = {}
+    staged: dict[str, bytes] = {}
     with tarfile.open(archive, "r:gz") as source:
         for member in source:
             name = member.name
@@ -35,14 +55,14 @@ def stage(destination: Path) -> dict:
                 or not (name == "results.json" or name.startswith("data/"))
                 or name not in entries
                 or name in staged
-                or member.size != entries[name]["bytes"]
+                or member.size != entries[name].bytes
             ):
                 raise ValueError("unsafe or unexpected retained archive member")
             stream = source.extractfile(member)
             if stream is None:
                 raise ValueError("retained archive member has no bytes")
             data = stream.read(member.size + 1)
-            if len(data) != member.size or digest(data) != entries[name]["sha256"]:
+            if len(data) != member.size or digest(data) != entries[name].sha256:
                 raise ValueError("retained member checksum mismatch")
             staged[name] = data
     if staged.keys() != entries.keys():
@@ -64,7 +84,7 @@ def stage(destination: Path) -> dict:
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
-    return {"files": len(staged), "archive_sha256": manifest["archive_sha256"]}
+    return {"files": len(staged), "archive_sha256": manifest.archive_sha256}
 
 
 def main() -> None:

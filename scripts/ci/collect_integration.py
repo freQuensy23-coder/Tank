@@ -3,10 +3,11 @@
 import json
 from pathlib import Path
 
+import pytest
 from _pytest.junitxml import bin_xml_escape, mangle_test_address
 
 
-def pytest_collection_finish(session) -> None:
+def pytest_collection_finish(session: pytest.Session) -> None:
     if not session.config.option.collectonly:
         raise ValueError("collect_integration is for --collect-only")
     cases = []
