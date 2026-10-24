@@ -351,6 +351,11 @@ async def test_external_contract_on_postgres(migrated, tmp_path: Path) -> None:
     service = MarketService(migrated, make_settings(tmp_path))
     await repair_round_trip(migrated, service)
     await check_stream_state(migrated, service)
+    await migrated.put(
+        "evt.events",
+        "EVT-1",
+        {"event_id": "EVT-1", "public_at": "2026-10-18T12:00:00Z", "public_at_prec": "EXACT"},
+    )
     await service.escalate("EVT-1", [TOKEN])
     (run,) = await migrated.list("mkt.backfill_runs")
     assert run["status"] == "PENDING" and run["started_at_prec"] == "COLLECTION_ONLY"
