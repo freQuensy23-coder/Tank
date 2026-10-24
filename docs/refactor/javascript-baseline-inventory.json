@@ -4,7 +4,8 @@
     "first-party MJS",
     "first-party TypeScript",
     "static String.raw Python snippets with import and function declarations",
-    "Python command expressions including dynamic arguments"
+    "Python command expressions including dynamic arguments",
+    "executed immutable reference programs reported separately"
   ],
   "files": 22,
   "counts": {
@@ -12975,6 +12976,177 @@
     }
   ],
   "immutable_exclusions": {
-    "tests/fixtures/openma/runtime-codec.ts": "Retained upstream runtime codec fixture; immutable interoperability evidence."
+    "tests/fixtures/openma/runtime-codec.ts": "Executable pinned OpenMA85d5361 codec excerpts, source SHA256 e2e01a8205d137a286c67e2d02f6440b0a3b8e7da7250354f92baea869e9adca; preserve as immutable interoperability oracle, not inactive data."
+  },
+  "reference_programs": {
+    "tests/fixtures/openma/runtime-codec.ts": {
+      "reason": "Executable pinned OpenMA85d5361 codec excerpts, source SHA256 e2e01a8205d137a286c67e2d02f6440b0a3b8e7da7250354f92baea869e9adca; preserve as immutable interoperability oracle, not inactive data.",
+      "executed_by": [
+        "tests/test_agents_openma_codec.py:run_codec"
+      ],
+      "findings": [
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 42,
+          "symbol": "camelCaseKey",
+          "kind": "untyped_parameter",
+          "expression": "_match"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 42,
+          "symbol": "camelCaseKey",
+          "kind": "untyped_return",
+          "expression": "(_match, value: string) =>\n    value.toUpperCase()"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 49,
+          "symbol": "camelCaseRuntimeValue",
+          "kind": "fallback",
+          "expression": "value === null || typeof value !== \"object\""
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 51,
+          "symbol": "camelCaseRuntimeValue",
+          "kind": "untyped_parameter",
+          "expression": "[key, item]"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 51,
+          "symbol": "camelCaseRuntimeValue",
+          "kind": "untyped_return",
+          "expression": "([key, item]) => [\n      camelCaseKey(key),\n      camelCaseRuntimeValue(item),\n    ]"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 59,
+          "symbol": "snakeCaseKey",
+          "kind": "untyped_parameter",
+          "expression": "value"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 59,
+          "symbol": "snakeCaseKey",
+          "kind": "untyped_return",
+          "expression": "(value) => `_${value.toLowerCase()}`"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 64,
+          "symbol": "snakeCaseRuntimeValue",
+          "kind": "fallback",
+          "expression": "value === null || typeof value !== \"object\""
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 66,
+          "symbol": "snakeCaseRuntimeValue",
+          "kind": "untyped_parameter",
+          "expression": "[key, item]"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 66,
+          "symbol": "snakeCaseRuntimeValue",
+          "kind": "untyped_return",
+          "expression": "([key, item]) => [\n      snakeCaseKey(key),\n      snakeCaseRuntimeValue(item),\n    ]"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 81,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "fallback",
+          "expression": "value === null || typeof value !== \"object\""
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 85,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "fallback",
+          "expression": "raw.type === \"agent.message_stream_start\" ||\n    raw.type === \"agent.thinking_stream_start\""
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 93,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "object",
+          "expression": "{ type: \"event_start\", event: { id, type } }"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 93,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "object",
+          "expression": "{ id, type }"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 96,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "fallback",
+          "expression": "raw.type === \"agent.message_chunk\" || raw.type === \"agent.thinking_chunk\""
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 105,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "object",
+          "expression": "{\n            type: \"event_delta\",\n            eventId: id,\n            delta: {\n              type: \"content_delta\",\n              content: { type: \"text\", text: raw.delta },\n              ...(typeof raw.index === \"number\" && { index: raw.index }),\n            },\n          }"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 108,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "object",
+          "expression": "{\n              type: \"content_delta\",\n              content: { type: \"text\", text: raw.delta },\n              ...(typeof raw.index === \"number\" && { index: raw.index }),\n            }"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 110,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "object",
+          "expression": "{ type: \"text\", text: raw.delta }"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 111,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "object",
+          "expression": "{ index: raw.index }"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 118,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "fallback",
+          "expression": "raw.type === \"agent.message_stream_end\" ||\n    raw.type === \"agent.thinking_stream_end\""
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 137,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "fallback",
+          "expression": "raw.model_usage ?? raw.modelUsage"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 149,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "fallback",
+          "expression": "raw.type === \"agent.tool_result\" || raw.type === \"agent.mcp_tool_result\""
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 156,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "object",
+          "expression": "{ type: \"text\", text: raw.content }"
+        }
+      ]
+    }
   }
 }
