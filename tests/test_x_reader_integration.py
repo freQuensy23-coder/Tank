@@ -150,3 +150,126 @@ async def test_real_worker_http_errors_flow_through_source_checkpoint_to_multipa
     assert metadata["request"]["body"] is None
     receipts = await repo.list("out.deliveries", filters={"status": "SENT"})
     assert len(receipts) == 5
+
+
+@pytest.mark.parametrize("phase", ["status", "headers", "chunk_extension", "chunk_trailer"])
+async def test_absolute_deadline_closes_slow_http_transport_and_retains_completed_evidence(
+    monkeypatch, phase
+):
+    root = Path(__file__).resolve().parents[1] / "apify" / "x-reader"
+    monkeypatch.syspath_prepend(str(root))
+    reader = importlib.import_module("public_profile")
+    worker = importlib.import_module("direct_fetch")
+    disconnected = asyncio.Event()
+    tasks = set()
+    requests = []
+    failures = []
+
+    async def serve(stream, writer):
+        task = asyncio.current_task()
+        tasks.add(task)
+        slow = False
+        try:
+            requests.append(await stream.readuntil(b"\r\n\r\n"))
+            if len(requests) == 1:
+                writer.write(b"HTTP/1.1 503 Busy\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfirst")
+                await writer.drain()
+                return
+            slow = True
+            if phase == "status":
+                initial = b"HTTP/1.1 503 "
+            elif phase == "headers":
+                initial = b"HTTP/1.1 503 Busy\r\nX-Slow: "
+            else:
+                initial = b"HTTP/1.1 503 Busy\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nprefix\r\n"
+                initial += b"1;slow=" if phase == "chunk_extension" else b"0\r\nX-Slow: "
+            writer.write(initial)
+            await writer.drain()
+            eof = asyncio.create_task(stream.read())
+            try:
+                for _ in range(200):
+                    done, _ = await asyncio.wait({eof}, timeout=0.02)
+                    if done:
+                        assert eof.result() == b""
+                        disconnected.set()
+                        break
+                    writer.write(b"x")
+                    await writer.drain()
+            finally:
+                eof.cancel()
+                await asyncio.gather(eof, return_exceptions=True)
+        except Exception as exc:
+            failures.append(exc)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            tasks.discard(task)
+            if slow:
+                assert disconnected.is_set()
+
+    server = await asyncio.start_server(serve, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    monkeypatch.setattr(reader, "PROFILE_ORIGIN", f"http://127.0.0.1:{port}/")
+    monkeypatch.setattr(reader, "run_deadline", lambda: time.monotonic() + 1.8)
+    started = time.monotonic()
+    try:
+        output = await asyncio.wait_for(
+            worker.fetch_snapshot({"handles": ["alice"], "cursors": {"alice": "90"}}), 4
+        )
+        assert time.monotonic() - started < 2.8
+        await asyncio.wait_for(disconnected.wait(), 1)
+        assert output["health"] == "failed" and output["posts"] == []
+        assert output["nextCursors"] == {"alice": "90"}
+        diagnostics = output["accounts"][0]["diagnostics"]
+        assert diagnostics["outcome"] == "deadline_exhausted" and diagnostics["attemptCount"] == 2
+        assert diagnostics["attempts"][0]["response"]["body"] == "first"
+        second = diagnostics["attempts"][1]
+        if phase.startswith("chunk"):
+            assert second["response"]["body"] == "prefix"
+            assert second["response"]["bodyTruncated"]
+            assert second["response"]["readError"] == "RESPONSE_BODY_DEADLINE_EXHAUSTED"
+        else:
+            assert second["error"] == "PUBLIC_PROFILE_DEADLINE_EXHAUSTED"
+        assert len(requests) == 2 and not failures
+    finally:
+        server.close()
+        await server.wait_closed()
+        await asyncio.gather(*tasks)
+
+
+async def test_absolute_deadline_closes_stalled_tls_handshake(monkeypatch):
+    root = Path(__file__).resolve().parents[1] / "apify" / "x-reader"
+    monkeypatch.syspath_prepend(str(root))
+    reader = importlib.import_module("public_profile")
+    disconnected = asyncio.Event()
+    tasks = set()
+    received = []
+
+    async def serve(stream, writer):
+        task = asyncio.current_task()
+        tasks.add(task)
+        try:
+            received.append(await stream.read(65536))
+            assert await stream.read() == b""
+            disconnected.set()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            tasks.discard(task)
+
+    server = await asyncio.start_server(serve, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    monkeypatch.setattr(reader, "PROFILE_ORIGIN", f"https://127.0.0.1:{port}/")
+    started = time.monotonic()
+    try:
+        with pytest.raises(reader.ProfileFailure) as failure:
+            await asyncio.wait_for(reader.fetch_profile("alice", started + 0.5), 2)
+        await asyncio.wait_for(disconnected.wait(), 1)
+        assert time.monotonic() - started < 1.5
+        assert received[0].startswith(b"\x16\x03")
+        assert failure.value.diagnostics["outcome"] == "deadline_exhausted"
+        assert failure.value.diagnostics["attemptCount"] == 1
+    finally:
+        server.close()
+        await server.wait_closed()
+        await asyncio.gather(*tasks)

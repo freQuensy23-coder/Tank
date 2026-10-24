@@ -26,8 +26,15 @@ HEADERS = {
 def redact(value, token=None):
     text = redact_text(str(value), (token,) if token else ())
     return re.sub(
-        r"(?im)((?:authorization|set-cookie|cookie|auth_token|ct0)[\"']?\s*[:=]\s*)[^\r\n<]+",
-        r"\1[REDACTED]",
+        r"(?i)(\b(?:authorization|set-cookie|cookie|auth_token|ct0)[\"']?[ \t]*[:=][ \t]*)"
+        r"(\"(?:\\[^\r\n]|[^\"\\\r\n])*\"?|'(?:\\[^\r\n]|[^'\\\r\n])*'?|"
+        r"(?:(?:Basic|Bearer)[ \t]+)?[^\s,;&<>{}\[\]\"']+)",
+        lambda match: (
+            match[1]
+            + (match[2][0] if match[2][0] in "\"'" else "")
+            + "[REDACTED]"
+            + (match[2][0] if match[2][0] in "\"'" and match[2][-1] == match[2][0] else "")
+        ),
         text,
     )
 
@@ -80,6 +87,8 @@ def sanitize(value, token=None):
                 "bodyTruncated": bool(response.get("bodyTruncated")) or clipped,
                 "omittedWireBytes": response.get("omittedWireBytes"),
                 "wireBytes": response.get("wireBytes"),
+                "captureLimitBytes": response.get("captureLimitBytes"),
+                "serializedBodyLimitBytes": response.get("serializedBodyLimitBytes"),
                 "readError": redact(response.get("readError"), token) if response.get("readError") else None,
                 "decodeError": redact(response.get("decodeError"), token)
                 if response.get("decodeError")

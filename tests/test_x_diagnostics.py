@@ -298,3 +298,112 @@ async def test_diagnostics_do_not_allow_failed_account_posts_or_cursors_to_advan
         scan = await XSensor(http, "apify-secret").posts(URL, ["alice"], {"alice": "90"})
     assert scan.cursors == {"alice": "90"}
     assert scan.rows == []
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "base64"])
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (b'{"cookie":"session","detail":"upstream A"}', b'{"cookie":"[REDACTED]","detail":"upstream A"}'),
+        (b'{"ct0":"escaped\\"secret","detail":1}', b'{"ct0":"[REDACTED]","detail":1}'),
+        (b"cookie=session; detail=upstream A", b"cookie=[REDACTED]; detail=upstream A"),
+        (b"?auth_token=session&detail=upstream+A", b"?auth_token=[REDACTED]&detail=upstream+A"),
+        (b"authorization: Basic abc123, detail=upstream A", b"authorization: [REDACTED], detail=upstream A"),
+    ],
+)
+def test_sanitization_preserves_adjacent_nonsecret_bytes(encoding, raw, expected):
+    prefix = b"\x00\xff" if encoding == "base64" else b""
+    raw = prefix + raw
+    evidence = sanitize(
+        diagnostics(base64.b64encode(raw).decode() if prefix else raw.decode(), encoding=encoding)
+    )
+    response = evidence["attempts"][0]["response"]
+    content = base64.b64decode(response["body"]) if prefix else response["body"].encode()
+    assert content == prefix + expected
+    assert response["bodySha256"] == sha256(prefix + expected)
+    assert response["redacted"]
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "base64"])
+async def test_changed_json_detail_survives_redaction_and_creates_distinct_ops_notice(encoding):
+    repo = MemoryRepository()
+    notices = []
+    for detail in ("A", "B"):
+        raw = (f'{{"cookie":"session","detail":"upstream {detail}"}}').encode()
+        if encoding == "base64":
+            raw = b"\x00\xff" + raw
+        body = base64.b64encode(raw).decode() if encoding == "base64" else raw.decode()
+        notices.append(await notice_for(repo, diagnostics(body, encoding=encoding)))
+    assert notices[0]["notice_id"] != notices[1]["notice_id"]
+    for index, detail in enumerate((b"A", b"B")):
+        attachments = documents(notices[index]["entry_errors"])
+        assert b"session" not in attachments[0]["content"]
+        assert b'"detail":"upstream ' + detail + b'"}' in attachments[0]["content"]
+    assert len(await repo.list("ops.jobs", filters={"type": "DELIVER"})) == 2
+
+
+@pytest.mark.parametrize("exhaust_first", [False, True])
+async def test_job_runner_preserves_independent_document_retry_budgets(monkeypatch, exhaust_first):
+    import asyncio
+    from datetime import timedelta
+
+    import tank.delivery
+    import tank.runtime
+    import tank.storage
+    from tank.runtime import Runtime
+    from tank.util import parse_time, utcnow
+
+    now = utcnow()
+    for module in (tank.delivery, tank.runtime, tank.storage):
+        monkeypatch.setattr(module, "utcnow", lambda: now)
+    repo = MemoryRepository()
+    notice = await notice_for(repo, diagnostics("full body"))
+    [job] = await repo.list("ops.jobs", filters={"type": "DELIVER"})
+    counts = {}
+    sent = []
+    message_count = 0
+    filenames = [row["filename"] for row in notice["document_manifest"]]
+
+    def send(request):
+        nonlocal message_count
+        if request.url.path.endswith("sendMessage"):
+            message_count += 1
+        else:
+            filename = multipart(request)["document"][0]
+            counts[filename] = counts.get(filename, 0) + 1
+            failures = 5 if exhaust_first and filename == filenames[0] else 4
+            if counts[filename] <= failures:
+                return httpx.Response(429, json={"ok": False, "parameters": {"retry_after": 1}})
+            sent.append(filename)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": message_count + len(sent)}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+        runtime = object.__new__(Runtime)
+        runtime.repo = repo
+        runtime.settings = telegram_settings()
+        for _ in range(30):
+            current = await repo.get("ops.jobs", job["job_id"])
+            if current["status"] in {"DONE", "FAILED"}:
+                break
+            now = max(now, parse_time(current["run_after"])) + timedelta(microseconds=1)
+            stop = asyncio.Event()
+            runtime.delivery = DeliveryService(repo, runtime.settings, http=http)
+
+            async def deliver(payload):
+                try:
+                    await runtime.delivery.deliver(payload)
+                finally:
+                    stop.set()
+
+            runtime.handlers = {"DELIVER": deliver}
+            await runtime.worker(stop)
+    current = await repo.get("ops.jobs", job["job_id"])
+    assert current["status"] == ("FAILED" if exhaust_first else "DONE")
+    assert counts == dict.fromkeys(filenames, 5)
+    assert sent == (filenames[1:] if exhaust_first else filenames)
+    assert message_count == 1
+    assert current["attempts"] == (5 if exhaust_first else 1)
+    ledger = await repo.list("out.deliveries", filters={"method": "sendDocument", "status": "SENT"})
+    assert [row["filename"] for row in ledger] == sent
+    failures = await repo.list("out.deliveries", filters={"method": "sendDocument", "terminal": True})
+    assert len(failures) == int(exhaust_first)

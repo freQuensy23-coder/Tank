@@ -179,6 +179,7 @@ class DeliveryService:
         ]
         if manifest != notice["document_manifest"]:
             raise DeliveryError("Ops diagnostic document manifest mismatch")
+        terminal_failure = None
         for document in attachments:
             document_id = sha256({"filename": document["filename"], "sha256": document["sha256"]})
             history = [row for row in ledger if row.get("document_id") == document_id]
@@ -186,9 +187,9 @@ class DeliveryService:
                 continue
             attempt = max((row.get("attempt", 0) for row in history), default=0) + 1
             if attempt > 5 or any(row.get("terminal") for row in history):
-                failure = DeliveryError("Ops document delivery exhausted five attempts")
-                failure.terminal = True
-                return failure
+                terminal_failure = DeliveryError("Ops document delivery exhausted five attempts")
+                terminal_failure.terminal = True
+                continue
             transition = {
                 "notice_id": notice["notice_id"],
                 "channel": "telegram:ops",
@@ -237,11 +238,16 @@ class DeliveryService:
                     },
                     immutable=True,
                 )
-                failure = DeliveryError(
-                    "Ops document delivery failed", getattr(exc, "retry_after", 2 ** (attempt - 1))
+                if attempt == 5:
+                    terminal_failure = DeliveryError("Ops document delivery exhausted five attempts")
+                    terminal_failure.terminal = True
+                    continue
+                return DeliveryDeferred(
+                    offset_schedule(
+                        collection_clock(),
+                        timedelta(seconds=getattr(exc, "retry_after", 2 ** (attempt - 1))),
+                    )
                 )
-                failure.terminal = attempt == 5
-                return failure
             await self.repo.put(
                 "out.deliveries",
                 new_id("delivery"),
@@ -254,7 +260,7 @@ class DeliveryService:
                 },
                 immutable=True,
             )
-        return None
+        return terminal_failure
 
     async def _deliver_progress(self, payload, notice):
         from tank.ops_cards import render, snapshot, time_of
