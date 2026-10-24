@@ -9,6 +9,7 @@ from typing import Never
 
 import httpx
 import pytest
+from ddgs.ddgs import DDGS
 from ddgs.engines import ENGINES
 from ddgs.exceptions import DDGSException, RatelimitException, TimeoutException
 from pydantic import JsonValue
@@ -70,22 +71,20 @@ def install_http(monkeypatch: pytest.MonkeyPatch, respond: Callable[[httpx.Reque
             headers=headers,
         )
 
-    monkeypatch.setattr(search.httpx, "Client", make_client)
+    monkeypatch.setattr(httpx, "Client", make_client)
 
 
 async def test_pinned_engine_payload_parser_and_unmodified_result(monkeypatch: pytest.MonkeyPatch) -> None:
     assert version("ddgs") == "9.16.0"
     requests: list[httpx.Request] = []
     calls: list[tuple[str, dict[str, str | int]]] = []
-    original_text = search.DDGS.text
+    original_text = DDGS.text
 
-    def text(
-        instance: search.DDGS, query: str, *, backend: str, max_results: int
-    ) -> list[dict[str, JsonValue]]:
+    def text(instance: DDGS, query: str, *, backend: str, max_results: int) -> list[dict[str, JsonValue]]:
         calls.append((query, {"backend": backend, "max_results": max_results}))
         return original_text(instance, query, backend=backend, max_results=max_results)
 
-    monkeypatch.setattr(search.DDGS, "text", text)
+    monkeypatch.setattr(DDGS, "text", text)
 
     monkeypatch.setenv("DDGS_PROXY", "http://forbidden.test:1")
     monkeypatch.setenv("HTTPS_PROXY", "http://forbidden.test:1")

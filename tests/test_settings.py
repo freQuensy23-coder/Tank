@@ -237,9 +237,14 @@ def test_frozen_config_is_parsed_once_and_callers_get_copies(
     config.mkdir()
     (config / "registry.yaml").write_text("tokens:\n- token_id: T\n")
     frozen = resolve_versions(Settings(_env_file=None, config_dir=config, data_dir=tmp_path / "data"))
-    calls = []
-    original = yaml.load
-    monkeypatch.setattr(module.yaml, "load", lambda *a, **k: calls.append(1) or original(*a, **k))
+    calls: list[int] = []
+
+    class CountingLoader(yaml.SafeLoader):
+        def __init__(self, stream: bytes | str) -> None:
+            calls.append(1)
+            super().__init__(stream)
+
+    monkeypatch.setattr(module, "_YAML_LOADER", CountingLoader)
     first = frozen.load_config("registry")
     tokens = first["tokens"]
     assert isinstance(tokens, list)

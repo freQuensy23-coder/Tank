@@ -13,6 +13,7 @@ from tank.contracts.repository import Collection, Repository
 from tank.contracts.score import ScoreAssessment, ScoreAssessmentView, ScoreDimension, ScoreDimensions
 from tank.market_codec import _prepare_records, encode, merge_point
 from tank.market_storage import market_range_by_instrument, market_rows_recorded_since
+from tank.models import Record
 from tank.retention import BenchmarkToken, RetentionEvidence, benchmark_token_ids, protected_windows
 from tank.settings import Settings
 from tank.storage import ImmutableRecordError, MemoryRepository
@@ -69,7 +70,8 @@ def test_typed_configuration_reports_missing_fields(tmp_path: Path) -> None:
 async def test_repository_refuses_unvalidated_constructed_entity_before_write() -> None:
     store = MemoryRepository()
     repository = Repository(store, Collection("qa.fixtures", Observation))
-    entity = Observation.model_construct(instrument_id="btc", observed_at=datetime.now(UTC), count="bad")
+    entity = Observation.model_construct(instrument_id="btc", observed_at=datetime.now(UTC), count=1)
+    object.__setattr__(entity, "count", "bad")
     with pytest.raises(ValueError):
         await repository.put("invalid", entity)
     assert await store.get("qa.fixtures", "invalid") is None
@@ -233,7 +235,7 @@ def test_json_codec_errors_omit_raw_invalid_document() -> None:
 
 async def test_memory_market_reads_return_real_persisted_keys() -> None:
     store = MemoryRepository()
-    row = {
+    row: Record = {
         "instrument_id": "A",
         "open_time": "2026-10-24T00:00:00Z",
         "open_time_prec": "EXACT",
