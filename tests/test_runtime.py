@@ -5,9 +5,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.runtime import Runtime
 from tank.runtime_contracts import MarketTruthJob
 from tank.storage import MemoryRepository
+from tank.time_precision import Timestamp
 from tank.util import parse_time
 
 
@@ -885,7 +887,7 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
         runtime.market = market
         runtime.truth = truth
         runtime.handlers = {
-            "RUN_MARKET_TRUTH": runtime.assess,
+            "RUN_MARKET_TRUTH": runtime.assess_wire,
             "EVAL_CONDITIONS": __import__("tank.scheduler", fromlist=["Scheduler"])
             .Scheduler(repo, settings, market, truth)
             .eval_conditions,
@@ -895,7 +897,12 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
         capture_task = asyncio.create_task(external_capture_worker())
         job = await repo.enqueue(
             "RUN_MARKET_TRUTH",
-            {"event_id": "e", "token_id": "T", "cutoff": iso(now - timedelta(minutes=1))},
+            {
+                "event_id": "e",
+                "token_id": "T",
+                "cutoff": iso(now - timedelta(minutes=1)),
+                "cutoff_prec": "EXACT",
+            },
             "truth",
             max_attempts=2,
         )
@@ -908,12 +915,13 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
                     await asyncio.sleep(0.01)
             first = await repo.get("ops.jobs", job["job_id"])
             assert first["attempts"] == 1
-            assert first["result"]["data_confidence"]["class"] == "LOW"
-            assert first["result"]["detail"]["capture_status"]["status"] == "INCOMPLETE"
+            first_assessment = await repo.get("ana.market_truth", first["result"]["mta_id"])
+            assert first_assessment["data_confidence"]["class"] == "LOW"
+            assert first_assessment["detail"]["capture_status"]["status"] == "INCOMPLETE"
             assert (
-                first["result"]["detail"]["capture_status"]["reason"] == "BOUNDED_PREREQUISITE_WAIT_EXPIRED"
+                first_assessment["detail"]["capture_status"]["reason"] == "BOUNDED_PREREQUISITE_WAIT_EXPIRED"
             )
-            assert first["result"]["detail"]["capture_status"]["bounded_wait_s"] >= 0.02
+            assert first_assessment["detail"]["capture_status"]["bounded_wait_s"] >= 0.02
             assert not release_capture.is_set()
             truth.assess.assert_awaited_once()
 
@@ -936,7 +944,7 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
                     await asyncio.sleep(0.01)
             next_job = await repo.enqueue(
                 "RUN_MARKET_TRUTH",
-                {"event_id": "e", "token_id": "T", "cutoff": iso(now)},
+                {"event_id": "e", "token_id": "T", "cutoff": iso(now), "cutoff_prec": "EXACT"},
                 "truth-after-capture",
                 max_attempts=2,
             )
@@ -944,8 +952,9 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
                 while (await repo.get("ops.jobs", next_job["job_id"]))["status"] != "DONE":
                     await asyncio.sleep(0.01)
             done = await repo.get("ops.jobs", next_job["job_id"])
-            assert done["result"]["data_confidence"]["class"] == "LOW"
-            assert done["result"]["detail"]["capture_status"]["status"] == terminal_status
+            done_assessment = await repo.get("ana.market_truth", done["result"]["mta_id"])
+            assert done_assessment["data_confidence"]["class"] == "LOW"
+            assert done_assessment["detail"]["capture_status"]["status"] == terminal_status
             assert (await repo.get("ops.jobs", job["job_id"]))["result"] == first["result"]
             assert len(requests) == 2
             for request, cutoff in zip(requests, (iso(now - timedelta(minutes=1)), iso(now)), strict=True):
@@ -1306,7 +1315,6 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
 @pytest.mark.asyncio
 async def test_market_truth_repairs_windows_within_budget_before_assessing() -> None:
     from datetime import timedelta
-    from types import SimpleNamespace
 
     from tank import runtime as runtime_module
 
@@ -1321,9 +1329,18 @@ async def test_market_truth_repairs_windows_within_budget_before_assessing() -> 
             calls.append(("repair", token_id, start, end, budget_s))
 
     class Truth:
-        async def assess(self, event_id, token_id, cutoff):
+        async def assess_for_job(
+            self, event_id: str, token_id: str, cutoff: Timestamp | None
+        ) -> MarketTruthAssessmentRef:
             calls.append(("assess", token_id))
-            return {"mta_id": "MTA"}
+            return MarketTruthAssessmentRef(
+                mta_id="MTA",
+                event_id=event_id,
+                token_id=token_id,
+                cutoff="2026-10-20T13:00:00Z",
+                cutoff_prec="EXACT",
+                cutoff_prec_reason=None,
+            )
 
     repo = MemoryRepository()
     await repo.put("evt.events", "e", {"event_id": "e", "public_at": anchor, "known_to_us_at": anchor})
@@ -1332,13 +1349,13 @@ async def test_market_truth_repairs_windows_within_budget_before_assessing() -> 
     result = await rt.assess(
         MarketTruthJob(event_id="e", token_id="T", cutoff="2026-10-20T13:00:00Z", cutoff_prec="EXACT")
     )
-    assert result == {"mta_id": "MTA"} and [c[0] for c in calls] == ["repair", "assess"]
+    assert result.mta_id == "MTA" and [c[0] for c in calls] == ["repair", "assess"]
     _, token, start, end, budget = calls[0]
     assert token == "T" and budget == runtime_module.REPAIR_BUDGET_S
     assert end == parse_time("2026-10-20T13:00:00Z")
     assert end - start <= timedelta(hours=25) and start <= parse_time(anchor) - timedelta(hours=24)
 
     calls.clear()
-    rt.market = SimpleNamespace(capture_readiness=Market().capture_readiness)
+    rt.market = Market()
     await rt.assess(MarketTruthJob(event_id="e", token_id="T"))
-    assert calls == [("assess", "T")]
+    assert [call[0] for call in calls] == ["repair", "assess"]

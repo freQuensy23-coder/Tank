@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.runtime import Runtime
 from tank.runtime_contracts import MarketTruthJob
 from tank.storage import MemoryRepository
@@ -54,9 +55,19 @@ async def test_market_job_preserves_its_declared_cutoff_precision(precision) -> 
     cutoff = Timestamp("2026-10-18T13:00:00Z", precision, None if precision else "UNVERIFIED_SEMANTICS")
     runtime = object.__new__(Runtime)
     runtime.repo = repo
-    runtime.market = SimpleNamespace(capture_readiness=AsyncMock(return_value={"status": "COMPLETE"}))
-    runtime.truth = SimpleNamespace(assess=AsyncMock(return_value={"mta_id": "actual-result"}))
-    assert await runtime.assess(
-        MarketTruthJob.model_validate({"event_id": "event", "token_id": "token", **cutoff.fields("cutoff")})
-    ) == {"mta_id": "actual-result"}
-    runtime.truth.assess.assert_awaited_once_with("event", "token", cutoff)
+    runtime.market = SimpleNamespace(
+        capture_readiness=AsyncMock(return_value={"status": "COMPLETE"}), repair_windows=AsyncMock()
+    )
+    reference = MarketTruthAssessmentRef.model_validate(
+        {"mta_id": "actual-result", "event_id": "event", "token_id": "token", **cutoff.fields("cutoff")}
+    )
+    runtime.truth = SimpleNamespace(assess_for_job=AsyncMock(return_value=reference))
+    assert (
+        await runtime.assess(
+            MarketTruthJob.model_validate(
+                {"event_id": "event", "token_id": "token", **cutoff.fields("cutoff")}
+            )
+        )
+        == reference
+    )
+    runtime.truth.assess_for_job.assert_awaited_once_with("event", "token", cutoff)

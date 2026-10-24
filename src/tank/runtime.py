@@ -8,7 +8,10 @@ from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
 
+from pydantic import JsonValue
+
 from tank.agents.sessions import ADMITTED_JOB_TYPES, AdmissionDeferred
+from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.delivery import DeliveryDeferred, DeliveryService
 from tank.ops_progress import job_failure_progress
 from tank.runtime_contracts import EscalateTokensJob, MarketTruthJob
@@ -21,7 +24,6 @@ from tank.util import parse_time, utcnow
 if TYPE_CHECKING:
     from tank.agents.pipeline import Pipeline
     from tank.agents.sessions import SessionService
-    from tank.analysis.truth import MarketTruthService
     from tank.market.service import MarketService
     from tank.telegram_inbox import TelegramInbox
 
@@ -35,6 +37,12 @@ class GatewayPort(Protocol):
     async def preflight(self) -> None: ...
     async def start(self) -> None: ...
     async def close(self) -> None: ...
+
+
+class MarketTruthPort(Protocol):
+    async def assess_for_job(
+        self, event_id: str, token_id: str, cutoff: Timestamp | None
+    ) -> MarketTruthAssessmentRef: ...
 
 
 log = logging.getLogger(__name__)
@@ -72,7 +80,7 @@ class Runtime:
         *,
         sources: RuntimeService,
         market: "MarketService",
-        truth: "MarketTruthService",
+        truth: "MarketTruthPort",
         pipeline: "Pipeline",
         sessions: "SessionService",
         delivery: DeliveryService,
@@ -110,16 +118,17 @@ class Runtime:
         self.validate()
         await self.gateway.preflight()
 
-    async def escalate_wire(self, payload):
+    async def escalate_wire(self, payload: dict[str, JsonValue]) -> None:
         await self.escalate(EscalateTokensJob.model_validate(payload))
 
-    async def assess_wire(self, payload):
-        return await self.assess(MarketTruthJob.model_validate(payload))
+    async def assess_wire(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        assessment = await self.assess(MarketTruthJob.model_validate(payload))
+        return assessment.model_dump(mode="json")
 
     async def escalate(self, payload: EscalateTokensJob) -> None:
         await self.market.escalate(payload.event_id, payload.tokens)
 
-    async def assess(self, payload: MarketTruthJob):
+    async def assess(self, payload: MarketTruthJob) -> MarketTruthAssessmentRef:
         from tank.market.capture import event_anchor
 
         event = await self.repo.get("evt.events", payload.event_id)
@@ -140,13 +149,12 @@ class Runtime:
             if payload.cutoff is not None
             else None
         )
-        if hasattr(self.market, "repair_windows"):
-            anchor_time = parse_time(anchor.value)
-            end = parse_time(cutoff.value) if cutoff is not None and cutoff.value else utcnow()
-            await self.market.repair_windows(
-                payload.token_id, min(anchor_time, end) - REPAIR_LOOKBACK, end, budget_s=REPAIR_BUDGET_S
-            )
-        return await self.truth.assess(payload.event_id, payload.token_id, cutoff)
+        anchor_time = parse_time(anchor.value)
+        end = parse_time(payload.cutoff) if payload.cutoff is not None else utcnow()
+        await self.market.repair_windows(
+            payload.token_id, min(anchor_time, end) - REPAIR_LOOKBACK, end, budget_s=REPAIR_BUDGET_S
+        )
+        return await self.truth.assess_for_job(payload.event_id, payload.token_id, cutoff)
 
     async def scout_review(self, payload):
         if not hasattr(self.sessions, "scout_review"):

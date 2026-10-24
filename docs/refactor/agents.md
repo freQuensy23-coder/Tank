@@ -194,3 +194,24 @@ All21 runtime/reload/drain/precision unit cases pass in1.57s with explicit
 required lifecycle fakes. Configured mypy passes both runtime modules; full
 strict runtime method migration remains open. CLI/E2E owners are coordinating
 the new build_supervisor import and explicit test construction.
+
+
+## Market assessment application port
+
+Runtime now depends on the precise MarketTruthPort.assess_for_job protocol and
+receives a strict MarketTruthAssessmentRef. The worker adapter serializes only
+that reference into the job result; numerical/provenance evidence remains in
+the assessment repository and is hydrated by evidence consumers. This removes
+the full untyped MTA document from the runtime application port without claiming
+that the calculation engine's complete stored document is already migrated.
+Window repair is a required capability and always runs before assessment;
+a missing fake/implementation method can no longer silently skip repair.
+
+Every owned durable worker fixture registers assess_wire, never the typed
+assess service directly. Queued cutoffs carry explicit precision. The bounded
+external-capture integration cases hydrate persisted assessments through the
+typed job reference and still verify incomplete bounded waits, actual terminal
+capture history, immutable previous results, exact repair windows and budgets.
+Both PARTIAL/FAILED cases pass in2.02s with real asyncio capture/repair workers,
+zero skips. All21 runtime unit cases pass in1.65s. Configured mypy passes both
+runtime modules. Typed direct service callers remain model-based.
