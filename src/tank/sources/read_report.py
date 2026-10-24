@@ -10,6 +10,7 @@ from typing import Protocol
 from pydantic import Field, JsonValue
 
 from tank.contracts import DomainModel
+from tank.sources.configuration import SourceConfiguration, SourceDefinition
 from tank.util import iso
 
 LIMIT = 0.01
@@ -69,15 +70,21 @@ class ReadReport(DomainModel):
     all_pass: bool
 
 
-async def snapshot(repo: CheckpointReader, sources: Sequence[dict[str, JsonValue]]) -> dict[str, JsonValue]:
+async def snapshot(
+    repo: CheckpointReader, sources: Sequence[SourceDefinition | dict[str, JsonValue]]
+) -> dict[str, JsonValue]:
     """Read persisted checkpoints; an unseen feed has explicit zero counters."""
     feeds: dict[str, FeedReads] = {}
     for source in sources:
-        inventory = SourceFeedInventory.model_validate(
-            {name: source[name] for name in ("source_id", "feeds")}
-        )
-        for index in range(len(inventory.feeds)):
-            key = f"{inventory.source_id}:{index}"
+        if isinstance(source, SourceDefinition):
+            source_id, feed_count = source.source_id, len(source.feeds)
+        else:
+            inventory = SourceFeedInventory.model_validate(
+                {name: source[name] for name in ("source_id", "feeds")}
+            )
+            source_id, feed_count = inventory.source_id, len(inventory.feeds)
+        for index in range(feed_count):
+            key = f"{source_id}:{index}"
             row = await repo.get("ops.source_checkpoints", key)
             if row is None:
                 feeds[key] = FeedReads(
@@ -169,8 +176,8 @@ async def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--save", type=Path, help="write the current snapshot here")
     args = parser.parse_args(argv)
     settings = resolve_versions(Settings())
-    sources = settings.load_config("sources")["sources"]
-    source_ids = [s["source_id"] for s in sources]
+    sources = settings.load_config_as("sources", SourceConfiguration).sources
+    source_ids = [source.source_id for source in sources]
     repo = PostgresRepository(settings.database_url)
     clickhouse_market.install(repo, settings)
     await repo.open()
@@ -180,7 +187,11 @@ async def main(argv: Sequence[str] | None = None) -> None:
         await repo.close()
     if args.save:
         args.save.write_text(json.dumps(end, indent=1) + "\n")
-    start = json.loads(args.baseline.read_text()) if args.baseline else None
+    start = (
+        ReadSnapshot.model_validate_json(args.baseline.read_bytes()).model_dump(mode="json")
+        if args.baseline
+        else None
+    )
     print(json.dumps(rates(end, start, source_ids), indent=1))
 
 
