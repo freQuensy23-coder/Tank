@@ -322,3 +322,15 @@ identifier taxonomy; an absent containing field is valid recursive traversal
 state, not a missing required domain value.76 schema/context/migration cases
 pass in1.97 seconds,zero skips; shared validator and its complete focused test
 module pass strict mypy.
+
+
+The v2 source tranche uses an explicit test-only synthetic publisher factory
+in tests/agent_source_fixtures.py. It declares complete capture, actor,
+publication-unknown, observation-clock and processing-policy fixture data,
+then validates the real canonical SourceItem model and emits its actual flat
+storage shape. It never patches runtime readers or relaxes model requirements;
+unknown/retired fields still fail the canonical schema. This lets boundary
+tests replace incomplete source bags with named complete fixture records.
+The helper passes strict mypy with the actual src import path. A real offline
+Pipeline/HTTP/repository smoke test classified its S30 item and re-read the
+strict cached score successfully.

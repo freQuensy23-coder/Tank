@@ -136,6 +136,10 @@ class ProgressDetails(DomainModel):
         return self.model_dump(mode="json", exclude_unset=True)
 
 
+class EventObservationSubject(DomainModel):
+    item_id: SourceContextId
+
+
 class ProgressSubject(DomainModel):
     item_id: SourceContextId
     source_id: str = Field(min_length=1)
