@@ -1,12 +1,19 @@
 """Capture and source coverage contracts exercise real validation and persistence decisions."""
 
 import base64
+from pathlib import Path
 
 import httpx
 import pytest
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 
-from tank.sources.capture_fetch import CaptureState, FetchRequest, FetchResult, capture_fetch
+from tank.sources.capture_fetch import (
+    CaptureRepository,
+    CaptureState,
+    FetchRequest,
+    FetchResult,
+    capture_fetch,
+)
 from tank.sources.read_report import FeedReads, ReadCounter, ReadSnapshot, report
 from tank.storage import MemoryRepository
 from tank.util import sha256
@@ -56,7 +63,9 @@ async def test_capture_preserves_invalid_terminal_evidence(monkeypatch: pytest.M
         "mkt.capture_requests", request_id, {"request_id": request_id, "status": "COMPLETE", "result": wire}
     )
 
-    async def completed(*args: object) -> tuple[str, CaptureState]:
+    async def completed(
+        repo: CaptureRepository, request: FetchRequest, budget_s: float
+    ) -> tuple[str, CaptureState]:
         return request_id, CaptureState(status="COMPLETE", reason=None, result=wire)
 
     monkeypatch.setattr(module, "_capture_request", completed)
@@ -77,7 +86,9 @@ async def test_capture_verified_response_releases_queue_record(monkeypatch: pyte
         "mkt.capture_requests", request_id, {"request_id": request_id, "status": "COMPLETE", "result": wire}
     )
 
-    async def completed(*args: object) -> tuple[str, CaptureState]:
+    async def completed(
+        repo: CaptureRepository, request: FetchRequest, budget_s: float
+    ) -> tuple[str, CaptureState]:
         return request_id, CaptureState(status="COMPLETE", reason=None, result=wire)
 
     monkeypatch.setattr(module, "_capture_request", completed)
@@ -151,3 +162,194 @@ def test_entry_error_variants_preserve_run_identity_and_validate_evidence() -> N
         parse_entry_error({"account": "alice"})
     with pytest.raises(ValidationError):
         parse_entry_error({"reason": "INVALID_PUBLISHER_ENTRY", "entry_index": -1})
+
+
+def test_pending_source_requires_actual_durable_capture_and_preserves_unknown_publication(
+    tmp_path: Path,
+) -> None:
+    import zstandard
+
+    from tank.contracts.source_items import PendingSourceItem, RawSourceReference, discovered_item
+    from tank.sources.raw_store import write_raw_item
+
+    payload = b"frozen source evidence"
+    observed = "2026-10-24T00:00:00Z"
+    discovery = discovered_item(
+        "S30",
+        {
+            "external_id": "release-1",
+            "title": "Publisher release",
+            "text": "Source facts",
+            "url": "https://example.org/release",
+            "published_at": None,
+            "published_prec": "COLLECTION_ONLY",
+            "published_prec_reason": "INCOMPLETE",
+            "_payload": payload,
+        },
+    )
+    pending = PendingSourceItem(
+        discovery=discovery.discovery,
+        item_id="ITM-fixture",
+        feed="https://example.org/rss",
+        observed_at=observed,
+        discovery_config_version="cfg",
+        discovery_code_version="code",
+        raw=None,
+    )
+    with pytest.raises(ValueError, match="no captured raw evidence"):
+        pending.captured()
+    reference, digest = write_raw_item(tmp_path, "S30", pending.item_id, observed, payload)
+    captured = pending.model_copy(
+        update={"raw": RawSourceReference(raw_ref=reference, raw_sha256=digest)}
+    ).captured()
+    record = captured.storage_record()
+    assert record["published_at"] is None and record["published_prec"] == "COLLECTION_ONLY"
+    assert record["observed_at_prec"] == "COLLECTION_ONLY"
+    assert "_payload" not in record
+    assert zstandard.ZstdDecompressor().decompress(Path(reference).read_bytes()) == payload
+
+
+def test_invalid_normalized_publisher_metadata_preserves_valid_sibling_and_identity() -> None:
+    from tank.sources import parsers
+
+    common = {
+        "title": "Official release",
+        "abstract": "Material facts",
+        "html_url": "https://www.federalregister.gov/document",
+        "publication_date": "2026-10-24",
+    }
+    rows = parsers.json_items(
+        {
+            "results": [
+                {**common, "document_number": "bad", "agencies": [{"name": False}]},
+                {**common, "document_number": "valid", "agencies": [{"name": "Treasury Department"}]},
+            ]
+        },
+        "S03",
+    )
+    assert [row["external_id"] for row in rows] == ["valid"]
+    assert len(rows.errors) == 1 and rows.errors[0]["entry_index"] == 0
+    assert rows.errors[0]["entry"]["id"] == "bad"
+    assert len(rows.errors[0]["entry_sha256"]) == 64
+
+
+def test_source_discovery_cannot_replace_configured_identity_or_invent_missing_publication() -> None:
+    from tank.contracts.source_items import discovered_item
+
+    wire = {"external_id": "entry", "title": "Title", "text": "Facts", "url": "https://example.org/entry"}
+    with pytest.raises(ValidationError):
+        discovered_item("S30", wire)
+    with pytest.raises(ValueError, match="conflicts"):
+        discovered_item("S30", {**wire, "published_at": None, "source_id": "S29"})
+
+
+@pytest.mark.asyncio
+async def test_real_source_record_roundtrips_and_validates_processing_transitions(tmp_path: Path) -> None:
+    from source_support import source_configuration
+    from test_sources import RSS
+
+    from tank.contracts.source_items import (
+        ClassifiedRelevance,
+        ClassifiedSource,
+        RoutedSource,
+        SourceRoute,
+        SourceRoutingMessage,
+        parse_feed_source_item,
+    )
+    from tank.settings import Settings
+    from tank.sources import SourceService
+
+    class FixtureSettings(Settings):
+        def load_config(self, name: str) -> dict[str, JsonValue]:
+            if name == "sources":
+                return source_configuration(
+                    {
+                        "sources": [
+                            {
+                                "source_id": "S30",
+                                "feeds": [{"kind": "rss", "url": "https://example.org/rss"}],
+                            },
+                        ]
+                    }
+                )
+            return super().load_config(name)
+
+    repo = MemoryRepository()
+    configuration = FixtureSettings(data_dir=tmp_path, ops_progress_enabled=False)
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=RSS))
+    ) as http:
+        source = SourceService(repo, configuration, http=http)
+        assert (await source.poll_once("S30"))["items"] == 1
+    [record] = await repo.list("ingest.source_items")
+    item = parse_feed_source_item(record)
+    assert item.storage_record() == record
+    hinted = parse_feed_source_item(
+        {
+            **record,
+            "tokens_mentioned": ["test:T"],
+            "entities": [{"entity_id": "test:entity"}],
+        }
+    )
+    assert hinted.identity_hints is not None
+    assert hinted.storage_record()["tokens_mentioned"] == ["test:T"]
+    from tank.contracts.repository import Repository as TypedRepository
+    from tank.contracts.source_items import SOURCE_ITEMS, SourceItemDocument
+
+    assert SourceItemDocument.model_validate(record).model_dump(mode="json") == record
+    classified = item.classified(
+        ClassifiedRelevance(
+            decision="SEND",
+            p_relevant=0.8,
+            cutoff=0.5,
+            model="synthetic-model",
+            provider="synthetic-provider",
+            requested_model="synthetic-request",
+            semantic_model_id="synthetic-semantic",
+            model_pin_evidence="Explicit synthetic test result",
+            usage_id="synthetic-usage",
+        )
+    )
+    assert isinstance(classified.processing, ClassifiedSource)
+    route = SourceRoute(decision="ADDED", event_id="event-1", p_same=0.9)
+    message = SourceRoutingMessage(kind="ITEM_ADDED", item_id=item.item_id, event_id="event-1")
+    routed = classified.routed(route, message, {"event-1": 0.9})
+    assert isinstance(routed.processing, RoutedSource)
+    assert parse_feed_source_item(routed.storage_record()).storage_record() == routed.storage_record()
+    assert routed.raw_ref == item.raw_ref and routed.observed_at == item.observed_at
+    records = TypedRepository(repo, SOURCE_ITEMS)
+    await records.put(item.item_id, SourceItemDocument(routed))
+    reloaded = await records.get(item.item_id)
+    assert reloaded is not None
+    assert reloaded.model_dump(mode="json") == routed.storage_record()
+    completed = routed.with_extraction("DONE")
+    assert isinstance(completed.processing, RoutedSource)
+    assert completed.processing.route_event_id == "event-1"
+    with pytest.raises(ValidationError, match="item identity conflicts"):
+        classified.routed(route, message.model_copy(update={"item_id": "different-item"}), {"event-1": 0.9})
+
+
+@pytest.mark.asyncio
+async def test_real_web_evidence_record_roundtrips_without_feed_source_assumptions(tmp_path: Path) -> None:
+    from tank.contracts.source_items import WebEvidenceItem, parse_source_item
+    from tank.event_tools import EventToolService
+    from tank.settings import Settings
+
+    repo = MemoryRepository()
+    service = EventToolService(repo, Settings(data_dir=tmp_path, ops_progress_enabled=False), None, None)
+    record = await service.save_web(
+        "https://example.org/evidence",
+        "Verified public document text",
+        "Public document",
+        {},
+        raw_bytes=b"<article>Verified public document text</article>",
+        media_type="text/html",
+    )
+    item = parse_source_item(record)
+    assert isinstance(item, WebEvidenceItem)
+    assert item.storage_record() == record
+    from tank.contracts.source_items import SourceItemDocument
+
+    assert SourceItemDocument(item).model_dump(mode="json") == record
+    assert item.raw_size_bytes == len(b"<article>Verified public document text</article>")
+    assert item.with_extraction("DONE").raw_sha256 == item.raw_sha256
