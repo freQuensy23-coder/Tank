@@ -1,14 +1,12 @@
 import asyncio
 from datetime import timedelta
-from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
 import pytest
-import yaml
 
 from tank.agents import SessionService
-from tank.settings import Settings, threshold
+from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.telegram_inbox import closed_reason
 from tank.util import iso, parse_time, utcnow
@@ -123,9 +121,7 @@ async def test_retention_comes_from_the_thresholds_config() -> None:
     posts, session = await finish(repo, settings(keep_days=1))
     assert posts and session["archive_keep_days"] == 1
     assert closed_reason(session)[1].endswith("закрыта после 1 дня без сообщений.")
-    assert threshold(SimpleNamespace(), "session_keep_days", 7) == 7
-    config = yaml.safe_load((Path(__file__).parents[1] / "config" / "thresholds.yaml").read_text())
-    assert config["session_keep_days"] == 7
+    assert Settings(_env_file=None).thresholds().session_keep_days == 7
 
 
 async def test_a_reader_question_counts_as_the_last_message() -> None:
