@@ -3,7 +3,7 @@ import { lstat, readFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const requiredNativeCases = Object.freeze(['managed-api-A-to-B-1', 'managed-api-A-to-B-2', 'writable-memory-restart-A-to-B', 'legacy-native-publication', 'metadata-only-native-rebuild', 'interrupted-transfer-publication', 'lease-loss-concurrent-resume-archive', 'security-mismatch-native-refusal']);
+export const requiredNativeCases = Object.freeze(['managed-api-A-to-B-1', 'managed-api-A-to-B-2', 'writable-memory-restart-A-to-B', 'legacy-native-publication', 'metadata-only-native-rebuild', 'interrupted-native-transfer', 'interrupted-native-publication', 'lease-loss-concurrent-native-resume', 'native-archive-publication-race', 'security-mismatch-native-refusal']);
 export function verifyAcceptance(summary, expected) {
   assert.equal(summary.schema, 'tank.native-managed-upgrade.v1');
   assert.equal(summary.sourceSha, expected.sourceSha, 'evidence belongs to a different source head');

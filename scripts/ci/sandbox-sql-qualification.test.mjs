@@ -3,7 +3,10 @@ import { test } from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { Readable, Writable } from 'node:stream';
+import { RetainedBoxOperations, pinnedBoxLiteProvider } from '../../vendor/openma/packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts';
 import { createRequire } from 'node:module';
 import { PostgresSqlClient } from '../../vendor/openma/packages/sql-client/src/adapters/postgres.ts';
 import { createBetterSqlite3SqlClient } from '../../vendor/openma/packages/sql-client/src/index.ts';
@@ -225,6 +228,114 @@ for (const reason of ['effects', 'interrupt', 'deadline']) {
   });
 }
 
+test('actual SQL transfer timeout producer settles and retries original input after durable reopen', async t => {
+  const { f, recovered, deadlineAt } = await recoveredAtCap(t);
+  let killed = false;
+  let completed;
+  const operations = new RetainedBoxOperations(async operation => operation({
+    async spawnDuplexProcess() {
+      const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'pipe' });
+      completed = new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', (code, signal) => resolve({ code, signal })); });
+      t.after(() => child.kill('SIGKILL'));
+      return { stdin: Writable.toWeb(child.stdin), stdout: Readable.toWeb(child.stdout), stderr: Readable.toWeb(child.stderr), exited: completed,
+        async kill(signal) { killed = child.kill(signal); } };
+    },
+  }));
+  let timeout;
+  await assert.rejects(operations.exec('python3', [], undefined, { timeoutSecs: 0.03 }), error => { timeout = error; return error.message === 'retained_exec_timeout'; });
+  assert.equal(killed, true);
+  assert.equal((await completed).signal, 'SIGKILL');
+  const retainedScope = { ...scope, environmentId: 'qualification', workId: 'tank-retained-session-v1' };
+  const source = { provider: 'litebox', runtimeId: 'actual-source-boundary' };
+  const sourceName = 'oma-' + createHash('sha256').update('litebox:' + scope.sessionId).digest('hex').slice(0, 32);
+  const provider = pinnedBoxLiteProvider({
+    module: {
+      createBoxLiteProvider() { return { async resume() { return { async spawnDuplexProcess() { throw timeout; }, async suspend() {} }; }, async create() { assert.fail('timeout must precede replacement allocation'); } }; },
+      createBoxLiteManagedRuntime() { return { sandbox: { async reap() { assert.fail('timeout must retain source'); } } }; },
+    },
+    client: { async getInfo(id) { return id === source.runtimeId ? { id, name: sourceName, state: { running: false } } : null; } },
+    allocation: { image: 'candidate' }, leaseTtlMs: 30000, isCurrent: async () => true,
+  });
+  const signal = new AbortController().signal;
+  const target = await provider.replacementIntent(source, {}, retainedScope, {}, signal);
+  let diagnostic;
+  await assert.rejects(provider.replace({ source, target }, retainedScope, {}, signal, async () => {}), error => {
+    diagnostic = error.message;
+    return diagnostic === 'retained_upgrade_transfer_failed:guest_timeout';
+  });
+  await project(f, recovered, [running('timeout-running', 6), errorEvent('timeout-error', 6, diagnostic), idle('timeout-idle', 6, { type: 'retries_exhausted' })], 6);
+  const settled = await f.store.settle({ fence: recovered.fence, settledAt: at(7), outcome: 'failed', failure: diagnostic });
+  assert.equal(settled.type, 'settled');
+  assert.equal(settled.execution.attemptCount, 1);
+  assert.equal(settled.execution.deadlineAt, deadlineAt);
+  await append(f, [{ id: 'after-timeout', type: 'user.message', content: [{ type: 'text', text: 'later input' }], processedAt: at(7) }]);
+  const reopened = coordinator(await f.open());
+  const retried = await claim(reopened, 'restored-provider', 8);
+  assert.equal(retried.type, 'claimed');
+  assert.equal(retried.execution.id, 'original');
+  assert.equal(retried.execution.deadlineAt, deadlineAt);
+  let snapshot = await loadSessionContinuationSnapshot(f.sql, scope);
+  assert.equal(planSessionContinuation(snapshot, 'original').mode, 'model');
+  assert.equal(planSessionContinuation(snapshot, 'after-timeout').mode, 'blocked');
+  await project(f, retried, [{ id: 'timeout-recovered-once', type: 'agent.message', content: [{ type: 'text', text: 'completed once' }], processedAt: at(9) }, idle('timeout-complete', 9)], 9);
+  assert.equal((await reopened.settle({ fence: retried.fence, settledAt: at(10), outcome: 'completed' })).type, 'settled');
+  assert.equal((await claim(reopened, 'ordered-later', 11)).execution.id, 'after-timeout');
+  snapshot = await loadSessionContinuationSnapshot(f.sql, scope);
+  assert.equal(snapshot.orderedEvents.filter(row => row.event.id === 'timeout-recovered-once').length, 1);
+});
+
+test('actual SQL expired-owner sweep preserves 105 recoverable sessions beyond one batch and refuses unsafe controls', { timeout: 120000 }, async t => {
+  const f = await fixture(t);
+  assert.equal((await f.store.settle({ fence: f.owned.fence, settledAt: at(3), outcome: 'completed' })).type, 'settled');
+  const records = [];
+  for (const kind of [...Array.from({ length: 105 }, (_, index) => 'eligible-' + index), 'effects', 'interrupt', 'deadline', 'archived']) {
+    const ownScope = { workspaceId: scope.workspaceId, sessionId: 'batch-' + kind };
+    const document = { ...session, id: ownScope.sessionId };
+    const inputId = ownScope.sessionId + '-input';
+    await f.sql.prepare('INSERT INTO managed_sessions (workspace_id,id,document,revision,status,created_at,updated_at) VALUES (?,?,?,1,?,?,?)').bind(ownScope.workspaceId, ownScope.sessionId, JSON.stringify(document), 'idle', Date.parse(at(0)), Date.parse(at(0))).run();
+    assert.equal((await f.events.append({ ...ownScope, expectedRevision: 1, events: [{ id: inputId, type: 'user.message', content: [{ type: 'text', text: kind }], processedAt: at(1) }], nextSession: document })).type, 'appended');
+    const first = await f.store.claim({ ...ownScope, ownerId: inputId + '-first', attemptId: inputId + '-first', claimedAt: at(2), leaseTtlMs: 10000 });
+    assert.equal(first.type, 'claimed');
+    assert.equal((await f.writer.project({ ...ownScope, expectedRevision: 2, executionFence: first.fence, events: [errorEvent(inputId + '-error', 3, 'retained_configuration_changed'), idle(inputId + '-idle', 3, { type: 'retries_exhausted' })], next: document })).type, 'projected');
+    assert.equal((await f.store.settle({ fence: first.fence, settledAt: at(4), outcome: 'failed', failure: 'retained_configuration_changed' })).type, 'settled');
+    await f.sql.prepare('UPDATE managed_session_executions SET max_attempts = 2 WHERE id = ?').bind(inputId).run();
+    const recovery = await f.store.claim({ ...ownScope, ownerId: inputId + '-died', attemptId: inputId + '-died', claimedAt: at(5), leaseTtlMs: 10000 });
+    assert.equal(recovery.type, 'claimed');
+    const writer = new SqlSessionRuntimeProjectionPersistence(f.sql, { now: () => new Date(at(6)) });
+    const effect = kind === 'effects' ? { id: inputId + '-effect', type: 'agent.message', content: [{ type: 'text', text: 'committed effect' }], processedAt: at(6) } : running(inputId + '-running', 6);
+    assert.equal((await writer.project({ ...ownScope, expectedRevision: 3, executionFence: recovery.fence, events: [effect], next: document })).type, 'projected');
+    if (kind === 'interrupt') assert.equal((await f.store.requestInterrupt({ ...ownScope, requestedAt: at(7) })).type, 'requested');
+    if (kind === 'deadline') await f.sql.prepare('UPDATE managed_session_executions SET deadline_at_ms = ? WHERE id = ?').bind(Date.parse(at(14)), inputId).run();
+    if (kind === 'archived') await f.sql.prepare('UPDATE managed_sessions SET archived_at = ? WHERE id = ?').bind(Date.parse(at(7)), ownScope.sessionId).run();
+    records.push({ kind, ownScope, inputId, recovery });
+  }
+  const reopened = coordinator(await f.open());
+  const first = records[0];
+  const trigger = await reopened.claim({ ...first.ownScope, ownerId: 'sweep-trigger', attemptId: 'sweep-trigger', claimedAt: at(16), leaseTtlMs: 10000 });
+  assert.equal(trigger.type, 'claimed');
+  for (const [index, row] of records.entries()) {
+    const saved = await reopened.find({ workspaceId: scope.workspaceId, executionId: row.inputId });
+    if (row.kind.startsWith('eligible-')) {
+      assert.notEqual(saved.failure, 'execution attempt limit exhausted', row.kind + ' was terminalized before adjudication');
+      const owned = index === 0 ? trigger : await reopened.claim({ ...row.ownScope, ownerId: row.inputId + '-restored', attemptId: row.inputId + '-restored', claimedAt: at(17), leaseTtlMs: 10000 });
+      assert.equal(owned.type, 'claimed', row.kind + ' lost recovery');
+      assert.equal(owned.execution.id, row.inputId);
+      assert.equal(owned.execution.attemptCount, 2);
+      assert.equal(owned.execution.deadlineAt, row.recovery.execution.deadlineAt);
+      assert.notEqual(owned.fence.generation, row.recovery.fence.generation);
+      assert.equal(planSessionContinuation(await loadSessionContinuationSnapshot(f.sql, row.ownScope), row.inputId).mode, 'model');
+      assert.equal((await reopened.settle({ fence: row.recovery.fence, settledAt: at(18), outcome: 'completed' })).type, 'lost');
+    } else {
+      assert.equal((await reopened.claim({ ...row.ownScope, ownerId: row.inputId + '-refused', attemptId: row.inputId + '-refused', claimedAt: at(17), leaseTtlMs: 10000 })).type, 'empty');
+      assert.equal(saved.attemptCount, 2, row.kind + ' was refunded');
+      assert.equal(saved.deadlineAt, row.kind === 'deadline' ? at(14) : row.recovery.execution.deadlineAt);
+      const snapshot = await loadSessionContinuationSnapshot(f.sql, row.ownScope);
+      assert.equal(snapshot.orderedEvents.filter(item => item.event.id === row.inputId + '-effect').length, row.kind === 'effects' ? 1 : 0);
+    }
+  }
+  assert.equal(records.filter(row => row.kind.startsWith('eligible-')).length, 105);
+});
+
 async function failedSiblings(t, unrelated = false) {
   const f = await fixture(t);
   await project(f, f.owned, [
@@ -233,8 +344,6 @@ async function failedSiblings(t, unrelated = false) {
     idle('declare-both', 3, { type: 'requires_action', eventIds: ['X', 'Y'] }),
   ], 3);
   assert.equal((await f.store.settle({ fence: f.owned.fence, settledAt: at(4), outcome: 'completed' })).type, 'settled');
-  // Admit/project with the real historical FIFO scheduler: unlike the new scheduler,
-  // it has no image-recovery selector. This seeds actual separately failed RX/RY.
   const historical = new SqlSessionExecutionCoordinator(f.sql, { serializeSessionClaims: true });
   for (const [index, id] of ['RX', 'RY'].entries()) {
     const seconds = 5 + index * 4;

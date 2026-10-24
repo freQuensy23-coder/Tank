@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
 import { mkdir, writeFile, readFile, mkdtemp, rm, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -51,6 +51,10 @@ if ${setup ? 'True' : 'False'}:
  file.write_bytes(expected)
  file.chmod(0o751)
  output.write_bytes(expected[::-1])
+
+ large=root/'large-user-state.bin'
+ if not large.exists():large.write_bytes(nonce.encode()*5242880)
+assert hashlib.sha256((root/'large-user-state.bin').read_bytes()).hexdigest()==hashlib.sha256(nonce.encode()*5242880).hexdigest(),'large user state changed'
 assert file.read_bytes()==expected,'workspace bytes changed'
 assert file.stat().st_mode&0o777==0o751,'executable mode changed'
 assert output.read_bytes()==expected[::-1],'output bytes changed'
@@ -92,19 +96,35 @@ const imageFacts = JSON.parse(docker(['image', 'inspect', image]))[0];
 assert.equal(imageFacts.Architecture, 'amd64');
 assert.equal(imageFacts.Config.Labels['org.opencontainers.image.revision'], sourceSha, 'candidate image does not belong to this head');
 await writeFile(join(evidence, 'image-inputs.json'), JSON.stringify({ sourceSha, runId: process.env.GITHUB_RUN_ID, image, architecture: imageFacts.Architecture, ociIndexSha256: Object.fromEntries(await Promise.all(['A', 'B'].map(async version => [version, createHash('sha256').update(await readFile(join(rootfs(version), 'index.json'))).digest('hex')]))), nativeArchiveSha256: createHash('sha256').update(await readFile('vendor/openma/tank-native/boxlite-runtime-v0.10.6-tank-replay-dns-amd64.tar.gz')).digest('hex') }, null, 2) + '\n');
-for (let round = 1; round <= 2; round++) {
+const scenarios = ['happy-1', 'happy-2', 'transfer-crash', 'publication-crash', 'lease-concurrent', 'archive-race'];
+for (const [index, scenario] of scenarios.entries()) {
+  const round = index + 1;
   const prefix = 'tank-qual-' + process.env.GITHUB_RUN_ID + '-' + round;
-  const names = { network: prefix, postgres: prefix + '-pg', provider: prefix + '-provider', service: prefix + '-api', volume: prefix + '-data' };
+  const names = { network: prefix, postgres: prefix + '-pg', proxy: prefix + '-proxy', provider: prefix + '-provider', service: prefix + '-api', competitor: prefix + '-competitor', volume: prefix + '-data' };
   const credentials = Object.fromEntries(['POSTGRES_PASSWORD', 'OMA_DB_PASSWORD', 'OMA_API_KEY', 'OMA_ROOT_SECRET', 'OMA_AUTH_SECRET', 'TANK_AGENT_DB_PASSWORD', 'TANK_REPLAY_AGENT_DB_PASSWORD', 'OPENROUTER_API_KEY', 'ETHERSCAN_API_KEY', 'QUALIFICATION_PROVIDER_KEY'].map(name => [name, randomBytes(32).toString('hex')]));
   secretValues.push(...Object.values(credentials));
   const env = { ...process.env, ...credentials, ANTHROPIC_API_KEY: credentials.QUALIFICATION_PROVIDER_KEY };
-  const receipt = { case: 'managed-api-A-to-B-' + round, sourceSha, image, model: 'isolated deterministic Anthropic-wire provider; no paid model', status: 'FAIL', cleanup: [] };
+  const caseName = { 'transfer-crash': 'interrupted-native-transfer', 'publication-crash': 'interrupted-native-publication', 'lease-concurrent': 'lease-loss-concurrent-native-resume', 'archive-race': 'native-archive-publication-race' }[scenario] ?? 'managed-api-A-to-B-' + round;
+  const receipt = { case: caseName, sourceSha, runId: process.env.GITHUB_RUN_ID, scenario, image, model: 'isolated deterministic Anthropic-wire provider; no paid model', status: 'FAIL', cleanup: [] };
   const nonce = randomBytes(16).toString('hex');
   const uploaded = Buffer.concat([Buffer.from('qualification-upload:' + nonce), Buffer.from([0, 255, 1, 128])]);
   const uploadedHash = createHash('sha256').update(uploaded).digest('hex');
   let base;
+  let activeService = names.service;
+  const sql = query => docker(['exec', names.postgres, 'psql', '-U', 'postgres', '-d', 'oma', '-At', '-c', query]);
+  const control = (path, body) => JSON.parse(docker(['exec', names.proxy, 'node', '-e', "fetch('http://127.0.0.1:9001' + process.argv[1],{method:process.argv[2]==='undefined'?'GET':'POST',headers:{'x-api-key':process.env.QUALIFICATION_PROVIDER_KEY,'content-type':'application/json'},body:process.argv[2]==='undefined'?undefined:process.argv[2]}).then(async r=>{if(!r.ok)throw Error(await r.text());console.log(await r.text())})", path, body === undefined ? 'undefined' : JSON.stringify(body)]));
+  const transferBarrier = () => {
+    const code = "const fs=require('fs');const deadline=Date.now()+180000;const timer=setInterval(()=>{for(const name of fs.readdirSync('/tmp'))if(name.startsWith('tank-runtime-upgrade-')){const p='/tmp/'+name+'/workspace.part';try{const s=fs.statSync(p);if(s.size>0){clearInterval(timer);console.log(JSON.stringify({path:p,bytes:s.size,at:new Date().toISOString()}));return;}}catch{}}if(Date.now()>deadline){clearInterval(timer);process.exit(1)}},5);";
+    const child = spawn('docker', ['exec', activeService, 'node', '-e', code], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', bytes => { stdout += bytes; }); child.stderr.on('data', bytes => { stderr += bytes; });
+    return new Promise((resolve, reject) => {
+      child.once('error', reject);
+      child.once('exit', status => status === 0 ? resolve(JSON.parse(stdout.trim())) : reject(Error('Actual transfer barrier failed: ' + sanitized(stderr))));
+    });
+  };
   const api = async (path, body, method = body === undefined ? 'GET' : 'POST') => {
-    const response = await fetch(base + path, { method, headers: { 'x-api-key': credentials.OMA_API_KEY, 'anthropic-beta': 'managed-agents-2026-04-01,files-api-2025-04-14', ...(body === undefined || body instanceof FormData ? {} : { 'content-type': 'application/json' }) }, body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body), signal: AbortSignal.timeout(15000) });
+    const response = await fetch(base + path, { method, headers: { 'x-api-key': credentials.OMA_API_KEY, 'anthropic-beta': 'managed-agents-2026-04-01,files-api-2025-04-14', ...(body === undefined || body instanceof FormData ? {} : { 'content-type': 'application/json' }) }, body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body), signal: AbortSignal.timeout(path.endsWith('/archive') ? 180000 : 15000) });
     const text = await response.text();
     assert.ok(response.ok, `Managed API ${method} ${path}: ${response.status} ${sanitized(text)}`);
     return JSON.parse(text);
@@ -115,20 +135,21 @@ for (let round = 1; round <= 2; round++) {
     assert.equal(values.length, 1);
     const value = values[0];
     const manifest = JSON.parse(value.workspaceCandidate.metadata.manifest);
-    return { handle: manifest.handle, imageIdentity: manifest.identity.image, compatibility: manifest.identity.compatibility, state: manifest.state, upgradedFrom: manifest.upgradedFrom, retired: manifest.retired };
+    return { handle: manifest.handle, imageIdentity: manifest.identity.image, compatibility: manifest.identity.compatibility, state: manifest.state, upgradedFrom: manifest.upgradedFrom, retired: manifest.retired, upgrade: manifest.upgrade, legacy: manifest.legacy, publicationSha256: createHash('sha256').update(rows).digest('hex') };
   };
-  const start = async version => {
-    docker(['run', '-d', '--name', names.service, '--label', 'tank.qualification=' + prefix, '--network', names.network, '--group-add', kvmGroup, '--device', '/dev/kvm:/dev/kvm', '--mount', `type=volume,src=${names.volume},dst=/app/data`, '--mount', `type=bind,src=${rootfs(version)},dst=/opt/tank-sandbox-oci,readonly`, ...Object.keys(credentials).filter(name => name !== 'POSTGRES_PASSWORD' && name !== 'QUALIFICATION_PROVIDER_KEY').flatMap(name => ['--env', name]), '--env', 'ANTHROPIC_API_KEY', '--env', 'ANTHROPIC_BASE_URL=http://provider:9000/v1', '--env', 'DREAM_CURATOR_MODE=dedup', image], { env });
-    const address = JSON.parse(docker(['inspect', '--format', '{{json .NetworkSettings.Networks}}', names.service]))[names.network]?.IPAddress;
+  const start = async (version, service = names.service) => {
+    activeService = service;
+    docker(['run', '-d', '--name', activeService, '--label', 'tank.qualification=' + prefix, '--network', names.network, '--group-add', kvmGroup, '--device', '/dev/kvm:/dev/kvm', '--mount', `type=volume,src=${names.volume},dst=/app/data`, '--mount', `type=bind,src=${rootfs(version)},dst=/opt/tank-sandbox-oci,readonly`, ...Object.keys(credentials).filter(name => name !== 'POSTGRES_PASSWORD' && name !== 'QUALIFICATION_PROVIDER_KEY').flatMap(name => ['--env', name]), '--env', 'ANTHROPIC_API_KEY', '--env', 'ANTHROPIC_BASE_URL=http://provider:9000/v1', '--env', 'DREAM_CURATOR_MODE=dedup', image], { env });
+    const address = JSON.parse(docker(['inspect', '--format', '{{json .NetworkSettings.Networks}}', activeService]))[names.network]?.IPAddress;
     assert.match(address ?? '', /^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)/, 'candidate must have an owned private bridge address');
     base = 'http://' + address + ':8787';
     await waitFor('candidate Managed API health', async () => {
-      const state = JSON.parse(docker(['inspect', '--format', '{{json .State}}', names.service]));
+      const state = JSON.parse(docker(['inspect', '--format', '{{json .State}}', activeService]));
       if (!state.Running) throw Object.assign(Error('Shipping OpenMA service exited before health: ' + JSON.stringify({ exitCode: state.ExitCode, error: state.Error, oomKilled: state.OOMKilled })), { fatal: true });
       return (await fetch(base + '/health', { signal: AbortSignal.timeout(2000) })).ok;
     });
   };
-  const stop = () => { docker(['stop', '--time', '45', names.service], { timeout: 60000 }); docker(['rm', names.service]); };
+  const stop = () => { docker(['stop', '--time', '45', activeService], { timeout: 60000 }); docker(['rm', activeService]); };
   let latestHistory = [];
   const events = async id => {
     const collected = [];
@@ -152,8 +173,10 @@ for (let round = 1; round <= 2; round++) {
     docker(['network', 'create', '--internal', '--label', 'tank.qualification=' + prefix, names.network]);
     docker(['volume', 'create', '--label', 'tank.qualification=' + prefix, names.volume]);
     docker(['run', '--rm', '--network', 'none', '--user', '0', '--mount', `type=volume,src=${names.volume},dst=/app/data`, '--entrypoint', 'chown', image, '1000:1000', '/app/data']);
-    docker(['run', '-d', '--name', names.postgres, '--label', 'tank.qualification=' + prefix, '--network', names.network, '--network-alias', 'postgres', '--env', 'POSTGRES_PASSWORD', '--mount', `type=bind,src=${init},dst=/docker-entrypoint-initdb.d/qualification.sql,readonly`, 'postgres:16-bookworm'], { env });
+    docker(['run', '-d', '--name', names.postgres, '--label', 'tank.qualification=' + prefix, '--network', names.network, '--network-alias', 'database', '--env', 'POSTGRES_PASSWORD', '--mount', `type=bind,src=${init},dst=/docker-entrypoint-initdb.d/qualification.sql,readonly`, 'postgres:16-bookworm'], { env });
     await waitFor('isolated PostgreSQL bootstrap', () => { const child = spawnSync('docker', ['exec', names.postgres, 'pg_isready', '-h', '127.0.0.1', '-U', 'oma', '-d', 'oma'], { encoding: 'utf8', timeout: 5000 }); return child.status === 0; });
+    docker(['run', '-d', '--name', names.proxy, '--label', 'tank.qualification=' + prefix, '--network', names.network, '--network-alias', 'postgres', '--env', 'QUALIFICATION_PROVIDER_KEY', '--mount', `type=bind,src=${resolve('scripts/ci/qualification-postgres-proxy.mjs')},dst=/proxy.mjs,readonly`, '--entrypoint', 'node', image, '/proxy.mjs'], { env });
+    await waitFor('owned PostgreSQL transparent proxy', () => control('/state'));
     docker(['run', '-d', '--name', names.provider, '--label', 'tank.qualification=' + prefix, '--network', names.network, '--network-alias', 'provider', '--env', 'QUALIFICATION_PROVIDER_KEY', '--mount', `type=bind,src=${resolve('scripts/ci/qualification-provider.mjs')},dst=/qualification-provider.mjs,readonly`, '--entrypoint', 'node', image, '/qualification-provider.mjs'], { env });
     await start('A');
     const agent = await api('/v1/agents', { name: 'Isolated native upgrade qualification', model: 'claude-sonnet-4-6', system: 'Execute the supplied qualification command exactly once. Report tool output. No external requests.', tools: [{ type: 'agent_toolset_20260401', default_config: { enabled: false }, configs: [{ name: 'bash', type: 'bash', enabled: true, permission_policy: { type: 'always_allow' } }] }] });
@@ -170,7 +193,7 @@ for (let round = 1; round <= 2; round++) {
     receipt.initialInput = await send('A');
     const initialHistory = await waitFor('actual A guest file/browser execution', async () => { const rows = await events(session.id); if (rows.some(row => row.type === 'session.error')) throw Object.assign(Error(JSON.stringify(rows.filter(row => row.type === 'session.error'))), { fatal: true }); return receipts(rows).length >= 1 && rows.some(row => row.type === 'session.status_idle' && row.stop_reason?.type === 'end_turn') ? rows : null; }, 600);
     receipt.before = publication();
-    const memoryBindings = runtimeId => JSON.parse(docker(['exec', names.service, 'node', '--input-type=module', '-e', "import {DatabaseSync} from 'node:sqlite';const db=new DatabaseSync(process.env.BOXLITE_HOME+'/db/boxlite.db',{readOnly:true});const row=db.prepare('SELECT id,name,json FROM box_config WHERE id=?').get(process.argv[1]);if(!row)throw Error('missing actual native catalog row');const data=JSON.parse(row.json);if(data.id!==row.id||data.name!==row.name)throw Error('actual native catalog identity mismatch');console.log(JSON.stringify(data.options.volumes.filter(v=>v.guest_path.startsWith('/mnt/memory/'))));db.close();", runtimeId]));
+    const memoryBindings = runtimeId => JSON.parse(docker(['exec', activeService, 'node', '--input-type=module', '-e', "import {DatabaseSync} from 'node:sqlite';const db=new DatabaseSync(process.env.BOXLITE_HOME+'/db/boxlite.db',{readOnly:true});const row=db.prepare('SELECT id,name,json FROM box_config WHERE id=?').get(process.argv[1]);if(!row)throw Error('missing actual native catalog row');const data=JSON.parse(row.json);if(data.id!==row.id||data.name!==row.name)throw Error('actual native catalog identity mismatch');console.log(JSON.stringify(data.options.volumes.filter(v=>v.guest_path.startsWith('/mnt/memory/'))));db.close();", runtimeId]));
     receipt.memoryBefore = await waitFor('A writable-memory synchronization through Managed API', async () => { const value = await memoryContent(); return value.content === 'seed:' + nonce + '\nA' ? value : null; });
     receipt.memoryBindingsBefore = memoryBindings(receipt.before.handle.runtimeId);
     assert.equal(receipt.memoryBindingsBefore.length, 1);
@@ -180,12 +203,61 @@ for (let round = 1; round <= 2; round++) {
     receipt.historyBefore = initialHistory.map(row => ({ id: row.id, sha256: createHash('sha256').update(JSON.stringify(row)).digest('hex') }));
     await stop();
     await start('B');
+    const actualTransfer = ['transfer-crash', 'lease-concurrent'].includes(scenario) ? transferBarrier() : null;
+    if (['publication-crash', 'archive-race'].includes(scenario)) control('/arm', { mode: scenario === 'publication-crash' ? 'publication-ack' : 'publication-before', sessionId: session.id });
     receipt.upgradeInput = await send('B-first');
     receipt.queuedInput = await send('B-second');
     receipt.queueObserved = JSON.parse(docker(['exec', names.postgres, 'psql', '-U', 'postgres', '-d', 'oma', '-At', '-c', "SELECT COALESCE(json_agg(json_build_object('id',id,'state',state)), '[]'::json) FROM managed_session_executions"]));
     assert.ok(receipt.queueObserved.some(row => row.state === 'queued'), 'No actual durably queued input was observed during replacement');
+    if (actualTransfer) {
+      receipt.transferBarrier = await actualTransfer;
+      receipt.interruptedPublication = publication();
+      assert.equal(receipt.interruptedPublication.state, 'upgrading', 'observed bytes were not an in-progress upgrade');
+      assert.deepEqual(receipt.interruptedPublication.handle, receipt.before.handle, 'incomplete transfer became authoritative');
+      if (scenario === 'transfer-crash') {
+        docker(['kill', '--signal', 'KILL', activeService]); docker(['rm', activeService]);
+        assert.deepEqual(publication().handle, receipt.before.handle, 'crash deleted the authoritative source');
+        await start('B');
+      } else {
+        receipt.ownerBeforePartition = JSON.parse(sql("SELECT row_to_json(r) FROM (SELECT generation,owner_id,expires_at_ms FROM runtime_resource_fences) r"));
+        docker(['network', 'disconnect', names.network, names.service]);
+        await waitFor('actual resource owner lease expiry without clock/SQL mutation', () => Number(sql('SELECT expires_at_ms FROM runtime_resource_fences')) <= Date.now(), 90);
+        await start('B', names.competitor);
+        docker(['network', 'connect', names.network, names.service]);
+        receipt.competingServices = [names.service, names.competitor];
+      }
+    }
+    if (['publication-crash', 'archive-race'].includes(scenario)) {
+      receipt.publicationBarrier = await waitFor('actual final publication wire boundary', () => control('/state').barrier, 600);
+      if (scenario === 'publication-crash') {
+        receipt.committedBeforeLostAck = await waitFor('durable target publication before acknowledgement', () => { const value = publication(); return value.state === 'retained' && value.handle.runtimeId !== receipt.before.handle.runtimeId ? value : null; });
+        docker(['kill', '--signal', 'KILL', activeService]); docker(['rm', activeService]);
+        control('/release', {});
+        await start('B');
+      } else {
+        const archived = api('/v1/sessions/' + session.id + '/archive', {});
+        void archived.catch(() => undefined);
+        await waitFor('durable archival while replacement publication is blocked', () => sql('SELECT archived_at IS NOT NULL FROM managed_sessions').trim() === 't');
+        receipt.atArchive = publication();
+        control('/release', {});
+        await archived;
+        receipt.archived = await waitFor('owned native archival and replacement fencing', () => { const value = publication(); return value.state === 'archived' ? value : null; }, 180);
+        const afterArchive = await events(session.id);
+        for (let index = 0; index < initialHistory.length; index++) assert.deepEqual(afterArchive[index], initialHistory[index]);
+        assert.deepEqual(receipts(afterArchive).map(row => row.phase), ['A'], 'archived race reached model/tool effects');
+        receipt.guestReceipts = receipts(afterArchive);
+        receipt.status = 'PASS';
+        continue;
+      }
+    }
     const history = await waitFor('same-session B upgrade and queued-input completion', async () => { const rows = await events(session.id); return receipts(rows).length >= 3 && rows.filter(row => row.type === 'session.status_idle' && row.stop_reason?.type === 'end_turn').length >= 2 ? rows : null; }, 600);
     receipt.after = publication();
+    if (receipt.committedBeforeLostAck) assert.deepEqual(receipt.after.handle, receipt.committedBeforeLostAck.handle, 'lost publication acknowledgement caused a second replacement');
+    if (scenario === 'lease-concurrent') {
+      receipt.ownerAfterPartition = JSON.parse(sql("SELECT row_to_json(r) FROM (SELECT generation,owner_id,expires_at_ms FROM runtime_resource_fences) r"));
+      assert.ok(Number(receipt.ownerAfterPartition.generation) > Number(receipt.ownerBeforePartition.generation), 'expired owner was not fenced by a new generation');
+      assert.equal(JSON.parse(sql("SELECT COALESCE(json_agg(id), '[]'::json) FROM managed_session_executions WHERE state IN ('running','queued')")).length, 0, 'competing worker left duplicate live execution');
+    }
     receipt.memoryAfter = await waitFor('B writable-memory synchronization through Managed API', async () => { const value = await memoryContent(); return value.content === 'seed:' + nonce + '\nA\nB-first\nB-second' ? value : null; });
     receipt.memoryBindingsAfter = memoryBindings(receipt.after.handle.runtimeId);
     assert.deepEqual(receipt.memoryBindingsAfter, receipt.memoryBindingsBefore, 'restart/upgrade rebound a writable memory store to an unproved incarnation');
@@ -245,7 +317,7 @@ for (let round = 1; round <= 2; round++) {
     process.exitCode = 1;
   } finally {
     await writeFile(join(evidence, 'public-history-' + round + '.json'), sanitized(JSON.stringify({ sourceSha, runId: process.env.GITHUB_RUN_ID, sessionId: receipt.sessionId ?? null, events: latestHistory }, null, 2)) + '\n');
-    for (const name of [names.service, names.provider, names.postgres]) {
+    for (const name of [names.service, names.competitor, names.provider, names.proxy, names.postgres]) {
       const inspect = spawnSync('docker', ['inspect', '--format', '{{index .Config.Labels "tank.qualification"}}', name], { encoding: 'utf8', timeout: 10000 });
       if (inspect.status !== 0) continue;
       assert.equal(inspect.stdout.trim(), prefix, 'cleanup ownership mismatch');
@@ -263,8 +335,9 @@ for (let round = 1; round <= 2; round++) {
     await writeFile(join(evidence, 'managed-upgrade-' + round + '.json'), JSON.stringify(receipt, null, 2) + '\n');
   }
 }
-additionalCases.push({ case: 'writable-memory-restart-A-to-B', sourceSha, status: observations.length === 2 && observations.every(row => row.status === 'PASS' && row.memoryVerified) ? 'PASS' : 'FAIL', rounds: observations.map(row => ({ case: row.case, memoryStoreId: row.memoryStoreId, bindingsBefore: row.memoryBindingsBefore, bindingsAfter: row.memoryBindingsAfter, verified: row.memoryVerified === true })) });
+const happyRounds = observations.filter(row => row.scenario.startsWith('happy-'));
+additionalCases.push({ case: 'writable-memory-restart-A-to-B', sourceSha, status: happyRounds.length === 2 && happyRounds.every(row => row.status === 'PASS' && row.memoryVerified) ? 'PASS' : 'FAIL', rounds: happyRounds.map(row => ({ case: row.case, memoryStoreId: row.memoryStoreId, bindingsBefore: row.memoryBindingsBefore, bindingsAfter: row.memoryBindingsAfter, verified: row.memoryVerified === true })) });
 await rm(privateDirectory, { recursive: true, force: true });
 for (const row of additionalCases) await writeFile(join(evidence, row.case + '.json'), JSON.stringify(row, null, 2) + '\n');
-await writeFile(join(evidence, 'native-summary.json'), JSON.stringify({ schema: 'tank.native-managed-upgrade.v1', sourceSha, runId: process.env.GITHUB_RUN_ID, cases: [...observations, ...additionalCases].map(row => ({ case: row.case, status: row.status })), fullyQualified: false, unproved: ['legacy-native-publication', 'interrupted-transfer-publication', 'lease-loss-concurrent-resume-archive'] }, null, 2) + '\n');
-assert.equal(observations.filter(row => row.status === 'PASS').length, 2, 'Two actually completed Managed API A-to-B native runs are required');
+await writeFile(join(evidence, 'native-summary.json'), JSON.stringify({ schema: 'tank.native-managed-upgrade.v1', sourceSha, runId: process.env.GITHUB_RUN_ID, cases: [...observations, ...additionalCases].map(row => ({ case: row.case, status: row.status })), fullyQualified: false, unproved: ['legacy-native-publication', ...observations.filter(row => row.status !== 'PASS').map(row => row.case)] }, null, 2) + '\n');
+assert.equal(observations.filter(row => row.status === 'PASS').length, scenarios.length, 'Every actual native scenario must complete');
