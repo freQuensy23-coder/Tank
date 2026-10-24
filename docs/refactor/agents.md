@@ -334,3 +334,12 @@ tests replace incomplete source bags with named complete fixture records.
 The helper passes strict mypy with the actual src import path. A real offline
 Pipeline/HTTP/repository smoke test classified its S30 item and re-read the
 strict cached score successfully.
+
+
+### Typed classification use case (v2)
+
+The standalone agents.classification.JevClassifier owns nongenerative provider classification and exact immutable score reuse. Its required ClassificationScores port has only typed get/put operations; file-backed calibration no longer needs to impersonate the runtime queue repository. ClassificationSettings declares the four required configuration values; ClassificationSource declares the item identity consumed by the classifier. Caller-owned HTTP transport lifetime stays outside this use case.
+
+ClassificationIdentity and JevScoreRecord replace tuple/dictionary application records, including exact usage, missing-field reasons, model bindings, cost, timestamps and fingerprints. Question-name dictionaries are bounded provider wire namespaces, and registry indexes are explicitly keyed domain collections. MissingClassificationFields optional reason absence represents metrics actually reported by the provider; its serializer retains the existing omission wire convention. This checkpoint is inactive until Pipeline/calibration consumers are migrated; full source/session typing remains open.
+
+Validation: 27 offline Jev/classification contract cases passed in 1.54 seconds, including immutable cache reuse and rejection of a contradictory persisted source identity before another provider request. Strict mypy passed for classifier, score contracts, provider models and the new behavior test with real source imports. Pipeline activation remains separate.
