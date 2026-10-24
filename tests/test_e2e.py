@@ -139,7 +139,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
     failures = [True]
     tool_event = {"id": "tool1", "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
 
-    def transport(request: pytest.FixtureRequest):
+    def transport(request: httpx.Request):
         path = request.url.path
         if request.url.host == "opencode.ai":
             body = json.loads(request.content)
@@ -971,7 +971,7 @@ async def test_runtime_autonomous_source_to_telegram(
         wire.append(body)
         await queue.put({"seq": stage, "body": body})
 
-    async def transport(request: pytest.FixtureRequest):
+    async def transport(request: httpx.Request):
         nonlocal stage
         path = request.url.path
         if request.url.host == "synthetic.invalid":
