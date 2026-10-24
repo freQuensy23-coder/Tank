@@ -18,8 +18,15 @@ import certifi
 import httpx
 
 import tank.sources.parsers as parsers
+from tank.contracts.configuration import Thresholds
 from tank.contracts.source_items import SourceText
-from tank.contracts.sources import HttpFetchPlan, SourceConfiguration, SourceDefinition
+from tank.contracts.sources import (
+    HttpFetchPlan,
+    SourceAccountRegistryView,
+    SourceApiLimitsConfiguration,
+    SourceConfiguration,
+    SourceDefinition,
+)
 from tank.ops_progress import item_progress
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.sources.rate_limits import shared_request_budgets
@@ -41,6 +48,15 @@ def tls_context():
 class SourceService:
     def __init__(self, repo, settings, *, http=None):
         cfg = SourceConfiguration.model_validate(settings.load_config("sources"))
+        registry = settings.load_config("registry")
+        account_registry = SourceAccountRegistryView.model_validate(
+            {name: registry[name] for name in ("x_accounts",) if name in registry}
+        )
+        self.api_limits = SourceApiLimitsConfiguration.model_validate(
+            settings.load_config("api_limits")
+        ).limits
+        self.thresholds = Thresholds.model_validate(settings.load_config("thresholds"))
+        self.escalated_interval_s = self.thresholds.escalated_interval_s
         self.repo = repo
         self.settings = settings
         self.http = (
@@ -70,18 +86,9 @@ class SourceService:
                             per_min, self.source_host_limits.get(host, per_min)
                         )
         self.accounts = {
-            a["handle"].lower().lstrip("@"): a for a in settings.load_config("registry").get("x_accounts", [])
+            account.handle.lower().lstrip("@"): account for account in account_registry.x_accounts
         }
         self.locks = {}
-        try:
-            self.api_limits = settings.load_config("api_limits").get("limits", [])
-        except FileNotFoundError:
-            self.api_limits = []
-        try:
-            self.thresholds = settings.load_config("thresholds")
-        except FileNotFoundError:
-            self.thresholds = {}
-        self.escalated_interval_s = self.thresholds.get("escalated_interval_s", 15)
         from tank.sources.polling import SourcePoller
 
         self.poller = SourcePoller(self)
@@ -104,13 +111,13 @@ class SourceService:
         provider = "sec.gov" if host == "sec.gov" or host.endswith(".sec.gov") else host
         weight = feed.request_weight
         for rule in self.api_limits:
-            if rule.get("provider") != provider or is_exchange_url(feed.url):
+            if rule.provider != provider or is_exchange_url(feed.url):
                 continue
-            if rule.get("tank_max_requests_per_s") is not None:
-                await shared_request_budgets.acquire(provider, rule["tank_max_requests_per_s"], 1, host=host)
-            if rule.get("tank_max_weight_per_min") is not None:
+            if rule.tank_max_requests_per_s is not None:
+                await shared_request_budgets.acquire(provider, rule.tank_max_requests_per_s, 1, host=host)
+            if rule.tank_max_weight_per_min is not None:
                 await shared_request_budgets.acquire(
-                    provider, rule["tank_max_weight_per_min"], 60, weight=weight, host=host
+                    provider, rule.tank_max_weight_per_min, 60, weight=weight, host=host
                 )
         capacities = [
             value
@@ -262,12 +269,10 @@ class SourceService:
             observed_at = item.get("observed_at") or iso()
             raw_ref, raw_hash = item["raw_ref"], item["raw_sha256"]
             account = self.accounts.get(
-                (item.get("monitored_author") or item.get("reposted_by") or item.get("author", ""))
-                .lower()
-                .lstrip("@"),
-                {},
+                (item.get("monitored_author") or item.get("author", "")).lower().lstrip("@")
             )
-            role = account.get("role")
+            role = account.role if account is not None else None
+            original_account = self.accounts.get(item.get("author", "").lower().lstrip("@"))
             from tank.sources.organization import resolve_author_organization
 
             author_organization = resolve_author_organization(source, item, self.accounts)
@@ -295,9 +300,7 @@ class SourceService:
                 ]
                 if sid == "S29"
                 else [],
-                original_author_role=self.accounts.get(item.get("author", "").lower().lstrip("@"), {}).get(
-                    "role"
-                ),
+                original_author_role=original_account.role if original_account is not None else None,
                 author_organization=author_organization,
                 deferrable=priority == 2,
                 external_id=external,
@@ -468,7 +471,7 @@ class SourceService:
                         "handle": handle,
                         "exists": response.status_code == 200,
                         "identity_status": "REQUIRES_OWNER_EVIDENCE",
-                        "role": account.get("role"),
+                        "role": account.role,
                     }
                 )
             except httpx.HTTPError as exc:

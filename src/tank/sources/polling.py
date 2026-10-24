@@ -302,7 +302,7 @@ class SourcePoller:
         sid = source.source_id
         kind = feed.kind
         if sid == "S29":
-            accounts = [account["handle"].lstrip("@") for account in svc.accounts.values()]
+            accounts = [account.handle.lstrip("@") for account in svc.accounts.values()]
             result = await svc.xsensor.posts(feed.url, accounts, state.get("account_cursors", {}))
             state.update(
                 fetched_at=self.stamp(),

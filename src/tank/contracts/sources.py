@@ -144,3 +144,90 @@ class SourceConfiguration(DomainModel):
         if len(set(identities)) != len(identities):
             raise ValueError("Source configuration contains duplicate source IDs")
         return self
+
+
+class SourceOfficialAuthority(DomainModel):
+    entity_id: str = Field(min_length=1)
+    role: str = Field(min_length=1)
+    evidence_refs: list[str] = Field(min_length=1)
+    authority_scope: str = Field(min_length=1)
+
+
+class SourceAccount(DomainModel):
+    handle: str = Field(min_length=1)
+    role: SourceAuthorRole
+    entity_id: str | None
+    token_id: str | None
+    official_authorities: list[SourceOfficialAuthority] | None = None
+
+
+class SourceAccountRegistryView(DomainModel):
+    x_accounts: list[SourceAccount]
+
+    @model_validator(mode="after")
+    def unique_handles(self) -> Self:
+        handles = [account.handle.lower().lstrip("@") for account in self.x_accounts]
+        if any(not handle for handle in handles) or len(handles) != len(set(handles)):
+            raise ValueError("Source registry account handles must be distinct nonempty identities")
+        return self
+
+
+class SourceEndpointBudget(DomainModel):
+    path: str = Field(min_length=1)
+    documented_requests: int = Field(gt=0)
+    period_s: int = Field(gt=0)
+    tank_request_budget: int = Field(gt=0)
+    scope: str = Field(min_length=1)
+
+
+class SourceProviderBudget(DomainModel):
+    provider: str = Field(min_length=1)
+    basis: str | None = Field(default=None, min_length=1)
+    documented_requests_per_s: int | None = Field(default=None, gt=0)
+    documented_requests_per_day: int | None = Field(default=None, gt=0)
+    documented_weight_per_min: int | None = Field(default=None, gt=0)
+    tank_max_requests_per_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    tank_max_requests_per_day: int | None = Field(default=None, gt=0)
+    tank_max_weight_per_min: int | None = Field(default=None, gt=0)
+    documented_requests: int | None = Field(default=None, gt=0)
+    period_s: int | None = Field(default=None, gt=0)
+    tank_request_budget: int | None = Field(default=None, gt=0)
+    minimum_request_spacing_s: int | None = Field(default=None, ge=0)
+    observed_header: str | None = None
+    source_ref: str | None = None
+    source_content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    verified_at: str | None = None
+    endpoint_limits: list[SourceEndpointBudget] | None = None
+    request_weights: dict[str, int] | None = None
+    response_size_extra_weights: dict[str, str] | None = None
+    inference_limits: list[str] | None = None
+    retry_delays_s: list[int] | None = None
+    api_key_required: bool | None = None
+    backend: str | None = None
+    client: str | None = None
+    cost_usd: int | None = Field(default=None, ge=0)
+    scope: str | None = None
+    tier: str | None = None
+
+    @model_validator(mode="after")
+    def documented_policy(self) -> Self:
+        if self.basis is None and self.source_ref is None:
+            raise ValueError("A provider budget requires declared policy or official source evidence")
+        if self.request_weights is not None and any(weight <= 0 for weight in self.request_weights.values()):
+            raise ValueError("Documented operation request weights must be positive")
+        if self.retry_delays_s is not None and any(delay <= 0 for delay in self.retry_delays_s):
+            raise ValueError("Provider retry delays must be positive")
+        return self
+
+
+class SourceApiLimitsConfiguration(DomainModel):
+    version: str = Field(min_length=1)
+    policy: str = Field(min_length=1)
+    limits: list[SourceProviderBudget]
+
+    @model_validator(mode="after")
+    def distinct_providers(self) -> Self:
+        providers = [rule.provider for rule in self.limits]
+        if len(providers) != len(set(providers)):
+            raise ValueError("API limit configuration requires distinct provider rules")
+        return self
