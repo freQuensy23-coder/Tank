@@ -146,8 +146,10 @@ class Credentials(DomainModel):
             if not isinstance(last_refresh, str):
                 return True
             refreshed = datetime.fromisoformat(last_refresh)
+            if refreshed.tzinfo is None or refreshed.utcoffset() is None:
+                return True
             return time.time() - refreshed.timestamp() >= 8 * 86400
-        except (KeyError, ValueError, TypeError, AttributeError):
+        except (KeyError, ValueError):
             return True
 
 

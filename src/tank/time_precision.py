@@ -13,7 +13,7 @@ from typing import Literal, Self
 from pydantic import BaseModel, JsonValue, model_validator
 
 from tank.contracts import DomainModel
-from tank.util import TimeInput, iso, parse_time
+from tank.util import TimeInput, clock_iso, iso, parse_time
 
 type BucketSize = str | timedelta | tuple[int | float | Decimal | str, str]
 type TimestampRecord = Mapping[str, JsonValue | datetime | Decimal]
@@ -174,7 +174,7 @@ def collection_clock(value: TimeInput | None = None, *, policy: str = "COLLECTIO
     """Call only where the producer actually observes a local collection/processing clock."""
     if policy != "COLLECTION_ONLY":
         raise ValueError("Collection-clock policy must be explicitly COLLECTION_ONLY")
-    return Timestamp(iso(value), policy)
+    return Timestamp(clock_iso() if value is None else iso(value), policy)
 
 
 def chosen_boundary(value: TimeInput, *, precision: str, bucket_size: BucketSize | None = None) -> Timestamp:

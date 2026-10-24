@@ -8,13 +8,22 @@ import random
 import time
 import weakref
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Collection, Iterable, Iterator, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Collection,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from contextvars import ContextVar
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Literal, Protocol, Self
+from typing import Literal, Protocol, Self, overload
 
 from psycopg import AsyncConnection, sql
 from psycopg.abc import PQGen
@@ -123,6 +132,7 @@ class Repository(Protocol):
         start: TimeInput | None = None,
         instrument_ids: Collection[str] | None = None,
     ) -> Records: ...
+    @overload
     async def market_dependency_head(
         self,
         collection: str,
@@ -134,8 +144,24 @@ class Repository(Protocol):
         instrument_ids: Collection[str] | None = None,
         assembled_at: TimeInput | None = None,
         order: str = "availability",
-        orders: Collection[str] | None = None,
-    ) -> Record | HeadMap | None: ...
+        orders: None = None,
+    ) -> Record | None: ...
+
+    @overload
+    async def market_dependency_head(
+        self,
+        collection: str,
+        semantic_field: str,
+        cutoff: TimeInput,
+        *,
+        start: TimeInput | None = None,
+        filters: Record | None = None,
+        instrument_ids: Collection[str] | None = None,
+        assembled_at: TimeInput | None = None,
+        order: str = "availability",
+        orders: Collection[str],
+    ) -> HeadMap: ...
+
     def iter_market_projection(
         self,
         collection: str,
@@ -492,7 +518,7 @@ class RepositoryQueries(ABC):
 
     async def iter_all(
         self, collection: str, *, filters: Record | None = None, batch_size: int = 1000
-    ) -> AsyncIterator[Record]:
+    ) -> AsyncGenerator[Record]:
         async for row in _iter_all(self._backend(), collection, filters=filters, batch_size=batch_size):
             yield row
 
@@ -575,6 +601,36 @@ class RepositoryQueries(ABC):
             start=start,
             instrument_ids=instrument_ids,
         )
+
+    @overload
+    async def market_dependency_head(
+        self,
+        collection: str,
+        semantic_field: str,
+        cutoff: TimeInput,
+        *,
+        start: TimeInput | None = None,
+        filters: Record | None = None,
+        instrument_ids: Collection[str] | None = None,
+        assembled_at: TimeInput | None = None,
+        order: str = "availability",
+        orders: None = None,
+    ) -> Record | None: ...
+
+    @overload
+    async def market_dependency_head(
+        self,
+        collection: str,
+        semantic_field: str,
+        cutoff: TimeInput,
+        *,
+        start: TimeInput | None = None,
+        filters: Record | None = None,
+        instrument_ids: Collection[str] | None = None,
+        assembled_at: TimeInput | None = None,
+        order: str = "availability",
+        orders: Collection[str],
+    ) -> HeadMap: ...
 
     async def market_dependency_head(
         self,

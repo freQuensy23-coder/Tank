@@ -50,7 +50,7 @@ def test_packaged_json_resource_changes_code_version_in_cold_process(tmp_path: P
     )
     environment = dict(os.environ, PYTHONPATH=str(package_root))
 
-    def cold_version():
+    def cold_version() -> str:
         return subprocess.check_output(
             [sys.executable, "-c", program, str(config), str(tmp_path / "runtime")],
             env=environment,

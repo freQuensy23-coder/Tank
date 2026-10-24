@@ -363,3 +363,26 @@ Classification uses the standalone JevClassifier and strict immutable JevScoreRe
 The retired source aliases body/source_name-as-publisher, tokens and reposted_by had no active collector producers; canonical source/text, identity_hints and monitored_author now carry those actual contracts. The dead source event_class priority override is removed: actual source deferrability determines priority. Unknown registry display names may use the explicit identity as their readable label; unavailable identity hints remain optional metadata. Missing source/event/session facts have no service defaults. Canonical source observation timestamps are collection clocks; optional publication provenance stays separate and queue expiry derives the observed collection clock.
 
 Validation: 77 offline focused units passed in 5.41 seconds. All ten relevant integration cases passed with actual services in 3.54 seconds; the seven PostgreSQL concurrency cases were rerun after precise test typing and passed in 3.49 seconds. Strict mypy passed for Pipeline, classifier, routing, score contracts, refusal tests, provider tests and PostgreSQL tests; default mypy passed for runtime/composition/Pipeline. Ruff checks/formatting passed. Full typing of the larger existing agents.py/pipeline_audit test helpers remains part of the ongoing owned test migration, together with SessionService/context/OpenMA/bootstrap; this milestone does not close the global goal.
+
+
+### OAuth refresh-clock zone validation
+
+Credential refresh age now requires an explicitly zoned last_refresh timestamp. A missing, invalid or zone-less clock requests the normal OAuth refresh instead of interpreting local server time. The gateway continues to preserve the operator-owned auth document and emits a UTC Z refresh timestamp after a successful exchange. This is an absence/invalid-metadata recovery branch, not an inferred expiry.
+
+The actual offline HTTP bridge regression uses a valid credential without an expiry claim and a future naive refresh clock, proves refresh happens before forwarding, and checks the replacement timestamp declares UTC. The one focused actual integration case passed; provider destinations and credentials remain synthetic.
+
+
+### Native source outcome transitions
+
+Native completion and terminal failure now load SourceItemDocument through the typed source repository and apply explicit SkippedExtraction/FailedExtraction transitions. A source lookup verifies the stored item identity. Completed native turns may mark pending/running extraction skipped with the actual completion reason; failures only change pending extraction. Missing source records remain a real retention/deletion outcome rather than a fabricated record.
+
+Existing native retry, execution barrier and session audit fixtures now contain complete captured sources. Seventy-nine focused native/session unit cases passed in 5.88 seconds. A three-case real completion-barrier regression additionally verifies stale NO_EVENT metadata is cleared for a newly skipped outcome while an existing failed-source reason remains unchanged. The larger SessionService record/port migration remains open; default mypy still reports its unchecked legacy constructor, and this milestone is not presented as strict full-session coverage.
+
+
+### Complete captured registry contracts (inactive bootstrap dependency)
+
+contracts.registry now declares complete RegistryConfiguration, DependencyConfiguration, SemanticsConfiguration and ExchangeAddressesConfiguration models without application, storage or I/O imports. SourceAccount and its authority/role contracts are reused. Token identities, contract descriptors, lending catalogs, registered instrument metadata and nested fundamentals evidence remain explicit records. Metric families discriminate aggressor, depth, funding, liquidation, open-interest and price records; each requires the exact fields used by that family. No semantic-confidence policy or probe was added.
+
+Instrument multipliers/tick/lot sizes are Decimal or explicit unknown, never guessed one. The YAML adapter validator accepts declared decimal text or existing Decimal values and rejects booleans/numeric coercion; configured wire roundtrips retain decimal strings. Entity names/authority/review/source hints, qualified aliases, chain evidence, supplementary fee metadata, metric-specific documentation/lag descriptors and optional explicit natural-key IDs represent actual absent config metadata; their None defaults preserve omission on serialization. The unavailable-wallet dictionary is a venue-keyed reason index, not an anonymous structured record.
+
+All four actual captured configuration documents roundtrip unchanged through Settings.load_config_as and strict models. Three malformed instrument variants exercise that actual loader and refuse missing identity, boolean multiplier and undeclared guessed size. Seven cases passed in 1.65 seconds; strict mypy and Ruff passed. Bootstrap activation and prepared managed registry records are still pending.
