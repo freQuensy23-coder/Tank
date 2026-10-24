@@ -47,12 +47,12 @@ def query(sql, params=None):
 
 def market_query(sql, params=None):
     """Return rows of ClickHouse `sql` as dicts; `params` bind as {name:String} parameters."""
-    args = ["docker", "exec", "-i", CH_CONTAINER, "sh", "-c"]
-    command = 'clickhouse-client --user tank --password "$TANK_DB_PASSWORD" --readonly 1'
+    command = 'exec clickhouse-client --user tank --password "$TANK_DB_PASSWORD" --readonly 1 "$@"'
+    args = ["docker", "exec", "-i", CH_CONTAINER, "sh", "-c", command, "tank-acceptance"]
     for key, value in (params or {}).items():
-        command += f" --param_{key}='{value}'"
+        args.append(f"--param_{key}={value}")
     out = subprocess.run(
-        [*args, command + " --format JSONEachRow"], input=sql, capture_output=True, text=True, check=False
+        [*args, "--format", "JSONEachRow"], input=sql, capture_output=True, text=True, check=False
     )
     if out.returncode != 0:
         raise RuntimeError("clickhouse-client failed: " + out.stderr.strip()[-500:])

@@ -1,15 +1,23 @@
 """Offline checks of the read-only acceptance measurement helpers (no database)."""
 
 import importlib.util
+import json
+import os
+import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1] / "scripts" / "acceptance"
 
 
-def load(name):
+def load(name: str) -> ModuleType:
     sys.path.insert(0, str(ROOT))
     spec = importlib.util.spec_from_file_location(name, ROOT / f"{name}.py")
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -61,3 +69,42 @@ def test_source_ratio_uses_counter_deltas_and_cadence() -> None:
     assert rows["S01"]["status"] == "FAIL"
     assert rows["S02"]["status"] == "FAIL"
     assert rows["S03"]["reads"] == 0 and rows["S03"]["status"] == "FAIL"
+
+
+@pytest.mark.integration
+@pytest.mark.process
+def test_clickhouse_parameters_remain_literal_shell_arguments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    common = load("common")
+    client = tmp_path / "clickhouse-client"
+    client.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$TANK_TEST_ARGUMENTS"\nprintf "{\\"rows\\":1}\\n"\n')
+    client.chmod(0o755)
+    arguments = tmp_path / "arguments"
+    marker = tmp_path / "injected"
+    value = f"'; touch {marker}; #"
+    run = subprocess.run
+
+    def local_shell(
+        args: list[str], *, input: str, capture_output: bool, text: bool, check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        assert args[:4] == ["docker", "exec", "-i", common.CH_CONTAINER]
+        return run(
+            args[4:],
+            input=input,
+            capture_output=capture_output,
+            text=text,
+            check=check,
+            env={
+                **os.environ,
+                "PATH": str(tmp_path) + os.pathsep + os.defpath,
+                "TANK_DB_PASSWORD": "disposable-test-value",
+                "TANK_TEST_ARGUMENTS": str(arguments),
+            },
+        )
+
+    monkeypatch.setattr(common.subprocess, "run", local_shell)
+    rows = common.market_query("SELECT 1", {"since": value})
+    assert rows == [json.loads('{"rows":1}')]
+    assert f"--param_since={value}" in arguments.read_text().splitlines()
+    assert not marker.exists()
