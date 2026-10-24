@@ -1,7 +1,9 @@
 """Typed repository ports and explicit codecs at the persistence boundary."""
 
-from collections.abc import Mapping
+import builtins
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 from pydantic import BaseModel, JsonValue
@@ -45,7 +47,36 @@ class DocumentStore(Protocol):
         *,
         filters: dict[str, JsonValue] | None = None,
         limit: int = 1000,
-    ) -> list[dict[str, JsonValue]]: ...
+    ) -> builtins.list[dict[str, JsonValue]]: ...
+
+    def iter_all(
+        self,
+        collection: str,
+        *,
+        filters: dict[str, JsonValue] | None = None,
+        batch_size: int = 1000,
+    ) -> AsyncIterator[dict[str, JsonValue]]: ...
+
+    async def latest_before(
+        self,
+        collection: str,
+        time_field: str,
+        cutoff: datetime,
+        *,
+        filters: dict[str, JsonValue] | None = None,
+    ) -> dict[str, JsonValue] | None: ...
+
+    async def list_range(
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        filters: dict[str, JsonValue] | None = None,
+        limit: int = 1000,
+        after: tuple[datetime, str] | None = None,
+    ) -> builtins.list[dict[str, JsonValue]]: ...
 
     async def delete(self, collection: str, key: str) -> None: ...
 
@@ -69,8 +100,47 @@ class Repository[T: BaseModel]:
         )
         return self._collection.decode(document)
 
-    async def list(self, *, filters: dict[str, JsonValue] | None = None, limit: int = 1000) -> list[T]:
+    async def list(self, *, filters: dict[str, JsonValue] | None = None, limit: int = 1000) -> builtins.list[T]:
         documents = await self._store.list(self._collection.name, filters=filters, limit=limit)
+        return [self._collection.decode(document) for document in documents]
+
+    async def iter_all(
+        self, *, filters: dict[str, JsonValue] | None = None, batch_size: int = 1000
+    ) -> AsyncIterator[T]:
+        async for document in self._store.iter_all(
+            self._collection.name, filters=filters, batch_size=batch_size
+        ):
+            yield self._collection.decode(document)
+
+    async def latest_before(
+        self,
+        time_field: str,
+        cutoff: datetime,
+        *,
+        filters: dict[str, JsonValue] | None = None,
+    ) -> T | None:
+        document = await self._store.latest_before(self._collection.name, time_field, cutoff, filters=filters)
+        return None if document is None else self._collection.decode(document)
+
+    async def list_range(
+        self,
+        time_field: str,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        filters: dict[str, JsonValue] | None = None,
+        limit: int = 1000,
+        after: tuple[datetime, str] | None = None,
+    ) -> builtins.list[T]:
+        documents = await self._store.list_range(
+            self._collection.name,
+            time_field,
+            start=start,
+            end=end,
+            filters=filters,
+            limit=limit,
+            after=after,
+        )
         return [self._collection.decode(document) for document in documents]
 
     async def delete(self, key: str) -> None:

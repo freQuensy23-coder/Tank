@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -13,14 +14,16 @@ from urllib.parse import quote, unquote, urlsplit
 
 import yaml
 from pydantic import AliasChoices, BaseModel, Field, JsonValue, PrivateAttr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic.fields import FieldInfo
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from tank.contracts.configuration import Thresholds
-from tank.contracts.json import decode_json
+from tank.contracts.json import JsonDocument, decode_json
+from tank.util import JsonInput
 
 _PROCESS_CODE_VERSION: str | None = None
 _CONFIG_SUFFIXES = {".yaml", ".yml", ".json", ".md"}
-_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+_YAML_LOADER = yaml.SafeLoader
 
 
 CONFIG_OWNED_FIELDS = ("user_agent", "telegram_alerts_chat", "telegram_ops_chat")
@@ -56,6 +59,28 @@ def _config_version(build_sha: str | None, digest: str) -> str:
 def _default_codex_auth_path() -> Path:
     root = os.environ.get("CODEX_HOME")
     return Path(root).expanduser() / "auth.json" if root else Path.home() / ".codex" / "auth.json"
+
+
+class ConfigOwnedSource(PydanticBaseSettingsSource):
+    """Exclude configuration-owned fields before Pydantic merges environment sources."""
+
+    def __init__(self, source: PydanticBaseSettingsSource) -> None:
+        super().__init__(source.settings_cls)
+        self.source = source
+
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[JsonInput, str, bool]:
+        return self.source.get_field_value(field, field_name)
+
+    def __call__(self) -> dict[str, JsonInput]:
+        values = self.source()
+        present = sorted(name for name in CONFIG_OWNED_FIELDS if values.get(name))
+        if present:
+            logging.getLogger("tank.settings").warning(
+                "Ignoring %s from the environment: set sources.yaml contact_email and "
+                "delivery.yaml chat IDs instead",
+                ", ".join("TANK_" + name.upper() for name in present),
+            )
+        return {key: value for key, value in values.items() if key not in CONFIG_OWNED_FIELDS}
 
 
 class Settings(BaseSettings):
@@ -132,11 +157,11 @@ class Settings(BaseSettings):
     backup_hour_utc: int = 2
     market_retention_days: int = 90
     shutdown_grace_s: int = 10
-    _config_snapshot: Any = PrivateAttr(default=None)
+    _config_snapshot: Mapping[str, bytes] | None = PrivateAttr(default=None)
 
-    _parsed_config: Any = PrivateAttr(default=None)
+    _parsed_config: dict[str, dict[str, JsonValue]] | None = PrivateAttr(default=None)
 
-    def model_post_init(self, context: Any) -> None:
+    def model_post_init(self, context: JsonValue) -> None:
         if self.tank_db_password and "database_url" not in self.model_fields_set:
             self.database_url = (
                 f"postgresql://tank:{quote(self.tank_db_password, safe='')}@postgres:5432/tank"
@@ -171,26 +196,17 @@ class Settings(BaseSettings):
 
     @classmethod
     def settings_customise_sources(
-        cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings
-    ):
-        def without_config_owned(source):
-            def read():
-                values = source()
-                present = sorted(name for name in CONFIG_OWNED_FIELDS if values.get(name))
-                if present:
-                    logging.getLogger("tank.settings").warning(
-                        "Ignoring %s from the environment: set sources.yaml contact_email and "
-                        "delivery.yaml chat IDs instead",
-                        ", ".join("TANK_" + name.upper() for name in present),
-                    )
-                return {k: v for k, v in values.items() if k not in CONFIG_OWNED_FIELDS}
-
-            return read
-
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (
             init_settings,
-            without_config_owned(env_settings),
-            without_config_owned(dotenv_settings),
+            ConfigOwnedSource(env_settings),
+            ConfigOwnedSource(dotenv_settings),
         )
 
     @staticmethod
@@ -229,12 +245,12 @@ class Settings(BaseSettings):
         payload = yaml.load(self.read_config_bytes(relative), Loader=_YAML_LOADER)
         return schema.model_validate(payload, strict=True)
 
-    def load_config(self, name: str) -> dict[str, Any]:
+    def load_config(self, name: str) -> dict[str, JsonValue]:
         relative = name if name.endswith((".yaml", ".yml")) else name + ".yaml"
         cache = self._parsed_config if self._config_snapshot is not None else None
         if cache is not None and relative in cache:
             return copy.deepcopy(cache[relative])
-        value = yaml.load(self.read_config_bytes(relative), Loader=_YAML_LOADER)
+        value = JsonDocument.validate_value(yaml.load(self.read_config_bytes(relative), Loader=_YAML_LOADER))
         if not isinstance(value, dict):
             raise ValueError(f"Configuration must be a mapping: {relative}")
         if cache is not None:

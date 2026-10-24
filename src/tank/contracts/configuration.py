@@ -58,3 +58,11 @@ class Thresholds(DomainModel):
     archive_retry_s: int
     routing_window_days: int
     market_context_rule: str
+
+
+class DeliveryConfiguration(DomainModel):
+    alerts_chat_id: str
+    ops_chat_id: str
+    parse_mode: str
+    max_attempts: int = Field(gt=0)
+    secrets: str
