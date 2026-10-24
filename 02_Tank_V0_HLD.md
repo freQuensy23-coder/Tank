@@ -29,7 +29,7 @@ One Linux host runs everything in Docker Compose: the Tank service — one async
 3. Native units and per-venue data first; venue fields are read by the semantics registry (03 §2.10), and composites combine only fields of the same meaning and unit.
 4. One frozen cutoff per analysis; every value carries observation time and precision.
 5. Missing is never zero; exclusions carry reasons.
-6. One agent session per event reads, analyzes and judges — in its own sandbox it may write files and run any command or script — but changes Tank's state only through Tank's tools, and every tool validates its input. Market Truth, Outlook, grades, actions and the card gate are code behind those tools and contain no LLM calls.
+6. One agent session per event reads, analyzes and judges — in its own sandbox it may write files and run any command or script — but changes Tank's state only through Tank's tools, and every tool validates its input. What Tank tells the agent is text without record IDs; tool arguments name stored records by their IDs, which the agent reads from Tank's data, and Tank checks every one (03 §3.2). Market Truth, Outlook, grades, actions and the card gate are code behind those tools and contain no LLM calls.
 7. Cards only for MAJOR+ events and material changes.
 8. Append-only audit tables; content-addressed evidence bundles.
 9. Every escalation, retry and scheduled capture has an expiry.

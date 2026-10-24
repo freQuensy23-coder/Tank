@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from tank.agents import ConfigurationError, Pipeline, SessionService
+from tank.agents.context import CONTEXT_VERSION
 from tank.storage import MemoryRepository
 from tank.telegram_rich import score_summary
 from tank.util import iso, sha256, utcnow
@@ -42,7 +43,7 @@ def settings(**overrides):
 async def seed_session(repo, **changes):
     row = {
         "session_id": "ses_1",
-        "model_context_version": 1,
+        "model_context_version": CONTEXT_VERSION,
         "event_id": "evt_1",
         "item_id": "itm_1",
         "status": "OPEN",
@@ -350,7 +351,11 @@ async def test_new_scout_session_wire_protocol_and_isolation():
     assert posted[0] == {
         "agent": "agt_s",
         "environment_id": "env_1",
-        "metadata": {"tank_identity": sha256({"identity": "p", "scout": True, "model_context_version": 1})},
+        "metadata": {
+            "tank_identity": sha256(
+                {"identity": "p", "scout": True, "model_context_version": CONTEXT_VERSION}
+            )
+        },
     }
     content = json.loads(posted[1]["events"][0]["content"][0]["text"])
     assert content["proposal"]["concept_name"] == "test"
@@ -482,7 +487,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
                 "id": "decision_original",
                 "type": "agent.custom_tool_use",
                 "name": "get_decision",
-                "input": {"token": "World (WLD)"},
+                "input": {"token_id": "world:WLD"},
             },
         )
         await service.process_event(
@@ -540,7 +545,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
                 "id": "decision_exit",
                 "type": "agent.custom_tool_use",
                 "name": "get_decision",
-                "input": {"token": "World (WLD)"},
+                "input": {"token_id": "world:WLD"},
             },
         )
         decision = (await repo.get("ops.tool_calls", "ses_1:decision_exit"))["result"]

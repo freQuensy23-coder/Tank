@@ -919,7 +919,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
 
     async def emit(event):
         if event.get("type") == "agent.custom_tool_use":
-            event = dict(event, input=await model_arguments(repo, config, event["name"], event["input"]))
+            event = dict(event, input=model_arguments(event["name"], event["input"]))
         nonlocal seq
         seq += 1
         if event["type"] == "session.status_idle":
@@ -1053,7 +1053,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                             "certainty": "MEDIUM",
                             "certainty_reason": "Declared synthetic transport actor",
                             "entities": [],
-                            "tokens": [],
+                            "token_ids": [],
                             "event_time": {"value": None, "precision": "UNKNOWN", "quote": None},
                             "public_at": {
                                 "value": "2026-10-16T12:00:00Z",
@@ -1097,10 +1097,8 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                         }
                         args["claims"] = [claim]
                         if item == "lead":
-                            args["tokens"] = ["lighter:LIT"]
-                            args["entities"] = [
-                                {"name": "Robinhood", "entity_id": "robinhood", "role": "ACTOR"}
-                            ]
+                            args["token_ids"] = ["lighter:LIT"]
+                            args["entities"] = [{"entity_id": "robinhood", "role": "ACTOR"}]
                             args["checked_sources"] = [
                                 "S13 lookup unavailable (missing replay evidence)"
                                 if missing_lookup
@@ -1126,10 +1124,8 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                         {
                             "event_id": eid,
                             "assessment": dict(
-                                unknown_assessment(
-                                    criterion="M1", klass="MAJOR", quote="Robinhood to list LIT"
-                                ),
-                                criterion_venue="Robinhood",
+                                unknown_assessment(criterion="M1", klass="MAJOR", claim=claim_id),
+                                criterion_venue_id="robinhood",
                             )
                             if publication
                             else unknown_assessment(klass="MATERIAL"),
@@ -1146,10 +1142,8 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                         {
                             "event_id": eid,
                             "assessment": dict(
-                                unknown_assessment(
-                                    criterion="M1", klass="MAJOR", quote="Robinhood to list LIT"
-                                ),
-                                criterion_venue="Robinhood",
+                                unknown_assessment(criterion="M1", klass="MAJOR", claim=claim_id),
+                                criterion_venue_id="robinhood",
                             ),
                         },
                         identity,
@@ -1189,11 +1183,11 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                 elif publication and stage == "map":
                     assert result.get("analysis_set") == ["lighter:LIT"], result
                     stage = "truth"
-                    await tool("get_market_truth", {"event_id": eid, "tokens": ["lighter:LIT"]}, identity)
+                    await tool("get_market_truth", {"event_id": eid, "token_ids": ["lighter:LIT"]}, identity)
                 elif publication and stage == "truth":
                     assert not result.get("error"), result
                     stage = "decision"
-                    await tool("get_decision", {"event_id": eid, "token": "lighter:LIT"}, identity)
+                    await tool("get_decision", {"event_id": eid, "token_id": "lighter:LIT"}, identity)
                 elif publication and stage == "decision":
                     assert result.get("action") == "WAIT", result
                     stage = "publication"

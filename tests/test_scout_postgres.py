@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from tank.agents import SessionService
+from tank.agents.context import CONTEXT_VERSION
 from tank.event_tools import EventToolService
 from tank.settings import Settings
 from tank.util import iso, sha256
@@ -131,7 +132,7 @@ async def seed_event(tools, sessions):
     )
     analyst = {
         "session_id": "ses_analyst",
-        "model_context_version": 1,
+        "model_context_version": CONTEXT_VERSION,
         "event_id": None,
         "status": "OPEN",
         "runtime_status": "RUNNING",
@@ -163,7 +164,7 @@ async def seed_event(tools, sessions):
         "certainty": "HIGH",
         "certainty_reason": "Official primary",
         "entities": [],
-        "tokens": [],
+        "token_ids": [],
         "event_time": {"value": None, "precision": "UNKNOWN", "quote": None},
         "public_at": {"value": at, "precision": "EXACT", "basis": "Primary publication", "quote": None},
         "freshness": "FRESH",
@@ -212,7 +213,7 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
                 "input": {
                     "hook": "MARKET_TRUTH_STATE",
                     "subject": "Venue-led drift",
-                    "evidence": [{"quote": "Product announced"}],
+                    "evidence": [{"claim_id": claim}],
                 },
             },
         )
@@ -239,14 +240,17 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
             ("publish_card", {"event_id": eid, "kind": "FULL", "what": "x", "verdict": "x", "why": ["y"]}),
             ("set_assessment", {"event_id": eid, "assessment": {}}),
             ("record_event", {"item_id": "i"}),
-            ("get_decision", {"event_id": eid, "token": "world:WLD"}),
-            ("propose_pattern", {"hook": "MARKET_TRUTH_STATE", "subject": "x", "evidence": [claim]}),
+            ("get_decision", {"event_id": eid, "token_id": "world:WLD"}),
+            (
+                "propose_pattern",
+                {"hook": "MARKET_TRUTH_STATE", "subject": "x", "evidence": [{"claim_id": claim}]},
+            ),
             (
                 "record_review",
                 {
                     "verdict": "Already covered by existing move classes",
                     "reason": "No decision-relevant difference shown",
-                    "evidence": [{"quote": "Product announced"}],
+                    "evidence": [{"claim_id": claim}],
                     "scores": {"overlap": 8, "observability": 5, "reusability": 3, "decision_value": 2},
                     "recommendation": "REJECT",
                     "duplicate_of": None,

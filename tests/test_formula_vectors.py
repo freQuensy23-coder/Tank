@@ -166,8 +166,8 @@ async def recorded(service, state):
             "statement": "T7 vector",
             "certainty": "HIGH",
             "certainty_reason": "Primary artifact",
-            "entities": [{"name": "World", "entity_id": None, "role": "ACTOR"}],
-            "tokens": ["world:WLD"],
+            "entities": [{"entity_id": "world", "role": "ACTOR"}],
+            "token_ids": ["world:WLD"],
             "event_time": {"value": now, "precision": "EXACT", "quote": "time"},
             "public_at": {"value": now, "precision": "EXACT", "basis": "primary", "quote": "time"},
             "freshness": "FRESH",
@@ -196,11 +196,11 @@ async def recorded(service, state):
     return result["event_id"], proof, quote
 
 
-def assessment(proof, klass, criterion, quote, gate=None):
+def assessment(proof, klass, criterion, gate=None):
     a = {
         "class": klass,
         "criterion": criterion,
-        "criterion_quote": quote,
+        "criterion_claim_id": proof,
         "dims": {
             n: {"value": 8, "rationale": "vector", "evidence": [proof]}
             for n in [
@@ -231,9 +231,9 @@ def assessment(proof, klass, criterion, quote, gate=None):
     [("STRUCTURAL_SHOCK", "M4", None), ("MAJOR", "M4", None), ("STRUCTURAL_SHOCK", "G4", "G4")],
 )
 async def test_t7_fee_burn_put_to_binding_vote_is_major_never_structural(service, klass, criterion, gate):
-    eid, proof, quote = await recorded(service, "PROPOSED")
+    eid, proof, _ = await recorded(service, "PROPOSED")
     out = await service.set_assessment(
-        {"event_id": eid, "assessment": assessment(proof, klass, criterion, quote, gate)}, {}
+        {"event_id": eid, "assessment": assessment(proof, klass, criterion, gate)}, {}
     )
     assert out["class"] != "STRUCTURAL_SHOCK"
     if criterion == "M4":
@@ -241,9 +241,9 @@ async def test_t7_fee_burn_put_to_binding_vote_is_major_never_structural(service
 
 
 async def test_t7_verified_required_infrastructure_selection_is_structural_g4(service):
-    eid, proof, quote = await recorded(service, "LIVE")
+    eid, proof, _ = await recorded(service, "LIVE")
     out = await service.set_assessment(
-        {"event_id": eid, "assessment": assessment(proof, "STRUCTURAL_SHOCK", "G4", quote, "G4")}, {}
+        {"event_id": eid, "assessment": assessment(proof, "STRUCTURAL_SHOCK", "G4", "G4")}, {}
     )
     assert out["class"] == "STRUCTURAL_SHOCK" and out["criterion"] == "G4"
 

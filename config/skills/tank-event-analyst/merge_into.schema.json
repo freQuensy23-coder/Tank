@@ -4,24 +4,13 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "event": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "statement": {
-          "type": "string"
-        },
-        "public_at": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "statement"
-      ]
+    "event_id": {
+      "type": "string",
+      "description": "Event ID (EVT-\u2026); find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abEvents by statement, time or token\u00bb."
     }
   },
   "required": [
-    "event"
+    "event_id"
   ],
-  "description": "Merge the current event into a displayed event selected by its exact statement and public time."
+  "description": "Merge the current event into the earlier open event that covers the same real-world development, named by its event_id. Observations and claims move to the surviving event, which keeps the earlier known-to-us time; the current event becomes MERGED."
 }

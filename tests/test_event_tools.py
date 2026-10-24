@@ -2,6 +2,7 @@ from datetime import timedelta
 
 import pytest
 
+from tank.agents.context import CONTEXT_VERSION
 from tank.event_tools import EventToolService, freshness, validate_schema
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -53,7 +54,7 @@ def extraction():
         certainty="HIGH",
         certainty_reason="Official primary",
         entities=[],
-        tokens=["world:WLD"],
+        token_ids=["world:WLD"],
         event_time={"value": now, "precision": "EXACT", "quote": None},
         public_at={"value": now, "precision": "EXACT", "basis": "Primary publication", "quote": None},
         freshness="FRESH",
@@ -288,9 +289,9 @@ async def test_numeric_map_version_ten_removes_old_token(
             "ana.market_truth", eid + "mta", complete_truth_fixture(eid + "mta", eid, "world:WLD", iso())
         )
         with pytest.raises(ValueError, match="current-map"):
-            await service.get_decision({"event_id": eid, "token": "world:WLD"}, {})
+            await service.get_decision({"event_id": eid, "token_id": "world:WLD"}, {})
         with pytest.raises(ValueError, match="outside analysis set"):
-            await service.get_market_truth({"event_id": eid, "tokens": ["world:WLD"]}, {"call_id": "c"})
+            await service.get_market_truth({"event_id": eid, "token_ids": ["world:WLD"]}, {"call_id": "c"})
     finally:
         if backend == "postgres":
             await service.repo.close()
@@ -363,7 +364,7 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service):
         ),
     ]:
         await service.repo.put(table, key, row)
-    first = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+    first = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
     assert all(condition["expires_at"] and condition["created_at"] for condition in first["conditions"])
     assert first["action"] == "HOLD"
     assert first["cutoff_prec"] == "BUCKET(1m)"
@@ -372,7 +373,7 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service):
     armed = next(c for c in first["conditions"] if c["role"] == "UPGRADE")
     armed.update(counters={"root": {"count": 1, "window": 42}})
     await service.repo.put("ana.watch_conditions", armed["cond_id"], armed)
-    second = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+    second = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
     same = next(c for c in second["conditions"] if c["role"] == "UPGRADE")
     assert same["cond_id"] == armed["cond_id"]
     assert same["counters"] == armed["counters"]
@@ -384,11 +385,11 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service):
         "condition-truth-fresh",
         {**truth, "mta_id": "condition-truth-fresh", "cutoff": same["fired_at"]},
     )
-    fired = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+    fired = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
     assert fired["action"] == "ADD"
     consumed = await service.repo.get("ana.watch_conditions", same["cond_id"])
     assert consumed["consumed_by"] == fired["dec_id"]
-    again = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+    again = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
     assert again["action"] == "HOLD"
 
     rearmed = next(c for c in again["conditions"] if c["role"] == "UPGRADE")
@@ -404,7 +405,7 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service):
         "condition-truth-second",
         {**truth, "mta_id": "condition-truth-second", "cutoff": rearmed["fired_at"]},
     )
-    second_add = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+    second_add = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
     assert second_add["action"] == "ADD"
 
 
@@ -452,7 +453,7 @@ async def test_start_condition_is_rearmed_for_the_open_call(service):
         "liquidity": {"liquidity_state": "NORMAL"},
     }
     await service.repo.put("ana.market_truth", "start-truth", truth)
-    watch = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+    watch = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
     assert watch["action"] == "WATCH_TO_START"
     upgrade = next(c for c in watch["conditions"] if c["role"] == "UPGRADE")
     upgrade.update(status="FIRED", fired_at=iso())
@@ -462,7 +463,7 @@ async def test_start_condition_is_rearmed_for_the_open_call(service):
         "start-truth-2",
         {**truth, "mta_id": "start-truth-2", "cutoff": iso(), "data_confidence": {"class": "HIGH"}},
     )
-    start = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+    start = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
     assert start["action"] == "START"
     await service.repo.put(
         "ana.calls",
@@ -476,7 +477,7 @@ async def test_start_condition_is_rearmed_for_the_open_call(service):
             "invalidation_price": "9",
         },
     )
-    hold = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+    hold = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
     assert hold["action"] == "HOLD"
     add_watch = next(c for c in hold["conditions"] if c["role"] == "UPGRADE")
     assert add_watch["status"] == "ARMED" and add_watch["cond_id"] != upgrade["cond_id"]
@@ -525,7 +526,7 @@ async def test_numeric_ems_requires_accepted_evidence(service):
     assessment = {
         "class": "MAJOR",
         "criterion": "M2",
-        "criterion_quote": "Product announced",
+        "criterion_claim_id": result["accepted_claims"][0]["claim_id"],
         "dims": dims,
         "impact_horizon": {"impact_start": "WEEKS"},
     }
@@ -542,7 +543,7 @@ async def test_milestone_exact_escalation_window(service):
     due = iso(utcnow() + timedelta(days=1))
     await service.dispatch(
         "schedule_milestone",
-        {"event_id": result["event_id"], "milestone": "Decision", "due_at": due, "source": "S01"},
+        {"event_id": result["event_id"], "milestone": "Decision", "due_at": due, "source_id": "S01"},
         {},
     )
     source = (await service.repo.list("ops.source_escalations", filters={"source_id": "S01"}))[0]
@@ -555,8 +556,8 @@ async def test_assessment_escalates_all_official_sources_in_consumer_table(servi
     from tank.sources import SourceService
 
     x = await seed(service)
-    x["tokens"] = ["world:WLD"]
-    x["entities"] = [{"name": "World", "entity_id": "world", "role": "ACTOR"}]
+    x["token_ids"] = ["world:WLD"]
+    x["entities"] = [{"entity_id": "world", "role": "ACTOR"}]
     result = await service.dispatch("record_event", x, {})
     dims = {
         name: {
@@ -580,7 +581,7 @@ async def test_assessment_escalates_all_official_sources_in_consumer_table(servi
     assessment = {
         "class": "MAJOR",
         "criterion": "M2",
-        "criterion_quote": "Product announced",
+        "criterion_claim_id": result["accepted_claims"][0]["claim_id"],
         "dims": dims,
         "impact_horizon": {
             "impact_start": "WEEKS",
@@ -605,7 +606,7 @@ async def test_assessment_escalates_all_official_sources_in_consumer_table(servi
 
 async def test_structural_assessment_requires_agent_partial_without_parallel_publisher(service):
     x = await seed(service)
-    x["tokens"] = ["world:WLD"]
+    x["token_ids"] = ["world:WLD"]
     x["statement"] = "World access approved"
     x["claims"][0].update(state_claim="APPROVED", quote="World access approved")
     item = await service.repo.get("ingest.source_items", "i")
@@ -634,7 +635,7 @@ async def test_structural_assessment_requires_agent_partial_without_parallel_pub
     assessment = {
         "class": "STRUCTURAL_SHOCK",
         "criterion": "G5",
-        "criterion_quote": "World access approved",
+        "criterion_claim_id": extraction["accepted_claims"][0]["claim_id"],
         "dims": dims,
         "impact_horizon": {
             "impact_start": "WEEKS",
@@ -697,7 +698,12 @@ async def test_real_session_tool_refuses_cross_event_mutation(service):
     await service.repo.put("evt.events", "A", {"event_id": "A", "lifecycle": "DETECTED"})
     original = {"event_id": "B", "lifecycle": "DETECTED", "statement": "Untouched"}
     await service.repo.put("evt.events", "B", original)
-    session = {"session_id": "scope-session", "model_context_version": 1, "event_id": "A", "item_id": "i"}
+    session = {
+        "session_id": "scope-session",
+        "model_context_version": CONTEXT_VERSION,
+        "event_id": "A",
+        "item_id": "i",
+    }
     await service.repo.put("ops.agent_sessions", session["session_id"], session)
     sessions = SessionService(service.repo, service.settings, service.dispatch)
     replies = []
@@ -714,7 +720,7 @@ async def test_real_session_tool_refuses_cross_event_mutation(service):
         {
             "id": "scope-call",
             "name": "schedule_milestone",
-            "input": {"event_id": "B", "milestone": "Wrong event", "due_at": iso(), "source": "S01"},
+            "input": {"event_id": "B", "milestone": "Wrong event", "due_at": iso(), "source_id": "S01"},
         },
     )
     assert await service.repo.get("evt.events", "B") == original
@@ -731,8 +737,11 @@ async def test_real_session_tool_refuses_cross_event_mutation(service):
         "list_open_events", {"events": [original]}
     )
     await sessions.tool(
-        session, {"id": "scope-read", "name": "get_event", "input": {"event": {"statement": "Untouched"}}}
+        session, {"id": "scope-old", "name": "get_event", "input": {"event": {"statement": "Untouched"}}}
     )
+    old = await service.repo.get("ops.tool_calls", "scope-session:scope-old")
+    assert old["status"] == "REFUSED" and "pass event_id" in old["result"]["error"]["reason"]
+    await sessions.tool(session, {"id": "scope-read", "name": "get_event", "input": {"event_id": "B"}})
     assert (await service.repo.get("ops.tool_calls", "scope-session:scope-read"))["result"][
         "event"
     ] == original
@@ -745,7 +754,12 @@ async def test_novel_layer_proposal_survives_real_session_transaction(service):
     extracted = await service.dispatch("record_event", x, {})
     eid = extracted["event_id"]
     proof = extracted["accepted_claims"][0]["claim_id"]
-    session = {"session_id": "novel-session", "model_context_version": 1, "event_id": eid, "item_id": "i"}
+    session = {
+        "session_id": "novel-session",
+        "model_context_version": CONTEXT_VERSION,
+        "event_id": eid,
+        "item_id": "i",
+    }
     await service.repo.put("ops.agent_sessions", session["session_id"], session)
     sessions = SessionService(service.repo, service.settings, service.dispatch)
 
@@ -755,13 +769,20 @@ async def test_novel_layer_proposal_survives_real_session_transaction(service):
         return {}
 
     sessions.request = request
+    edge = {
+        "entity_id": "world",
+        "token_id": "world:WLD",
+        "role": "SECONDARY",
+        "layer": "NOVEL_LAYER",
+        "direction": "POSITIVE",
+        "causal_chain": "A new kind of rail",
+        "directionality": "SOURCE_SIDE_SUPPORT",
+        "exposure_score": 4,
+        "edge_certainty": "MEDIUM",
+        "evidence": [proof],
+    }
     await sessions.tool(
-        session,
-        {
-            "id": "novel-call",
-            "name": "set_beneficiaries",
-            "input": {"edges": [{"layer": "NOVEL_LAYER", "evidence": [{"quote": "Product announced"}]}]},
-        },
+        session, {"id": "novel-call", "name": "set_beneficiaries", "input": {"edges": [edge]}}
     )
     ledger = await service.repo.get("ops.tool_calls", "novel-session:novel-call")
     assert ledger["returned_at"]
@@ -801,10 +822,10 @@ async def test_agent_verification_of_world_and_openai_is_persisted(service):
         statement=quote,
         certainty="HIGH",
         certainty_reason="Registered CEO/co-founder speaking about both authorized organizations",
-        tokens=["world:WLD"],
+        token_ids=["world:WLD"],
         entities=[
-            {"name": "World", "entity_id": "world", "role": "ACTOR"},
-            {"name": "OpenAI", "entity_id": "openai", "role": "COUNTERPARTY"},
+            {"entity_id": "world", "role": "ACTOR"},
+            {"entity_id": "openai", "role": "COUNTERPARTY"},
         ],
     )
     x["claims"] = [
@@ -1034,7 +1055,7 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(service, monkey
         ("ana.calls", "expiry-call", call),
     ]:
         await service.repo.put(table, key, row)
-    first_decision = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+    first_decision = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
     assert first_decision["action"] == "HOLD"
     first = await service.dispatch(
         "publish_card",
@@ -1066,7 +1087,7 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(service, monkey
         scheduler = Scheduler(service.repo, service.settings, None, None)
         await scheduler.expire_calls(now)
         assert (await service.repo.get("evt.events", eid))["call_expired"]
-        lifecycle = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+        lifecycle = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
         assert lifecycle["tracking_ended"] and lifecycle["actionable"] is False
         assert lifecycle["action"] == "HOLD"
         assert not lifecycle["conditions"]
@@ -1104,7 +1125,7 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(service, monkey
     assert len(calls) == 1
     assert calls[0]["status"] == "CLOSED" and calls[0]["closed_by"] == "EXPIRED"
     assert not (await service.repo.get("evt.events", eid)).get("call_expired")
-    again = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+    again = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
     assert again["tracking_ended"] and not again["actionable"]
     assert (await service.repo.get("ana.decisions", first_decision["dec_id"]))["action"] == "HOLD"
 
@@ -1199,7 +1220,7 @@ async def test_material_update_is_queued_once_and_delivered_after_window(service
     records.append(("ana.market_truth", "material-truth", truth))
     for table, key, row in records:
         await service.repo.put(table, key, row)
-    first = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+    first = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
     assert first["action"] == "HOLD"
     full = await service.dispatch(
         "publish_card",
@@ -1232,7 +1253,7 @@ async def test_material_update_is_queued_once_and_delivered_after_window(service
             data_confidence={"class": "LOW", "critical_semantics_verified": False},
         )
         await service.repo.put("ana.market_truth", "material-low", low)
-        reduced = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+        reduced = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
         assert reduced["action"] == "REDUCE"
         args = {
             "event_id": eid,
@@ -1269,7 +1290,7 @@ async def test_material_update_is_queued_once_and_delivered_after_window(service
 
 async def test_bundle_keeps_producing_model_and_separate_session_config(service):
     x = await seed(service)
-    x["tokens"] = ["world:WLD"]
+    x["token_ids"] = ["world:WLD"]
     x["statement"] = "World access approved"
     x["claims"][0].update(state_claim="APPROVED", quote="World access approved")
     item = await service.repo.get("ingest.source_items", "i")
@@ -1314,7 +1335,7 @@ async def test_bundle_keeps_producing_model_and_separate_session_config(service)
     assessment = {
         "class": "STRUCTURAL_SHOCK",
         "criterion": "G5",
-        "criterion_quote": "World access approved",
+        "criterion_claim_id": result["accepted_claims"][0]["claim_id"],
         "dims": dims,
         "impact_horizon": {
             "impact_start": "WEEKS",
@@ -1399,7 +1420,7 @@ async def test_market_truth_domain_result_and_evidence_bundle_keep_full_metadata
     task = asyncio.create_task(
         service.dispatch(
             "get_market_truth",
-            {"event_id": eid, "tokens": ["T"], "cutoff": cutoff},
+            {"event_id": eid, "token_ids": ["T"], "cutoff": cutoff},
             {"call_id": "metadata-call"},
         )
     )
@@ -1568,7 +1589,7 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
                 truth, mta_id=eid + "-future", cutoff=iso(now + timedelta(days=1)), move_class="DISTRIBUTION"
             ),
         )
-        decision = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+        decision = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
         assert decision["market_truth_id"] == current
         published = await service.dispatch(
             "publish_card",
@@ -1660,7 +1681,7 @@ async def test_search_failure_does_not_mutate_medium_event_certainty(service):
     assert len(await service.repo.list("evt.event_observations")) == 1
 
 
-def unknown_assessment(criterion="M2", klass="MAJOR", quote="Product announced"):
+def unknown_assessment(criterion="M2", klass="MAJOR", claim=None):
     dims = {
         name: {
             "value": None,
@@ -1683,7 +1704,7 @@ def unknown_assessment(criterion="M2", klass="MAJOR", quote="Product announced")
     return {
         "class": klass,
         "criterion": criterion,
-        "criterion_quote": quote,
+        "criterion_claim_id": claim,
         "dims": dims,
         "impact_horizon": {
             "impact_start": "WEEKS",
@@ -1699,7 +1720,7 @@ async def test_primary_approved_edge_is_credible_and_exposure_layer_reasons_chec
     from tank.event_tools import LAYERS
 
     x = await seed(service)
-    x["tokens"] = ["world:WLD"]
+    x["token_ids"] = ["world:WLD"]
     result = await service.dispatch("record_event", x, {})
     eid = result["event_id"]
     proof = result["accepted_claims"][0]["claim_id"]
@@ -1747,7 +1768,7 @@ async def test_primary_approved_edge_is_credible_and_exposure_layer_reasons_chec
 
 async def test_material_criterion_cannot_pass_major_and_measured_headline_only_caps(service):
     x = await seed(service)
-    x["tokens"] = ["world:WLD"]
+    x["token_ids"] = ["world:WLD"]
     created = await service.dispatch("record_event", x, {})
     assessment = unknown_assessment("MATERIAL")
     scored = await service.dispatch(
@@ -1805,7 +1826,7 @@ async def test_other_tank_item_quote_read_through_real_session_is_admissible(ser
     )
     session = {
         "session_id": "item-proof-session",
-        "model_context_version": 1,
+        "model_context_version": CONTEXT_VERSION,
         "event_id": None,
         "item_id": "i",
     }
@@ -1822,16 +1843,12 @@ async def test_other_tank_item_quote_read_through_real_session_is_admissible(ser
         session, {"id": "search-other", "name": "search_tank_items", "input": {"query": "Fee switch"}}
     )
     await sessions.tool(
-        session,
-        {
-            "id": "read-other",
-            "name": "get_item",
-            "input": {"document": {"url": "https://example.org/fee-switch"}},
-        },
+        session, {"id": "read-other", "name": "get_item", "input": {"item_id": "other-primary"}}
     )
+    assert (await service.repo.get("ops.tool_calls", "item-proof-session:read-other"))["status"] == "DONE"
     x["claims"][0].update(quote="Fee switch approved.", state_claim="APPROVED")
     x.pop("item_id")
-    x["tokens"] = ["World (WLD)"]
+    x["token_ids"] = ["world:WLD"]
     await sessions.tool(session, {"id": "extract", "name": "record_event", "input": x})
     result = (await service.repo.get("ops.tool_calls", "item-proof-session:extract"))["result"]
     assert result["accepted_claims"][0]["evidence"] == [{"item_id": "i", "quote": "Fee switch approved."}]
@@ -1844,7 +1861,9 @@ async def test_milestone_official_outcome_quote_clears_pending_and_preserves_his
     eid = created["event_id"]
     due = iso()
     await service.dispatch(
-        "schedule_milestone", {"event_id": eid, "milestone": "Approval", "due_at": due, "source": "S01"}, {}
+        "schedule_milestone",
+        {"event_id": eid, "milestone": "Approval", "due_at": due, "source_id": "S01"},
+        {},
     )
     quote = "The SEC approved the application."
     await service.repo.put(
@@ -1883,16 +1902,17 @@ async def test_milestone_official_outcome_quote_clears_pending_and_preserves_his
 
 async def test_scout_review_records_four_scores_and_merges_named_duplicate(service):
     first = await service.propose_pattern(
-        {"hook": "BENEFICIARY_LAYER", "subject": "Concept A", "evidence": ["claim-A"]}, {}
+        {"hook": "BENEFICIARY_LAYER", "subject": "Concept A", "evidence": [{"claim_id": "claim-A"}]}, {}
     )
     second = await service.propose_pattern(
-        {"hook": "BENEFICIARY_LAYER", "subject": "Equivalent wording", "evidence": ["claim-B"]}, {}
+        {"hook": "BENEFICIARY_LAYER", "subject": "Equivalent wording", "evidence": [{"claim_id": "claim-B"}]},
+        {},
     )
     review = {
         "proposal_id": second["prp_id"],
         "verdict": "Already represented",
         "reason": "Same observable mechanism",
-        "evidence": ["claim-B"],
+        "evidence": [{"claim_id": "claim-B"}],
         "scores": {"overlap": 10, "observability": 8, "reusability": 4, "decision_value": 2},
         "recommendation": "REJECT",
         "duplicate_of": first["prp_id"],
@@ -1901,6 +1921,7 @@ async def test_scout_review_records_four_scores_and_merges_named_duplicate(servi
         "record_review", review, {"role": "scout", "proposal_id": second["prp_id"]}
     )
     assert result["adversarial_review"]["scores"] == review["scores"] and result["recommendation"] == "REJECT"
+    assert result["adversarial_review"]["evidence"] == ["claim-B"]
     target = await service.repo.get("scout.expansion_proposals", first["prp_id"])
     assert target["occurrences"] == 2 and set(target["evidence"]) == {"claim-A", "claim-B"}
 
@@ -1970,7 +1991,7 @@ async def test_snapshot_vote_end_creates_single_canonical_milestone_after_extrac
     assert len(jobs) == 1
     await service.dispatch(
         "schedule_milestone",
-        {"event_id": event["event_id"], "milestone": "Snapshot vote ends", "due_at": due, "source": "S24"},
+        {"event_id": event["event_id"], "milestone": "Snapshot vote ends", "due_at": due, "source_id": "S24"},
         {},
     )
     assert len(await service.repo.list("ops.jobs", filters={"type": "MILESTONE_CHECK"})) == 1
@@ -2095,8 +2116,8 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
         x.update(
             item_id=item_id,
             statement=quote,
-            tokens=["world:WLD"],
-            entities=[{"name": "World", "entity_id": "world", "role": "SUBJECT"}],
+            token_ids=["world:WLD"],
+            entities=[{"entity_id": "world", "role": "SUBJECT"}],
             public_at={
                 "value": stamp,
                 "precision": "EXACT",
@@ -2114,7 +2135,12 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
         eid = created["event_id"]
         context["event_id"] = eid
         await service.dispatch(
-            "set_assessment", {"event_id": eid, "assessment": unknown_assessment(quote=quote)}, context
+            "set_assessment",
+            {
+                "event_id": eid,
+                "assessment": unknown_assessment(claim=created["accepted_claims"][0]["claim_id"]),
+            },
+            context,
         )
         proof = created["accepted_claims"][0]["claim_id"]
         edge = {
@@ -2141,7 +2167,7 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
         truth = compute_market_truth({"event_id": eid, "token_id": "world:WLD", "cutoff": iso()})
         truth["mta_id"] = new_id("mta")
         await repo.put("ana.market_truth", truth["mta_id"], truth)
-        decision = await service.dispatch("get_decision", {"event_id": eid, "token": "world:WLD"}, context)
+        decision = await service.dispatch("get_decision", {"event_id": eid, "token_id": "world:WLD"}, context)
         assert decision["mta_id"] == truth["mta_id"] and decision["trade_reasons"]
         published = await service.dispatch(
             "publish_card",
@@ -2187,7 +2213,7 @@ async def test_search_and_fetched_evidence_keep_agent_certainty(service, media_t
     x.update(
         item_id=found["items"][0]["item_id"],
         statement=quote,
-        entities=[{"name": "SEC", "entity_id": "sec", "role": "REGULATOR"}],
+        entities=[{"entity_id": "sec", "role": "REGULATOR"}],
     )
     x["public_at"]["value"] = found["items"][0]["observed_at"]
     x["claims"] = [
@@ -2352,7 +2378,7 @@ async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(
                     asyncio.create_task(
                         service.dispatch(
                             "get_market_truth",
-                            {"event_id": eid, "tokens": [tokens[0]], "cutoff": cutoff},
+                            {"event_id": eid, "token_ids": [tokens[0]], "cutoff": cutoff},
                             {"call_id": call},
                         )
                     )
@@ -2378,7 +2404,7 @@ async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(
             second = await asyncio.wait_for(
                 service.dispatch(
                     "get_market_truth",
-                    {"event_id": eid, "tokens": [tokens[0]], "cutoff": cutoff},
+                    {"event_id": eid, "token_ids": [tokens[0]], "cutoff": cutoff},
                     {"call_id": "model-call-two"},
                 ),
                 5,
@@ -2396,7 +2422,7 @@ async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(
             await base.delete("mkt.hot_tokens", hot_key)
             reused = await service.dispatch(
                 "get_market_truth",
-                {"event_id": eid, "tokens": [tokens[0]], "cutoff": cutoff},
+                {"event_id": eid, "token_ids": [tokens[0]], "cutoff": cutoff},
                 {"call_id": "third-call-after-demotion"},
             )
             assert reused["market_truth"][0] == actual
@@ -2406,7 +2432,7 @@ async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(
             later_task = asyncio.create_task(
                 service.dispatch(
                     "get_market_truth",
-                    {"event_id": eid, "tokens": [tokens[0]], "cutoff": later},
+                    {"event_id": eid, "token_ids": [tokens[0]], "cutoff": later},
                     {"call_id": "later-model-call"},
                 )
             )
@@ -2420,7 +2446,7 @@ async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(
             token_task = asyncio.create_task(
                 service.dispatch(
                     "get_market_truth",
-                    {"event_id": eid, "tokens": [tokens[1]], "cutoff": cutoff},
+                    {"event_id": eid, "token_ids": [tokens[1]], "cutoff": cutoff},
                     {"call_id": "other-token-call"},
                 )
             )
@@ -2623,8 +2649,8 @@ async def seed_economic_event(service, *, capture_score=8, negative_relation=Tru
     x.update(
         item_id=item_id,
         statement=quote,
-        tokens=["world:WLD"],
-        entities=[{"name": "World", "entity_id": "world", "role": "ACTOR"}],
+        token_ids=["world:WLD"],
+        entities=[{"entity_id": "world", "role": "ACTOR"}],
         public_at={
             "value": stamp,
             "precision": "EXACT",
@@ -2714,7 +2740,7 @@ async def seed_economic_event(service, *, capture_score=8, negative_relation=Tru
             "evidence": [created["accepted_claims"][1]["claim_id"]],
         },
     )
-    assessment = unknown_assessment(quote=quote)
+    assessment = unknown_assessment(claim=created["accepted_claims"][0]["claim_id"])
     assessment["capture_chains"] = [chain]
     await service.dispatch("set_assessment", {"event_id": created["event_id"], "assessment": assessment}, {})
     return created, relation_quote, {layer: "No further adopted link is established" for layer in LAYERS}
@@ -2755,7 +2781,7 @@ async def test_produced_loser_has_supported_negative_grade_without_long_action(
     assert produced["credible"] is False and produced["thesis_link_credible"] is True
     truth = complete_truth_fixture("loser-" + eid, eid, "world:WLD", iso())
     await service.repo.put("ana.market_truth", truth["mta_id"], truth)
-    decision = await service.dispatch("get_decision", {"event_id": eid, "token": "world:WLD"}, {})
+    decision = await service.dispatch("get_decision", {"event_id": eid, "token_id": "world:WLD"}, {})
     assert decision["thesis_grade"] == expected_grade
 
     assert decision["outlook"]["direction"] == "UNKNOWN"
@@ -2788,7 +2814,7 @@ async def test_loser_cannot_reuse_only_positive_capture_proof(service):
     assert produced["thesis_link_credible"] is False
     truth = complete_truth_fixture("unsupported-loser-" + eid, eid, "world:WLD", iso())
     await service.repo.put("ana.market_truth", truth["mta_id"], truth)
-    assert (await service.dispatch("get_decision", {"event_id": eid, "token": "world:WLD"}, {}))[
+    assert (await service.dispatch("get_decision", {"event_id": eid, "token_id": "world:WLD"}, {}))[
         "thesis_grade"
     ] == "D"
     edge["negative_thesis"] = {
@@ -2840,7 +2866,7 @@ async def test_rejected_approval_only_exits_call_with_explicit_evidenced_depende
             "invalidation_price": "9",
         },
     )
-    before = await service.dispatch("get_decision", {"event_id": eid, "token": "world:WLD"}, {})
+    before = await service.dispatch("get_decision", {"event_id": eid, "token_id": "world:WLD"}, {})
 
     async def rejected(object_text, dependency=None):
         stamp = iso()
@@ -2892,7 +2918,7 @@ async def test_rejected_approval_only_exits_call_with_explicit_evidenced_depende
 
     await rejected("An unrelated SEC motion")
     assert not await service.repo.list("ana.contradictions", filters={"event_id": eid})
-    unrelated = await service.dispatch("get_decision", {"event_id": eid, "token": "world:WLD"}, {})
+    unrelated = await service.dispatch("get_decision", {"event_id": eid, "token_id": "world:WLD"}, {})
     assert unrelated["action"] == before["action"] and unrelated["action"] != "EXIT"
     dependency_id = claims[2]["claim_id"]
     await rejected(
@@ -2902,7 +2928,7 @@ async def test_rejected_approval_only_exits_call_with_explicit_evidenced_depende
     contradictions = await service.repo.list("ana.contradictions", filters={"event_id": eid})
     assert len(contradictions) == 1 and contradictions[0]["type"] == "FATAL"
     assert contradictions[0]["token_id"] == "world:WLD" and dependency_id in contradictions[0]["evidence"]
-    dependent = await service.dispatch("get_decision", {"event_id": eid, "token": "world:WLD"}, {})
+    dependent = await service.dispatch("get_decision", {"event_id": eid, "token_id": "world:WLD"}, {})
     assert dependent["action"] == "EXIT"
 
 
@@ -2910,7 +2936,7 @@ async def test_integration_cap_uses_actual_stage_claim_not_unrelated_counterpart
     from tank.event_tools import LAYERS
 
     x = await seed(service)
-    x["tokens"] = ["world:WLD"]
+    x["token_ids"] = ["world:WLD"]
     x["statement"] = "World route is now live."
     item = await service.repo.get("ingest.source_items", "i")
     item["text"] = "World route is now live. A different counterparty announced an investment."
@@ -2973,7 +2999,7 @@ async def test_magnitude_agent_judgment_is_preserved_with_or_without_ratio_metad
     created, _, _ = await seed_economic_event(service, negative_relation=False)
     eid = created["event_id"]
     proof = created["accepted_claims"][0]["claim_id"]
-    assessment = unknown_assessment(quote="World access approved")
+    assessment = unknown_assessment(claim=created["accepted_claims"][0]["claim_id"])
     assessment["dims"]["magnitude"].update(value=10, rationale="V4 is significant", evidence=[proof])
     out = await service.dispatch("set_assessment", {"event_id": eid, "assessment": assessment}, {})
     stored = await service.repo.get("evt.ems_assessments", out["ems_id"])
@@ -3040,7 +3066,7 @@ async def test_proposed_timing_requires_primary_dated_decision(service):
     eid = created["event_id"]
     event = await service.repo.get("evt.events", eid)
     await service.repo.put("evt.events", eid, {**event, "event_state": "PROPOSED"})
-    assessment = unknown_assessment(quote="World access approved")
+    assessment = unknown_assessment(claim=created["accepted_claims"][0]["claim_id"])
     assessment["impact_horizon"].update(impact_start="DAYS", timing_confidence="HIGH")
     out = await service.dispatch("set_assessment", {"event_id": eid, "assessment": assessment}, {})
     stored = await service.repo.get("evt.ems_assessments", out["ems_id"])
@@ -3098,8 +3124,8 @@ async def test_immediate_market_access_allows_effective_primary_change_without_p
     x.update(
         item_id=item_id,
         statement=quote,
-        tokens=["world:WLD"],
-        entities=[{"name": "World", "entity_id": "world", "role": "ACTOR"}],
+        token_ids=["world:WLD"],
+        entities=[{"entity_id": "world", "role": "ACTOR"}],
         public_at={
             "value": stamp,
             "precision": "EXACT",
@@ -3128,7 +3154,7 @@ async def test_immediate_market_access_allows_effective_primary_change_without_p
         "world-access",
         {"instrument_id": "world-access", "token_id": "world:WLD", "active": True},
     )
-    assessment = unknown_assessment(quote=quote)
+    assessment = unknown_assessment(claim=proof)
     assessment["impact_horizon"].update(
         impact_start="NOW",
         immediate_market_access={
@@ -3190,7 +3216,7 @@ async def test_primary_natural_calendar_and_usd_ratio_dispatch(service):
                 "evidence": [{"item_id": "primary-quote", "quote": quote}],
             },
         )
-    assessment = unknown_assessment(quote="World access approved")
+    assessment = unknown_assessment(claim=created["accepted_claims"][0]["claim_id"])
     assessment["dims"]["magnitude"].update(value=10, evidence=["fees", "revenue"])
     assessment["magnitude_basis"] = {
         "kind": "USAGE_REVENUE",
@@ -3242,7 +3268,7 @@ async def test_event_source_time_provenance_and_milestone_offsets(service):
             "milestone": "Quoted day milestone",
             "due_at": due,
             "due_at_prec": "BUCKET(1d)",
-            "source": "S01",
+            "source_id": "S01",
         },
         {},
     )
@@ -3279,7 +3305,7 @@ async def test_market_analysis_boundary_rejects_collection_clock_precision(servi
             "get_market_truth",
             {
                 "event_id": made["event_id"],
-                "tokens": ["world:WLD"],
+                "token_ids": ["world:WLD"],
                 "cutoff": iso(),
                 "cutoff_prec": "COLLECTION_ONLY",
             },
@@ -3529,8 +3555,8 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
             args.update(
                 item_id=item["item_id"],
                 statement=quote,
-                tokens=["World (WLD)"],
-                entities=[{"name": "SEC", "entity_id": "sec", "role": "REGULATOR"}],
+                token_ids=["world:WLD"],
+                entities=[{"entity_id": "sec", "role": "REGULATOR"}],
                 event_time={"value": stamp, "precision": "EXACT", "quote": quote},
                 public_at={
                     "value": stamp,
@@ -3553,8 +3579,6 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
                 }
             ]
             args.pop("item_id")
-            for entity in args["entities"]:
-                entity.pop("entity_id", None)
             await native.tool(session, {"id": "native-record", "name": "record_event", "input": args})
             ledger = await repo.get("ops.tool_calls", sid + ":native-record")
             if not resolved_snapshot:
@@ -3570,7 +3594,11 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
                     {
                         "id": "native-assessment",
                         "name": "set_assessment",
-                        "input": {"assessment": unknown_assessment(quote=quote)},
+                        "input": {
+                            "assessment": unknown_assessment(
+                                claim=ledger["result"]["accepted_claims"][0]["claim_id"]
+                            )
+                        },
                     },
                 )
                 assessed = await repo.get("ops.tool_calls", sid + ":native-assessment")
@@ -3717,7 +3745,7 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
         async def tool(call_id, name, args):
             from model_fixture import model_arguments
 
-            args = await model_arguments(service.repo, service.settings, name, args)
+            args = model_arguments(name, args)
             await resumed.process_event(
                 sid, {"id": call_id, "type": "agent.custom_tool_use", "name": name, "input": args}
             )
@@ -3729,8 +3757,8 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
         x.update(
             item_id=iid,
             statement=approved,
-            tokens=["world:WLD"],
-            entities=[{"name": "World", "entity_id": "world", "role": "ACTOR"}],
+            token_ids=["world:WLD"],
+            entities=[{"entity_id": "world", "role": "ACTOR"}],
             public_at={
                 "value": stamp,
                 "precision": "EXACT",
@@ -3809,7 +3837,7 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
                     "evidence": [created["accepted_claims"][1]["claim_id"]],
                 },
             )
-            assessment = unknown_assessment(quote=approved)
+            assessment = unknown_assessment(claim=created["accepted_claims"][0]["claim_id"])
             assessment["capture_chains"] = [chain]
             await tool("assessment", "set_assessment", {"event_id": eid, "assessment": assessment})
             await tool(
@@ -3872,7 +3900,7 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
                 tool(
                     "market-truth",
                     "get_market_truth",
-                    {"event_id": eid, "tokens": ["world:WLD"], "cutoff": iso(), "cutoff_prec": "EXACT"},
+                    {"event_id": eid, "token_ids": ["world:WLD"], "cutoff": iso(), "cutoff_prec": "EXACT"},
                 )
             )
             market_worker = asyncio.create_task(settle_owned_missing_input_jobs())
@@ -3891,7 +3919,7 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
                 receipt["native_turn_message_id"]
                 == (await service.repo.get("ops.agent_sessions", sid))["active_message_id"]
             )
-            decision = await tool("decision", "get_decision", {"event_id": eid, "token": "world:WLD"})
+            decision = await tool("decision", "get_decision", {"event_id": eid, "token_id": "world:WLD"})
             assert decision["action"] == "WAIT" and decision["outlook"]["direction"] == "UNKNOWN"
             card = await tool(
                 "card",
@@ -4028,9 +4056,9 @@ async def test_trusted_reference_clock_changes_logical_age_only(service, tmp_pat
     assert [entry["item_id"] for entry in found["items"]] == ["i"]
     assert found["items"][0] == view
     assert not (await service.dispatch("search_tank_items", {"query": "Product", "days": 1}, {}))["items"]
-    assert not (await reference.dispatch("search_tank_items", {"query": "Product", "sources": ["S99"]}, {}))[
-        "items"
-    ]
+    assert not (
+        await reference.dispatch("search_tank_items", {"query": "Product", "source_ids": ["S99"]}, {})
+    )["items"]
     assert await service.repo.get("ingest.source_items", "i") == stored_before
     monkeypatch.setattr("tank.event_tools.utcnow", lambda: parse_time(logical) - timedelta(seconds=1))
     assert not (await reference.dispatch("search_tank_items", {"query": "Product"}, {}))["items"]
@@ -4086,7 +4114,7 @@ async def test_trusted_reference_clock_changes_logical_age_only(service, tmp_pat
 async def test_quoted_proposal_requires_explicit_stage_claim_not_fact_keyword(service, explicit_stage):
     quote = "The Securities and Exchange Commission is proposing new custody rules."
     x = extraction()
-    x.update(statement="SEC proposes new custody rules", tokens=[], entities=[])
+    x.update(statement="SEC proposes new custody rules", token_ids=[], entities=[])
     x["claims"] = [
         dict(
             verified=True,
@@ -4130,8 +4158,8 @@ async def test_primary_event_fact_certainty_allows_neutral_paraphrase(service, p
     await service.repo.put("ingest.source_items", "i", item)
     x.update(
         statement="SEC approved the application." if paraphrase else quote,
-        entities=[{"name": "SEC", "entity_id": "sec", "role": "REGULATOR"}],
-        tokens=[],
+        entities=[{"entity_id": "sec", "role": "REGULATOR"}],
+        token_ids=[],
     )
     x["claims"] = [
         dict(
@@ -4166,10 +4194,10 @@ async def test_primary_selection_paraphrase_preserves_fact_certainty(service):
     x.update(
         statement="The Clearing House selected Quant for its planned On-Chain Money Initiative.",
         entities=[
-            {"name": "The Clearing House", "entity_id": "the-clearing-house", "role": "ACTOR"},
-            {"name": "Quant", "entity_id": "quant", "role": "COUNTERPARTY"},
+            {"entity_id": "the-clearing-house", "role": "ACTOR"},
+            {"entity_id": "quant", "role": "COUNTERPARTY"},
         ],
-        tokens=["quant:QNT"],
+        token_ids=["quant:QNT"],
     )
     x["claims"] = [
         dict(
@@ -4206,7 +4234,7 @@ async def test_primary_fact_scope_uses_declared_identity_not_word_overlap(servic
     item = await service.repo.get("ingest.source_items", "i")
     item["text"] = quote
     await service.repo.put("ingest.source_items", "i", item)
-    x.update(statement=name + " plans to launch a product.", entities=entities, tokens=tokens)
+    x.update(statement=name + " plans to launch a product.", entities=entities, token_ids=tokens)
     x["claims"] = [
         dict(
             verified=True,
@@ -4233,7 +4261,7 @@ async def test_event_certainty_is_not_host_semantic_scope_judgment(service, fail
     if failure == "secondary_source":
         item.update(source_id="S33", source_class="SECONDARY", author="CoinDesk")
     await service.repo.put("ingest.source_items", "i", item)
-    x.update(statement=quote, entities=[{"name": "SEC", "entity_id": "sec", "role": "REGULATOR"}], tokens=[])
+    x.update(statement=quote, entities=[{"entity_id": "sec", "role": "REGULATOR"}], token_ids=[])
     subject = "World" if failure == "other_entity" else ("" if failure == "empty_subject" else "SEC")
     x["claims"] = [
         dict(
@@ -4261,7 +4289,7 @@ async def test_explicit_agent_corroboration_updates_certainty(service):
     await service.repo.put("ingest.source_items", "i", item)
     x.update(
         statement="World approved a new product.",
-        entities=[{"name": "World", "entity_id": "world", "role": "ACTOR"}],
+        entities=[{"entity_id": "world", "role": "ACTOR"}],
     )
     x["claims"] = [
         dict(
@@ -4338,8 +4366,8 @@ async def test_immediate_access_uses_agent_structured_fact_and_effective_time(se
     x.update(
         item_id=item_id,
         statement=quote if case == "verbatim" else "World approved access to its instrument.",
-        tokens=["world:WLD"],
-        entities=[{"name": "World", "entity_id": "world", "role": "ACTOR"}],
+        token_ids=["world:WLD"],
+        entities=[{"entity_id": "world", "role": "ACTOR"}],
         public_at={
             "value": stamp,
             "precision": "EXACT",
@@ -4387,7 +4415,7 @@ async def test_immediate_access_uses_agent_structured_fact_and_effective_time(se
             active=case != "inactive_instrument",
         ),
     )
-    assessment = unknown_assessment(quote=quote)
+    assessment = unknown_assessment(claim=proof)
     assessment["impact_horizon"].update(
         impact_start="NOW",
         immediate_market_access={
@@ -4815,33 +4843,40 @@ async def test_each_layer_needs_agent_reason_when_primary_does_not_supply_a_seco
         assert result["no_credible_secondary_reason"] is None
 
 
-async def test_tokens_and_entities_resolve_to_registry_ids(service):
-    """W5 (03 §2.11, V3): tickers, $TICKER and registered aliases resolve to the
-    token id the universe check and routing use; other names stay UNRESOLVED."""
+async def test_registry_ids_pass_and_only_names_outside_the_registry_stay_unresolved(service):
+    """W5 (03 §2.11, V3): entities and tokens are named by registry ID; a name is kept,
+    UNRESOLVED, only when the registry does not resolve it, and a registered name is refused."""
     from tank.event_tools import resolve_entity, resolve_token
 
     registry = service.settings.load_config("registry")
     assert resolve_token(registry, "UNI") == "uniswap:UNI"
     assert resolve_token(registry, "$uni") == "uniswap:UNI"
     assert resolve_token(registry, "Uniswap Labs") == "uniswap:UNI"
-    assert resolve_token(registry, "uniswap:UNI") == "uniswap:UNI"
-    assert resolve_token(registry, "litentry:LIT") == "litentry:LIT"
     assert resolve_token(registry, "Lighter") == "UNRESOLVED:Lighter"
     assert resolve_token(registry, "Lighter", context="Lighter (LIT) lists") == "lighter:LIT"
     assert resolve_token(registry, "Foo") == "UNRESOLVED:Foo"
     assert resolve_entity(registry, "Plasma") == "UNRESOLVED:Plasma"
     assert resolve_entity(registry, "Plasma", context="XPL") == "plasma"
     assert resolve_entity(registry, "Ava Labs") == "avalanche"
-    assert resolve_entity(registry, "", None) == "UNRESOLVED:"
     x = await seed(service)
     x.update(
-        tokens=["UNI", "$UNI", "Foo"],
-        entities=[{"name": "Uniswap Labs", "entity_id": None, "role": "ACTOR"}],
+        token_ids=["uniswap:UNI"],
+        token_names=["Foo"],
+        entities=[
+            {"entity_id": "uniswap", "role": "ACTOR"},
+            {"name": "Northstar Lab", "role": "COUNTERPARTY"},
+        ],
     )
     eid = (await service.dispatch("record_event", x, {}))["event_id"]
     event = await service.repo.get("evt.events", eid)
     assert event["tokens_mentioned"] == ["uniswap:UNI", "UNRESOLVED:Foo"]
-    assert event["entities"] == [{"entity_id": "uniswap", "role": "ACTOR"}]
+    assert event["entities"] == [
+        {"entity_id": "uniswap", "role": "ACTOR"},
+        {"entity_id": "UNRESOLVED:Northstar Lab", "role": "COUNTERPARTY"},
+    ]
+    for names in ({"token_names": ["$UNI"]}, {"entities": [{"name": "Uniswap Labs", "role": "ACTOR"}]}):
+        with pytest.raises(ValueError, match="is the registry (token|entity)"):
+            await service.dispatch("record_event", {**x, **names}, {})
 
 
 async def test_least_repriced_ranks_all_credible_tokens_on_partial_refresh(service, truth_job_enqueued):
@@ -4887,7 +4922,9 @@ async def test_least_repriced_ranks_all_credible_tokens_on_partial_refresh(servi
     earlier = iso(utcnow() - timedelta(minutes=5))
     await service.repo.put("ana.market_truth", "mta-B", truth("B", "UNPRICED", 0.2, earlier))
     fresh = truth("A", "HEAVY", 0.9, iso())
-    task = asyncio.create_task(service.dispatch("get_market_truth", {"event_id": eid, "tokens": ["A"]}, {}))
+    task = asyncio.create_task(
+        service.dispatch("get_market_truth", {"event_id": eid, "token_ids": ["A"]}, {})
+    )
     try:
         async with asyncio.timeout(2):
             await truth_job_enqueued.wait()
@@ -4913,14 +4950,21 @@ async def test_list_open_events_skips_events_whose_session_failed(service):
     never sees it as open and never merges later news into it."""
     for eid, status in [("live-event", "OPEN"), ("failed-event", "FAILED")]:
         await service.repo.put(
-            "evt.events", eid, {"event_id": eid, "lifecycle": "ANALYZING", "statement": "World news"}
+            "evt.events",
+            eid,
+            {
+                "event_id": eid,
+                "lifecycle": "ANALYZING",
+                "statement": "World news",
+                "entities": [{"entity_id": "world", "role": "SUBJECT"}],
+            },
         )
         await service.repo.put(
             "ops.agent_sessions",
             "session-" + eid,
             {"session_id": "session-" + eid, "event_id": eid, "status": status},
         )
-    listed = await service.dispatch("list_open_events", {"entity_or_token": "world"}, {})
+    listed = await service.dispatch("list_open_events", {"entity_id": "world"}, {})
     assert [row["event_id"] for row in listed["events"]] == ["live-event"]
 
 
@@ -4940,7 +4984,7 @@ async def test_token_facts_show_unlocks_before_the_cutoff_and_nothing_after(serv
         await service.repo.put(
             "mkt.unlocks", "layerzero:ZRO:" + label, {"token_id": "layerzero:ZRO", "label": label, **row}
         )
-    facts = await service.dispatch("get_token_facts", {"token": "layerzero:ZRO"}, {})
+    facts = await service.dispatch("get_token_facts", {"token_id": "layerzero:ZRO"}, {})
     assert [(u["label"], u["relative_to_cutoff"]) for u in facts["unlocks"]] == [
         ("past", "PAST"),
         ("next", "UPCOMING"),
@@ -4972,7 +5016,7 @@ def test_schema_refusal_names_allowed_cutoff_precisions():
             / "config/skills/tank-event-analyst/get_market_truth.schema.json"
         ).read_text()
     )
-    args = {"tokens": ["T"], "cutoff": "2026-10-20T19:07:00Z"}
+    args = {"token_ids": ["T"], "cutoff": "2026-10-20T19:07:00Z"}
     validate_schema(dict(args, cutoff_prec="BUCKET(1m)"), schema)
     validate_schema(dict(args, cutoff_prec="EXACT"), schema)
     with pytest.raises(ValueError) as refused:
@@ -4984,24 +5028,15 @@ def test_schema_refusal_names_allowed_cutoff_precisions():
     )
 
 
-async def test_token_tools_resolve_tickers_and_refuse_unknown_names_explicitly(service):
-    """E2E msg 15/16: get_decision("BTC") must reach bitcoin:BTC, and an
-    unknown name gets an error that states the expected form."""
-    resolved = service.resolve_token_arguments("get_decision", {"event_id": "e", "token": "BTC"})
-    assert resolved["token"] == "bitcoin:BTC"
-    many = service.resolve_token_arguments(
-        "get_market_truth", {"event_id": "e", "tokens": ["$WLD", "uniswap:UNI"]}
-    )
-    assert many["tokens"] == ["world:WLD", "uniswap:UNI"]
-    assert service.resolve_token_arguments("get_token_facts", {"token": "Bitcoinz"}) == {"token": "Bitcoinz"}
-    assert service.resolve_token_arguments("get_event", {"event_id": "e"}) == {"event_id": "e"}
+async def test_decision_for_a_token_outside_the_analysis_set_names_the_set(service):
+    """E2E msg 15/16: a token_id outside the analysis set gets an error that names the set."""
     await service.repo.put("evt.events", "e", {"event_id": "e", "current_ems_id": "ems"})
     await service.repo.put("evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": "e", "class": "MAJOR"})
     await service.repo.put(
         "evt.beneficiary_maps", "e:1", {"event_id": "e", "map_version": 1, "analysis_set": ["bitcoin:BTC"]}
     )
     with pytest.raises(ValueError, match=r"'Bitcoinz'.*analysis set: \['bitcoin:BTC'\]"):
-        await service.dispatch("get_decision", {"event_id": "e", "token": "Bitcoinz"}, {})
+        await service.dispatch("get_decision", {"event_id": "e", "token_id": "Bitcoinz"}, {})
 
 
 def test_publish_card_schema_bounds_agent_text():
@@ -5070,7 +5105,7 @@ async def test_token_facts_for_btc_fit_the_context(service):
                 protocols={"bitcoin": {"dailyFees": dict(daily, source_url="https://api.llama.fi/x")}},
             )
         await service.repo.put("mkt.supply_obs", f"btc:{n}", row)
-    facts = await service.dispatch("get_token_facts", {"token": "BTC"}, {})
+    facts = await service.dispatch("get_token_facts", {"token_id": "bitcoin:BTC"}, {})
     size = len(canonical_json(facts).encode())
     assert size < TOOL_RESULT_MAX_BYTES, size
     kinds = [row["kind"] for row in facts["supply_obs"]]
@@ -5099,13 +5134,14 @@ async def test_read_tool_results_are_bounded_and_say_so(service):
             "event_id": "open",
             "lifecycle": "ANALYZING",
             "statement": "World news",
+            "tokens_mentioned": ["world:WLD"],
             "claims_blob": "z" * 50_000,
         },
     )
     await service.repo.put(
         "ops.agent_sessions", "s1", {"session_id": "s1", "event_id": "open", "status": "OPEN"}
     )
-    listed = await service.dispatch("list_open_events", {"entity_or_token": "world"}, {})
+    listed = await service.dispatch("list_open_events", {"entity_id": "world"}, {})
     event = listed["events"][0]
     assert "claims_blob" not in event and event["sessions"] == [{"session_id": "s1", "status": "OPEN"}]
 
@@ -5132,7 +5168,7 @@ async def test_daily_vesting_unlocks_stay_visible_around_the_cutoff(service, mon
                     "observed_at": iso(now - timedelta(days=40)),
                 },
             )
-    facts = await service.dispatch("get_token_facts", {"token": "ethena:ENA"}, {})
+    facts = await service.dispatch("get_token_facts", {"token_id": "ethena:ENA"}, {})
     assert len(canonical_json(facts).encode()) < 40_000
     summary = facts["unlock_summary"]
     assert summary["count"] == 4 * 430 and summary["window_days"] == 14
@@ -5177,7 +5213,7 @@ async def test_token_facts_give_the_covered_daily_volume(service):
         await service.repo.put(
             "mkt.tickers_24h", iid + ":t", {"instrument_id": iid, "token_id": "bitcoin:BTC", **row}
         )
-    facts = await service.dispatch("get_token_facts", {"token": "BTC"}, {})
+    facts = await service.dispatch("get_token_facts", {"token_id": "bitcoin:BTC"}, {})
     volume = facts["covered_daily_volume"]
 
     assert volume["total_native"] == "20500.5" and volume["total_usd"] == "1500000000"
@@ -5252,7 +5288,7 @@ async def test_named_cutoff_precisions_are_accepted_as_buckets(service, truth_jo
         ).read_text()
     )
     for name in ("SECOND", "MINUTE", "HOUR"):
-        validate_schema({"tokens": ["T"], "cutoff": "2026-10-21T05:05:00Z", "cutoff_prec": name}, schema)
+        validate_schema({"token_ids": ["T"], "cutoff": "2026-10-21T05:05:00Z", "cutoff_prec": name}, schema)
     eid = "named-prec"
     await service.repo.put(
         "evt.events", eid, {"event_id": eid, "current_ems_id": "ems", "tokens_mentioned": ["T"]}
@@ -5264,7 +5300,7 @@ async def test_named_cutoff_precisions_are_accepted_as_buckets(service, truth_jo
     task = asyncio.create_task(
         service.dispatch(
             "get_market_truth",
-            {"event_id": eid, "tokens": ["T"], "cutoff": "2026-10-21T05:05:00Z", "cutoff_prec": "MINUTE"},
+            {"event_id": eid, "token_ids": ["T"], "cutoff": "2026-10-21T05:05:00Z", "cutoff_prec": "MINUTE"},
             {},
         )
     )

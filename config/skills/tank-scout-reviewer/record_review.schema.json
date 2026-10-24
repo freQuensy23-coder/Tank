@@ -12,125 +12,46 @@
     },
     "evidence": {
       "type": "array",
+      "description": "Each entry cites one stored record by its ID: {claim_id} for a claim, {event_id} for an event or {item_id} for a source document; find them with read-only SQL (your skill, \u00abFinding record IDs\u00bb).",
       "items": {
-        "oneOf": [
+        "anyOf": [
           {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "quote": {
-                "type": "string"
-              },
-              "subject": {
-                "type": "string"
-              },
-              "predicate": {
-                "type": "string"
-              },
-              "object": {
-                "type": "string"
-              },
-              "sources": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "url": {
-                      "type": "string"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "observed_at": {
-                      "type": "string"
-                    },
-                    "excerpt": {
-                      "type": "string"
-                    }
-                  },
-                  "anyOf": [
-                    {
-                      "required": [
-                        "url"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "title",
-                        "observed_at"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "excerpt",
-                        "observed_at"
-                      ]
-                    }
-                  ]
-                }
-              },
-              "verified": {
-                "type": "boolean"
-              },
-              "stage": {
-                "type": "string"
+              "claim_id": {
+                "type": "string",
+                "description": "Claim ID (CLM-\u2026)."
               }
             },
             "required": [
-              "quote"
+              "claim_id"
             ]
           },
           {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "statement": {
-                "type": "string"
-              },
-              "public_at": {
-                "type": "string"
+              "event_id": {
+                "type": "string",
+                "description": "Event ID (EVT-\u2026)."
               }
             },
             "required": [
-              "statement"
+              "event_id"
             ]
           },
           {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "url": {
-                "type": "string"
-              },
-              "title": {
-                "type": "string"
-              },
-              "observed_at": {
-                "type": "string"
-              },
-              "excerpt": {
-                "type": "string"
+              "item_id": {
+                "type": "string",
+                "description": "Source document ID (ITM-\u2026 or web-\u2026)."
               }
             },
-            "anyOf": [
-              {
-                "required": [
-                  "url"
-                ]
-              },
-              {
-                "required": [
-                  "title",
-                  "observed_at"
-                ]
-              },
-              {
-                "required": [
-                  "excerpt",
-                  "observed_at"
-                ]
-              }
+            "required": [
+              "item_id"
             ]
           }
         ]
@@ -177,23 +98,11 @@
       ]
     },
     "duplicate_of": {
-      "anyOf": [
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "subject": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "subject"
-          ]
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Proposal ID (PRP-\u2026) of the earlier open proposal of the same concept, or null; find it with read-only SQL (your skill, \u00abFinding record IDs\u00bb), \u00abProposals by subject\u00bb."
     }
   },
   "required": [
@@ -203,5 +112,5 @@
     "scores",
     "recommendation"
   ],
-  "description": "Record the current proposal review with scores, evidence, verdict and reason. Select an optional duplicate by its displayed subject."
+  "description": "Record the adversarial review of the current proposal: verdict, reason, the four 0\u201310 scores and the recommendation. Cite stored claims, events or source documents by ID as evidence, and name an earlier open proposal of the same concept in duplicate_of by its proposal ID. The host binds the current proposal."
 }

@@ -110,7 +110,7 @@ async def seed(repo):
         "certainty": "MEDIUM",
         "certainty_reason": "Fixture",
         "entities": [],
-        "tokens": [],
+        "token_ids": [],
         "event_time": {"value": None, "precision": "UNKNOWN", "quote": None},
         "public_at": {"value": at, "precision": "EXACT", "basis": "Fixture", "quote": None},
         "freshness": "FRESH",

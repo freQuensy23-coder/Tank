@@ -189,12 +189,11 @@ async def test_builtin_toolset_drift_in_openma_is_corrected(tmp_path):
     fake = FakeOpenMA(settings)
     await run(settings, fake)
     analyst = fake.agents[CONFIG["agent_id"]]
-    for row in analyst["tools"][0]["configs"]:
-        if row["name"] == "browser":
-            row["enabled"] = not row["enabled"]
+    analyst["tools"][0]["configs"] = [{"name": "browser", "enabled": False}]
     report = await run(settings, fake)
     assert report["agents"]["tank-event-analyst"].startswith("VERSION")
-    assert next(r for r in analyst["tools"][0]["configs"] if r["name"] == "browser")["enabled"] is True
+    assert analyst["tools"][0]["default_config"] == {"enabled": True}
+    assert [(r["name"], r["enabled"]) for r in analyst["tools"][0]["configs"]] == [("browser", True)]
 
 
 async def test_a_skill_missing_from_its_agent_is_created(tmp_path):

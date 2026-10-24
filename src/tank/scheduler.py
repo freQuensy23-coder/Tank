@@ -238,15 +238,25 @@ class Scheduler:
                 filters={"event_id": event["event_id"], "kind": "REACTION_CAPTURE_GAP"},
             )
         }
-        jobs = {
-            row["idem_key"]: row
-            async for row in self.repo.iter_metadata(
-                "ops.jobs",
-                ["job_id", "idem_key", "status", "expires_at", "expires_at_prec", "expires_at_prec_reason"],
-                filters={"type": "REACTION_CAPTURE"},
-            )
-            if row["idem_key"].startswith(event["event_id"] + ":")
-        }
+
+        async def capture_job(key):
+            rows = [
+                row
+                async for row in self.repo.iter_metadata(
+                    "ops.jobs",
+                    [
+                        "job_id",
+                        "idem_key",
+                        "status",
+                        "expires_at",
+                        "expires_at_prec",
+                        "expires_at_prec_reason",
+                    ],
+                    filters={"type": "REACTION_CAPTURE", "idem_key": key},
+                )
+            ]
+            return rows[0] if rows else None
+
         for token in sorted(tokens):
             missing_pre = []
             for label, offset in CHECKPOINTS.items():
@@ -266,7 +276,7 @@ class Scheduler:
                 due_stamp = offset_schedule(anchor_stamp, timedelta(seconds=offset))
                 due = parse_time(due_stamp.value)
                 key = f"{event['event_id']}:{token}:{label}"
-                job = jobs.get(key)
+                job = await capture_job(key)
                 run_stamp = due_stamp if due >= now else collection_clock(now)
                 expiry_stamp = (
                     propagate_timestamp(job, "expires_at")

@@ -52,12 +52,17 @@ def test_stage_claim_contract_is_closed_synced_and_preserves_unknown(name):
 def test_rejection_contract_requires_a_concrete_reason(reason, public):
     from test_event_tools import extraction
 
-    directory = DIRECTORY if public else DIRECTORY.parents[1] / "tool_contracts"
-    schema = json.loads((directory / "record_event.schema.json").read_text())
+    from tank.event_tools import domain_schema
+    from tank.settings import Settings
+
+    schema = (
+        json.loads((DIRECTORY / "record_event.schema.json").read_text())
+        if public
+        else domain_schema(Settings(_env_file=None), "record_event")
+    )
     value = extraction()
     if public:
         value.pop("item_id")
-        value["tokens"] = ["World (WLD)"]
     validate_schema(value, schema)
     value["is_event"] = False
     if reason is not None:

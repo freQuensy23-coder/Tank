@@ -52,7 +52,7 @@ async def test_observation_and_source_completion_are_atomic(
                 certainty="MEDIUM",
                 certainty_reason="Synthetic fixture",
                 entities=[],
-                tokens=[],
+                token_ids=[],
                 event_time=dict(value=None, precision="UNKNOWN", quote=None),
                 public_at=public_at,
                 freshness="FRESH",

@@ -235,7 +235,7 @@ async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_pa
         ("ana.market_truth", truth["mta_id"], truth),
     ]:
         await repo.put(table, key, row)
-    decision = await tools.dispatch("get_decision", {"event_id": eid, "token": "T"}, {})
+    decision = await tools.dispatch("get_decision", {"event_id": eid, "token_id": "T"}, {})
     published = await tools.dispatch(
         "publish_card",
         {

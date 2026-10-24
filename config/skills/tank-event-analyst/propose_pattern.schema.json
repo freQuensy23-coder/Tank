@@ -12,125 +12,46 @@
     },
     "evidence": {
       "type": "array",
+      "description": "Each entry cites one stored record by its ID: {claim_id} for a claim, {event_id} for an event or {item_id} for a source document; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb).",
       "items": {
-        "oneOf": [
+        "anyOf": [
           {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "quote": {
-                "type": "string"
-              },
-              "subject": {
-                "type": "string"
-              },
-              "predicate": {
-                "type": "string"
-              },
-              "object": {
-                "type": "string"
-              },
-              "sources": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "url": {
-                      "type": "string"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "observed_at": {
-                      "type": "string"
-                    },
-                    "excerpt": {
-                      "type": "string"
-                    }
-                  },
-                  "anyOf": [
-                    {
-                      "required": [
-                        "url"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "title",
-                        "observed_at"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "excerpt",
-                        "observed_at"
-                      ]
-                    }
-                  ]
-                }
-              },
-              "verified": {
-                "type": "boolean"
-              },
-              "stage": {
-                "type": "string"
+              "claim_id": {
+                "type": "string",
+                "description": "Claim ID (CLM-\u2026)."
               }
             },
             "required": [
-              "quote"
+              "claim_id"
             ]
           },
           {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "statement": {
-                "type": "string"
-              },
-              "public_at": {
-                "type": "string"
+              "event_id": {
+                "type": "string",
+                "description": "Event ID (EVT-\u2026)."
               }
             },
             "required": [
-              "statement"
+              "event_id"
             ]
           },
           {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "url": {
-                "type": "string"
-              },
-              "title": {
-                "type": "string"
-              },
-              "observed_at": {
-                "type": "string"
-              },
-              "excerpt": {
-                "type": "string"
+              "item_id": {
+                "type": "string",
+                "description": "Source document ID (ITM-\u2026 or web-\u2026)."
               }
             },
-            "anyOf": [
-              {
-                "required": [
-                  "url"
-                ]
-              },
-              {
-                "required": [
-                  "title",
-                  "observed_at"
-                ]
-              },
-              {
-                "required": [
-                  "excerpt",
-                  "observed_at"
-                ]
-              }
+            "required": [
+              "item_id"
             ]
           }
         ]
@@ -142,5 +63,5 @@
     "subject",
     "evidence"
   ],
-  "description": "Propose a reusable pattern with displayed claims or source documents as evidence. Returns its subject and review status."
+  "description": "Propose a reusable pattern for adversarial scout review, citing stored claims, events or source documents by ID as evidence. Returns its subject and review status."
 }

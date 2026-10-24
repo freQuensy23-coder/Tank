@@ -38,7 +38,7 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
         session, args = await seed(repo)
         session["message_log"][0]["body"] = {"type": "user.message", "content": []}
         await repo.put("ops.agent_sessions", "s", session)
-        args["tokens"] = ["world:WLD"]
+        args["token_ids"] = ["world:WLD"]
         args["claims"] = extraction()["claims"]
         tools = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
         requests, posts, accepted = [], [], []
@@ -76,7 +76,9 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
 
             async def emit(tool, arguments):
                 arguments = {
-                    key: value for key, value in arguments.items() if key not in {"event_id", "item_id"}
+                    key: value
+                    for key, value in arguments.items()
+                    if key not in {"event_id", "item_id"} or tool == "merge_into"
                 }
                 nonlocal count
                 count += 1
@@ -144,16 +146,7 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
                 eid = origin["result"].get("event_id")
                 if case == "merge":
                     target = await seed_other("target")
-                    from tank.agents.context import ModelContext
-
-                    target_event = await repo.get("evt.events", target["event_id"])
-                    target_event["statement"] = "Separate target event"
-                    await repo.put("evt.events", target["event_id"], target_event)
-                    current = await repo.get("ops.agent_sessions", "s")
-                    await ModelContext(repo, tools.settings, current).result(
-                        "list_open_events", {"events": [target_event]}
-                    )
-                    await emit("merge_into", {"event": {"statement": "Separate target event"}})
+                    await emit("merge_into", {"event_id": target["event_id"]})
                 if case in {"LOW", "MATERIAL", "wrong_event", "bad_class", "cache_revision"}:
                     assessment = await emit(
                         "set_assessment",

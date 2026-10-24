@@ -100,7 +100,7 @@ async def test_explicit_replay_session_boundaries(tmp_path, monkeypatch, second_
                     "certainty": "HIGH",
                     "certainty_reason": "Synthetic actor",
                     "entities": [],
-                    "tokens": [],
+                    "token_ids": [],
                     "event_time": stamp,
                     "public_at": {**stamp, "basis": "Synthetic input"},
                     "freshness": "FRESH",

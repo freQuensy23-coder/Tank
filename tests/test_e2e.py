@@ -313,7 +313,10 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
         "exchange_addresses": {"version": "synthetic-fixture", "wallet_lists": []},
         "registry": {
             "tokens": [{"token_id": "T", "symbol": "T"}],
-            "entities": [],
+            "entities": [
+                {"entity_id": "binance", "name": "Binance"},
+                {"entity_id": "synthetic-venue", "name": "Synthetic venue"},
+            ],
             "instruments": [{"instrument_id": "mock:spot:T", "token_id": "T"}],
         },
         "thresholds": _fixture_thresholds(),
@@ -516,12 +519,9 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                             },
                         }
                     ]
-                from tank.agents.context import ModelContext
+                from model_fixture import model_arguments
 
-                boundary = ModelContext(repo, settings, await repo.get("ops.agent_sessions", sid))
-                model_args = await boundary.project(args)
-                model_args.pop("document", None)
-                await boundary.save()
+                model_args = model_arguments(name, args)
                 count += 1
                 call_id = f"{sid}-full-{count}"
                 active[:] = [
@@ -574,7 +574,7 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                         "certainty": "HIGH",
                         "certainty_reason": "Synthetic primary capture",
                         "entities": [],
-                        "tokens": ["T"],
+                        "token_ids": ["T"],
                         "event_time": {
                             "value": iso(
                                 __import__("datetime").datetime.fromisoformat(now)
@@ -629,8 +629,8 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                     "assessment": {
                         "class": "MAJOR",
                         "criterion": "M1",
-                        "criterion_venue": "binance",
-                        "criterion_quote": text,
+                        "criterion_venue_id": "binance",
+                        "criterion_claim_id": claim,
                         "dims": dims,
                         "impact_horizon": {
                             "impact_start": "UNKNOWN",
@@ -664,7 +664,7 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                     "layer_reasons": {layer: "No other synthetic evidence" for layer in LAYERS},
                 },
             )
-            mt = await invoke("get_market_truth", {"event_id": eid, "tokens": ["T"]})
+            mt = await invoke("get_market_truth", {"event_id": eid, "token_ids": ["T"]})
             assert mt["market_truth"][0]["move_class"] == (
                 "SPOT_LED_ACCUMULATION" if complete_market else "UNKNOWN"
             ), mt
@@ -675,7 +675,7 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                 assert any(
                     "EVENT" in fact and "NATIVE_TOKEN" in fact for fact in persisted_truth["decisive_facts"]
                 )
-            decision = await invoke("get_decision", {"event_id": eid, "token": "T"})
+            decision = await invoke("get_decision", {"event_id": eid, "token_id": "T"})
             assert decision["action"] == ("START" if complete_market else "WAIT"), decision
             what = "Binance approved listing T, allowing the exchange to add trading access for this token."
             published = await invoke(
@@ -751,7 +751,6 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                     {
                         "certainty_reason": "Synthetic agent confirms the official denial",
                         "event_id": eid,
-                        "item_id": denial_item["item_id"],
                         "link": "DENIAL",
                         "certainty": "HIGH",
                         "public_at": {
@@ -776,7 +775,7 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                         ],
                     },
                 )
-                exited = await invoke("get_decision", {"event_id": eid, "token": "T"})
+                exited = await invoke("get_decision", {"event_id": eid, "token_id": "T"})
                 assert exited["action"] == "EXIT", exited
                 correction_what = "Binance cancelled the listing of T, withdrawing the planned access to trading on its exchange."
                 correction = await invoke(
@@ -872,7 +871,10 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
         "exchange_addresses": {"version": "synthetic-fixture", "wallet_lists": []},
         "registry": {
             "tokens": [{"token_id": "T", "symbol": "T"}],
-            "entities": [],
+            "entities": [
+                {"entity_id": "binance", "name": "Binance"},
+                {"entity_id": "synthetic-venue", "name": "Synthetic venue"},
+            ],
             "instruments": [{"instrument_id": "mock:spot:T", "token_id": "T"}],
         },
         "thresholds": _fixture_thresholds(),
@@ -1006,7 +1008,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                         "certainty": "HIGH",
                         "certainty_reason": "Synthetic primary source capture",
                         "entities": [],
-                        "tokens": ["T"],
+                        "token_ids": ["T"],
                         "event_time": {"value": timestamp, "precision": "EXACT", "quote": text},
                         "public_at": {
                             "value": timestamp,
@@ -1035,8 +1037,10 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
             elif event["type"] == "user.custom_tool_result":
                 result = json.loads(event["content"][0]["text"])
                 if stage == 1:
-                    assert "event_id" not in result
-                    state["claim"] = result["accepted_claims"][0]["claim"]
+                    assert "event_id" not in result and "claim_id" not in json.dumps(result)
+                    state["claim"] = next(
+                        row["claim_id"] for row in await repo.list("evt.claims") if row.get("quote") == text
+                    )
                     dims = {
                         name: {
                             "value": None,
@@ -1060,8 +1064,8 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                             "assessment": {
                                 "class": "MAJOR",
                                 "criterion": "M1",
-                                "criterion_venue": "binance",
-                                "criterion_quote": text,
+                                "criterion_venue_id": "binance",
+                                "criterion_claim_id": state["claim"],
                                 "dims": dims,
                                 "impact_horizon": {
                                     "impact_start": "UNKNOWN",
@@ -1080,8 +1084,8 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                         {
                             "edges": [
                                 {
-                                    "entity": "synthetic-venue",
-                                    "token": "T",
+                                    "entity_id": "synthetic-venue",
+                                    "token_id": "T",
                                     "role": "PRIMARY",
                                     "layer": "VENUE_DEX",
                                     "direction": "POSITIVE",
@@ -1096,10 +1100,10 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                         },
                     )
                 elif stage == 3:
-                    await emit("get_market_truth", {"tokens": ["T"]})
+                    await emit("get_market_truth", {"token_ids": ["T"]})
                 elif stage == 4:
                     assert result["market_truth"][0]["move_class"] == "UNKNOWN"
-                    await emit("get_decision", {"token": "T"})
+                    await emit("get_decision", {"token_id": "T"})
                 elif stage == 5:
                     assert result["action"] == "WAIT"
                     await emit(
