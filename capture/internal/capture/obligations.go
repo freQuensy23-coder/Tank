@@ -2,6 +2,7 @@ package capture
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -133,7 +134,11 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 		return
 	}
 	end := minTime(s.clock.Now(), anchor.Add(WindowAfter))
-	s.repairWindows(ctx, token, anchor.Add(-WindowBefore), end, 0)
+	if _, err := s.repairWindows(ctx, token, anchor.Add(-WindowBefore), end, 0); err != nil {
+		s.log.Warn("pre-event repair coverage unavailable", "backfill_id", row["backfill_id"], "error", err)
+		fail("REPAIR_FAILED")
+		return
+	}
 	coverage := make([]map[string]any, len(instruments))
 	for i, inst := range instruments {
 		coverage[i] = s.captureWindowCoverage(ctx, inst, anchor)
@@ -232,10 +237,15 @@ func (s *Service) runRequest(ctx context.Context, row map[string]any) {
 		finish("FAILED", string(invalidRequestToken), nil)
 		return
 	}
-	results := s.repairWindows(ctx, tokenID, start, end, budget)
+	results, repairErr := s.repairWindows(ctx, tokenID, start, end, budget)
 	out := map[string]any{}
 	for iid, result := range results {
 		out[iid] = result.storageValue()
+	}
+	if repairErr != nil {
+		s.log.Warn("capture request repair coverage unavailable", "request_id", row["request_id"], "error", repairErr)
+		finish("FAILED", "REPAIR_FAILED", map[string]any{"instruments": out})
+		return
 	}
 	finish("COMPLETE", nil, map[string]any{"instruments": out})
 }
@@ -252,7 +262,7 @@ func (r RepairCoverage) storageValue() map[string]any {
 	}
 }
 
-func (s *Service) repairWindows(ctx context.Context, token string, start, end time.Time, budget time.Duration) map[string]RepairCoverage {
+func (s *Service) repairWindows(ctx context.Context, token string, start, end time.Time, budget time.Duration) (map[string]RepairCoverage, error) {
 	if budget > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, budget)
@@ -298,25 +308,33 @@ func (s *Service) repairWindows(ctx context.Context, token string, start, end ti
 	}
 	phases := []phase{{reference, recent, hi, true}, {othersSpot, recent, hi, false}, {perp, recent, hi, false}, {instruments, lo, recent, false}}
 	results := map[string]RepairCoverage{}
+	var repairErrors []error
 	var mu sync.Mutex
 	for _, ph := range phases {
+		if !ph.b.After(ph.a) {
+			continue
+		}
 		var wg sync.WaitGroup
 		for _, inst := range ph.group {
 			wg.Add(1)
 			go func(inst *venue.Instrument) {
 				defer wg.Done()
-				before, after := s.repairInstrument(ctx, inst, ph.a, ph.b, ph.reserved)
+				coverage, err := s.repairInstrument(ctx, inst, ph.a, ph.b, ph.reserved)
 				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					repairErrors = append(repairErrors, fmt.Errorf("%s: %w", inst.ID, err))
+					return
+				}
 				total := results[inst.ID]
-				total.IncompleteBefore += before
-				total.IncompleteAfter += after
+				total.IncompleteBefore += coverage.IncompleteBefore
+				total.IncompleteAfter += coverage.IncompleteAfter
 				results[inst.ID] = total
-				mu.Unlock()
 			}(inst)
 		}
 		wg.Wait()
 	}
-	return results
+	return results, errors.Join(repairErrors...)
 }
 
 func (s *Service) incompleteRuns(ctx context.Context, iid string, lo, hi time.Time) ([]span, map[int64]map[string]any, error) {
@@ -351,15 +369,14 @@ func minutesIn(runs []span) int64 {
 	return n
 }
 
-func (s *Service) repairInstrument(ctx context.Context, inst *venue.Instrument, lo, hi time.Time, reserved bool) (int64, int64) {
+func (s *Service) repairInstrument(ctx context.Context, inst *venue.Instrument, lo, hi time.Time, reserved bool) (RepairCoverage, error) {
 	if !hi.After(lo) {
-		return 0, 0
+		return RepairCoverage{}, nil
 	}
 	iid := inst.ID
 	runs, bars, err := s.incompleteRuns(ctx, iid, lo, hi)
 	if err != nil {
-		s.log.Warn("repair read failed", "instrument", iid, "error", err)
-		return 0, 0
+		return RepairCoverage{}, fmt.Errorf("initial repair coverage unavailable: %w", err)
 	}
 	before := minutesIn(runs)
 	var chunks []span
@@ -417,7 +434,7 @@ func (s *Service) repairInstrument(ctx context.Context, inst *venue.Instrument, 
 	}
 	runs, bars, err = s.incompleteRuns(context.WithoutCancel(ctx), iid, lo, hi)
 	if err != nil {
-		return before, before
+		return RepairCoverage{}, fmt.Errorf("final repair coverage unavailable: %w", err)
 	}
 	reason := NoTradeHistory[inst.Venue]
 	if reason == "" {
@@ -442,7 +459,7 @@ func (s *Service) repairInstrument(ctx context.Context, inst *venue.Instrument, 
 		}
 	}
 	s.flush(context.WithoutCancel(ctx))
-	return before, minutesIn(runs)
+	return RepairCoverage{IncompleteBefore: before, IncompleteAfter: minutesIn(runs)}, nil
 }
 
 func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, start, end time.Time, includeReference bool, kind string) (map[string]any, error) {
@@ -731,7 +748,10 @@ func (s *Service) repairUnrepaired(ctx context.Context, token string, lo, hi tim
 			defer func() { <-sem }()
 			for i := len(gaps) - 1; i >= 0 && ctx.Err() == nil; i-- {
 				s.log.Info("gap repair", "instrument", inst.ID, "start", pytime.ISO(gaps[i].start), "end", pytime.ISO(gaps[i].end))
-				s.repairInstrument(ctx, inst, gaps[i].start, gaps[i].end, reserved)
+				if _, err := s.repairInstrument(ctx, inst, gaps[i].start, gaps[i].end, reserved); err != nil {
+					s.log.Warn("gap repair coverage unavailable", "instrument", inst.ID, "error", err)
+					return
+				}
 			}
 		}(inst, gaps)
 	}

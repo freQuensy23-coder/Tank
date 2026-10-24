@@ -13,7 +13,7 @@ from decimal import Context, Decimal, DivisionByZero, InvalidOperation, localcon
 from pathlib import Path
 
 from tank.time_precision import propagate_timestamp
-from tank.util import iso, parse_time
+from tank.util import iso, parse_epoch
 
 OUT = Path(__file__).resolve().parents[2] / "capture" / "testdata" / "pyvectors"
 
@@ -177,7 +177,10 @@ def times(rng) -> None:
         precisions.append(
             {"record": record, "field": field, "aliases": aliases, "fields": stamp.fields(field)}
         )
-    write("time.json.gz", {"times": cases, "precisions": precisions, "parse_check": iso(parse_time(0))})
+    write(
+        "time.json.gz",
+        {"times": cases, "precisions": precisions, "parse_check": iso(parse_epoch(0, unit="s"))},
+    )
 
 
 def main() -> None:

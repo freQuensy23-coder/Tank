@@ -26,7 +26,10 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 @pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     try:
-        index, count = parse_shard(config.getoption("--ci-shard"))
+        selected_shard = config.getoption("--ci-shard")
+        if not isinstance(selected_shard, str):
+            raise ValueError("shard must be INDEX/COUNT text")
+        index, count = parse_shard(selected_shard)
     except ValueError as error:
         raise pytest.UsageError(str(error)) from error
     selected: list[pytest.Item] = []

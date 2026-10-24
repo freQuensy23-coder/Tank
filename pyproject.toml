@@ -79,11 +79,3 @@ files = ["src"]
 ignore_missing_imports = true
 warn_unused_ignores = true
 warn_redundant_casts = true
-
-[[tool.mypy.overrides]]
-module = ["tank.storage"]
-disable_error_code = ["attr-defined"]
-
-[[tool.mypy.overrides]]
-module = ["tank.search"]
-disable_error_code = ["assignment", "override"]
