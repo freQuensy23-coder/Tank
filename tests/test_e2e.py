@@ -7,7 +7,6 @@ from pathlib import Path
 import httpx
 import pytest
 from delivery_support import delivery_job
-from pydantic import ConfigDict, JsonValue, RootModel
 from score_fixtures import unassessed_score_dimensions
 from source_support import source_configuration, source_definition
 
@@ -17,6 +16,8 @@ from tank.analysis.cards import compose_card
 from tank.analysis.decisions import DecisionEngine
 from tank.delivery import DeliveryError, DeliveryService
 from tank.event_tools import EventToolService
+from tank.market.capture_contracts import RepairOutcome
+from tank.ops_progress import DisabledSourceProgress
 from tank.settings import Settings
 from tank.sources import SourceService
 from tank.storage import ImmutableRecordError, MemoryRepository
@@ -24,12 +25,6 @@ from tank.telegram_inbox import TelegramInbox
 from tank.telegram_rich import rich_message_text
 
 pytestmark = [pytest.mark.integration]
-
-
-class CapturedRepairReport(RootModel[dict[str, JsonValue]]):
-    """Raw instrument-keyed JSON returned by the real capture queue boundary."""
-
-    model_config = ConfigDict(strict=True)
 
 
 def _native_session(session_id, agent_id="synthetic"):
@@ -111,7 +106,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
         "sources": source_configuration({"sources": [{"source_id": "S30", "feeds": []}]}),
         "api_limits": _fixture_api_limits(),
         "exchange_addresses": {"version": "synthetic-fixture", "wallet_lists": []},
-        "registry": {"tokens": [{"token_id": "T", "symbol": "T"}], "entities": []},
+        "registry": {"tokens": [{"token_id": "T", "symbol": "T"}], "entities": [], "x_accounts": []},
         "thresholds": _fixture_thresholds(),
         "openma": {"agent_id": "synthetic-agent", "environment_id": "synthetic-offline"},
     }
@@ -199,15 +194,19 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
                 "raw_sha256": sha,
                 "observed_at": seen,
                 "external_id": "one",
+                "url": "https://synthetic.invalid/feed/one",
+                "feed": "synthetic-integration",
+                "discovery_config_version": settings.config_version,
+                "discovery_code_version": settings.code_version,
                 "title": "Synthetic",
                 "text": "Synthetic crypto T approval",
                 "published_at": "2026-10-17T00:00:00Z",
             },
         )
         tool_event["input"] = {}
-        pipeline = Pipeline(repo, settings, http=http)
-        await pipeline.filter_item({"item_id": item["item_id"]})
-        routed_origin = await pipeline.route_item({"item_id": item["item_id"]})
+        pipeline = Pipeline(repo, settings, progress=DisabledSourceProgress(), http=http)
+        await pipeline.filter_item_wire({"item_id": item["item_id"]})
+        routed_origin = await pipeline.route_item_wire({"item_id": item["item_id"]})
         toolservice = EventToolService(repo, settings, None, DecisionEngine(settings), http=http)
         session = SessionService(repo, settings, toolservice.dispatch, http=http)
 
@@ -330,6 +329,7 @@ async def test_full_sse_pipeline_postgres(
         "api_limits": _fixture_api_limits(),
         "exchange_addresses": {"version": "synthetic-fixture", "wallet_lists": []},
         "registry": {
+            "x_accounts": [],
             "tokens": [{"token_id": "T", "symbol": "T"}],
             "entities": [
                 {"entity_id": "binance", "name": "Binance"},
@@ -480,9 +480,9 @@ async def test_full_sse_pipeline_postgres(
             assert polled["status"] == "HEALTHY" and polled["items"] == 1, polled
             item = (await repo.list("ingest.source_items", filters={"external_id": sid}))[0]
             sha = item["raw_sha256"]
-            pipeline = Pipeline(repo, settings, http=http)
-            await pipeline.filter_item({"item_id": item["item_id"]})
-            routed_origin = await pipeline.route_item({"item_id": item["item_id"]})
+            pipeline = Pipeline(repo, settings, progress=DisabledSourceProgress(), http=http)
+            await pipeline.filter_item_wire({"item_id": item["item_id"]})
+            routed_origin = await pipeline.route_item_wire({"item_id": item["item_id"]})
             truth_service = MarketTruthService(repo, settings, CapturedMarket())
             tools = EventToolService(
                 repo,
@@ -758,9 +758,9 @@ async def test_full_sse_pipeline_postgres(
                 source = SourceService(repo, settings, http=http)
                 assert (await source.poll_once("S30"))["status"] == "HEALTHY"
                 denial_item = (await repo.list("ingest.source_items", filters={"external_id": feed_guid}))[0]
-                pipeline = Pipeline(repo, settings, http=http)
-                await pipeline.filter_item({"item_id": denial_item["item_id"]})
-                routed = await pipeline.route_item({"item_id": denial_item["item_id"]})
+                pipeline = Pipeline(repo, settings, progress=DisabledSourceProgress(), http=http)
+                await pipeline.filter_item_wire({"item_id": denial_item["item_id"]})
+                routed = await pipeline.route_item_wire({"item_id": denial_item["item_id"]})
                 assert routed["routing_message"]["kind"] == "ITEM_ADDED", routed
                 assert routed["route_event_id"] == eid, routed
                 await session.send_message(routed["routing_message"])
@@ -899,6 +899,7 @@ async def test_runtime_autonomous_source_to_telegram(
         "api_limits": _fixture_api_limits(),
         "exchange_addresses": {"version": "synthetic-fixture", "wallet_lists": []},
         "registry": {
+            "x_accounts": [],
             "tokens": [{"token_id": "T", "symbol": "T"}],
             "entities": [
                 {"entity_id": "binance", "name": "Binance"},
@@ -1215,7 +1216,9 @@ async def test_runtime_autonomous_source_to_telegram(
             async for change in self.actual_capture_reader.capture_changes(since=since, end=end):
                 yield change
 
-        async def repair_windows(self, token_id: str, start: datetime, end: datetime, *, budget_s: float):
+        async def repair_windows(
+            self, token_id: str, start: datetime, end: datetime, *, budget_s: float
+        ) -> RepairOutcome:
             from tank.time_precision import collection_clock
             from tank.util import utcnow
 
@@ -1246,7 +1249,7 @@ async def test_runtime_autonomous_source_to_telegram(
                     result = await self.actual_capture_reader.repair_windows(
                         token_id, start, end, budget_s=budget_s
                     )
-                    return CapturedRepairReport.model_validate(result).root
+                    return result
                 finally:
                     consumer.cancel()
 
@@ -1307,7 +1310,7 @@ async def test_runtime_autonomous_source_to_telegram(
             market = CapturedMarket(http)
             truth = MarketTruthService(repo, settings, market)
             sources = SourceService(repo, settings, http=http)
-            pipeline = Pipeline(repo, settings, http=http)
+            pipeline = Pipeline(repo, settings, progress=DisabledSourceProgress(), http=http)
             tools = EventToolService(repo, settings, truth, DecisionEngine(settings), http=http)
             sessions = SessionService(repo, settings, tools.dispatch, http=http)
             delivery = DeliveryService(repo, settings, http=http)
