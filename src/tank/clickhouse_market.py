@@ -316,13 +316,20 @@ def _response_timestamp(value: JsonValue) -> datetime:
     return parse_utc_time(value)
 
 
-def _record(collection: str, row: Record) -> Record:
+def _record(collection: str, row: Record, *, omit_book_levels: bool = False) -> Record:
     """A ClickHouse row as the typed values a PostgreSQL row carries (then decode)."""
     from tank.market_codec import decode
 
     out: StoredRow = {}
+    if omit_book_levels and collection != "mkt.book_summaries":
+        raise ValueError("Only book projections may omit level arrays")
     for name, kind in MARKET_COLUMNS[collection].items():
-        value = row.get(name)
+        if omit_book_levels and name in {"bids", "asks"}:
+            out[name] = None
+            continue
+        if name not in row:
+            raise ValueError(f"ClickHouse response lacks selected schema column {name}")
+        value = row[name]
         if value is None:
             out[name] = None
         elif kind == "timestamptz":
@@ -344,14 +351,14 @@ def _record(collection: str, row: Record) -> Record:
     return decode(collection, out)
 
 
-def _records(collection: str, rows: Sequence[Record]) -> list[Record]:
-    return [_record(collection, r) for r in rows]
+def _records(collection: str, rows: Sequence[Record], *, omit_book_levels: bool = False) -> list[Record]:
+    return [_record(collection, row, omit_book_levels=omit_book_levels) for row in rows]
 
 
-async def _decode(collection: str, rows: Sequence[Record]) -> list[Record]:
+async def _decode(collection: str, rows: Sequence[Record], *, omit_book_levels: bool = False) -> list[Record]:
     if len(rows) > 1000:
-        return await asyncio.to_thread(_records, collection, rows)
-    return _records(collection, rows)
+        return await asyncio.to_thread(_records, collection, rows, omit_book_levels=omit_book_levels)
+    return _records(collection, rows, omit_book_levels=omit_book_levels)
 
 
 def _table(collection: str) -> str:
@@ -367,7 +374,7 @@ class MarketSelectionKey(DomainModel):
 
 
 async def _select(
-    ch: ClickHouse, collection: str, q: Query, order: str, tail: str = "", selected: str = "*"
+    ch: ClickHouse, collection: str, q: Query, order: str, tail: str = "", *, omit_book_levels: bool = False
 ) -> list[Record]:
     day = MARKET_TABLES[collection]
     keys = await ch.rows(
@@ -386,6 +393,9 @@ async def _select(
     k.where(f"`{day}` >= {k.param(min(days), DT)}")
     k.where(f"`{day}` <= {k.param(max(days), DT)}")
     k.where(f"storage_key IN {k.param([row.storage_key for row in selected_keys], 'Array(String)')}")
+    if omit_book_levels and collection != "mkt.book_summaries":
+        raise ValueError("Only book projections may omit level arrays")
+    selected = "* EXCEPT (bids, asks)" if omit_book_levels else "*"
     return await ch.rows(
         f"SELECT {selected} FROM {_table(collection)} WHERE {k.predicate()} ORDER BY {order}", k.params
     )
@@ -856,11 +866,16 @@ async def range_by_instrument_page(
             (f"`{time_field}`", after[1], DT),
             ("storage_key", after[2], "String"),
         )
-    selected = "*" if levels else "* EXCEPT (bids, asks)" if collection == "mkt.book_summaries" else "*"
+    omit_book_levels = not levels and collection == "mkt.book_summaries"
     rows = await _select(
-        ch, collection, q, f"instrument_id, `{time_field}`, storage_key", f"LIMIT {int(limit)}", selected
+        ch,
+        collection,
+        q,
+        f"instrument_id, `{time_field}`, storage_key",
+        f"LIMIT {int(limit)}",
+        omit_book_levels=omit_book_levels,
     )
-    records = await _decode(collection, rows)
+    records = await _decode(collection, rows, omit_book_levels=omit_book_levels)
     return [
         (_text(row, "instrument_id"), rec, _text(row, "storage_key"), _response_timestamp(row[time_field]))
         for row, rec in zip(rows, records, strict=True)

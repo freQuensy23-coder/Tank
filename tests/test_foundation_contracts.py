@@ -6,7 +6,7 @@ import httpx
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from tank.clickhouse_market import ClickHouse, _response_timestamp
+from tank.clickhouse_market import ClickHouse, _record, _response_timestamp
 from tank.contracts import DomainModel
 from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import InvalidJobClaim, JobEnvelope
@@ -14,6 +14,7 @@ from tank.contracts.repository import Collection, Repository
 from tank.contracts.score import ScoreAssessment, ScoreAssessmentView, ScoreDimension, ScoreDimensions
 from tank.market.trade_contracts import FlowInstrument, QuoteUsdValuation
 from tank.market_codec import _prepare_records, encode, merge_point
+from tank.market_schema import MARKET_COLUMNS
 from tank.market_storage import market_range_by_instrument, market_rows_recorded_since
 from tank.models import Record
 from tank.retention import BenchmarkToken, RetentionEvidence, benchmark_token_ids, protected_windows
@@ -454,3 +455,21 @@ def test_trade_instrument_requires_declared_metadata_and_rejects_unclocked_histo
     assert explicit.rate == Decimal("1.00001") and explicit.as_of is None
     with pytest.raises(ValidationError, match="requires its reason"):
         QuoteUsdValuation(rate=None, as_of=None, basis="UNAVAILABLE", unavailable_reason=None)
+
+
+def test_clickhouse_full_row_decoder_refuses_an_omitted_schema_column() -> None:
+    with pytest.raises(ValueError, match="lacks selected schema column"):
+        _record("mkt.klines_1m", {"instrument_id": "A", "open_time": "2026-10-24 12:00:00"})
+
+
+def test_clickhouse_only_its_explicit_book_projection_may_omit_level_arrays() -> None:
+    row: Record = {
+        name: None for name in MARKET_COLUMNS["mkt.book_summaries"] if name not in {"bids", "asks"}
+    }
+    row["instrument_id"] = "A"
+    row["exchange_ts"] = "2026-10-24 12:00:00.123456"
+    projected = _record("mkt.book_summaries", row, omit_book_levels=True)
+    assert projected["bids"] is None and projected["asks"] is None
+    assert projected["exchange_ts"] == "2026-10-24T12:00:00.123456Z"
+    with pytest.raises(ValueError, match="lacks selected schema column"):
+        _record("mkt.book_summaries", row)
