@@ -188,7 +188,7 @@ class Pipeline:
                 "request_fingerprint": request_fingerprint,
                 "session_id": None,
                 "score": score,
-                "usage": usage.model_dump(),
+                "usage": usage.model_dump(mode="json"),
                 "input_tokens": tokens,
                 "output_tokens": usage.output_tokens,
                 "effort": None,

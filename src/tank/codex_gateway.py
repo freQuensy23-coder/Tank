@@ -15,13 +15,18 @@ import os
 import re
 import tempfile
 import time
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote, quote_plus
 
 import httpx
 from aiohttp import web
+from pydantic import Field, JsonValue
+
+from tank.contracts import DomainModel
+from tank.contracts.json import decode_json
+from tank.settings import Settings
 
 RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses"
 TOKEN_URL = "https://auth.openai.com/oauth/token"
@@ -54,7 +59,7 @@ class GatewayError(Exception):
         super().__init__(code)
 
 
-def _text(value) -> str | None:
+def _text(value: JsonValue) -> str | None:
     if (
         isinstance(value, str)
         and value
@@ -66,13 +71,13 @@ def _text(value) -> str | None:
     return None
 
 
-def _claims(token: str) -> dict:
+def _claims(token: str) -> dict[str, JsonValue]:
     try:
         parts = token.split(".")
         if len(parts) != 3 or not all(re.fullmatch(r"[A-Za-z0-9_-]+", part) for part in parts):
             raise ValueError
         payload = base64.b64decode(parts[1] + "=" * (-len(parts[1]) % 4), altchars=b"-_", validate=True)
-        value = json.loads(payload)
+        value = decode_json(payload)
         if not isinstance(value, dict):
             raise TypeError
         return value
@@ -80,19 +85,56 @@ def _claims(token: str) -> dict:
         raise GatewayError("codex_auth_invalid") from None
 
 
-@dataclass(repr=False)
-class Credentials:
-    document: dict = field(repr=False)
-    access: str = field(repr=False)
-    refresh: str | None = field(repr=False)
-    account: str = field(repr=False)
+def _refresh_token(payload: dict[str, JsonValue], name: Literal["refresh_token", "id_token"]) -> str | None:
+    if name not in payload:
+        return None
+    token = _text(payload[name])
+    if token is None:
+        raise GatewayError("codex_refresh_invalid")
+    if name == "id_token":
+        _claims(token)
+    return token
+
+
+class RefreshedTokens(DomainModel):
+    """Validated token fields selected from an OAuth response; other provider fields are not persisted."""
+
+    access_token: str = Field(repr=False)
+    refresh_token: str | None = Field(default=None, repr=False)
+    id_token: str | None = Field(default=None, repr=False)
+
+
+class RefreshRequest(DomainModel):
+    grant_type: Literal["refresh_token"] = "refresh_token"
+    client_id: str = CLIENT_ID
+    refresh_token: str = Field(repr=False)
+    refresh_reason: Literal["unauthorized_recovery", "proactive_expiry"]
+
+
+class GatewayErrorDetail(DomainModel):
+    type: Literal["codex_gateway_error"] = "codex_gateway_error"
+    code: str
+    message: str
+
+
+class GatewayErrorResponse(DomainModel):
+    error: GatewayErrorDetail
+
+
+class Credentials(DomainModel):
+    document: dict[str, JsonValue] = Field(repr=False)
+    access: str = Field(repr=False)
+    refresh: str | None = Field(repr=False)
+    account: str = Field(repr=False)
     expires_at: float | None
 
     @property
     def fingerprint(self) -> bytes:
+        tokens = self.document["tokens"]
+        if not isinstance(tokens, dict):
+            raise GatewayError("codex_auth_invalid")
         identity = {
-            name: self.document["tokens"].get(name)
-            for name in ("access_token", "refresh_token", "id_token", "account_id")
+            name: tokens.get(name) for name in ("access_token", "refresh_token", "id_token", "account_id")
         }
         return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).digest()
 
@@ -100,7 +142,10 @@ class Credentials:
         if self.expires_at is not None:
             return self.expires_at <= time.time() + 300
         try:
-            refreshed = datetime.fromisoformat(self.document["last_refresh"])
+            last_refresh = self.document["last_refresh"]
+            if not isinstance(last_refresh, str):
+                return True
+            refreshed = datetime.fromisoformat(last_refresh)
             return time.time() - refreshed.timestamp() >= 8 * 86400
         except (KeyError, ValueError, TypeError, AttributeError):
             return True
@@ -127,20 +172,20 @@ class _Redactor:
 
 
 class CodexGateway:
-    def __init__(self, settings, *, upstream_transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(self, settings: Settings, *, upstream_transport: httpx.AsyncBaseTransport | None = None):
         self.settings = settings
         self._transport = upstream_transport
         self._client: httpx.AsyncClient | None = None
         self._runner: web.AppRunner | None = None
         self._key: bytes | None = None
         self._refresh_lock = asyncio.Lock()
-        self._auth_tasks: set[asyncio.Task] = set()
+        self._auth_tasks: set[asyncio.Task[Credentials]] = set()
         self._refresh_failure: tuple[bytes, float, GatewayError] | None = None
         self._secrets: set[bytes] = set()
         self.ready = asyncio.Event()
         self.bound_port: int | None = None
 
-    def _remember(self, value) -> None:
+    def _remember(self, value: JsonValue) -> None:
         if isinstance(value, str) and value:
             for variant in (value, json.dumps(value)[1:-1], quote(value, safe=""), quote_plus(value)):
                 self._secrets.add(variant.encode())
@@ -160,7 +205,7 @@ class CodexGateway:
                 raw = handle.read(_MAX_AUTH_BYTES + 1)
             if len(raw) > _MAX_AUTH_BYTES:
                 raise ValueError
-            document = json.loads(raw)
+            document = decode_json(raw)
             if not isinstance(document, dict) or document.get("auth_mode") not in (None, "chatgpt"):
                 raise ValueError
             tokens = document["tokens"]
@@ -176,16 +221,27 @@ class CodexGateway:
             account = _text(tokens.get("account_id"))
             if not account:
                 identity = _claims(_text(tokens.get("id_token")) or "")
-                account = _text(identity.get("https://api.openai.com/auth", {}).get("chatgpt_account_id"))
+                auth_claims = identity.get("https://api.openai.com/auth")
+                if not isinstance(auth_claims, dict):
+                    raise ValueError
+                account = _text(auth_claims.get("chatgpt_account_id"))
             if not account:
                 raise ValueError
             expiry = claims.get("exp")
-            if expiry is not None and (type(expiry) not in (int, float) or not 0 < expiry < 1e12):
+            if expiry is not None and (
+                not isinstance(expiry, (int, float)) or isinstance(expiry, bool) or not 0 < expiry < 1e12
+            ):
                 raise ValueError
             refresh = tokens.get("refresh_token")
             if refresh not in (None, "") and not _text(refresh):
                 raise ValueError
-            return Credentials(document, access, refresh or None, account, expiry)
+            return Credentials(
+                document=document,
+                access=access,
+                refresh=_text(refresh),
+                account=account,
+                expires_at=expiry,
+            )
         except GatewayError:
             raise
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
@@ -251,12 +307,15 @@ class CodexGateway:
                 except Exception:
                     raise GatewayError("codex_gateway_close_failed") from None
 
-    def _persist(self, credentials: Credentials, update: dict) -> Credentials:
+    def _persist(self, credentials: Credentials, update: RefreshedTokens) -> Credentials:
         current = self._load()
         if current.fingerprint != credentials.fingerprint:
             return current
         document = current.document
-        document["tokens"].update(update)
+        tokens = document["tokens"]
+        if not isinstance(tokens, dict):
+            raise GatewayError("codex_auth_invalid")
+        tokens.update(update.model_dump(mode="json", exclude_none=True))
         document["last_refresh"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         path = Path(self.settings.codex_auth_path)
         temporary = None
@@ -294,7 +353,7 @@ class CodexGateway:
         except TimeoutError:
             raise GatewayError("codex_refresh_timeout") from None
 
-    def _auth_done(self, task: asyncio.Task) -> None:
+    def _auth_done(self, task: asyncio.Task[Credentials]) -> None:
         self._auth_tasks.discard(task)
         if not task.cancelled():
             task.exception()
@@ -317,12 +376,10 @@ class CodexGateway:
                 request = httpx.Request(
                     "POST",
                     TOKEN_URL,
-                    json={
-                        "grant_type": "refresh_token",
-                        "client_id": CLIENT_ID,
-                        "refresh_token": credentials.refresh,
-                        "refresh_reason": "unauthorized_recovery" if forced else "proactive_expiry",
-                    },
+                    json=RefreshRequest(
+                        refresh_token=credentials.refresh,
+                        refresh_reason="unauthorized_recovery" if forced else "proactive_expiry",
+                    ).model_dump(),
                     extensions={"timeout": {"connect": 15, "read": 30, "write": 30, "pool": 30}},
                 )
                 response = await self._client.send(request, stream=True, follow_redirects=False)
@@ -339,7 +396,7 @@ class CodexGateway:
                         raw.extend(chunk)
                         if len(raw) > _MAX_AUTH_BYTES:
                             raise GatewayError("codex_refresh_invalid")
-                    update = json.loads(raw)
+                    update = decode_json(raw)
                 finally:
                     await self._close_response(response)
                 if not isinstance(update, dict):
@@ -352,17 +409,16 @@ class CodexGateway:
                 claims = _claims(access)
                 expiry = claims.get("exp")
                 if expiry is not None and (
-                    type(expiry) not in (int, float) or not time.time() < expiry < 1e12
+                    not isinstance(expiry, (int, float))
+                    or isinstance(expiry, bool)
+                    or not time.time() < expiry < 1e12
                 ):
                     raise GatewayError("codex_refresh_invalid")
-                selected = {"access_token": access}
-                for name in ("refresh_token", "id_token"):
-                    if name in update:
-                        if not _text(update[name]):
-                            raise GatewayError("codex_refresh_invalid")
-                        if name == "id_token":
-                            _claims(update[name])
-                        selected[name] = update[name]
+                selected = RefreshedTokens(
+                    access_token=access,
+                    refresh_token=_refresh_token(update, "refresh_token"),
+                    id_token=_refresh_token(update, "id_token"),
+                )
                 result = self._persist(credentials, selected)
                 self._refresh_failure = None
                 return result
@@ -372,7 +428,7 @@ class CodexGateway:
                 raise error from None
 
     @staticmethod
-    def _body(body: dict) -> dict:
+    def _body(body: dict[str, JsonValue]) -> dict[str, JsonValue]:
         if body.get("model") != "gpt-6.1-sol":
             raise GatewayError("unsupported_model", 400)
         if type(body.get("stream", False)) is not bool:
@@ -385,25 +441,29 @@ class CodexGateway:
         instructions = body.get("instructions", "")
         if not isinstance(instructions, str):
             raise GatewayError("invalid_instructions", 400)
-        messages = []
+        messages: list[JsonValue] = []
         for item in items:
             if not isinstance(item, dict):
                 raise GatewayError("invalid_input", 400)
             if item.get("role") in ("system", "developer"):
                 content = item.get("content")
-                if isinstance(content, list) and all(
-                    isinstance(part, dict)
-                    and part.get("type") in ("input_text", "text")
-                    and isinstance(part.get("text"), str)
-                    for part in content
-                ):
-                    content = "\n".join(part["text"] for part in content)
+                if isinstance(content, list):
+                    text_parts: list[str] = []
+                    for part in content:
+                        if not isinstance(part, dict) or part.get("type") not in ("input_text", "text"):
+                            raise GatewayError("invalid_instructions", 400)
+                        text = part.get("text")
+                        if not isinstance(text, str):
+                            raise GatewayError("invalid_instructions", 400)
+                        text_parts.append(text)
+                    content = "\n".join(text_parts)
                 if not isinstance(content, str):
                     raise GatewayError("invalid_instructions", 400)
                 instructions = "\n\n".join(part for part in (instructions, content) if part)
             else:
                 messages.append(item)
-        result = dict(body, input=messages, instructions=instructions, store=False, stream=True)
+        result: dict[str, JsonValue] = dict(body)
+        result.update(input=messages, instructions=instructions, store=False, stream=True)
 
         for name in ("max_output_tokens", "temperature", "prompt_cache_retention", "prompt_cache_options"):
             result.pop(name, None)
@@ -420,7 +480,7 @@ class CodexGateway:
     @staticmethod
     def _error(error: GatewayError) -> web.Response:
         return web.json_response(
-            {"error": {"type": "codex_gateway_error", "code": error.code, "message": error.code}},
+            GatewayErrorResponse(error=GatewayErrorDetail(code=error.code, message=error.code)).model_dump(),
             status=error.status,
         )
 
@@ -434,7 +494,7 @@ class CodexGateway:
         downstream = None
         try:
             try:
-                original = await request.json()
+                original = decode_json(await request.read())
                 if not isinstance(original, dict):
                     raise TypeError
             except (ValueError, TypeError, UnicodeError):
@@ -503,7 +563,7 @@ class CodexGateway:
             if upstream is not None:
                 await self._close_response(upstream)
 
-    async def _collect(self, upstream: httpx.Response, headers: dict) -> web.Response:
+    async def _collect(self, upstream: httpx.Response, headers: dict[str, str]) -> web.Response:
         """Codex streams; nonstream Responses callers receive the terminal object."""
         pending = ""
         encoding = None
@@ -527,9 +587,11 @@ class CodexGateway:
                 if not data or data == "[DONE]":
                     continue
                 try:
-                    event = json.loads(data)
+                    event = decode_json(data)
                 except ValueError:
                     raise GatewayError("codex_stream_invalid", 502) from None
+                if not isinstance(event, dict):
+                    raise GatewayError("codex_stream_invalid", 502)
                 if event.get("type") in ("response.completed", "response.incomplete", "response.failed"):
                     response = event.get("response")
                     if not isinstance(response, dict):
@@ -541,7 +603,7 @@ class CodexGateway:
         if encoding == "json":
             pending += decoder.decode(redactor.feed(b"", final=True), final=True)
             try:
-                response = json.loads(pending)
+                response = decode_json(pending)
             except ValueError:
                 raise GatewayError("codex_response_invalid", 502) from None
             if not isinstance(response, dict):

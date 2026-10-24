@@ -28,12 +28,43 @@ the external classification endpoint accepts task-specific state, whose
 domain projections are produced by Pipeline. Serialization occurs only when
 constructing an HTTP request, request fingerprint or repository document.
 
+## Credential and wire boundaries
+
+The pure redactor takes only a frozenset of configured credentials, rather than
+inspecting arbitrary Settings internals. Settings owns credential discovery.
+Its recursive dictionary/list handling is necessary because untrusted tool JSON
+can put credentials at arbitrary nested positions; no domain record is inferred
+from that tree. Configured secrets, percent-encoded variants, URL query
+credentials and URL/DSN userinfo remain scrubbed before durable tool capture.
+
+CodexGateway is entirely annotated and passes strict mypy. Credentials,
+RefreshedTokens, RefreshRequest, GatewayErrorDetail and GatewayErrorResponse
+are strict domain models. Credential fields are excluded from repr. Every JSON
+decode goes through a validated JSON-value boundary. OAuth update selection
+distinguishes omitted refresh/id tokens (preserve existing token) from present
+invalid values (refuse response). OAuth refresh/recovery, atomic credential
+persistence, shared refresh locking and cancellation shielding remain explicit.
+
+Credentials.document intentionally preserves the operator-owned auth JSON as
+an opaque adapter document; unknown operator/token fields are retained during
+atomic writes. JWT claims are similarly an extensible external wire map.
+Responses body, content items and terminal provider responses are external
+protocol payloads relayed by this bridge, not Tank domain entities. Their
+dynamic JSON maps stay inside this adapter and are structurally validated
+before use. Headers are inherently string-keyed HTTP maps. None denotes an
+absent refresh token, unknown expiry, unopened HTTP resources and no downstream
+response before prepare. Missing last_refresh triggers refresh conservatively,
+because unknown credential age cannot establish a still-valid generation.
+
 ## Validation
 
 Pinned Python 3.13.13 environment and frozen dependencies used.
 Jev focused suite: 26 passed, zero skips, pytest-xdist -n auto, 1.57 seconds.
 Ruff checks/format pass for changed source/tests. Strict mypy passed jev.py
 before shared base adoption; final cross-module verification is pending.
+Gateway and security strict mypy pass. Gateway: 2 unit tests and all 49 local
+HTTP integration tests pass, zero skips. Security: 18 tests pass. Combined
+Jev/security/session targeted unit suite: 86 passed, zero skips, 2.40 seconds.
 
 ## Remaining scope
 

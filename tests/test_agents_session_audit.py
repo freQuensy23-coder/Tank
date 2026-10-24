@@ -19,7 +19,7 @@ def settings(replay=False):
         "prompt_version": "prompt",
         "reasoning_effort": "medium",
     }
-    return SimpleNamespace(
+    opts = SimpleNamespace(
         openma_url="http://oma",
         openma_api_key="fake-only",
         openma_model="gpt-6.1-sol",
@@ -30,6 +30,12 @@ def settings(replay=False):
             name, config
         ),
     )
+    opts.configured_secrets = lambda: frozenset(
+        value
+        for name, value in vars(opts).items()
+        if isinstance(value, str) and name.endswith(("_key", "_token", "_password"))
+    )
+    return opts
 
 
 async def seed(repo, **changes):
@@ -70,7 +76,7 @@ async def test_refused_tool_reason_survives_lost_reply_and_does_not_stall() -> N
         await repo.put("evt.events", "bad", {"event_id": "bad"})
         raise ValueError("V7 freshness is inconsistent")
 
-    def lost(request: pytest.FixtureRequest) -> None:
+    def lost(request: httpx.Request) -> None:
         posts.append(json.loads(request.content))
         raise httpx.ReadError("lost", request=request)
 
@@ -81,7 +87,7 @@ async def test_refused_tool_reason_survives_lost_reply_and_does_not_stall() -> N
     assert await repo.get("evt.events", "bad") is None
     assert (await repo.get("ops.tool_calls", "s:refused"))["status"] == "REFUSED"
 
-    def accepted(request: pytest.FixtureRequest):
+    def accepted(request: httpx.Request):
         posts.append(json.loads(request.content))
         return httpx.Response(200, json={})
 
@@ -103,7 +109,7 @@ async def test_failed_turn_retries_original_message_and_new_message_cannot_reset
     await repo.put("ingest.source_items", "one", {"item_id": "one", "text": "first"})
     await repo.put("ingest.source_items", "two", {"item_id": "two", "text": "second"})
 
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request):
         posts.append(json.loads(request.content))
         return httpx.Response(200, json={})
 
@@ -149,7 +155,7 @@ async def test_replay_runs_verdict_code_and_uses_fresh_remote_session() -> None:
         calls.append(tool)
         return {"action": "EXIT"}
 
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request):
         if request.method == "GET":
             return httpx.Response(200, json={"data": [], "next_page": None})
         body = json.loads(request.content)
@@ -194,7 +200,7 @@ async def test_follow_retains_open_idle_sse_and_keeps_rejected_material_session_
     cancelled = []
     idle_seen = asyncio.Event()
 
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request):
         if request.method == "POST":
             posts.append(request.url.path)
         if request.url.path.endswith("/executions"):
@@ -287,7 +293,7 @@ async def test_credential_url_never_reaches_tool_ledger_or_callback() -> None:
         called.append(args)
         return {"never": "called"}
 
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request):
         posted.append(json.loads(request.content))
         return httpx.Response(200, json={})
 
@@ -331,7 +337,7 @@ async def test_configured_tokens_and_dsn_userinfo_never_enter_session_ledger(cas
     async def dispatch(*args) -> None:
         raise AssertionError("Credential-bearing call reached callback")
 
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request):
         posted.append(json.loads(request.content))
         return httpx.Response(200, json={})
 
@@ -365,7 +371,7 @@ async def test_legacy_prompt_label_requires_exact_native_snapshot() -> None:
         "model": {"id": "gpt-6.1-sol"},
     }
 
-    def transport(request: pytest.FixtureRequest):
+    def transport(request: httpx.Request):
         requests.append(request.url.path)
         return httpx.Response(200, json={"data": {"id": "s", "agent": snapshot}})
 
@@ -415,7 +421,7 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
             while True:
                 yield await queue.get()
 
-    async def transport(request: pytest.FixtureRequest):
+    async def transport(request: httpx.Request):
         if request.url.path.endswith("/events/stream"):
             return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
         if request.url.path.endswith("/events") and request.method == "GET":
@@ -516,11 +522,11 @@ async def test_control_result_progresses_while_independent_sse_request_remains_o
         async def aclose(self) -> None:
             stream_closed.append(True)
 
-    async def stream_transport(request: pytest.FixtureRequest):
+    async def stream_transport(request: httpx.Request):
         assert request.url.path.endswith("/events/stream")
         return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
 
-    async def control_transport(request: pytest.FixtureRequest):
+    async def control_transport(request: httpx.Request):
         assert request.method == "POST" and request.url.path.endswith("/events")
         acknowledged.set()
         return httpx.Response(200, json={})
@@ -561,7 +567,7 @@ async def test_unbound_terminal_turn_failure_retries_once_then_marks_source_fail
     )
     posts = []
 
-    def transport(request: pytest.FixtureRequest):
+    def transport(request: httpx.Request):
         posts.append(json.loads(request.content))
         return httpx.Response(200, json={})
 
@@ -618,7 +624,7 @@ async def test_new_replay_session_restores_captured_external_error_and_acknowled
     async def forbidden(*arguments) -> None:
         raise AssertionError("Captured external errors must never issue a new fetch")
 
-    def control(request: pytest.FixtureRequest):
+    def control(request: httpx.Request):
         posts.append(json.loads(request.content)["events"][0])
         if len(posts) == 1:
             raise httpx.ConnectError("Synthetic lost native acknowledgement", request=request)

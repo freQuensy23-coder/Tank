@@ -1,55 +1,38 @@
 """Keep credentials out of durable tool arguments and evidence URLs."""
 
-import copy
 import re
-from urllib.parse import parse_qsl, quote, quote_plus, unquote, urlencode, urlsplit, urlunsplit
+from re import Match
+from urllib.parse import parse_qsl, quote, quote_plus, urlencode, urlsplit, urlunsplit
+
+from pydantic import JsonValue
 
 _REDACTED = "[REDACTED]"
 _AUTH_KEYS = {"api_key", "apikey", "access_token", "password", "secret", "auth", "authorization"}
-_SECRET_SETTING = re.compile(r"(?:api_?key|password|secret|_token|_key)$", re.IGNORECASE)
 
 
-def redact_tool_arguments(arguments, settings):
-    """Return a detached JSON-shaped copy and a safe refusal reason if sensitive.
-
-    A plain domain field named ``token`` is valid. It is credential-bearing only
-    in a URL query, where evidence-fetch URLs must not carry authentication.
-    Only configured scalar secret values are inspected; no auth files are read.
-    """
-    configured = vars(settings) if hasattr(settings, "__dict__") else {}
-    secrets = {
-        value
-        for key, value in configured.items()
-        if _SECRET_SETTING.search(key) and isinstance(value, str) and value
-    }
-
-    for key, value in configured.items():
-        if key.endswith("_url") and isinstance(value, str):
-            try:
-                parsed = urlsplit(value)
-                if parsed.password:
-                    secrets.add(unquote(parsed.password))
-            except ValueError:
-                pass
+def redact_tool_arguments(
+    arguments: dict[str, JsonValue], secrets: frozenset[str]
+) -> tuple[dict[str, JsonValue], str | None]:
+    """Copy JSON tool input, redacting credentials supplied by the settings boundary."""
     found = False
 
-    def redact(value):
+    def redact(value: JsonValue) -> JsonValue:
         nonlocal found
         if isinstance(value, dict):
-            clean = {}
+            children: dict[str, JsonValue] = {}
             for key, child in value.items():
                 if str(key).casefold() in _AUTH_KEYS and child not in (None, ""):
-                    clean[key] = _REDACTED
+                    children[key] = _REDACTED
                     found = True
                 else:
-                    clean[key] = redact(child)
-            return clean
+                    children[key] = redact(child)
+            return children
         if isinstance(value, list):
             return [redact(child) for child in value]
         if not isinstance(value, str):
             return value
 
-        def hide_userinfo(match):
+        def hide_userinfo(match: Match[str]) -> str:
             nonlocal found
             found = True
             return match.group(1) + _REDACTED + "@"
@@ -77,7 +60,13 @@ def redact_tool_arguments(arguments, settings):
                 found = True
         return clean
 
-    sanitized = redact(copy.deepcopy(arguments))
+    sanitized: dict[str, JsonValue] = {}
+    for key, value in arguments.items():
+        if key.casefold() in _AUTH_KEYS and value not in (None, ""):
+            sanitized[key] = _REDACTED
+            found = True
+        else:
+            sanitized[key] = redact(value)
     return (
         sanitized,
         "Tool arguments contain credentials; provide public evidence without authentication."

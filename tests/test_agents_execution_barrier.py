@@ -18,6 +18,7 @@ def config():
     return SimpleNamespace(
         openma_url="http://native",
         openma_api_key="fake-protocol-test",
+        configured_secrets=lambda: frozenset({"fake-protocol-test"}),
         replay=False,
         openma_model="gpt-6.1-sol",
         config_version="test",

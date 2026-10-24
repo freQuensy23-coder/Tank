@@ -100,6 +100,7 @@ async def setup():
     settings = SimpleNamespace(
         openma_url="http://native",
         openma_api_key="fake-test",
+        configured_secrets=lambda: frozenset({"fake-test"}),
         replay=False,
         openma_model="test",
         config_version="test",

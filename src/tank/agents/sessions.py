@@ -1305,7 +1305,7 @@ class SessionService:
                 "category": "PROVENANCE",
             }, "REFUSED"
         if isinstance(error, (ValueError, KeyError)):
-            safe, rejected = redact_tool_arguments({"reason": str(error)}, self.settings)
+            safe, rejected = redact_tool_arguments({"reason": str(error)}, self.settings.configured_secrets())
             reason = (
                 "Tool input rejected; credential-bearing diagnostic withheld" if rejected else safe["reason"]
             )
@@ -1330,7 +1330,9 @@ class SessionService:
         if prior and prior.get("returned_at"):
             return
         original_hash = sha256(event["input"])
-        safe_arguments, credential_reason = redact_tool_arguments(event["input"], self.settings)
+        safe_arguments, credential_reason = redact_tool_arguments(
+            event["input"], self.settings.configured_secrets()
+        )
         event = {**event, "input": safe_arguments}
         resolved_arguments = {}
         slow_ready = bool(credential_reason)

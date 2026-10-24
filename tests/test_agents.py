@@ -38,6 +38,11 @@ def settings(**overrides):
         "load_config": lambda name: config[name],
     }
     values.update(overrides)
+    values["configured_secrets"] = lambda: frozenset(
+        value
+        for name, value in values.items()
+        if isinstance(value, str) and name.endswith(("_key", "_token", "_password"))
+    )
     return SimpleNamespace(**values), config
 
 
@@ -72,7 +77,7 @@ async def test_filter_requires_calibration_and_logs_typed_usage() -> None:
     await repo.put("ingest.source_items", "i", {"item_id": "i", "text": "Aave release", "source": "issuer"})
     calls = []
 
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request):
         calls.append(json.loads(request.content))
         return httpx.Response(
             200,
@@ -639,7 +644,7 @@ async def test_concurrent_items_without_event_candidates_open_distinct_idempoten
         )
     creates, messages = [], []
 
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request):
         assert request.url.host != "opencode.ai"
         if request.method == "GET":
             return httpx.Response(200, json={"data": [], "next_page": None})
@@ -749,7 +754,7 @@ async def test_market_truth_wire_omits_internal_metadata_full_result_survives_re
         dispatched += 1
         return full
 
-    def lost(request: pytest.FixtureRequest) -> None:
+    def lost(request: httpx.Request) -> None:
         requests.append(json.loads(request.content))
         raise httpx.ReadError("lost response", request=request)
 
@@ -766,7 +771,7 @@ async def test_market_truth_wire_omits_internal_metadata_full_result_survives_re
     stored = await repo.get("ops.tool_calls", "ses_1:mt_call")
     assert stored["result"] == full and "measurement_metadata" in stored["result"]["market_truth"][0]
 
-    def accepted(request: pytest.FixtureRequest):
+    def accepted(request: httpx.Request):
         requests.append(json.loads(request.content))
         return httpx.Response(200, json={})
 
@@ -895,7 +900,7 @@ async def test_session_acceptance_and_tools_keep_clock_and_source_precision_sepa
         },
     )
 
-    def transport(request: pytest.FixtureRequest):
+    def transport(request: httpx.Request):
         if request.url.path.endswith("/sessions"):
             return (
                 httpx.Response(200, json={"data": []})
@@ -985,7 +990,7 @@ async def test_tool_execution_error_is_durable_returned_and_never_redispatched_a
             "FAKE_CREDENTIAL_IN_EXCEPTION", request=request, response=httpx.Response(500, request=request)
         )
 
-    def control(request: pytest.FixtureRequest):
+    def control(request: httpx.Request):
         responses.append(json.loads(request.content)["events"][0])
         if len(responses) == 1:
             raise httpx.ConnectError("Lost tool response acknowledgement", request=request)
@@ -1024,7 +1029,7 @@ async def test_new_session_prompt_version_binds_actual_resolved_agent_not_static
     }
     created = 0
 
-    def control(request: pytest.FixtureRequest):
+    def control(request: httpx.Request):
         nonlocal created
         if request.url.path.endswith("/sessions"):
             if request.method == "GET":

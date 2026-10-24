@@ -1,6 +1,7 @@
 """Pinned, validated Jev classification through OpenCode System One."""
 
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Literal
 
 import httpx
@@ -25,7 +26,7 @@ class JevAnswer(DomainModel):
 class JevUsage(DomainModel):
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
-    cost: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    cost: Decimal | None = Field(default=None, ge=0, allow_inf_nan=False)
 
 
 class JevResponse(DomainModel):
