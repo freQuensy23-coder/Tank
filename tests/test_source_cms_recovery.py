@@ -82,6 +82,7 @@ async def test_retained_canonical_404_recovers_only_exact_same_cms_entry(tmp_pat
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
         row = original()
+        row["feed"] = FEED["url"]
         row["observed_at"] = "2026-10-19T07:59:02.218121Z"
         batch = {"kind": "html"}
         if mismatch:
@@ -136,6 +137,7 @@ async def test_cms_fallback_is_not_used_for_non404_failure(
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         svc = SourceService(Repo(), settings(tmp_path, [source]), http=http)
         row = original()
+        row["feed"] = FEED["url"]
         row["observed_at"] = "2026-10-19T07:59:02.218121Z"
         with pytest.raises(httpx.HTTPStatusError) as error:
             await svc.poller._item(
@@ -163,6 +165,7 @@ async def test_checkpoint_fallback_must_match_same_host_and_declared_slug(tmp_pa
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         svc = SourceService(Repo(), settings(tmp_path, [source]), http=http)
         row = original()
+        row["feed"] = FEED["url"]
         row.update(observed_at="2026-10-19T07:59:02.218121Z", publisher_cms_slug_url=fallback)
         with pytest.raises(httpx.HTTPStatusError):
             await svc.poller._item(

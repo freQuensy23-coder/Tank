@@ -14,6 +14,7 @@ from test_sources import settings
 
 from tank.contracts.json import decode_json
 from tank.contracts.source_items import SocialSourceItem, parse_feed_source_item
+from tank.contracts.sources import SourceAccount
 from tank.sources import SourceService
 from tank.sources.xsensor import AccountFailure, XSensor
 from tank.storage import MemoryRepository
@@ -214,8 +215,12 @@ async def test_s29_poll_stores_new_posts_and_moves_cursors_only_after_them(tmp_p
     repo = MemoryRepository()
     svc = SourceService(repo, config, http=httpx.AsyncClient(transport=httpx.MockTransport(actor)))
     svc.accounts = {
-        "official_org": {"handle": "Official_Org", "role": "ORGANIZATION", "entity_id": "uniswap"},
-        "other_account": {"handle": "@other_account", "role": "OTHER", "entity_id": "other"},
+        "official_org": SourceAccount(
+            handle="Official_Org", role="ORGANIZATION", entity_id="uniswap", token_id=None
+        ),
+        "other_account": SourceAccount(
+            handle="@other_account", role="OTHER", entity_id="other", token_id=None
+        ),
     }
 
     async def items() -> dict[str, SocialSourceItem]:
@@ -362,7 +367,13 @@ async def test_configured_founder_role_survives_real_source_capture_and_domain_d
     repo = MemoryRepository()
     async with httpx.AsyncClient(transport=httpx.MockTransport(actor)) as http:
         service = SourceService(repo, configuration, http=http)
-        service.accounts = {"sama": configured}
+        declared_account = SourceAccount.model_validate(configured)
+        assert declared_account.official_authorities is not None
+        assert {authority.entity_id for authority in declared_account.official_authorities} == {
+            "world",
+            "openai",
+        }
+        service.accounts = {"sama": declared_account}
         assert (await service.poll_once("S29"))["items"] == 0
         assert (await service.poll_once("S29"))["items"] == 1
     [record] = await repo.list("ingest.source_items")

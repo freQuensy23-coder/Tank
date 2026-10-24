@@ -144,3 +144,29 @@ class SourceConfiguration(DomainModel):
         if len(set(identities)) != len(identities):
             raise ValueError("Source configuration contains duplicate source IDs")
         return self
+
+
+class SourceOfficialAuthority(DomainModel):
+    entity_id: str = Field(min_length=1)
+    role: str = Field(min_length=1)
+    evidence_refs: list[str] = Field(min_length=1)
+    authority_scope: str = Field(min_length=1)
+
+
+class SourceAccount(DomainModel):
+    handle: str = Field(min_length=1)
+    role: SourceAuthorRole
+    entity_id: str | None
+    token_id: str | None
+    official_authorities: list[SourceOfficialAuthority] | None = None
+
+
+class SourceAccountRegistryView(DomainModel):
+    x_accounts: list[SourceAccount]
+
+    @model_validator(mode="after")
+    def unique_handles(self) -> Self:
+        handles = [account.handle.lower().lstrip("@") for account in self.x_accounts]
+        if any(not handle for handle in handles) or len(handles) != len(set(handles)):
+            raise ValueError("Source registry account handles must be distinct nonempty identities")
+        return self
