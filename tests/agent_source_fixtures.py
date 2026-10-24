@@ -1,11 +1,15 @@
 """Complete synthetic publisher records used by agent and routing boundary tests."""
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from urllib.parse import quote
 
 from pydantic import JsonValue
+from pydantic_settings import SettingsConfigDict
 
+from tank.contracts.configuration import Thresholds
 from tank.contracts.source_items import FeedSourceItem, parse_feed_source_item
+from tank.settings import Settings
 from tank.sources.policy import initial_relevance, is_filtered_source
 from tank.util import iso
 
@@ -95,3 +99,35 @@ def source_record_fixture(record: Mapping[str, JsonValue]) -> dict[str, JsonValu
     return source_item_fixture(
         item_id, source_id=source_id, source=source, author=author, title=title, text=text, **fields
     ).storage_record()
+
+
+class _FixtureSettings(Settings):
+    model_config = SettingsConfigDict(env_file=None)
+
+
+@dataclass
+class PipelineFixtureSettings:
+    configurations: dict[str, dict[str, JsonValue]]
+    opencode_api_key: str | None
+    replay: bool
+    config_version: str
+    code_version: str
+
+    def load_config(self, name: str) -> dict[str, JsonValue]:
+        return self.configurations[name]
+
+    def thresholds(self) -> Thresholds:
+        baseline = _FixtureSettings().thresholds().model_dump(mode="json")
+        return Thresholds.model_validate({**baseline, **self.configurations["thresholds"]})
+
+
+def pipeline_settings_fixture(
+    configurations: dict[str, dict[str, JsonValue]],
+    *,
+    opencode_api_key: str | None = None,
+    replay: bool = False,
+    config_version: str = "test",
+    code_version: str = "test",
+) -> PipelineFixtureSettings:
+    """Declare complete synthetic test settings without changing runtime configuration policy."""
+    return PipelineFixtureSettings(configurations, opencode_api_key, replay, config_version, code_version)

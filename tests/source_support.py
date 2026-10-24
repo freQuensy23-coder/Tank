@@ -69,3 +69,12 @@ def fetch_plan(plan: Mapping[str, JsonValue]) -> HttpFetchPlan:
             **limits,
         }
     return HttpFetchPlan.model_validate(values)
+
+
+def operational_configuration(name: str) -> dict[str, JsonValue]:
+    """Use the actual versioned operational policy for synthetic source fixtures."""
+    from tank.settings import Settings
+
+    if name not in {"api_limits", "thresholds"}:
+        raise ValueError("No operational fixture declared for " + name)
+    return Settings().load_config(name)
