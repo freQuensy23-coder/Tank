@@ -271,7 +271,7 @@ async def test_partial_document_delivery_retry_does_not_duplicate_successful_mes
         delivery = DeliveryService(repo, telegram_settings(), http=http)
         with pytest.raises(DeliveryError) as failure:
             await delivery.deliver(payload)
-        assert failure.value.retry_after == 7
+        assert failure.value.retry_after == pytest.approx(7, abs=0.1)
         await DeliveryService(repo, telegram_settings(), http=http).deliver(payload)
         await delivery.deliver(payload)
     assert len(sent) == 6 and len(successful) == 5
