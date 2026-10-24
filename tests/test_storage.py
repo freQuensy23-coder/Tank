@@ -1,28 +1,31 @@
 import asyncio
 import os
+from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import timedelta
 
 import pytest
 import pytest_asyncio
 from deployment_postgres_helpers import deployment_repository
+from postgres_helpers import PostgresTemplate
 
 from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import InvalidJobClaim
+from tank.models import Record
 from tank.storage import ImmutableRecordError, MemoryRepository, PostgresRepository, StorageBackend
-from tank.util import iso, new_id, parse_time, sha256, utcnow
+from tank.util import clock_iso, iso, new_id, parse_time, sha256, utcnow
 
 
-def complete_fixture_record(collection, record):
+def complete_fixture_record(collection: str, record: Record) -> Record:
     """Explicit synthetic §14 fixtures, independent of production defaulting behavior."""
-    at = iso()
+    at = clock_iso()
     common = {
         "config_version": "test-config",
         "code_version": "test-code",
         "model_id": "test-model",
         "prompt_version": "test-prompt",
     }
-    templates = {
+    templates: dict[str, Record] = {
         "ingest.source_items": {
             "feed": "test:fixture",
             "external_id": record.get("item_id"),
@@ -122,41 +125,42 @@ def complete_fixture_record(collection, record):
 @pytest_asyncio.fixture(
     params=["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
-async def repo(request: pytest.FixtureRequest, postgres_template):
+async def repo(
+    request: pytest.FixtureRequest, postgres_template: PostgresTemplate
+) -> AsyncIterator[StorageBackend]:
     async with AsyncExitStack() as resources:
+        result: StorageBackend
         if request.param == "postgres_deployment":
             result = await resources.enter_async_context(deployment_repository())
         elif request.param in {"postgres", "postgres_fresh"}:
             url = os.getenv("TANK_TEST_DATABASE_URL")
             if not url:
-                pytest.skip(
-                    "Real PostgreSQL requires TANK_TEST_DATABASE_URL pointing at an isolated test database"
-                )
+                pytest.fail("Integration requires the isolated TANK_TEST_DATABASE_URL")
             fresh = request.param == "postgres_fresh"
             result = await resources.enter_async_context(
                 postgres_template.repository(url, migrated=not fresh)
             )
             if fresh:
                 await result.migrate()
-        else:
+        elif request.param == "memory":
             result = MemoryRepository()
             resources.push_async_callback(result.close)
             await result.open()
-        original_put = result.put
-
-        async def put_fixture(collection, key, record, **kwargs):
-            return await original_put(collection, key, complete_fixture_record(collection, record), **kwargs)
-
-        result.put = put_fixture
+        else:
+            raise ValueError("Unknown storage test backend")
         yield result
 
 
-async def test_nested_transaction_rollback_and_exact_filters(repo) -> None:
+async def test_nested_transaction_rollback_and_exact_filters(repo: StorageBackend) -> None:
     async with repo.transaction():
-        await repo.put("reg.tokens", "a", {"token_id": "a", "symbol": "A", "null": None})
+        await repo.put(
+            "reg.tokens",
+            "a",
+            complete_fixture_record("reg.tokens", {"token_id": "a", "symbol": "A", "null": None}),
+        )
         try:
             async with repo.transaction():
-                await repo.put("reg.tokens", "b", {"token_id": "b"})
+                await repo.put("reg.tokens", "b", complete_fixture_record("reg.tokens", {"token_id": "b"}))
                 raise ValueError("rollback nested")
         except ValueError:
             pass
@@ -171,21 +175,29 @@ async def test_nested_transaction_rollback_and_exact_filters(repo) -> None:
     assert await repo.get("reg.tokens", "a")
 
 
-async def test_append_only_and_immutable(repo) -> None:
-    await repo.put("evt.events", "alert-fixture-event", {"event_id": "alert-fixture-event"})
+async def test_append_only_and_immutable(repo: StorageBackend) -> None:
+    await repo.put(
+        "evt.events",
+        "alert-fixture-event",
+        complete_fixture_record("evt.events", {"event_id": "alert-fixture-event"}),
+    )
     record = {"alert_id": "a", "version": 1, "event_id": "alert-fixture-event", "card_text": "original"}
-    await repo.put("out.alerts", "a:1", record)
-    assert await repo.put("out.alerts", "a:1", record) == record
+    await repo.put("out.alerts", "a:1", complete_fixture_record("out.alerts", record))
+    assert await repo.put("out.alerts", "a:1", complete_fixture_record("out.alerts", record)) == record
     with pytest.raises(ImmutableRecordError):
-        await repo.put("out.alerts", "a:1", {**record, "card_text": "changed"})
+        await repo.put(
+            "out.alerts", "a:1", complete_fixture_record("out.alerts", {**record, "card_text": "changed"})
+        )
     with pytest.raises(ImmutableRecordError):
         await repo.delete("out.alerts", "a:1")
-    await repo.put("reg.tokens", "sealed", {"token_id": "sealed"}, immutable=True)
+    await repo.put(
+        "reg.tokens", "sealed", complete_fixture_record("reg.tokens", {"token_id": "sealed"}), immutable=True
+    )
     with pytest.raises(ImmutableRecordError):
         await repo.delete("reg.tokens", "sealed")
 
 
-async def test_queue_namespaced_idempotency_concurrency_priority(repo) -> None:
+async def test_queue_namespaced_idempotency_concurrency_priority(repo: StorageBackend) -> None:
     rows = await asyncio.gather(*[repo.enqueue("FILTER_ITEM", {"item_id": "i"}, "i") for _ in range(10)])
     assert len({r["job_id"] for r in rows}) == 1
     routed = await repo.enqueue("ROUTE_ITEM", {"item_id": "i"}, "i", priority=0)
@@ -198,7 +210,7 @@ async def test_queue_namespaced_idempotency_concurrency_priority(repo) -> None:
     assert (await repo.enqueue("ROUTE_ITEM", {}, "i"))["status"] == "DONE"
 
 
-async def test_queue_expiry_retry_recovery(repo) -> None:
+async def test_queue_expiry_retry_recovery(repo: StorageBackend) -> None:
     expired = await repo.enqueue("X", {}, "expired", expires_at=iso(utcnow() - timedelta(seconds=1)))
     delayed = await repo.enqueue("X", {}, "delayed", run_after=iso(utcnow() + timedelta(hours=1)))
     retry = await repo.enqueue("X", {}, "retry", max_attempts=2)
@@ -216,15 +228,17 @@ async def test_queue_expiry_retry_recovery(repo) -> None:
     assert await repo.claim_job() is None
 
 
-async def test_event_lock_serializes_increment(repo) -> None:
-    await repo.put("evt.events", "event", {"event_id": "event", "counter": 0})
+async def test_event_lock_serializes_increment(repo: StorageBackend) -> None:
+    await repo.put(
+        "evt.events", "event", complete_fixture_record("evt.events", {"event_id": "event", "counter": 0})
+    )
 
     async def increment() -> None:
         async with repo.lock("event:event"):
             row = await repo.get("evt.events", "event")
             await asyncio.sleep(0)
             row["counter"] += 1
-            await repo.put("evt.events", "event", row)
+            await repo.put("evt.events", "event", complete_fixture_record("evt.events", row))
 
     await asyncio.gather(*[increment() for _ in range(10)])
     assert (await repo.get("evt.events", "event"))["counter"] == 10
@@ -233,9 +247,8 @@ async def test_event_lock_serializes_increment(repo) -> None:
 @pytest.mark.integration
 @pytest.mark.postgres
 @pytest.mark.parametrize("repo", ["postgres"], indirect=True)
-async def test_postgres_reopen_keeps_jobs_and_typed_columns(repo) -> None:
-    if not isinstance(repo, PostgresRepository):
-        pytest.skip("PostgreSQL restart/persistence requires the real PostgreSQL repository")
+async def test_postgres_reopen_keeps_jobs_and_typed_columns(repo: StorageBackend) -> None:
+    assert isinstance(repo, PostgresRepository)
     job = await repo.enqueue("DELIVER", {"alert_id": "a"}, new_id("idem"))
     await repo.claim_job()
     await repo.close()
@@ -251,20 +264,33 @@ async def test_postgres_reopen_keeps_jobs_and_typed_columns(repo) -> None:
     assert len(rows) >= 45
 
 
-async def test_market_projection_update_and_retention(repo) -> None:
+async def test_market_projection_update_and_retention(repo: StorageBackend) -> None:
     token, instrument = new_id("tok"), new_id("ins")
-    await repo.put("reg.instruments", instrument, {"instrument_id": instrument, "token_id": token})
+    await repo.put(
+        "reg.instruments",
+        instrument,
+        complete_fixture_record("reg.instruments", {"instrument_id": instrument, "token_id": token}),
+    )
     event = new_id("evt")
     old = utcnow() - timedelta(days=120)
-    await repo.put("evt.events", event, {"event_id": event, "public_at": iso(old)})
+    await repo.put(
+        "evt.events", event, complete_fixture_record("evt.events", {"event_id": event, "public_at": iso(old)})
+    )
     ems = new_id("ems")
     await repo.put(
         "evt.ems_assessments",
         ems,
-        {"ems_id": ems, "event_id": event, "version": 1, "class": "STRUCTURAL_SHOCK"},
+        complete_fixture_record(
+            "evt.ems_assessments",
+            {"ems_id": ems, "event_id": event, "version": 1, "class": "STRUCTURAL_SHOCK"},
+        ),
     )
     mta = new_id("mta")
-    await repo.put("ana.market_truth", mta, {"mta_id": mta, "token_id": token, "event_id": event})
+    await repo.put(
+        "ana.market_truth",
+        mta,
+        complete_fixture_record("ana.market_truth", {"mta_id": mta, "token_id": token, "event_id": event}),
+    )
     key = instrument + ":protected"
     row = {
         "instrument_id": instrument,
@@ -273,29 +299,39 @@ async def test_market_projection_update_and_retention(repo) -> None:
         "buy_notional": "24.6",
         "complete": True,
     }
-    await repo.put("mkt.flow_bars_1m", key, row)
-    await repo.put("mkt.flow_bars_1m", key, {**row, "buy_qty": "13.3"})
+    await repo.put("mkt.flow_bars_1m", key, complete_fixture_record("mkt.flow_bars_1m", row))
+    await repo.put(
+        "mkt.flow_bars_1m", key, complete_fixture_record("mkt.flow_bars_1m", {**row, "buy_qty": "13.3"})
+    )
     stale_key = instrument + ":stale"
-    await repo.put("mkt.flow_bars_1m", stale_key, {**row, "minute_start": iso(old - timedelta(days=10))})
+    await repo.put(
+        "mkt.flow_bars_1m",
+        stale_key,
+        complete_fixture_record("mkt.flow_bars_1m", {**row, "minute_start": iso(old - timedelta(days=10))}),
+    )
     await repo.prune_market(utcnow() - timedelta(days=90))
     assert (await repo.get("mkt.flow_bars_1m", key))["buy_qty"] == "13.3"
     assert await repo.get("mkt.flow_bars_1m", stale_key) is None
     assert (await repo.get("mkt.flow_bars_1m", key))["buy_usd"] == "24.6"
 
 
-async def test_indexed_range_pages_equal_timestamps_exclusive_end(repo) -> None:
+async def test_indexed_range_pages_equal_timestamps_exclusive_end(repo: StorageBackend) -> None:
     instrument = new_id("ins")
     at = utcnow()
     for n in range(9):
         await repo.put(
             "mkt.liq_obs",
             f"{instrument}:{n}",
-            {"instrument_id": instrument, "ts": iso(at), "qty_native": str(n)},
+            complete_fixture_record(
+                "mkt.liq_obs", {"instrument_id": instrument, "ts": iso(at), "qty_native": str(n)}
+            ),
         )
     await repo.put(
         "mkt.liq_obs",
         f"{instrument}:later",
-        {"instrument_id": instrument, "ts": iso(at + timedelta(seconds=1))},
+        complete_fixture_record(
+            "mkt.liq_obs", {"instrument_id": instrument, "ts": iso(at + timedelta(seconds=1))}
+        ),
     )
     rows = [
         row
@@ -317,15 +353,14 @@ async def test_indexed_range_pages_equal_timestamps_exclusive_end(repo) -> None:
 @pytest.mark.integration
 @pytest.mark.postgres
 @pytest.mark.parametrize("repo", [pytest.param("postgres_fresh", id="postgres")], indirect=True)
-async def test_postgres_migrations_repeat_and_nested_temporal_projection(repo) -> None:
-    if not isinstance(repo, PostgresRepository):
-        pytest.skip("Migration identity and SQL projections require real PostgreSQL")
+async def test_postgres_migrations_repeat_and_nested_temporal_projection(repo: StorageBackend) -> None:
+    assert isinstance(repo, PostgresRepository)
     await repo.migrate()
     await repo.migrate()
     eid = new_id("evt")
     at = iso()
     record = {"event_id": eid, "event_time": {"value": at, "precision": "EXACT", "quote": "evidence"}}
-    await repo.put("evt.events", eid, record)
+    await repo.put("evt.events", eid, complete_fixture_record("evt.events", record))
     assert await repo.get("evt.events", eid) == record
     async with repo.transaction():
         row = await (
@@ -337,10 +372,12 @@ async def test_postgres_migrations_repeat_and_nested_temporal_projection(repo) -
     assert row["event_time_prec"] == "EXACT"
 
 
-async def test_decision_structured_condition_projection(repo) -> None:
+async def test_decision_structured_condition_projection(repo: StorageBackend) -> None:
     eid, mid, did = new_id("evt"), new_id("mta"), new_id("dec")
-    await repo.put("evt.events", eid, {"event_id": eid})
-    await repo.put("ana.market_truth", mid, {"mta_id": mid, "event_id": eid})
+    await repo.put("evt.events", eid, complete_fixture_record("evt.events", {"event_id": eid}))
+    await repo.put(
+        "ana.market_truth", mid, complete_fixture_record("ana.market_truth", {"mta_id": mid, "event_id": eid})
+    )
     conditions = [{"cond_id": "cond-a", "role": "UPGRADE", "expr": {"metric": "dc.class", "value": "HIGH"}}]
     row = {
         "dec_id": did,
@@ -349,7 +386,7 @@ async def test_decision_structured_condition_projection(repo) -> None:
         "conditions": conditions,
         "trade_reasons": ["DATA_LOW"],
     }
-    await repo.put("ana.decisions", did, row)
+    await repo.put("ana.decisions", did, complete_fixture_record("ana.decisions", row))
     assert (await repo.get("ana.decisions", did))["conditions"] == conditions
     if isinstance(repo, PostgresRepository):
         async with repo.transaction():
@@ -362,43 +399,62 @@ async def test_decision_structured_condition_projection(repo) -> None:
         assert result["trade_reasons"] == ["DATA_LOW"]
 
 
-async def test_expired_source_escalations_follow_job_retention(repo) -> None:
+async def test_expired_source_escalations_follow_job_retention(repo: StorageBackend) -> None:
     expired, active = new_id("esc"), new_id("esc")
     for key, expires in ((expired, utcnow() - timedelta(days=31)), (active, utcnow() + timedelta(hours=1))):
         await repo.put(
             "ops.source_escalations",
             key,
-            {"escalation_id": key, "source_id": "S01", "status": "ACTIVE", "expires_at": iso(expires)},
+            complete_fixture_record(
+                "ops.source_escalations",
+                {"escalation_id": key, "source_id": "S01", "status": "ACTIVE", "expires_at": iso(expires)},
+            ),
         )
     await repo.prune_jobs(utcnow() - timedelta(days=30))
     assert await repo.get("ops.source_escalations", expired) is None
     assert (await repo.get("ops.source_escalations", active))["source_id"] == "S01"
 
 
-async def test_terminal_job_retention_keeps_dependencies_and_pending(repo) -> None:
+async def test_terminal_job_retention_keeps_dependencies_and_pending(repo: StorageBackend) -> None:
     old = iso(utcnow() - timedelta(days=40))
     removable = await repo.enqueue("RETENTION_TEST", {}, new_id("idem"))
     needed = await repo.enqueue("RETENTION_TEST", {}, new_id("idem"))
     active = await repo.enqueue("RETENTION_TEST", {"depends_on": needed["job_id"]}, new_id("idem"))
     for row in (removable, needed):
         row.update(status="DONE", finished_at=old)
-        await repo.put("ops.jobs", row["job_id"], row)
+        await repo.put("ops.jobs", row["job_id"], complete_fixture_record("ops.jobs", row))
     active["run_after"] = old
-    await repo.put("ops.jobs", active["job_id"], active)
+    await repo.put("ops.jobs", active["job_id"], complete_fixture_record("ops.jobs", active))
     assert await repo.prune_jobs(utcnow() - timedelta(days=30)) == 1
     assert await repo.get("ops.jobs", removable["job_id"]) is None
     assert await repo.get("ops.jobs", needed["job_id"])
     assert (await repo.get("ops.jobs", active["job_id"]))["status"] == "QUEUED"
 
 
-async def test_preservation_before_market_truth_includes_beneficiary_and_benchmarks(repo) -> None:
+async def test_preservation_before_market_truth_includes_beneficiary_and_benchmarks(
+    repo: StorageBackend,
+) -> None:
     eid = new_id("evt")
     now = iso()
-    await repo.put("evt.events", eid, {"event_id": eid, "public_at": now, "tokens_mentioned": ["world:WLD"]})
-    ems = new_id("ems")
-    await repo.put("evt.ems_assessments", ems, {"ems_id": ems, "event_id": eid, "class": "MAJOR"})
     await repo.put(
-        "evt.beneficiary_maps", eid + ":1", {"event_id": eid, "map_version": 1, "analysis_set": ["ondo:ONDO"]}
+        "evt.events",
+        eid,
+        complete_fixture_record(
+            "evt.events", {"event_id": eid, "public_at": now, "tokens_mentioned": ["world:WLD"]}
+        ),
+    )
+    ems = new_id("ems")
+    await repo.put(
+        "evt.ems_assessments",
+        ems,
+        complete_fixture_record("evt.ems_assessments", {"ems_id": ems, "event_id": eid, "class": "MAJOR"}),
+    )
+    await repo.put(
+        "evt.beneficiary_maps",
+        eid + ":1",
+        complete_fixture_record(
+            "evt.beneficiary_maps", {"event_id": eid, "map_version": 1, "analysis_set": ["ondo:ONDO"]}
+        ),
     )
     tokens = {row[0] for row in await repo.preserved_market_windows()}
     assert {"world:WLD", "ondo:ONDO", "bitcoin:BTC", "ethereum:ETH"} <= tokens
@@ -407,7 +463,7 @@ async def test_preservation_before_market_truth_includes_beneficiary_and_benchma
 @pytest.mark.integration
 @pytest.mark.postgres
 @pytest.mark.parametrize("repo", [pytest.param("postgres_deployment", id="postgres")], indirect=True)
-async def test_deployed_agent_role_select_only(repo) -> None:
+async def test_deployed_agent_role_select_only(repo: StorageBackend) -> None:
     assert isinstance(repo, PostgresRepository)
     from pathlib import Path
 
@@ -451,19 +507,22 @@ async def test_deployed_agent_role_select_only(repo) -> None:
         await repo._conn().execute("DROP TABLE reg." + probe)
 
 
-async def test_latest_before_strict_cutoff_and_control_records(repo) -> None:
+async def test_latest_before_strict_cutoff_and_control_records(repo: StorageBackend) -> None:
     instrument = new_id("ins")
     at = utcnow()
     for n, seconds in enumerate((-2, -1, 0, 1)):
         await repo.put(
             "mkt.liq_obs",
             f"{instrument}:{n}",
-            {
-                "instrument_id": instrument,
-                "qty_native": str(n),
-                "ts": iso(at + timedelta(seconds=seconds)),
-                "price": str(n),
-            },
+            complete_fixture_record(
+                "mkt.liq_obs",
+                {
+                    "instrument_id": instrument,
+                    "qty_native": str(n),
+                    "ts": iso(at + timedelta(seconds=seconds)),
+                    "price": str(n),
+                },
+            ),
         )
     row = await repo.latest_before("mkt.liq_obs", "ts", at, filters={"instrument_id": instrument})
     assert row["qty_native"] == "1"
@@ -477,7 +536,10 @@ async def test_latest_before_strict_cutoff_and_control_records(repo) -> None:
     await repo.put(
         "mkt.backfill_runs",
         bid,
-        {"backfill_id": bid, "status": "PENDING", "anchor": iso(), "result": {"instruments": []}},
+        complete_fixture_record(
+            "mkt.backfill_runs",
+            {"backfill_id": bid, "status": "PENDING", "anchor": iso(), "result": {"instruments": []}},
+        ),
     )
     assert (await repo.get("mkt.backfill_runs", bid))["result"] == {"instruments": []}
 
@@ -490,7 +552,7 @@ def test_decisive_fact_projection_requires_canonical_text() -> None:
     assert _projection("ana.market_truth", {"decisive_facts": ["Positive"]})["decisive_facts"] == ["Positive"]
 
 
-async def test_uncapped_keyset_and_latest_outside_first_page(repo) -> None:
+async def test_uncapped_keyset_and_latest_outside_first_page(repo: StorageBackend) -> None:
     prefix = new_id("scan")
     at = utcnow()
     for n in range(9):
@@ -498,12 +560,15 @@ async def test_uncapped_keyset_and_latest_outside_first_page(repo) -> None:
         await repo.put(
             "evt.events",
             key,
-            {
-                "event_id": key,
-                "scan": prefix,
-                "lifecycle": "TRACKED" if n % 2 == 0 else "CLOSED",
-                "known_to_us_at": iso(at + timedelta(seconds=n)),
-            },
+            complete_fixture_record(
+                "evt.events",
+                {
+                    "event_id": key,
+                    "scan": prefix,
+                    "lifecycle": "TRACKED" if n % 2 == 0 else "CLOSED",
+                    "known_to_us_at": iso(at + timedelta(seconds=n)),
+                },
+            ),
         )
     all_rows = [r async for r in repo.iter_all("evt.events", filters={"scan": prefix}, batch_size=2)]
     assert len(all_rows) == 9 and len({r["event_id"] for r in all_rows}) == 9
@@ -524,20 +589,27 @@ async def test_uncapped_keyset_and_latest_outside_first_page(repo) -> None:
         _ = [r async for r in repo.iter_all("evt.events", batch_size=0)]
 
 
-async def test_normalized_retention_keeps_whole_event_day(repo) -> None:
+async def test_normalized_retention_keeps_whole_event_day(repo: StorageBackend) -> None:
     old = utcnow() - timedelta(days=120)
     event, ems = new_id("evt"), new_id("ems")
     await repo.put(
         "evt.events",
         event,
-        {
-            "event_id": event,
-            "public_at": iso(old),
-            "known_to_us_at": iso(old),
-            "tokens_mentioned": ["token:major"],
-        },
+        complete_fixture_record(
+            "evt.events",
+            {
+                "event_id": event,
+                "public_at": iso(old),
+                "known_to_us_at": iso(old),
+                "tokens_mentioned": ["token:major"],
+            },
+        ),
     )
-    await repo.put("evt.ems_assessments", ems, {"ems_id": ems, "event_id": event, "class": "MAJOR"})
+    await repo.put(
+        "evt.ems_assessments",
+        ems,
+        complete_fixture_record("evt.ems_assessments", {"ems_id": ems, "event_id": event, "class": "MAJOR"}),
+    )
     expired, preserved, current = new_id("bar"), new_id("bar"), new_id("bar")
     for key, at in [
         (expired, old - timedelta(days=10)),
@@ -545,7 +617,11 @@ async def test_normalized_retention_keeps_whole_event_day(repo) -> None:
         (current, utcnow()),
     ]:
         await repo.put(
-            "mkt.flow_bars_1m", key, {"instrument_id": "retention:" + key, "minute_start": iso(at)}
+            "mkt.flow_bars_1m",
+            key,
+            complete_fixture_record(
+                "mkt.flow_bars_1m", {"instrument_id": "retention:" + key, "minute_start": iso(at)}
+            ),
         )
     await repo.prune_market(utcnow() - timedelta(days=90))
     assert await repo.get("mkt.flow_bars_1m", expired) is None
@@ -556,9 +632,8 @@ async def test_normalized_retention_keeps_whole_event_day(repo) -> None:
 @pytest.mark.integration
 @pytest.mark.postgres
 @pytest.mark.parametrize("repo", ["postgres"], indirect=True)
-async def test_sql_typed_completeness_and_serials(repo) -> None:
-    if not isinstance(repo, PostgresRepository):
-        pytest.skip("Actual typed SQL constraints require PostgreSQL")
+async def test_sql_typed_completeness_and_serials(repo: StorageBackend) -> None:
+    assert isinstance(repo, PostgresRepository)
     import psycopg
     from psycopg.types.json import Jsonb
 
@@ -569,14 +644,23 @@ async def test_sql_typed_completeness_and_serials(repo) -> None:
                 "INSERT INTO evt.events(storage_key,document,event_id) VALUES (%s,%s,%s)",
                 (eid, Jsonb({"event_id": eid}), eid),
             )
-    await repo.put("evt.events", eid, {"event_id": eid})
+    await repo.put("evt.events", eid, complete_fixture_record("evt.events", {"event_id": eid}))
     ids = []
     for _ in range(2):
         key = new_id("state")
         await repo.put(
             "evt.state_changes",
             key,
-            {"event_id": eid, "ladder": "EVENT", "to_state": "RUMOR", "evidence": [], "changed_at": iso()},
+            complete_fixture_record(
+                "evt.state_changes",
+                {
+                    "event_id": eid,
+                    "ladder": "EVENT",
+                    "to_state": "RUMOR",
+                    "evidence": [],
+                    "changed_at": iso(),
+                },
+            ),
             immutable=True,
         )
         async with repo.transaction():
@@ -590,7 +674,7 @@ async def test_sql_typed_completeness_and_serials(repo) -> None:
 @pytest.mark.integration
 @pytest.mark.postgres
 @pytest.mark.parametrize("repo", [pytest.param("postgres_deployment", id="postgres")], indirect=True)
-async def test_agent_new_connection_defaults_read_only(repo) -> None:
+async def test_agent_new_connection_defaults_read_only(repo: StorageBackend) -> None:
     assert isinstance(repo, PostgresRepository)
     import psycopg
     from psycopg.conninfo import conninfo_to_dict, make_conninfo
@@ -618,7 +702,7 @@ async def test_agent_new_connection_defaults_read_only(repo) -> None:
         await connection.close()
 
 
-async def test_late_arrivals_use_availability_not_original_receipt(repo) -> None:
+async def test_late_arrivals_use_availability_not_original_receipt(repo: StorageBackend) -> None:
     instrument = new_id("late")
     cutoff = utcnow() - timedelta(hours=2)
     arrival = utcnow()
@@ -626,39 +710,51 @@ async def test_late_arrivals_use_availability_not_original_receipt(repo) -> None
         await repo.put(
             "mkt.liq_obs",
             f"{instrument}:{n}",
-            {
-                "instrument_id": instrument,
-                "qty_native": str(n),
-                "ts": iso(cutoff - timedelta(seconds=n)),
-                "received_ts": iso(cutoff - timedelta(hours=1)),
-                "recorded_at": iso(arrival),
-                "price": "1.234567890123456789",
-            },
+            complete_fixture_record(
+                "mkt.liq_obs",
+                {
+                    "instrument_id": instrument,
+                    "qty_native": str(n),
+                    "ts": iso(cutoff - timedelta(seconds=n)),
+                    "received_ts": iso(cutoff - timedelta(hours=1)),
+                    "recorded_at": iso(arrival),
+                    "price": "1.234567890123456789",
+                },
+            ),
         )
     await repo.put(
         "mkt.liq_obs",
         instrument + ":future",
-        {
-            "instrument_id": instrument,
-            "qty_native": "10",
-            "ts": iso(cutoff + timedelta(microseconds=1)),
-            "recorded_at": iso(arrival),
-        },
+        complete_fixture_record(
+            "mkt.liq_obs",
+            {
+                "instrument_id": instrument,
+                "qty_native": "10",
+                "ts": iso(cutoff + timedelta(microseconds=1)),
+                "recorded_at": iso(arrival),
+            },
+        ),
     )
     await repo.put(
         "mkt.liq_obs",
         instrument + ":legacy",
-        {"instrument_id": instrument, "qty_native": "11", "ts": iso(cutoff), "received_ts": iso(arrival)},
+        complete_fixture_record(
+            "mkt.liq_obs",
+            {"instrument_id": instrument, "qty_native": "11", "ts": iso(cutoff), "received_ts": iso(arrival)},
+        ),
     )
     await repo.put(
         "mkt.liq_obs",
         instrument + ":end",
-        {
-            "instrument_id": instrument,
-            "qty_native": "12",
-            "ts": iso(cutoff),
-            "recorded_at": iso(arrival + timedelta(seconds=1)),
-        },
+        complete_fixture_record(
+            "mkt.liq_obs",
+            {
+                "instrument_id": instrument,
+                "qty_native": "12",
+                "ts": iso(cutoff),
+                "recorded_at": iso(arrival + timedelta(seconds=1)),
+            },
+        ),
     )
     result = [
         r
@@ -693,18 +789,21 @@ async def test_late_arrivals_use_availability_not_original_receipt(repo) -> None
     assert [r["qty_native"] for r in retried] == [r["qty_native"] for r in result]
 
 
-async def test_metadata_pages_omit_large_document_payload(repo) -> None:
+async def test_metadata_pages_omit_large_document_payload(repo: StorageBackend) -> None:
     prefix = new_id("pack")
     for n in range(5):
         await repo.put(
             "out.reaction_checkpoints",
             prefix + str(n),
-            {
-                "event_id": prefix,
-                "token_id": "test:T",
-                "revision": n + 1,
-                "market_truth": {"large_payload": "x" * 10000},
-            },
+            complete_fixture_record(
+                "out.reaction_checkpoints",
+                {
+                    "event_id": prefix,
+                    "token_id": "test:T",
+                    "revision": n + 1,
+                    "market_truth": {"large_payload": "x" * 10000},
+                },
+            ),
             immutable=True,
         )
     rows = [
@@ -722,22 +821,25 @@ async def test_metadata_pages_omit_large_document_payload(repo) -> None:
     )
 
 
-async def test_capture_tier_transitions_follow_market_retention(repo) -> None:
+async def test_capture_tier_transitions_follow_market_retention(repo: StorageBackend) -> None:
     old, recent = new_id("tier"), new_id("tier")
     for key, at in ((old, utcnow() - timedelta(days=120)), (recent, utcnow() - timedelta(days=1))):
         await repo.put(
             "ops.capture_tier_transitions",
             key,
-            {
-                "transition_id": key,
-                "token_id": "retention:" + key,
-                "effective_at": iso(at),
-                "effective_at_prec": "COLLECTION_ONLY",
-                "reason": "retention test",
-                "config_version": "test",
-                "code_version": "test",
-                "tier": "BASE",
-            },
+            complete_fixture_record(
+                "ops.capture_tier_transitions",
+                {
+                    "transition_id": key,
+                    "token_id": "retention:" + key,
+                    "effective_at": iso(at),
+                    "effective_at_prec": "COLLECTION_ONLY",
+                    "reason": "retention test",
+                    "config_version": "test",
+                    "code_version": "test",
+                    "tier": "BASE",
+                },
+            ),
         )
     await repo.prune_market(utcnow() - timedelta(days=90))
     assert await repo.get("ops.capture_tier_transitions", old) is None
@@ -747,9 +849,10 @@ async def test_capture_tier_transitions_follow_market_retention(repo) -> None:
 @pytest.mark.integration
 @pytest.mark.postgres
 @pytest.mark.parametrize("repo", ["postgres"], indirect=True)
-async def test_lock_waiters_do_not_drain_the_pool(repo, monkeypatch: pytest.MonkeyPatch) -> None:
-    if not isinstance(repo, PostgresRepository):
-        pytest.skip("Pool behavior requires PostgreSQL")
+async def test_lock_waiters_do_not_drain_the_pool(
+    repo: StorageBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert isinstance(repo, PostgresRepository)
     key = new_id("contended")
     held, release = asyncio.Event(), asyncio.Event()
     ready = asyncio.Event()
@@ -758,7 +861,7 @@ async def test_lock_waiters_do_not_drain_the_pool(repo, monkeypatch: pytest.Monk
     transaction = repo.transaction
 
     @asynccontextmanager
-    async def observed_transaction():
+    async def observed_transaction() -> AsyncIterator[PostgresRepository]:
         async with transaction() as current:
             yield current
 
@@ -777,7 +880,7 @@ async def test_lock_waiters_do_not_drain_the_pool(repo, monkeypatch: pytest.Monk
 
     order = []
 
-    async def waiter(n) -> None:
+    async def waiter(n: int) -> None:
         async with repo.lock(key):
             order.append(n)
 
@@ -795,7 +898,7 @@ async def test_lock_waiters_do_not_drain_the_pool(repo, monkeypatch: pytest.Monk
     assert sorted(order) == list(range(40))
 
 
-async def test_one_reaction_capture_runs_at_a_time_and_other_jobs_do_not_wait(repo) -> None:
+async def test_one_reaction_capture_runs_at_a_time_and_other_jobs_do_not_wait(repo: StorageBackend) -> None:
     await _clear_queue(repo)
     captures = [
         await repo.enqueue("REACTION_CAPTURE", {"n": n}, new_id("idem"), priority=0) for n in range(3)
@@ -813,9 +916,8 @@ async def test_one_reaction_capture_runs_at_a_time_and_other_jobs_do_not_wait(re
 @pytest.mark.integration
 @pytest.mark.postgres
 @pytest.mark.parametrize("repo", ["postgres"], indirect=True)
-async def test_concurrent_claims_respect_the_capture_cap(repo) -> None:
-    if not isinstance(repo, PostgresRepository):
-        pytest.skip("Concurrent claims require PostgreSQL")
+async def test_concurrent_claims_respect_the_capture_cap(repo: StorageBackend) -> None:
+    assert isinstance(repo, PostgresRepository)
     await _clear_queue(repo)
     for n in range(6):
         await repo.enqueue("REACTION_CAPTURE", {"n": n}, new_id("idem"), priority=0)
@@ -825,7 +927,7 @@ async def test_concurrent_claims_respect_the_capture_cap(repo) -> None:
     assert sorted(job["type"] for job in claimed) == ["DELIVER"] * 3 + ["REACTION_CAPTURE"]
 
 
-async def test_due_captures_are_claimed_earliest_expiry_first(repo) -> None:
+async def test_due_captures_are_claimed_earliest_expiry_first(repo: StorageBackend) -> None:
     await _clear_queue(repo)
     now = utcnow()
 
@@ -855,12 +957,11 @@ async def test_due_captures_are_claimed_earliest_expiry_first(repo) -> None:
 @pytest.mark.postgres
 @pytest.mark.parametrize("repo", ["postgres"], indirect=True)
 async def test_late_deliver_claim_is_logged_with_type_and_wait(
-    repo, caplog: pytest.LogCaptureFixture
+    repo: StorageBackend, caplog: pytest.LogCaptureFixture
 ) -> None:
     import logging
 
-    if not isinstance(repo, PostgresRepository):
-        pytest.skip("The claim timing log is the PostgreSQL claim path")
+    assert isinstance(repo, PostgresRepository)
     await _clear_queue(repo)
     await repo.enqueue(
         "DELIVER", {}, new_id("idem"), priority=0, run_after=iso(utcnow() - timedelta(seconds=7))
@@ -871,7 +972,7 @@ async def test_late_deliver_claim_is_logged_with_type_and_wait(
     assert "type DELIVER" in caplog.text and "after run_after" in caplog.text
 
 
-async def _clear_queue(repo) -> None:
+async def _clear_queue(repo: StorageBackend) -> None:
     if isinstance(repo, PostgresRepository):
         async with repo.transaction():
             await repo._conn().execute("DELETE FROM ops.jobs WHERE status IN ('QUEUED','RUNNING')")
@@ -881,7 +982,7 @@ async def _clear_queue(repo) -> None:
             )
 
 
-async def test_captures_yield_to_event_analysis_unless_near_expiry(repo) -> None:
+async def test_captures_yield_to_event_analysis_unless_near_expiry(repo: StorageBackend) -> None:
     await _clear_queue(repo)
     now = utcnow()
     truth = await repo.enqueue("RUN_MARKET_TRUTH", {}, new_id("idem"), priority=1)
@@ -902,11 +1003,15 @@ async def test_captures_yield_to_event_analysis_unless_near_expiry(repo) -> None
     assert (await repo.claim_job())["job_id"] == slack["job_id"]
 
 
-async def test_captures_wait_for_a_fresh_event_card(repo) -> None:
+async def test_captures_wait_for_a_fresh_event_card(repo: StorageBackend) -> None:
     await _clear_queue(repo)
     event = new_id("evt")
     await repo.put(
-        "evt.events", event, {"event_id": event, "known_to_us_at": iso(utcnow() - timedelta(minutes=2))}
+        "evt.events",
+        event,
+        complete_fixture_record(
+            "evt.events", {"event_id": event, "known_to_us_at": iso(utcnow() - timedelta(minutes=2))}
+        ),
     )
     capture = await repo.enqueue(
         "REACTION_CAPTURE", {}, new_id("idem"), priority=0, expires_at=iso(utcnow() + timedelta(hours=5))
@@ -915,7 +1020,16 @@ async def test_captures_wait_for_a_fresh_event_card(repo) -> None:
     await repo.put(
         "out.alerts",
         f"{event}:1",
-        {"alert_id": new_id("alr"), "version": 1, "event_id": event, "kind": "FULL", "generated_at": iso()},
+        complete_fixture_record(
+            "out.alerts",
+            {
+                "alert_id": new_id("alr"),
+                "version": 1,
+                "event_id": event,
+                "kind": "FULL",
+                "generated_at": iso(),
+            },
+        ),
         immutable=True,
     )
     assert (await repo.claim_job())["job_id"] == capture["job_id"]
@@ -924,7 +1038,7 @@ async def test_captures_wait_for_a_fresh_event_card(repo) -> None:
 async def test_memory_reads_return_isolated_values_and_see_own_writes_before_rollback() -> None:
     repo = MemoryRepository()
     original = {"token_id": "a", "nested": {"values": [1]}}
-    await repo.put("reg.tokens", "a", original)
+    await repo.put("reg.tokens", "a", complete_fixture_record("reg.tokens", original))
     fetched = await repo.get("reg.tokens", "a")
     listed = await repo.list("reg.tokens")
     scanned = [row async for row in repo.iter_all("reg.tokens")]
@@ -934,7 +1048,11 @@ async def test_memory_reads_return_isolated_values_and_see_own_writes_before_rol
     assert await repo.get("reg.tokens", "a") == original
     with pytest.raises(ValueError, match="rollback"):
         async with repo.transaction():
-            await repo.put("reg.tokens", "a", {"token_id": "a", "nested": {"values": [9]}})
+            await repo.put(
+                "reg.tokens",
+                "a",
+                complete_fixture_record("reg.tokens", {"token_id": "a", "nested": {"values": [9]}}),
+            )
             assert (await repo.get("reg.tokens", "a"))["nested"]["values"] == [9]
             assert (await repo.list("reg.tokens"))[0]["nested"]["values"] == [9]
             assert [row["nested"]["values"] async for row in repo.iter_all("reg.tokens")] == [[9]]
@@ -944,20 +1062,26 @@ async def test_memory_reads_return_isolated_values_and_see_own_writes_before_rol
 
 async def test_memory_cancelled_reader_keeps_writer_exclusive_and_releases_waiter() -> None:
     repo = MemoryRepository()
-    await repo.put("reg.tokens", "a", {"token_id": "a", "value": "before"})
+    await repo.put(
+        "reg.tokens", "a", complete_fixture_record("reg.tokens", {"token_id": "a", "value": "before"})
+    )
     held, release, attempted, next_attempted = (asyncio.Event() for _ in range(4))
 
     async def writer() -> None:
         async with repo.transaction():
-            await repo.put("reg.tokens", "a", {"token_id": "a", "value": "committed"})
+            await repo.put(
+                "reg.tokens",
+                "a",
+                complete_fixture_record("reg.tokens", {"token_id": "a", "value": "committed"}),
+            )
             held.set()
             await release.wait()
 
-    async def read_one():
+    async def read_one() -> Record | None:
         attempted.set()
         return await repo.get("reg.tokens", "a")
 
-    async def read_list():
+    async def read_list() -> list[Record]:
         next_attempted.set()
         return await repo.list("reg.tokens")
 
@@ -998,18 +1122,23 @@ async def test_retention_policy_preserves_exact_windows_days_and_bundle_referenc
     await repo.put(
         "evt.events",
         event_id,
-        {
-            "event_id": event_id,
-            "event_time": iso(anchor),
-            "public_at": iso(anchor),
-            "known_to_us_at": iso(known),
-            "tokens_mentioned": ["retained:T"],
-        },
+        complete_fixture_record(
+            "evt.events",
+            {
+                "event_id": event_id,
+                "event_time": iso(anchor),
+                "public_at": iso(anchor),
+                "known_to_us_at": iso(known),
+                "tokens_mentioned": ["retained:T"],
+            },
+        ),
     )
     await repo.put(
         "evt.ems_assessments",
         ems_id,
-        {"ems_id": ems_id, "event_id": event_id, "class": grade},
+        complete_fixture_record(
+            "evt.ems_assessments", {"ems_id": ems_id, "event_id": event_id, "class": grade}
+        ),
     )
     start, end = anchor - timedelta(hours=24), known + timedelta(hours=72)
     protected = grade != "LOW"
@@ -1028,16 +1157,19 @@ async def test_retention_policy_preserves_exact_windows_days_and_bundle_referenc
         await repo.put(
             "ops.capture_tier_transitions",
             key,
-            {
-                "transition_id": key,
-                "token_id": "retained:T",
-                "effective_at": iso(at),
-                "effective_at_prec": "COLLECTION_ONLY",
-                "reason": "retention boundary fixture",
-                "config_version": "test",
-                "code_version": "test",
-                "tier": "BASE",
-            },
+            complete_fixture_record(
+                "ops.capture_tier_transitions",
+                {
+                    "transition_id": key,
+                    "token_id": "retained:T",
+                    "effective_at": iso(at),
+                    "effective_at_prec": "COLLECTION_ONLY",
+                    "reason": "retention boundary fixture",
+                    "config_version": "test",
+                    "code_version": "test",
+                    "tier": "BASE",
+                },
+            ),
         )
     bundle_id = sha256(event_id)
     bundle = {
@@ -1047,7 +1179,7 @@ async def test_retention_policy_preserves_exact_windows_days_and_bundle_referenc
         "event_id": event_id,
         "capture_transition_refs": keys,
     }
-    await repo.put("out.evidence_bundles", bundle_id, bundle)
+    await repo.put("out.evidence_bundles", bundle_id, complete_fixture_record("out.evidence_bundles", bundle))
     counts = await repo.prune_market(utcnow() - timedelta(days=90))
     assert counts["ops.capture_tier_transitions"] == (2 if protected else 4)
     assert await repo.get("ops.capture_tier_transitions", keys[0]) is None
@@ -1063,18 +1195,21 @@ async def test_legacy_wire_job_lifecycle_does_not_fabricate_provenance(repo: Sto
     await repo.put(
         "ops.jobs",
         job_id,
-        {
-            "job_id": job_id,
-            "type": "LEGACY",
-            "priority": 1,
-            "idem_key": idem_key,
-            "payload": {},
-            "status": "QUEUED",
-            "attempts": 0,
-            "max_attempts": 3,
-            "run_after": iso(utcnow() - timedelta(seconds=1)),
-            "expires_at": None,
-        },
+        complete_fixture_record(
+            "ops.jobs",
+            {
+                "job_id": job_id,
+                "type": "LEGACY",
+                "priority": 1,
+                "idem_key": idem_key,
+                "payload": {},
+                "status": "QUEUED",
+                "attempts": 0,
+                "max_attempts": 3,
+                "run_after": iso(utcnow() - timedelta(seconds=1)),
+                "expires_at": None,
+            },
+        ),
     )
     snapshot = await repo.get("ops.jobs", job_id)
     assert snapshot is not None
@@ -1096,18 +1231,21 @@ async def test_invalid_claim_rejection_is_atomic_and_sparse_on_real_backend(repo
     await repo.put(
         "ops.jobs",
         job_id,
-        {
-            "job_id": job_id,
-            "type": "LEGACY",
-            "priority": 1,
-            "idem_key": idem_key,
-            "payload": {"retained": "wire"},
-            "status": "QUEUED",
-            "attempts": 0,
-            "max_attempts": 3,
-            "run_after": iso(utcnow() - timedelta(seconds=1)),
-            "expires_at": None,
-        },
+        complete_fixture_record(
+            "ops.jobs",
+            {
+                "job_id": job_id,
+                "type": "LEGACY",
+                "priority": 1,
+                "idem_key": idem_key,
+                "payload": {"retained": "wire"},
+                "status": "QUEUED",
+                "attempts": 0,
+                "max_attempts": 3,
+                "run_after": iso(utcnow() - timedelta(seconds=1)),
+                "expires_at": None,
+            },
+        ),
     )
     jobs = JobRepository(repo)
     invalid = await jobs.claim()
