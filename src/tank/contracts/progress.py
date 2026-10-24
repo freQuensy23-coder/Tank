@@ -211,3 +211,21 @@ class SessionProgressView(DomainModel):
 class ExtractionProgressView(DomainModel):
     extraction_status: Literal["PENDING", "RUNNING", "DONE", "SKIPPED", "FAILED"]
     extraction_reason: str | None = None
+
+
+class FailureProgressTarget(DomainModel):
+    item_id: SourceContextId | None = None
+    event_id: SourceContextId | None = None
+
+    @model_validator(mode="after")
+    def declared_subject(self) -> Self:
+        if self.item_id is None and self.event_id is None:
+            raise ValueError("A source-processing failure requires an item or event identity")
+        return self
+
+
+class JobFailureProgressView(DomainModel):
+    job_id: SourceContextId
+    type: Literal["FILTER_ITEM", "ROUTE_ITEM", "AGENT_MESSAGE", "RUN_MARKET_TRUTH", "ESCALATE_TOKENS"]
+    status: Literal["QUEUED", "RUNNING", "DONE", "FAILED", "EXPIRED"]
+    target: FailureProgressTarget

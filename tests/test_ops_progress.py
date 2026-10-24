@@ -434,3 +434,39 @@ async def test_source_session_reporting_requires_retry_ownership() -> None:
         )
     assert await repo.list("out.ops_notices") == []
     assert await repo.list("ops.jobs") == []
+
+
+@pytest.mark.asyncio
+async def test_expired_filter_job_reports_actual_subject_once() -> None:
+    from tank.contracts.progress import ProgressPreferences
+    from tank.ops_progress import job_failure_progress
+
+    repo = MemoryRepository()
+    await repo.put("ingest.source_items", "item", {"item_id": "item", "source_id": "S30"})
+    job = await repo.enqueue("FILTER_ITEM", {"item_id": "item"}, "filter:item")
+    preferences = ProgressPreferences(ops_progress_enabled=True, replay=False)
+    await job_failure_progress(repo, preferences, job, "EXPIRED")
+    await job_failure_progress(repo, preferences, job, "EXPIRED")
+    rows = await repo.list("out.ops_notices")
+    assert len(rows) == 1
+    assert rows[0]["subject_id"] == "item"
+    assert rows[0]["stage"] == "PROCESSING_EXPIRED"
+    deliveries = await repo.list("ops.jobs", filters={"type": "DELIVER"})
+    assert len(deliveries) == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_source_job_requires_its_reporting_subject() -> None:
+    from pydantic import ValidationError
+
+    from tank.contracts.progress import ProgressPreferences
+    from tank.ops_progress import job_failure_progress
+
+    repo = MemoryRepository()
+    job = await repo.enqueue("FILTER_ITEM", {}, "malformed-filter")
+    with pytest.raises(ValidationError, match="item or event"):
+        await job_failure_progress(
+            repo, ProgressPreferences(ops_progress_enabled=True, replay=False), job, "FAILED"
+        )
+    assert await repo.list("out.ops_notices") == []
+    assert await repo.list("ops.jobs", filters={"type": "DELIVER"}) == []

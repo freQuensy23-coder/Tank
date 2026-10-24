@@ -9,6 +9,8 @@ from tank.contracts.progress import (
     EventObservationSubject,
     EventProgressRepository,
     ExtractionProgressView,
+    FailureProgressTarget,
+    JobFailureProgressView,
     ProgressDetails,
     ProgressIdentity,
     ProgressNotice,
@@ -315,20 +317,42 @@ async def session_progress(
         await item_progress(repo, settings, item_id, stage, reason, event_id=view.event_id, key=key)
 
 
-async def job_failure_progress(repo, settings, job, reason):
+async def job_failure_progress(
+    repo: EventProgressRepository,
+    settings: ProgressSettings,
+    job: Mapping[str, JsonValue],
+    reason: str,
+) -> None:
     if not enabled(settings):
         return
     kind = job["type"]
+    if not isinstance(kind, str):
+        raise ValueError("Progress job type must be a declared string")
     if kind not in {"FILTER_ITEM", "ROUTE_ITEM", "AGENT_MESSAGE", "RUN_MARKET_TRUTH", "ESCALATE_TOKENS"}:
         return
     payload = job["payload"]
-    if kind == "AGENT_MESSAGE" and payload.get("kind") == "USER_QUESTION":
-        return
-    stage = (
-        "PROCESSING_EXPIRED" if job.get("status") == "EXPIRED" or reason == "EXPIRED" else "PROCESSING_FAILED"
+    if not isinstance(payload, dict):
+        raise ValueError("Source-processing job payload must be a JSON object")
+    if kind == "AGENT_MESSAGE":
+        message_kind = payload["kind"]
+        if not isinstance(message_kind, str):
+            raise ValueError("Agent progress payload requires its declared kind")
+        if message_kind in {"USER_QUESTION", "SCOUT_REVIEW"}:
+            return
+    target = FailureProgressTarget.model_validate(
+        {name: payload[name] for name in ("item_id", "event_id") if name in payload}
     )
-    detail = f"Этап {kind}; {reason}"
-    if payload.get("item_id"):
-        await item_progress(repo, settings, payload["item_id"], stage, detail, key=job["job_id"])
+    view = JobFailureProgressView.model_validate(
+        {
+            **{name: job[name] for name in ("job_id", "type", "status") if name in job},
+            "target": target,
+        }
+    )
+    stage: ProgressStage = (
+        "PROCESSING_EXPIRED" if view.status == "EXPIRED" or reason == "EXPIRED" else "PROCESSING_FAILED"
+    )
+    detail = f"Этап {view.type}; {reason}"
+    if view.target.item_id is not None:
+        await item_progress(repo, settings, view.target.item_id, stage, detail, key=view.job_id)
     else:
-        await event_progress(repo, settings, payload.get("event_id"), stage, detail, key=job["job_id"])
+        await event_progress(repo, settings, view.target.event_id, stage, detail, key=view.job_id)
