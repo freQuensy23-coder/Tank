@@ -29,6 +29,8 @@ type Trades struct {
 
 const stampKeep = 26 * time.Hour
 
+var restStamped = map[string]bool{"coinbase": true, "kraken": true}
+
 func New(ch Inserter, code, config string, log *slog.Logger) *Trades {
 	return &Trades{ch: ch, code: code, config: config, log: log}
 }
@@ -75,7 +77,7 @@ func (t *Trades) Row(tr *normalize.Trade, version uint64) map[string]any {
 }
 
 func (t *Trades) stamp(tr *normalize.Trade) *normalize.Trade {
-	if tr.Venue != "coinbase" {
+	if !restStamped[tr.Venue] {
 		return tr
 	}
 	key := tr.InstrumentID + "\x00" + tr.TradeID

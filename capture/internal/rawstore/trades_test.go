@@ -94,3 +94,33 @@ func TestCoinbaseReprintKeepsTheFirstStamp(t *testing.T) {
 		t.Fatal("the caller's trade is not changed")
 	}
 }
+
+func TestKrakenReprintKeepsTheFirstStampAndOthersPassThrough(t *testing.T) {
+	sink := &lines{}
+	w := New(sink, "tank-capture/test", "cfg", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ws := time.Date(2026, 10, 24, 14, 34, 2, 347552000, time.UTC)
+	kraken := print("112806606", ws)
+	rest := *kraken
+	rest.TS = ws.Add(time.Microsecond)
+	binance := print("9", ws)
+	binance.InstrumentID, binance.Venue = "binance:spot:BTCUSDT", "binance"
+	again := *binance
+	again.TS = ws.Add(time.Microsecond)
+	for _, tr := range []*normalize.Trade{kraken, &rest, binance, &again} {
+		w.Add(tr)
+	}
+	if err := w.Flush(ws); err != nil {
+		t.Fatal(err)
+	}
+	var stamps []string
+	for _, line := range sink.got {
+		var row map[string]any
+		if err := json.Unmarshal(line, &row); err != nil {
+			t.Fatal(err)
+		}
+		stamps = append(stamps, row["ts"].(string))
+	}
+	if stamps[1] != stamps[0] || stamps[3] == stamps[2] {
+		t.Fatalf("Kraken reprints reuse the first stamp; venues that stamp consistently are written as given: %v", stamps)
+	}
+}
