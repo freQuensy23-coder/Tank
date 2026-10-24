@@ -25,8 +25,13 @@ test("JavaScript inventory inspects functions without executing source", (t: Tes
 test("JavaScript inventory preserves explicit immutable fixtures and rejects active syntax errors", (t: TestContext): void => {
   const root = fixture(t);
   mkdirSync(join(root, "tests/fixtures/openma"), { recursive: true });
-  writeFileSync(join(root, "tests/fixtures/openma/runtime-codec.ts"), "not valid TypeScript");
-  assert.equal(inventory(root).files, 0);
+  writeFileSync(join(root, "tests/fixtures/openma/runtime-codec.ts"), "export function reference(value) { return value; }");
+  const reference = inventory(root);
+  assert.equal(reference.files, 0);
+  assert.equal(reference.reference_programs["tests/fixtures/openma/runtime-codec.ts"]?.findings.length, 2);
+  mkdirSync(join(root, "capture/testdata"), { recursive: true });
+  writeFileSync(join(root, "capture/testdata/generator.mjs"), "function generate(input) { return input; }");
+  assert.equal(inventory(root).files, 1);
   writeFileSync(join(root, "src/broken.mts"), "function broken(");
   assert.throws((): void => { inventory(root); }, /broken.mts/);
 });
