@@ -1,9 +1,11 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from tank.clickhouse_market import ClickHouse
 from tank.contracts import DomainModel
 from tank.contracts.job_repository import JobRepository
 from tank.contracts.repository import Collection, Repository
@@ -190,3 +192,22 @@ async def test_typed_job_adapter_refuses_fabricated_completion_before_write() ->
     stored = await store.get("ops.jobs", queued.job_id)
     assert stored is not None
     assert stored["status"] == "QUEUED"
+
+
+async def test_clickhouse_rejects_nonfinite_json_before_http_write() -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200)
+
+    client = ClickHouse(
+        "http://clickhouse.invalid",
+        http=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    )
+    try:
+        with pytest.raises(ValueError, match="finite"):
+            await client.insert("mkt.klines_1m", [{"c": float("nan")}])
+    finally:
+        await client.close()
+    assert requests == []

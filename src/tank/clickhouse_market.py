@@ -11,10 +11,9 @@ exact decimal text (some carry 100 digits), timestamps as DateTime64(6, UTC), JS
 """
 
 import asyncio
-import json
 import re
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal, Protocol
@@ -24,12 +23,12 @@ import httpx
 from pydantic import Field, JsonValue
 
 from tank.contracts import DomainModel
-from tank.contracts.json import decode_json
-from tank.market_codec import IdentityValue, StoredRow, StoredValue, _timestamp
+from tank.contracts.json import decode_json, encode_json
+from tank.market_codec import IdentityValue, StoredRow, StoredValue, _identity, _timestamp
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES
 from tank.models import Record
 from tank.settings import Settings
-from tank.util import canonical_json, iso, parse_time
+from tank.util import JsonInput, TimeInput, canonical_json, iso, parse_time
 
 MARKET_TABLES = {
     "mkt.klines_1m": "open_time",
@@ -180,7 +179,7 @@ class ClickHouse:
 
     async def insert(self, table: str, rows: list[dict[str, JsonValue]]) -> None:
         if rows:
-            body = "\n".join(json.dumps(row) for row in rows)
+            body = "\n".join(encode_json(row).decode() for row in rows)
             await self._post(f"INSERT INTO {table} FORMAT JSONEachRow\n{body}", None)
 
 
@@ -198,6 +197,33 @@ def _json_lines(body: bytes) -> list[dict[str, JsonValue]]:
 
 type QueryValue = StoredValue | Sequence[IdentityValue]
 type QueryKey = tuple[str, QueryValue, str]
+
+
+def _integer(record: Record, field: str) -> int:
+    value = record[field]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field} requires an integer")
+    return value
+
+
+class DependencyHead(DomainModel):
+    storage_key: str
+    recorded_at: str
+    fingerprint: str | None
+    semantic_at: str
+
+
+class SystemPart(DomainModel):
+    database: str
+    table: str
+    partition: str
+
+
+def _text(record: Record, field: str) -> str:
+    value = record[field]
+    if not isinstance(value, str):
+        raise ValueError(f"{field} requires text")
+    return value
 
 
 def _literal(value: QueryValue) -> str:
@@ -261,18 +287,18 @@ def _filters(q: Query, collection: str, filters: Mapping[str, StoredValue] | Non
             q.where(f"`{name}` = {q.param(value, TYPES[kind])}")
 
 
-def _after(q: Query, *keys: QueryKey) -> None:
+def _after(q: Query, first: QueryKey, *rest: QueryKey) -> None:
     """Rows after a keyset cursor, spelled out per column: ClickHouse prunes by the sort key on
     this form and reads the whole range again for every page on a tuple comparison."""
-    q.where(_after_clause(q, *keys))
+    q.where(_after_clause(q, first, *rest))
 
 
-def _after_clause(q: Query, *keys: QueryKey) -> str:
-    column, value, kind = keys[0]
+def _after_clause(q: Query, first: QueryKey, *rest: QueryKey) -> str:
+    column, value, kind = first
     here = q.param(value, kind)
-    if len(keys) == 1:
+    if not rest:
         return f"{column} > {here}"
-    return f"({column} > {here} OR ({column} = {here} AND {_after_clause(q, *keys[1:])}))"
+    return f"({column} > {here} OR ({column} = {here} AND {_after_clause(q, rest[0], *rest[1:])}))"
 
 
 def _ids(q: Query, instrument_ids: Sequence[str]) -> None:
@@ -362,24 +388,42 @@ async def get(ch: ClickHouse, collection: str, key: str) -> Record | None:
 
 
 async def range_page(
-    ch, collection, time_field, *, start=None, end=None, filters=None, limit=1000, after=None
-):
+    ch: ClickHouse,
+    collection: str,
+    time_field: str,
+    *,
+    start: TimeInput | None = None,
+    end: TimeInput | None = None,
+    filters: Mapping[str, StoredValue] | None = None,
+    limit: int = 1000,
+    after: tuple[TimeInput, str] | None = None,
+) -> list[tuple[Record, tuple[str, str]]]:
     time_field = _column(collection, time_field)
     q = Query()
     q.where(f"`{time_field}` IS NOT NULL")
-    if start:
+    if start is not None:
         q.where(f"`{time_field}` >= {q.param(parse_time(start), DT)}")
-    if end:
+    if end is not None:
         q.where(f"`{time_field}` < {q.param(parse_time(end), DT)}")
     if after is not None:
         _after(q, (f"`{time_field}`", parse_time(after[0]), DT), ("storage_key", str(after[1]), "String"))
     _filters(q, collection, filters)
     rows = await _select(ch, collection, q, f"`{time_field}`, storage_key", f"LIMIT {int(limit)}")
     records = await _decode(collection, rows)
-    return [(rec, (rec[time_field], row["storage_key"])) for rec, row in zip(records, rows, strict=True)]
+    return [
+        (rec, (_text(rec, time_field), _text(row, "storage_key")))
+        for rec, row in zip(records, rows, strict=True)
+    ]
 
 
-async def latest_before(ch, collection, time_field, cutoff, *, filters=None):
+async def latest_before(
+    ch: ClickHouse,
+    collection: str,
+    time_field: str,
+    cutoff: TimeInput,
+    *,
+    filters: Mapping[str, StoredValue] | None = None,
+) -> Record | None:
     time_field = _column(collection, time_field)
     q = Query()
     q.where(f"`{time_field}` < {q.param(parse_time(cutoff), DT)}")
@@ -388,17 +432,33 @@ async def latest_before(ch, collection, time_field, cutoff, *, filters=None):
     return _record(collection, rows[0]) if rows else None
 
 
-async def all_page(ch, collection, *, filters=None, after=None, limit=1000):
+async def all_page(
+    ch: ClickHouse,
+    collection: str,
+    *,
+    filters: Mapping[str, StoredValue] | None = None,
+    after: str | None = None,
+    limit: int = 1000,
+) -> list[tuple[str, Record]]:
     q = Query()
     _filters(q, collection, filters)
     if after is not None:
         q.where(f"storage_key > {q.param(str(after), 'String')}")
     rows = await _select(ch, collection, q, "storage_key", f"LIMIT {int(limit)}")
     records = await _decode(collection, rows)
-    return [(row["storage_key"], rec) for row, rec in zip(rows, records, strict=True)]
+    return [(_text(row, "storage_key"), rec) for row, rec in zip(rows, records, strict=True)]
 
 
-async def list_latest(ch, collection, time_field, *, filters=None, limit=100, start=None, end=None):
+async def list_latest(
+    ch: ClickHouse,
+    collection: str,
+    time_field: str,
+    *,
+    filters: Mapping[str, StoredValue] | None = None,
+    limit: int = 100,
+    start: TimeInput | None = None,
+    end: TimeInput | None = None,
+) -> list[Record]:
     time_field = _column(collection, time_field)
     q = Query()
     _filters(q, collection, filters)
@@ -412,8 +472,18 @@ async def list_latest(ch, collection, time_field, *, filters=None, limit=100, st
 
 
 async def late_page(
-    ch, collection, arrival_field, market_field, *, since, end, market_end, filters, after, limit
-):
+    ch: ClickHouse,
+    collection: str,
+    arrival_field: str,
+    market_field: str,
+    *,
+    since: TimeInput | None,
+    end: TimeInput | None,
+    market_end: TimeInput,
+    filters: Mapping[str, StoredValue] | None,
+    after: tuple[TimeInput, str] | None,
+    limit: int,
+) -> list[tuple[Record, tuple[datetime, str]]]:
     q = Query()
     _filters(q, collection, filters)
     q.where(f"`{arrival_field}` IS NOT NULL")
@@ -427,7 +497,7 @@ async def late_page(
     rows = await _select(ch, collection, q, f"`{arrival_field}`, storage_key", f"LIMIT {int(limit)}")
     records = await _decode(collection, rows)
     return [
-        (rec, (parse_time(rec[arrival_field]), row["storage_key"]))
+        (rec, (_timestamp(rec[arrival_field]), _text(row, "storage_key")))
         for rec, row in zip(records, rows, strict=True)
     ]
 
@@ -436,14 +506,25 @@ RECENT_LATEST = timedelta(days=1)
 
 
 async def latest_market_records(
-    ch, collection, *, group_by, time_field, filters, cutoff, assembled_at, start, instrument_ids
-):
+    ch: ClickHouse,
+    collection: str,
+    *,
+    group_by: Sequence[str],
+    time_field: str,
+    filters: Mapping[str, StoredValue] | None,
+    cutoff: TimeInput | None,
+    assembled_at: TimeInput | None,
+    start: TimeInput | None,
+    instrument_ids: Sequence[str] | None,
+) -> list[Record]:
     """Latest row per group. Grouped by instrument alone, the day before the cutoff is read first
     and only instruments without a row there read the rest of the range: the same rows, without
     merging months of every instrument under FINAL for the last minute of each."""
     groups = ", ".join(f"`{g}`" for g in group_by)
 
-    async def latest(lo, below, ids):
+    async def latest(
+        lo: TimeInput | None, below: TimeInput | None, ids: Sequence[str] | None
+    ) -> list[Record]:
         q = Query()
         _filters(q, collection, filters)
         if lo is not None:
@@ -473,17 +554,31 @@ async def latest_market_records(
     ):
         return await _decode(collection, await latest(start, None, instrument_ids))
     rows = await latest(recent, None, instrument_ids)
-    found = {row["instrument_id"] for row in rows}
+    found = {_text(row, "instrument_id") for row in rows}
     rest = [i for i in instrument_ids if i not in found]
     if rest:
         rows += await latest(start, recent, rest)
-        rows.sort(key=lambda row: row["instrument_id"])
+        rows.sort(key=lambda row: _text(row, "instrument_id"))
     return await _decode(collection, rows)
 
 
 async def market_dependency_head(
-    ch, collection, semantic_field, cutoff, *, start, filters, instrument_ids, assembled_at, wanted
-):
+    ch: ClickHouse,
+    collection: str,
+    semantic_field: str,
+    cutoff: TimeInput,
+    *,
+    start: TimeInput | None,
+    filters: Mapping[str, StoredValue] | None,
+    instrument_ids: Sequence[str] | None,
+    assembled_at: TimeInput | None,
+    wanted: Sequence[str],
+) -> dict[str, Record]:
+    if not wanted:
+        return {}
+    supported = {"availability", "semantic_latest", "semantic_earliest"}
+    if any(order not in supported for order in wanted):
+        raise ValueError("Unsupported market dependency order")
     q = Query()
     _filters(q, collection, filters)
     q.where("recorded_at IS NOT NULL")
@@ -508,23 +603,39 @@ async def market_dependency_head(
     rows = await ch.rows(
         f"SELECT count() AS n, {heads} FROM {_table(collection)} WHERE {q.predicate()}", q.params
     )
-    if not wanted or not rows or not int(rows[0]["n"]):
+    if not wanted or not rows or _integer(rows[0], "n") == 0:
         return {}
-    found = {}
+    found: dict[str, Record] = {}
     for order in wanted:
-        key, recorded, fingerprint, semantic = rows[0][order]
+        raw = rows[0][order]
+        if not isinstance(raw, list) or len(raw) != 4:
+            raise ValueError("ClickHouse dependency head requires four tuple elements")
+        head = DependencyHead.model_validate(
+            {"storage_key": raw[0], "recorded_at": raw[1], "fingerprint": raw[2], "semantic_at": raw[3]}
+        )
         found[order] = {
-            "storage_key": key,
-            "recorded_at": iso(parse_time(recorded)),
-            "semantic_fingerprint": fingerprint,
-            semantic_field: iso(parse_time(semantic)),
+            "storage_key": head.storage_key,
+            "recorded_at": iso(parse_time(head.recorded_at)),
+            "semantic_fingerprint": head.fingerprint,
+            semantic_field: iso(parse_time(head.semantic_at)),
         }
     return found
 
 
 async def projection_page(
-    ch, collection, selected, time_field, *, start, end, filters, instrument_ids, assembled_at, after, limit
-):
+    ch: ClickHouse,
+    collection: str,
+    selected: Mapping[str, str],
+    time_field: str,
+    *,
+    start: TimeInput | None,
+    end: TimeInput | None,
+    filters: Mapping[str, StoredValue] | None,
+    instrument_ids: Sequence[str] | None,
+    assembled_at: TimeInput | None,
+    after: tuple[TimeInput, str] | None,
+    limit: int,
+) -> list[tuple[datetime, str, Record]]:
     q = Query()
     _filters(q, collection, filters)
     q.where(f"`{time_field}` IS NOT NULL")
@@ -546,23 +657,25 @@ async def projection_page(
     )
     columns = MARKET_COLUMNS[collection]
 
-    def convert():
-        page = []
+    def convert() -> list[tuple[datetime, str, Record]]:
+        page: list[tuple[datetime, str, Record]] = []
         for row in rows:
-            result = {}
+            result: Record = {}
             for requested, field in selected.items():
                 value = row[requested]
                 kind = columns.get(field)
                 if value is not None and kind == "timestamptz":
-                    value = iso(parse_time(value))
+                    value = iso(_timestamp(value))
                 elif value is not None and kind == "jsonb":
-                    value = json.loads(value)
+                    value = decode_json(_text(row, requested))
                 elif value is not None and kind == "numeric":
-                    value = str(Decimal(value))
-                elif kind == "text[]":
-                    value = list(value) or None
+                    value = str(Decimal(_text(row, requested)))
+                elif kind == "text[]" and value is not None:
+                    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+                        raise ValueError(f"{collection}.{field} requires an array of text")
+                    value = value if value else None
                 result[requested] = value
-            page.append((parse_time(row["_cursor_time"]), row["_cursor_key"], result))
+            page.append((_timestamp(row["_cursor_time"]), _text(row, "_cursor_key"), result))
         return page
 
     return await asyncio.to_thread(convert) if len(rows) > 1000 else convert()
@@ -571,7 +684,13 @@ async def projection_page(
 CLOSE_OK = "isFinite(toFloat64OrNull(c)) AND toFloat64OrNull(c) > 0"
 
 
-async def market_series_counts(ch, instrument_ids, start, cutoff, assembled_at):
+async def market_series_counts(
+    ch: ClickHouse,
+    instrument_ids: Sequence[str],
+    start: TimeInput,
+    cutoff: TimeInput,
+    assembled_at: TimeInput | None,
+) -> dict[str, int]:
     q = Query()
     _ids(q, instrument_ids)
     q.where(f"open_time >= {q.param(start, DT)}")
@@ -584,10 +703,12 @@ async def market_series_counts(ch, instrument_ids, start, cutoff, assembled_at):
         f"SELECT instrument_id, count() AS n FROM {_table('mkt.klines_1m')} WHERE {q.predicate()} GROUP BY instrument_id",
         q.params,
     )
-    return {row["instrument_id"]: int(row["n"]) for row in rows}
+    return {_text(row, "instrument_id"): _integer(row, "n") for row in rows}
 
 
-async def latest_market_trades(ch, instrument_ids, start):
+async def latest_market_trades(
+    ch: ClickHouse, instrument_ids: Sequence[str], start: TimeInput
+) -> list[Record]:
     q = Query()
     _ids(q, instrument_ids)
     q.where(f"minute_start >= {q.param(start, DT)}")
@@ -597,10 +718,22 @@ async def latest_market_trades(ch, instrument_ids, start):
         "ORDER BY instrument_id, minute_start DESC LIMIT 1 BY instrument_id",
         q.params,
     )
-    return [{"instrument_id": r["instrument_id"], "last_trade": json.loads(r["last_trade"])} for r in rows]
+    result: list[Record] = []
+    for row in rows:
+        trade = decode_json(_text(row, "last_trade"))
+        if not isinstance(trade, dict):
+            raise ValueError("Last trade requires an object")
+        result.append({"instrument_id": _text(row, "instrument_id"), "last_trade": trade})
+    return result
 
 
-async def market_series_day_counts(ch, instrument_ids, start, end, assembled_at):
+async def market_series_day_counts(
+    ch: ClickHouse,
+    instrument_ids: Sequence[str],
+    start: TimeInput,
+    end: TimeInput,
+    assembled_at: TimeInput | None,
+) -> dict[tuple[str, datetime], int]:
     q = Query()
     _ids(q, instrument_ids)
     q.where(f"open_time >= {q.param(start, DT)}")
@@ -613,14 +746,16 @@ async def market_series_day_counts(ch, instrument_ids, start, end, assembled_at)
         f"FROM {_table('mkt.klines_1m')} WHERE {q.predicate()} GROUP BY instrument_id, day",
         q.params,
     )
-    return {(r["instrument_id"], _day(r["day"])): int(r["n"]) for r in rows}
+    return {(_text(row, "instrument_id"), _day(_text(row, "day"))): _integer(row, "n") for row in rows}
 
 
-def _day(text):
+def _day(text: str) -> datetime:
     return datetime.strptime(text, "%Y-%m-%d").replace(tzinfo=UTC)
 
 
-async def market_kline_days_recorded_since(ch, since, end):
+async def market_kline_days_recorded_since(
+    ch: ClickHouse, since: TimeInput, end: TimeInput
+) -> set[tuple[str, datetime]]:
     q = Query()
     q.where(f"recorded_at >= {q.param(since, DT)}")
     q.where(f"open_time < {q.param(end, DT)}")
@@ -629,10 +764,19 @@ async def market_kline_days_recorded_since(ch, since, end):
         f"WHERE {q.predicate()}",
         q.params,
     )
-    return {(r["instrument_id"], _day(r["day"])) for r in rows}
+    return {(_text(row, "instrument_id"), _day(_text(row, "day"))) for row in rows}
 
 
-async def market_rows_recorded_since(ch, collection, time_field, instrument_ids, since, start, end, filters):
+async def market_rows_recorded_since(
+    ch: ClickHouse,
+    collection: str,
+    time_field: str,
+    instrument_ids: Sequence[str],
+    since: TimeInput,
+    start: TimeInput,
+    end: TimeInput,
+    filters: Mapping[str, StoredValue] | None,
+) -> list[tuple[str, Record, str]]:
     q = Query()
     _ids(q, instrument_ids)
     q.where(f"recorded_at >= {q.param(since, DT)}")
@@ -641,12 +785,22 @@ async def market_rows_recorded_since(ch, collection, time_field, instrument_ids,
     _filters(q, collection, filters)
     rows = await _select(ch, collection, q, f"instrument_id, `{time_field}`, storage_key")
     records = await _decode(collection, rows)
-    return [(row["instrument_id"], rec, row["storage_key"]) for row, rec in zip(rows, records, strict=True)]
+    return [
+        (_text(row, "instrument_id"), rec, _text(row, "storage_key"))
+        for row, rec in zip(rows, records, strict=True)
+    ]
 
 
 async def sampled_market_history(
-    ch, collection, time_field, group_fields, instrument_ids, start, end, bucket_s
-):
+    ch: ClickHouse,
+    collection: str,
+    time_field: str,
+    group_fields: Sequence[str],
+    instrument_ids: Sequence[str],
+    start: TimeInput,
+    end: TimeInput,
+    bucket_s: int,
+) -> list[Record]:
     q = Query()
     _ids(q, instrument_ids)
     q.where(f"`{time_field}` >= {q.param(start, DT)}")
@@ -661,12 +815,21 @@ async def sampled_market_history(
         f"LIMIT 1 BY {groups}, {bucket}",
     )
     records = await _decode(collection, rows)
-    return sorted(records, key=lambda r: r[time_field])
+    return sorted(records, key=lambda row: _text(row, time_field))
 
 
 async def range_by_instrument_page(
-    ch, collection, time_field, instrument_ids, start, end, filters, after, limit, levels
-):
+    ch: ClickHouse,
+    collection: str,
+    time_field: str,
+    instrument_ids: Sequence[str],
+    start: TimeInput | None,
+    end: TimeInput | None,
+    filters: Mapping[str, StoredValue] | None,
+    after: tuple[str, TimeInput, str] | None,
+    limit: int,
+    levels: bool,
+) -> list[tuple[str, Record, str, datetime]]:
     q = Query()
     q.where(f"`{time_field}` IS NOT NULL")
     _ids(q, instrument_ids)
@@ -688,12 +851,19 @@ async def range_by_instrument_page(
     )
     records = await _decode(collection, rows)
     return [
-        (row["instrument_id"], rec, row["storage_key"], parse_time(row[time_field]))
+        (_text(row, "instrument_id"), rec, _text(row, "storage_key"), _timestamp(row[time_field]))
         for row, rec in zip(rows, records, strict=True)
     ]
 
 
-async def prune(ch, cutoff, preserved_days, *, book_cutoff=None, trades_cutoff=None):
+async def prune(
+    ch: ClickHouse,
+    cutoff: datetime,
+    preserved_days: Collection[datetime],
+    *,
+    book_cutoff: datetime | None = None,
+    trades_cutoff: datetime | None = None,
+) -> dict[str, int]:
     """Drop whole daily partitions older than the cutoffs, except preserved (MAJOR+) days;
     book summaries go at their own cutoff with no exception."""
     cutoffs = {collection: cutoff for collection in MARKET_TABLES}
@@ -705,16 +875,17 @@ async def prune(ch, cutoff, preserved_days, *, book_cutoff=None, trades_cutoff=N
         "SELECT DISTINCT database, table, partition FROM system.parts WHERE database = 'mkt' AND active"
     )
     keep = {day.strftime("%Y%m%d") for day in preserved_days}
-    dropped = {}
-    for row in rows:
-        collection = "mkt." + row["table"]
+    dropped: dict[str, int] = {}
+    for raw in rows:
+        row = SystemPart.model_validate(raw)
+        collection = "mkt." + row.table
         limit = cutoffs.get(collection)
         if limit is None:
             continue
-        day = datetime.strptime(row["partition"], "%Y%m%d").replace(tzinfo=UTC)
-        exempt = collection != "mkt.book_summaries" and row["partition"] in keep
+        day = datetime.strptime(row.partition, "%Y%m%d").replace(tzinfo=UTC)
+        exempt = collection != "mkt.book_summaries" and row.partition in keep
         if day + timedelta(days=1) <= limit and not exempt:
-            await ch.execute(f"ALTER TABLE {collection} DROP PARTITION {int(row['partition'])}")
+            await ch.execute(f"ALTER TABLE {collection} DROP PARTITION {int(row.partition)}")
             dropped[collection] = dropped.get(collection, 0) + 1
     return dropped
 
@@ -747,8 +918,8 @@ def client(repo: MarketClientOwner, collection: str) -> ClickHouse | None:
     return ch
 
 
-def _row(collection, record, key, version):
-    row = {"storage_key": key, "_version": version}
+def _row(collection: str, record: Record, key: str, version: int) -> Record:
+    row: Record = {"storage_key": key, "_version": version}
     for name, kind in MARKET_COLUMNS[collection].items():
         value = record.get(name)
         if value is None:
@@ -756,13 +927,15 @@ def _row(collection, record, key, version):
                 row[name] = []
             continue
         if kind == "timestamptz":
-            row[name] = parse_time(value).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
+            row[name] = _timestamp(value).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
         elif kind == "jsonb":
             row[name] = canonical_json(value)
         elif kind == "numeric":
             row[name] = str(value)
         elif kind == "text[]":
-            row[name] = list(value)
+            if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+                raise ValueError(f"{collection}.{name} requires an array of text")
+            row[name] = value
         else:
             row[name] = value
     return row
@@ -783,27 +956,34 @@ REASONED = {"mkt.flow_bars_1m": ("buy_usd", "sell_usd", "size_buckets")}
 
 
 class RequiredFieldError(ValueError):
-    def __init__(self, collection, field):
+    def __init__(self, collection: str, field: str) -> None:
         super().__init__(f"{collection}: required_{field}")
         self.constraint = "required_" + field
 
 
-def _check_required(collection, value):
+def _check_required(collection: str, value: Record) -> None:
     """Every required field is set; a missing USD conversion carries its own valid reason."""
     from tank.market_schema import MARKET_REQUIRED
 
     for field in MARKET_REQUIRED.get(collection, ()):
         if value.get(field) is None:
             raise RequiredFieldError(collection, field)
-    reasons = value.get("null_reasons") or {}
+    reasons = value.get("null_reasons")
+    if reasons is not None and not isinstance(reasons, dict):
+        raise ValueError(f"{collection}.null_reasons requires an object")
     for field in REASONED.get(collection, ()):
-        if value.get(field) is None and (
-            not isinstance(reasons.get(field), str) or reasons[field] not in NULL_REASONS
-        ):
-            raise RequiredFieldError(collection, field)
+        if value.get(field) is None:
+            reason = None if reasons is None else reasons.get(field)
+            if not isinstance(reason, str) or reason not in NULL_REASONS:
+                raise RequiredFieldError(collection, field)
 
 
-async def put_batch(ch, collection, records, keys=None):
+async def put_batch(
+    ch: ClickHouse,
+    collection: str,
+    records: Sequence[Mapping[str, JsonInput]],
+    keys: Sequence[str] | None = None,
+) -> list[Record]:
     """Write typed rows the way tank-capture does; return the rows that changed.
 
     A complete flow bar is never replaced by an unproven one, funding and ticker points
@@ -816,12 +996,14 @@ async def put_batch(ch, collection, records, keys=None):
     identity = MARKET_IDENTITIES[collection]
     values = {key: decode(collection, prepared) for key, prepared in unique.items()}
 
-    def ident(key, value):
-        return tuple(key if name == "storage_key" else value.get(name) for name in identity)
+    def ident(key: str, value: Record) -> tuple[IdentityValue, ...]:
+        return tuple(
+            key if name == "storage_key" else _identity(value.get(name), collection) for name in identity
+        )
 
-    def literal(name, value):
+    def literal(name: str, value: IdentityValue) -> str:
         if name != "storage_key" and MARKET_COLUMNS[collection][name] == "timestamptz":
-            return f"toDateTime64('{_literal(parse_time(value))}', 6, 'UTC')"
+            return f"toDateTime64('{_literal(_timestamp(value))}', 6, 'UTC')"
         return _literal([value])[1:-1]
 
     tuples = ",".join(
@@ -832,29 +1014,31 @@ async def put_batch(ch, collection, records, keys=None):
     )
     q = Query()
     q.where(f"({','.join(f'`{name}`' for name in identity)}) IN ({tuples})")
-    stored = {}
+    stored: dict[tuple[IdentityValue, ...], Record] = {}
     for row in await _select(ch, collection, q, "storage_key"):
         record = _record(collection, row)
-        stored[ident(row["storage_key"], record)] = record
-    changed, rows = [], []
+        stored[ident(_text(row, "storage_key"), record)] = record
+    changed: list[Record] = []
+    rows: list[Record] = []
     version = time.time_ns()
     for value in values.values():
         _check_required(collection, value)
     for key, value in values.items():
-        old = stored.get(ident(key, value), {})
-        if old and collection in ("mkt.funding_obs", "mkt.tickers_24h"):
-            value = merge_point(collection, old, value)
-        if old.get("semantic_fingerprint") == value["semantic_fingerprint"] or _unproves(
-            collection, old, value
-        ):
-            continue
+        old = stored.get(ident(key, value))
+        if old is not None:
+            if collection in ("mkt.funding_obs", "mkt.tickers_24h"):
+                value = merge_point(collection, old, value)
+            if old.get("semantic_fingerprint") == value["semantic_fingerprint"] or _unproves(
+                collection, old, value
+            ):
+                continue
         changed.append(value)
         rows.append(_row(collection, value, key, version))
     await ch.insert(collection, rows)
     return changed
 
 
-async def delete(ch, collection, key):
+async def delete(ch: ClickHouse, collection: str, key: str) -> None:
     q = Query()
     q.where(f"storage_key = {q.param(str(key), 'String')}")
     await ch.execute(f"DELETE FROM {collection} WHERE {q.predicate()}", q.params)
