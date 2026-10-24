@@ -2,8 +2,19 @@
 
 from datetime import timedelta
 
+from pydantic import JsonValue
+
+from tank.contracts.progress import (
+    ProgressDetails,
+    ProgressIdentity,
+    ProgressNotice,
+    ProgressRepository,
+    ProgressSettings,
+    ProgressStage,
+    ProgressSubject,
+)
 from tank.time_precision import collection_clock, offset_schedule
-from tank.util import sha256
+from tank.util import iso, sha256
 
 STAGES = {
     "ANALYSIS_UPDATED": "Обновлён результат анализа",
@@ -28,54 +39,67 @@ STAGES = {
 }
 
 
-def enabled(settings):
-    return bool(getattr(settings, "ops_progress_enabled", False)) and not getattr(settings, "replay", False)
+def enabled(settings: ProgressSettings) -> bool:
+    return settings.ops_progress_enabled and not settings.replay
 
 
-def clipped(value, units):
-    text = " ".join(str(value or "").split())
+def clipped(value: JsonValue, units: int) -> str:
+    if units <= 0:
+        raise ValueError("Text clipping requires a positive UTF-16 unit limit")
+    text = " ".join(str(value if value is not None else "").split())
     encoded = text.encode("utf-16-le")
     return (
         text if len(encoded) <= units * 2 else encoded[: (units - 1) * 2].decode("utf-16-le", "ignore") + "…"
     )
 
 
-async def item_progress(repo, settings, item_id, stage, reason="", *, event_id=None, key=None, details=None):
-    if not enabled(settings) or not item_id:
+async def item_progress(
+    repo: ProgressRepository,
+    settings: ProgressSettings,
+    item_id: str,
+    stage: ProgressStage,
+    reason: str = "",
+    *,
+    event_id: str | None = None,
+    key: str | None = None,
+    details: ProgressDetails | None = None,
+) -> None:
+    if not enabled(settings):
         return
-    item = await repo.get("ingest.source_items", item_id)
-    if item is None:
+    if key is not None and not key.strip():
+        raise ValueError("Progress deduplication key must be nonempty when supplied")
+    identity = ProgressIdentity(
+        item_id=item_id,
+        stage=stage,
+        event_id=None if key is not None else event_id,
+        key=key if key is not None else reason,
+    )
+    record = await repo.get("ingest.source_items", item_id)
+    if record is None:
         return
-    identity = {
-        "item_id": item_id,
-        "stage": stage,
-        "event_id": None if key else event_id,
-        "key": key or reason,
-    }
-    notice_id = "progress_" + sha256(identity)
+    subject = ProgressSubject.model_validate(
+        {field: record[field] for field in ("item_id", "source_id", "evidence_kind") if field in record}
+    )
+    if subject.item_id != item_id:
+        raise ValueError("Progress source identity conflicts with its stored subject")
+    notice_id = "progress_" + sha256(identity.model_dump(mode="json"))
     async with repo.lock("ops-progress:" + notice_id), repo.transaction():
-        if await repo.get("out.ops_notices", notice_id):
+        if await repo.get("out.ops_notices", notice_id) is not None:
             return
-        stamp = collection_clock()
-        await repo.put(
-            "out.ops_notices",
-            notice_id,
-            {
-                "notice_id": notice_id,
-                "kind": "ITEM_PROGRESS",
-                "subject_id": item_id,
-                "stage": stage,
-                "event_id": event_id,
-                "reason": reason,
-                "text": STAGES[stage],
-                "format_version": 2,
-                "details": details or {},
-                **stamp.fields("created_at"),
-                "created_by": "ops-progress",
-            },
-            immutable=True,
+        created_at = iso()
+        stamp = collection_clock(created_at)
+        notice = ProgressNotice(
+            notice_id=notice_id,
+            subject_id=item_id,
+            stage=stage,
+            event_id=event_id,
+            reason=reason,
+            text=STAGES[stage],
+            details=details if details is not None else ProgressDetails(),
+            created_at=created_at,
         )
-        if item.get("source_id") == "WEB" and item.get("evidence_kind"):
+        await repo.put("out.ops_notices", notice_id, notice.storage_record(), immutable=True)
+        if subject.source_id == "WEB" and subject.evidence_kind is not None:
             return
         await repo.enqueue(
             "DELIVER",
@@ -86,6 +110,37 @@ async def item_progress(repo, settings, item_id, stage, reason="", *, event_id=N
             max_attempts=5,
             expires_at=offset_schedule(stamp, timedelta(days=7)),
         )
+
+
+class RepositorySourceProgress:
+    def __init__(self, repo: ProgressRepository, settings: ProgressSettings) -> None:
+        self.repo, self.settings = repo, settings
+
+    async def record(
+        self,
+        item_id: str,
+        stage: ProgressStage,
+        reason: str = "",
+        *,
+        event_id: str | None = None,
+        key: str | None = None,
+    ) -> None:
+        await item_progress(self.repo, self.settings, item_id, stage, reason, event_id=event_id, key=key)
+
+
+class DisabledSourceProgress:
+    """Explicit side-effect-free reporting port for a composition that disables notices."""
+
+    async def record(
+        self,
+        item_id: str,
+        stage: ProgressStage,
+        reason: str = "",
+        *,
+        event_id: str | None = None,
+        key: str | None = None,
+    ) -> None:
+        return None
 
 
 async def event_progress(repo, settings, event_id, stage, reason="", *, key=None, details=None):
@@ -121,11 +176,13 @@ async def tool_progress(repo, settings, tool, arguments, context, result):
             "ALERT_QUEUED" if published else "PUBLICATION_BLOCKED",
             reason,
             key=f"{result['alert_id']}:{result['version']}" if published else None,
-            details={
-                name: result[name]
-                for name in ("missing_market_truth", "missing_decisions", "publication_receipt")
-                if name in result
-            },
+            details=ProgressDetails.model_validate(
+                {
+                    name: result[name]
+                    for name in ("missing_market_truth", "missing_decisions", "publication_receipt")
+                    if name in result
+                }
+            ),
         )
     elif tool in {"set_beneficiaries", "get_market_truth", "get_decision"}:
         await event_progress(

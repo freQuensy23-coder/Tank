@@ -38,6 +38,7 @@ def delivery_settings():
         telegram_token="test",
         telegram_alerts_chat="alerts",
         telegram_ops_chat="ops",
+        replay=False,
     )
 
 
@@ -49,6 +50,7 @@ async def test_every_ingested_material_reaches_ops_before_filtering_and_duplicat
     source = {"source_id": source_id, "name": "Fixture source"}
     settings = source_settings(tmp_path, [source])
     settings.ops_progress_enabled = True
+    settings.replay = False
     service = SourceService(repo, settings)
     try:
         item = captured(
@@ -92,11 +94,13 @@ async def test_every_ingested_material_reaches_ops_before_filtering_and_duplicat
 async def test_filter_outcomes_and_routing_are_visible_without_publishing(score, expected) -> None:
     settings, _ = options()
     settings.ops_progress_enabled = True
+    settings.replay = False
     repo = MemoryRepository()
     await repo.put(
         "ingest.source_items",
         "i",
         {
+            "source_id": "S30",
             "item_id": "i",
             "title": "Aave announcement",
             "relevance": {"decision": "ALWAYS" if score is None else None},
@@ -234,7 +238,9 @@ async def test_generated_card_only_becomes_sent_after_telegram_receipt(
 async def test_agent_acceptance_completion_and_failure_are_not_confused_with_approval() -> None:
     repo = MemoryRepository()
     settings = delivery_settings()
-    await repo.put("ingest.source_items", "i", {"item_id": "i", "extraction_status": "PENDING"})
+    await repo.put(
+        "ingest.source_items", "i", {"source_id": "S30", "item_id": "i", "extraction_status": "PENDING"}
+    )
     session = {
         "session_id": "s",
         "message_log": [
@@ -252,6 +258,7 @@ async def test_agent_acceptance_completion_and_failure_are_not_confused_with_app
         "ingest.source_items",
         "i",
         {
+            "source_id": "S30",
             "item_id": "i",
             "extraction_status": "SKIPPED",
             "extraction_reason": "NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION",
@@ -275,7 +282,7 @@ async def test_terminal_jobs_and_restart_reconciliation_report_where_processing_
     repo = MemoryRepository()
     runtime = object.__new__(Runtime)
     runtime.repo, runtime.settings = repo, delivery_settings()
-    await repo.put("ingest.source_items", "i", {"item_id": "i"})
+    await repo.put("ingest.source_items", "i", {"source_id": "S30", "item_id": "i"})
     job = await repo.enqueue(kind, {"item_id": "i", "kind": "NEW_ITEM"}, "failed")
     job.update(status=status, last_error="TimeoutError")
     await repo.put("ops.jobs", job["job_id"], job)
@@ -329,6 +336,50 @@ async def test_outbox_is_transactional_and_concurrent_retries_create_one_notice(
 @pytest.mark.parametrize("flag,replay", [(False, False), (True, True)])
 async def test_disabled_or_replay_does_not_create_live_ops_notices(flag, replay) -> None:
     repo = MemoryRepository()
-    await repo.put("ingest.source_items", "i", {"item_id": "i"})
+    await repo.put("ingest.source_items", "i", {"source_id": "S30", "item_id": "i"})
     await item_progress(repo, SimpleNamespace(ops_progress_enabled=flag, replay=replay), "i", "RECEIVED")
+    assert await notices(repo) == [] and await repo.list("ops.jobs") == []
+
+
+@pytest.mark.asyncio
+async def test_typed_source_progress_sink_deduplicates_notice_and_delivery() -> None:
+    from tank.contracts.progress import ProgressPreferences
+    from tank.ops_progress import RepositorySourceProgress
+
+    repo = MemoryRepository()
+    await repo.put("ingest.source_items", "subject-1", {"item_id": "subject-1", "source_id": "S30"})
+    sink = RepositorySourceProgress(repo, ProgressPreferences(ops_progress_enabled=True, replay=False))
+    await sink.record("subject-1", "RECEIVED", "A captured source item")
+    await sink.record("subject-1", "RECEIVED", "A captured source item")
+    [notice] = await notices(repo)
+    assert notice["subject_id"] == "subject-1" and notice["details"] == {}
+    jobs = await repo.list("ops.jobs", filters={"type": "DELIVER"})
+    assert len(jobs) == 1 and jobs[0]["payload"] == {
+        "notice_id": notice["notice_id"],
+        "channel": "telegram:ops",
+    }
+
+
+@pytest.mark.asyncio
+async def test_typed_source_progress_preferences_suppress_notice_side_effects() -> None:
+    from tank.contracts.progress import ProgressPreferences
+    from tank.ops_progress import RepositorySourceProgress
+
+    repo = MemoryRepository()
+    await repo.put("ingest.source_items", "subject-1", {"item_id": "subject-1", "source_id": "S30"})
+    sink = RepositorySourceProgress(repo, ProgressPreferences(ops_progress_enabled=False, replay=False))
+    await sink.record("subject-1", "RECEIVED", "A captured source item")
+    assert await notices(repo) == [] and await repo.list("ops.jobs") == []
+
+
+@pytest.mark.asyncio
+async def test_progress_rejects_a_mismatched_subject_before_writing_notices() -> None:
+    from tank.contracts.progress import ProgressPreferences
+    from tank.ops_progress import RepositorySourceProgress
+
+    repo = MemoryRepository()
+    await repo.put("ingest.source_items", "subject-1", {"item_id": "another-subject", "source_id": "S30"})
+    sink = RepositorySourceProgress(repo, ProgressPreferences(ops_progress_enabled=True, replay=False))
+    with pytest.raises(ValueError, match="conflicts"):
+        await sink.record("subject-1", "RECEIVED")
     assert await notices(repo) == [] and await repo.list("ops.jobs") == []
