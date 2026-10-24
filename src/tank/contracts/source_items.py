@@ -16,6 +16,7 @@ from pydantic import (
 from tank.contracts import DomainModel
 from tank.contracts.provenance import GenerationProvenance
 from tank.contracts.repository import Collection
+from tank.contracts.sources import SourceAuthorRole
 from tank.time_precision import Timestamp, collection_clock, propagate_timestamp
 
 type BucketAnchor = Literal["START", "END", "UNSPECIFIED"]
@@ -468,8 +469,8 @@ class SourceLifecycle(SourceExtractionFields):
     source: str = Field(min_length=1)
     source_name: str = Field(min_length=1)
     author: str = Field(min_length=1)
-    author_role: Literal["ORGANIZATION", "PERSON", "OTHER"] | None
-    original_author_role: Literal["ORGANIZATION", "PERSON", "OTHER"] | None
+    author_role: SourceAuthorRole | None
+    original_author_role: SourceAuthorRole | None
     author_organization: str | None
     monitored_accounts: list[str]
     deferrable: bool

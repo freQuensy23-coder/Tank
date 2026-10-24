@@ -340,3 +340,35 @@ async def test_credential_echo_is_rejected_before_it_can_become_raw_source_evide
         with pytest.raises(ValueError, match="credential material") as failure:
             await XSensor(http, token).posts(URL, ["ethereum"], {"ethereum": "100"})
     assert token not in str(failure.value)
+
+
+@pytest.mark.asyncio
+async def test_configured_founder_role_survives_real_source_capture_and_domain_decode(tmp_path: Path) -> None:
+    from tank.contracts.source_items import SourceItemDocument
+    from tank.settings import Settings
+
+    configuration = Settings(
+        data_dir=tmp_path, apify_api_token="synthetic-actor-token", ops_progress_enabled=False
+    )
+    registry = configuration.load_config("registry")
+    accounts = registry["x_accounts"]
+    assert isinstance(accounts, list)
+    configured = next(row for row in accounts if isinstance(row, dict) and row["handle"] == "sama")
+    assert isinstance(configured, dict)
+    actor = Actor(
+        (201, run([post("100", "sama")], [account("sama")], {"sama": "100"})),
+        (201, run([post("105", "sama")], [account("sama")], {"sama": "105"})),
+    )
+    repo = MemoryRepository()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(actor)) as http:
+        service = SourceService(repo, configuration, http=http)
+        service.accounts = {"sama": configured}
+        assert (await service.poll_once("S29"))["items"] == 0
+        assert (await service.poll_once("S29"))["items"] == 1
+    [record] = await repo.list("ingest.source_items")
+    item = SourceItemDocument.model_validate(record).root
+    assert isinstance(item, SocialSourceItem)
+    assert item.author_role == configured["role"] == "FOUNDER_C_LEVEL"
+    assert item.original_author_role == "FOUNDER_C_LEVEL"
+    assert item.relevance.decision is None
+    assert item.author_organization == configured["entity_id"]

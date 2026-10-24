@@ -8,6 +8,8 @@ from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
 
+type SourceAuthorRole = Literal["ORGANIZATION", "FOUNDER_C_LEVEL", "PERSON", "OTHER"]
+
 
 class SourceLimits(DomainModel):
     rate_per_min: int | None = Field(gt=0)
