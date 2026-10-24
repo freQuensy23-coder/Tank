@@ -1,6 +1,6 @@
 """Typed reporting data and a side-effect port independent of workflow decisions."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import AbstractAsyncContextManager
 from typing import Literal, Protocol, Self
 
@@ -131,6 +131,7 @@ class ProgressDetails(DomainModel):
     missing_market_truth: list[SourceContextId] | None = None
     missing_decisions: list[SourceContextId] | None = None
     publication_receipt: PublicationReceipt | None = None
+    source_provenance: Literal["NOT_CAPTURED"] | None = None
 
     def storage_fields(self) -> dict[str, JsonValue]:
         return self.model_dump(mode="json", exclude_unset=True)
@@ -140,10 +141,35 @@ class EventObservationSubject(DomainModel):
     item_id: SourceContextId
 
 
-class ProgressSubject(DomainModel):
-    item_id: SourceContextId
+class KnownProgressOrigin(DomainModel):
+    state: Literal["KNOWN"] = "KNOWN"
     source_id: str = Field(min_length=1)
     evidence_kind: Literal["FETCHED_PAGE", "SEARCH_RESULT"] | None = None
+
+
+class UncapturedProgressOrigin(DomainModel):
+    state: Literal["NOT_CAPTURED"] = "NOT_CAPTURED"
+    reason: Literal["SOURCE_PROVENANCE_NOT_CAPTURED"]
+
+
+class ProgressSubject(DomainModel):
+    item_id: SourceContextId
+    origin: KnownProgressOrigin | UncapturedProgressOrigin = Field(discriminator="state")
+
+
+def progress_subject(record: Mapping[str, JsonValue]) -> ProgressSubject:
+    """Read retained reporting provenance without admitting a partial live source aggregate."""
+    if "source_id" not in record or record["source_id"] is None:
+        origin: KnownProgressOrigin | UncapturedProgressOrigin = UncapturedProgressOrigin(
+            reason="SOURCE_PROVENANCE_NOT_CAPTURED"
+        )
+    else:
+        origin = KnownProgressOrigin.model_validate(
+            {name: record[name] for name in ("source_id", "evidence_kind") if name in record}
+        )
+    return ProgressSubject.model_validate(
+        {**{name: record[name] for name in ("item_id",) if name in record}, "origin": origin}
+    )
 
 
 class ProgressIdentity(DomainModel):
