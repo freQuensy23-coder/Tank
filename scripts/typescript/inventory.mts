@@ -17,6 +17,13 @@ interface EmbeddedSource {
   language: "python";
   source: string;
 }
+interface ReferenceConfiguration {
+  reason: string;
+  executed_by: string[];
+}
+interface ReferenceProgram extends ReferenceConfiguration {
+  findings: Finding[];
+}
 interface Inventory {
   coverage: string[];
   files: number;
@@ -25,12 +32,17 @@ interface Inventory {
   findings: Finding[];
   embedded: EmbeddedSource[];
   immutable_exclusions: Record<string, string>;
+  reference_programs: Record<string, ReferenceProgram>;
 }
 
-const excluded = new Set([".git", ".venv", "node_modules", "vendor", "upstream", "history", "testdata", "goldens"]);
-const immutable = {
-  "tests/fixtures/openma/runtime-codec.ts": "Retained upstream runtime codec fixture; immutable interoperability evidence.",
-};
+const excluded = new Set([".git", ".venv", "node_modules", "vendor", "upstream", "history"]);
+const immutable = new Map<string, ReferenceConfiguration>([[
+  "tests/fixtures/openma/runtime-codec.ts",
+  {
+    reason: "Executable pinned OpenMA85d5361 codec excerpts, source SHA256 e2e01a8205d137a286c67e2d02f6440b0a3b8e7da7250354f92baea869e9adca; preserve as immutable interoperability oracle, not inactive data.",
+    executed_by: ["tests/test_agents_openma_codec.py:run_codec"],
+  },
+]]);
 
 function files(root: string): string[] {
   const result: string[] = [];
@@ -39,8 +51,6 @@ function files(root: string): string[] {
       for (const entry of readdirSync(directory, { withFileTypes: true })) {
         if (excluded.has(entry.name)) continue;
         const path = join(directory, entry.name);
-        const local = relative(root, path);
-        if (Object.hasOwn(immutable, local)) continue;
         if (entry.isDirectory()) visit(path);
         else if ([".js", ".mjs", ".ts", ".mts", ".cts"].includes(extname(path))) result.push(path);
       }
@@ -62,6 +72,8 @@ export function inventory(root: string): Inventory {
   const findings: Finding[] = [];
   const embedded: EmbeddedSource[] = [];
   const paths = files(root);
+  const references: Record<string, ReferenceProgram> = {};
+  let referenceFiles = 0;
   for (const path of paths) {
     const local = relative(root, path);
     const text = readFileSync(path, "utf8");
@@ -70,8 +82,15 @@ export function inventory(root: string): Inventory {
       throw Error(local + ": " + parsed.diagnostics.map((diagnostic: ts.Diagnostic): string => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")).join("\n"));
     }
     const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+    const reference = immutable.get(local);
+    const referenceFindings: Finding[] = [];
+    if (reference !== undefined) {
+      references[local] = { ...reference, findings: referenceFindings };
+      referenceFiles++;
+    }
+    const destination = reference === undefined ? findings : referenceFindings;
     const record = (node: ts.Node, kind: Kind, scope: string[]): void => {
-      findings.push({
+      destination.push({
         path: local,
         line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1,
         symbol: scope.join("."),
@@ -119,13 +138,16 @@ export function inventory(root: string): Inventory {
     modules[finding.path] = module;
   }
   return {
-    coverage: ["first-party JavaScript", "first-party MJS", "first-party TypeScript", "static String.raw Python snippets with import and function declarations", "Python command expressions including dynamic arguments"],
-    files: paths.length,
+    coverage: ["first-party JavaScript", "first-party MJS", "first-party TypeScript", "static String.raw Python snippets with import and function declarations", "Python command expressions including dynamic arguments", "executed immutable reference programs reported separately"],
+    files: paths.length - referenceFiles,
     counts,
     modules,
     findings,
     embedded,
-    immutable_exclusions: immutable,
+    immutable_exclusions: Object.fromEntries([...immutable.entries()].map(
+      ([path, value]: [string, ReferenceConfiguration]): [string, string] => [path, value.reason],
+    )),
+    reference_programs: references,
   };
 }
 
@@ -137,5 +159,5 @@ export function main(): void {
   const output = resolve(args[1]);
   mkdirSync(dirname(output), { recursive: true });
   writeFileSync(output, JSON.stringify(report, null, 2) + "\n");
-  console.log(JSON.stringify({ coverage: report.coverage, files: report.files, counts: report.counts, embedded: report.embedded.length }));
+  console.log(JSON.stringify({ coverage: report.coverage, files: report.files, counts: report.counts, embedded: report.embedded.length, reference_files: Object.keys(report.reference_programs).length }));
 }

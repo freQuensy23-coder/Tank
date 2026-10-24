@@ -4,16 +4,16 @@
     "first-party MJS",
     "first-party TypeScript",
     "static String.raw Python snippets with import and function declarations",
-    "Python command expressions including dynamic arguments"
+    "Python command expressions including dynamic arguments",
+    "executed immutable reference programs reported separately"
   ],
   "files": 34,
   "counts": {
-    "object": 690,
+    "object": 693,
     "untyped_parameter": 355,
     "untyped_return": 539,
     "optional": 16,
     "fallback": 64,
-    "embedded_python": 1,
     "embedded_python_command": 13
   },
   "modules": {
@@ -34,7 +34,6 @@
       "fallback": 5,
       "untyped_parameter": 17,
       "untyped_return": 10,
-      "embedded_python": 1,
       "object": 12,
       "embedded_python_command": 1
     },
@@ -56,12 +55,12 @@
       "embedded_python_command": 1
     },
     "scripts/typescript/inventory.mts": {
-      "object": 12,
+      "object": 14,
       "fallback": 8,
       "embedded_python_command": 1
     },
     "scripts/typescript/inventory.test.mts": {
-      "object": 2
+      "object": 3
     },
     "scripts/typescript/register-openma-source.mts": {
       "fallback": 1,
@@ -1008,231 +1007,224 @@
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 25,
-      "symbol": "PROBE",
-      "kind": "embedded_python",
-      "expression": "String.raw`\nimport json, os, socket, ssl, struct, subprocess, time, urllib.request\nr = {}\ndef attempt(name, fn):\n    t = time.monotonic()\n    try:\n        r[name] = {\"ok\": True, \"value\": fn()}\n    except Exception as e:\n        r[name] = {\"ok\": False, \"error\": (type(e).__name__ + \": \" + str(e))[:240]}\n    r[name][\"ms\"] = round((time.monotonic() - t) * 1000)\ndef udp_dns(server, name=\"example.com\"):\n    q = struct.pack(\">HHHHHH\", 0x5441, 0x0100, 1, 0, 0, 0) + b\"\".join(bytes([len(p)]) + p.encode() for p in name.split(\".\")) + b\"\\0\" + struct.pack(\">HH\", 1, 1)\n    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(4)\n    s.sendto(q, (server, 53)); d, _ = s.recvfrom(1500); s.close()\n    rcode, answers = d[3] & 15, struct.unpack(\">H\", d[6:8])[0]\n    if rcode != 0 or answers == 0: raise RuntimeError(\"rcode=%d answers=%d\" % (rcode, answers))\n    return {\"rcode\": rcode, \"answers\": answers}\ndef tls(host, port=443, sni=None):\n    raw = socket.create_connection((host, port), timeout=6)\n    with ssl.create_default_context().wrap_socket(raw, server_hostname=sni or host) as s:\n        return {\"peer\": s.getpeername()[0], \"version\": s.version()}\ndef https(target):\n    with urllib.request.urlopen(target, timeout=12) as response:\n        return response.status\ndef psql(dburl, sql):\n    p = subprocess.run([\"psql\", dburl, \"-v\", \"ON_ERROR_STOP=1\", \"-Atc\", sql], capture_output=True, text=True, timeout=25)\n    if p.returncode: raise RuntimeError(p.stderr.strip().splitlines()[-1] if p.stderr.strip() else \"exit %d\" % p.returncode)\n    return p.stdout.strip()\nattempt(\"machine\", lambda: os.uname().machine)\nattempt(\"kernel\", lambda: os.uname().release)\nattempt(\"hypervisor_cpu_flag\", lambda: \"hypervisor\" in open(\"/proc/cpuinfo\").read())\nnameservers = [l.split()[1] for l in open(\"/etc/resolv.conf\") if l.startswith(\"nameserver\")]\nr[\"nameservers\"] = nameservers\nfor host in (\"example.com\", \"openrouter.ai\", \"api.etherscan.io\", \"postgres\"):\n    attempt(\"dns_getaddrinfo_\" + host, lambda h=host: sorted({a[4][0] for a in socket.getaddrinfo(h, 443, proto=socket.IPPROTO_TCP)}))\nattempt(\"dns_udp_configured\", lambda: udp_dns(nameservers[0]))\nattempt(\"dns_udp_public_1.1.1.1\", lambda: udp_dns(\"1.1.1.1\"))\nattempt(\"tls_direct_ip_1.1.1.1\", lambda: tls(\"1.1.1.1\", sni=\"one.one.one.one\"))\nattempt(\"tls_direct_ip_8.8.8.8\", lambda: tls(\"8.8.8.8\", sni=\"dns.google\"))\nattempt(\"https_example.com\", lambda: https(\"https://example.com/\"))\nattempt(\"https_openrouter_models\", lambda: https(\"https://openrouter.ai/api/v1/models\"))\nattempt(\"db_tcp\", lambda: socket.create_connection((os.environ[\"TANK_NATIVE_DB_IPV4\"], 5432), timeout=6).getpeername()[0])\nattempt(\"db_select\", lambda: psql(os.environ[\"TANK_DB_URL\"], \"select current_user || ' ' || current_database()\"))\nattempt(\"db_write_refused\", lambda: psql(os.environ[\"TANK_DB_URL\"], \"create table tank_native_probe(x int)\"))\nattempt(\"db_cross_database\", lambda: psql(os.environ[\"TANK_CROSS_DB_URL\"], \"select current_database()\"))\nprint(\"TANKPROBE\" + json.dumps(r))\n`"
-    },
-    {
-      "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 73,
+      "line": 27,
       "symbol": "policies",
       "kind": "object",
       "expression": "{\n  unrestricted: { mode: 'enabled' },\n  replay: { mode: 'enabled', allowNet: [databaseIp] },\n}"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 74,
+      "line": 28,
       "symbol": "policies",
       "kind": "object",
       "expression": "{ mode: 'enabled' }"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 75,
+      "line": 29,
       "symbol": "policies",
       "kind": "object",
       "expression": "{ mode: 'enabled', allowNet: [databaseIp] }"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 77,
+      "line": 31,
       "symbol": "run",
       "kind": "untyped_parameter",
       "expression": "name"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 77,
+      "line": 31,
       "symbol": "run",
       "kind": "untyped_parameter",
       "expression": "policy"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 77,
+      "line": 31,
       "symbol": "run",
       "kind": "untyped_parameter",
       "expression": "dbUrl"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 77,
+      "line": 31,
       "symbol": "run",
       "kind": "untyped_parameter",
       "expression": "crossUrl"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 77,
+      "line": 31,
       "symbol": "run",
       "kind": "untyped_return",
       "expression": "async function run(name, policy, dbUrl, crossUrl) {\n  const { LiteBoxSandbox } = await import('/app/packages/sandbox-adapter-litebox/src/index.ts');\n  const scope = join(directory, name);\n  await mkdir(join(scope, 'outputs'), { recursive: true });\n  await mkdir(join(scope, 'scratch'), { recursive: true });\n  const sandbox = new LiteBoxSandbox({\n    tankNetwork: policy, rootfsPath: rootfs, memoryMib: 2048, cpus: 2, name: 'tank-native-network-' + name + '-' + randomUUID().slice(0, 8),\n    outputsRoot: join(scope, 'outputs'), scratchRoot: join(scope, 'scratch'),\n  });\n  const started = Date.now();\n  try {\n    await sandbox.setEnvVars({ TANK_DB_URL: dbUrl, TANK_CROSS_DB_URL: crossUrl, TANK_NATIVE_DB_IPV4: databaseIp });\n    const output = await sandbox.exec(\"python3 - <<'PY'\\n\" + PROBE + \"\\nPY\", 240000);\n    const line = output.split('\\n').find(l => l.startsWith('TANKPROBE'));\n    assert.ok(line, 'probe produced no result: ' + output.slice(-400));\n    const result = { name, policy, bootAndProbeMs: Date.now() - started, probe: JSON.parse(line.slice(9)) };\n    await writeFile(join(directory, name + '.json'), JSON.stringify(result, null, 2) + '\\n', { mode: 0o600 });\n    return result;\n  } finally {\n    await sandbox.destroy();\n  }\n}"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 80,
+      "line": 34,
       "symbol": "run",
       "kind": "object",
       "expression": "{ recursive: true }"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 81,
+      "line": 35,
       "symbol": "run",
       "kind": "object",
       "expression": "{ recursive: true }"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 82,
+      "line": 36,
       "symbol": "run.sandbox",
       "kind": "object",
       "expression": "{\n    tankNetwork: policy, rootfsPath: rootfs, memoryMib: 2048, cpus: 2, name: 'tank-native-network-' + name + '-' + randomUUID().slice(0, 8),\n    outputsRoot: join(scope, 'outputs'), scratchRoot: join(scope, 'scratch'),\n  }"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 88,
+      "line": 42,
       "symbol": "run",
       "kind": "object",
       "expression": "{ TANK_DB_URL: dbUrl, TANK_CROSS_DB_URL: crossUrl, TANK_NATIVE_DB_IPV4: databaseIp }"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 89,
+      "line": 43,
       "symbol": "run.output",
       "kind": "embedded_python_command",
       "expression": "sandbox.exec(\"python3 - <<'PY'\\n\" + PROBE + \"\\nPY\", 240000)"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 90,
+      "line": 44,
       "symbol": "run.line",
       "kind": "untyped_parameter",
       "expression": "l"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 90,
+      "line": 44,
       "symbol": "run.line",
       "kind": "untyped_return",
       "expression": "l => l.startsWith('TANKPROBE')"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 92,
+      "line": 46,
       "symbol": "run.result",
       "kind": "object",
       "expression": "{ name, policy, bootAndProbeMs: Date.now() - started, probe: JSON.parse(line.slice(9)) }"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 93,
+      "line": 47,
       "symbol": "run",
       "kind": "object",
       "expression": "{ mode: 0o600 }"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 109,
+      "line": 63,
       "symbol": "ok",
       "kind": "untyped_parameter",
       "expression": "result"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 109,
+      "line": 63,
       "symbol": "ok",
       "kind": "untyped_parameter",
       "expression": "key"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 109,
+      "line": 63,
       "symbol": "ok",
       "kind": "untyped_return",
       "expression": "(result, key) => result.probe[key]?.ok === true"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 111,
+      "line": 65,
       "symbol": "expect",
       "kind": "untyped_parameter",
       "expression": "condition"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 111,
+      "line": 65,
       "symbol": "expect",
       "kind": "untyped_parameter",
       "expression": "label"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 111,
+      "line": 65,
       "symbol": "expect",
       "kind": "untyped_return",
       "expression": "(condition, label) => { if (!condition) failed.push(label); }"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 128,
+      "line": 82,
       "symbol": "summary",
       "kind": "object",
       "expression": "{\n  status: failed.length ? 'FAIL' : 'PASS',\n  failed,\n  checks: {\n    kvm: results.every(r => r.probe.machine?.value === 'x86_64') ? 'PASS' : 'FAIL',\n    dns: failed.some(f => f.includes('dns_')) ? 'FAIL' : 'PASS',\n    replay_isolation: failed.some(f => f.startsWith('replay:')) ? 'FAIL' : 'PASS',\n  },\n  databaseIp,\n  imageId: env.TANK_NATIVE_IMAGE_ID,\n  ociIndexSha256: hash(await readFile(join(rootfs, 'index.json'))),\n  shimSha256: hash(await readFile('/opt/tank-boxlite-runtime/boxlite-shim')),\n  finishedAt: new Date().toISOString(),\n}"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 131,
+      "line": 85,
       "symbol": "summary",
       "kind": "object",
       "expression": "{\n    kvm: results.every(r => r.probe.machine?.value === 'x86_64') ? 'PASS' : 'FAIL',\n    dns: failed.some(f => f.includes('dns_')) ? 'FAIL' : 'PASS',\n    replay_isolation: failed.some(f => f.startsWith('replay:')) ? 'FAIL' : 'PASS',\n  }"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 132,
+      "line": 86,
       "symbol": "summary",
       "kind": "untyped_parameter",
       "expression": "r"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 132,
+      "line": 86,
       "symbol": "summary",
       "kind": "untyped_return",
       "expression": "r => r.probe.machine?.value === 'x86_64'"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 133,
+      "line": 87,
       "symbol": "summary",
       "kind": "untyped_parameter",
       "expression": "f"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 133,
+      "line": 87,
       "symbol": "summary",
       "kind": "untyped_return",
       "expression": "f => f.includes('dns_')"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 134,
+      "line": 88,
       "symbol": "summary",
       "kind": "untyped_parameter",
       "expression": "f"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 134,
+      "line": 88,
       "symbol": "summary",
       "kind": "untyped_return",
       "expression": "f => f.startsWith('replay:')"
     },
     {
       "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 142,
+      "line": 96,
       "symbol": "",
       "kind": "object",
       "expression": "{ mode: 0o600 }"
@@ -2296,150 +2288,164 @@
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 31,
+      "line": 41,
       "symbol": "immutable",
       "kind": "object",
-      "expression": "{\n  \"tests/fixtures/openma/runtime-codec.ts\": \"Retained upstream runtime codec fixture; immutable interoperability evidence.\",\n}"
+      "expression": "{\n    reason: \"Executable pinned OpenMA85d5361 codec excerpts, source SHA256 e2e01a8205d137a286c67e2d02f6440b0a3b8e7da7250354f92baea869e9adca; preserve as immutable interoperability oracle, not inactive data.\",\n    executed_by: [\"tests/test_agents_openma_codec.py:run_codec\"],\n  }"
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 39,
+      "line": 51,
       "symbol": "files.visit",
       "kind": "object",
       "expression": "{ withFileTypes: true }"
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 54,
+      "line": 64,
       "symbol": "symbol",
       "kind": "fallback",
       "expression": "ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isClassDeclaration(node)"
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 54,
+      "line": 64,
       "symbol": "symbol",
       "kind": "fallback",
       "expression": "ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)"
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 68,
+      "line": 75,
+      "symbol": "inventory.references",
+      "kind": "object",
+      "expression": "{}"
+    },
+    {
+      "path": "scripts/typescript/inventory.mts",
+      "line": 80,
       "symbol": "inventory.parsed",
       "kind": "object",
       "expression": "{ fileName: path, reportDiagnostics: true, compilerOptions: { allowJs: true, target: ts.ScriptTarget.Latest } }"
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 68,
+      "line": 80,
       "symbol": "inventory.parsed",
       "kind": "object",
       "expression": "{ allowJs: true, target: ts.ScriptTarget.Latest }"
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 74,
+      "line": 88,
+      "symbol": "inventory",
+      "kind": "object",
+      "expression": "{ ...reference, findings: referenceFindings }"
+    },
+    {
+      "path": "scripts/typescript/inventory.mts",
+      "line": 93,
       "symbol": "inventory.record",
       "kind": "object",
       "expression": "{\n        path: local,\n        line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1,\n        symbol: scope.join(\".\"),\n        kind,\n        expression: node.getText(source),\n      }"
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 88,
+      "line": 107,
       "symbol": "inventory.visit",
       "kind": "fallback",
       "expression": "parameter.questionToken !== undefined || parameter.initializer !== undefined"
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 94,
+      "line": 113,
       "symbol": "inventory.visit",
       "kind": "embedded_python_command",
       "expression": "node.arguments[0]?.getText(source).includes(\"python3\")"
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 100,
+      "line": 119,
       "symbol": "inventory.visit",
       "kind": "object",
       "expression": "{\n            path: local,\n            line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1,\n            symbol: scope.join(\".\"),\n            language: \"python\",\n            source: text,\n          }"
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 113,
+      "line": 132,
       "symbol": "inventory.counts",
       "kind": "object",
       "expression": "{}"
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 114,
+      "line": 133,
       "symbol": "inventory.modules",
       "kind": "object",
       "expression": "{}"
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 116,
+      "line": 135,
       "symbol": "inventory",
       "kind": "fallback",
       "expression": "counts[finding.kind] ?? 0"
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 117,
+      "line": 136,
       "symbol": "inventory.module",
       "kind": "fallback",
       "expression": "modules[finding.path] ?? {}"
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 117,
+      "line": 136,
       "symbol": "inventory.module",
       "kind": "object",
       "expression": "{}"
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 118,
+      "line": 137,
       "symbol": "inventory",
       "kind": "fallback",
       "expression": "module[finding.kind] ?? 0"
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 121,
+      "line": 140,
       "symbol": "inventory",
       "kind": "object",
-      "expression": "{\n    coverage: [\"first-party JavaScript\", \"first-party MJS\", \"first-party TypeScript\", \"static String.raw Python snippets with import and function declarations\", \"Python command expressions including dynamic arguments\"],\n    files: paths.length,\n    counts,\n    modules,\n    findings,\n    embedded,\n    immutable_exclusions: immutable,\n  }"
+      "expression": "{\n    coverage: [\"first-party JavaScript\", \"first-party MJS\", \"first-party TypeScript\", \"static String.raw Python snippets with import and function declarations\", \"Python command expressions including dynamic arguments\", \"executed immutable reference programs reported separately\"],\n    files: paths.length - referenceFiles,\n    counts,\n    modules,\n    findings,\n    embedded,\n    immutable_exclusions: Object.fromEntries([...immutable.entries()].map(\n      ([path, value]: [string, ReferenceConfiguration]): [string, string] => [path, value.reason],\n    )),\n    reference_programs: references,\n  }"
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 135,
+      "line": 157,
       "symbol": "main",
       "kind": "fallback",
       "expression": "args.length !== 2 || args[0] !== \"--output\" || args[1] === undefined"
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 135,
+      "line": 157,
       "symbol": "main",
       "kind": "fallback",
       "expression": "args.length !== 2 || args[0] !== \"--output\""
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 138,
+      "line": 160,
       "symbol": "main",
       "kind": "object",
       "expression": "{ recursive: true }"
     },
     {
       "path": "scripts/typescript/inventory.mts",
-      "line": 140,
+      "line": 162,
       "symbol": "main",
       "kind": "object",
-      "expression": "{ coverage: report.coverage, files: report.files, counts: report.counts, embedded: report.embedded.length }"
+      "expression": "{ coverage: report.coverage, files: report.files, counts: report.counts, embedded: report.embedded.length, reference_files: Object.keys(report.reference_programs).length }"
     },
     {
       "path": "scripts/typescript/inventory.test.mts",
@@ -2451,6 +2457,13 @@
     {
       "path": "scripts/typescript/inventory.test.mts",
       "line": 27,
+      "symbol": "",
+      "kind": "object",
+      "expression": "{ recursive: true }"
+    },
+    {
+      "path": "scripts/typescript/inventory.test.mts",
+      "line": 32,
       "symbol": "",
       "kind": "object",
       "expression": "{ recursive: true }"
@@ -11913,16 +11926,179 @@
       "expression": "() => {\n  const plan = planSessionContinuation(snapshot(true), 'callback');\n  assert.equal(plan.mode, 'failure');\n  assert.match(plan.failure, /Invalid custom-tool group declaration/);\n}"
     }
   ],
-  "embedded": [
-    {
-      "path": "deploy/openma_lifecycle/native-network-qualification.mjs",
-      "line": 25,
-      "symbol": "PROBE",
-      "language": "python",
-      "source": "\nimport json, os, socket, ssl, struct, subprocess, time, urllib.request\nr = {}\ndef attempt(name, fn):\n    t = time.monotonic()\n    try:\n        r[name] = {\"ok\": True, \"value\": fn()}\n    except Exception as e:\n        r[name] = {\"ok\": False, \"error\": (type(e).__name__ + \": \" + str(e))[:240]}\n    r[name][\"ms\"] = round((time.monotonic() - t) * 1000)\ndef udp_dns(server, name=\"example.com\"):\n    q = struct.pack(\">HHHHHH\", 0x5441, 0x0100, 1, 0, 0, 0) + b\"\".join(bytes([len(p)]) + p.encode() for p in name.split(\".\")) + b\"\\0\" + struct.pack(\">HH\", 1, 1)\n    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(4)\n    s.sendto(q, (server, 53)); d, _ = s.recvfrom(1500); s.close()\n    rcode, answers = d[3] & 15, struct.unpack(\">H\", d[6:8])[0]\n    if rcode != 0 or answers == 0: raise RuntimeError(\"rcode=%d answers=%d\" % (rcode, answers))\n    return {\"rcode\": rcode, \"answers\": answers}\ndef tls(host, port=443, sni=None):\n    raw = socket.create_connection((host, port), timeout=6)\n    with ssl.create_default_context().wrap_socket(raw, server_hostname=sni or host) as s:\n        return {\"peer\": s.getpeername()[0], \"version\": s.version()}\ndef https(target):\n    with urllib.request.urlopen(target, timeout=12) as response:\n        return response.status\ndef psql(dburl, sql):\n    p = subprocess.run([\"psql\", dburl, \"-v\", \"ON_ERROR_STOP=1\", \"-Atc\", sql], capture_output=True, text=True, timeout=25)\n    if p.returncode: raise RuntimeError(p.stderr.strip().splitlines()[-1] if p.stderr.strip() else \"exit %d\" % p.returncode)\n    return p.stdout.strip()\nattempt(\"machine\", lambda: os.uname().machine)\nattempt(\"kernel\", lambda: os.uname().release)\nattempt(\"hypervisor_cpu_flag\", lambda: \"hypervisor\" in open(\"/proc/cpuinfo\").read())\nnameservers = [l.split()[1] for l in open(\"/etc/resolv.conf\") if l.startswith(\"nameserver\")]\nr[\"nameservers\"] = nameservers\nfor host in (\"example.com\", \"openrouter.ai\", \"api.etherscan.io\", \"postgres\"):\n    attempt(\"dns_getaddrinfo_\" + host, lambda h=host: sorted({a[4][0] for a in socket.getaddrinfo(h, 443, proto=socket.IPPROTO_TCP)}))\nattempt(\"dns_udp_configured\", lambda: udp_dns(nameservers[0]))\nattempt(\"dns_udp_public_1.1.1.1\", lambda: udp_dns(\"1.1.1.1\"))\nattempt(\"tls_direct_ip_1.1.1.1\", lambda: tls(\"1.1.1.1\", sni=\"one.one.one.one\"))\nattempt(\"tls_direct_ip_8.8.8.8\", lambda: tls(\"8.8.8.8\", sni=\"dns.google\"))\nattempt(\"https_example.com\", lambda: https(\"https://example.com/\"))\nattempt(\"https_openrouter_models\", lambda: https(\"https://openrouter.ai/api/v1/models\"))\nattempt(\"db_tcp\", lambda: socket.create_connection((os.environ[\"TANK_NATIVE_DB_IPV4\"], 5432), timeout=6).getpeername()[0])\nattempt(\"db_select\", lambda: psql(os.environ[\"TANK_DB_URL\"], \"select current_user || ' ' || current_database()\"))\nattempt(\"db_write_refused\", lambda: psql(os.environ[\"TANK_DB_URL\"], \"create table tank_native_probe(x int)\"))\nattempt(\"db_cross_database\", lambda: psql(os.environ[\"TANK_CROSS_DB_URL\"], \"select current_database()\"))\nprint(\"TANKPROBE\" + json.dumps(r))\n"
-    }
-  ],
+  "embedded": [],
   "immutable_exclusions": {
-    "tests/fixtures/openma/runtime-codec.ts": "Retained upstream runtime codec fixture; immutable interoperability evidence."
+    "tests/fixtures/openma/runtime-codec.ts": "Executable pinned OpenMA85d5361 codec excerpts, source SHA256 e2e01a8205d137a286c67e2d02f6440b0a3b8e7da7250354f92baea869e9adca; preserve as immutable interoperability oracle, not inactive data."
+  },
+  "reference_programs": {
+    "tests/fixtures/openma/runtime-codec.ts": {
+      "reason": "Executable pinned OpenMA85d5361 codec excerpts, source SHA256 e2e01a8205d137a286c67e2d02f6440b0a3b8e7da7250354f92baea869e9adca; preserve as immutable interoperability oracle, not inactive data.",
+      "executed_by": [
+        "tests/test_agents_openma_codec.py:run_codec"
+      ],
+      "findings": [
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 42,
+          "symbol": "camelCaseKey",
+          "kind": "untyped_parameter",
+          "expression": "_match"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 42,
+          "symbol": "camelCaseKey",
+          "kind": "untyped_return",
+          "expression": "(_match, value: string) =>\n    value.toUpperCase()"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 49,
+          "symbol": "camelCaseRuntimeValue",
+          "kind": "fallback",
+          "expression": "value === null || typeof value !== \"object\""
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 51,
+          "symbol": "camelCaseRuntimeValue",
+          "kind": "untyped_parameter",
+          "expression": "[key, item]"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 51,
+          "symbol": "camelCaseRuntimeValue",
+          "kind": "untyped_return",
+          "expression": "([key, item]) => [\n      camelCaseKey(key),\n      camelCaseRuntimeValue(item),\n    ]"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 59,
+          "symbol": "snakeCaseKey",
+          "kind": "untyped_parameter",
+          "expression": "value"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 59,
+          "symbol": "snakeCaseKey",
+          "kind": "untyped_return",
+          "expression": "(value) => `_${value.toLowerCase()}`"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 64,
+          "symbol": "snakeCaseRuntimeValue",
+          "kind": "fallback",
+          "expression": "value === null || typeof value !== \"object\""
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 66,
+          "symbol": "snakeCaseRuntimeValue",
+          "kind": "untyped_parameter",
+          "expression": "[key, item]"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 66,
+          "symbol": "snakeCaseRuntimeValue",
+          "kind": "untyped_return",
+          "expression": "([key, item]) => [\n      snakeCaseKey(key),\n      snakeCaseRuntimeValue(item),\n    ]"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 81,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "fallback",
+          "expression": "value === null || typeof value !== \"object\""
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 85,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "fallback",
+          "expression": "raw.type === \"agent.message_stream_start\" ||\n    raw.type === \"agent.thinking_stream_start\""
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 93,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "object",
+          "expression": "{ type: \"event_start\", event: { id, type } }"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 93,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "object",
+          "expression": "{ id, type }"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 96,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "fallback",
+          "expression": "raw.type === \"agent.message_chunk\" || raw.type === \"agent.thinking_chunk\""
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 105,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "object",
+          "expression": "{\n            type: \"event_delta\",\n            eventId: id,\n            delta: {\n              type: \"content_delta\",\n              content: { type: \"text\", text: raw.delta },\n              ...(typeof raw.index === \"number\" && { index: raw.index }),\n            },\n          }"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 108,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "object",
+          "expression": "{\n              type: \"content_delta\",\n              content: { type: \"text\", text: raw.delta },\n              ...(typeof raw.index === \"number\" && { index: raw.index }),\n            }"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 110,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "object",
+          "expression": "{ type: \"text\", text: raw.delta }"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 111,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "object",
+          "expression": "{ index: raw.index }"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 118,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "fallback",
+          "expression": "raw.type === \"agent.message_stream_end\" ||\n    raw.type === \"agent.thinking_stream_end\""
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 137,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "fallback",
+          "expression": "raw.model_usage ?? raw.modelUsage"
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 149,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "fallback",
+          "expression": "raw.type === \"agent.tool_result\" || raw.type === \"agent.mcp_tool_result\""
+        },
+        {
+          "path": "tests/fixtures/openma/runtime-codec.ts",
+          "line": 156,
+          "symbol": "decodeRuntimeEvent",
+          "kind": "object",
+          "expression": "{ type: \"text\", text: raw.content }"
+        }
+      ]
+    }
   }
 }

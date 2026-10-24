@@ -43,23 +43,23 @@ type Service struct {
 	wake    chan struct{}
 	slots   chan struct{}
 
-	mu           sync.Mutex
-	hotSince     map[string]time.Time
-	groups       map[string]*group
-	members      map[string]*memberState
-	depth        map[string]*memberState
-	books        map[string]*books.Book
-	metadata     map[string]map[string]any
-	klinesPolled map[string][]string
-	obliged      map[string]bool
-	flowLocks    map[string]*sync.Mutex
-	ctxLocks     map[string]*sync.Mutex
-	late         map[flow.Key]bool
-	repairs      map[string]*repairQueue
-	fxCache      map[string][2]string
-	history      map[[2]string]time.Time
-	reads        map[string][2]int
-	frames       map[string]int
+	mu                sync.Mutex
+	hotSince          map[string]time.Time
+	groups            map[string]*group
+	members           map[string]*memberState
+	depth             map[string]*memberState
+	books             map[string]*books.Book
+	metadata          map[string]map[string]any
+	klinesPolled      map[string][]string
+	activeObligations map[string]struct{}
+	flowLocks         map[string]*sync.Mutex
+	ctxLocks          map[string]*sync.Mutex
+	late              map[flow.Key]bool
+	repairs           map[string]*repairQueue
+	fxCache           map[string][2]string
+	history           map[[2]string]time.Time
+	reads             map[string][2]int
+	frames            map[string]int
 
 	flushMu   sync.Mutex
 	lastFlush atomic.Int64
@@ -85,7 +85,7 @@ func New(opt Options, store Store, writer Writer, venues Venues, dial Dialer, cl
 		wake: make(chan struct{}, 1), slots: make(chan struct{}, RepairSlots),
 		hotSince: map[string]time.Time{}, groups: map[string]*group{}, members: map[string]*memberState{},
 		depth: map[string]*memberState{}, books: map[string]*books.Book{}, metadata: map[string]map[string]any{},
-		klinesPolled: map[string][]string{}, obliged: map[string]bool{}, flowLocks: map[string]*sync.Mutex{},
+		klinesPolled: map[string][]string{}, activeObligations: map[string]struct{}{}, flowLocks: map[string]*sync.Mutex{},
 		ctxLocks: map[string]*sync.Mutex{}, late: map[flow.Key]bool{}, repairs: map[string]*repairQueue{},
 		fxCache: map[string][2]string{}, history: map[[2]string]time.Time{}, reads: map[string][2]int{},
 		frames: map[string]int{},

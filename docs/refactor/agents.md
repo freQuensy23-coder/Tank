@@ -294,3 +294,31 @@ and malformed-edit assertions; the PostgreSQL score callback reads JevState
 attributes, so it reaches the overlap barrier. The reload unit case passes in
 1.50 seconds. All seven actual routing PostgreSQL integration cases pass in
 3.15 seconds via the guarded runner, zero skips; timeout budgets are unchanged.
+
+
+## Inward tool wire contracts
+
+contracts.tool_schema owns scoped-tool names and the sole shared strict
+JSON-schema-subset validator; context projection no longer imports the
+EventToolService application module. The application owner is removing its
+previous definition and importing this shared implementation in the companion
+commit. This change must be integrated with that removal so no duplicate
+validator remains. Tool ID scope/ownership checks stay in ModelContext.
+
+The validator has precise JSON types and no dynamic Python-type registry.
+It keeps required/unknown-field/union diagnostics, rejects nonfinite numeric
+wire values, distinguishes booleans from numbers in enums, and enforces
+previously ignored declared maxItems and additional-property schemas.
+Malformed present keywords cannot masquerade as absent constraints.
+Schema dictionaries are necessary wire-schema trees, not domain payload
+facades. Absent additionalProperties means true by the JSON-schema contract;
+absent properties means no named property constraints. Description/format
+remain annotations in this checked-in subset; domain timestamp validation
+continues at its actual service boundary.
+
+ToolArgumentReference is a strict object carrying each extracted path/kind/ID
+into scope checking. Static ID_FIELDS/PREFIXES tables define the shared
+identifier taxonomy; an absent containing field is valid recursive traversal
+state, not a missing required domain value.76 schema/context/migration cases
+pass in1.97 seconds,zero skips; shared validator and its complete focused test
+module pass strict mypy.

@@ -292,19 +292,16 @@ async def test_actual_market_loader_selective_sql_footprint_and_no_assessment_wr
     repo.put = forbidden
     repo.put_market_batch = forbidden
     registry = {"instruments": packet["instruments"], "tokens": [{"token_id": "T", "symbol": "T"}]}
-    settings = SimpleNamespace(
-        config_version="t",
-        code_version="t",
-        data_dir=tmp_path,
-        user_agent="test",
-        load_config=lambda name: (
-            registry
-            if name == "registry"
-            else {"metrics": packet["semantics"]}
-            if name == "semantics"
-            else {}
-        ),
-    )
+    import json
+
+    from tank.settings import Settings
+
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "registry.yaml").write_text(json.dumps(registry))
+    (config / "semantics.yaml").write_text(json.dumps({"metrics": packet["semantics"]}))
+    (config / "thresholds.yaml").write_bytes(Settings().read_config_bytes("thresholds.yaml"))
+    settings = Settings(_env_file=None, config_dir=config, data_dir=tmp_path)
     async with httpx.AsyncClient() as http:
         market = MarketService(repo, settings, http=http)
         monkeypatch.setattr(market, "snapshot", forbidden)

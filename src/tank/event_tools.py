@@ -25,6 +25,8 @@ from tank.analysis.identity import (
 )
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.analysis.watch_contracts import WatchCondition
+from tank.contracts.tool_schema import SCOPED_TOOLS as SCOPED_TOOLS
+from tank.contracts.tool_schema import validate_schema as validate_schema
 from tank.ops_progress import event_progress, item_progress, tool_progress
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.time_precision import (
@@ -62,18 +64,6 @@ IMPLEMENTATION = dict(zip(STATES, [0, 4, 6, 6, 7, 8, 10], strict=False))
 M1_VENUES = frozenset({"binance", "coinbase", "okx", "bybit", "kraken", "robinhood"})
 
 
-SCOPED_TOOLS = frozenset(
-    {
-        "add_observation",
-        "set_assessment",
-        "set_beneficiaries",
-        "get_market_truth",
-        "get_decision",
-        "publish_card",
-        "schedule_milestone",
-        "set_watch_condition",
-    }
-)
 HOST_BOUND_FIELDS = {
     **{tool: ("event_id",) for tool in SCOPED_TOOLS},
     "add_observation": ("event_id", "item_id"),
@@ -1281,6 +1271,8 @@ class EventToolService:
             ),
         )
         item["extraction_status"] = "DONE"
+        item.pop("extraction_decision", None)
+        item.pop("extraction_reason", None)
         await self.repo.put("ingest.source_items", item["item_id"], item)
         await item_progress(
             self.repo, self.settings, item["item_id"], "EVENT_RECORDED", x["statement"], event_id=eid
@@ -1535,6 +1527,8 @@ class EventToolService:
             ),
         )
         item["extraction_status"] = "DONE"
+        item.pop("extraction_decision", None)
+        item.pop("extraction_reason", None)
         await self.repo.put("ingest.source_items", item["item_id"], item)
         await item_progress(
             self.repo, self.settings, item["item_id"], "OBSERVATION_ADDED", link, event_id=event["event_id"]
@@ -3330,74 +3324,3 @@ def evidence_ids(evidence):
         for key in ("claim_id", "event_id", "item_id")
         if isinstance(entry, dict) and key in entry
     ]
-
-
-def validate_schema(value, schema, path="$"):
-    """Validate the JSON-schema subset used by the checked-in tool declarations."""
-    kinds = {
-        "object": dict,
-        "array": list,
-        "string": str,
-        "boolean": bool,
-        "integer": int,
-        "number": (int, float),
-        "null": type(None),
-    }
-    declared = schema.get("type")
-    declared = [declared] if isinstance(declared, str) else declared
-    if declared and not any(
-        isinstance(value, kinds[t]) and not (t in {"integer", "number"} and isinstance(value, bool))
-        for t in declared
-    ):
-        raise ValueError(f"{path}: invalid type")
-    if "enum" in schema and value not in schema["enum"]:
-        raise ValueError(f"{path}: invalid enum; allowed: {schema['enum']}")
-    if "anyOf" in schema:
-        errors = []
-        for option in schema["anyOf"]:
-            try:
-                validate_schema(value, option, path)
-                break
-            except ValueError as exc:
-                errors.append(str(exc).removeprefix(path + ": "))
-        else:
-            raise ValueError(f"{path}: matches none of the allowed forms: " + " | ".join(errors))
-    if isinstance(value, str):
-        import re
-
-        if "pattern" in schema and not re.search(schema["pattern"], value):
-            raise ValueError(f"{path}: does not match pattern {schema['pattern']}")
-        if len(value) < schema.get("minLength", 0):
-            raise ValueError(f"{path}: shorter than {schema['minLength']}")
-        if "maxLength" in schema and len(value) > schema["maxLength"]:
-            raise ValueError(f"{path}: {len(value)} characters, at most {schema['maxLength']}")
-    if isinstance(value, list) and len(value) < schema.get("minItems", 0):
-        raise ValueError(f"{path}: fewer than {schema['minItems']} items")
-    if (
-        "exclusiveMinimum" in schema
-        and isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and value <= schema["exclusiveMinimum"]
-    ):
-        raise ValueError(f"{path}: must be greater than {schema['exclusiveMinimum']}")
-    if isinstance(value, dict):
-        for key in schema.get("required", []):
-            if key not in value:
-                raise ValueError(f"{path}: missing {key}")
-        props = schema.get("properties", {})
-        if schema.get("additionalProperties") is False and set(value) - set(props):
-            raise ValueError(f"{path}: unknown fields {sorted(set(value) - set(props))}")
-        for key, item in value.items():
-            if key in props:
-                validate_schema(item, props[key], path + "." + key)
-    if isinstance(value, list):
-        for n, item in enumerate(value):
-            validate_schema(item, schema.get("items", {}), f"{path}[{n}]")
-    for key, op in [("minimum", lambda a, b: a < b), ("maximum", lambda a, b: a > b)]:
-        if (
-            key in schema
-            and isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            and op(value, schema[key])
-        ):
-            raise ValueError(f"{path}: violates {key}")

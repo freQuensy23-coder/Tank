@@ -53,6 +53,19 @@ func (m *memStore) Flush(context.Context) error {
 			continue
 		}
 		table[r.Key] = row
+		if r.Collection == "mkt.backfill_runs" {
+			found := false
+			for index, original := range m.runs {
+				if original["backfill_id"] == row["backfill_id"] {
+					m.runs[index] = copyRow(row)
+					found = true
+					break
+				}
+			}
+			if !found {
+				m.runs = append(m.runs, copyRow(row))
+			}
+		}
 		m.writes[r.Collection]++
 	}
 	m.queued = nil
@@ -147,11 +160,13 @@ func (m *memStore) LatestRecords(context.Context, string, []string, string, []st
 func (m *memStore) HotTokens(context.Context) ([]map[string]any, error) { return m.hot, nil }
 
 func (m *memStore) BackfillRuns(_ context.Context, statuses []string) ([]map[string]any, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	var out []map[string]any
 	for _, r := range m.runs {
 		for _, st := range statuses {
 			if r["status"] == st {
-				out = append(out, r)
+				out = append(out, copyRow(r))
 			}
 		}
 	}

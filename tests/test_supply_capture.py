@@ -40,6 +40,7 @@ def lending_market(tmp_path: Path, transport, *, catalog=True, repo=None, tokens
     }
     config = tmp_path / "config"
     config.mkdir()
+    (config / "thresholds.yaml").write_bytes(Settings().read_config_bytes("thresholds.yaml"))
     for name, document in {
         "registry": {
             "tokens": tokens or [token],
@@ -238,6 +239,7 @@ async def test_contract_failure_preserves_other_chains_and_uses_registry_chain_i
     }
     config = tmp_path / "config"
     config.mkdir()
+    (config / "thresholds.yaml").write_bytes(Settings().read_config_bytes("thresholds.yaml"))
     for name, document in {
         "registry": {"tokens": [token], "instruments": []},
         "semantics": {"metrics": []},
@@ -295,6 +297,7 @@ async def test_failed_transfer_reads_do_not_become_observed_zero_flows(tmp_path:
     }
     config = tmp_path / "config"
     config.mkdir()
+    (config / "thresholds.yaml").write_bytes(Settings().read_config_bytes("thresholds.yaml"))
     for name, document in {
         "registry": {"tokens": [token], "instruments": []},
         "semantics": {"metrics": []},
