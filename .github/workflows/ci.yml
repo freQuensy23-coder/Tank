@@ -209,7 +209,7 @@ jobs:
         with:
           node-version: "24.22.0"
           package-manager-cache: false
-      - name: Prove real KVM_CREATE_VM without changing host permissions
+      - name: Prove real KVM_CREATE_VM with scoped hosted-runner access
         run: node scripts/ci/kvm-preflight.mjs
         env:
           TANK_QUALIFICATION_EVIDENCE: ${{ runner.temp }}/sandbox-qualification
@@ -240,15 +240,20 @@ jobs:
           corepack prepare pnpm@11.0.8 --activate
           pnpm install --frozen-lockfile
       - name: Typecheck touched vendored runtime composition
-        working-directory: vendor/openma
-        run: |
-          pnpm --filter @open-managed-agents/control-plane-node typecheck
-          pnpm --filter @open-managed-agents/session-runtime-contract typecheck
-          pnpm --filter @open-managed-agents/session-runtime-sql typecheck
-          pnpm --filter @open-managed-agents/managed-runtime-boxlite typecheck
-          pnpm --filter @open-managed-agents/sandbox-adapter-litebox typecheck
+        run: node scripts/ci/vendored-typecheck.mjs
+        env:
+          TANK_QUALIFICATION_EVIDENCE: ${{ runner.temp }}/sandbox-qualification
       - name: Actual SQL coordinator upgrade recovery integration
-        run: node --import ./vendor/openma/node_modules/tsx/dist/loader.mjs --test scripts/ci/sandbox-sql-qualification.test.mjs
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/sandbox-qualification"
+          node --import ./vendor/openma/apps/main-node/node_modules/tsx/dist/loader.mjs --test --test-reporter=junit scripts/ci/sandbox-sql-qualification.test.mjs > "$RUNNER_TEMP/sandbox-qualification/sql-qualification.xml"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: sandbox-vendored-${{ github.sha }}
+          path: ${{ runner.temp }}/sandbox-qualification/
+          if-no-files-found: error
 
   publish:
     if: github.event_name == 'push'

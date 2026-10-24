@@ -6,18 +6,26 @@ import { join } from 'node:path';
 const directory = process.env.TANK_QUALIFICATION_EVIDENCE;
 assert.ok(directory && process.env.GITHUB_ACTIONS === 'true', 'Qualification requires an isolated Actions runner');
 await mkdir(directory, { recursive: true });
-const probe = spawnSync('python3', ['-c', `import fcntl,json,os,platform,shutil
+const probe = spawnSync('python3', ['-c', `import fcntl,json,os,platform,shutil,subprocess
 result={'architecture':platform.machine(),'kvmDevice':os.path.exists('/dev/kvm'),'freeBytes':shutil.disk_usage(os.environ['RUNNER_TEMP']).free}
 try:
- fd=os.open('/dev/kvm',os.O_RDWR|os.O_CLOEXEC)
+ try:
+  fd=os.open('/dev/kvm',os.O_RDWR|os.O_CLOEXEC)
+ except PermissionError:
+  result['initialAccess']='EACCES'
+  if os.environ.get('RUNNER_ENVIRONMENT')!='github-hosted' or os.environ.get('GITHUB_EVENT_NAME')!='workflow_dispatch':
+   raise
+  subprocess.run(['/usr/bin/sudo','-n','/usr/bin/setfacl','-m','u:'+str(os.getuid())+':rw','/dev/kvm'],check=True,capture_output=True,timeout=10)
+  result['hostedRunnerUidAcl']=os.getuid()
+  fd=os.open('/dev/kvm',os.O_RDWR|os.O_CLOEXEC)
  result['apiVersion']=fcntl.ioctl(fd,0xAE00,0)
  vm=fcntl.ioctl(fd,0xAE01,0)
  os.close(vm)
  os.close(fd)
  result['createVm']='PASS'
-except OSError as error:
+except (OSError,subprocess.SubprocessError) as error:
  result['createVm']='FAIL'
- result['errno']=error.errno
+ result['errno']=getattr(error,'errno',None)
  result['error']=str(error)
 print(json.dumps(result))
 `], { encoding: 'utf8', timeout: 15000 });
