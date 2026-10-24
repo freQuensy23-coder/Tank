@@ -193,8 +193,13 @@ for (const [index, scenario] of scenarios.entries()) {
     await api('/v1/sessions/' + session.id + '/resources', { type: 'file', file_id: file.id, mount_path: '/workspace/upload.bin' });
     const send = phase => api('/v1/sessions/' + session.id + '/events', { events: [{ type: 'user.message', content: [{ type: 'text', text: 'TANK_QUALIFICATION_COMMAND:' + Buffer.from(guestCommand(phase, nonce, uploadedHash)).toString('base64') }] }] });
     receipt.initialInput = await send('A');
+    const initialStarted = performance.now();
     const initialHistory = await waitFor('actual A guest file/browser execution', async () => {
       const rows = await events(session.id);
+      if (performance.now() - initialStarted > 30000 && rows.length === 1) {
+        receipt.executionDiagnostics = JSON.parse(sql("SELECT COALESCE(json_agg(row_to_json(e)), '[]'::json) FROM managed_session_executions e"));
+        if (!receipt.executionDiagnostics.some(row => row.state === 'running' || row.state === 'queued')) throw Object.assign(Error('Accepted A input has no runnable durable execution: ' + sanitized(JSON.stringify(receipt.executionDiagnostics))), { fatal: true });
+      }
       if (rows.some(row => row.type === 'session.error')) throw Object.assign(Error(JSON.stringify(rows.filter(row => row.type === 'session.error'))), { fatal: true });
       const ended = rows.some(row => row.type === 'session.status_idle' && row.stop_reason?.type === 'end_turn');
       if (ended && receipts(rows).length === 0) throw Object.assign(Error('A model turn ended without a successful native guest receipt: ' + sanitized(JSON.stringify(rows))), { fatal: true });
@@ -336,11 +341,14 @@ for (const [index, scenario] of scenarios.entries()) {
     process.exitCode = 1;
   } finally {
     await writeFile(join(evidence, 'public-history-' + round + '.json'), sanitized(JSON.stringify({ sourceSha, runId: process.env.GITHUB_RUN_ID, sessionId: receipt.sessionId ?? null, events: latestHistory }, null, 2)) + '\n');
+    if (receipt.status !== 'PASS') {
+      try { receipt.executionDiagnostics = JSON.parse(sql("SELECT COALESCE(json_agg(row_to_json(e)), '[]'::json) FROM managed_session_executions e")); } catch (error) { receipt.diagnosticError = sanitized(error.message); }
+    }
     for (const name of [names.service, names.competitor, names.provider, names.proxy, names.postgres]) {
       const inspect = spawnSync('docker', ['inspect', '--format', '{{index .Config.Labels "tank.qualification"}}', name], { encoding: 'utf8', timeout: 10000 });
       if (inspect.status !== 0) continue;
       assert.equal(inspect.stdout.trim(), prefix, 'cleanup ownership mismatch');
-      const logs = spawnSync('docker', ['logs', '--tail', '300', name], { encoding: 'utf8', timeout: 10000, maxBuffer: 1024 ** 2 });
+      const logs = spawnSync('docker', ['logs', name], { encoding: 'utf8', timeout: 10000, maxBuffer: 16 * 1024 ** 2 });
       await writeFile(join(evidence, name + '.txt'), sanitized((logs.stdout ?? '') + (logs.stderr ?? '')));
       docker(['rm', '-f', name]); receipt.cleanup.push(name);
     }
