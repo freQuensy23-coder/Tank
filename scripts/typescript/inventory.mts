@@ -139,4 +139,3 @@ export function main(): void {
   writeFileSync(output, JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify({ coverage: report.coverage, files: report.files, counts: report.counts, embedded: report.embedded.length }));
 }
-

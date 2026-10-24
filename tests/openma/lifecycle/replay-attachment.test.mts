@@ -40,4 +40,3 @@ test("fresh validation failure and changed, writable or duplicate mounts fail cl
 test("ordinary analysis attachments do not invoke replay validation", async (): Promise<void> => {
   await replay.validateReplayAttachment({ environment: { name: "tank-analysis" }, session: {} }, allocation, async (): ReturnType<PrefixVerifier> => assert.fail("no replay validation"), undefined);
 });
-

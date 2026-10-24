@@ -160,4 +160,3 @@ export function setup(): Setup {
       new lifecycle.RetainedSessionLifecycle({ ...options, ...changes }),
   };
 }
-

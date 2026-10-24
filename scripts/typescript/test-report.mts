@@ -34,4 +34,3 @@ export function verifyTestReport(output: string): TestSummary {
   ) throw Error("Node tests require a complete nonempty set with zero failures, skips, cancellations or todos");
   return summary;
 }
-
