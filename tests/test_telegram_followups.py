@@ -26,7 +26,13 @@ USER = 42
 
 
 def inbox_settings():
-    return SimpleNamespace(telegram_token="test", telegram_alerts_chat=ALERTS, telegram_ops_chat="-100600")
+    return SimpleNamespace(
+        telegram_token="test",
+        telegram_alerts_chat=ALERTS,
+        telegram_ops_chat="-100600",
+        ops_progress_enabled=False,
+        replay=False,
+    )
 
 
 def session_settings():
@@ -41,6 +47,8 @@ def session_settings():
         config_version="test",
         code_version="test",
         load_config=lambda name: config[name],
+        ops_progress_enabled=False,
+        replay=False,
     )
 
 
@@ -471,6 +479,7 @@ async def test_terminal_question_job_records_a_failure_answer() -> None:
     repo = MemoryRepository()
     question_id = await ask(repo)
     runtime = object.__new__(Runtime)
+    runtime.settings = SimpleNamespace(ops_progress_enabled=False, replay=False)
     runtime.repo = repo
     job = {"type": "AGENT_MESSAGE", "payload": {"kind": "USER_QUESTION", "question_id": question_id}}
     await runtime.terminal_delivery_failure(job, "EXPIRED")
@@ -602,6 +611,7 @@ async def test_terminal_answer_job_is_recorded_once_and_marked_reconciled() -> N
     repo = MemoryRepository()
     question_id = await ask(repo)
     runtime = object.__new__(Runtime)
+    runtime.settings = SimpleNamespace(ops_progress_enabled=False, replay=False)
     runtime.repo = repo
     runtime.delivery = None
     runtime.inbox = TelegramInbox(repo, inbox_settings(), http=httpx.AsyncClient())
@@ -744,7 +754,9 @@ async def test_agent_watch_rules_arm_disarm_and_survive_decision_reconciliation(
     await repo.put("evt.events", "evt_1", {"event_id": "evt_1", "lifecycle": "MONITORING"})
     tools = object.__new__(EventToolService)
     tools.repo = repo
-    tools.settings = SimpleNamespace(config_version="c", code_version="v")
+    tools.settings = SimpleNamespace(
+        config_version="c", code_version="v", ops_progress_enabled=False, replay=False
+    )
     armed = await tools.set_watch_condition(
         {
             "event_id": "evt_1",
@@ -941,7 +953,9 @@ async def test_numeric_watch_comparisons_need_numbers() -> None:
     await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
     tools = object.__new__(EventToolService)
     tools.repo = repo
-    tools.settings = SimpleNamespace(config_version="c", code_version="v")
+    tools.settings = SimpleNamespace(
+        config_version="c", code_version="v", ops_progress_enabled=False, replay=False
+    )
     with pytest.raises(ValueError, match="numeric"):
         await tools.set_watch_condition(
             {
@@ -1084,7 +1098,9 @@ async def test_event_scoped_watches_refuse_persistence() -> None:
     await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
     tools = object.__new__(EventToolService)
     tools.repo = repo
-    tools.settings = SimpleNamespace(config_version="c", code_version="v")
+    tools.settings = SimpleNamespace(
+        config_version="c", code_version="v", ops_progress_enabled=False, replay=False
+    )
     with pytest.raises(ValueError, match="first match"):
         await tools.set_watch_condition(
             {
@@ -1113,7 +1129,9 @@ async def test_ordered_watch_on_categorical_metric_is_refused() -> None:
     await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
     tools = object.__new__(EventToolService)
     tools.repo = repo
-    tools.settings = SimpleNamespace(config_version="c", code_version="v")
+    tools.settings = SimpleNamespace(
+        config_version="c", code_version="v", ops_progress_enabled=False, replay=False
+    )
     with pytest.raises(ValueError, match="categorical"):
         await tools.set_watch_condition(
             {
@@ -1315,7 +1333,9 @@ async def test_watch_rules_refuse_mixed_windows_and_unevaluated_metrics() -> Non
     await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
     tools = object.__new__(EventToolService)
     tools.repo = repo
-    tools.settings = SimpleNamespace(config_version="c", code_version="v")
+    tools.settings = SimpleNamespace(
+        config_version="c", code_version="v", ops_progress_enabled=False, replay=False
+    )
     base = {"event_id": "evt_1", "action": "ARM", "token_id": "bitcoin:BTC"}
     with pytest.raises(ValueError, match="same window"):
         await tools.set_watch_condition(
@@ -1584,6 +1604,8 @@ async def test_watch_token_must_exist_in_the_registry() -> None:
         config_version="c",
         code_version="v",
         load_config=lambda name: {"tokens": [{"token_id": "bitcoin:BTC"}]},
+        ops_progress_enabled=False,
+        replay=False,
     )
     arm = {
         "event_id": "evt_1",
@@ -1782,7 +1804,11 @@ async def test_legacy_card_deliveries_stop_matching_after_the_alerts_chat_change
         moved = TelegramInbox(
             repo,
             SimpleNamespace(
-                telegram_token="test", telegram_alerts_chat="-100777", telegram_ops_chat="-100600"
+                telegram_token="test",
+                telegram_alerts_chat="-100777",
+                telegram_ops_chat="-100600",
+                ops_progress_enabled=False,
+                replay=False,
             ),
             http=http,
         )
@@ -2017,7 +2043,9 @@ async def test_agent_rules_are_coalesced_and_capped_per_event() -> None:
     await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
     tools = object.__new__(EventToolService)
     tools.repo = repo
-    tools.settings = SimpleNamespace(config_version="c", code_version="v")
+    tools.settings = SimpleNamespace(
+        config_version="c", code_version="v", ops_progress_enabled=False, replay=False
+    )
 
     def arm(value):
         return {

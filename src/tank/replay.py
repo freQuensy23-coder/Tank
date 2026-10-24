@@ -1505,6 +1505,9 @@ async def replay_agent_session(
                             "event_id",
                             "session_id",
                             "extraction_status",
+                            "extraction_decision",
+                            "extraction_reason",
+                            "filter_score",
                             "route_event_id",
                             "route",
                             "routing_message",
@@ -1523,8 +1526,8 @@ async def replay_agent_session(
                             from tank.sources.policy import initial_relevance
 
                             record["relevance"] = initial_relevance(
-                                record.get("source_id"), record.get("subtype"), record.get("author_role")
-                            )
+                                record["source_id"], record.get("subtype"), record.get("author_role")
+                            ).model_dump(mode="json", exclude_unset=True)
                         if fresh:
                             for field in ("observed_at", "published_at", "public_at", "fetched_at"):
                                 if field in record and record[field] != fresh.get(field):

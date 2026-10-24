@@ -44,7 +44,13 @@ async def test_delivery_sent_opens_once_and_escapes_html() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
         service = DeliveryService(
             repo,
-            SimpleNamespace(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2"),
+            SimpleNamespace(
+                telegram_token="test",
+                telegram_alerts_chat="1",
+                telegram_ops_chat="2",
+                ops_progress_enabled=False,
+                replay=False,
+            ),
             http=http,
         )
         await service.deliver(delivery_job({"alert_id": "a", "version": 1}))
@@ -83,7 +89,13 @@ async def test_receipt_beyond_first_ledger_page_prevents_duplicate_delivery() ->
         requests.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 99}})
 
-    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = SimpleNamespace(
+        telegram_token="fixture",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
         service = DeliveryService(repo, settings, http=http)
         await service.deliver(delivery_job({"alert_id": "a", "version": 1}))
@@ -106,7 +118,13 @@ async def test_failure_never_opens_call_and_honors_retry_after() -> None:
     ) as http:
         service = DeliveryService(
             repo,
-            SimpleNamespace(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2"),
+            SimpleNamespace(
+                telegram_token="test",
+                telegram_alerts_chat="1",
+                telegram_ops_chat="2",
+                ops_progress_enabled=False,
+                replay=False,
+            ),
             http=http,
         )
         with pytest.raises(DeliveryError) as exc:
@@ -128,7 +146,13 @@ async def test_update_replies_to_first_event_card() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
         service = DeliveryService(
             repo,
-            SimpleNamespace(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2"),
+            SimpleNamespace(
+                telegram_token="test",
+                telegram_alerts_chat="1",
+                telegram_ops_chat="2",
+                ops_progress_enabled=False,
+                replay=False,
+            ),
             http=http,
         )
         await service.deliver(delivery_job({"alert_id": "a", "version": 1}))
@@ -169,7 +193,13 @@ async def test_invalidated_session_finalizes_only_after_sent_terminal_correction
         },
         immutable=True,
     )
-    settings = SimpleNamespace(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = SimpleNamespace(
+        telegram_token="test",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(500, json={"ok": False}))
     ) as http:
@@ -213,7 +243,13 @@ async def test_invalidated_session_waits_for_every_call_to_close() -> None:
         },
         immutable=True,
     )
-    settings = SimpleNamespace(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = SimpleNamespace(
+        telegram_token="test",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda r: httpx.Response(200, json={"ok": True, "result": {"message_id": 9}})
@@ -271,7 +307,13 @@ async def test_structural_first_delivery_measures_missed_three_minute_target() -
         },
         immutable=True,
     )
-    settings = SimpleNamespace(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = SimpleNamespace(
+        telegram_token="test",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda r: httpx.Response(200, json={"ok": True, "result": {"message_id": 9}})
@@ -322,7 +364,13 @@ async def test_expiry_notice_never_reopens_frozen_start_and_consumes_only_delive
         },
         immutable=True,
     )
-    settings = SimpleNamespace(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = SimpleNamespace(
+        telegram_token="test",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(500, json={"ok": False}))
     ) as http:
@@ -417,7 +465,13 @@ async def test_held_update_is_never_sent_after_a_newer_immediate_exit(
         },
         immutable=True,
     )
-    settings = SimpleNamespace(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = SimpleNamespace(
+        telegram_token="test",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     requests = []
 
     def send(request: httpx.Request):
@@ -527,7 +581,13 @@ async def test_normal_update_sends_at_fifteen_minutes_and_is_idempotent(
         },
         immutable=True,
     )
-    settings = SimpleNamespace(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = SimpleNamespace(
+        telegram_token="test",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     requests = []
 
     def send(request: httpx.Request):
@@ -547,7 +607,13 @@ async def test_normal_update_sends_at_fifteen_minutes_and_is_idempotent(
 )
 async def test_terminal_failure_is_durable_once_and_never_opens_calls(cause) -> None:
     repo = await setup_repo()
-    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = SimpleNamespace(
+        telegram_token="fixture",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: pytest.fail("Unexpected send"))
     ) as http:
@@ -564,7 +630,13 @@ async def test_terminal_failure_is_durable_once_and_never_opens_calls(cause) -> 
 @pytest.mark.asyncio
 async def test_terminal_ops_failure_never_recurses_and_sent_is_preserved() -> None:
     repo = await setup_repo()
-    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = SimpleNamespace(
+        telegram_token="fixture",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda r: httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
@@ -583,7 +655,13 @@ async def test_terminal_ops_failure_never_recurses_and_sent_is_preserved() -> No
 @pytest.mark.asyncio
 async def test_fifth_http_failure_records_terminal_and_single_notice() -> None:
     repo = await setup_repo()
-    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = SimpleNamespace(
+        telegram_token="fixture",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(500, json={"ok": False}))
     ) as http:
@@ -626,7 +704,13 @@ async def test_milestone_resolution_consumed_only_on_matching_sent_snapshot(curr
         },
         immutable=True,
     )
-    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = SimpleNamespace(
+        telegram_token="fixture",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(500, json={"ok": False}))
     ) as http:
@@ -722,7 +806,13 @@ async def test_explicit_ordinary_update_flag_preserves_rate_with_persistent_safe
         },
         immutable=True,
     )
-    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = SimpleNamespace(
+        telegram_token="fixture",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: pytest.fail("Ordinary update sent early"))
     ) as http:
@@ -750,7 +840,13 @@ async def test_delivery_ledger_and_calls_keep_source_precision_and_actual_clocks
     if precision:
         alert["generated_at_prec"] = precision
     await repo.put("out.alerts", "precision:1", alert, immutable=True)
-    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = SimpleNamespace(
+        telegram_token="fixture",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda r: httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
@@ -817,7 +913,13 @@ async def test_delivery_due_guard_preserves_sent_anchor_and_records_no_attempt(p
         },
         immutable=True,
     )
-    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = SimpleNamespace(
+        telegram_token="fixture",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: pytest.fail("Sent early"))) as http:
         with pytest.raises(DeliveryError) as exc:
             await DeliveryService(repo, settings, http=http).deliver(
@@ -858,7 +960,13 @@ async def test_accepted_immutable_card_is_not_semantically_recensored_by_deliver
         },
         immutable=True,
     )
-    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = SimpleNamespace(
+        telegram_token="fixture",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda _: httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
@@ -894,7 +1002,13 @@ async def test_historical_suppression_is_preserved_without_censoring_explicit_re
         requests.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
 
-    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = SimpleNamespace(
+        telegram_token="fixture",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
         for _ in range(2):
             await DeliveryService(repo, settings, http=http).deliver(
@@ -940,7 +1054,13 @@ async def test_newer_held_update_supersedes_older_and_keeps_spacing_through_rest
         monkeypatch.setattr("tank.delivery.utcnow", lambda: clock[0])
         aid = new_id("alert")
         event_id = new_id("event")
-        settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+        settings = SimpleNamespace(
+            telegram_token="fixture",
+            telegram_alerts_chat="1",
+            telegram_ops_chat="2",
+            ops_progress_enabled=False,
+            replay=False,
+        )
         requests = []
 
         def send(request: httpx.Request):

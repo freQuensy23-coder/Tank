@@ -8,6 +8,7 @@ import pytest
 from delivery_support import delivery_job
 from test_session_binding_concurrency import fixture_repo
 
+from tank.contracts.progress import ProgressDetails
 from tank.delivery import DeliveryDeferred, DeliveryError, DeliveryService
 from tank.ops_cards import render, snapshot
 from tank.ops_progress import item_progress
@@ -24,6 +25,7 @@ def settings():
         telegram_token="test",
         telegram_ops_chat="-100123",
         telegram_alerts_chat="-100456",
+        replay=False,
     )
 
 
@@ -253,7 +255,7 @@ async def test_publication_refusal_contains_exact_missing_analysis(settings) -> 
         "PUBLICATION_BLOCKED",
         "ANALYSIS_INCOMPLETE",
         event_id=event["event_id"],
-        details={"missing_market_truth": ["world:WLD"], "missing_decisions": ["world:WLD"]},
+        details=ProgressDetails(missing_market_truth=["world:WLD"], missing_decisions=["world:WLD"]),
     )
     card = render(await snapshot(repo, item["item_id"]))
     assert card["code"] == "PUBLICATION_BLOCKED"
@@ -609,7 +611,7 @@ async def test_later_analysis_clears_an_obsolete_missing_data_refusal(settings, 
         "PUBLICATION_BLOCKED",
         "ANALYSIS_INCOMPLETE",
         event_id=event["event_id"],
-        details={"missing_market_truth": ["world:WLD"], "missing_decisions": ["world:WLD"]},
+        details=ProgressDetails(missing_market_truth=["world:WLD"], missing_decisions=["world:WLD"]),
     )
     stamp = collection_clock().fields("cutoff") if update_kind == "artifact" else {}
     await repo.put(

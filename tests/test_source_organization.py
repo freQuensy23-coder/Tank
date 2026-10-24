@@ -85,6 +85,8 @@ async def test_normal_poll_preserves_actual_author_and_exposes_exact_pruner_orga
             if name == "registry"
             else {}
         ),
+        ops_progress_enabled=False,
+        replay=False,
     )
     requests = []
 

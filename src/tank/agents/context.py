@@ -3,11 +3,24 @@ Tool arguments name records by ID and registry objects by key; the host validate
 
 import copy
 import re
+from collections.abc import Iterator
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 
-from tank.event_tools import SCOPED_TOOLS, validate_schema
+from tank.contracts import DomainModel
+from tank.contracts.tool_schema import SCOPED_TOOLS, validate_schema
 from tank.util import JsonInput
+
+type RecordKind = Literal["item", "event", "claim", "condition", "proposal"]
+type ReferenceKind = RecordKind | Literal["token", "entity", "instrument", "source"]
+
+
+class ToolArgumentReference(DomainModel):
+    path: str
+    kind: ReferenceKind
+    value: str
+
 
 CONTEXT_VERSION = 2
 AGENT_SKILLS = {False: "tank-event-analyst", True: "tank-scout-reviewer"}
@@ -103,7 +116,7 @@ QUERIES = {
     "instrument": "Registry keys",
     "source": "Registry keys",
 }
-ID_FIELDS = {
+ID_FIELDS: dict[str, ReferenceKind] = {
     "item_id": "item",
     "event_id": "event",
     "claim_id": "claim",
@@ -140,7 +153,7 @@ LEGACY_REFERENCES = {
     "criterion_quote": "criterion_claim_id",
     "criterion_venue": "criterion_venue_id",
 }
-PREFIXES = (
+PREFIXES: tuple[tuple[str, RecordKind], ...] = (
     ("ITM-", "item"),
     ("web-", "item"),
     ("EVT-", "event"),
@@ -234,16 +247,16 @@ def clean_value(value: JsonInput) -> JsonInput:
     return clean_text(value) if isinstance(value, str) else value
 
 
-def labelled(name, key):
+def labelled(name: str, key: str) -> str:
     """How model context shows a registry object: its readable name, then the key tools take."""
     return f"{name} · {key}"
 
 
-def named(label):
+def named(label: str) -> str:
     return ("an " if label[0] in "aeiou" else "a ") + label
 
 
-def record_kind(value):
+def record_kind(value: JsonInput) -> RecordKind | None:
     """The record kind named by an ID's prefix, when it has one."""
     if isinstance(value, str):
         for prefix, kind in PREFIXES:
@@ -252,14 +265,18 @@ def record_kind(value):
     return None
 
 
-def id_kind(tool, field):
+def id_kind(tool: str, field: str | None) -> ReferenceKind | None:
     """The record kind an argument field takes, or None for text."""
+    if field is None:
+        return None
     if field == "evidence" and tool in CLAIM_EVIDENCE_TOOLS:
         return "claim"
     return ID_FIELDS.get(field)
 
 
-def references(tool, value, path="$", field=None):
+def references(
+    tool: str, value: JsonValue, path: str = "$", field: str | None = None
+) -> Iterator[ToolArgumentReference]:
     """Every record ID in tool arguments, with its argument path and kind."""
     if isinstance(value, dict):
         for key, item in value.items():
@@ -268,10 +285,10 @@ def references(tool, value, path="$", field=None):
         for index, item in enumerate(value):
             yield from references(tool, item, f"{path}[{index}]", field)
     elif isinstance(value, str) and (kind := id_kind(tool, field)):
-        yield path, kind, value
+        yield ToolArgumentReference(path=path, kind=kind, value=value)
 
 
-def reject_text_ids(tool, value, path="$", field=None):
+def reject_text_ids(tool: str, value: JsonValue, path: str = "$", field: str | None = None) -> None:
     """Record IDs go only in ID fields; authored text, names and reasons stay free of them."""
     if isinstance(value, dict):
         for key, item in value.items():
@@ -288,12 +305,26 @@ def reject_text_ids(tool, value, path="$", field=None):
         raise ValueError(f"{path}: write this text without internal record IDs; IDs go only in ID fields")
 
 
-def legacy_reference(value, schema, path="$"):
+def legacy_reference(value: JsonValue, schema: JsonValue, path: str = "$") -> tuple[str, str] | None:
     """The first old description-based reference field, with the ID field that replaced it."""
     if isinstance(value, dict) and isinstance(schema, dict):
-        properties = {}
-        for option in (schema, *schema.get("anyOf", [])):
-            properties.update(option.get("properties", {}))
+        properties: dict[str, JsonValue] = {}
+        options: list[JsonValue] = [schema]
+        if "anyOf" in schema:
+            alternatives = schema["anyOf"]
+            if not isinstance(alternatives, list):
+                raise TypeError("Configured tool schema anyOf must be an array")
+            options.extend(alternatives)
+        for option in options:
+            if isinstance(option, bool):
+                continue
+            if not isinstance(option, dict):
+                raise TypeError("Configured tool schema alternatives must be schema objects")
+            if "properties" in option:
+                fields = option["properties"]
+                if not isinstance(fields, dict):
+                    raise TypeError("Configured tool schema properties must be an object")
+                properties.update(fields)
         for key, item in value.items():
             if key not in properties:
                 if key in LEGACY_REFERENCES:
@@ -310,11 +341,17 @@ def legacy_reference(value, schema, path="$"):
     return None
 
 
-def novel_layers_allowed(schema):
+def novel_layers_allowed(schema: dict[str, JsonValue]) -> dict[str, JsonValue]:
     """set_beneficiaries also takes a layer outside the eight: the domain turns it into a
     BENEFICIARY_LAYER scout proposal (03 §10) instead of an edge."""
     schema = copy.deepcopy(schema)
-    schema["properties"]["edges"]["items"]["properties"]["layer"].pop("enum", None)
+    layer = schema
+    for field in ("properties", "edges", "items", "properties", "layer"):
+        child = layer[field]
+        if not isinstance(child, dict):
+            raise TypeError("Configured beneficiary layer schema must contain object-valued fields")
+        layer = child
+    layer.pop("enum", None)
     return schema
 
 
@@ -748,8 +785,8 @@ class ModelContext:
             raise ValueError("Tool arguments must be an object")
         self.validate_shape(tool, arguments)
         reject_text_ids(tool, arguments)
-        for path, kind, value in references(tool, arguments):
-            await self.check(tool, path, kind, value)
+        for reference in references(tool, arguments):
+            await self.check(tool, reference.path, reference.kind, reference.value)
         result = copy.deepcopy(arguments)
         self.bind(tool, result)
         return result

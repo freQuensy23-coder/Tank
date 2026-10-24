@@ -5507,3 +5507,47 @@ async def test_publish_card_keeps_market_truth_once_and_bounds_evidence_and_ops_
     ):
         expected = 2 if collection == "evt.event_observations" else 1
         assert reads.count(collection) == expected, (collection, reads.count(collection))
+
+
+@pytest.mark.parametrize("operation", ["record_event", "add_observation"])
+async def test_successful_extraction_clears_prior_no_event_metadata(service, operation: str) -> None:
+    arguments = await seed(service)
+    context = {}
+    if operation == "add_observation":
+        event = await service.record_event(arguments, context)
+        item = await service.repo.get("ingest.source_items", arguments["item_id"])
+        item.update(
+            item_id="retry-observation",
+            extraction_status="SKIPPED",
+            extraction_decision="NO_EVENT",
+            extraction_reason="Earlier classification rejected the item",
+        )
+        await service.repo.put("ingest.source_items", item["item_id"], item)
+        target = item["item_id"]
+        await service.add_observation(
+            {
+                "event_id": event["event_id"],
+                "item_id": target,
+                "link": "CORROBORATION",
+                "certainty": "HIGH",
+                "certainty_reason": "Official source retained in the retry",
+                "claims": arguments["claims"],
+                "public_at": arguments["public_at"],
+                "freshness": "FRESH",
+            },
+            context,
+        )
+    else:
+        target = arguments["item_id"]
+        item = await service.repo.get("ingest.source_items", target)
+        item.update(
+            extraction_status="SKIPPED",
+            extraction_decision="NO_EVENT",
+            extraction_reason="Earlier classification rejected the item",
+        )
+        await service.repo.put("ingest.source_items", target, item)
+        await service.record_event(arguments, context)
+    completed = await service.repo.get("ingest.source_items", target)
+    assert completed["extraction_status"] == "DONE"
+    assert completed.get("extraction_decision") is None
+    assert completed.get("extraction_reason") is None

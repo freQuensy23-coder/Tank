@@ -24,6 +24,7 @@ from tank.agents import SessionService
 from tank.analysis.decisions import DecisionEngine
 from tank.analysis.truth import MarketTruthService
 from tank.event_tools import EventToolService
+from tank.market.capture_contracts import CaptureReadiness, RepairCompleted
 from tank.runtime import Runtime
 from tank.scheduler import Scheduler
 from tank.settings import Settings
@@ -105,13 +106,20 @@ class ReleasedMarket:
     async def escalate(self, *args, **kwargs) -> None:
         return None
 
-    async def capture_readiness(self, *args, **kwargs):
-        return {"status": "PARTIAL"}
+    async def capture_readiness(self, event_id: str, token_id: str, *, anchor=None) -> CaptureReadiness:
+        return CaptureReadiness(
+            event_id=event_id,
+            token_id=token_id,
+            status="PARTIAL",
+            reason="INCOMPLETE_VENUE_WINDOWS_EXCLUDED",
+            backfill_id="BF-released",
+            anchor=None if anchor is None else anchor.value,
+        )
 
     async def repair_windows(
         self, token_id: str, start: datetime, end: datetime, *, budget_s: float
-    ) -> dict[str, dict[str, int]]:
-        return {}
+    ) -> RepairCompleted:
+        return RepairCompleted(status="COMPLETE", request_id="REQ-released", instruments={})
 
     async def wait_capture(self, *args, **kwargs) -> None:
         raise AssertionError("Terminal capture must not wait")
@@ -306,7 +314,16 @@ async def test_runtime_waits_for_capture_release_before_numerical_assessment() -
     runtime = object.__new__(Runtime)
     runtime.repo = repo
     runtime.market = SimpleNamespace(
-        capture_readiness=AsyncMock(return_value={"status": "RUNNING"}),
+        capture_readiness=AsyncMock(
+            return_value=CaptureReadiness(
+                event_id="e",
+                token_id="T",
+                status="RUNNING",
+                reason="PRE_EVENT_CAPTURE_PENDING",
+                backfill_id="BF-runtime",
+                anchor=None,
+            )
+        ),
         wait_capture=wait_capture,
         repair_windows=AsyncMock(return_value=None),
     )
