@@ -11,7 +11,7 @@ class PriorityGate:
     """At most `capacity` holders at once; waiters are admitted lowest priority number first."""
 
     def __init__(self, capacity: int = 1) -> None:
-        if isinstance(capacity, bool) or capacity < 1:
+        if type(capacity) is not int or capacity < 1:
             raise ValueError("Priority gate capacity must be a positive integer")
         self.capacity = capacity
         self.active = 0

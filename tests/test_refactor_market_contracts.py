@@ -120,3 +120,23 @@ def test_order_book_preserves_decimal_checksum_spelling_and_unavailable_usd():
     book.update([["99", "0"]], [], sequence=2, ts=1781654400013)
     assert frozen.summary()["best_bid"] == "99"
     assert book.summary()["best_bid"] == "95"
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{"venue": "unknown"}, {"market_type": "TYPO"}, {"venue": "coinbase", "market_type": "PERP_LINEAR"}],
+)
+def test_book_instrument_rejects_unsupported_identity_instead_of_assuming_spot(changes):
+    from tank.market.book_contracts import BookInstrument
+
+    with pytest.raises(ValidationError):
+        BookInstrument.from_wire(
+            {
+                "instrument_id": "venue:BTC",
+                "token_id": "bitcoin:BTC",
+                "venue": "coinbase",
+                "market_type": "SPOT",
+                "venue_symbol": "BTC-USD",
+            }
+            | changes
+        )

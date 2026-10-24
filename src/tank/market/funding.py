@@ -3,13 +3,13 @@
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import Field, field_validator
+
+from tank.contracts import DomainModel
 
 
-class FundingObservation(BaseModel):
+class FundingObservation(DomainModel):
     """A provider rate per declared funding interval; zero is an observed rate."""
-
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     instrument_id: str = Field(min_length=1)
     token_id: str = Field(min_length=1)

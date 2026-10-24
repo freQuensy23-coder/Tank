@@ -4,19 +4,17 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import Field, JsonValue
+
+from tank.contracts import DomainModel
 
 
-class IdentityModel(BaseModel):
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
-
-class QualifiedAlias(IdentityModel):
+class QualifiedAlias(DomainModel):
     alias: str = Field(min_length=1)
     requires_any: list[str] = Field(min_length=1)
 
 
-class EntityIdentity(IdentityModel):
+class EntityIdentity(DomainModel):
     entity_id: str = Field(min_length=1)
     name: str | None = None
     names: list[str] = Field(default_factory=list)
@@ -24,13 +22,13 @@ class EntityIdentity(IdentityModel):
     qualified_aliases: list[QualifiedAlias] = Field(default_factory=list)
 
 
-class TokenIdentity(IdentityModel):
+class TokenIdentity(DomainModel):
     token_id: str = Field(min_length=1)
     symbol: str | None = None
     entity_id: str | None = None
 
 
-class IdentityRegistry(IdentityModel):
+class IdentityRegistry(DomainModel):
     entities: list[EntityIdentity] = Field(default_factory=list)
     tokens: list[TokenIdentity] = Field(default_factory=list)
 

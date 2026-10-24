@@ -2,20 +2,20 @@
 
 from collections.abc import Mapping
 from decimal import Decimal
-from typing import Self
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+from pydantic import Field, JsonValue, field_validator, model_validator
+
+from tank.contracts import DomainModel
 
 type Number = str | int | float | Decimal
 
 
-class BookInstrument(BaseModel):
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
+class BookInstrument(DomainModel):
     instrument_id: str = Field(min_length=1)
     token_id: str = Field(min_length=1)
-    market_type: str = Field(min_length=1)
-    venue: str = Field(min_length=1)
+    market_type: Literal["SPOT", "PERP_LINEAR"]
+    venue: Literal["binance", "bybit", "okx", "coinbase", "kraken", "hyperliquid"]
     venue_symbol: str = Field(min_length=1)
     quote_asset: str | None = None
     quote_usd_rate: Decimal | None = Field(default=None, gt=0)
@@ -38,10 +38,18 @@ class BookInstrument(BaseModel):
         """Select book semantics from the larger instrument registry at its adapter boundary."""
         return cls.model_validate({key: instrument[key] for key in cls.model_fields if key in instrument})
 
+    @model_validator(mode="after")
+    def supported_market(self) -> Self:
+        if self.venue in {"coinbase", "kraken"} and self.market_type != "SPOT":
+            raise ValueError("venue has no supported perpetual order book")
+        if self.venue == "hyperliquid" and self.market_type != "PERP_LINEAR":
+            raise ValueError("Hyperliquid capture supports perpetual order books only")
+        return self
+
     @property
     def venue_key(self) -> str:
-        venue = self.venue.lower()
-        perp = self.market_type.lower() != "spot"
+        venue = self.venue
+        perp = self.market_type == "PERP_LINEAR"
         if venue.startswith("binance"):
             return "binance.usdm" if perp or venue.endswith("usdm") else "binance.spot"
         if venue.startswith("bybit"):
@@ -50,12 +58,10 @@ class BookInstrument(BaseModel):
             return "okx.swap" if perp else "okx.spot"
         if venue.startswith("hyperliquid"):
             return "hyperliquid.perp"
-        return venue.split(".")[0] + ".spot"
+        return venue + ".spot"
 
 
-class BookLevel(BaseModel):
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
+class BookLevel(DomainModel):
     price: Decimal = Field(gt=0, allow_inf_nan=False)
     quantity: Decimal = Field(ge=0, allow_inf_nan=False)
     price_spelling: str
@@ -70,38 +76,28 @@ class BookLevel(BaseModel):
         return cls(price=Decimal(p), quantity=Decimal(q), price_spelling=p, quantity_spelling=q)
 
 
-class DepthQuantity(BaseModel):
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
+class DepthQuantity(DomainModel):
     native: Decimal = Field(ge=0, allow_inf_nan=False)
     usd: Decimal | None = Field(ge=0, allow_inf_nan=False)
 
 
-class DepthBands(BaseModel):
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
+class DepthBands(DomainModel):
     p0_5: DepthQuantity | None
     p1: DepthQuantity | None
     p2: DepthQuantity | None
 
 
-class BookDepth(BaseModel):
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
+class BookDepth(DomainModel):
     bid: DepthBands
     ask: DepthBands
 
 
-class SideCoverage(BaseModel):
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
+class SideCoverage(DomainModel):
     bid: Decimal = Field(ge=0, allow_inf_nan=False)
     ask: Decimal = Field(ge=0, allow_inf_nan=False)
 
 
-class BookSummary(BaseModel):
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
+class BookSummary(DomainModel):
     instrument_id: str
     token_id: str
     exchange_ts: str
@@ -124,5 +120,5 @@ class BookSummary(BaseModel):
     integrity_ok: bool
     integrity_method: str
     gap_reason: str | None
-    bids: list[list[str]]
-    asks: list[list[str]]
+    bids: list[tuple[str, str]]
+    asks: list[tuple[str, str]]
