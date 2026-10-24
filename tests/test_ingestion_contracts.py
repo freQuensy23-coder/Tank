@@ -402,3 +402,24 @@ def test_publisher_authority_requires_declared_capture_feed() -> None:
     )
     with pytest.raises(ValidationError, match="feed"):
         resolve_author_organization(source, {"url": "https://example.org/release"}, {})
+
+
+@pytest.mark.asyncio
+async def test_missing_provider_limits_prevents_source_service_start(tmp_path: Path) -> None:
+    from tank.settings import Settings
+    from tank.sources import SourceService
+
+    class MissingProviderLimits(Settings):
+        def load_config(self, name: str) -> dict[str, JsonValue]:
+            configuration = super().load_config(name)
+            if name == "api_limits":
+                del configuration["limits"]
+            return configuration
+
+    repo = MemoryRepository()
+    settings = MissingProviderLimits(data_dir=tmp_path, ops_progress_enabled=False)
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(ValidationError, match="limits"):
+            SourceService(repo, settings, http=http)
+    assert await repo.list("ops.jobs") == []
+    assert await repo.list("ingest.source_items") == []

@@ -18,10 +18,12 @@ import certifi
 import httpx
 
 import tank.sources.parsers as parsers
+from tank.contracts.configuration import Thresholds
 from tank.contracts.source_items import SourceText
 from tank.contracts.sources import (
     HttpFetchPlan,
     SourceAccountRegistryView,
+    SourceApiLimitsConfiguration,
     SourceConfiguration,
     SourceDefinition,
 )
@@ -50,6 +52,11 @@ class SourceService:
         account_registry = SourceAccountRegistryView.model_validate(
             {name: registry[name] for name in ("x_accounts",) if name in registry}
         )
+        self.api_limits = SourceApiLimitsConfiguration.model_validate(
+            settings.load_config("api_limits")
+        ).limits
+        self.thresholds = Thresholds.model_validate(settings.load_config("thresholds"))
+        self.escalated_interval_s = self.thresholds.escalated_interval_s
         self.repo = repo
         self.settings = settings
         self.http = (
@@ -82,15 +89,6 @@ class SourceService:
             account.handle.lower().lstrip("@"): account for account in account_registry.x_accounts
         }
         self.locks = {}
-        try:
-            self.api_limits = settings.load_config("api_limits").get("limits", [])
-        except FileNotFoundError:
-            self.api_limits = []
-        try:
-            self.thresholds = settings.load_config("thresholds")
-        except FileNotFoundError:
-            self.thresholds = {}
-        self.escalated_interval_s = self.thresholds.get("escalated_interval_s", 15)
         from tank.sources.polling import SourcePoller
 
         self.poller = SourcePoller(self)
@@ -113,13 +111,13 @@ class SourceService:
         provider = "sec.gov" if host == "sec.gov" or host.endswith(".sec.gov") else host
         weight = feed.request_weight
         for rule in self.api_limits:
-            if rule.get("provider") != provider or is_exchange_url(feed.url):
+            if rule.provider != provider or is_exchange_url(feed.url):
                 continue
-            if rule.get("tank_max_requests_per_s") is not None:
-                await shared_request_budgets.acquire(provider, rule["tank_max_requests_per_s"], 1, host=host)
-            if rule.get("tank_max_weight_per_min") is not None:
+            if rule.tank_max_requests_per_s is not None:
+                await shared_request_budgets.acquire(provider, rule.tank_max_requests_per_s, 1, host=host)
+            if rule.tank_max_weight_per_min is not None:
                 await shared_request_budgets.acquire(
-                    provider, rule["tank_max_weight_per_min"], 60, weight=weight, host=host
+                    provider, rule.tank_max_weight_per_min, 60, weight=weight, host=host
                 )
         capacities = [
             value

@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import yaml
-from source_support import source_configuration, source_definition
+from source_support import operational_configuration, source_configuration, source_definition
 
 from tank.sources import SourceService, parsers
 from tank.storage import MemoryRepository
@@ -26,7 +26,7 @@ def config(tmp_path: Path, sources):
             if name == "sources"
             else {"x_accounts": []}
             if name == "registry"
-            else {}
+            else operational_configuration(name)
         ),
         ops_progress_enabled=False,
         replay=False,

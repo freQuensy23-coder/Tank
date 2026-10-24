@@ -6,7 +6,13 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import zstandard
-from source_support import fetch_plan, source_configuration, source_definition, source_feed
+from source_support import (
+    fetch_plan,
+    operational_configuration,
+    source_configuration,
+    source_definition,
+    source_feed,
+)
 
 from tank.contracts.source_items import SourceText
 from tank.sources import SourceService, parsers
@@ -104,6 +110,8 @@ def settings(tmp_path: Path, sources):
             source_configuration({"sources": sources})
             if name == "sources"
             else {"x_accounts": [], "tokens": [], "entities": []}
+            if name == "registry"
+            else operational_configuration(name)
         ),
         ops_progress_enabled=False,
         replay=False,
