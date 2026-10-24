@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { bindSharedNativeClient } from './qualification-shared-native.mjs';
 import { JsBoxlite } from '/app/packages/control-plane-node/node_modules/@boxlite-ai/boxlite/dist/index.js';
 import { loadNodeConfig } from '/app/apps/main-node/src/config.ts';
 import { nodeDefaults } from '/app/apps/main-node/src/components.ts';
 import { createNodeControlPlane, serveNodeControlPlane } from '/app/packages/control-plane-node/src/index.ts';
 
-const native = JsBoxlite.withDefaultConfig();
-let nativeBindings = 0;
-JsBoxlite.withDefaultConfig = () => { nativeBindings++; return native; };
+const shared = bindSharedNativeClient(JsBoxlite);
 const controllers = [];
 let starting = false;
 async function start(competitor) {
@@ -30,9 +29,9 @@ const control = createServer(async (request, response) => {
   starting = true;
   try {
     await start(true);
-    assert.equal(nativeBindings, 2, 'both real control planes must bind the one native runtime client');
+    assert.equal(shared.bindings, 2, 'both real control planes must bind the one native runtime client');
     response.setHeader('content-type', 'application/json');
-    response.end(JSON.stringify({ owners: controllers.map(row => row.ownerId), nativeBindings, sharedNativeRuntime: true, ports: controllers.map(row => row.server.address.port), pid: process.pid }));
+    response.end(JSON.stringify({ owners: controllers.map(row => row.ownerId), nativeBindings: shared.bindings, sharedNativeRuntime: true, ports: controllers.map(row => row.server.address.port), pid: process.pid }));
   } catch (error) { response.writeHead(500).end(JSON.stringify({ error: error.message })); }
 });
 control.listen(8790, '127.0.0.1');

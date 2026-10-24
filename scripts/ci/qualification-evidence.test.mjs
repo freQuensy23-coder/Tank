@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { requiredNativeCases, verifyAcceptance } from './check-sandbox-acceptance.mjs';
-import { completedInputExecutions } from './qualification-execution-state.mjs';
+import { completedInputExecutions, settledNativeHistory } from './qualification-execution-state.mjs';
+import { bindSharedNativeClient } from './qualification-shared-native.mjs';
 import { validateQualificationExecutor } from './qualification-executor.mjs';
 
 test('native executor requires the exact hosted owner branch dispatch', () => {
@@ -28,6 +29,37 @@ test('native restart waits for exact durable inputs rather than public idle even
   ]) assert.throws(() => completedInputExecutions(rows, ['input-a'], 'session-a'));
   assert.throws(() => completedInputExecutions([completed], [], 'session-a'));
   assert.throws(() => completedInputExecutions([completed], ['input-a', 'input-a'], 'session-a'));
+});
+
+test('native receipts are read after exact input settlement, not before it', async () => {
+  const calls = [];
+  let settled = false;
+  const completed = () => { calls.push('settlement'); return settled; };
+  const events = async () => { calls.push('events'); return ['A', 'B-first', 'B-second']; };
+  const validate = rows => { calls.push('receipts'); return rows.length === 3; };
+  assert.equal(await settledNativeHistory({ completed, events, validate }), null);
+  assert.deepEqual(calls, ['settlement']);
+  calls.length = 0;
+  settled = true;
+  assert.deepEqual(await settledNativeHistory({ completed, events, validate }), ['A', 'B-first', 'B-second']);
+  assert.deepEqual(calls, ['settlement', 'events', 'receipts']);
+  await assert.rejects(settledNativeHistory({ completed, events: async () => ['A'], validate }), error => error.fatal === true);
+});
+
+test('shared runtime composition shadows the SDK inherited read-only factory without opening another home', () => {
+  let openings = 0;
+  const native = {};
+  class NativeSdk {}
+  Object.defineProperty(NativeSdk, 'withDefaultConfig', { value() { openings++; return native; } });
+  class Sdk extends NativeSdk {}
+  assert.throws(() => { Sdk.withDefaultConfig = () => native; }, TypeError);
+  const shared = bindSharedNativeClient(Sdk);
+  assert.equal(shared.native, native);
+  assert.equal(Sdk.withDefaultConfig(), native);
+  assert.equal(Sdk.withDefaultConfig(), native);
+  assert.equal(shared.bindings, 2);
+  assert.equal(openings, 1);
+  assert.equal(Object.getOwnPropertyDescriptor(NativeSdk, 'withDefaultConfig').writable, false);
 });
 
 const expected = { sourceSha: 'a'.repeat(40), runId: '123' };

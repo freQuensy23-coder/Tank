@@ -3,7 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
 import { mkdir, writeFile, readFile, mkdtemp, rm, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { completedInputExecutions } from './qualification-execution-state.mjs';
+import { completedInputExecutions, settledNativeHistory } from './qualification-execution-state.mjs';
 import { trustedLegacyBuild } from '../../vendor/openma/packages/control-plane-node/src/lib/tank-retained/legacy-build-provenance.ts';
 import { qualificationExecutor } from './qualification-executor.mjs';
 import { historicalController, verifyHistoricalLayout } from './qualification-legacy-fixture.mjs';
@@ -179,7 +179,7 @@ for (const [index, scenario] of scenarios.entries()) {
     incarnation++;
     const selectedImage = version === 'legacy' ? historicalController.image : image;
     const launcher = version === 'legacy' ? ['--mount', `type=bind,src=${resolve('vendor/openma/tank-deploy/openma_entrypoint.mjs')},dst=/app/tank-deploy/openma_entrypoint.mjs,readonly`] : [];
-    const concurrent = scenario === 'lease-concurrent' && version === 'B' ? ['--env', 'QUALIFICATION_PROVIDER_KEY', '--env', 'QUALIFICATION_OWNER_PREFIX=' + prefix, ...['qualification-concurrent-entrypoint.mjs', 'qualification-concurrent-app.mjs'].flatMap(name => ['--mount', `type=bind,src=${resolve('scripts/ci', name)},dst=/${name},readonly`]), '--entrypoint', 'node'] : [];
+    const concurrent = scenario === 'lease-concurrent' && version === 'B' ? ['--env', 'QUALIFICATION_PROVIDER_KEY', '--env', 'QUALIFICATION_OWNER_PREFIX=' + prefix, ...['qualification-concurrent-entrypoint.mjs', 'qualification-concurrent-app.mjs', 'qualification-shared-native.mjs'].flatMap(name => ['--mount', `type=bind,src=${resolve('scripts/ci', name)},dst=/${name},readonly`]), '--entrypoint', 'node'] : [];
     docker(['run', '-d', '--name', activeService, '--label', 'tank.qualification=' + prefix, '--network', names.network, '--group-add', kvmGroup, '--device', '/dev/kvm:/dev/kvm', '--mount', `type=volume,src=${names.volume},dst=/app/data`, '--mount', `type=bind,src=${rootfs(version)},dst=/opt/tank-sandbox-oci,readonly`, ...launcher, ...Object.keys(credentials).filter(name => name !== 'POSTGRES_PASSWORD' && name !== 'QUALIFICATION_PROVIDER_KEY').flatMap(name => ['--env', name]), '--env', 'ANTHROPIC_API_KEY', '--env', 'ANTHROPIC_BASE_URL=http://provider:9000/v1', '--env', 'DREAM_CURATOR_MODE=dedup', ...concurrent, selectedImage, ...(concurrent.length ? ['/qualification-concurrent-entrypoint.mjs'] : [])], { env });
     const address = JSON.parse(docker(['inspect', '--format', '{{json .NetworkSettings.Networks}}', activeService]))[names.network]?.IPAddress;
     assert.match(address ?? '', /^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)/, 'candidate must have an owned private bridge address');
@@ -350,12 +350,11 @@ for (const [index, scenario] of scenarios.entries()) {
         continue;
       }
     }
-    const history = await waitFor('same-session B upgrade and queued-input completion', async () => {
-      const rows = await events(session.id);
-      if (receipts(rows).length >= 3 && completed([receipt.upgradeInput, receipt.queuedInput])) return rows;
-      if (Number(sql("SELECT count(*) FROM managed_session_executions WHERE state IN ('running','queued')")) === 0) throw Object.assign(Error('B inputs settled without complete native receipts: ' + sanitized(JSON.stringify(rows))), { fatal: true });
-      return null;
-    }, 600);
+    const history = await waitFor('same-session B upgrade and queued-input completion', () => settledNativeHistory({
+      completed: () => completed([receipt.upgradeInput, receipt.queuedInput]),
+      events: () => events(session.id),
+      validate: rows => receipts(rows).length >= 3,
+    }), 600);
     receipt.after = publication();
     receipt.nativeAfter = nativeCatalog();
     if (receipt.committedBeforeLostAck) assert.deepEqual(receipt.after.handle, receipt.committedBeforeLostAck.handle, 'lost publication acknowledgement caused a second replacement');

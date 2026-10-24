@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
 
+export async function settledNativeHistory({ completed, events, validate }) {
+  if (!completed()) return null;
+  const history = await events();
+  if (!validate(history)) throw Object.assign(Error('Durably settled native inputs have incomplete guest receipts'), { fatal: true });
+  return history;
+}
+
 export function completedInputExecutions(rows, ids, sessionId) {
   assert.ok(Array.isArray(rows));
   assert.ok(Array.isArray(ids) && ids.length > 0 && ids.every(id => typeof id === 'string' && id.length > 0));
