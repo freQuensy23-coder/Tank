@@ -84,7 +84,9 @@ class ConfigOwnedSource(PydanticBaseSettingsSource):
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="TANK_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="TANK_", env_file=".env", extra="ignore", hide_input_in_errors=True
+    )
     data_dir: Path = Path("data")
     config_dir: Path = Path("config")
     replay_private_mask_path: Path | None = Field(default=None, repr=False, exclude=True)

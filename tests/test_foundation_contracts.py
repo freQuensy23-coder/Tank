@@ -211,3 +211,25 @@ async def test_clickhouse_rejects_nonfinite_json_before_http_write() -> None:
     finally:
         await client.close()
     assert requests == []
+
+
+def test_domain_validation_errors_omit_raw_inputs_without_losing_field_reason() -> None:
+    secret = "fake-unconfigured-refresh-secret"
+    with pytest.raises(ValidationError) as failure:
+        Observation.model_validate(
+            {"instrument_id": "btc", "observed_at": datetime.now(UTC), "count": secret}
+        )
+    message = str(failure.value)
+    assert secret not in message
+    assert "count" in message
+    assert "valid integer" in message
+
+
+def test_json_codec_errors_omit_raw_invalid_document() -> None:
+    from tank.contracts.json import decode_json
+
+    secret = "fake-unconfigured-refresh-secret"
+    with pytest.raises(ValidationError) as failure:
+        decode_json('{"token":"' + secret + '", broken}')
+    assert secret not in str(failure.value)
+    assert "Invalid JSON" in str(failure.value)

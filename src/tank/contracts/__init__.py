@@ -13,4 +13,5 @@ class DomainModel(BaseModel):
         validate_default=True,
         allow_inf_nan=False,
         revalidate_instances="always",
+        hide_input_in_errors=True,
     )

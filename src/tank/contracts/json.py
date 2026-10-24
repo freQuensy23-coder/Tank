@@ -6,7 +6,7 @@ from pydantic import ConfigDict, JsonValue, RootModel
 
 
 class JsonDocument(RootModel[JsonValue]):
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, hide_input_in_errors=True)
 
     @classmethod
     def validate_value(cls, value: JsonValue) -> JsonValue:
