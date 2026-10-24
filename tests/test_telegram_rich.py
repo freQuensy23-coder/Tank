@@ -146,7 +146,13 @@ async def test_rich_delivery_retries_frozen_payload_and_threads_update_once() ->
             result["reply_to_message"] = body["reply_parameters"]
         return httpx.Response(200, json={"ok": True, "result": result})
 
-    settings = SimpleNamespace(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = SimpleNamespace(
+        telegram_token="test",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
         service = DeliveryService(repo, settings, http=http)
         with pytest.raises(DeliveryError):

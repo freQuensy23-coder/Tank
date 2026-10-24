@@ -2944,7 +2944,7 @@ class MarketService:
             waited = self._capture.waits[latest["backfill_id"]]
             result["capture_status"]["bounded_wait_s"] = waited.bounded_wait_s
             if latest["status"] in ("PENDING", "RUNNING"):
-                result["capture_status"].update(waited.model_dump(mode="json"))
+                result["capture_status"].update(waited.to_wire())
         result["funding_source_observations"] = [
             observation
             for point in result["funding"]

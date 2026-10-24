@@ -1,10 +1,16 @@
 """Durable, idempotent source processing notices for the operator channel."""
 
+from collections.abc import Mapping
 from datetime import timedelta
 
 from pydantic import JsonValue
 
 from tank.contracts.progress import (
+    EventObservationSubject,
+    EventProgressRepository,
+    ExtractionProgressView,
+    FailureProgressTarget,
+    JobFailureProgressView,
     ProgressDetails,
     ProgressIdentity,
     ProgressNotice,
@@ -12,6 +18,10 @@ from tank.contracts.progress import (
     ProgressSettings,
     ProgressStage,
     ProgressSubject,
+    PublicationProgressResult,
+    SessionProgressView,
+    SourceMessageProgress,
+    ToolProgressContext,
 )
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import iso, sha256
@@ -143,11 +153,22 @@ class DisabledSourceProgress:
         return None
 
 
-async def event_progress(repo, settings, event_id, stage, reason="", *, key=None, details=None):
-    if not enabled(settings) or not event_id:
+async def event_progress(
+    repo: EventProgressRepository,
+    settings: ProgressSettings,
+    event_id: str | None,
+    stage: ProgressStage,
+    reason: str = "",
+    *,
+    key: str | None = None,
+    details: ProgressDetails | None = None,
+) -> None:
+    if not enabled(settings) or event_id is None:
         return
+    if not event_id or any(char.isspace() for char in event_id):
+        raise ValueError("Event progress requires a nonempty event identity")
     items = {
-        row["item_id"]
+        EventObservationSubject.model_validate(row).item_id
         async for row in repo.iter_metadata(
             "evt.event_observations", ["item_id"], filters={"event_id": event_id}
         )
@@ -158,79 +179,180 @@ async def event_progress(repo, settings, event_id, stage, reason="", *, key=None
         )
 
 
-async def tool_progress(repo, settings, tool, arguments, context, result):
-    if not enabled(settings) or not isinstance(result, dict):
+async def tool_progress(
+    repo: EventProgressRepository,
+    settings: ProgressSettings,
+    tool: str,
+    arguments: Mapping[str, JsonValue],
+    context: Mapping[str, JsonValue],
+    result: JsonValue,
+) -> None:
+    if not enabled(settings) or tool not in {
+        "publish_card",
+        "set_beneficiaries",
+        "get_market_truth",
+        "get_decision",
+    }:
         return
-    event_id = arguments.get("event_id") or context.get("event_id")
+    if not isinstance(result, dict):
+        raise ValueError("Reported tool results must be JSON objects")
+    argument_context = ToolProgressContext.model_validate(
+        {name: arguments[name] for name in ("event_id",) if name in arguments}
+    )
+    call_context = ToolProgressContext.model_validate(
+        {name: context[name] for name in ("event_id", "call_id") if name in context}
+    )
+    event_id = argument_context.event_id
+    if event_id is None:
+        event_id = call_context.event_id
     if tool == "publish_card":
-        published = result.get("published")
-        reason = result.get("reason") or "UNKNOWN"
-        if published:
-            reason += f"; карточка {result['alert_id']} v{result['version']}"
-            if result.get("delivery_not_before"):
-                reason += f"; отправка не раньше {result['delivery_not_before']}"
+        detail = ProgressDetails.model_validate(
+            {
+                name: result[name]
+                for name in ("missing_market_truth", "missing_decisions", "publication_receipt")
+                if name in result
+            }
+        )
+        output = PublicationProgressResult.model_validate(
+            {
+                **{
+                    name: result[name]
+                    for name in ("published", "reason", "alert_id", "version", "delivery_not_before")
+                    if name in result
+                },
+                "details": detail,
+            }
+        )
+        reason = output.reason
+        if output.published:
+            reason += f"; карточка {output.alert_id} v{output.version}"
+            if output.delivery_not_before is not None:
+                reason += f"; отправка не раньше {output.delivery_not_before}"
         await event_progress(
             repo,
             settings,
             event_id,
-            "ALERT_QUEUED" if published else "PUBLICATION_BLOCKED",
+            "ALERT_QUEUED" if output.published else "PUBLICATION_BLOCKED",
             reason,
-            key=f"{result['alert_id']}:{result['version']}" if published else None,
-            details=ProgressDetails.model_validate(
-                {
-                    name: result[name]
-                    for name in ("missing_market_truth", "missing_decisions", "publication_receipt")
-                    if name in result
-                }
-            ),
+            key=f"{output.alert_id}:{output.version}" if output.published else None,
+            details=output.details,
         )
-    elif tool in {"set_beneficiaries", "get_market_truth", "get_decision"}:
+    else:
         await event_progress(
-            repo, settings, event_id, "ANALYSIS_UPDATED", tool, key=context.get("call_id") or sha256(result)
+            repo,
+            settings,
+            event_id,
+            "ANALYSIS_UPDATED",
+            tool,
+            key=call_context.call_id if call_context.call_id is not None else sha256(result),
         )
 
 
-async def session_progress(repo, settings, session):
+def source_message_progress(message: JsonValue) -> SourceMessageProgress | None:
+    if not isinstance(message, dict):
+        raise ValueError("Session progress messages must be JSON objects")
+    payload = message["payload"]
+    if not isinstance(payload, dict) or not isinstance(payload["kind"], str):
+        raise ValueError("Session message payload requires its declared kind")
+    if payload["kind"] not in {"NEW_ITEM", "ITEM_ADDED"}:
+        return None
+    return SourceMessageProgress.model_validate(
+        {
+            **{
+                name: message[name]
+                for name in ("message_id", "retry_count", "turn_status", "sent_at")
+                if name in message
+            },
+            "payload": {
+                name: payload[name]
+                for name in ("kind", "item_id", "event_id", "session_id")
+                if name in payload
+            },
+        }
+    )
+
+
+async def session_progress(
+    repo: ProgressRepository,
+    settings: ProgressSettings,
+    session: Mapping[str, JsonValue],
+) -> None:
     if not enabled(settings):
         return
-    for message in session.get("message_log", []):
-        payload = message.get("payload") or {}
-        if payload.get("kind") not in {"NEW_ITEM", "ITEM_ADDED"}:
-            continue
-        item_id = payload.get("item_id")
-        key = f"{session['session_id']}:{message['message_id']}:{message.get('retry_count', 0)}"
-        status = message.get("turn_status")
-        if status == "FAILED":
+    log = session["message_log"]
+    if not isinstance(log, list):
+        raise ValueError("Session progress requires its durable message log")
+    messages = [source_message_progress(message) for message in log]
+    view = SessionProgressView.model_validate(
+        {
+            **{name: session[name] for name in ("session_id", "event_id") if name in session},
+            "source_messages": [message for message in messages if message is not None],
+        }
+    )
+    for message in view.source_messages:
+        item_id = message.payload.item_id
+        key: str | None = f"{view.session_id}:{message.message_id}:{message.retry_count}"
+        stage: ProgressStage
+        if message.turn_status == "FAILED":
             stage, reason = "PROCESSING_FAILED", "AGENT_EXECUTION_FAILED"
-        elif status == "DONE":
+        elif message.turn_status == "DONE":
             item = await repo.get("ingest.source_items", item_id)
-            if item and item.get("extraction_status") == "SKIPPED":
+            extraction = (
+                ExtractionProgressView.model_validate(
+                    {name: item[name] for name in ("extraction_status", "extraction_reason") if name in item}
+                )
+                if item is not None
+                else None
+            )
+            if extraction is not None and extraction.extraction_status == "SKIPPED":
                 stage = "AGENT_REJECTED"
-                reason = item.get("extraction_reason") or ""
+                reason = extraction.extraction_reason if extraction.extraction_reason is not None else ""
                 key = None
             else:
                 stage, reason = "AGENT_COMPLETED", ""
-        elif message.get("sent_at"):
+        elif message.sent_at is not None:
             stage, reason = "AGENT_ACCEPTED", "Ожидается результат анализа"
         else:
             continue
-        await item_progress(repo, settings, item_id, stage, reason, event_id=session.get("event_id"), key=key)
+        await item_progress(repo, settings, item_id, stage, reason, event_id=view.event_id, key=key)
 
 
-async def job_failure_progress(repo, settings, job, reason):
+async def job_failure_progress(
+    repo: EventProgressRepository,
+    settings: ProgressSettings,
+    job: Mapping[str, JsonValue],
+    reason: str,
+) -> None:
     if not enabled(settings):
         return
     kind = job["type"]
+    if not isinstance(kind, str):
+        raise ValueError("Progress job type must be a declared string")
     if kind not in {"FILTER_ITEM", "ROUTE_ITEM", "AGENT_MESSAGE", "RUN_MARKET_TRUTH", "ESCALATE_TOKENS"}:
         return
     payload = job["payload"]
-    if kind == "AGENT_MESSAGE" and payload.get("kind") == "USER_QUESTION":
-        return
-    stage = (
-        "PROCESSING_EXPIRED" if job.get("status") == "EXPIRED" or reason == "EXPIRED" else "PROCESSING_FAILED"
+    if not isinstance(payload, dict):
+        raise ValueError("Source-processing job payload must be a JSON object")
+    if kind == "AGENT_MESSAGE":
+        message_kind = payload["kind"]
+        if not isinstance(message_kind, str):
+            raise ValueError("Agent progress payload requires its declared kind")
+        if message_kind in {"USER_QUESTION", "SCOUT_REVIEW"}:
+            return
+    target = FailureProgressTarget.model_validate(
+        {name: payload[name] for name in ("item_id", "event_id") if name in payload}
     )
-    detail = f"Этап {kind}; {reason}"
-    if payload.get("item_id"):
-        await item_progress(repo, settings, payload["item_id"], stage, detail, key=job["job_id"])
+    view = JobFailureProgressView.model_validate(
+        {
+            **{name: job[name] for name in ("job_id", "type", "status") if name in job},
+            "target": target,
+        }
+    )
+    stage: ProgressStage = (
+        "PROCESSING_EXPIRED" if view.status == "EXPIRED" or reason == "EXPIRED" else "PROCESSING_FAILED"
+    )
+    detail = f"Этап {view.type}; {reason}"
+    if view.target.item_id is not None:
+        await item_progress(repo, settings, view.target.item_id, stage, detail, key=view.job_id)
     else:
-        await event_progress(repo, settings, payload.get("event_id"), stage, detail, key=job["job_id"])
+        await event_progress(repo, settings, view.target.event_id, stage, detail, key=view.job_id)

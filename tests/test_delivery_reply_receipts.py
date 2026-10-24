@@ -37,7 +37,13 @@ async def test_requested_and_returned_reply_targets_are_separate(returned_target
             result["reply_to_message"] = {"message_id": returned_target}
         return httpx.Response(200, json={"ok": True, "result": result})
 
-    settings = SimpleNamespace(telegram_token="fake-token", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = SimpleNamespace(
+        telegram_token="fake-token",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
         service = DeliveryService(repo, settings, http=http)
         await service.deliver(delivery_job({"alert_id": "a", "version": 1}))

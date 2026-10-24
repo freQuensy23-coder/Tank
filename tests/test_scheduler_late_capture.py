@@ -14,7 +14,7 @@ from tank.runtime import Runtime
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.time_precision import collection_clock
+from tank.time_precision import chosen_boundary, collection_clock
 from tank.util import iso, parse_time, utcnow
 
 
@@ -120,11 +120,18 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         original = await scheduler.reaction_capture(payload)
         assert original["r_raw"] is None and original["revision"] == 1
 
-        await market._schedule_event_backfill("e", "test:T", iso(anchor))
-        pending = await market.capture_readiness("e", "test:T", anchor=iso(anchor))
-        assert pending["status"] == "PENDING"
-        key = pending["backfill_id"]
-        await repo.put_market_batch("mkt.backfill_runs", [{**pending, "status": "RUNNING"}], keys=[key])
+        obligation = await market._schedule_event_backfill(
+            "e", "test:T", chosen_boundary(anchor, precision="EXACT")
+        )
+        pending = await market.capture_readiness(
+            "e", "test:T", anchor=chosen_boundary(anchor, precision="EXACT")
+        )
+        assert pending.status == "PENDING"
+        key = pending.backfill_id
+        assert key is not None
+        await repo.put_market_batch(
+            "mkt.backfill_runs", [{**obligation.model_dump(mode="json"), "status": "RUNNING"}], keys=[key]
+        )
         observed = utcnow()
 
         historical = []
@@ -214,13 +221,15 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
                     **collection_clock(utcnow()).fields("finished_at"),
                     "status": "PARTIAL",
                     "reason": "ONLY_REACTION_WINDOW_CAPTURED",
-                    "result": {"instruments": [{"instrument_id": inst["instrument_id"], "complete": False}]},
+                    "result": {"instruments": [], "benchmark_klines": []},
                 }
             ],
             keys=[key],
         )
-        state = await market.capture_readiness("e", "test:T", anchor=iso(anchor))
-        assert state["status"] in {"COMPLETE", "PARTIAL"}
+        state = await market.capture_readiness(
+            "e", "test:T", anchor=chosen_boundary(anchor, precision="EXACT")
+        )
+        assert state.status in {"COMPLETE", "PARTIAL"}
         await scheduler.detect_late_data(utcnow())
         jobs = [j async for j in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE"})]
         assert jobs and all(job["payload"]["automatic_revision"] for job in jobs)
