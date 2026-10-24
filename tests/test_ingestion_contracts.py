@@ -538,3 +538,31 @@ def test_configured_source_intervals_preserve_canonical_json_and_reject_boolean(
     invalid["interval_s"] = True
     with pytest.raises(ValidationError, match="interval_s"):
         SourceDefinition.model_validate(invalid)
+
+
+@pytest.mark.asyncio
+async def test_source_repository_validation_logs_hide_complete_input_record(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    from agent_source_fixtures import source_item_fixture
+
+    from tank.contracts.repository import Repository as TypedRepository
+    from tank.contracts.source_items import SOURCE_ITEMS
+
+    repo = MemoryRepository()
+    marker = "synthetic-private-source-text-that-must-not-enter-errors"
+    document = source_item_fixture("invalid-source", text=marker).storage_record()
+    document["source_id"] = False
+    await repo.put("ingest.source_items", "invalid-source", document)
+    typed = TypedRepository(repo, SOURCE_ITEMS)
+    with pytest.raises(ValidationError) as failure:
+        await typed.get("invalid-source")
+    logging.getLogger("tank.ingestion.validation-test").error(
+        "Stored source schema rejected", exc_info=failure.value
+    )
+    assert marker not in str(failure.value)
+    assert marker not in caplog.text
+    assert "input_value" not in caplog.text
+    assert "declared source identity" in caplog.text
