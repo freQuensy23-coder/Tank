@@ -16,7 +16,7 @@ from tank.agents.sessions import SessionService
 from tank.event_tools import EventToolService
 from tank.settings import Settings
 from tank.storage import MemoryRepository, PostgresRepository
-from tank.util import iso, sha256
+from tank.util import clock_iso, sha256
 
 
 @asynccontextmanager
@@ -57,7 +57,7 @@ async def fixture_repo(backend, postgres_template=None):
 
 
 async def seed(repo):
-    at = iso()
+    at = clock_iso()
     await repo.put(
         "ingest.source_items",
         "i",

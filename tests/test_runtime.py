@@ -10,9 +10,10 @@ from tank.contracts.progress import ProgressPreferences
 from tank.market.capture_contracts import CaptureReadiness
 from tank.runtime import Runtime
 from tank.runtime_contracts import MarketTruthJob
+from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.time_precision import Timestamp
-from tank.util import parse_time
+from tank.util import clock_iso, parse_time
 
 
 @pytest.mark.asyncio
@@ -323,7 +324,7 @@ async def test_runtime_quiescence_drains_old_job_dependencies_and_preserves_sess
             "call_id": "tool",
             "session_id": "session",
             "status": "DONE",
-            "returned_at": iso(),
+            "returned_at": clock_iso(),
             "config_version": "old",
             "result": {"frozen": "old"},
         },
@@ -779,7 +780,6 @@ async def test_unfinished_dependency_defers_without_error_or_attempt_cost(
 @pytest.mark.asyncio
 async def test_terminal_delivery_reconciliation_covers_expiry_restart_and_validation() -> None:
     from tank.delivery import DeliveryService
-    from tank.util import iso
 
     repo = MemoryRepository()
     runtime = object.__new__(Runtime)
@@ -793,7 +793,7 @@ async def test_terminal_delivery_reconciliation_covers_expiry_restart_and_valida
         await repo.put(
             "ops.jobs",
             job["job_id"],
-            {**job, "status": status, "finished_at": iso(), "last_error": "ValueError"},
+            {**job, "status": status, "finished_at": clock_iso(), "last_error": "ValueError"},
         )
     await runtime.reconcile_delivery_failures()
     runtime._delivery_reconciled_at = None
@@ -855,7 +855,7 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
                             if terminal_status == "PARTIAL"
                             else None,
                             "reason": "SYNTHETIC_EXTERNAL_CAPTURE_TERMINAL",
-                            "finished_at": iso(),
+                            "finished_at": clock_iso(),
                             "finished_at_prec": "COLLECTION_ONLY",
                         }
                     ],
@@ -872,7 +872,7 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
                             **request,
                             "status": "COMPLETE",
                             "result": {"instruments": {}},
-                            "finished_at": iso(),
+                            "finished_at": clock_iso(),
                             "finished_at_prec": "COLLECTION_ONLY",
                         }
                     ],
@@ -1051,7 +1051,13 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
     monkeypatch.setattr("tank.delivery.DELIVERY_LOCK_WAIT_S", 0.2)
     aid = new_id("alert")
     eid = new_id("event")
-    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = Settings(
+        telegram_token="fixture",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     sent_requests = []
 
     def send(request: httpx.Request):
@@ -1147,6 +1153,7 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
             async def run_one() -> None:
                 stop = asyncio.Event()
                 runtime = object.__new__(Runtime)
+                runtime.settings = settings
                 runtime.repo = repo
                 runtime.delivery = delivery
 
@@ -1227,7 +1234,13 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
     now = utcnow()
     held, release, acquiring = asyncio.Event(), asyncio.Event(), asyncio.Event()
     key = "event:" + eid if lock_kind == "event" else f"deliver:{aid}:1:telegram:alerts"
-    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = Settings(
+        telegram_token="fixture",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     requests = []
 
     async def holder() -> None:
@@ -1313,6 +1326,7 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
             async def run_one() -> None:
                 stop = asyncio.Event()
                 runtime = object.__new__(Runtime)
+                runtime.settings = settings
                 runtime.repo, runtime.delivery = repo, delivery
 
                 async def handle(payload):

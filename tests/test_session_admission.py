@@ -19,7 +19,7 @@ from tank.agents import SessionService
 from tank.runtime import Runtime
 from tank.storage import MemoryRepository
 from tank.time_precision import collection_clock
-from tank.util import iso, parse_time, sha256, utcnow
+from tank.util import clock_iso, parse_time, sha256, utcnow
 
 
 @asynccontextmanager
@@ -58,7 +58,7 @@ def settings(cap=2):
 
 
 async def seed(repo) -> None:
-    at = iso()
+    at = clock_iso()
     for item in ("i_new", "i_idle", "i_busy", "i_e1", "i_e2", "i_e3"):
         await repo.put(
             "ingest.source_items",

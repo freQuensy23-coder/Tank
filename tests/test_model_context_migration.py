@@ -15,7 +15,7 @@ from tank.event_tools import EventToolService
 from tank.openma_sync import agent_tools
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.util import iso, new_id, sha256
+from tank.util import clock_iso, new_id, sha256
 
 
 @pytest.fixture
@@ -26,9 +26,9 @@ async def legacy(tmp_path: Path):
         "item_id": new_id("itm"),
         "url": "https://example.org/launch",
         "text": "Live",
-        "observed_at": iso(),
+        "observed_at": clock_iso(),
     }
-    event = {"event_id": new_id("evt"), "statement": "Protocol launch", "public_at": iso()}
+    event = {"event_id": new_id("evt"), "statement": "Protocol launch", "public_at": clock_iso()}
     payload = {"kind": "NEW_ITEM", "item_id": item["item_id"]}
     session = {
         "session_id": "session_legacy",
