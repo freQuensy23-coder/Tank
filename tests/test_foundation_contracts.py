@@ -2,10 +2,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from tank.contracts import DomainModel
 from tank.contracts.repository import Collection, Repository
+from tank.contracts.score import ScoreAssessment, ScoreAssessmentView, ScoreDimension, ScoreDimensions
 from tank.market_codec import _prepare_records, encode, merge_point
 from tank.market_schema import MARKET_COLUMNS
 from tank.settings import Settings
@@ -105,3 +106,39 @@ def test_market_codec_requires_real_identity_instead_of_empty_key_parts() -> Non
 def test_market_codec_does_not_treat_invalid_source_metadata_as_absent() -> None:
     with pytest.raises(ValueError, match="source_observations"):
         merge_point("mkt.funding_obs", {}, {"source_observations": []})
+
+
+async def test_repository_refuses_wrong_runtime_schema_before_write() -> None:
+    store = MemoryRepository()
+    repository = Repository[BaseModel](store, Collection[BaseModel]("qa.fixtures", Observation))
+    with pytest.raises(TypeError, match="requires Observation"):
+        await repository.put("invalid", Measurements(samples=[1.0]))
+    assert await store.get("qa.fixtures", "invalid") is None
+
+
+def test_score_projection_keeps_complete_domain_metadata_out_of_display() -> None:
+    dimension = ScoreDimension(
+        value=4,
+        rationale="Accepted claim",
+        reason=None,
+        evidence=["claim-1"],
+        proposed_by="LLM",
+        caps_applied=["C1"],
+    )
+    assessment = ScoreAssessment(
+        dims=ScoreDimensions(
+            economic_directness=dimension,
+            magnitude=dimension,
+            permanence=dimension,
+            distribution_expansion=dimension,
+            mechanical_flows=dimension,
+            surprise=dimension,
+            implementation=dimension,
+        )
+    )
+    view = ScoreAssessmentView.from_domain(assessment)
+    assert view.dims.magnitude.value == 4
+    assert view.dims.magnitude.rationale == "Accepted claim"
+    assert "evidence" not in view.dims.magnitude.model_dump()
+    assert assessment.dims.magnitude.evidence == ["claim-1"]
+    assert assessment.dims.magnitude.caps_applied == ["C1"]

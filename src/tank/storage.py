@@ -8,14 +8,23 @@ import logging
 import random
 import time
 import weakref
-from contextlib import asynccontextmanager, suppress
+from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator, Awaitable, Mapping
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from contextvars import ContextVar
-from datetime import timedelta
+from datetime import datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal, Protocol, Self
+
+from psycopg import AsyncConnection
+from psycopg.abc import PQGen
+from psycopg_pool import AsyncConnectionPool
 
 from tank.clickhouse_market import ClickHouse
-from tank.contracts.jobs import JobEnvelope
+from tank.contracts import DomainModel
+from tank.contracts.jobs import JobEnvelope, JobRetryState
+from tank.market_codec import StoredRow, StoredValue
 from tank.market_codec import decode as decode_market
 from tank.market_schema import MARKET_COLUMNS
 from tank.market_storage import (
@@ -33,7 +42,19 @@ from tank.models import (
     Record,
 )
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
-from tank.util import iso, jsonable, new_id, parse_time, utcnow
+from tank.util import JsonInput, TimeInput, iso, jsonable, new_id, parse_time, utcnow
+
+
+class TaskOwner(Protocol):
+    def done(self) -> bool: ...
+
+
+class AdvisoryLockResult(DomainModel):
+    ok: bool
+
+
+class MigrationAdoption(DomainModel):
+    adopt: bool
 
 
 class ImmutableRecordError(ValueError):
@@ -141,26 +162,43 @@ FRESH_EVENT_S, EXPIRY_SAFETY_S = 600, 1200
 DEFERRAL_LOG_S = 60
 
 
-def _analysis_gate_memory(data, now):
-    """(analysis_busy, fresh_event_without_card) for the memory repository."""
+def _time_field(record: Mapping[str, StoredValue], field: str) -> datetime:
+    value = record[field]
+    if isinstance(value, bool) or not isinstance(value, (str, int, float, datetime, Decimal)):
+        raise ValueError(f"{field} requires a timestamp")
+    return parse_time(value)
+
+
+def _text_field(record: Mapping[str, StoredValue], field: str) -> str:
+    value = record[field]
+    if not isinstance(value, str):
+        raise ValueError(f"{field} requires text")
+    return value
+
+
+def _analysis_gate_memory(data: dict[str, dict[str, Record]], now: datetime) -> tuple[bool, bool]:
+    """Return whether captures yield to pending analysis or fresh uncarded events."""
+    jobs = (JobEnvelope.model_validate(row) for row in data.get("ops.jobs", {}).values())
     busy = any(
-        job["type"] in ANALYSIS_TYPES
+        job.type in ANALYSIS_TYPES
         and (
-            job["status"] == "RUNNING"
-            or (
-                job["status"] == "QUEUED"
-                and parse_time(job["run_after"]) <= now
-                and not (job.get("expires_at") and parse_time(job["expires_at"]) <= now)
-            )
+            job.status == "RUNNING"
+            or job.status == "QUEUED"
+            and parse_time(job.run_after) <= now
+            and (job.expires_at is None or parse_time(job.expires_at) > now)
         )
-        for job in data.get("ops.jobs", {}).values()
+        for job in jobs
     )
-    carded = {a.get("event_id") for a in data.get("out.alerts", {}).values() if a.get("kind") == "FULL"}
+    carded = {
+        _text_field(alert, "event_id")
+        for alert in data.get("out.alerts", {}).values()
+        if alert.get("kind") == "FULL"
+    }
     fresh = any(
-        e.get("known_to_us_at")
-        and parse_time(e["known_to_us_at"]) > now - timedelta(seconds=FRESH_EVENT_S)
-        and e.get("event_id") not in carded
-        for e in data.get("evt.events", {}).values()
+        event.get("known_to_us_at") is not None
+        and _time_field(event, "known_to_us_at") > now - timedelta(seconds=FRESH_EVENT_S)
+        and _text_field(event, "event_id") not in carded
+        for event in data.get("evt.events", {}).values()
     )
     return busy, fresh
 
@@ -171,13 +209,13 @@ def _table(collection):
     return collection
 
 
-def _queue_anchor(value, field):
+def _queue_anchor(value: TimeInput | Timestamp | None, field: str) -> Timestamp:
     if isinstance(value, Timestamp):
         return value
     return propagate_timestamp({field: value}, field)
 
 
-def _stamp_job_clock_fields(record):
+def _stamp_job_clock_fields(record: Record) -> Record:
     """Explicit lifecycle clock policy for the in-memory test double, mirroring SQL026."""
     created = (
         collection_clock() if record.get("created_at") is None else propagate_timestamp(record, "created_at")
@@ -195,7 +233,15 @@ def _stamp_job_clock_fields(record):
     return record
 
 
-def _job(kind, payload, idem_key, priority, run_after, expires_at, max_attempts):
+def _job(
+    kind: str,
+    payload: Mapping[str, JsonInput],
+    idem_key: str,
+    priority: int,
+    run_after: TimeInput | Timestamp | None,
+    expires_at: TimeInput | Timestamp | None,
+    max_attempts: int,
+) -> Record:
     if not 0 <= priority <= 4 or max_attempts < 1:
         raise ValueError("priority must be0..4 and max_attempts positive")
     default_expiry = {
@@ -220,12 +266,12 @@ def _job(kind, payload, idem_key, priority, run_after, expires_at, max_attempts)
         expiry = _queue_anchor(expires_at, "expires_at")
     else:
         expiry = Timestamp(None, None, "NOT_APPLICABLE")
-    result = {
+    result: Record = {
         "job_id": new_id("JOB"),
         "type": kind,
         "priority": priority,
         "idem_key": idem_key,
-        "payload": jsonable(payload),
+        "payload": jsonable(dict(payload)),
         "status": "QUEUED",
         "attempts": 0,
         "max_attempts": max_attempts,
@@ -398,34 +444,62 @@ class RepositoryQueries:
         return await market_series_counts(self, instrument_ids, start, cutoff, assembled_at)
 
 
-class QueueMixin(RepositoryQueries):
+class QueueMixin(RepositoryQueries, ABC):
+    @abstractmethod
+    def lock(self, key: str) -> AbstractAsyncContextManager[Self]: ...
+
+    @abstractmethod
+    async def get(self, collection: str, key: str) -> Record | None: ...
+
+    @abstractmethod
+    async def put(
+        self, collection: str, key: str, record: Mapping[str, JsonInput], *, immutable: bool = False
+    ) -> Record: ...
+
+    @abstractmethod
+    async def list(
+        self, collection: str, *, filters: Record | None = None, limit: int = 1000
+    ) -> list[Record]: ...
+
     def _exact_predicate(self, collection, filters):
         return _exact_predicate(collection, filters)
 
     async def enqueue(
-        self, kind, payload, idem_key, *, priority=1, run_after=None, expires_at=None, max_attempts=3
-    ):
+        self,
+        kind: str,
+        payload: Mapping[str, JsonInput],
+        idem_key: str,
+        *,
+        priority: int = 1,
+        run_after: TimeInput | Timestamp | None = None,
+        expires_at: TimeInput | Timestamp | None = None,
+        max_attempts: int = 3,
+    ) -> Record:
         async with self.lock(f"queue:{kind}:{idem_key}"):
             old = await self.list("ops.jobs", filters={"type": kind, "idem_key": idem_key}, limit=1)
             if old:
+                JobEnvelope.model_validate(old[0])
                 return old[0]
             job = _job(kind, payload, idem_key, priority, run_after, expires_at, max_attempts)
-            return await self.put("ops.jobs", job["job_id"], job)
+            return await self.put("ops.jobs", _text_field(job, "job_id"), job)
 
-    async def finish_job(self, job_id):
+    async def finish_job(self, job_id: str) -> None:
         await self._transition_job(job_id, "DONE")
 
-    async def fail_job(self, job_id, error, *, retry_after=1):
+    async def fail_job(self, job_id: str, error: str | Exception, *, retry_after: float = 1) -> None:
         async with self.lock(f"job:{job_id}"):
             job = await self.get("ops.jobs", job_id)
             if job is None:
                 raise KeyError(job_id)
-            if job["status"] != "RUNNING":
+            envelope = JobRetryState.from_document(job)
+            if envelope.status != "RUNNING":
                 return
             job["last_error"] = str(error)
-            expired = job.get("expires_at") and parse_time(job["expires_at"]) <= utcnow()
+            expired = envelope.expires_at is not None and parse_time(envelope.expires_at) <= utcnow()
             job["status"] = (
-                "EXPIRED" if expired else ("FAILED" if job["attempts"] >= job["max_attempts"] else "QUEUED")
+                "EXPIRED"
+                if expired
+                else ("FAILED" if envelope.attempts >= envelope.max_attempts else "QUEUED")
             )
             job.update(
                 offset_schedule(collection_clock(), timedelta(seconds=retry_after)).fields("run_after")
@@ -436,7 +510,7 @@ class QueueMixin(RepositoryQueries):
                 job.update(Timestamp(None, None, "PENDING").fields("finished_at"))
             await self.put("ops.jobs", job_id, job)
 
-    async def _transition_job(self, job_id, status):
+    async def _transition_job(self, job_id: str, status: Literal["DONE"]) -> None:
         async with self.lock(f"job:{job_id}"):
             job = await self.get("ops.jobs", job_id)
             if job is None:
@@ -448,9 +522,9 @@ class QueueMixin(RepositoryQueries):
 
 
 class _MemoryAdvisoryLock:
-    def __init__(self):
+    def __init__(self) -> None:
         self.mutex = asyncio.Lock()
-        self.owner = None
+        self.owner: TaskOwner | None = None
         self.depth = 0
         self.users = 0
 
@@ -461,24 +535,24 @@ class MemoryRepository(QueueMixin):
     backend: Literal["memory"] = "memory"
     clickhouse: ClickHouse | None = None
 
-    def __init__(self):
-        self._data = {}
-        self._immutable = set()
+    def __init__(self) -> None:
+        self._data: dict[str, dict[str, Record]] = {}
+        self._immutable: set[tuple[str, str]] = set()
         self._mutex = asyncio.Lock()
-        self._owner = None
-        self._locks = {}
+        self._owner: TaskOwner | None = None
+        self._locks: dict[str, _MemoryAdvisoryLock] = {}
 
-    async def open(self):
+    async def open(self) -> Self:
         return self
 
-    async def close(self):
+    async def close(self) -> None:
         pass
 
-    async def migrate(self):
+    async def migrate(self) -> None:
         pass
 
     @asynccontextmanager
-    async def transaction(self):
+    async def transaction(self) -> AsyncIterator[Self]:
         outer = self._owner is not asyncio.current_task()
         if outer:
             await self._mutex.acquire()
@@ -499,7 +573,7 @@ class MemoryRepository(QueueMixin):
                 self._mutex.release()
 
     @asynccontextmanager
-    async def _read(self):
+    async def _read(self) -> AsyncIterator[Self]:
         """Read consistent state without a write transaction's rollback snapshot."""
         if self._owner is asyncio.current_task():
             yield self
@@ -508,7 +582,7 @@ class MemoryRepository(QueueMixin):
                 yield self
 
     @asynccontextmanager
-    async def lock(self, key):
+    async def lock(self, key: str) -> AsyncIterator[Self]:
         """Task-owned advisory exclusion, independent of explicit transaction scope.
 
         Acquire advisory keys before an explicit transaction. Waiting for a contended
@@ -543,41 +617,50 @@ class MemoryRepository(QueueMixin):
             if state.users == 0:
                 self._locks.pop(key, None)
 
-    async def put(self, collection, key, record, *, immutable=False):
+    async def put(
+        self, collection: str, key: str, record: Mapping[str, JsonInput], *, immutable: bool = False
+    ) -> Record:
         if collection in MARKET_COLUMNS:
             changed = await self.put_market_batch(collection, [record], keys=[str(key)])
-            return changed[0] if changed else await self.get(collection, key)
+            if changed:
+                return changed[0]
+            stored = await self.get(collection, key)
+            if stored is None:
+                raise RuntimeError("Market write did not produce a persisted record")
+            return stored
         _table(collection)
         key = str(key)
-        record = jsonable(record)
+        document = jsonable(dict(record))
         async with self.transaction():
             old = self._data.get(collection, {}).get(key)
             if old is not None and (
                 (collection, key) in self._immutable or collection in APPEND_ONLY or immutable
             ):
-                if old != record:
+                if old != document:
                     raise ImmutableRecordError(f"Immutable record: {collection}/{key}")
                 if immutable:
                     self._immutable.add((collection, key))
                 return copy.deepcopy(old)
             if collection == "ops.jobs" and any(
-                r["type"] == record["type"] and r["idem_key"] == record["idem_key"] and k != key
+                r["type"] == document["type"] and r["idem_key"] == document["idem_key"] and k != key
                 for k, r in self._data.get(collection, {}).items()
             ):
                 raise ValueError("Duplicate job idempotency key")
             if collection == "ops.jobs":
-                _stamp_job_clock_fields(record)
-            self._data.setdefault(collection, {})[key] = copy.deepcopy(record)
+                _stamp_job_clock_fields(document)
+            self._data.setdefault(collection, {})[key] = copy.deepcopy(document)
             if immutable or collection in APPEND_ONLY:
                 self._immutable.add((collection, key))
-            return copy.deepcopy(record)
+            return copy.deepcopy(document)
 
-    async def get(self, collection, key):
+    async def get(self, collection: str, key: str) -> Record | None:
         _table(collection)
         async with self._read():
             return copy.deepcopy(self._data.get(collection, {}).get(str(key)))
 
-    async def list(self, collection, *, filters=None, limit=1000):
+    async def list(
+        self, collection: str, *, filters: Record | None = None, limit: int = 1000
+    ) -> list[Record]:
         _table(collection)
         if limit < 0:
             raise ValueError("limit must be nonnegative")
@@ -590,85 +673,90 @@ class MemoryRepository(QueueMixin):
                 ][:limit]
             )
 
-    async def delete(self, collection, key):
+    async def delete(self, collection: str, key: str) -> None:
         _table(collection)
         async with self.transaction():
             if collection in APPEND_ONLY or (collection, str(key)) in self._immutable:
                 raise ImmutableRecordError(f"Immutable record: {collection}/{key}")
             self._data.get(collection, {}).pop(str(key), None)
 
-    async def claim_job(self):
+    async def claim_job(self) -> Record | None:
         async with self.transaction():
             now = utcnow()
-            candidates = []
-            for job in self._data.get("ops.jobs", {}).values():
-                if job["status"] != "QUEUED":
+            candidates: list[tuple[JobEnvelope, Record]] = []
+            rows = self._data.get("ops.jobs", {})
+            for document in rows.values():
+                job = JobEnvelope.model_validate(document)
+                if job.status != "QUEUED":
                     continue
-                if job.get("expires_at") and parse_time(job["expires_at"]) <= now:
-                    job["status"] = "EXPIRED"
-                    job.update(collection_clock().fields("finished_at"))
-                elif job["attempts"] >= job["max_attempts"] and not job.get("recovery_reclaim"):
-                    job["status"] = "FAILED"
-                    job.update(collection_clock().fields("finished_at"))
-                elif parse_time(job["run_after"]) <= now:
-                    candidates.append(job)
-            running = {}
-            for job in self._data.get("ops.jobs", {}).values():
-                if job["status"] == "RUNNING":
-                    running[job["type"]] = running.get(job["type"], 0) + 1
+                if job.expires_at is not None and parse_time(job.expires_at) <= now:
+                    document["status"] = "EXPIRED"
+                    document.update(collection_clock().fields("finished_at"))
+                elif job.attempts >= job.max_attempts and job.recovery_reclaim is not True:
+                    document["status"] = "FAILED"
+                    document.update(collection_clock().fields("finished_at"))
+                elif parse_time(job.run_after) <= now:
+                    candidates.append((job, document))
+            running: dict[str, int] = {}
+            for document in rows.values():
+                job = JobEnvelope.model_validate(document)
+                if job.status == "RUNNING":
+                    running[job.type] = running.get(job.type, 0) + 1
             candidates = [
-                job
-                for job in candidates
-                if running.get(job["type"], 0) < RUNNING_CAPS.get(job["type"], 10**9)
+                pair
+                for pair in candidates
+                if (cap := RUNNING_CAPS.get(pair[0].type)) is None or running.get(pair[0].type, 0) < cap
             ]
             busy, fresh = _analysis_gate_memory(self._data, now)
             if busy or fresh:
                 safety = now + timedelta(seconds=EXPIRY_SAFETY_S)
                 candidates = [
-                    job
-                    for job in candidates
-                    if job["type"] not in YIELDS_TO_ANALYSIS
-                    or (job.get("expires_at") and parse_time(job["expires_at"]) <= safety)
+                    pair
+                    for pair in candidates
+                    if pair[0].type not in YIELDS_TO_ANALYSIS
+                    or pair[0].expires_at is not None
+                    and parse_time(pair[0].expires_at) <= safety
                 ]
             if not candidates:
                 return None
 
-            def order(r):
-                deadline = r.get("expires_at") if r["type"] in EARLIEST_EXPIRY_FIRST else None
+            def order(pair: tuple[JobEnvelope, Record]) -> tuple[int, bool, datetime, str, str]:
+                job = pair[0]
+                deadline = job.expires_at if job.type in EARLIEST_EXPIRY_FIRST else None
                 return (
-                    r["priority"],
+                    job.priority,
                     deadline is None,
-                    parse_time(deadline) if deadline else now,
-                    r["run_after"],
-                    r["job_id"],
+                    now if deadline is None else parse_time(deadline),
+                    job.run_after,
+                    job.job_id,
                 )
 
-            job = min(candidates, key=order)
-            job["status"] = "RUNNING"
-            if not job.pop("recovery_reclaim", False):
-                job["attempts"] += 1
-            return copy.deepcopy(job)
+            job, document = min(candidates, key=order)
+            document["status"] = "RUNNING"
+            document.pop("recovery_reclaim", None)
+            if job.recovery_reclaim is not True:
+                document["attempts"] = job.attempts + 1
+            return copy.deepcopy(document)
 
-    async def recover_jobs(self):
+    async def recover_jobs(self) -> int:
         async with self.transaction():
             count = 0
-            for job in self._data.get("ops.jobs", {}).values():
-                if job["status"] == "RUNNING":
-                    job["status"] = (
-                        "EXPIRED"
-                        if job.get("expires_at") and parse_time(job["expires_at"]) <= utcnow()
-                        else "QUEUED"
+            for document in self._data.get("ops.jobs", {}).values():
+                job = JobEnvelope.model_validate(document)
+                if job.status != "RUNNING":
+                    continue
+                expired = job.expires_at is not None and parse_time(job.expires_at) <= utcnow()
+                document["status"] = "EXPIRED" if expired else "QUEUED"
+                if expired:
+                    document.update(collection_clock().fields("finished_at"))
+                else:
+                    document.update(
+                        recovery_reclaim=True,
+                        recovery_count=(0 if job.recovery_count is None else job.recovery_count) + 1,
                     )
-                    if job["status"] == "EXPIRED":
-                        job.update(collection_clock().fields("finished_at"))
-                    else:
-                        job.update(
-                            recovery_reclaim=True,
-                            recovery_count=job.get("recovery_count", 0) + 1,
-                        )
-                        job.update(collection_clock().fields("recovery_at"))
-                        job.update(Timestamp(None, None, "PENDING").fields("finished_at"))
-                    count += 1
+                    document.update(collection_clock().fields("recovery_at"))
+                    document.update(Timestamp(None, None, "PENDING").fields("finished_at"))
+                count += 1
             return count
 
 
@@ -809,7 +897,7 @@ def _projection(collection, record):
     return {k: values.get(k) for k in TABLE_COLUMNS[collection]}
 
 
-async def _finish_critical(awaitable):
+async def _finish_critical[T](awaitable: Awaitable[T]) -> tuple[T, asyncio.CancelledError | None]:
     """Finish connection-state transitions despite repeated caller cancellation.
 
     Shield only driver enter/exit and pool return, never application work. Retain the
@@ -828,7 +916,7 @@ async def _finish_critical(awaitable):
 
 
 @asynccontextmanager
-async def _stable_transaction(conn):
+async def _stable_transaction(conn: AsyncConnection[StoredRow]) -> AsyncIterator[None]:
     context = conn.transaction()
     _, cancelled = await _finish_critical(context.__aenter__())
     if cancelled:
@@ -857,20 +945,22 @@ class PostgresRepository(QueueMixin):
     def _exact_predicate(self, collection, filters):
         return _exact_predicate(collection, filters)
 
-    def __init__(self, database_url):
+    def __init__(self, database_url: str) -> None:
         self.database_url = database_url
-        self._pool = None
-        self._connection = ContextVar(f"pg_connection_{id(self)}", default=None)
+        self._pool: AsyncConnectionPool[AsyncConnection[StoredRow]] | None = None
+        self._connection: ContextVar[
+            tuple[weakref.ReferenceType[AsyncConnection[StoredRow]], weakref.ReferenceType[TaskOwner]] | None
+        ] = ContextVar(f"pg_connection_{id(self)}", default=None)
 
-    async def open(self):
-        from psycopg import AsyncConnection
+    async def open(self) -> Self:
         from psycopg.rows import dict_row
-        from psycopg_pool import AsyncConnectionPool
 
-        class CancellationSafeConnection(AsyncConnection):
-            async def wait(connection, *args, **kwargs):
+        class CancellationSafeConnection(AsyncConnection[StoredRow]):
+            async def wait[T](
+                connection, gen: PQGen[T], interval: float = 0.1, timeout: float | None = None
+            ) -> T:
 
-                operation = asyncio.create_task(super().wait(*args, **kwargs))
+                operation = asyncio.create_task(super().wait(gen, interval=interval, timeout=timeout))
                 try:
                     return await asyncio.shield(operation)
                 except asyncio.CancelledError:
@@ -880,7 +970,7 @@ class PostgresRepository(QueueMixin):
                         await _finish_critical(operation)
                     raise
 
-        self._pool = AsyncConnectionPool(
+        self._pool = AsyncConnectionPool[AsyncConnection[StoredRow]](
             self.database_url,
             open=False,
             min_size=1,
@@ -894,18 +984,23 @@ class PostgresRepository(QueueMixin):
         await self._pool.wait()
         return self
 
-    async def close(self):
-        if self._pool:
+    async def close(self) -> None:
+        if self._pool is not None:
             await self._pool.close()
             self._pool = None
 
     @asynccontextmanager
-    async def transaction(self):
+    async def transaction(self) -> AsyncIterator[Self]:
         existing = self._connection.get()
         task = asyncio.current_task()
+        if task is None:
+            raise RuntimeError("Repository transactions require an asyncio task")
 
         if existing is not None and existing[1]() is task:
-            async with _stable_transaction(existing[0]()):
+            connection = existing[0]()
+            if connection is None:
+                raise RuntimeError("Transaction connection no longer exists")
+            async with _stable_transaction(connection):
                 yield self
             return
         pool = self._pool
@@ -922,14 +1017,18 @@ class PostgresRepository(QueueMixin):
             if cancelled:
                 raise cancelled
 
-    def _conn(self):
+    def _conn(self) -> AsyncConnection[StoredRow]:
         existing = self._connection.get()
-        if existing is None or existing[1]() is not asyncio.current_task() or existing[0]() is None:
+        owner = None if existing is None else existing[1]()
+        if existing is None or owner is None or owner.done() or owner is not asyncio.current_task():
             raise RuntimeError("Connection access requires a transaction owned by the current task")
-        return existing[0]()
+        connection = existing[0]()
+        if connection is None:
+            raise RuntimeError("Transaction connection no longer exists")
+        return connection
 
     @asynccontextmanager
-    async def lock(self, key):
+    async def lock(self, key: str) -> AsyncIterator[Self]:
         digest = int.from_bytes(hashlib.sha256(str(key).encode()).digest()[:8], "big", signed=True)
         existing = self._connection.get()
         if existing is None or existing[1]() is not asyncio.current_task():
@@ -938,7 +1037,7 @@ class PostgresRepository(QueueMixin):
                     row = await (
                         await self._conn().execute("SELECT pg_try_advisory_xact_lock(%s) AS ok", (digest,))
                     ).fetchone()
-                    if row["ok"]:
+                    if AdvisoryLockResult.model_validate(row).ok:
                         yield self
                         return
                 await asyncio.sleep(random.uniform(0.05, 0.2))
@@ -948,7 +1047,7 @@ class PostgresRepository(QueueMixin):
             yield self
 
     @asynccontextmanager
-    async def _migration_connection(self):
+    async def _migration_connection(self) -> AsyncIterator[AsyncConnection[StoredRow]]:
         """Serialize versions across transaction boundaries on a dedicated session.
 
         The key is identical to the old transaction advisory lock, so old and
@@ -962,6 +1061,8 @@ class PostgresRepository(QueueMixin):
             raise RuntimeError("Repository.open() must be called first")
         conn = await pool.getconn()
         task = asyncio.current_task()
+        if task is None:
+            raise RuntimeError("Repository migrations require an asyncio task")
         token = self._connection.set((weakref.ref(conn), weakref.ref(task)))
         digest = int.from_bytes(hashlib.sha256(b"tank:migrations").digest()[:8], "big", signed=True)
         try:
@@ -971,7 +1072,7 @@ class PostgresRepository(QueueMixin):
         finally:
             self._connection.reset(token)
 
-            async def release():
+            async def release() -> None:
                 try:
                     async with _stable_transaction(conn):
                         await conn.execute("SELECT pg_advisory_unlock(%s)", (digest,))
@@ -983,7 +1084,7 @@ class PostgresRepository(QueueMixin):
             if cancelled:
                 raise cancelled
 
-    async def migrate(self, *, target=None):
+    async def migrate(self, *, target: str | None = None) -> None:
         async with self._migration_connection() as conn:
             async with _stable_transaction(conn):
                 await conn.execute("CREATE SCHEMA IF NOT EXISTS ops")
@@ -997,7 +1098,7 @@ class PostgresRepository(QueueMixin):
                         (BASELINE,),
                     )
                 ).fetchone()
-                if adopted["adopt"]:
+                if MigrationAdoption.model_validate(adopted).adopt:
                     await conn.execute("INSERT INTO ops.schema_migrations(version) VALUES (%s)", (BASELINE,))
             for path in sorted((Path(__file__).parent / "migrations").glob("*.sql")):
                 if target is not None and path.name > target:

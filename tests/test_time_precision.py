@@ -127,7 +127,7 @@ def test_unknown_source_bucket_edge_does_not_invent_an_interval() -> None:
 
 
 @pytest.mark.parametrize("precision", ["EXACT", "COLLECTION_ONLY", None])
-def test_bucket_edge_cannot_upgrade_or_conflict_with_precision(precision) -> None:
+def test_bucket_edge_cannot_upgrade_or_conflict_with_precision(precision: str | None) -> None:
     with pytest.raises(ValueError, match="Bucket anchor requires"):
         propagate_timestamp({"ts": AT, "ts_prec": precision, "ts_bucket_anchor": "END"}, "ts")
     with pytest.raises(ValueError, match="Conflicting timestamp bucket anchors"):

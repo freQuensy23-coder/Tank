@@ -5,7 +5,7 @@ import pytest
 from tank.backup import prune_backup_snapshots
 
 
-def snapshot(root, name, complete=True):
+def snapshot(root: Path, name: str, complete: bool = True) -> Path:
     path = root / name
     path.mkdir()
     (path / "tank.dump").write_bytes(b"dump")
@@ -35,7 +35,7 @@ def test_keeps_newest_complete_snapshots_only(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("keep", [0, -1, "3", None])
-def test_keep_must_be_positive_integer(tmp_path: Path, keep) -> None:
+def test_keep_must_be_positive_integer(tmp_path: Path, keep: int | str | None) -> None:
     snapshot(tmp_path, "tank-2026-10-20")
     with pytest.raises(ValueError):
         prune_backup_snapshots(tmp_path, keep)

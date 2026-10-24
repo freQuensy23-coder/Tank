@@ -1,5 +1,6 @@
 """Persisted queue envelope; payload is a dispatcher-owned JSON wire contract."""
 
+from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import Field, JsonValue
@@ -33,3 +34,28 @@ class JobEnvelope(DomainModel):
     run_after_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
     expires_at_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
     finished_at_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
+    recovery_reclaim: bool | None = None
+    recovery_count: int | None = Field(default=None, ge=0)
+    recovery_at: str | None = None
+    recovery_at_prec: str | None = None
+    recovery_at_prec_reason: str | None = None
+
+
+class JobRetryState(DomainModel):
+    """Retry only needs execution fields, including for direct SQL jobs lacking provenance."""
+
+    status: Literal["QUEUED", "RUNNING", "DONE", "FAILED", "EXPIRED"]
+    attempts: int = Field(ge=0)
+    max_attempts: int = Field(ge=1)
+    expires_at: str | None
+
+    @classmethod
+    def from_document(cls, document: Mapping[str, JsonValue]) -> "JobRetryState":
+        return cls.model_validate(
+            {
+                "status": document["status"],
+                "attempts": document["attempts"],
+                "max_attempts": document["max_attempts"],
+                "expires_at": document.get("expires_at"),
+            }
+        )

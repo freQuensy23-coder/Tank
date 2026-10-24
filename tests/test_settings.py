@@ -160,7 +160,7 @@ def test_readiness_checks_opencode_key(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("name", ["TANK_USER_AGENT", "TANK_TELEGRAM_ALERTS_CHAT", "TANK_TELEGRAM_OPS_CHAT"])
 def test_configuration_values_never_come_from_environment(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, name
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, name: str
 ) -> None:
     monkeypatch.setenv(name, "FAKE-environment-value")
     settings = Settings(_env_file=None)
@@ -216,7 +216,9 @@ def test_frozen_config_is_parsed_once_and_callers_get_copies(
     original = yaml.load
     monkeypatch.setattr(module.yaml, "load", lambda *a, **k: calls.append(1) or original(*a, **k))
     first = frozen.load_config("registry")
-    first["tokens"].append({"token_id": "MUTATED"})
+    tokens = first["tokens"]
+    assert isinstance(tokens, list)
+    tokens.append({"token_id": "MUTATED"})
     second = frozen.load_config("registry.yaml")
     assert second == {"tokens": [{"token_id": "T"}]} and len(calls) == 1
     (config / "registry.yaml").write_text("tokens: []\n")

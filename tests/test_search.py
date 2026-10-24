@@ -2,19 +2,26 @@
 
 import asyncio
 import threading
+from collections.abc import Callable
 from importlib.metadata import version
 from itertools import pairwise
+from typing import Never
 
 import httpx
 import pytest
-from ddgs.ddgs import ENGINES
+from ddgs.engines import ENGINES
 from ddgs.exceptions import DDGSException, RatelimitException, TimeoutException
+from pydantic import JsonValue
 
 from tank import search
-from tank.search import DuckDuckGoSearchService, SearchError, SearchLimiter
+from tank.search import DuckDuckGoSearchService, SearchError, SearchLimiter, SearchResult
 
 USER_AGENT = "TankV0/search-test (offline fixture)"
-RESULT = {"title": "Official announcement", "href": "https://example.test/official", "body": "A fact."}
+RESULT: SearchResult = {
+    "title": "Official announcement",
+    "href": "https://example.test/official",
+    "body": "A fact.",
+}
 
 
 DDG_HTML = """<!doctype html><html><body>
@@ -28,18 +35,20 @@ DDG_HTML = """<!doctype html><html><body>
 class Time:
     def __init__(self) -> None:
         self.now = 0.0
-        self.delays = []
+        self.delays: list[float] = []
 
-    def clock(self):
+    def clock(self) -> float:
         return self.now
 
-    async def sleep(self, delay) -> None:
+    async def sleep(self, delay: float) -> None:
         self.delays.append(delay)
         self.now += delay
         await asyncio.sleep(0)
 
 
-def service(attempt):
+def service(
+    attempt: Callable[[str, str, Callable[[], None]], list[SearchResult]],
+) -> tuple[DuckDuckGoSearchService, Time]:
     timer = Time()
     limiter = SearchLimiter(clock=timer.clock, sleep=timer.sleep)
     return DuckDuckGoSearchService(
@@ -47,24 +56,34 @@ def service(attempt):
     ), timer
 
 
-def install_http(monkeypatch: pytest.MonkeyPatch, respond) -> None:
+def install_http(monkeypatch: pytest.MonkeyPatch, respond: Callable[[httpx.Request], httpx.Response]) -> None:
     original = httpx.Client
 
-    def make_client(**kwargs):
-        return original(transport=httpx.MockTransport(respond), **kwargs)
+    def make_client(
+        *, timeout: int, follow_redirects: bool, trust_env: bool, headers: dict[str, str]
+    ) -> httpx.Client:
+        return original(
+            transport=httpx.MockTransport(respond),
+            timeout=timeout,
+            follow_redirects=follow_redirects,
+            trust_env=trust_env,
+            headers=headers,
+        )
 
     monkeypatch.setattr(search.httpx, "Client", make_client)
 
 
 async def test_pinned_engine_payload_parser_and_unmodified_result(monkeypatch: pytest.MonkeyPatch) -> None:
     assert version("ddgs") == "9.16.0"
-    requests = []
-    calls = []
+    requests: list[httpx.Request] = []
+    calls: list[tuple[str, dict[str, str | int]]] = []
     original_text = search.DDGS.text
 
-    def text(instance, query, **kwargs):
-        calls.append((query, kwargs))
-        return original_text(instance, query, **kwargs)
+    def text(
+        instance: search.DDGS, query: str, *, backend: str, max_results: int
+    ) -> list[dict[str, JsonValue]]:
+        calls.append((query, {"backend": backend, "max_results": max_results}))
+        return original_text(instance, query, backend=backend, max_results=max_results)
 
     monkeypatch.setattr(search.DDGS, "text", text)
 
@@ -82,7 +101,7 @@ async def test_pinned_engine_payload_parser_and_unmodified_result(monkeypatch: p
     install_http(monkeypatch, respond)
 
     class Forbidden:
-        def __init__(self, *args, **kwargs) -> None:
+        def __init__(self, *, proxy: str | None, timeout: int | None, verify: bool | str) -> None:
             pytest.fail("An alternate engine was instantiated")
 
     monkeypatch.setitem(ENGINES, "text", {"forbidden": Forbidden})
@@ -105,9 +124,9 @@ async def test_pinned_engine_payload_parser_and_unmodified_result(monkeypatch: p
     ],
 )
 async def test_real_ddgs_preserves_block_and_retry_contract(
-    monkeypatch: pytest.MonkeyPatch, status, html, code
+    monkeypatch: pytest.MonkeyPatch, status: int, html: str, code: str
 ) -> None:
-    requests = []
+    requests: list[httpx.Request] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
         requests.append(request)
@@ -115,9 +134,9 @@ async def test_real_ddgs_preserves_block_and_retry_contract(
 
     install_http(monkeypatch, respond)
     adapter, timer = service(search._search_sync)
-    accounted = []
+    accounted: list[int] = []
 
-    async def account(number) -> None:
+    async def account(number: int) -> None:
         accounted.append(number)
 
     with pytest.raises(SearchError) as failure:
@@ -133,10 +152,12 @@ async def test_real_ddgs_preserves_block_and_retry_contract(
 
 
 @pytest.mark.parametrize("exception", [TimeoutException("timed out"), RatelimitException("limit")])
-async def test_typed_library_timeout_and_ratelimit_retry_exactly(exception) -> None:
-    starts = []
+async def test_typed_library_timeout_and_ratelimit_retry_exactly(
+    exception: TimeoutException | RatelimitException,
+) -> None:
+    starts: list[float] = []
 
-    def attempt(query, user_agent, mark) -> None:
+    def attempt(query: str, user_agent: str, mark: Callable[[], None]) -> Never:
         mark()
         starts.append(timer.now)
         raise exception
@@ -150,9 +171,9 @@ async def test_typed_library_timeout_and_ratelimit_retry_exactly(exception) -> N
 
 
 async def test_actual_http_timeout_preserved_without_hidden_retry(monkeypatch: pytest.MonkeyPatch) -> None:
-    starts = []
+    starts: list[float] = []
 
-    def respond(request: httpx.Request) -> None:
+    def respond(request: httpx.Request) -> Never:
         starts.append(timer.now)
         raise httpx.ReadTimeout("timeout", request=request)
 
@@ -172,8 +193,8 @@ async def test_actual_http_timeout_preserved_without_hidden_retry(monkeypatch: p
         (SearchError("POLICY", "Unexpected request"), "POLICY"),
     ],
 )
-async def test_nonretryable_errors_return_once(exception, code) -> None:
-    def attempt(query, user_agent, mark) -> None:
+async def test_nonretryable_errors_return_once(exception: Exception, code: str) -> None:
+    def attempt(query: str, user_agent: str, mark: Callable[[], None]) -> Never:
         mark()
         raise exception
 
@@ -192,12 +213,12 @@ async def test_default_limiter_is_shared_across_generations_and_concurrent_calls
     timer = Time()
     limiter = SearchLimiter(clock=timer.clock, sleep=timer.sleep)
     monkeypatch.setattr(search, "_PROCESS_LIMITER", limiter)
-    starts = []
+    starts: list[float] = []
 
-    def attempt(query, user_agent, mark):
+    def attempt(query: str, user_agent: str, mark: Callable[[], None]) -> list[SearchResult]:
         mark()
         starts.append(timer.now)
-        return [dict(RESULT)]
+        return [RESULT.copy()]
 
     generations = [DuckDuckGoSearchService(user_agent=USER_AGENT, attempt=attempt) for _ in range(3)]
     assert all(generation.limiter is limiter for generation in generations)
@@ -207,16 +228,16 @@ async def test_default_limiter_is_shared_across_generations_and_concurrent_calls
 
 
 async def test_retries_and_other_queries_share_the_same_limiter() -> None:
-    starts = []
-    tries = {}
+    starts: list[tuple[str, float]] = []
+    tries: dict[str, int] = {}
 
-    def attempt(query, user_agent, mark):
+    def attempt(query: str, user_agent: str, mark: Callable[[], None]) -> list[SearchResult]:
         mark()
         starts.append((query, timer.now))
         tries[query] = tries.get(query, 0) + 1
         if query == "retry" and tries[query] == 1:
             raise TimeoutException("timeout")
-        return [dict(RESULT)]
+        return [RESULT.copy()]
 
     adapter, timer = service(attempt)
     await asyncio.gather(adapter.search("retry"), adapter.search("other"))
@@ -226,15 +247,15 @@ async def test_retries_and_other_queries_share_the_same_limiter() -> None:
 
 async def test_blocking_search_does_not_block_ingestion_and_cancel_drains_worker() -> None:
     entered, release = threading.Event(), threading.Event()
-    accounted = []
+    accounted: list[int] = []
 
-    def attempt(query, user_agent, mark):
+    def attempt(query: str, user_agent: str, mark: Callable[[], None]) -> list[SearchResult]:
         mark()
         entered.set()
         assert release.wait(5)
-        return [dict(RESULT)]
+        return [RESULT.copy()]
 
-    async def account(number) -> None:
+    async def account(number: int) -> None:
         accounted.append(number)
 
     adapter, _ = service(attempt)
@@ -258,9 +279,9 @@ async def test_blocking_search_does_not_block_ingestion_and_cancel_drains_worker
 
 async def test_cancel_before_request_does_not_charge_attempt() -> None:
     adapter, _ = service(lambda *args: pytest.fail("Cancelled request executed"))
-    accounted = []
+    accounted: list[int] = []
 
-    async def account(number) -> None:
+    async def account(number: int) -> None:
         accounted.append(number)
 
     async with adapter.limiter._lock:
@@ -273,12 +294,13 @@ async def test_cancel_before_request_does_not_charge_attempt() -> None:
 
 
 def test_transport_rejects_other_engines_redirect_target_and_second_request() -> None:
-    requests = []
-    with httpx.Client(
-        transport=httpx.MockTransport(
-            lambda request: requests.append(request) or httpx.Response(200, text=DDG_HTML)
-        )
-    ) as client:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, text=DDG_HTML)
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
         for url in ("https://www.google.com/search", "https://html.duckduckgo.com.evil.test/html/"):
             transport = search._DuckDuckGoHTTP(client, lambda: None)
             with pytest.raises(SearchError, match="Unexpected"):
