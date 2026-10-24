@@ -15,3 +15,9 @@ The same orchestrator calls capture.yml and requires all source policy, Ruff, my
 Python integration and the Go race job each own a separate ClickHouse 25.8 service. prepare_clickhouse.py accepts only a loopback test URL, verifies the server release line and initializes all eight required market/trade tables. Full Python integration uses xdist loadfile to keep database-resetting ClickHouse cases together; check_go_results.py rejects every skipped/failed or incomplete Go test report.
 
 MR wall-clock timing and integration shard completeness are described in [CI_BUDGET.md](../../docs/CI_BUDGET.md).
+
+The Node local job now provisions Node24.22.0 plus uv0.11.7/Python3.13.13 and the frozen
+project environment, installs the locked scripts/typescript tooling, and sets
+TANK_FILE_IO_TEST_PYTHON to that environment's interpreter before running either lane.
+For a fresh development checkout, follow the complete setup in docs/TESTING.md; a bare
+node scripts/test-node.mjs command does not provision its prerequisites.
