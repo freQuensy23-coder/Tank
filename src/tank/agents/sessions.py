@@ -45,8 +45,8 @@ from tank.delivery import DeliveryDeferred
 from tank.openma_sync import agent_tools
 from tank.ops_progress import session_progress
 from tank.telegram_inbox import DOCUMENT_LIMIT, closed_reason, question_message, record_answer
-from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
-from tank.util import canonical_json, iso, parse_time, sha256, utcnow
+from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
+from tank.util import canonical_json, parse_time, sha256, utcnow
 
 REST_TIMEOUT_S = 30
 
@@ -133,9 +133,8 @@ class SessionService:
         self.closed = False
         self.telegram = None
 
-    def clock_timestamp(self):
-
-        return collection_clock(iso())
+    def clock_timestamp(self) -> Timestamp:
+        return collection_clock()
 
     def event_timestamp(self, event):
         return (

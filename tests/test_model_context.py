@@ -12,14 +12,14 @@ from tank.agents.sessions import SessionService
 from tank.event_tools import EventToolService, validate_schema
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.util import iso, new_id, sha256, utcnow
+from tank.util import clock_iso, iso, new_id, sha256, utcnow
 
 
 @pytest.fixture
 async def context(tmp_path: Path):
     repo = MemoryRepository()
     settings = Settings(data_dir=tmp_path, _env_file=None)
-    stamp = iso()
+    stamp = clock_iso()
     item = {
         "item_id": new_id("itm"),
         "url": "https://example.org/launch",
@@ -127,7 +127,7 @@ def observation(**changes):
         "link": "CORROBORATION",
         "claims": [],
         "freshness": "FRESH",
-        "public_at": {"value": iso(), "precision": "EXACT", "basis": "Source", "quote": None},
+        "public_at": {"value": clock_iso(), "precision": "EXACT", "basis": "Source", "quote": None},
         **changes,
     }
 
@@ -860,7 +860,7 @@ async def test_milestone_callback_confirms_from_the_fetched_official_document_by
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
         domain = EventToolService(repo, settings, None, None, http=http)
-        due = iso()
+        due = clock_iso()
         await domain.dispatch(
             "schedule_milestone",
             {"event_id": session["event_id"], "source_id": "S01", "milestone": "Approval", "due_at": due},

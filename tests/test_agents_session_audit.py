@@ -10,7 +10,7 @@ from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.util import iso
+from tank.util import clock_iso
 
 
 def settings(replay=False):
@@ -275,7 +275,7 @@ async def test_usage_keeps_effort_stop_reason_and_search_count() -> None:
                     "output_tokens": 2,
                     "server_tool_use": {"web_search_requests": 3},
                 },
-                "processed_at": iso(),
+                "processed_at": clock_iso(),
             },
         )
     usage = await repo.get("ops.llm_usage", "s:span")
@@ -620,7 +620,7 @@ async def test_new_replay_session_restores_captured_external_error_and_acknowled
             "status": "ERROR",
             "is_error": True,
             "result": result,
-            "returned_at": iso(),
+            "returned_at": clock_iso(),
         },
     )
     posts = []
