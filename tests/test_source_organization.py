@@ -4,9 +4,11 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from source_support import source_configuration
+from source_support import operational_configuration, source_configuration
 
-from tank.agents.pipeline import Pipeline
+from tank.agents.pipeline_contracts import RoutingRegistry
+from tank.agents.routing import RoutingItem, RoutingSelector
+from tank.contracts.source_items import parse_feed_source_item
 from tank.settings import Settings
 from tank.sources import SourceService, parsers
 from tank.storage import MemoryRepository
@@ -83,8 +85,10 @@ async def test_normal_poll_preserves_actual_author_and_exposes_exact_pruner_orga
             if name == "sources"
             else registry
             if name == "registry"
-            else {}
+            else operational_configuration(name)
         ),
+        ops_progress_enabled=False,
+        replay=False,
     )
     requests = []
 
@@ -102,7 +106,9 @@ async def test_normal_poll_preserves_actual_author_and_exposes_exact_pruner_orga
             assert len(rows) == 1 and len(requests) == 1
             record = rows[0]
             assert record["author"] == src["name"]
-            identities = Pipeline(repo, config, http=object()).identities(record)
+            identities = RoutingSelector(
+                repo, RoutingRegistry.from_wire(config.load_config("registry"))
+            ).identities(RoutingItem.from_source(parse_feed_source_item(record)))
             assert "sec" in identities if sid == "S03" else "layerzero" in identities
             assert record["author_organization"] == (
                 "Securities and Exchange Commission; Treasury Department"

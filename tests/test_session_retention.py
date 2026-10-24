@@ -18,6 +18,7 @@ def settings(keep_days=7, replay=False):
         "thresholds": {"session_keep_days": keep_days},
     }
     return SimpleNamespace(
+        ops_progress_enabled=False,
         openma_api_key="secret",
         openma_url="http://oma",
         openma_model="gpt-6.1-sol",

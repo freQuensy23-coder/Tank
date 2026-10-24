@@ -21,6 +21,7 @@ def settings(replay=False):
         "reasoning_effort": "medium",
     }
     opts = SimpleNamespace(
+        ops_progress_enabled=False,
         thresholds=Settings(_env_file=None).thresholds,
         openma_url="http://oma",
         openma_api_key="fake-only",

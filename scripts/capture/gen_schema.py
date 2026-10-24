@@ -9,27 +9,38 @@ import json
 import sys
 from pathlib import Path
 
+from pydantic import BaseModel, ConfigDict
+
 from tank.market_schema import (
     MARKET_ALIASES,
     MARKET_COLUMNS,
     MARKET_IDENTITIES,
     MARKET_REQUIRED,
+    SQLType,
 )
 
 OUT = Path(__file__).resolve().parents[2] / "capture" / "internal" / "schema" / "market_schema.json"
 
 
-def render():
-    payload = {
-        "columns": {
-            name: [[column, kind] for column, kind in columns.items()]
+class ExportedMarketSchema(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    columns: dict[str, list[tuple[str, SQLType]]]
+    aliases: dict[str, dict[str, str]]
+    identities: dict[str, list[str]]
+    required: dict[str, list[str]]
+
+
+def render() -> str:
+    payload = ExportedMarketSchema(
+        columns={
+            name: [(column, kind) for column, kind in columns.items()]
             for name, columns in MARKET_COLUMNS.items()
         },
-        "aliases": MARKET_ALIASES,
-        "identities": {name: list(identity) for name, identity in MARKET_IDENTITIES.items()},
-        "required": MARKET_REQUIRED,
-    }
-    return json.dumps(payload, indent=1, sort_keys=True) + "\n"
+        aliases=MARKET_ALIASES,
+        identities={name: list(identity) for name, identity in MARKET_IDENTITIES.items()},
+        required=MARKET_REQUIRED,
+    )
+    return json.dumps(payload.model_dump(mode="json"), indent=1, sort_keys=True) + "\n"
 
 
 if __name__ == "__main__":

@@ -12,7 +12,9 @@ import pwd
 import shutil
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -20,21 +22,24 @@ ROOT = Path(__file__).resolve().parents[1]
 CAPTURE = ROOT / "capture"
 
 
-def script(name):
-    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / "capture" / (name + ".py"))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+if TYPE_CHECKING:
+    from scripts.capture import gen_schema
+else:
+    spec = importlib.util.spec_from_file_location("gen_schema", ROOT / "scripts/capture/gen_schema.py")
+    assert spec is not None
+    assert spec.loader is not None
+    gen_schema = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = gen_schema
+    spec.loader.exec_module(gen_schema)
 
 
 def test_go_schema_copy_matches_market_schema() -> None:
-    gen_schema = script("gen_schema")
     assert gen_schema.OUT.read_text() == gen_schema.render(), (
         "run: uv run python scripts/capture/gen_schema.py"
     )
 
 
-def go_environment(tmp_path: Path):
+def go_environment(tmp_path: Path) -> dict[str, str]:
     """The operator's Go module and build caches (pytest moved HOME and the XDG roots);
     modules and the go.mod toolchain come from the module cache, never the network."""
     probe = {name: value for name, value in os.environ.items() if not name.startswith("XDG_")}
@@ -57,7 +62,7 @@ def go_environment(tmp_path: Path):
 
 
 @pytest.fixture(scope="module")
-def parity_binary(tmp_path_factory: pytest.TempPathFactory):
+def parity_binary(tmp_path_factory: pytest.TempPathFactory) -> Path:
     if shutil.which("go") is None:
         pytest.fail("Go 1.25 and its prefilled module cache are required; see docs/TESTING.md")
     directory = tmp_path_factory.mktemp("capture-parity")
@@ -75,7 +80,7 @@ def parity_binary(tmp_path_factory: pytest.TempPathFactory):
     return binary
 
 
-def run_parity(binary, fixtures) -> None:
+def run_parity(binary: Path, fixtures: Sequence[Path]) -> None:
     result = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "capture" / "parity.py"), "--check", "--go", str(binary)],
         check=False,
@@ -91,6 +96,6 @@ def run_parity(binary, fixtures) -> None:
 
 @pytest.mark.integration
 @pytest.mark.process
-def test_go_port_matches_the_goldens_on_recorded_frames_and_rest_polls(parity_binary) -> None:
+def test_go_port_matches_the_goldens_on_recorded_frames_and_rest_polls(parity_binary: Path) -> None:
     testdata = CAPTURE / "testdata"
     run_parity(parity_binary, [*testdata.glob("frames/*.jsonl.gz"), *testdata.glob("rest/*.json.gz")])

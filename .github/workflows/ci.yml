@@ -103,8 +103,22 @@ jobs:
           enable-cache: true
       - run: uv sync --python 3.13.13 --frozen --extra dev
       - run: uv run --frozen --extra dev mypy
-      - name: Require precise CI helper and watchdog types
-        run: uv run --frozen --extra dev mypy --strict --explicit-package-bases scripts/ci tests/test_ci_budget.py
+      - name: Check completed foundation source family strictly
+        env:
+          MYPYPATH: src:tests
+        run: >-
+          uv run --frozen --extra dev mypy --strict --follow-imports=silent --explicit-package-bases
+          src/tank/storage.py src/tank/retention.py src/tank/search.py src/tank/market_storage.py
+          src/tank/market_codec.py src/tank/clickhouse_market.py src/tank/models.py src/tank/market_schema.py
+          src/tank/settings.py src/tank/util.py src/tank/time_precision.py src/tank/logging.py
+          src/tank/backup.py src/tank/contracts
+      - name: Check completed quality module families strictly
+        env:
+          MYPYPATH: src:tests
+        run: >-
+          uv run --frozen --extra dev mypy --strict --follow-imports=silent --explicit-package-bases
+          scripts/ci scripts/capture/gen_schema.py deploy/openma_lifecycle/native_network_probe.py
+          tests/test_ci_budget.py tests/test_ci_go_results.py tests/test_capture_parity.py tests/test_native_network_probe.py
 
   test:
     uses: ./.github/workflows/test-suite.yml

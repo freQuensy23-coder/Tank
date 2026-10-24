@@ -6,8 +6,15 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import zstandard
-from source_support import fetch_plan, source_configuration, source_definition, source_feed
+from source_support import (
+    fetch_plan,
+    operational_configuration,
+    source_configuration,
+    source_definition,
+    source_feed,
+)
 
+from tank.contracts.source_items import SourceText, parse_feed_source_item
 from tank.sources import SourceService, parsers
 from tank.util import new_id, sha256
 
@@ -39,7 +46,15 @@ def captured(svc, sid, item, payload=b"<html>source evidence</html>", observed_a
     """An item as the poller hands it to ingest: raw payload already stored under its item_id."""
     item_id = new_id("item")
     raw_ref, digest = svc.raw(payload, source_id=sid, item_id=item_id, observed_at=observed_at)
-    return dict(item, item_id=item_id, raw_ref=raw_ref, raw_sha256=digest, observed_at=observed_at)
+    return dict(
+        {"url": "https://synthetic.invalid/source-evidence", "feed": sid, "published_at": None, **item},
+        item_id=item_id,
+        discovery_config_version=svc.settings.config_version,
+        discovery_code_version=svc.settings.code_version,
+        raw_ref=raw_ref,
+        raw_sha256=digest,
+        observed_at=observed_at,
+    )
 
 
 RSS = b"""<rss version="2.0"><channel><title>Official</title><item><guid>release-42</guid><title>New protocol</title><link>https://example.org/a</link><pubDate>Fri, 16 Oct 2026 12:00:00 GMT</pubDate><description>&lt;p&gt;Protocol deployment &amp;amp; vote&lt;/p&gt;</description></item></channel></rss>"""
@@ -97,7 +112,11 @@ def settings(tmp_path: Path, sources):
             source_configuration({"sources": sources})
             if name == "sources"
             else {"x_accounts": [], "tokens": [], "entities": []}
+            if name == "registry"
+            else operational_configuration(name)
         ),
+        ops_progress_enabled=False,
+        replay=False,
     )
 
 
@@ -518,6 +537,9 @@ async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path: Pat
                 )
                 item = {
                     "item_id": item_id,
+                    "feed": source["feeds"][0]["url"],
+                    "discovery_config_version": svc.settings.config_version,
+                    "discovery_code_version": svc.settings.code_version,
                     "raw_ref": raw_ref,
                     "raw_sha256": digest,
                     "observed_at": "2026-10-16T12:00:01Z",
@@ -955,13 +977,17 @@ def test_sec_filing_identity_boundaries_and_date_only_precision(tmp_path: Path) 
     from tank.settings import Settings
 
     svc = SourceService(Repo(), Settings(data_dir=tmp_path))
-    assert not svc.filing_matches({"title": "Linear Manufacturing S-1", "text": "Filed with SEC"})
     assert not svc.filing_matches(
-        {"title": "Quantitative Research company", "text": "Near the registered office"}
+        SourceText.model_validate({"title": "Linear Manufacturing S-1", "text": "Filed with SEC"})
     )
-    assert svc.filing_matches({"title": "Uniswap protocol filing", "text": ""})
-    assert svc.filing_matches({"title": "Bitcoin Trust ETF", "text": ""})
-    assert svc.filing_matches({"title": "Digital Asset Trust", "text": ""})
+    assert not svc.filing_matches(
+        SourceText.model_validate(
+            {"title": "Quantitative Research company", "text": "Near the registered office"}
+        )
+    )
+    assert svc.filing_matches(SourceText.model_validate({"title": "Uniswap protocol filing", "text": ""}))
+    assert svc.filing_matches(SourceText.model_validate({"title": "Bitcoin Trust ETF", "text": ""}))
+    assert svc.filing_matches(SourceText.model_validate({"title": "Digital Asset Trust", "text": ""}))
     row = parsers.json_items(
         {
             "results": [
@@ -1304,10 +1330,12 @@ async def test_seen_full_article_empty_index_deduplicates_before_new_content_gua
 
 @pytest.mark.asyncio
 async def test_declared_author_organization_precedence_and_identity_without_body_name(tmp_path: Path) -> None:
-    from tank.agents.pipeline import Pipeline
+    from tank.agents.pipeline_contracts import RoutingRegistry
+    from tank.agents.routing import RoutingItem, RoutingSelector
     from tank.settings import Settings
+    from tank.storage import MemoryRepository
 
-    repo = Repo()
+    repo = MemoryRepository()
     config = Settings(data_dir=tmp_path)
     service = SourceService(repo, config)
     source = {
@@ -1333,7 +1361,9 @@ async def test_declared_author_organization_precedence_and_identity_without_body
             record = await service.ingest(source_definition(source), captured(service, "S01", item, payload))
             assert record["author_organization"] == expected
             if external == "source":
-                assert "sec" in Pipeline(repo, config, http=object()).identities(record)
+                assert "sec" in RoutingSelector(
+                    repo, RoutingRegistry.from_wire(config.load_config("registry"))
+                ).identities(RoutingItem.from_source(parse_feed_source_item(record)))
         news = await service.ingest(
             source_definition({"source_id": "S30", "name": "BBC News"}),
             captured(
@@ -1344,7 +1374,9 @@ async def test_declared_author_organization_precedence_and_identity_without_body
             ),
         )
         assert news["author"] == "BBC News" and news["author_organization"] is None
-        assert "sec" not in Pipeline(repo, config, http=object()).identities(news)
+        assert "sec" not in RoutingSelector(
+            repo, RoutingRegistry.from_wire(config.load_config("registry"))
+        ).identities(RoutingItem.from_source(parse_feed_source_item(news)))
     finally:
         await service.close()
 
@@ -1841,6 +1873,7 @@ async def test_conditional_304_does_not_starve_durable_pending_detail(tmp_path: 
                     "url": "https://example.org/article/one",
                     "title": "Release",
                     "text": "",
+                    "published_at": None,
                 }
             ],
             "html",

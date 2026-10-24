@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import yaml
-from source_support import source_configuration, source_definition
+from source_support import operational_configuration, source_configuration, source_definition
 
 from tank.sources import SourceService, parsers
 from tank.storage import MemoryRepository
@@ -21,7 +21,15 @@ def config(tmp_path: Path, sources):
         user_agent="Tank source regression",
         config_version="test",
         code_version="test",
-        load_config=lambda name: source_configuration({"sources": sources}) if name == "sources" else {},
+        load_config=lambda name: (
+            source_configuration({"sources": sources})
+            if name == "sources"
+            else {"x_accounts": []}
+            if name == "registry"
+            else operational_configuration(name)
+        ),
+        ops_progress_enabled=False,
+        replay=False,
     )
 
 
@@ -80,9 +88,18 @@ async def test_duplicate_preserves_capture_and_counts_one_observation(tmp_path: 
 
     def captured(item_id, payload, item):
         ref, digest = service.raw(payload, source_id="S30", item_id=item_id, observed_at=item["observed_at"])
-        return dict(item, item_id=item_id, raw_ref=ref, raw_sha256=digest)
+        return dict(
+            item,
+            item_id=item_id,
+            raw_ref=ref,
+            raw_sha256=digest,
+            discovery_config_version="test",
+            discovery_code_version="test",
+        )
 
     incoming = {
+        "url": "https://synthetic.invalid/original-publication",
+        "feed": "S30",
         "external_id": "one",
         "title": "Original title",
         "text": "Original text",

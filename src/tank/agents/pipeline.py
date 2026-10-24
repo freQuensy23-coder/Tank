@@ -1,408 +1,257 @@
-"""Version-pinned Jev classification (03 §3.1). Cutoffs come from config/thresholds.yaml."""
+"""Typed source classification and event routing; wire JSON remains at adapters."""
 
 import asyncio
-import re
-from datetime import timedelta
-from decimal import Decimal
+from collections.abc import AsyncIterator
+from datetime import datetime, timedelta
+from typing import Literal, Protocol
 
 import httpx
+from pydantic import JsonValue, ValidationError
 
-from tank.agents.jev import MODEL, JevEvent, JevItem, JevQuestion, JevState, binding, classify
-from tank.ops_progress import item_progress
-from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
-from tank.util import iso, sha256, utcnow
+from tank.agents.classification import FILTER as FILTER
+from tank.agents.classification import FILTER_CRITERIA as FILTER_CRITERIA
+from tank.agents.classification import JEV_PROMPT_VERSION as JEV_PROMPT_VERSION
+from tank.agents.classification import ROUTE as ROUTE
+from tank.agents.classification import ROUTE_CRITERIA as ROUTE_CRITERIA
+from tank.agents.classification import JevClassifier
+from tank.agents.jev import JevEvent, JevItem, JevState
+from tank.agents.pipeline_contracts import (
+    ClassificationIdentity,
+    ClassificationName,
+    JevScoreRecord,
+    RoutingCandidate,
+    RoutingRegistry,
+)
+from tank.agents.routing import RoutingItem, RoutingSelector, item_state, item_view
+from tank.contracts.configuration import Thresholds
+from tank.contracts.job_repository import JobRepository, QueueStore
+from tank.contracts.progress import SourceProgressSink
+from tank.contracts.repository import Collection, Repository
+from tank.contracts.source_items import (
+    SOURCE_ITEMS,
+    AlwaysRelevance,
+    ClassifiedRelevance,
+    FeedSourceItem,
+    PendingRelevance,
+    RoutedSource,
+    SourceItemDocument,
+    SourceRoute,
+    SourceRoutingMessage,
+    WebEvidenceItem,
+)
+from tank.runtime_contracts import ItemJob
+from tank.time_precision import collection_clock, offset_schedule
+from tank.util import TimeInput, iso, utcnow
 
-JEV_PROMPT_VERSION = "jev-v2"
-
-
-FILTER = "Is `item` about crypto: crypto assets, crypto exchanges, crypto regulation or enforcement, blockchain networks, or one of these projects: Bitcoin, Ethereum, Uniswap, PancakeSwap, Aerodrome, Curve, 1inch, 0x, CoW Protocol, Hyperliquid, Lighter, Aave, Morpho, Euler, Ondo, LayerZero, Quant, Avalanche, NEAR, Plasma, Ethena, World (Worldcoin)?"
-FILTER_CRITERIA = {
-    "true": "About crypto, even if it reports nothing new or important.",
-    "false": "General finance, technology or politics that does not touch crypto.",
-}
-ROUTE = "Does `item` report the same real-world event as `event`, or a new development of that event?"
-ROUTE_CRITERIA = {
-    "true": "The same event, or a development of it: a confirmation, denial, stage change, new detail or new party.",
-    "false": "A different event, even one about the same project, company, exchange or token.",
-}
 TEXT_LIMIT = 12000
+type CutoffName = Literal["filter_cutoff", "routing_cutoff"]
 
 
-def _clean(value):
-    return " ".join(str(value or "").split())
+class PipelineSettings(Protocol):
+    opencode_api_key: str | None
+    replay: bool
+    config_version: str
+    code_version: str
+
+    def load_config(self, name: str) -> dict[str, JsonValue]: ...
+    def thresholds(self) -> Thresholds: ...
 
 
-def _words(value):
-    return re.findall(r"\w+", value.casefold())
+class PipelineStore(QueueStore, Protocol):
+    def iter_range(
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: dict[str, JsonValue] | None = None,
+        batch_size: int = 10000,
+    ) -> AsyncIterator[dict[str, JsonValue]]: ...
 
 
-def _truncate(text, limit=TEXT_LIMIT):
-    if len(text) <= limit:
-        return text
-    cut = text[:limit]
-    end = max(cut.rfind(". "), cut.rfind("? "), cut.rfind("! "))
-    return (cut[: end + 1] if end > limit // 2 else cut[: cut.rfind(" ")]) + " …"
+def priority(item: FeedSourceItem) -> Literal[1, 2]:
+    return 2 if item.deferrable else 1
 
 
 class ConfigurationError(ValueError):
     pass
 
 
-def priority(item):
-    sid = item.get("source_id")
-    deferred = item.get(
-        "deferrable",
-        sid in {"S30", "S31", "S32", "S33", "S34"}
-        or (sid == "S25" and item.get("subtype") == "commits")
-        or (sid == "S29" and item.get("author_role") == "OTHER"),
-    )
-    return 2 if deferred and item.get("event_class") not in ("MAJOR", "STRUCTURAL_SHOCK") else 1
-
-
 class Pipeline:
-    def __init__(self, repo, settings, *, http=None):
+    def __init__(
+        self,
+        repo: PipelineStore,
+        settings: PipelineSettings,
+        *,
+        progress: SourceProgressSink,
+        http: httpx.AsyncClient | None = None,
+    ) -> None:
         self.repo, self.settings = repo, settings
-        self.http = http or httpx.AsyncClient(timeout=15)
+        self.progress = progress
+        self.http = httpx.AsyncClient(timeout=15) if http is None else http
         self.owns_http = http is None
+        self.items = Repository(repo, SOURCE_ITEMS)
+        self.scores = Repository(repo, Collection("ops.llm_usage", JevScoreRecord))
+        self.jobs = JobRepository(repo)
+        self.classifier = JevClassifier(self.scores, settings, self.http)
 
-    def cutoff(self, name):
-        value = self.settings.load_config("thresholds").get(name)
-        if value is None or isinstance(value, bool) or not 0 <= float(value) <= 1:
-            raise ConfigurationError(f"{name} requires a calibrated probability")
-        return float(value)
+    def cutoff(self, name: CutoffName) -> float:
+        try:
+            thresholds = self.settings.thresholds()
+        except ValidationError:
+            raise ConfigurationError(f"{name} requires a calibrated probability") from None
+        match name:
+            case "filter_cutoff":
+                return thresholds.filter_cutoff
+            case "routing_cutoff":
+                return thresholds.routing_cutoff
+            case _:
+                raise ConfigurationError("Unregistered classification threshold")
+
+    async def source_item(self, item_id: str) -> FeedSourceItem:
+        document = await self.items.get(item_id)
+        if document is None:
+            raise KeyError(item_id)
+        item = document.root
+        if isinstance(item, WebEvidenceItem):
+            raise ValueError("Publisher classification jobs cannot process agent-requested WEB evidence")
+        if item.item_id != item_id:
+            raise ValueError("Source item identity does not match its repository key")
+        return item
+
+    async def save_source(self, item: FeedSourceItem) -> FeedSourceItem:
+        stored = await self.items.put(item.item_id, SourceItemDocument(item))
+        if isinstance(stored.root, WebEvidenceItem):
+            raise ValueError("Publisher source storage unexpectedly returned WEB evidence")
+        return stored.root
 
     @staticmethod
-    def item_view(item) -> JevItem:
-        """The item as Jev sees it: source, author when it adds anything, title, body once, quote."""
-        source = _clean(item.get("source") or item.get("source_name"))
-        author = _clean(item.get("author"))
-        title = _clean(item.get("title"))
-        body = _clean(item.get("text") or item.get("body"))
+    def item_view(item: FeedSourceItem) -> JevItem:
+        return item_view(RoutingItem.from_source(item))
 
-        if title and source:
-            for separator in (" - ", " | ", " — "):
-                if title.casefold().endswith((separator + source).casefold()):
-                    title = title[: -len(separator + source)].rstrip()
-        if body.casefold().startswith(title.casefold()):
-            body = body[len(title) :].lstrip(" -|:—")
-        if set(_words(body)) <= set(_words(title)) | set(_words(source)):
-            body = ""
-        quoted = _clean(item.get("quoted"))
-        return JevItem(
-            source=source,
-            author=author if author and author.casefold() != source.casefold() else None,
-            title=title if title else None,
-            text=_truncate(body) if body else None,
-            quoted=_truncate(quoted) if quoted else None,
-        )
+    @staticmethod
+    def state(item: FeedSourceItem) -> JevState:
+        return item_state(RoutingItem.from_source(item))
 
-    @classmethod
-    def state(cls, item) -> JevState:
-        return JevState(item=cls.item_view(item))
+    async def score(self, item: FeedSourceItem, name: ClassificationName, state: JevState) -> float:
+        return await self.classifier.score(item, name, state)
 
-    async def score(self, item, name, state):
-        return (await self._score_record(item, name, state))["score"]
+    def score_identity(
+        self, item: FeedSourceItem, name: ClassificationName, state: JevState
+    ) -> ClassificationIdentity:
+        return self.classifier.score_identity(item, name, state)
 
-    def score_identity(self, item, name, state):
-        questions = {
-            name: JevQuestion(
-                instructions=FILTER if name == "relevant" else ROUTE,
-                criteria=FILTER_CRITERIA if name == "relevant" else ROUTE_CRITERIA,
-            )
-        }
-        pinned = binding(getattr(self.settings, "opencode_api_key", None))
-        wire_state = state.to_wire()
-        state_fingerprint = sha256(wire_state)
-        wire_questions = {
-            name: question.model_dump(exclude_none=True) for name, question in questions.items()
-        }
-        question_fingerprint = sha256(wire_questions)
-        request_fingerprint = sha256(
-            {"model": pinned.request_model, "state": wire_state, "questions": wire_questions}
-        )
-        key = sha256(
-            {
-                "item_id": item["item_id"],
-                "model": pinned.request_model,
-                "provider": pinned.provider,
-                "base_url": pinned.base_url,
-                "prompt_version": JEV_PROMPT_VERSION,
-                "questions": wire_questions,
-                "state_fingerprint": state_fingerprint,
-            }
-        )
-        return key, questions, pinned, state_fingerprint, question_fingerprint, request_fingerprint
+    async def _score_record(
+        self, item: FeedSourceItem, name: ClassificationName, state: JevState
+    ) -> JevScoreRecord:
+        return await self.classifier._score_record(item, name, state)
 
-    async def _score_record(self, item, name, state):
-        key, questions, pinned, state_fingerprint, question_fingerprint, request_fingerprint = (
-            self.score_identity(item, name, state)
-        )
-        cached = await self.repo.get("ops.llm_usage", key)
-        if cached:
-            return cached
-        if getattr(self.settings, "replay", False):
-            raise ValueError(
-                "Replay requires stored Jev score for the exact wire question and state; live classification is disabled"
-            )
-        wire_questions = {
-            name: question.model_dump(exclude_none=True) for name, question in questions.items()
-        }
-        api_key = getattr(self.settings, "opencode_api_key", None)
-        data = await classify(self.http, api_key=api_key, state=state, questions=questions)
-        score = data.answers[name].noul
-        if not 0 <= score <= 1 or data.model not in pinned.resolved_models:
-            raise ValueError("Jev returned invalid score or unexpected resolved model")
-        usage = data.usage
-        tokens = usage.input_tokens
-        reported_cost = usage.cost
-        amount = Decimal(str(reported_cost)) if reported_cost is not None else None
-        if amount is not None and (not amount.is_finite() or amount < 0):
-            raise ValueError("Invalid provider-reported Jev cost")
-        cost = str(amount) if amount is not None else None
-        cost_reason = None if amount is not None else "OpenCode does not report usage.cost"
-        billing_basis = "OPENCODE_REPORTED"
-        completed_at = collection_clock()
-        record = await self.repo.put(
-            "ops.llm_usage",
-            key,
-            {
-                "usage_id": key,
-                "item_id": item["item_id"],
-                "call": "FILTER" if name == "relevant" else "ROUTE",
-                "model_id": data.model,
-                "semantic_model_id": MODEL,
-                "requested_model_id": pinned.request_model,
-                "jev_provider": pinned.provider,
-                "endpoint": pinned.base_url + "/v1/systemone",
-                "resolved_model_id": data.model,
-                "response_id": data.id,
-                "upstream_provider": data.provider,
-                "model_pin_evidence": "OpenCode serves Jev 1.13 under this model name; no dated snapshot or patch suffix is exposed",
-                "billing_basis": billing_basis,
-                "billing_currency": "USD",
-                "prompt_version": JEV_PROMPT_VERSION,
-                "questions": wire_questions,
-                "state_fingerprint": state_fingerprint,
-                "question_fingerprint": question_fingerprint,
-                "request_fingerprint": request_fingerprint,
-                "session_id": None,
-                "score": score,
-                "usage": usage.model_dump(mode="json"),
-                "input_tokens": tokens,
-                "output_tokens": usage.output_tokens,
-                "effort": None,
-                "stop_reason": "NON_GENERATIVE_CLASSIFICATION",
-                "web_searches": 0,
-                "missing_fields": {
-                    "effort": "Not applicable to nongenerative Jev classification",
-                    **({"cost_usd": cost_reason} if cost is None else {}),
-                    **({"input_tokens": "Provider omitted input tokens"} if tokens is None else {}),
-                    **(
-                        {"output_tokens": "Provider omitted output tokens"}
-                        if usage.output_tokens is None
-                        else {}
-                    ),
-                    "cache_read_tokens": "Not exposed by Jev API",
-                    "cache_write_tokens": "Not exposed by Jev API",
-                },
-                "cost_usd": cost,
-                "cost_reason": cost_reason,
-                **completed_at.fields("at"),
-                **completed_at.fields("created_at"),
-                "subject_id": item["item_id"],
-                "model": data.model,
-                "config_version": self.settings.config_version,
-                "code_version": self.settings.code_version,
-            },
-            immutable=True,
-        )
-        return record
+    async def filter_item_wire(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        item = await self.filter_item(ItemJob.model_validate(payload))
+        return item.storage_record()
 
-    async def filter_item(self, payload):
-        async with self.repo.lock("filter:" + payload["item_id"]):
-            item = await self.repo.get("ingest.source_items", payload["item_id"])
-            if item is None:
-                raise KeyError(payload["item_id"])
-
-            score = None
-            if item.get("relevance", {}).get("decision") != "ALWAYS":
+    async def filter_item(self, payload: ItemJob) -> FeedSourceItem:
+        async with self.repo.lock("filter:" + payload.item_id):
+            item = await self.source_item(payload.item_id)
+            if isinstance(item.processing, RoutedSource):
+                return item
+            scored: JevScoreRecord | None = None
+            cutoff: float | None = None
+            if not isinstance(item.relevance, AlwaysRelevance):
                 cutoff = self.cutoff("filter_cutoff")
-                score_record = await self._score_record(item, "relevant", self.state(item))
-                score = score_record["score"]
+                scored = await self._score_record(item, "relevant", self.state(item))
             async with self.repo.lock("ingest-dedup"), self.repo.transaction():
-                item = await self.repo.get("ingest.source_items", payload["item_id"])
-                if item is None:
-                    raise KeyError(payload["item_id"])
-                promoted = item.get("relevance", {}).get("decision") == "ALWAYS"
+                item = await self.source_item(payload.item_id)
+                promoted = isinstance(item.relevance, AlwaysRelevance)
+                if isinstance(item.processing, RoutedSource):
+                    return item
                 if not promoted:
-                    if score < cutoff:
-                        item["extraction_status"] = "SKIPPED"
-                    item.update(
-                        filter_score=score,
-                        relevance={
-                            "decision": "SEND" if score >= cutoff else "SKIP",
-                            "p_relevant": score,
-                            "cutoff": cutoff,
-                            "model": score_record["resolved_model_id"],
-                            "provider": score_record["jev_provider"],
-                            "requested_model": score_record["requested_model_id"],
-                            "semantic_model_id": score_record["semantic_model_id"],
-                            "model_pin_evidence": score_record["model_pin_evidence"],
-                            "usage_id": score_record["usage_id"],
-                        },
-                        status="RELEVANT" if score >= cutoff else "SKIPPED",
+                    if scored is None or cutoff is None:
+                        raise ValueError("Unconditional source relevance changed during classification")
+                    relevance = ClassifiedRelevance(
+                        decision="SEND" if scored.score >= cutoff else "SKIP",
+                        p_relevant=scored.score,
+                        cutoff=cutoff,
+                        model=scored.resolved_model_id,
+                        provider=scored.jev_provider,
+                        requested_model=scored.requested_model_id,
+                        semantic_model_id=scored.semantic_model_id,
+                        model_pin_evidence=scored.model_pin_evidence,
+                        usage_id=scored.usage_id,
                     )
-                    await self.repo.put("ingest.source_items", item["item_id"], item)
-                await item_progress(
-                    self.repo,
-                    self.settings,
-                    item["item_id"],
-                    "JEV_BYPASSED" if promoted else "JEV_PASSED" if score >= cutoff else "JEV_REJECTED",
-                    "Источник проходит напрямую к агенту"
-                    if promoted
-                    else f"score={score:.4f}; порог={cutoff:.4f}",
+                    item = await self.save_source(item.classified(relevance))
+                accepted = promoted or (
+                    isinstance(item.relevance, ClassifiedRelevance) and item.relevance.decision == "SEND"
                 )
-                if promoted or score >= cutoff:
-                    await self.repo.enqueue(
+                detail = "Источник проходит напрямую к агенту"
+                if not promoted:
+                    if scored is None or cutoff is None:
+                        raise RuntimeError("Conditional classification lost its score")
+                    detail = f"score={scored.score:.4f}; порог={cutoff:.4f}"
+                await self.progress.record(
+                    item.item_id,
+                    "JEV_BYPASSED" if promoted else "JEV_PASSED" if accepted else "JEV_REJECTED",
+                    detail,
+                )
+                if accepted:
+                    await self.jobs.enqueue(
                         "ROUTE_ITEM",
-                        {"item_id": item["item_id"]},
-                        item["item_id"],
+                        ItemJob(item_id=item.item_id).model_dump(
+                            mode="json", by_alias=True, exclude_unset=True
+                        ),
+                        item.item_id,
                         priority=priority(item),
                         max_attempts=2,
-                        expires_at=offset_schedule(
-                            propagate_timestamp(item, "observed_at")
-                            if item.get("observed_at")
-                            else collection_clock(),
-                            timedelta(hours=6),
-                        ),
+                        expires_at=offset_schedule(collection_clock(item.observed_at), timedelta(hours=6)),
                     )
             return item
 
-    def identities(self, item):
-        registry = self.settings.load_config("registry")
-        text = " ".join(
-            str(item.get(k) or "") for k in ("title", "text", "body", "quoted", "author_organization")
-        )
-        raw_tokens = item.get("tokens_mentioned", item.get("tokens", []))
-        result = {e["entity_id"] if isinstance(e, dict) else e for e in item.get("entities", [])} | set(
-            raw_tokens
-        )
+    def registry(self) -> RoutingRegistry:
+        return RoutingRegistry.from_wire(self.settings.load_config("registry"))
 
-        symbols = {
-            str(row.get("symbol", "")).casefold(): row["token_id"] for row in registry.get("tokens", [])
-        }
-        for value in raw_tokens:
-            if isinstance(value, str) and value.removeprefix("$").casefold() in symbols:
-                result.add(symbols[value.removeprefix("$").casefold()])
+    def selector(self) -> RoutingSelector:
+        return RoutingSelector(self.repo, self.registry())
 
-        def matches(name):
-            return name and re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", text, re.IGNORECASE)
+    def identities(self, item: FeedSourceItem) -> set[str]:
+        return self.selector().identities(RoutingItem.from_source(item))
 
-        for row in registry.get("entities", []):
-            entity = row.get("entity_id")
+    def event_view(self, event: RoutingCandidate) -> JevEvent:
+        return self.selector().event_view(event)
 
-            hit = any(matches(name) for name in row.get("aliases", [])) or any(
-                matches(rule["alias"]) and any(matches(q) for q in rule["requires_any"])
-                for rule in row.get("qualified_aliases", [])
-            )
-            if hit:
-                result.update([entity, *row.get("tokens", [])])
-        for row in registry.get("tokens", []):
-            if row.get("symbol") and matches("$" + row["symbol"]):
-                result.update([row.get("entity_id"), row["token_id"]])
-        authors = {
-            str(item.get(key) or "").lstrip("@").lower()
-            for key in ("author", "monitored_author", "reposted_by")
-        }
-        for account in registry.get("x_accounts", []):
-            if str(account["handle"]).lstrip("@").lower() in authors:
-                result.add(account.get("entity_id"))
-        for row in registry.get("tokens", []):
-            if row.get("token_id") in result or row.get("entity_id") in result:
-                result.update([row.get("entity_id"), row.get("token_id")])
-        return result - {None}
+    def routing_state(self, item: FeedSourceItem, event: RoutingCandidate) -> JevState:
+        return self.selector().routing_state(RoutingItem.from_source(item), event)
 
-    def event_view(self, event) -> JevEvent:
-        """The candidate event as Jev sees it: the agent's statement, readable names, stage."""
-        registry = self.settings.load_config("registry")
-        names = {
-            row["entity_id"]: (row.get("aliases") or row.get("names") or [row["entity_id"]])[0]
-            for row in registry.get("entities", [])
-        }
-        symbols = {row["token_id"]: row.get("symbol") for row in registry.get("tokens", [])}
+    async def _candidate_events(
+        self, identities: set[str], since: str, now: datetime
+    ) -> list[RoutingCandidate]:
+        return await self.selector().candidate_events(identities, since, now)
 
-        def label(value, table):
-            key = value.get("entity_id") if isinstance(value, dict) else value
-            key = str(key).removeprefix("UNRESOLVED:")
-            return table.get(key) or key.split(":")[-1]
-
-        entities = list(dict.fromkeys(label(e, names) for e in event.get("entities", [])))
-        tokens = list(
-            dict.fromkeys(label(t, symbols) for t in event.get("tokens_mentioned", event.get("tokens", [])))
-        )
-        stage = event.get("event_state", event.get("stage"))
-        return JevEvent(
-            statement=_clean(event.get("statement")),
-            entities=entities,
-            tokens=tokens,
-            stage=str(stage).lower() if stage else None,
-        )
-
-    def routing_state(self, item, event) -> JevState:
-        return JevState(item=self.item_view(item), event=self.event_view(event))
-
-    async def _candidate_events(self, identities, since, now):
-
-        recent = {
-            row["event_id"]
-            async for row in self.repo.iter_range(
-                "ops.agent_sessions", "last_item_at", start=since, end=iso(now + timedelta(microseconds=1))
-            )
-            if row.get("event_id") and row.get("status") != "FAILED"
-        }
-        events = []
-
-        for event_id in sorted(recent):
-            event = await self.repo.get("evt.events", event_id)
-            if not event or event.get("lifecycle", event.get("status")) in (
-                "CLOSED",
-                "MERGED",
-                "INVALIDATED",
-            ):
-                continue
-            event_ids = {
-                e["entity_id"] if isinstance(e, dict) else e for e in event.get("entities", [])
-            } | set(event.get("tokens_mentioned", event.get("tokens", [])))
-            if identities.intersection(event_ids):
-                events.append(event)
-        return events
-
-    async def candidate_events(self, item):
-        """The exact online candidate builder, also used by isolated calibration."""
+    async def candidate_events(self, item: FeedSourceItem) -> list[RoutingCandidate]:
         now = utcnow()
-        since = iso(
-            now - timedelta(days=self.settings.load_config("thresholds").get("routing_window_days", 3))
-        )
+        since = iso(now - timedelta(days=self.settings.thresholds().routing_window_days))
         return await self._candidate_events(self.identities(item), since, now)
 
-    async def route_item(self, payload):
-        async with self.repo.lock("routing:" + payload["item_id"]):
-            item = await self.repo.get("ingest.source_items", payload["item_id"])
-            if item is None:
-                raise KeyError(payload["item_id"])
-            if item.get("routing_message"):
+    async def route_item_wire(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        item = await self.route_item(ItemJob.model_validate(payload))
+        return item.storage_record()
+
+    async def route_item(self, payload: ItemJob) -> FeedSourceItem:
+        async with self.repo.lock("routing:" + payload.item_id):
+            item = await self.source_item(payload.item_id)
+            if isinstance(item.processing, RoutedSource):
                 return item
+            if isinstance(item.relevance, PendingRelevance) or item.relevance.decision == "SKIP":
+                raise ValueError("Source relevance does not permit routing to an agent")
             identities = self.identities(item)
             now = utcnow()
-            since = iso(
-                now - timedelta(days=self.settings.load_config("thresholds").get("routing_window_days", 3))
-            )
-            best, best_score = None, -1
-            scores = {}
-            candidates = tuple(await self._candidate_events(identities, since, now))
+            since = iso(now - timedelta(days=self.settings.thresholds().routing_window_days))
+            best: RoutingCandidate | None = None
+            best_score = -1.0
+            scores: dict[str, float] = {}
+            candidates = await self._candidate_events(identities, since, now)
             if candidates:
                 cutoff = self.cutoff("routing_cutoff")
-
                 requests = [
                     asyncio.create_task(self.score(item, "same_event", self.routing_state(item, event)))
                     for event in candidates
@@ -414,49 +263,39 @@ class Pipeline:
                         request.cancel()
                     await asyncio.gather(*requests, return_exceptions=True)
                     raise
-                for result in results:
-                    if isinstance(result, BaseException):
-                        raise result
-
                 for event, score in zip(candidates, results, strict=True):
-                    scores[event["event_id"]] = score
+                    if isinstance(score, BaseException):
+                        raise score
+                    scores[event.event_id] = score
                     if score >= cutoff and score > best_score:
                         best, best_score = event, score
-
-            added = best is not None
-            message = {"kind": "ITEM_ADDED" if added else "NEW_ITEM", "item_id": item["item_id"]}
-            if best:
-                message["event_id"] = best["event_id"]
-            route = {
-                "decision": "ADDED" if added else "NEW_SESSION",
-                "event_id": best["event_id"] if best else None,
-                "p_same": best_score if added else None,
-            }
+            if best is not None:
+                message = SourceRoutingMessage(
+                    kind="ITEM_ADDED", item_id=item.item_id, event_id=best.event_id
+                )
+                route = SourceRoute(decision="ADDED", event_id=best.event_id, p_same=best_score)
+            else:
+                message = SourceRoutingMessage(kind="NEW_ITEM", item_id=item.item_id)
+                route = SourceRoute(decision="NEW_SESSION", event_id=None, p_same=None)
             async with self.repo.lock("ingest-dedup"), self.repo.transaction():
-                item = await self.repo.get("ingest.source_items", payload["item_id"])
-                if item is None:
-                    raise KeyError(payload["item_id"])
-                item.update(
-                    route=route,
-                    routing_message=message,
-                    routing_scores=scores,
-                    route_event_id=best["event_id"] if best else None,
-                    status="ROUTED",
-                )
-                await self.repo.put("ingest.source_items", item["item_id"], item)
-                await item_progress(
-                    self.repo,
-                    self.settings,
-                    item["item_id"],
+                item = await self.source_item(payload.item_id)
+                item = await self.save_source(item.routed(route, message, scores))
+                await self.progress.record(
+                    item.item_id,
                     "AGENT_QUEUED",
-                    "Маршрутизация: существующее событие" if added else "Маршрутизация: новая сессия",
-                    event_id=route["event_id"],
+                    "Маршрутизация: существующее событие"
+                    if best is not None
+                    else "Маршрутизация: новая сессия",
+                    event_id=route.event_id,
                 )
-                await self.repo.enqueue(
-                    "AGENT_MESSAGE", message, item["item_id"] + ":" + message["kind"], priority=priority(item)
+                await self.jobs.enqueue(
+                    "AGENT_MESSAGE",
+                    message.model_dump(mode="json", exclude_unset=True),
+                    item.item_id + ":" + message.kind,
+                    priority=priority(item),
                 )
             return item
 
-    async def close(self):
+    async def close(self) -> None:
         if self.owns_http:
             await self.http.aclose()

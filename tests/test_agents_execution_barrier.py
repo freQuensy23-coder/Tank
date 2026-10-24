@@ -16,6 +16,7 @@ def config():
     """Protocol settings; the model boundary still reads the real registry and sources."""
     real = Settings(_env_file=None)
     return SimpleNamespace(
+        ops_progress_enabled=False,
         openma_url="http://native",
         openma_api_key="fake-protocol-test",
         configured_secrets=lambda: frozenset({"fake-protocol-test"}),

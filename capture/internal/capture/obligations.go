@@ -2,6 +2,7 @@ package capture
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -21,18 +22,26 @@ func (s *Service) obligations(ctx context.Context) {
 		return
 	}
 	for _, row := range rows {
-		id := text(row["backfill_id"])
-		s.mu.Lock()
-		started := s.obliged[id]
-		s.mu.Unlock()
-		if started || id == "" {
+		id, validID := row["backfill_id"].(string)
+		if !validID || id == "" {
+			s.log.Error("capture obligation has no backfill identity")
 			continue
 		}
 		s.mu.Lock()
-		s.obliged[id] = true
+		if _, active := s.activeObligations[id]; active {
+			s.mu.Unlock()
+			continue
+		}
+		s.activeObligations[id] = struct{}{}
 		s.mu.Unlock()
-		row := row
-		s.spawn(func(ctx context.Context) { s.runObligation(ctx, row) })
+		s.spawn(func(ctx context.Context) {
+			defer func() {
+				s.mu.Lock()
+				delete(s.activeObligations, id)
+				s.mu.Unlock()
+			}()
+			s.runObligation(ctx, row)
+		})
 	}
 }
 
@@ -87,7 +96,7 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 		return
 	}
 	token := text(row["token_id"])
-	row["status"] = "RUNNING"
+	row["status"], row["started_at"] = "RUNNING", pytime.ISO(s.clock.Now())
 	s.putRun(ctx, row)
 	instruments := s.tokenInstruments(ctx, token)
 	ids := make([]string, len(instruments))
@@ -125,7 +134,11 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 		return
 	}
 	end := minTime(s.clock.Now(), anchor.Add(WindowAfter))
-	s.repairWindows(ctx, token, anchor.Add(-WindowBefore), end, 0)
+	if _, err := s.repairWindows(ctx, token, anchor.Add(-WindowBefore), end, 0); err != nil {
+		s.log.Warn("pre-event repair coverage unavailable", "backfill_id", row["backfill_id"], "error", err)
+		fail("REPAIR_FAILED")
+		return
+	}
 	coverage := make([]map[string]any, len(instruments))
 	for i, inst := range instruments {
 		coverage[i] = s.captureWindowCoverage(ctx, inst, anchor)
@@ -197,40 +210,59 @@ func (s *Service) runRequest(ctx context.Context, row map[string]any) {
 			s.log.Warn("capture request not finished", "request_id", row["request_id"], "error", err)
 		}
 	}
-	budget := time.Duration(0)
-	if deadline, err := pytime.Parse(row["deadline"]); err == nil {
-		budget = deadline.Sub(s.clock.Now())
-		if budget <= 0 {
-			finish("EXPIRED", "REQUEST_DEADLINE_PASSED", nil)
-			return
-		}
+	limits, invalid := decodeRequestLimits(row, s.clock.Now())
+	if invalid != nil {
+		finish("FAILED", string(invalid.reason), nil)
+		return
 	}
-	if seconds, err := pyval.Decimal(row["budget_s"]); err == nil && seconds.Float64() > 0 {
-		limit := time.Duration(seconds.Float64() * float64(time.Second))
-		if budget <= 0 || limit < budget {
-			budget = limit
-		}
+	if limits.budget <= 0 || !limits.deadline.After(s.clock.Now()) {
+		finish("EXPIRED", "REQUEST_DEADLINE_PASSED", nil)
+		return
 	}
+	budget := limits.budget
+
 	switch text(row["kind"]) {
 	case "HTTP_FETCH":
 		s.runFetch(ctx, row, budget, finish)
 		return
 	}
-	start, err1 := pytime.Parse(row["start"])
-	end, err2 := pytime.Parse(row["end"])
-	if err1 != nil || err2 != nil || text(row["kind"]) != "REPAIR_WINDOWS" {
+	start, err1 := requestTimestamp(row["start"])
+	end, err2 := requestTimestamp(row["end"])
+	if err1 != nil || err2 != nil || !end.After(start) || text(row["kind"]) != "REPAIR_WINDOWS" {
 		finish("FAILED", "UNSUPPORTED_CAPTURE_REQUEST", nil)
 		return
 	}
-	results := s.repairWindows(ctx, text(row["token_id"]), start, end, budget)
+	tokenID, validToken := row["token_id"].(string)
+	if !validToken || tokenID == "" {
+		finish("FAILED", string(invalidRequestToken), nil)
+		return
+	}
+	results, repairErr := s.repairWindows(ctx, tokenID, start, end, budget)
 	out := map[string]any{}
-	for iid, r := range results {
-		out[iid] = r
+	for iid, result := range results {
+		out[iid] = result.storageValue()
+	}
+	if repairErr != nil {
+		s.log.Warn("capture request repair coverage unavailable", "request_id", row["request_id"], "error", repairErr)
+		finish("FAILED", "REPAIR_FAILED", map[string]any{"instruments": out})
+		return
 	}
 	finish("COMPLETE", nil, map[string]any{"instruments": out})
 }
 
-func (s *Service) repairWindows(ctx context.Context, token string, start, end time.Time, budget time.Duration) map[string]map[string]any {
+type RepairCoverage struct {
+	IncompleteBefore int64 `json:"incomplete_before"`
+	IncompleteAfter  int64 `json:"incomplete_after"`
+}
+
+func (r RepairCoverage) storageValue() map[string]any {
+	return map[string]any{
+		"incomplete_before": r.IncompleteBefore,
+		"incomplete_after":  r.IncompleteAfter,
+	}
+}
+
+func (s *Service) repairWindows(ctx context.Context, token string, start, end time.Time, budget time.Duration) (map[string]RepairCoverage, error) {
 	if budget > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, budget)
@@ -275,29 +307,34 @@ func (s *Service) repairWindows(ctx context.Context, token string, start, end ti
 		reserved bool
 	}
 	phases := []phase{{reference, recent, hi, true}, {othersSpot, recent, hi, false}, {perp, recent, hi, false}, {instruments, lo, recent, false}}
-	results := map[string]map[string]any{}
+	results := map[string]RepairCoverage{}
+	var repairErrors []error
 	var mu sync.Mutex
 	for _, ph := range phases {
+		if !ph.b.After(ph.a) {
+			continue
+		}
 		var wg sync.WaitGroup
 		for _, inst := range ph.group {
 			wg.Add(1)
 			go func(inst *venue.Instrument) {
 				defer wg.Done()
-				before, after := s.repairInstrument(ctx, inst, ph.a, ph.b, ph.reserved)
+				coverage, err := s.repairInstrument(ctx, inst, ph.a, ph.b, ph.reserved)
 				mu.Lock()
-				total := results[inst.ID]
-				if total == nil {
-					total = map[string]any{"incomplete_before": int64(0), "incomplete_after": int64(0)}
-					results[inst.ID] = total
+				defer mu.Unlock()
+				if err != nil {
+					repairErrors = append(repairErrors, fmt.Errorf("%s: %w", inst.ID, err))
+					return
 				}
-				total["incomplete_before"] = total["incomplete_before"].(int64) + before
-				total["incomplete_after"] = total["incomplete_after"].(int64) + after
-				mu.Unlock()
+				total := results[inst.ID]
+				total.IncompleteBefore += coverage.IncompleteBefore
+				total.IncompleteAfter += coverage.IncompleteAfter
+				results[inst.ID] = total
 			}(inst)
 		}
 		wg.Wait()
 	}
-	return results
+	return results, errors.Join(repairErrors...)
 }
 
 func (s *Service) incompleteRuns(ctx context.Context, iid string, lo, hi time.Time) ([]span, map[int64]map[string]any, error) {
@@ -332,15 +369,14 @@ func minutesIn(runs []span) int64 {
 	return n
 }
 
-func (s *Service) repairInstrument(ctx context.Context, inst *venue.Instrument, lo, hi time.Time, reserved bool) (int64, int64) {
+func (s *Service) repairInstrument(ctx context.Context, inst *venue.Instrument, lo, hi time.Time, reserved bool) (RepairCoverage, error) {
 	if !hi.After(lo) {
-		return 0, 0
+		return RepairCoverage{}, nil
 	}
 	iid := inst.ID
 	runs, bars, err := s.incompleteRuns(ctx, iid, lo, hi)
 	if err != nil {
-		s.log.Warn("repair read failed", "instrument", iid, "error", err)
-		return 0, 0
+		return RepairCoverage{}, fmt.Errorf("initial repair coverage unavailable: %w", err)
 	}
 	before := minutesIn(runs)
 	var chunks []span
@@ -398,7 +434,7 @@ func (s *Service) repairInstrument(ctx context.Context, inst *venue.Instrument, 
 	}
 	runs, bars, err = s.incompleteRuns(context.WithoutCancel(ctx), iid, lo, hi)
 	if err != nil {
-		return before, before
+		return RepairCoverage{}, fmt.Errorf("final repair coverage unavailable: %w", err)
 	}
 	reason := NoTradeHistory[inst.Venue]
 	if reason == "" {
@@ -423,7 +459,7 @@ func (s *Service) repairInstrument(ctx context.Context, inst *venue.Instrument, 
 		}
 	}
 	s.flush(context.WithoutCancel(ctx))
-	return before, minutesIn(runs)
+	return RepairCoverage{IncompleteBefore: before, IncompleteAfter: minutesIn(runs)}, nil
 }
 
 func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, start, end time.Time, includeReference bool, kind string) (map[string]any, error) {
@@ -712,7 +748,10 @@ func (s *Service) repairUnrepaired(ctx context.Context, token string, lo, hi tim
 			defer func() { <-sem }()
 			for i := len(gaps) - 1; i >= 0 && ctx.Err() == nil; i-- {
 				s.log.Info("gap repair", "instrument", inst.ID, "start", pytime.ISO(gaps[i].start), "end", pytime.ISO(gaps[i].end))
-				s.repairInstrument(ctx, inst, gaps[i].start, gaps[i].end, reserved)
+				if _, err := s.repairInstrument(ctx, inst, gaps[i].start, gaps[i].end, reserved); err != nil {
+					s.log.Warn("gap repair coverage unavailable", "instrument", inst.ID, "error", err)
+					return
+				}
 			}
 		}(inst, gaps)
 	}

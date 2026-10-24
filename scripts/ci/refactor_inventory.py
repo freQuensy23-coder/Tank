@@ -2,6 +2,7 @@
 
 import argparse
 import ast
+import hashlib
 import json
 import re
 from collections import Counter, defaultdict
@@ -30,8 +31,6 @@ EXCLUDED = frozenset(
         "vendor",
         "upstream",
         "history",
-        "testdata",
-        "goldens",
         "__pycache__",
         ".mypy_cache",
         ".ruff_cache",
@@ -47,6 +46,42 @@ class Finding(BaseModel):
     symbol: str
     kind: Kind
     expression: str
+
+
+class ReferenceConfiguration(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+    role: Literal["historical-oracle-recipe"]
+    sha256: str
+    git_blob: str
+    reference_commit: str
+    reason: str
+    output_consumer: str
+
+
+class ReferenceProgram(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    provenance: ReferenceConfiguration
+    findings: list[Finding]
+
+
+REFERENCE_PROGRAMS = {
+    "capture/internal/budget/testdata/gen_vectors.py": ReferenceConfiguration(
+        role="historical-oracle-recipe",
+        sha256="5aa37e93275faad4f8c256002e1efce27e772aa07fa7a871d94c5c2c6de1dc0e",
+        git_blob="b6f81d1e94f1e2c2f46b45d330776cbf76616317",
+        reference_commit="ef68a822ceafeca3e37b405535a9cb310e4fa35a",
+        reason="Unchanged historical Python request-budget planner recipe; current imports are unavailable. Do not restore retired planner APIs.",
+        output_consumer="capture/internal/budget/budget_test.go:loadVectors reads testdata/vectors.json; CI does not execute this recipe",
+    ),
+    "capture/internal/rest/testdata/gen_vectors.py": ReferenceConfiguration(
+        role="historical-oracle-recipe",
+        sha256="ee12c5940f249c5f39b0124015119b38868bd84c805dd6986c6f1c9e1ce92907",
+        git_blob="ff9b6c0962d9cf65e10cdc9447ed49621e529a5a",
+        reference_commit="ef68a822ceafeca3e37b405535a9cb310e4fa35a",
+        reason="Unchanged historical VenueAdapter/MarketService._request recipe; those Python exchange producers are retired.",
+        output_consumer="capture/internal/rest/rest_test.go:loadVectors reads testdata/vectors.json; CI does not execute this recipe",
+    ),
+}
 
 
 class EmbeddedPython(BaseModel):
@@ -75,6 +110,7 @@ class Inventory(BaseModel):
     symbols: dict[str, dict[str, int]]
     imports: dict[str, list[str]]
     cycles: list[list[str]]
+    reference_programs: dict[str, ReferenceProgram]
 
 
 class Scan(ast.NodeVisitor):
@@ -230,6 +266,7 @@ def dependencies(root: Path) -> tuple[dict[str, list[str]], list[list[str]]]:
 
 def inventory(root: Path, embedded: tuple[EmbeddedPython, ...] = ()) -> Inventory:
     findings: list[Finding] = []
+    references: dict[str, ReferenceProgram] = {}
     count = 0
     for directory in ("src", "tests", "scripts", "deploy", "capture"):
         for path in sorted((root / directory).rglob("*")):
@@ -245,7 +282,13 @@ def inventory(root: Path, embedded: tuple[EmbeddedPython, ...] = ()) -> Inventor
             if path.suffix == ".py":
                 scan = Scan(str(relative))
                 scan.visit(ast.parse(source, filename=str(relative)))
-                findings.extend(scan.findings)
+                reference = REFERENCE_PROGRAMS.get(str(relative))
+                if reference is not None:
+                    if hashlib.sha256(path.read_bytes()).hexdigest() != reference.sha256:
+                        raise ValueError(f"Historical reference program changed: {relative}")
+                    references[str(relative)] = ReferenceProgram(provenance=reference, findings=scan.findings)
+                else:
+                    findings.extend(scan.findings)
             else:
                 for line, value in enumerate(source.splitlines(), 1):
                     if re.search(r"\bany\b|interface\s*\{", value):
@@ -271,7 +314,7 @@ def inventory(root: Path, embedded: tuple[EmbeddedPython, ...] = ()) -> Inventor
         symbols[finding.path + ":" + finding.symbol][finding.kind] += 1
     graph, cycles = dependencies(root)
     return Inventory(
-        files=count,
+        files=count - len(references),
         coverage=[
             "active Python files",
             "active Go files",
@@ -285,6 +328,7 @@ def inventory(root: Path, embedded: tuple[EmbeddedPython, ...] = ()) -> Inventor
         symbols={key: dict(value) for key, value in sorted(symbols.items())},
         imports=graph,
         cycles=cycles,
+        reference_programs=references,
     )
 
 
@@ -304,7 +348,16 @@ def main() -> None:
         args.output.write_text(
             json.dumps(report.model_dump(exclude=set() if args.details else {"findings"}), indent=2) + "\n"
         )
-    print(json.dumps({"files": report.files, "counts": report.counts}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "files": report.files,
+                "counts": report.counts,
+                "reference_programs": len(report.reference_programs),
+            },
+            sort_keys=True,
+        )
+    )
 
 
 if __name__ == "__main__":

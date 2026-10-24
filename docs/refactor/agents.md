@@ -294,3 +294,72 @@ and malformed-edit assertions; the PostgreSQL score callback reads JevState
 attributes, so it reaches the overlap barrier. The reload unit case passes in
 1.50 seconds. All seven actual routing PostgreSQL integration cases pass in
 3.15 seconds via the guarded runner, zero skips; timeout budgets are unchanged.
+
+
+## Inward tool wire contracts
+
+contracts.tool_schema owns scoped-tool names and the sole shared strict
+JSON-schema-subset validator; context projection no longer imports the
+EventToolService application module. The application owner is removing its
+previous definition and importing this shared implementation in the companion
+commit. This change must be integrated with that removal so no duplicate
+validator remains. Tool ID scope/ownership checks stay in ModelContext.
+
+The validator has precise JSON types and no dynamic Python-type registry.
+It keeps required/unknown-field/union diagnostics, rejects nonfinite numeric
+wire values, distinguishes booleans from numbers in enums, and enforces
+previously ignored declared maxItems and additional-property schemas.
+Malformed present keywords cannot masquerade as absent constraints.
+Schema dictionaries are necessary wire-schema trees, not domain payload
+facades. Absent additionalProperties means true by the JSON-schema contract;
+absent properties means no named property constraints. Description/format
+remain annotations in this checked-in subset; domain timestamp validation
+continues at its actual service boundary.
+
+ToolArgumentReference is a strict object carrying each extracted path/kind/ID
+into scope checking. Static ID_FIELDS/PREFIXES tables define the shared
+identifier taxonomy; an absent containing field is valid recursive traversal
+state, not a missing required domain value.76 schema/context/migration cases
+pass in1.97 seconds,zero skips; shared validator and its complete focused test
+module pass strict mypy.
+
+
+The v2 source tranche uses an explicit test-only synthetic publisher factory
+in tests/agent_source_fixtures.py. It declares complete capture, actor,
+publication-unknown, observation-clock and processing-policy fixture data,
+then validates the real canonical SourceItem model and emits its actual flat
+storage shape. It never patches runtime readers or relaxes model requirements;
+unknown/retired fields still fail the canonical schema. This lets boundary
+tests replace incomplete source bags with named complete fixture records.
+The helper passes strict mypy with the actual src import path. A real offline
+Pipeline/HTTP/repository smoke test classified its S30 item and re-read the
+strict cached score successfully.
+
+
+### Typed classification use case (v2)
+
+The standalone agents.classification.JevClassifier owns nongenerative provider classification and exact immutable score reuse. Its required ClassificationScores port has only typed get/put operations; file-backed calibration no longer needs to impersonate the runtime queue repository. ClassificationSettings declares the four required configuration values; ClassificationSource declares the item identity consumed by the classifier. Caller-owned HTTP transport lifetime stays outside this use case.
+
+ClassificationIdentity and JevScoreRecord replace tuple/dictionary application records, including exact usage, missing-field reasons, model bindings, cost, timestamps and fingerprints. Question-name dictionaries are bounded provider wire namespaces, and registry indexes are explicitly keyed domain collections. MissingClassificationFields optional reason absence represents metrics actually reported by the provider; its serializer retains the existing omission wire convention. This checkpoint is inactive until Pipeline/calibration consumers are migrated; full source/session typing remains open.
+
+Validation: 27 offline Jev/classification contract cases passed in 1.54 seconds, including immutable cache reuse and rejection of a contradictory persisted source identity before another provider request. Strict mypy passed for classifier, score contracts, provider models and the new behavior test with real source imports. Pipeline activation remains separate.
+
+
+### Read-only routing separation (v2)
+
+agents.routing exposes a strict RoutingItem projection and pure item_state/item_view functions. RoutingSelector requires only a read-only get/iter_range port and an already validated RoutingRegistry. Calibration can now select and project events without queue mutation, provider transport or progress notification dependencies. RoutingItem.from_source projects canonical publisher source records; packet adapters must declare their own actual source metadata before constructing the projection.
+
+Missing identity hints and monitored author represent unavailable producer metadata. Text formatting omits empty presentation fields by design. Unknown registry display labels use their explicit identifier as a readable label while preserving identity; required source text, event lifecycle, source relevance and repository identities are never invented. Read-only candidate projection requires all actual event/session fields it consumes, rejects event/key mismatch, preserves inclusive batch timestamps, and excludes closed lifecycles.
+
+Validation: 15 focused routing/provider/classification cases passed in 1.66 seconds and strict mypy passed for the routing module/test. The seven real PostgreSQL routing concurrency cases passed in 2.98 seconds with complete synthetic records under the pending Pipeline activation. This commit only publishes the standalone selector; activation and caller migration remain separate.
+
+
+### Canonical SourceItem and Pipeline activation (v2)
+
+Pipeline now decodes stored sources through Repository[SOURCE_ITEMS] once, consumes FeedSourceItem/SourceProcessing/SourceRelevance attributes, and persists validated lifecycle transitions through SourceItemDocument. FILTER_ITEM and ROUTE_ITEM core handlers require ItemJob; explicit wire adapters validate job payloads and serialize source records at dispatcher boundaries. Production composition injects the required SourceProgressSink. Borrowed HTTP clients remain open; a constructed client is owned and closed by Pipeline.
+
+Classification uses the standalone JevClassifier and strict immutable JevScoreRecord ledger. Routing uses the pure RoutingItem projection and read-only RoutingSelector, preserving calibrated Jev wire state and stable candidate order. Concurrent scoring cancellation never commits a partial winner. Source updates are reloaded under the deduplication transaction; unconditional relevance promotion wins over an in-flight score. A routed item remains routed on filter retry. Identity/key mismatches and incomplete capture metadata fail before provider calls or queue publication.
+
+The retired source aliases body/source_name-as-publisher, tokens and reposted_by had no active collector producers; canonical source/text, identity_hints and monitored_author now carry those actual contracts. The dead source event_class priority override is removed: actual source deferrability determines priority. Unknown registry display names may use the explicit identity as their readable label; unavailable identity hints remain optional metadata. Missing source/event/session facts have no service defaults. Canonical source observation timestamps are collection clocks; optional publication provenance stays separate and queue expiry derives the observed collection clock.
+
+Validation: 77 offline focused units passed in 5.41 seconds. All ten relevant integration cases passed with actual services in 3.54 seconds; the seven PostgreSQL concurrency cases were rerun after precise test typing and passed in 3.49 seconds. Strict mypy passed for Pipeline, classifier, routing, score contracts, refusal tests, provider tests and PostgreSQL tests; default mypy passed for runtime/composition/Pipeline. Ruff checks/formatting passed. Full typing of the larger existing agents.py/pipeline_audit test helpers remains part of the ongoing owned test migration, together with SessionService/context/OpenMA/bootstrap; this milestone does not close the global goal.

@@ -8,14 +8,21 @@ import asyncio
 import json
 import logging
 import re
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from dataclasses import asdict
 from datetime import datetime, timedelta
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
+from pydantic import JsonValue
 
 import tank.sources.parsers as parsers
+from tank.contracts.source_items import (
+    DiscoveryEnvelope,
+    PendingSourceItem,
+    RawSourceReference,
+    discovered_item,
+)
 from tank.contracts.sources import HttpFetchPlan, SourceDefinition, SourceFeed
 from tank.ops_entry_errors import report_entry_errors
 from tank.util import TimeInput, new_id, parse_time, sha256
@@ -199,36 +206,63 @@ class SourcePoller:
         """The item's raw payload is its article/detail page, fetched in the backlog."""
         return kind in ARTICLE_KINDS or sid in {"S01", "S09"}
 
-    async def queue_rows(self, current, key, source, feed, rows, kind, coverage, token, acquired_at):
-        """Queue only items not yet captured; write raw now unless a detail page is still due."""
+    async def queue_rows(
+        self,
+        current,
+        key: str,
+        source: SourceDefinition,
+        feed: SourceFeed,
+        rows: Sequence[DiscoveryEnvelope | Mapping[str, JsonValue | bytes]],
+        kind: str,
+        coverage,
+        token: str,
+        acquired_at: str,
+    ) -> None:
+        """Validate discoveries before binding first-seen identity and durable raw evidence."""
         svc, sid = self.service, source.source_id
         pending = {
             str(row["external_id"]) for batch in current.get("pending_batches", []) for row in batch["rows"]
         }
-        fresh = []
+        fresh: list[dict[str, JsonValue]] = []
         for original in rows:
-            row = dict(original)
-            payload = row.pop("_payload", None)
-            external = str(row["external_id"])
-            row.setdefault("feed", feed.url)
-            row.setdefault("observed_at", acquired_at)
+            envelope = original if isinstance(original, DiscoveryEnvelope) else discovered_item(sid, original)
+            material = envelope.discovery
+            if material.source_id != sid:
+                raise ValueError("Discovery source identity conflicts with its configured source")
+            external = material.external_id
             if (
                 external in pending
                 or external in current.get("duplicate_ids", [])
-                or await svc.observe_known(sid, external, row["feed"])
+                or await svc.observe_known(sid, external, feed.url)
             ):
                 continue
-            if sid == "S02" and not svc.filing_matches(row):
+            if sid == "S02" and not svc.filing_matches(material):
                 continue
-            row["item_id"] = new_id("item")
-            row.setdefault("discovery_config_version", svc.settings.config_version)
-            row.setdefault("discovery_code_version", svc.settings.code_version)
+            item_id = new_id("item")
+            observed_at = (
+                envelope.observation.observed_at
+                if envelope.observation.observed_at is not None
+                else acquired_at
+            )
+            raw = None
             if not self.needs_detail(sid, kind):
-                row["raw_ref"], row["raw_sha256"] = svc.raw(
-                    payload, source_id=sid, item_id=row["item_id"], observed_at=row["observed_at"]
+                if envelope.payload is None:
+                    raise ValueError("Source discovery has no raw response bytes")
+                raw_ref, raw_sha256 = svc.raw(
+                    envelope.payload, source_id=sid, item_id=item_id, observed_at=observed_at
                 )
+                raw = RawSourceReference(raw_ref=raw_ref, raw_sha256=raw_sha256)
+            row = PendingSourceItem(
+                discovery=material,
+                item_id=item_id,
+                feed=feed.url,
+                observed_at=observed_at,
+                discovery_config_version=svc.settings.config_version,
+                discovery_code_version=svc.settings.code_version,
+                raw=raw,
+            )
             pending.add(external)
-            fresh.append(row)
+            fresh.append(row.storage_record())
         current.setdefault("pending_batches", []).append(
             {
                 "batch_id": sha256(key + "|" + token),
@@ -268,12 +302,12 @@ class SourcePoller:
         sid = source.source_id
         kind = feed.kind
         if sid == "S29":
-            accounts = [account["handle"].lstrip("@") for account in svc.accounts.values()]
+            accounts = [account.handle.lstrip("@") for account in svc.accounts.values()]
             result = await svc.xsensor.posts(feed.url, accounts, state.get("account_cursors", {}))
             state.update(
                 fetched_at=self.stamp(),
                 account_cursors=result.cursors,
-                entry_errors=[asdict(failure) for failure in result.failures],
+                entry_errors=[failure.model_dump(mode="json") for failure in result.failures],
                 history_gap=result.gaps,
             )
             return result.rows, state, kind

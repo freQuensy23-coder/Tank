@@ -4,10 +4,10 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from types import SimpleNamespace
 from uuid import uuid4
 
 import psycopg
+import pytest
 from postgres_helpers import prepare_schema_template
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
@@ -20,7 +20,9 @@ def main() -> None:
     if fields.get("dbname") != "tank_test_ci_admin" or fields.get("host") != "127.0.0.1":
         raise ValueError("CI setup requires the loopback tank_test_ci_admin database")
 
-    workers = pytest_xdist_auto_num_workers(SimpleNamespace(option=SimpleNamespace(numprocesses="auto")))
+    config = pytest.Config(pytest.PytestPluginManager())
+    config.option.numprocesses = "auto"
+    workers = pytest_xdist_auto_num_workers(config)
     if workers < 1:
         raise ValueError("xdist must have at least one worker")
     with psycopg.connect(dsn, autocommit=True) as connection:

@@ -118,11 +118,16 @@ cd capture && go vet ./... && go test ./...
 uv run python scripts/capture/parity.py --check --go capture/bin/capture-parity
 ```
 
-The parity harness feeds the same recorded frames (`testdata/frames`) through the
-Python reference (`tank.market`) and the Go port and requires identical trades, rows,
-bars, fingerprints and watermarks. ClickHouse tests run when `CLICKHOUSE_TEST_URL` is set
-(a disposable server with the `mkt` tables), PostgreSQL tests when `TANK_TEST_DATABASE_URL`
-is set.
+The parity harness feeds recorded frames and REST polls through the Go port and
+compares full outputs with the frozen Python-reference goldens and digests. The retired
+Python exchange producer is not executed or restored. Complete qualification requires
+both dedicated ClickHouse and PostgreSQL test services and zero skipped cases.
+
+The generator programs under `internal/budget/testdata` and `internal/rest/testdata`
+are pinned historical oracle recipes from `ef68a822ceafeca3e37b405535a9cb310e4fa35a`.
+Current tests read their frozen `vectors.json` outputs. The recipes are not supported
+current-runtime generators; their original Python dependencies are retired. See
+`docs/refactor/executable-boundaries.md` for exact source hashes and reachability.
 
 ## Not in tank-capture
 

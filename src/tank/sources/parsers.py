@@ -11,6 +11,7 @@ import feedparser
 from pydantic import JsonValue
 from selectolax.parser import HTMLParser
 
+from tank.contracts.source_items import discovered_item
 from tank.contracts.sources import FeedParsingSpec
 from tank.time_precision import Timestamp
 from tank.util import iso, sha256
@@ -126,22 +127,29 @@ def feeds(payload, source_id, feed):
                 {"entry_index": index, "reason": "ENTRY_WITHOUT_ID_OR_URL", **entry_identity(e)}
             )
             continue
-        result.append(
-            {
-                "external_id": key,
-                "title": text(e.get("title", "")),
-                "text": text(body),
-                "url": link,
-                **timestamp_fields(dict(e).get("published")),
-                **(
-                    timestamp_fields(dict(e)["updated"], "source_updated_at")
-                    if dict(e).get("updated")
-                    else {}
-                ),
-                "categories": [t.get("term") for t in e.get("tags", [])],
-                "subtype": feed.subtype or ("commits" if "/commits/" in feed.url else "releases"),
-            }
-        )
+        row = {
+            "external_id": key,
+            "title": text(e.get("title", "")),
+            "text": text(body),
+            "url": link,
+            **timestamp_fields(dict(e).get("published")),
+            **(timestamp_fields(dict(e)["updated"], "source_updated_at") if dict(e).get("updated") else {}),
+            "categories": [t.get("term") for t in e.get("tags", [])],
+            "subtype": feed.subtype or ("commits" if "/commits/" in feed.url else "releases"),
+        }
+        try:
+            discovered_item(source_id, row)
+        except ValueError as exc:
+            result.errors.append(
+                {
+                    "entry_index": index,
+                    "reason": "INVALID_PUBLISHER_ENTRY",
+                    "error": str(exc),
+                    **entry_identity(e),
+                }
+            )
+            continue
+        result.append(row)
     return result
 
 
@@ -455,6 +463,7 @@ def json_items(payload, source_id):
         try:
             normalized = _json_items(single(row), source_id)
             for item in normalized:
+                discovered_item(source_id, item)
                 identity = item.get("external_id")
                 if (
                     isinstance(identity, bool)

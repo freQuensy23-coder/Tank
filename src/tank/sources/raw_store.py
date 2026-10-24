@@ -6,6 +6,7 @@ from pathlib import Path
 
 import zstandard
 
+from tank.contracts.source_items import CapturedItem
 from tank.util import TimeInput, new_id, parse_time, sha256
 
 
@@ -85,3 +86,16 @@ def write_raw_item(
             temporary.unlink()
             _sync_directory(path.parent)
     return str(path), digest
+
+
+class RawItemStorage:
+    def __init__(self, data_dir: Path) -> None:
+        self.data_dir = data_dir
+
+    def discard(self, item: CapturedItem) -> None:
+        expected = raw_item_path(
+            self.data_dir, item.discovery.source_id, item.capture.item_id, item.capture.observed_at
+        )
+        if Path(item.capture.raw_ref).resolve() != expected:
+            raise ValueError("Duplicate raw evidence does not belong to the captured source item")
+        expected.unlink(missing_ok=True)
