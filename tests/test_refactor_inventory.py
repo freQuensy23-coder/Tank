@@ -87,3 +87,20 @@ def test_inventory_distinguishes_trivial_assertions_from_observed_calls(
     report = inventory_module.inventory(tmp_path)
     assertions = [(item.kind, item.expression) for item in report.findings if item.kind.startswith("assert_")]
     assert assertions == [("assert_constant", "True"), ("assert_self_comparison", "value == value")]
+
+
+def test_inventory_includes_explicit_embedded_python_with_original_locations(
+    inventory_module: ModuleType, tmp_path: Path
+) -> None:
+    snippet = inventory_module.EmbeddedPython(
+        path="deploy/probe.mjs",
+        line=40,
+        symbol="PROBE",
+        language="python",
+        source="def decode(payload):\n    return payload.get('value')\n",
+    )
+    report = inventory_module.inventory(tmp_path, (snippet,))
+    assert report.embedded_python == 1
+    found = {(item.path, item.line, item.symbol, item.kind) for item in report.findings}
+    assert ("deploy/probe.mjs", 40, "PROBE.decode", "untyped_parameter") in found
+    assert ("deploy/probe.mjs", 41, "PROBE.decode", "fallback") in found

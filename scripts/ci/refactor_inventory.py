@@ -49,9 +49,25 @@ class Finding(BaseModel):
     expression: str
 
 
+class EmbeddedPython(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    path: str
+    line: int
+    symbol: str
+    language: Literal["python"]
+    source: str
+
+
+class JavascriptReport(BaseModel):
+    model_config = ConfigDict(strict=True, extra="ignore")
+    embedded: list[EmbeddedPython]
+
+
 class Inventory(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
     files: int
+    coverage: list[str]
+    embedded_python: int
     counts: dict[str, int]
     findings: list[Finding]
     areas: dict[str, dict[str, int]]
@@ -62,16 +78,17 @@ class Inventory(BaseModel):
 
 
 class Scan(ast.NodeVisitor):
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, line_offset: int = 0, scope: tuple[str, ...] = ()) -> None:
         self.path = path
-        self.scope: list[str] = []
+        self.line_offset = line_offset
+        self.scope = list(scope)
         self.findings: list[Finding] = []
 
     def record(self, node: ast.expr | ast.stmt | ast.arg, kind: Kind, expression: str) -> None:
         self.findings.append(
             Finding(
                 path=self.path,
-                line=node.lineno,
+                line=node.lineno + self.line_offset,
                 symbol=".".join(self.scope),
                 kind=kind,
                 expression=expression,
@@ -211,7 +228,7 @@ def dependencies(root: Path) -> tuple[dict[str, list[str]], list[list[str]]]:
     return graph, sorted(cycles)
 
 
-def inventory(root: Path) -> Inventory:
+def inventory(root: Path, embedded: tuple[EmbeddedPython, ...] = ()) -> Inventory:
     findings: list[Finding] = []
     count = 0
     for directory in ("src", "tests", "scripts", "deploy", "capture"):
@@ -241,6 +258,10 @@ def inventory(root: Path) -> Inventory:
                                 expression=value.strip(),
                             )
                         )
+    for snippet in embedded:
+        scan = Scan(snippet.path, line_offset=snippet.line - 1, scope=(snippet.symbol,))
+        scan.visit(ast.parse(snippet.source, filename=snippet.path + ":" + snippet.symbol))
+        findings.extend(scan.findings)
     areas: defaultdict[str, Counter[str]] = defaultdict(Counter)
     modules: defaultdict[str, Counter[str]] = defaultdict(Counter)
     symbols: defaultdict[str, Counter[str]] = defaultdict(Counter)
@@ -251,6 +272,12 @@ def inventory(root: Path) -> Inventory:
     graph, cycles = dependencies(root)
     return Inventory(
         files=count,
+        coverage=[
+            "active Python files",
+            "active Go files",
+            "explicit embedded Python snippets from JavaScript report",
+        ],
+        embedded_python=len(embedded),
         counts=dict(sorted(Counter(item.kind for item in findings).items())),
         findings=findings,
         areas={key: dict(value) for key, value in sorted(areas.items())},
@@ -266,8 +293,12 @@ def main() -> None:
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--output", type=Path)
     parser.add_argument("--details", action="store_true")
+    parser.add_argument("--javascript-report", type=Path)
     args = parser.parse_args()
-    report = inventory(args.root)
+    embedded: tuple[EmbeddedPython, ...] = ()
+    if args.javascript_report is not None:
+        embedded = tuple(JavascriptReport.model_validate_json(args.javascript_report.read_text()).embedded)
+    report = inventory(args.root, embedded)
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(
