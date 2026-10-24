@@ -8,18 +8,19 @@ persists probability/model provenance; source ingestion never guesses relevance.
 import asyncio
 import re
 import ssl
+from collections.abc import Mapping
 from contextlib import suppress
 from copy import deepcopy
 from datetime import datetime
-from pathlib import Path
 from urllib.parse import urlsplit
 
 import certifi
 import httpx
+from pydantic import JsonValue
 
 import tank.sources.parsers as parsers
 from tank.contracts.configuration import Thresholds
-from tank.contracts.source_items import SourceText
+from tank.contracts.source_items import SourceText, captured_item
 from tank.contracts.sources import (
     HttpFetchPlan,
     SourceAccountRegistryView,
@@ -27,9 +28,11 @@ from tank.contracts.sources import (
     SourceConfiguration,
     SourceDefinition,
 )
-from tank.ops_progress import item_progress
+from tank.ops_progress import RepositorySourceProgress
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
+from tank.sources.ingestion import IngestionVersions, SourceIngestion
 from tank.sources.rate_limits import shared_request_budgets
+from tank.sources.raw_store import RawItemStorage
 from tank.sources.xsensor import XSensor
 from tank.util import TimeInput, iso, parse_time, sha256, utcnow
 
@@ -210,160 +213,33 @@ class SourceService:
             raise RuntimeError("Source fetch exhausted retries without a recorded failure")
         raise error
 
-    async def captured(self, **filters):
-        """The stored item matching (source_id, external_id) or content_hash (03 §2.9)."""
-        rows = await self.repo.list("ingest.source_items", filters=filters, limit=1)
-        return rows[0] if rows else None
+    def _ingestion(self) -> SourceIngestion:
+        return SourceIngestion(
+            self.repo,
+            IngestionVersions(
+                config_version=self.settings.config_version, code_version=self.settings.code_version
+            ),
+            self.accounts,
+            RawItemStorage(self.settings.data_dir),
+            RepositorySourceProgress(self.repo, self.settings),
+        )
 
-    async def observe_known(self, source_id, external_id, feed):
-        """True when the item is already captured; a sighting in another feed counts once (03 §3.1)."""
-        item = await self.captured(source_id=source_id, external_id=str(external_id))
-        if not item:
-            return False
-        if feed not in item.get("observed_feeds", [item.get("feed")]):
-            async with self.repo.lock("ingest-dedup"), self.repo.transaction():
-                await self._count_observation(item["item_id"], feed)
-        return True
+    async def captured(self, *, source_id: str, external_id: str) -> dict[str, JsonValue] | None:
+        """Expose the explicit durable-record boundary for captured source lookups."""
+        item = await self._ingestion().captured(source_id, external_id)
+        return item.storage_record() if item is not None else None
 
-    async def _count_observation(self, item_id, feed):
-        old = await self.repo.get("ingest.source_items", item_id)
-        old["observation_count"] = old.get("observation_count", 1) + 1
-        old["observed_feeds"] = old.get("observed_feeds", [old.get("feed")]) + [feed]
-        await self.repo.put("ingest.source_items", item_id, old)
-        return old
-
-    async def ingest(self, source: SourceDefinition, item):
-        """Store one captured item whose raw payload is already at item["raw_ref"]."""
-        sid = source.source_id
-        identity = item.get("external_id")
-        if isinstance(identity, bool) or not isinstance(identity, (str, int)) or not str(identity).strip():
+    async def observe_known(self, source_id: str, external_id: str | int, feed: str) -> bool:
+        """Normalize the external identifier before the typed observation workflow."""
+        if isinstance(external_id, bool) or not str(external_id).strip():
             raise ValueError("Source entry has no valid external identity")
-        body = " ".join(
-            (item.get("title", "") + " " + item.get("text", "") + " " + (item.get("quoted") or "")).split()
-        )
+        return await self._ingestion().observe_known(source_id, str(external_id), feed)
 
-        content_hash = (
-            sha256(body)
-            if body
-            else sha256(
-                {"source_id": sid, "external_id": item["external_id"], "media": item.get("media", [])}
-            )
-        )
-        external = str(item["external_id"])
-        feed = item.get("feed") or sid
-        item_id = item["item_id"]
-        async with self.repo.lock("ingest-dedup"), self.repo.transaction():
-            existing = await self.captured(source_id=sid, external_id=external) or await self.captured(
-                content_hash=content_hash
-            )
-            if not existing and not body and sid != "S29":
-                raise ValueError("Source entry has no normalized content")
-            if existing:
-                if existing["item_id"] == item_id:
-                    return existing
-
-                Path(item["raw_ref"]).unlink(missing_ok=True)
-                if feed in existing.get("observed_feeds", [existing.get("feed")]):
-                    return existing
-                return await self._count_observation(existing["item_id"], feed)
-            observed_at = item.get("observed_at") or iso()
-            raw_ref, raw_hash = item["raw_ref"], item["raw_sha256"]
-            account = self.accounts.get(
-                (item.get("monitored_author") or item.get("author", "")).lower().lstrip("@")
-            )
-            role = account.role if account is not None else None
-            original_account = self.accounts.get(item.get("author", "").lower().lstrip("@"))
-            from tank.sources.organization import resolve_author_organization
-
-            author_organization = resolve_author_organization(source, item, self.accounts)
-            from tank.sources.policy import initial_relevance, is_filtered_source
-
-            filtered = is_filtered_source(sid, item.get("subtype"), role)
-            priority = (
-                2
-                if sid in {"S30", "S31", "S32", "S33", "S34"}
-                or (sid == "S25" and item.get("subtype") == "commits")
-                or (sid == "S29" and role == "OTHER")
-                else 1
-            )
-            record = dict(
-                item,
-                item_id=item_id,
-                source_id=sid,
-                feed=feed,
-                source=source.name,
-                source_name=source.name,
-                author=item.get("author") or source.name,
-                author_role=role,
-                monitored_accounts=[
-                    item.get("monitored_author") or item.get("reposted_by") or item.get("author")
-                ]
-                if sid == "S29"
-                else [],
-                original_author_role=original_account.role if original_account is not None else None,
-                author_organization=author_organization,
-                deferrable=priority == 2,
-                external_id=external,
-                raw_ref=raw_ref,
-                raw_sha256=raw_hash,
-                content_hash=content_hash,
-                observed_at=observed_at,
-                observed_at_precision="COLLECTION_ONLY",
-                published_at_precision=item.get("published_at_precision")
-                or (None if item.get("published_at") else "COLLECTION_ONLY"),
-                published_prec="BUCKET"
-                if str(item.get("published_at_precision", "")).startswith("BUCKET")
-                or item.get("published_at_precision") == "DAY"
-                else "EXACT"
-                if item.get("published_at_precision") in {"EXACT", "SECOND"}
-                else "COLLECTION_ONLY",
-                published_at_bucket_size_s=86400
-                if item.get("published_at_precision") in {"DAY", "BUCKET(1d)"}
-                else item.get("published_at_bucket_size_s"),
-                published_prec_reason=None
-                if item.get("published_at")
-                and item.get("published_at_precision") in {"EXACT", "SECOND", "DAY", "BUCKET(1d)"}
-                else item.get("published_prec_reason") or "INCOMPLETE",
-                published_at_missing_reason=None
-                if item.get("published_at")
-                else item.get("published_at_missing_reason")
-                or item.get("published_prec_reason")
-                or "INCOMPLETE",
-                published_at_reason=None
-                if item.get("published_at")
-                else item.get("published_at_reason") or item.get("published_prec_reason") or "INCOMPLETE",
-                source_class=source.source_class,
-                relevance=initial_relevance(sid, item.get("subtype"), role).model_dump(
-                    mode="json", exclude_unset=True
-                ),
-                extraction_status="PENDING",
-                observation_count=1,
-                config_version=self.settings.config_version,
-                code_version=self.settings.code_version,
-            )
-            from tank.time_precision import collection_clock
-
-            record.update(collection_clock(record["observed_at"]).fields("observed_at"))
-            await self.repo.put("ingest.source_items", item_id, record)
-            await item_progress(
-                self.repo,
-                self.settings,
-                item_id,
-                "RECEIVED",
-                "Ожидает проверки Jev" if filtered else "Jev не требуется; ожидает маршрутизации к агенту",
-            )
-            if not filtered:
-                await item_progress(
-                    self.repo, self.settings, item_id, "JEV_BYPASSED", "Источник проходит напрямую к агенту"
-                )
-            await self.repo.enqueue(
-                "FILTER_ITEM" if filtered else "ROUTE_ITEM",
-                {"item_id": item_id},
-                item_id,
-                priority=priority,
-                max_attempts=2,
-            )
-            return record
+    async def ingest(self, source: SourceDefinition, item: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+        """Decode the flat capture wire and serialize the typed ingestion result."""
+        captured = captured_item(source.source_id, item)
+        stored = await self._ingestion().ingest(source, captured)
+        return stored.storage_record()
 
     async def poll_once(self, source_id, *, due_only=False, escalated=False):
         return await self.poller.poll_once(source_id, due_only=due_only, escalated=escalated)

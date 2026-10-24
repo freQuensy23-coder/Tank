@@ -47,8 +47,10 @@ def captured(svc, sid, item, payload=b"<html>source evidence</html>", observed_a
     item_id = new_id("item")
     raw_ref, digest = svc.raw(payload, source_id=sid, item_id=item_id, observed_at=observed_at)
     return dict(
-        {"url": "https://synthetic.invalid/source-evidence", "feed": sid, **item},
+        {"url": "https://synthetic.invalid/source-evidence", "feed": sid, "published_at": None, **item},
         item_id=item_id,
+        discovery_config_version=svc.settings.config_version,
+        discovery_code_version=svc.settings.code_version,
         raw_ref=raw_ref,
         raw_sha256=digest,
         observed_at=observed_at,
