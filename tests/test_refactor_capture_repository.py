@@ -7,6 +7,7 @@ from postgres_helpers import PostgresTemplate
 from pydantic import ValidationError
 
 from tank.market.capture_contracts import (
+    CaptureCadences,
     CapturePolicy,
     NewBackfillRequest,
     NewRepairRequest,
@@ -260,3 +261,10 @@ async def test_capture_control_requests_round_trip_actual_postgres(
         assert queued.budget_s == "20"
         assert queued.started_at is None
         assert await repo.repair("REQ-peer") == queued
+
+
+def test_cadence_policy_cannot_drop_a_supply_kind() -> None:
+    with pytest.raises(ValidationError, match="every supply kind"):
+        CaptureCadences(
+            oi_funding_s=60.0, kline_s=60.0, book_s=10.0, supply_by_kind={"EXCHANGE_INVENTORY": 900}
+        )

@@ -106,7 +106,7 @@ class Pre24Reference(DomainModel):
     trade_id: str | int | None
     ts: str | None
     ts_prec: str | None
-    reason: str | None
+    reason: Literal["INCOMPLETE"] | None
 
 
 class InstrumentCaptureCoverage(DomainModel):
@@ -432,6 +432,22 @@ class CaptureCadences(DomainModel):
     kline_s: float = Field(gt=0)
     book_s: float = Field(gt=0)
     supply_by_kind: dict[SupplyKind, PositiveInt]
+
+    @model_validator(mode="after")
+    def complete_supply_policy(self) -> Self:
+        required: frozenset[SupplyKind] = frozenset(
+            {
+                "EXCHANGE_INVENTORY",
+                "WALLET_FLOWS",
+                "UNLOCKS",
+                "LENDING",
+                "CHAIN_LIQUIDITY",
+                "FUNDAMENTALS",
+            }
+        )
+        if self.supply_by_kind.keys() != required:
+            raise ValueError("Capture cadence policy must declare every supply kind")
+        return self
 
 
 class CaptureTierTransition(DomainModel):
