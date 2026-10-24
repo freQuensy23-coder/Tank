@@ -5,11 +5,13 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from test_session_binding_concurrency import fixture_repo
 from test_sources import RSS
 from test_sources import settings as source_settings
 
+from tank import ops_entry_errors
 from tank.delivery import DeliveryService
-from tank.ops_entry_errors import MESSAGE_LIMIT, report_entry_errors
+from tank.ops_entry_errors import MESSAGE_LIMIT, report_entry_errors, units
 from tank.sources import SourceService
 from tank.storage import MemoryRepository
 
@@ -89,11 +91,11 @@ async def test_repeat_polls_do_not_report_same_entry_and_new_entry_is_reported_a
 
 async def test_burst_of_broken_entries_is_one_message_clipped_to_telegram_limit(tmp_path):
     repo = MemoryRepository()
-    titles = [f"Broken entry {n} " + "x" * 150 for n in range(60)]
+    titles = [f"Broken entry {n} " + "\U0001f680" * 150 for n in range(60)]
     await poll(repo, tmp_path, [broken(*titles)])
     [notice] = await entry_notices(repo)
     assert len(notice["entry_errors"]) == 60 and len(await entry_jobs(repo)) == 1
-    assert len(html.escape(notice["text"])) <= MESSAGE_LIMIT
+    assert units(html.escape(notice["text"])) <= MESSAGE_LIMIT
     assert "Новых записей с ошибкой: 60" in notice["text"]
     assert "полный список: out.ops_notices " + notice["notice_id"] in notice["text"]
 
@@ -175,3 +177,63 @@ async def test_publisher_json_entry_error_is_reported_and_delivered_to_ops(tmp_p
         await delivery.deliver(job["payload"])
     assert len(requests) == 1 and requests[0]["chat_id"] == "ops"
     assert requests[0]["text"] == html.escape(notice["text"])
+
+
+async def test_x_account_failures_are_keyed_by_account():
+    repo = MemoryRepository()
+    settings = SimpleNamespace(ops_progress_enabled=True)
+    source = {"source_id": "S29", "name": "X"}
+    feed = {"url": "apify://x"}
+    first = [
+        {"account": "alice", "reason": "MISSING_FROM_RUN"},
+        {"account": "bob", "reason": "MISSING_FROM_RUN"},
+        {"account": None, "reason": "RUN_DEGRADED"},
+    ]
+    await report_entry_errors(repo, settings, source, feed, first, "2026-10-24T12:00:00Z")
+    [notice] = await entry_notices(repo)
+    assert len(notice["entry_errors"]) == 3
+    assert "аккаунт @alice" in notice["text"] and "аккаунт @bob" in notice["text"]
+    assert "весь запуск сбора X" in notice["text"]
+    again = first + [{"account": "carol", "reason": "MISSING_FROM_RUN"}]
+    await report_entry_errors(repo, settings, source, feed, again, "2026-10-24T12:05:00Z")
+    latest = [row for row in await entry_notices(repo) if row["notice_id"] != notice["notice_id"]]
+    assert [row["entry_errors"] for row in latest] == [[{"account": "carol", "reason": "MISSING_FROM_RUN"}]]
+
+
+async def test_failed_report_does_not_fail_acquisition_and_is_retried_next_poll(tmp_path, monkeypatch):
+    repo = MemoryRepository()
+    report = ops_entry_errors.report_entry_errors
+    calls = []
+
+    async def flaky(*args):
+        calls.append(args)
+        if len(calls) == 1:
+            raise RuntimeError("database unavailable")
+        return await report(*args)
+
+    monkeypatch.setattr("tank.sources.polling.report_entry_errors", flaky)
+    results = await poll(repo, tmp_path, [broken("Bad"), broken("Bad")])
+    assert [result["items"] for result in results] == [1, 0]
+    assert len(calls) == 2 and len(await entry_notices(repo)) == 1
+    checkpoint = await repo.get("ops.source_checkpoints", "S30:0")
+    assert checkpoint["entry_errors"] and not checkpoint.get("acquisition_error")
+
+
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+async def test_entry_error_notices_persist_and_deduplicate_in_storage(backend, postgres_template):
+    async with fixture_repo(backend, postgres_template) as repo:
+        settings = SimpleNamespace(ops_progress_enabled=True)
+        source = {"source_id": "S30", "name": "Fixture blog"}
+        errors = [{"reason": "ENTRY_WITHOUT_ID_OR_URL", "entry_sha256": "e" * 64, "payload_sha256": "p" * 64}]
+        ids = await asyncio.gather(
+            *(
+                report_entry_errors(repo, settings, source, {"url": FEED_URL}, errors, "2026-10-24T12:00:00Z")
+                for _ in range(3)
+            )
+        )
+        assert len([notice_id for notice_id in ids if notice_id]) == 1
+        assert len(await entry_notices(repo)) == 1
+        assert len(await repo.list("out.ops_notices", filters={"kind": "ENTRY_ERROR"})) == 1
+        assert len(await entry_jobs(repo)) == 1

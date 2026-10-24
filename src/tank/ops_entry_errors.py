@@ -34,8 +34,8 @@ def identity(error):
         return {"entry_sha256": error["entry_sha256"]}
     if error.get("proposal_id"):
         return {"proposal_id": error["proposal_id"]}
-    if "handle" in error:
-        return {"handle": str(error.get("handle") or "").lower()}
+    if "account" in error:
+        return {"account": str(error.get("account") or "").lower()}
     return {"error": re.sub(r"\d+", "#", str(error.get("error") or ""))}
 
 
@@ -48,6 +48,10 @@ def error_key(source_id, feed_url, error):
             **identity(error),
         }
     )
+
+
+def units(text):
+    return len(text.encode("utf-16-le")) // 2
 
 
 def seen_label(value):
@@ -69,8 +73,10 @@ def entry_block(number, error, payload_shown):
             parts.append(plain(entry[name], 200))
     if error.get("proposal_id"):
         parts.append("предложение " + plain(error["proposal_id"], 120))
-    if "handle" in error:
-        parts.append("аккаунт @" + plain(error.get("handle") or "—", 60))
+    if error.get("account"):
+        parts.append("аккаунт @" + plain(error["account"], 60))
+    elif "account" in error:
+        parts.append("весь запуск сбора X")
     if parts:
         lines.append("Запись: " + " · ".join(parts))
     if entry.get("excerpt"):
@@ -104,7 +110,7 @@ def render(notice):
         rest = len(errors) - index - 1
         tail = f"\n\n… и ещё {rest}; полный список: out.ops_notices {notice['notice_id']}" if rest else ""
         candidate = text + "\n\n" + block
-        if len(html.escape(candidate + tail)) > MESSAGE_LIMIT:
+        if units(html.escape(candidate + tail)) > MESSAGE_LIMIT:
             return (
                 text
                 + f"\n\n… и ещё {len(errors) - index}; полный список: out.ops_notices {notice['notice_id']}"
