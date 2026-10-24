@@ -296,7 +296,7 @@ async def test_full_sse_pipeline_postgres(
     from tank.analysis.truth import MarketTruthService
     from tank.event_tools import LAYERS
     from tank.storage import PostgresRepository
-    from tank.util import iso, new_id
+    from tank.util import clock_iso, iso, new_id
 
     clock = datetime.now(UTC).replace(second=0, microsecond=0)
     for name in (
@@ -475,7 +475,7 @@ async def test_full_sse_pipeline_postgres(
             text = f"Binance approved the synthetic $T listing {sid}."
             if complete_market:
                 text += " The synthetic fee burn is now live and fees accrued are burned."
-            now = iso()
+            now = clock_iso()
             polled = await source.poll_once("S30")
             assert polled["status"] == "HEALTHY" and polled["items"] == 1, polled
             item = (await repo.list("ingest.source_items", filters={"external_id": sid}))[0]
@@ -754,7 +754,7 @@ async def test_full_sse_pipeline_postgres(
                 text = (
                     f"Binance cancelled the synthetic $T listing {sid} and reversed its synthetic fee burn."
                 )
-                now = iso()
+                now = clock_iso()
                 source = SourceService(repo, settings, http=http)
                 assert (await source.poll_once("S30"))["status"] == "HEALTHY"
                 denial_item = (await repo.list("ingest.source_items", filters={"external_id": feed_guid}))[0]
@@ -859,7 +859,7 @@ async def test_runtime_autonomous_source_to_telegram(
     from tank.runtime import Runtime
     from tank.runtime_composition import validate_runtime_settings
     from tank.scheduler import Scheduler
-    from tank.util import iso
+    from tank.util import clock_iso, iso
 
     repo = isolated_e2e_database
 
@@ -1198,8 +1198,8 @@ async def test_runtime_autonomous_source_to_telegram(
                         "event_id": event_id,
                         "token_id": token,
                         "anchor": iso(anchor),
-                        "started_at": iso(),
-                        "finished_at": iso(),
+                        "started_at": clock_iso(),
+                        "finished_at": clock_iso(),
                         "status": "FAILED",
                         "reason": "SYNTHETIC_CAPTURE_INPUTS_UNAVAILABLE",
                         "result": None,
@@ -1265,7 +1265,7 @@ async def test_runtime_autonomous_source_to_telegram(
                     "status": latest["status"] if latest else "NOT_REQUESTED",
                     "reason": latest["reason"] if latest else "NO_DURABLE_CAPTURE_REQUEST",
                     "backfill_id": latest["backfill_id"] if latest else None,
-                    "observed_at": iso(),
+                    "observed_at": clock_iso(),
                     "bounded_wait_s": 0,
                     "incomplete_windows_excluded": True,
                 },
