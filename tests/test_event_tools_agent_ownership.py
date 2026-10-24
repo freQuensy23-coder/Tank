@@ -18,18 +18,19 @@ async def owner_service(tmp_path):
     return EventToolService(repo, Settings(data_dir=tmp_path), None, None)
 
 
-@pytest.mark.parametrize("query", ["sama", "@sama", " @SAMA "])
-async def test_registry_handle_notation_preserves_registered_authority(owner_service, query):
-    result = await owner_service.get_registry({"entity_or_token": query}, {})
+@pytest.mark.parametrize("query", [{"entity_id": "world"}, {"token_id": "world:WLD"}])
+async def test_registry_filter_preserves_registered_authority(owner_service, query):
+    result = await owner_service.get_registry(query, {})
     account = next(row for row in result["x_accounts"] if row["handle"] == "sama")
     assert {row["entity_id"] for row in account["official_authorities"]} == {"world", "openai"}
-    assert result == await owner_service.get_registry({"entity_or_token": "sama"}, {})
+    assert [row["token_id"] for row in result["tokens"]] == ["world:WLD"]
+    assert result == await owner_service.get_registry({"entity_id": "world"}, {})
 
 
-@pytest.mark.parametrize("query", ["@", "@@sama", "@unregistered_handle"])
-async def test_unmatched_handle_does_not_return_registered_accounts(owner_service, query):
-    result = await owner_service.get_registry({"entity_or_token": query}, {})
-    assert result["x_accounts"] == []
+async def test_registry_filter_returns_only_the_named_identity(owner_service):
+    result = await owner_service.get_registry({"entity_id": "openai"}, {})
+    assert [row["entity_id"] for row in result["entities"]] == ["openai"]
+    assert result["x_accounts"] == [] and result["tokens"] == [] and result["instruments"] == []
 
 
 async def create(service, *, verified=True, state="LIVE", certainty="HIGH"):
@@ -51,8 +52,8 @@ async def create(service, *, verified=True, state="LIVE", certainty="HIGH"):
         "statement": "Neutral agent interpretation",
         "certainty": certainty,
         "certainty_reason": "Analyst verified the primary artifact",
-        "entities": [{"name": "World", "entity_id": None, "role": "ACTOR"}],
-        "tokens": ["world:WLD"],
+        "entities": [{"entity_id": "world", "role": "ACTOR"}],
+        "token_ids": ["world:WLD"],
         "event_time": {"value": now, "precision": "EXACT", "quote": "Declared primary time"},
         "public_at": {
             "value": iso(utcnow() + timedelta(days=1)),
@@ -87,7 +88,7 @@ def assessment(proof, *, klass="MATERIAL", criterion="MATERIAL"):
     return {
         "class": klass,
         "criterion": criterion,
-        "criterion_quote": "Analyst selected support",
+        "criterion_claim_id": proof,
         "dims": {
             name: {"value": 8, "rationale": "Agent dimensional judgment", "evidence": [proof]}
             for name in [
@@ -175,28 +176,49 @@ async def test_assessment_without_universe_concern_is_low(owner_service, klass, 
         ("LOW", "LIVE", "M2", None, "MATERIAL"),
         ("HIGH", "PROPOSED", "M2", None, "MATERIAL"),
         ("HIGH", "PROPOSED", "M4", None, "MAJOR"),
-        ("HIGH", "LIVE", "M1", "uncovered", "MATERIAL"),
+        ("HIGH", "LIVE", "M1", "sec", "MATERIAL"),
         ("HIGH", "LIVE", "M1", "okx", "MAJOR"),
-        ("HIGH", "LIVE", "M1", "Coinbase", "MAJOR"),
+        ("HIGH", "LIVE", "M1", "coinbase", "MAJOR"),
+        ("HIGH", "LIVE", "M2", None, "MAJOR"),
     ],
 )
 async def test_explicit_class_caps_still_apply(owner_service, certainty, state, criterion, venue, expected):
     result, _ = await create(owner_service, certainty=certainty, state=state)
     supplied = assessment(result["accepted_claims"][0]["claim_id"], klass="MAJOR", criterion=criterion)
     if venue:
-        supplied["criterion_venue"] = venue
+        supplied["criterion_venue_id"] = venue
     out = await owner_service.set_assessment({"event_id": result["event_id"], "assessment": supplied}, {})
     assert out["class"] == expected
+    assert out["criterion_quote"] == result["accepted_claims"][0]["quote"]
+
+
+async def test_major_without_a_criterion_claim_is_material(owner_service):
+    result, _ = await create(owner_service)
+    supplied = assessment(None, klass="MAJOR", criterion="M2")
+    for dimension in supplied["dims"].values():
+        dimension["evidence"] = [result["accepted_claims"][0]["claim_id"]]
+    out = await owner_service.set_assessment({"event_id": result["event_id"], "assessment": supplied}, {})
+    assert out["class"] == "MATERIAL" and "MAJOR_EVIDENCE" in out["class_reasons"]
+    supplied["criterion_claim_id"] = "not-a-claim-of-this-event"
+    with pytest.raises(ValueError, match="criterion_claim_id must be an accepted claim of this event"):
+        await owner_service.set_assessment({"event_id": result["event_id"], "assessment": supplied}, {})
 
 
 @pytest.mark.parametrize("venue", [None, "", "   "])
 async def test_m1_requires_explicit_venue_without_guessing_from_prose(owner_service, venue):
     result, _ = await create(owner_service)
     supplied = assessment(result["accepted_claims"][0]["claim_id"], klass="MAJOR", criterion="M1")
-    supplied["criterion_quote"] = "Binance lists this token"
     if venue is not None:
-        supplied["criterion_venue"] = venue
-    with pytest.raises(ValueError, match="M1 requires criterion_venue"):
+        supplied["criterion_venue_id"] = venue
+    with pytest.raises(ValueError, match="M1 requires criterion_venue_id"):
+        await owner_service.set_assessment({"event_id": result["event_id"], "assessment": supplied}, {})
+
+
+async def test_m1_venue_outside_the_registry_is_refused_not_guessed(owner_service):
+    result, _ = await create(owner_service)
+    supplied = assessment(result["accepted_claims"][0]["claim_id"], klass="MAJOR", criterion="M1")
+    supplied["criterion_venue_id"] = "upbit"
+    with pytest.raises(ValueError, match="M1 counts only Binance"):
         await owner_service.set_assessment({"event_id": result["event_id"], "assessment": supplied}, {})
 
 
@@ -258,14 +280,14 @@ async def test_capture_caps_and_source_side_integration_remain_deterministic(own
     [
         ("matching", "STRUCTURAL_SHOCK"),
         ("implicit", "STRUCTURAL_SHOCK"),
-        ("unrelated_quote", "MAJOR"),
+        ("unrelated_claim", "MAJOR"),
         ("different_gate", "MAJOR"),
         ("unsatisfied", "MAJOR"),
         ("unverified", "MAJOR"),
-        ("empty_quote", "MATERIAL"),
+        ("no_claim", "MATERIAL"),
     ],
 )
-async def test_structural_criterion_quote_binds_selected_gate_verified_claim(
+async def test_structural_criterion_claim_binds_selected_gate_verified_claim(
     owner_service, binding, expected
 ):
     import copy
@@ -287,25 +309,27 @@ async def test_structural_criterion_quote_binds_selected_gate_verified_claim(
     )
     await owner_service.repo.put("evt.claims", "unrelated", unrelated)
     supplied = assessment(proof, klass="STRUCTURAL_SHOCK", criterion="G1")
-    supplied["criterion_quote"] = "  requires this\n settlement infrastructure. "
     supplied["structural_gates"] = [{"gate": "G1", "satisfied": True, "evidence": [proof]}]
     if binding == "implicit":
         supplied.pop("structural_gates")
-    elif binding == "unrelated_quote":
-        supplied["criterion_quote"] = unrelated["evidence"][0]["quote"]
+    elif binding == "unrelated_claim":
+        supplied["criterion_claim_id"] = "unrelated"
     elif binding == "different_gate":
         supplied["structural_gates"][0]["gate"] = "G2"
     elif binding == "unsatisfied":
         supplied["structural_gates"][0]["satisfied"] = False
-    elif binding == "empty_quote":
-        supplied["criterion_quote"] = "   "
+    elif binding == "no_claim":
+        supplied["criterion_claim_id"] = None
     supplied["impact_horizon"].update(ramp_shape="STEP", dependencies=[], time_to_materiality="Weeks")
     original = copy.deepcopy(supplied)
     result = await owner_service.dispatch("set_assessment", {"event_id": eid, "assessment": supplied}, {})
     assert supplied == original
     assert result["class"] == expected
     assert result["criterion"] == "G1"
-    assert result["criterion_quote"] == original["criterion_quote"]
+    assert result["criterion_claim_id"] == original["criterion_claim_id"]
+    assert result["criterion_quote"] == (
+        {proof: claim["quote"], "unrelated": unrelated["quote"]}.get(original["criterion_claim_id"]) or ""
+    )
     assert ("STRUCTURAL_GATE" in result["class_reasons"]) == (expected != "STRUCTURAL_SHOCK")
 
     assert (await owner_service.repo.get("evt.claims", proof))["evidence"][0]["quote"] == primary_quote

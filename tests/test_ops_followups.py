@@ -14,6 +14,7 @@ from test_telegram_followups import (
 )
 
 from tank.agents import SessionService
+from tank.agents.context import CONTEXT_VERSION
 from tank.storage import MemoryRepository
 from tank.telegram_inbox import (
     EARLY_ARCHIVED_TEXT,
@@ -96,7 +97,7 @@ async def analyst_session(repo, session_id, event_id, item_id, *, status="OPEN",
         session_id,
         {
             "session_id": session_id,
-            "model_context_version": 1,
+            "model_context_version": CONTEXT_VERSION,
             "event_id": event_id,
             "item_id": item_id if kind == "NEW_ITEM" else "itm_opening",
             "status": status,

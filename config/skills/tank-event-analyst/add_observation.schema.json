@@ -4,43 +4,9 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "document": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "url": {
-          "type": "string"
-        },
-        "title": {
-          "type": "string"
-        },
-        "observed_at": {
-          "type": "string"
-        },
-        "excerpt": {
-          "type": "string"
-        }
-      },
-      "anyOf": [
-        {
-          "required": [
-            "url"
-          ]
-        },
-        {
-          "required": [
-            "title",
-            "observed_at"
-          ]
-        },
-        {
-          "required": [
-            "excerpt",
-            "observed_at"
-          ]
-        }
-      ],
-      "description": "For a callback without an incoming source, select the displayed document establishing this observation by URL and observation time. Required for milestone, watch or question follow-ups without a source. Omit when an incoming source is already supplied."
+    "item_id": {
+      "type": "string",
+      "description": "Only for a callback without an incoming source: the stored document that establishes this observation, ITM-\u2026 for a collected item or web-\u2026 for a page read with fetch_page; find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abSource document by URL\u00bb. Omit when an incoming source is supplied."
     },
     "link": {
       "enum": [
@@ -137,15 +103,15 @@
           },
           "quote": {
             "type": "string",
-            "description": "Verbatim atomic quote. Cite its actual saved document through evidence; a fetched page has its own document even when its URL matches the discovery item."
+            "description": "Verbatim atomic quote. Omit evidence when it comes from the incoming source; otherwise cite the stored document containing it in evidence (a page read with fetch_page is its own document, even when its URL matches the discovery item)."
           },
           "approval_dependency": {
             "type": "object",
             "additionalProperties": false,
             "required": [
               "scope",
-              "tokens",
-              "claims"
+              "token_ids",
+              "claim_ids"
             ],
             "properties": {
               "scope": {
@@ -154,85 +120,22 @@
                   "TOKEN"
                 ]
               },
-              "tokens": {
+              "token_ids": {
                 "type": "array",
                 "items": {
-                  "type": "string",
-                  "minLength": 1
-                }
+                  "type": "string"
+                },
+                "description": "Registry token keys (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC or uniswap:UNI."
               },
-              "claims": {
+              "claim_ids": {
                 "type": "array",
                 "items": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "quote": {
-                      "type": "string"
-                    },
-                    "subject": {
-                      "type": "string"
-                    },
-                    "predicate": {
-                      "type": "string"
-                    },
-                    "object": {
-                      "type": "string"
-                    },
-                    "sources": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "url": {
-                            "type": "string"
-                          },
-                          "title": {
-                            "type": "string"
-                          },
-                          "observed_at": {
-                            "type": "string"
-                          },
-                          "excerpt": {
-                            "type": "string"
-                          }
-                        },
-                        "anyOf": [
-                          {
-                            "required": [
-                              "url"
-                            ]
-                          },
-                          {
-                            "required": [
-                              "title",
-                              "observed_at"
-                            ]
-                          },
-                          {
-                            "required": [
-                              "excerpt",
-                              "observed_at"
-                            ]
-                          }
-                        ]
-                      }
-                    },
-                    "verified": {
-                      "type": "boolean"
-                    },
-                    "stage": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "quote"
-                  ]
-                }
+                  "type": "string"
+                },
+                "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
               }
             },
-            "description": "Explicit model-authored thesis dependency. References must identify existing accepted causal RELATION claims; the service validates scope and project name and tickerentity and does not infer dependencies from text."
+            "description": "Explicit thesis dependency of a REJECTED approval: the accepted causal RELATION claims of the current event it rests on (claim_ids) and, for TOKEN scope, the registry tokens it concerns (token_ids). Tank validates the IDs and their scope; it does not infer dependencies from text."
           },
           "verified": {
             "type": "boolean",
@@ -245,130 +148,32 @@
             ],
             "description": "Agent-supplied explanation of what confirmation is missing for this unverified claim (for example, no announcement from the named organization). Tank preserves and displays it verbatim; null means the reason was not established. Keep it to about 10 words; it is printed in NOT VERIFIED."
           },
-          "supersedes_claims": {
+          "supersedes_claim_ids": {
             "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Claim IDs (CLM-\u2026) of prior claims of the current event that this claim replaces on the current card; the old claims remain historical evidence. Omit unrelated claims and remaining uncertainties; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+          },
+          "evidence": {
+            "type": "array",
+            "description": "The stored document containing this claim's quote, by item_id. Omit for a quote from the incoming source. For text read with fetch_page or web_search, cite that stored document, not the discovery document merely because its URL matches. The observation's own document is the incoming source, or the item_id given for a callback without one.",
             "items": {
               "type": "object",
               "additionalProperties": false,
               "properties": {
+                "item_id": {
+                  "type": "string",
+                  "description": "ID of a stored source document: ITM-\u2026 for a collected item, web-\u2026 for a page read with fetch_page or a web_search result; find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abSource document by URL\u00bb."
+                },
                 "quote": {
-                  "type": "string"
-                },
-                "subject": {
-                  "type": "string"
-                },
-                "predicate": {
-                  "type": "string"
-                },
-                "object": {
-                  "type": "string"
-                },
-                "sources": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "url": {
-                        "type": "string"
-                      },
-                      "title": {
-                        "type": "string"
-                      },
-                      "observed_at": {
-                        "type": "string"
-                      },
-                      "excerpt": {
-                        "type": "string"
-                      }
-                    },
-                    "anyOf": [
-                      {
-                        "required": [
-                          "url"
-                        ]
-                      },
-                      {
-                        "required": [
-                          "title",
-                          "observed_at"
-                        ]
-                      },
-                      {
-                        "required": [
-                          "excerpt",
-                          "observed_at"
-                        ]
-                      }
-                    ]
-                  }
-                },
-                "verified": {
-                  "type": "boolean"
-                },
-                "stage": {
                   "type": "string"
                 }
               },
               "required": [
+                "item_id",
                 "quote"
               ]
-            }
-          },
-          "evidence": {
-            "type": "array",
-            "minItems": 1,
-            "description": "Agent-supplied exact source document containing this claim's quote. For text read with fetch_page or web_search, use that returned document, not the discovery document merely because its URL matches. The observation source is the incoming source, or the root document selected for a callback without one. Tank preserves these references without semantic rewriting.",
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "document",
-                "quote"
-              ],
-              "properties": {
-                "document": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "url": {
-                      "type": "string"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "observed_at": {
-                      "type": "string"
-                    },
-                    "excerpt": {
-                      "type": "string"
-                    }
-                  },
-                  "anyOf": [
-                    {
-                      "required": [
-                        "url"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "title",
-                        "observed_at"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "excerpt",
-                        "observed_at"
-                      ]
-                    }
-                  ]
-                },
-                "quote": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              }
             }
           }
         }
@@ -458,5 +263,5 @@
     "public_at",
     "freshness"
   ],
-  "description": "Add claims to the current event. The host binds an incoming source automatically; for a callback without one, select the displayed source in document. Cite claim evidence by displayed URL and observation time. Replace prior claims by quoting them in supersedes_claims."
+  "description": "Add claims to the current event. The host binds the incoming source; for a callback without one (MILESTONE, CONDITION_FIRED, CALL_EXPIRED, USER_QUESTION), pass the item_id of the stored document that establishes the update, such as a page read with fetch_page. Cite claim evidence by item_id and replace prior claims of this event with supersedes_claim_ids."
 }

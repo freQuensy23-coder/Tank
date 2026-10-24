@@ -4,13 +4,13 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "token": {
+    "token_id": {
       "type": "string",
-      "description": "Displayed project name and ticker, e.g. 'Bitcoin (BTC)' or 'World (WLD)'. An unambiguous ticker such as BTC or $BTC is also accepted."
+      "description": "Registry token key (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC in \u00abBitcoin (BTC) \u00b7 bitcoin:BTC\u00bb."
     }
   },
   "required": [
-    "token"
+    "token_id"
   ],
   "description": "Compute the deterministic token decision from the event assessment, beneficiary/capture evidence and current Market Truth. Returns action, economic/market/final grades, outlook, conditions, decisive facts and data limitations. Use these stored outputs for card numbers; independent sandbox calculations may inform judgment but do not replace authoritative decision or Market Truth figures."
 }

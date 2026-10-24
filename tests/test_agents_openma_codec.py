@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tank.agents.context import CONTEXT_VERSION
+
 pytestmark = [pytest.mark.integration, pytest.mark.node, pytest.mark.process]
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -73,7 +75,7 @@ async def test_patched_actual_tool_uses_host_bound_item(tmp_path):
     )
     session = {
         "session_id": "s",
-        "model_context_version": 1,
+        "model_context_version": CONTEXT_VERSION,
         "item_id": "real-item",
         "config_version": "config",
         "code_version": "code",

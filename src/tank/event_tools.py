@@ -47,6 +47,7 @@ LAYERS = [
     "CUSTODY_COMPLIANCE",
 ]
 IMPLEMENTATION = dict(zip(STATES, [0, 4, 6, 6, 7, 8, 10], strict=False))
+M1_VENUES = frozenset({"binance", "coinbase", "okx", "bybit", "kraken", "robinhood"})
 
 
 def _word(term, text):
@@ -102,6 +103,78 @@ def resolve_token(registry, value, context=""):
 
 def resolve_tokens(registry, values, context=""):
     return list(dict.fromkeys(resolve_token(registry, value, context) for value in values or []))
+
+
+def entity_identity(registry, entity_id, name, context=""):
+    """V3: an entity is named by its registry entity_id or, outside the registry, by its name (kept UNRESOLVED).
+    A name the registry resolves (alias, or qualified alias with its qualifier) is refused: pass the entity_id."""
+    if entity_id is not None:
+        return entity_id
+    if not str(name or "").strip():
+        raise ValueError("Name each entity by its registry entity_id or, outside the registry, by its name")
+    resolved = resolve_entity(registry, name, context=context)
+    if not resolved.startswith("UNRESOLVED:"):
+        raise ValueError(f"{name!r} is the registry entity {resolved}: pass its entity_id")
+    return "UNRESOLVED:" + str(name).strip()
+
+
+def token_identities(registry, token_ids, names, context=""):
+    """Registry token_ids as given; a token outside the registry is kept by its name, UNRESOLVED.
+    A name the registry resolves (ticker, $TICKER or project alias) is refused: pass the token_id."""
+    unresolved = []
+    for name in names:
+        if not str(name).strip():
+            raise ValueError("A token outside the registry needs its name")
+        resolved = resolve_token(registry, name, context)
+        if any(row["token_id"] == resolved for row in registry.get("tokens", [])):
+            raise ValueError(f"{name!r} is the registry token {resolved}: pass its token_id")
+        unresolved.append("UNRESOLVED:" + str(name).strip())
+    return list(dict.fromkeys([*token_ids, *unresolved]))
+
+
+SCOPED_TOOLS = frozenset(
+    {
+        "add_observation",
+        "set_assessment",
+        "set_beneficiaries",
+        "get_market_truth",
+        "get_decision",
+        "publish_card",
+        "schedule_milestone",
+        "set_watch_condition",
+    }
+)
+HOST_BOUND_FIELDS = {
+    **{tool: ("event_id",) for tool in SCOPED_TOOLS},
+    "add_observation": ("event_id", "item_id"),
+    "record_event": ("item_id",),
+    "get_item": ("item_id",),
+    "get_event": ("event_id",),
+    "record_review": ("proposal_id",),
+}
+
+
+def domain_schema(settings, tool):
+    """A tool's one input shape: its public schema plus the records the host binds itself."""
+    skill = "tank-scout-reviewer" if tool == "record_review" else "tank-event-analyst"
+    relative = f"skills/{skill}/tools.json"
+    if not settings.has_config(relative):
+        return None
+    schema = next(
+        (
+            copy.deepcopy(row["input_schema"])
+            for row in settings.read_config_json(relative)
+            if row["name"] == tool
+        ),
+        None,
+    )
+    if schema is None:
+        return None
+    for field in HOST_BOUND_FIELDS.get(tool, ()):
+        schema.setdefault("properties", {})[field] = {"type": "string"}
+        if field not in schema.setdefault("required", []):
+            schema["required"].append(field)
+    return schema
 
 
 TOOL_RESULT_MAX_BYTES = 40_000
@@ -422,28 +495,6 @@ class EventToolService:
             ).items()
         }
 
-    def resolve_token_arguments(self, tool, arguments):
-        """V3 for token arguments: a ticker or $TICKER becomes its registry
-        token_id ("BTC" -> "bitcoin:BTC"). Other values pass unchanged; a tool
-        that cannot use them names the token and the expected form."""
-        fields = {
-            "get_decision": "token",
-            "get_token_facts": "token",
-            "get_market_truth": "tokens",
-            "set_watch_condition": "token",
-        }
-        field = fields.get(tool)
-        if field is None or field not in arguments:
-            return arguments
-        registry = self.settings.load_config("registry")
-
-        def one(value):
-            resolved = resolve_token(registry, value)
-            return value if isinstance(resolved, str) and resolved.startswith("UNRESOLVED:") else resolved
-
-        value = arguments[field]
-        return dict(arguments, **{field: [one(v) for v in value] if isinstance(value, list) else one(value)})
-
     async def dispatch(self, tool, arguments, context):
         if tool not in self.TOOLS:
             raise ValueError(f"Unknown Tank tool: {tool}")
@@ -465,22 +516,12 @@ class EventToolService:
                 trigger = active.get("payload") or stored_session.get("last_payload") or {}
                 context["trigger_kind"] = trigger.get("kind")
                 context["trigger_item_id"] = trigger.get("item_id")
-        scoped = {
-            "add_observation",
-            "set_assessment",
-            "set_beneficiaries",
-            "get_market_truth",
-            "get_decision",
-            "publish_card",
-            "schedule_milestone",
-            "set_watch_condition",
-        }
         analyst = context.get("role") == "analyst" or (
             context.get("session_id") and context.get("role") not in {"system", "scout"}
         )
         if analyst:
             bound = context.get("event_id")
-            if tool in scoped and (not bound or arguments.get("event_id") != bound):
+            if tool in SCOPED_TOOLS and (not bound or arguments.get("event_id") != bound):
                 return {
                     "accepted": False,
                     "reason": "EVENT_SCOPE",
@@ -528,7 +569,7 @@ class EventToolService:
                         {
                             "hook": "BENEFICIARY_LAYER",
                             "subject": "BENEFICIARY_LAYER:" + str(edge.get("layer")),
-                            "evidence": evidence,
+                            "evidence": [{"claim_id": ref} for ref in evidence],
                         },
                         dict(context or {}),
                     )
@@ -538,10 +579,9 @@ class EventToolService:
                     "reason": "Noncanonical beneficiary layer requires scout review",
                     "proposal_ids": proposals,
                 }
-        schema_relative = f"tool_contracts/{tool}.schema.json"
-        if self.settings.has_config(schema_relative):
-            validate_schema(arguments, self.settings.read_config_json(schema_relative))
-        arguments = self.resolve_token_arguments(tool, arguments)
+        schema = domain_schema(self.settings, tool)
+        if schema is not None:
+            validate_schema(arguments, schema)
         ctx = dict(context or {})
         event_id = arguments.get("event_id") or ctx.get("event_id")
         if tool == "get_decision" and not ctx.get("_decision_market_refresh_completed"):
@@ -642,7 +682,7 @@ class EventToolService:
             raise ValueError("days must be >0 and <=90")
         now = utcnow()
         cutoff = now - timedelta(days=days)
-        sources = a.get("sources", [])
+        sources = a.get("source_ids", [])
         terms = a["query"].casefold().split()
         if self.reference_clock is not None:
             rows = []
@@ -681,8 +721,24 @@ class EventToolService:
             )[:20]
         }
 
+    def identities(self, a):
+        """The registry identities a token_id or entity_id filter covers: the token or entity and its pair."""
+        tokens = self.settings.load_config("registry").get("tokens", [])
+        wanted = set()
+        if a.get("token_id"):
+            wanted |= {
+                a["token_id"],
+                *(row.get("entity_id") for row in tokens if row["token_id"] == a["token_id"]),
+            }
+        if a.get("entity_id"):
+            wanted |= {
+                a["entity_id"],
+                *(row["token_id"] for row in tokens if row.get("entity_id") == a["entity_id"]),
+            }
+        return wanted - {None}
+
     async def list_open_events(self, a, c):
-        q = a.get("entity_or_token", "").casefold()
+        wanted = self.identities(a)
 
         statuses = {}
         for session in await self.rows("ops.agent_sessions"):
@@ -714,7 +770,14 @@ class EventToolService:
                 for r in await self.rows("evt.events")
                 if r["lifecycle"] not in {"CLOSED", "MERGED", "INVALIDATED"}
                 and r["event_id"] not in failed
-                and (not q or q in canonical_json(r).casefold())
+                and (
+                    not wanted
+                    or wanted
+                    & {
+                        *(e.get("entity_id") for e in r.get("entities", []) if isinstance(e, dict)),
+                        *r.get("tokens_mentioned", []),
+                    }
+                )
             ]
         }
 
@@ -737,14 +800,13 @@ class EventToolService:
         }
 
     async def get_registry(self, a, c):
-        q = a.get("entity_or_token", "").strip().casefold()
-        if q.startswith("@") and len(q) > 1:
-            q = q[1:]
+        wanted = self.identities(a)
+        registry = self.settings.load_config("registry")
         return {
             name: [
                 r
-                for r in self.settings.load_config("registry").get(name, [])
-                if not q or q in canonical_json(r).casefold()
+                for r in registry.get(name, [])
+                if not wanted or wanted & {r.get("entity_id"), r.get("token_id")}
             ]
             for name in ["entities", "tokens", "instruments", "x_accounts"]
         } | {"dependency_map": self.settings.load_config("dependency_map")}
@@ -819,8 +881,8 @@ class EventToolService:
         """Stored fundamentals, supply and unlocks known at the analysis cutoff
         (03 §3.2). Unlocks dated before the cutoff stay visible, labelled PAST,
         so the agent can weigh a recent unlock; Tank draws no conclusion."""
-        token = a["token"]
-        registry = await self.get_registry({"entity_or_token": token}, c)
+        token = a["token_id"]
+        registry = await self.get_registry({"token_id": token}, c)
         cutoff = utcnow()
 
         def known(row):
@@ -1189,7 +1251,7 @@ class EventToolService:
             "certainty",
             "certainty_reason",
             "entities",
-            "tokens",
+            "token_ids",
             "event_time",
             "public_at",
             "freshness",
@@ -1214,20 +1276,20 @@ class EventToolService:
             return {"is_event": False}
         eid = new_id("evt")
         obs = new_id("obs")
-        entities = []
         registry = self.settings.load_config("registry")
-
-        context = " ".join(
-            [x["statement"], *[str(t) for t in x["tokens"]], *[str(e.get("name")) for e in x["entities"]]]
-        )
-        for e in x["entities"]:
-            entities.append(
-                {
-                    "entity_id": resolve_entity(registry, e["name"], e.get("entity_id"), context),
-                    "role": e["role"],
-                }
-            )
-        tokens_mentioned = resolve_tokens(registry, x["tokens"], context)
+        names = [str(e["name"]) for e in x["entities"] if e.get("name") is not None]
+        context = " ".join([x["statement"], *names, *[str(t) for t in x.get("token_names", [])]])
+        entities = [
+            {
+                "entity_id": entity_identity(registry, e.get("entity_id"), e.get("name"), context),
+                "role": e["role"],
+            }
+            for e in x["entities"]
+        ]
+        tokens_mentioned = token_identities(registry, x["token_ids"], x.get("token_names", []), context)
+        milestone = x.get("next_milestone")
+        if milestone and not await self.registered_source(milestone.get("source_id")):
+            raise ValueError("next_milestone.source_id must be a registered source_id")
         claims, dropped = await self.validate_claims(x["claims"], item, c, x["certainty"], obs, eid)
         primary_fact_basis = [claim["claim_id"] for claim in claims if claim["verified"]]
         certainty = x["certainty"]
@@ -1299,14 +1361,13 @@ class EventToolService:
                 if session:
                     session["event_id"] = eid
                     await self.repo.put("ops.agent_sessions", c["session_id"], session)
-        milestone = x.get("next_milestone")
         if claims and item.get("source_id") == "S24" and item.get("end"):
             await self.schedule_milestone(
                 {
                     "event_id": eid,
                     "milestone": "Snapshot vote ends",
                     **propagate_timestamp(item, "end").fields("due_at"),
-                    "source": "S24",
+                    "source_id": "S24",
                 },
                 c,
             )
@@ -1316,7 +1377,7 @@ class EventToolService:
                     "event_id": eid,
                     "milestone": milestone["kind"],
                     "due_at": milestone["due_at"],
-                    "source": milestone["source_id"],
+                    "source_id": milestone["source_id"],
                 },
                 c,
             )
@@ -1561,6 +1622,8 @@ class EventToolService:
         target = await self.require("evt.events", a["event_id"])
         if source["event_id"] == target["event_id"]:
             return target
+        if target.get("lifecycle") in {"CLOSED", "MERGED", "INVALIDATED"}:
+            raise ValueError("Merge target must be an open event")
         if parse_time(target["known_to_us_at"]) > parse_time(source["known_to_us_at"]):
             raise ValueError("Merge target must be the earlier event")
         async with self.repo.lock("event:" + target["event_id"]):
@@ -1625,7 +1688,19 @@ class EventToolService:
         claims = await self.rows("evt.claims", eid)
         accepted = {r["claim_id"]: r for r in claims if r["accepted"]}
         criterion = x["criterion"]
-        quote = x.get("criterion_quote", "")
+        criterion_claim_id = x.get("criterion_claim_id")
+        criterion_claim = accepted.get(criterion_claim_id) if criterion_claim_id else None
+        if criterion_claim_id and criterion_claim is None:
+            raise ValueError("criterion_claim_id must be an accepted claim of this event")
+        quote = (criterion_claim or {}).get("quote") or next(
+            (
+                entry.get("quote")
+                for entry in (criterion_claim or {}).get("evidence", [])
+                if entry.get("quote")
+            ),
+            "",
+        )
+        x["criterion_quote"] = quote
         klass = x["class"]
         caps = []
         if klass not in {"LOW", "MATERIAL", "MAJOR", "STRUCTURAL_SHOCK"}:
@@ -1648,16 +1723,11 @@ class EventToolService:
             "LOW",
         }:
             raise ValueError("Invalid class criterion")
-        criterion_proof = [
-            claim["claim_id"]
-            for claim in accepted.values()
-            if claim.get("verified") is True
-            and quote.strip()
-            and any(
-                " ".join(quote.split()) in " ".join((evidence.get("quote") or "").split())
-                for evidence in claim.get("evidence", [])
-            )
-        ]
+        criterion_proof = (
+            [criterion_claim_id]
+            if criterion_claim and criterion_claim.get("verified") is True and quote.strip()
+            else []
+        )
         gates = x.get("structural_gates")
         if gates is None:
             gates = (
@@ -1689,34 +1759,24 @@ class EventToolService:
             caps.append("STRUCTURAL_GATE")
         if klass == "MAJOR" and (
             event["certainty"] == "LOW"
+            or criterion_claim is None
             or not quote.strip()
             or criterion not in {"M1", "M2", "M3", "M4", "M5", "M6", "M7", "G1", "G2", "G3", "G4", "G5", "G6"}
         ):
             klass = "MATERIAL"
             caps.append("MAJOR_EVIDENCE")
         if criterion == "M1":
-            venue = x.get("criterion_venue")
+            venue = x.get("criterion_venue_id")
             if not isinstance(venue, str) or not venue.strip():
-                raise ValueError("M1 requires criterion_venue")
-            name = venue.strip().casefold()
-            identity = next(
-                (
-                    row["entity_id"]
-                    for row in self.settings.load_config("registry").get("entities", [])
-                    if name
-                    in {
-                        str(value).casefold()
-                        for value in [
-                            row["entity_id"],
-                            row.get("name", ""),
-                            *row.get("names", []),
-                            *row.get("aliases", []),
-                        ]
-                    }
-                ),
-                name,
-            )
-            if identity not in {"binance", "coinbase", "okx", "bybit", "kraken", "robinhood"}:
+                raise ValueError("M1 requires criterion_venue_id, the registry entity_id of the venue")
+            if not any(
+                row["entity_id"] == venue for row in self.settings.load_config("registry").get("entities", [])
+            ):
+                raise ValueError(
+                    "criterion_venue_id is not a registry entity; M1 counts only Binance, Coinbase, OKX, Bybit, "
+                    "Kraken and Robinhood, so a listing elsewhere is not M1"
+                )
+            if venue not in M1_VENUES:
                 klass = "MATERIAL"
                 caps.append("M1_VENUE")
         if (
@@ -1893,12 +1953,14 @@ class EventToolService:
         edges = []
         for raw in a["edges"]:
             e = copy.deepcopy(raw)
-            if e.get("token_id") is not None:
-                e["token_id"] = resolve_token(
-                    registry,
-                    e["token_id"],
-                    " ".join(str(e.get(k) or "") for k in ("entity_name", "entity_id")),
-                )
+            context = " ".join(str(e.get(k) or "") for k in ("entity_name", "token_name"))
+            e["entity_id"] = entity_identity(registry, e.get("entity_id"), e.get("entity_name"), context)
+            if e.get("token_name") is not None:
+                if e.get("token_id") is not None:
+                    raise ValueError(
+                        "Name an edge token by its registry token_id or, outside the registry, by token_name"
+                    )
+                e["token_id"] = token_identities(registry, [], [e["token_name"]], context)[0]
             if (
                 isinstance(e.get("exposure_score"), bool)
                 or not isinstance(e.get("exposure_score"), (int, float))
@@ -2124,7 +2186,7 @@ class EventToolService:
     async def refresh_fired_condition_truth(self, a, c):
         """Refresh actual fired-condition inputs before entering mutation locks."""
         eid = a["event_id"]
-        token = a.get("token", a.get("token_id"))
+        token = a["token_id"]
         fired = [
             row
             for row in await self.rows(
@@ -2149,7 +2211,7 @@ class EventToolService:
             return prepared_ids
         refresh_key = sha256(sorted((row["cond_id"], row["fired_at"]) for row in fired))
         await self.get_market_truth(
-            {"event_id": eid, "tokens": [token]}, c, refresh_key="condition:" + refresh_key
+            {"event_id": eid, "token_ids": [token]}, c, refresh_key="condition:" + refresh_key
         )
         return prepared_ids
 
@@ -2164,7 +2226,7 @@ class EventToolService:
         event = await self.require("evt.events", eid)
         assessment = await self.require("evt.ems_assessments", event["current_ems_id"])
         managed = await self.managed_tokens(eid)
-        if assessment["class"] not in {"MAJOR", "STRUCTURAL_SHOCK"} and not set(a["tokens"]) <= managed:
+        if assessment["class"] not in {"MAJOR", "STRUCTURAL_SHOCK"} and not set(a["token_ids"]) <= managed:
             raise ValueError("Market escalation requires MAJOR+ or existing call/shown-token management")
         maps = await self.rows("evt.beneficiary_maps", eid)
         allowed = set(
@@ -2173,8 +2235,8 @@ class EventToolService:
             else event["tokens_mentioned"]
         )
         allowed |= await self.managed_tokens(eid)
-        if not set(a["tokens"]) <= allowed:
-            raise ValueError("Tokens outside analysis set")
+        if not set(a["token_ids"]) <= allowed:
+            raise ValueError("token_ids outside analysis set")
         cutoff = iso(a["cutoff"]) if a.get("cutoff") else iso(utcnow().replace(second=0, microsecond=0))
         cutoff_stamp = chosen_boundary(
             cutoff,
@@ -2184,7 +2246,7 @@ class EventToolService:
         cutoff_minute = iso(parse_time(cutoff).replace(second=0, microsecond=0))
         async with self.repo.transaction():
             jobs = []
-            for token in a["tokens"]:
+            for token in a["token_ids"]:
                 escalation = await self.repo.enqueue(
                     "ESCALATE_TOKENS",
                     {"event_id": eid, "token_id": token, "tokens": [token]},
@@ -2266,7 +2328,7 @@ class EventToolService:
 
     async def get_decision(self, a, c):
         eid = a["event_id"]
-        token = a.get("token", a.get("token_id"))
+        token = a["token_id"]
         event = await self.require("evt.events", eid)
         event["contradictions"] = [
             row for row in await self.rows("ana.contradictions", eid) if row.get("token_id") in {None, token}
@@ -2511,12 +2573,12 @@ class EventToolService:
             )
             await self.repo.put("ana.watch_conditions", condition["cond_id"], condition)
             return {"accepted": True, "cond_id": condition["cond_id"], "status": "CANCELLED"}
-        token = a.get("token")
-        if not isinstance(token, str) or ":" not in token:
-            raise ValueError("ARM requires token as a registry token_id or ticker")
+        token = a.get("token_id")
+        if not isinstance(token, str):
+            raise ValueError("ARM requires token_id, a registry token key")
         registry = self.settings.load_config("registry") if hasattr(self.settings, "load_config") else None
         if registry is not None and token not in {row["token_id"] for row in registry.get("tokens", [])}:
-            raise ValueError(f"{token} is not a registry token; use a token_id from get_registry")
+            raise ValueError("ARM token_id is not a registry token key")
         leaves = []
         for leaf in a.get("conditions") or []:
             if leaf["metric"] not in AGENT_WATCH_METRICS:
@@ -3165,16 +3227,19 @@ class EventToolService:
         )
         return await self.repo.put("ops.source_escalations", key, row)
 
+    async def registered_source(self, source_id):
+        return isinstance(source_id, str) and (
+            await self.repo.get("reg.sources", source_id) is not None
+            or any(row["source_id"] == source_id for row in self.settings.load_config("sources")["sources"])
+        )
+
     async def schedule_milestone(self, a, c):
         event = await self.require("evt.events", a["event_id"])
         due_stamp = propagate_timestamp(a, "due_at", missing_reason="CALLER_DID_NOT_DECLARE_DUE_PRECISION")
         due = due_stamp.value
-        source = a["source"]
-        source_id = source.get("source_id") if isinstance(source, dict) else source
-        if not await self.repo.get("reg.sources", source_id) and not any(
-            source["source_id"] == source_id for source in self.settings.load_config("sources")["sources"]
-        ):
-            raise ValueError("Milestone source must be registered")
+        source_id = a["source_id"]
+        if not await self.registered_source(source_id):
+            raise ValueError("Milestone source_id must be a registered source")
         event["next_milestone"] = {
             "kind": a["milestone"],
             **due_stamp.fields("due_at"),
@@ -3240,7 +3305,7 @@ class EventToolService:
             "duplicate_of": duplicate,
             "verdict": a["verdict"],
             "reason": a["reason"],
-            "evidence": a["evidence"],
+            "evidence": evidence_ids(a["evidence"]),
             **self.provenance(c),
         }
         await self.repo.put("scout.expansion_proposals", row["prp_id"], row)
@@ -3287,7 +3352,7 @@ class EventToolService:
             **self.provenance(c),
         )
         row["occurrences"] += 1
-        row["evidence"] += a["evidence"]
+        row["evidence"] += evidence_ids(a["evidence"])
         await self.repo.put("scout.expansion_proposals", row["prp_id"], row)
         await self.repo.enqueue(
             "SCOUT_REVIEW", {"prp_id": row["prp_id"]}, f"{row['prp_id']}:{row['occurrences']}", priority=4
@@ -3304,6 +3369,16 @@ class _borrow:
 
     async def __aexit__(self, *args):
         return False
+
+
+def evidence_ids(evidence):
+    """The stored form of pattern evidence: the cited claim, event and source document IDs."""
+    return [
+        entry[key]
+        for entry in evidence
+        for key in ("claim_id", "event_id", "item_id")
+        if isinstance(entry, dict) and key in entry
+    ]
 
 
 def validate_schema(value, schema, path="$"):
