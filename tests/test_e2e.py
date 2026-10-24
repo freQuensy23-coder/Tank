@@ -839,8 +839,11 @@ async def test_runtime_autonomous_source_to_telegram(
     import importlib
 
     from tank.analysis.truth import MarketTruthService
+    from tank.bootstrap import sync_registry
+    from tank.codex_gateway import CodexGateway
     from tank.event_tools import LAYERS
     from tank.runtime import Runtime
+    from tank.runtime_composition import validate_runtime_settings
     from tank.scheduler import Scheduler
     from tank.util import iso
 
@@ -1259,6 +1262,18 @@ async def test_runtime_autonomous_source_to_telegram(
             tools = EventToolService(repo, settings, truth, DecisionEngine(settings), http=http)
             sessions = SessionService(repo, settings, tools.dispatch, http=http)
             delivery = DeliveryService(repo, settings, http=http)
+            gateway = CodexGateway(settings)
+            inbox = TelegramInbox(repo, settings, http=http)
+            scheduler = FixtureScheduler(repo, settings, market, truth)
+            sessions.telegram = inbox
+            tools.scheduler = scheduler
+
+            async def bootstrap_registry() -> None:
+                await sync_registry(repo, settings)
+
+            def validate_generation() -> None:
+                validate_runtime_settings(settings)
+
             runtime = Runtime(
                 repo,
                 settings,
@@ -1266,11 +1281,13 @@ async def test_runtime_autonomous_source_to_telegram(
                 market=market,
                 truth=truth,
                 pipeline=pipeline,
-                event_tools=tools,
                 sessions=sessions,
                 delivery=delivery,
-                inbox=TelegramInbox(repo, settings, http=http),
-                scheduler=FixtureScheduler(repo, settings, market, truth),
+                inbox=inbox,
+                scheduler=scheduler,
+                gateway=gateway,
+                bootstrap=bootstrap_registry,
+                validate=validate_generation,
             )
             runtime_task = asyncio.create_task(runtime.run(stop))
             try:
@@ -1305,8 +1322,8 @@ async def test_runtime_autonomous_source_to_telegram(
                         }
                     )
                 )
-            assert runtime.gateway.bound_port is not None and runtime.gateway.bound_port > 0
-            assert runtime.gateway.settings.codex_auth_path == settings.codex_auth_path
+            assert gateway.bound_port is not None and gateway.bound_port > 0
+            assert gateway.settings.codex_auth_path == settings.codex_auth_path
             assert settings.codex_auth_path.name == "FAKE-codex-auth.json"
 
             async with asyncio.timeout(3):
