@@ -1,33 +1,58 @@
 """Require actual Go test cases to pass with no failed or skipped cases."""
 
 import argparse
-import json
+from collections import Counter
 from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class TestEvent(BaseModel):
+    """Project Go 1.25 test2json fields used by the completeness gate."""
+
+    model_config = ConfigDict(strict=True, extra="ignore")
+    action: Literal["start", "run", "pause", "cont", "pass", "bench", "fail", "output", "skip"] = Field(
+        alias="Action"
+    )
+    package: str = Field(alias="Package")
+    test: str | None = Field(default=None, alias="Test")
+
+
+class TestSummary(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    cases: int
+    passed: int
+    skipped: Literal[0] = 0
+
+
+def verify(report: Path) -> TestSummary:
+    events = [TestEvent.model_validate_json(line) for line in report.read_text().splitlines() if line.strip()]
+    if any(event.action == "fail" or (event.action == "skip" and event.test is not None) for event in events):
+        raise ValueError("Go tests require zero failures and skips")
+    if any(event.action == "run" and not event.test for event in events):
+        raise ValueError("Go run events require test identity")
+    started = Counter(
+        (event.package, event.test) for event in events if event.action == "run" and event.test is not None
+    )
+    passed = Counter(
+        (event.package, event.test) for event in events if event.action == "pass" and event.test is not None
+    )
+    if not started or started != passed:
+        raise ValueError("Go report must contain a complete nonempty set of passed test cases")
+    count = sum(passed.values())
+    return TestSummary(cases=count, passed=count)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("report", type=Path)
     args = parser.parse_args()
-    events = [json.loads(line) for line in args.report.read_text().splitlines() if line.strip()]
-    if any(
-        event.get("Action") == "fail" or (event.get("Action") == "skip" and "Test" in event)
-        for event in events
-    ):
-        parser.error("Go tests require zero failures and skips")
-    started = {
-        (event["Package"], event["Test"])
-        for event in events
-        if event.get("Action") == "run" and "Test" in event
-    }
-    passed = {
-        (event["Package"], event["Test"])
-        for event in events
-        if event.get("Action") == "pass" and "Test" in event
-    }
-    if not started or started != passed:
-        parser.error("Go report must contain a complete nonempty set of passed test cases")
-    print(json.dumps({"cases": len(passed), "passed": len(passed), "skipped": 0}))
+    try:
+        result = verify(args.report)
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
+    print(result.model_dump_json())
 
 
 if __name__ == "__main__":
