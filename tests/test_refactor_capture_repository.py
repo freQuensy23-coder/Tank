@@ -174,6 +174,7 @@ async def test_bounded_wait_uses_current_anchor_not_newer_unrelated_run() -> Non
     assert waited.status == "INCOMPLETE"
     assert waited.backfill_id == queued.backfill_id
     assert waited.bounded_wait_s == 0.5
+    assert waited.to_wire()["observed_at"] == "2026-10-25T00:00:00.500000Z"
     persisted = await app.repository.backfill(queued.backfill_id)
     assert persisted is not None
     assert persisted.status == "PENDING"
