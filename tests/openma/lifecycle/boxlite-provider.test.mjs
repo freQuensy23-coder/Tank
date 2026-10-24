@@ -40,7 +40,7 @@ test('SimpleBox-compatible command/file bridge preserves current per-exec env an
       commands.push(spec);
       if(spec.command==='python3'){
         const python=process.env.TANK_FILE_IO_TEST_PYTHON;
-        assert.ok(python,'explicit Python3.12 test interpreter required');
+        assert.ok(python,'explicit Python3.13.13 test interpreter required');
         const child=spawn(python,spec.args,{stdio:['pipe','pipe','pipe'],env:{PATH:'/usr/bin:/bin'}});
         children.push(child);
         const exited=new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',(code,signal)=>resolve({code,signal}));});

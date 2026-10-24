@@ -10,7 +10,7 @@ import {pathToFileURL} from 'node:url';
 const {RetainedBoxOperations}=await import(new URL('packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts',openmaSource));
 const {FILE_LIMIT,copyGuestFileOut,copyGuestFileIn}=await import(new URL('packages/control-plane-node/src/lib/tank-retained/guest-file-io.ts',openmaSource));
 const python=process.env.TANK_FILE_IO_TEST_PYTHON;
-assert.ok(python,'explicit Python3.12 test interpreter required');
+assert.ok(python,'explicit Python3.13.13 test interpreter required');
 function fixture(){
  const children=[];let kills=0;
  const runtime={async spawnDuplexProcess(spec){

@@ -206,6 +206,8 @@ jobs:
 
   node-local:
     name: Node local units and contracts
+    env:
+      TANK_FILE_IO_TEST_PYTHON: ${{ github.workspace }}/.venv/bin/python
     runs-on: ubuntu-24.04
     timeout-minutes: 4
     steps:
@@ -216,6 +218,15 @@ jobs:
         with:
           node-version: "24.22.0"
           package-manager-cache: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+        with:
+          version: "0.11.7"
+          python-version: "3.13.13"
+          enable-cache: true
+      - run: uv sync --python 3.13.13 --frozen --extra dev
+      - run: npm ci --prefix scripts/typescript --ignore-scripts --no-audit --no-fund
+      - name: Check migrated TypeScript quality tools
+        run: scripts/typescript/node_modules/.bin/tsc -p scripts/typescript/tsconfig.json
       - name: Local JavaScript units
         run: node scripts/test-node.mjs local-unit
       - name: Local JavaScript contracts
