@@ -115,8 +115,10 @@ for (let round = 1; round <= 2; round++) {
     return { handle: manifest.handle, imageIdentity: manifest.identity.image, compatibility: manifest.identity.compatibility, state: manifest.state, upgradedFrom: manifest.upgradedFrom, retired: manifest.retired };
   };
   const start = async version => {
-    docker(['run', '-d', '--name', names.service, '--label', 'tank.qualification=' + prefix, '--network', names.network, '--group-add', kvmGroup, '--device', '/dev/kvm:/dev/kvm', '--publish', '127.0.0.1::8787', '--mount', `type=volume,src=${names.volume},dst=/app/data`, '--mount', `type=bind,src=${rootfs(version)},dst=/opt/tank-sandbox-oci,readonly`, ...Object.keys(credentials).filter(name => name !== 'POSTGRES_PASSWORD' && name !== 'QUALIFICATION_PROVIDER_KEY').flatMap(name => ['--env', name]), '--env', 'ANTHROPIC_API_KEY', '--env', 'ANTHROPIC_BASE_URL=http://provider:9000/v1', '--env', 'DREAM_CURATOR_MODE=dedup', image], { env });
-    base = 'http://' + docker(['port', names.service, '8787/tcp']);
+    docker(['run', '-d', '--name', names.service, '--label', 'tank.qualification=' + prefix, '--network', names.network, '--group-add', kvmGroup, '--device', '/dev/kvm:/dev/kvm', '--mount', `type=volume,src=${names.volume},dst=/app/data`, '--mount', `type=bind,src=${rootfs(version)},dst=/opt/tank-sandbox-oci,readonly`, ...Object.keys(credentials).filter(name => name !== 'POSTGRES_PASSWORD' && name !== 'QUALIFICATION_PROVIDER_KEY').flatMap(name => ['--env', name]), '--env', 'ANTHROPIC_API_KEY', '--env', 'ANTHROPIC_BASE_URL=http://provider:9000/v1', '--env', 'DREAM_CURATOR_MODE=dedup', image], { env });
+    const address = JSON.parse(docker(['inspect', '--format', '{{json .NetworkSettings.Networks}}', names.service]))[names.network]?.IPAddress;
+    assert.match(address ?? '', /^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)/, 'candidate must have an owned private bridge address');
+    base = 'http://' + address + ':8787';
     await waitFor('candidate Managed API health', async () => (await fetch(base + '/health', { signal: AbortSignal.timeout(2000) })).ok);
   };
   const stop = () => { docker(['stop', '--time', '45', names.service], { timeout: 60000 }); docker(['rm', names.service]); };
