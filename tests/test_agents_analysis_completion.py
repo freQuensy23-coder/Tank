@@ -73,7 +73,7 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
                     "certainty": "MEDIUM",
                     "certainty_reason": "Synthetic fixture",
                     "entities": [],
-                    "tokens": [],
+                    "token_ids": [],
                     "event_time": {"value": None, "precision": "UNKNOWN", "quote": None},
                     "public_at": {
                         "value": at,
@@ -223,7 +223,7 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
                         "certainty": "MEDIUM",
                         "certainty_reason": "Synthetic fixture",
                         "entities": [],
-                        "tokens": [],
+                        "token_ids": [],
                         "event_time": {"value": None, "precision": "UNKNOWN", "quote": None},
                         "public_at": public,
                         "freshness": "FRESH",

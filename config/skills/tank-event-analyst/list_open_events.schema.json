@@ -4,10 +4,14 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "entity_or_token": {
-      "type": "string"
+    "token_id": {
+      "type": "string",
+      "description": "Registry token key (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC in \u00abBitcoin (BTC) \u00b7 bitcoin:BTC\u00bb."
+    },
+    "entity_id": {
+      "type": "string",
+      "description": "Registry entity key (reg.entities), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. uniswap in \u00abUniswap \u00b7 uniswap\u00bb."
     }
   },
-  "required": [],
-  "description": "List open events eligible for routing or comparison, including their statements, entities, tokens, current stages, known-to-us time and session associations. Use their recorded evidence to distinguish a new development from a duplicate or continuation; listing an event does not modify it."
+  "description": "List open events eligible for routing or comparison, including their statements, entities, tokens, current stages, known-to-us time and session associations. Filter by token_id or entity_id (a token's project and a project's tokens match too), or omit both for every open event. Use their recorded evidence to distinguish a new development from a duplicate or continuation; listing an event does not modify it."
 }

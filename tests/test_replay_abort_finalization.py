@@ -203,7 +203,7 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
                             "id": "missing-market",
                             "type": "agent.custom_tool_use",
                             "name": "get_market_truth",
-                            "input": {"tokens": ["T"], "cutoff": source["observed_at"]},
+                            "input": {"token_ids": ["T"], "cutoff": source["observed_at"]},
                             "execution_id": identity,
                         }
                     )

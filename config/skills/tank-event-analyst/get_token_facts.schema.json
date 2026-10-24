@@ -4,13 +4,13 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "token": {
+    "token_id": {
       "type": "string",
-      "description": "Displayed project name and ticker, e.g. 'Bitcoin (BTC)' or 'World (WLD)'. An unambiguous ticker such as BTC or $BTC is also accepted."
+      "description": "Registry token key (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC in \u00abBitcoin (BTC) \u00b7 bitcoin:BTC\u00bb."
     }
   },
   "required": [
-    "token"
+    "token_id"
   ],
   "description": "Read stored token fundamentals and coverage: provider-specific fees/revenue, supply/unlocks, verified identity/contracts and active venues/markets. Returns provenance, timestamps and unavailable-data reasons. Protocol fees or chain gas do not by themselves prove economic value accruing to the token."
 }

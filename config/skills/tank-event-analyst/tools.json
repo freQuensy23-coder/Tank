@@ -1,55 +1,21 @@
 [
   {
     "name": "get_item",
-    "description": "Read a displayed source document by URL and observation time; omit document to read the triggering source. Returns text, author, source and dates. Cite verbatim evidence.",
+    "description": "Read one stored source document in full: text, author, source and dates. Omit item_id to read the incoming source; pass item_id to read another stored document, such as a history hit or a fetched page. Cite verbatim evidence.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "document": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "url": {
-              "type": "string"
-            },
-            "title": {
-              "type": "string"
-            },
-            "observed_at": {
-              "type": "string"
-            },
-            "excerpt": {
-              "type": "string"
-            }
-          },
-          "anyOf": [
-            {
-              "required": [
-                "url"
-              ]
-            },
-            {
-              "required": [
-                "title",
-                "observed_at"
-              ]
-            },
-            {
-              "required": [
-                "excerpt",
-                "observed_at"
-              ]
-            }
-          ]
+        "item_id": {
+          "type": "string",
+          "description": "ID of a stored source document: ITM-… for a collected item, web-… for a page read with fetch_page or a web_search result; find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Source document by URL»."
         }
-      },
-      "required": []
+      }
     }
   },
   {
     "name": "search_tank_items",
-    "description": "Search collected source items by text over at most the preceding 90 days, returning at most 20 matching source URL and observation times and excerpts. This queries stored observations without external network requests. Read the full item before citing an excerpt or deciding that two items describe the same event.",
+    "description": "Search collected source items by text over at most the preceding 90 days, returning at most 20 matching documents with their source, URL, observation time and excerpt. This queries stored observations without external network requests. Read the full item before citing an excerpt or deciding that two items describe the same event.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -62,11 +28,12 @@
           "minimum": 1,
           "maximum": 90
         },
-        "sources": {
+        "source_ids": {
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "description": "Registered source keys (reg.sources), shown after « · » next to the name in Tank's messages and results, e.g. S29 or S32."
         }
       },
       "required": [
@@ -76,56 +43,52 @@
   },
   {
     "name": "list_open_events",
-    "description": "List open events eligible for routing or comparison, including their statements, entities, tokens, current stages, known-to-us time and session associations. Use their recorded evidence to distinguish a new development from a duplicate or continuation; listing an event does not modify it.",
+    "description": "List open events eligible for routing or comparison, including their statements, entities, tokens, current stages, known-to-us time and session associations. Filter by token_id or entity_id (a token's project and a project's tokens match too), or omit both for every open event. Use their recorded evidence to distinguish a new development from a duplicate or continuation; listing an event does not modify it.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "entity_or_token": {
-          "type": "string"
+        "token_id": {
+          "type": "string",
+          "description": "Registry token key (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC in «Bitcoin (BTC) · bitcoin:BTC»."
+        },
+        "entity_id": {
+          "type": "string",
+          "description": "Registry entity key (reg.entities), shown after « · » next to the name in Tank's messages and results, e.g. uniswap in «Uniswap · uniswap»."
         }
-      },
-      "required": []
+      }
     }
   },
   {
     "name": "get_event",
-    "description": "Read the current event, or select a displayed event by its statement and public time. Returns claims, assessments and beneficiaries.",
+    "description": "Read an event with its claims, observations, stage changes, assessments and beneficiaries. Omit event_id for the current event; pass event_id to read another event.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "event": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "statement": {
-              "type": "string"
-            },
-            "public_at": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "statement"
-          ]
+        "event_id": {
+          "type": "string",
+          "description": "Event ID (EVT-…); find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Events by statement, time or token»."
         }
-      },
-      "required": []
+      }
     }
   },
   {
     "name": "get_registry",
-    "description": "Read fixed registry identity and dependency information for an entity or token: project names, aliases, contracts, official accounts and sources, plus registered causal dependencies. Registry links identify candidates; they do not alone prove a current integration, economic effect or token capture.",
+    "description": "Read fixed registry identity and dependency information: project names, aliases, contracts, official accounts and sources, plus registered causal dependencies. Filter by token_id or entity_id, or omit both for the whole registry. Registry links identify candidates; they do not alone prove a current integration, economic effect or token capture.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "entity_or_token": {
-          "type": "string"
+        "token_id": {
+          "type": "string",
+          "description": "Registry token key (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC in «Bitcoin (BTC) · bitcoin:BTC»."
+        },
+        "entity_id": {
+          "type": "string",
+          "description": "Registry entity key (reg.entities), shown after « · » next to the name in Tank's messages and results, e.g. uniswap in «Uniswap · uniswap»."
         }
-      },
-      "required": []
+      }
     }
   },
   {
@@ -135,13 +98,13 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "token": {
+        "token_id": {
           "type": "string",
-          "description": "Displayed project name and ticker, e.g. 'Bitcoin (BTC)' or 'World (WLD)'. An unambiguous ticker such as BTC or $BTC is also accepted."
+          "description": "Registry token key (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC in «Bitcoin (BTC) · bitcoin:BTC»."
         }
       },
       "required": [
-        "token"
+        "token_id"
       ]
     }
   },
@@ -186,7 +149,7 @@
   },
   {
     "name": "record_event",
-    "description": "Record the current source as a new event, or mark it as containing no new event. The host binds the triggering source and creates all stored relationships. Cite source documents by URL and observation time with verbatim quotes.",
+    "description": "Record the incoming source as a new event, or mark it as containing no new event. The host binds the incoming source and creates all stored relationships. Name registry entities and tokens by their registry keys (entity_id, token_ids), and an entity or token outside the registry by its name. A claim quoted from the incoming source needs no evidence; any other claim cites its stored document by item_id.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -196,7 +159,7 @@
         "certainty",
         "certainty_reason",
         "entities",
-        "tokens",
+        "token_ids",
         "event_time",
         "public_at",
         "freshness",
@@ -228,13 +191,14 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "name",
-              "role"
-            ],
             "properties": {
+              "entity_id": {
+                "type": "string",
+                "description": "Registry entity key (reg.entities), shown after « · » next to the name in Tank's messages and results, e.g. uniswap in «Uniswap · uniswap»."
+              },
               "name": {
-                "type": "string"
+                "type": "string",
+                "description": "Name of an entity outside the registry, kept unresolved. Tank refuses a name the registry resolves; pass that entity's entity_id instead."
               },
               "role": {
                 "enum": [
@@ -244,14 +208,37 @@
                   "REGULATOR"
                 ]
               }
-            }
+            },
+            "required": [
+              "role"
+            ],
+            "anyOf": [
+              {
+                "required": [
+                  "entity_id"
+                ]
+              },
+              {
+                "required": [
+                  "name"
+                ]
+              }
+            ]
           }
         },
-        "tokens": {
+        "token_ids": {
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "description": "Registry token keys (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC or uniswap:UNI."
+        },
+        "token_names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Tickers or names of tokens outside the registry, kept unresolved. Tank refuses a registry token here; pass its token_id in token_ids."
         },
         "event_time": {
           "type": "object",
@@ -412,15 +399,15 @@
               },
               "quote": {
                 "type": "string",
-                "description": "Verbatim atomic quote. Cite its actual saved document through evidence; a fetched page has its own document even when its URL matches the discovery item."
+                "description": "Verbatim atomic quote. Omit evidence when it comes from the incoming source; otherwise cite the stored document containing it in evidence (a page read with fetch_page is its own document, even when its URL matches the discovery item)."
               },
               "approval_dependency": {
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
                   "scope",
-                  "tokens",
-                  "claims"
+                  "token_ids",
+                  "claim_ids"
                 ],
                 "properties": {
                   "scope": {
@@ -429,85 +416,22 @@
                       "TOKEN"
                     ]
                   },
-                  "tokens": {
+                  "token_ids": {
                     "type": "array",
                     "items": {
-                      "type": "string",
-                      "minLength": 1
-                    }
+                      "type": "string"
+                    },
+                    "description": "Registry token keys (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC or uniswap:UNI."
                   },
-                  "claims": {
+                  "claim_ids": {
                     "type": "array",
                     "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "quote": {
-                          "type": "string"
-                        },
-                        "subject": {
-                          "type": "string"
-                        },
-                        "predicate": {
-                          "type": "string"
-                        },
-                        "object": {
-                          "type": "string"
-                        },
-                        "sources": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": {
-                              "url": {
-                                "type": "string"
-                              },
-                              "title": {
-                                "type": "string"
-                              },
-                              "observed_at": {
-                                "type": "string"
-                              },
-                              "excerpt": {
-                                "type": "string"
-                              }
-                            },
-                            "anyOf": [
-                              {
-                                "required": [
-                                  "url"
-                                ]
-                              },
-                              {
-                                "required": [
-                                  "title",
-                                  "observed_at"
-                                ]
-                              },
-                              {
-                                "required": [
-                                  "excerpt",
-                                  "observed_at"
-                                ]
-                              }
-                            ]
-                          }
-                        },
-                        "verified": {
-                          "type": "boolean"
-                        },
-                        "stage": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "quote"
-                      ]
-                    }
+                      "type": "string"
+                    },
+                    "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                   }
                 },
-                "description": "Explicit model-authored thesis dependency. References must identify existing accepted causal RELATION claims; the service validates scope and project name and tickerentity and does not infer dependencies from text."
+                "description": "Explicit thesis dependency of a REJECTED approval: the accepted causal RELATION claims of the current event it rests on (claim_ids) and, for TOKEN scope, the registry tokens it concerns (token_ids). Tank validates the IDs and their scope; it does not infer dependencies from text."
               },
               "verified": {
                 "type": "boolean",
@@ -522,58 +446,23 @@
               },
               "evidence": {
                 "type": "array",
-                "minItems": 1,
-                "description": "Agent-supplied exact source document containing this claim's quote. For text read with fetch_page or web_search, use that returned document, not the discovery document merely because its URL matches. The root tool document remains the trigger/origin. Tank preserves these references without semantic rewriting.",
+                "description": "The stored document containing this claim's quote, by item_id. Omit for a quote from the incoming source. For text read with fetch_page or web_search, cite that stored document, not the discovery document merely because its URL matches. The incoming source remains the event's origin.",
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
-                  "required": [
-                    "document",
-                    "quote"
-                  ],
                   "properties": {
-                    "document": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "url": {
-                          "type": "string"
-                        },
-                        "title": {
-                          "type": "string"
-                        },
-                        "observed_at": {
-                          "type": "string"
-                        },
-                        "excerpt": {
-                          "type": "string"
-                        }
-                      },
-                      "anyOf": [
-                        {
-                          "required": [
-                            "url"
-                          ]
-                        },
-                        {
-                          "required": [
-                            "title",
-                            "observed_at"
-                          ]
-                        },
-                        {
-                          "required": [
-                            "excerpt",
-                            "observed_at"
-                          ]
-                        }
-                      ]
+                    "item_id": {
+                      "type": "string",
+                      "description": "ID of a stored source document: ITM-… for a collected item, web-… for a page read with fetch_page or a web_search result; find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Source document by URL»."
                     },
                     "quote": {
-                      "type": "string",
-                      "minLength": 1
+                      "type": "string"
                     }
-                  }
+                  },
+                  "required": [
+                    "item_id",
+                    "quote"
+                  ]
                 }
               }
             }
@@ -583,6 +472,29 @@
           "type": [
             "object",
             "null"
+          ],
+          "description": "The next dated step, or null. Use due_at null for an undated step; never invent a date.",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "type": "string"
+            },
+            "due_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "ISO date or timezone-aware ISO datetime from the source."
+            },
+            "source_id": {
+              "type": "string",
+              "description": "Registered source key (reg.sources), shown after « · » next to the name in Tank's messages and results, e.g. S14 in «Venue instrument lists · S14»."
+            }
+          },
+          "required": [
+            "kind",
+            "due_at",
+            "source_id"
           ]
         },
         "checked_sources": {
@@ -634,48 +546,14 @@
   },
   {
     "name": "add_observation",
-    "description": "Add claims to the current event. The host binds an incoming source automatically; for a callback without one, select the displayed source in document. Cite claim evidence by displayed URL and observation time. Replace prior claims by quoting them in supersedes_claims.",
+    "description": "Add claims to the current event. The host binds the incoming source; for a callback without one (MILESTONE, CONDITION_FIRED, CALL_EXPIRED, USER_QUESTION), pass the item_id of the stored document that establishes the update, such as a page read with fetch_page. Cite claim evidence by item_id and replace prior claims of this event with supersedes_claim_ids.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "document": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "url": {
-              "type": "string"
-            },
-            "title": {
-              "type": "string"
-            },
-            "observed_at": {
-              "type": "string"
-            },
-            "excerpt": {
-              "type": "string"
-            }
-          },
-          "anyOf": [
-            {
-              "required": [
-                "url"
-              ]
-            },
-            {
-              "required": [
-                "title",
-                "observed_at"
-              ]
-            },
-            {
-              "required": [
-                "excerpt",
-                "observed_at"
-              ]
-            }
-          ],
-          "description": "For a callback without an incoming source, select the displayed document establishing this observation by URL and observation time. Required for milestone, watch or question follow-ups without a source. Omit when an incoming source is already supplied."
+        "item_id": {
+          "type": "string",
+          "description": "Only for a callback without an incoming source: the stored document that establishes this observation, ITM-… for a collected item or web-… for a page read with fetch_page; find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Source document by URL». Omit when an incoming source is supplied."
         },
         "link": {
           "enum": [
@@ -772,15 +650,15 @@
               },
               "quote": {
                 "type": "string",
-                "description": "Verbatim atomic quote. Cite its actual saved document through evidence; a fetched page has its own document even when its URL matches the discovery item."
+                "description": "Verbatim atomic quote. Omit evidence when it comes from the incoming source; otherwise cite the stored document containing it in evidence (a page read with fetch_page is its own document, even when its URL matches the discovery item)."
               },
               "approval_dependency": {
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
                   "scope",
-                  "tokens",
-                  "claims"
+                  "token_ids",
+                  "claim_ids"
                 ],
                 "properties": {
                   "scope": {
@@ -789,85 +667,22 @@
                       "TOKEN"
                     ]
                   },
-                  "tokens": {
+                  "token_ids": {
                     "type": "array",
                     "items": {
-                      "type": "string",
-                      "minLength": 1
-                    }
+                      "type": "string"
+                    },
+                    "description": "Registry token keys (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC or uniswap:UNI."
                   },
-                  "claims": {
+                  "claim_ids": {
                     "type": "array",
                     "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "quote": {
-                          "type": "string"
-                        },
-                        "subject": {
-                          "type": "string"
-                        },
-                        "predicate": {
-                          "type": "string"
-                        },
-                        "object": {
-                          "type": "string"
-                        },
-                        "sources": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": {
-                              "url": {
-                                "type": "string"
-                              },
-                              "title": {
-                                "type": "string"
-                              },
-                              "observed_at": {
-                                "type": "string"
-                              },
-                              "excerpt": {
-                                "type": "string"
-                              }
-                            },
-                            "anyOf": [
-                              {
-                                "required": [
-                                  "url"
-                                ]
-                              },
-                              {
-                                "required": [
-                                  "title",
-                                  "observed_at"
-                                ]
-                              },
-                              {
-                                "required": [
-                                  "excerpt",
-                                  "observed_at"
-                                ]
-                              }
-                            ]
-                          }
-                        },
-                        "verified": {
-                          "type": "boolean"
-                        },
-                        "stage": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "quote"
-                      ]
-                    }
+                      "type": "string"
+                    },
+                    "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                   }
                 },
-                "description": "Explicit model-authored thesis dependency. References must identify existing accepted causal RELATION claims; the service validates scope and project name and tickerentity and does not infer dependencies from text."
+                "description": "Explicit thesis dependency of a REJECTED approval: the accepted causal RELATION claims of the current event it rests on (claim_ids) and, for TOKEN scope, the registry tokens it concerns (token_ids). Tank validates the IDs and their scope; it does not infer dependencies from text."
               },
               "verified": {
                 "type": "boolean",
@@ -880,130 +695,32 @@
                 ],
                 "description": "Agent-supplied explanation of what confirmation is missing for this unverified claim (for example, no announcement from the named organization). Tank preserves and displays it verbatim; null means the reason was not established. Keep it to about 10 words; it is printed in NOT VERIFIED."
               },
-              "supersedes_claims": {
+              "supersedes_claim_ids": {
                 "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Claim IDs (CLM-…) of prior claims of the current event that this claim replaces on the current card; the old claims remain historical evidence. Omit unrelated claims and remaining uncertainties; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
+              },
+              "evidence": {
+                "type": "array",
+                "description": "The stored document containing this claim's quote, by item_id. Omit for a quote from the incoming source. For text read with fetch_page or web_search, cite that stored document, not the discovery document merely because its URL matches. The observation's own document is the incoming source, or the item_id given for a callback without one.",
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
                   "properties": {
+                    "item_id": {
+                      "type": "string",
+                      "description": "ID of a stored source document: ITM-… for a collected item, web-… for a page read with fetch_page or a web_search result; find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Source document by URL»."
+                    },
                     "quote": {
-                      "type": "string"
-                    },
-                    "subject": {
-                      "type": "string"
-                    },
-                    "predicate": {
-                      "type": "string"
-                    },
-                    "object": {
-                      "type": "string"
-                    },
-                    "sources": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "url": {
-                            "type": "string"
-                          },
-                          "title": {
-                            "type": "string"
-                          },
-                          "observed_at": {
-                            "type": "string"
-                          },
-                          "excerpt": {
-                            "type": "string"
-                          }
-                        },
-                        "anyOf": [
-                          {
-                            "required": [
-                              "url"
-                            ]
-                          },
-                          {
-                            "required": [
-                              "title",
-                              "observed_at"
-                            ]
-                          },
-                          {
-                            "required": [
-                              "excerpt",
-                              "observed_at"
-                            ]
-                          }
-                        ]
-                      }
-                    },
-                    "verified": {
-                      "type": "boolean"
-                    },
-                    "stage": {
                       "type": "string"
                     }
                   },
                   "required": [
+                    "item_id",
                     "quote"
                   ]
-                }
-              },
-              "evidence": {
-                "type": "array",
-                "minItems": 1,
-                "description": "Agent-supplied exact source document containing this claim's quote. For text read with fetch_page or web_search, use that returned document, not the discovery document merely because its URL matches. The observation source is the incoming source, or the root document selected for a callback without one. Tank preserves these references without semantic rewriting.",
-                "items": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "required": [
-                    "document",
-                    "quote"
-                  ],
-                  "properties": {
-                    "document": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "url": {
-                          "type": "string"
-                        },
-                        "title": {
-                          "type": "string"
-                        },
-                        "observed_at": {
-                          "type": "string"
-                        },
-                        "excerpt": {
-                          "type": "string"
-                        }
-                      },
-                      "anyOf": [
-                        {
-                          "required": [
-                            "url"
-                          ]
-                        },
-                        {
-                          "required": [
-                            "title",
-                            "observed_at"
-                          ]
-                        },
-                        {
-                          "required": [
-                            "excerpt",
-                            "observed_at"
-                          ]
-                        }
-                      ]
-                    },
-                    "quote": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  }
                 }
               }
             }
@@ -1097,35 +814,24 @@
   },
   {
     "name": "merge_into",
-    "description": "Merge the current event into a displayed event selected by its exact statement and public time.",
+    "description": "Merge the current event into the earlier open event that covers the same real-world development, named by its event_id. Observations and claims move to the surviving event, which keeps the earlier known-to-us time; the current event becomes MERGED.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "event": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "statement": {
-              "type": "string"
-            },
-            "public_at": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "statement"
-          ]
+        "event_id": {
+          "type": "string",
+          "description": "Event ID (EVT-…); find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Events by statement, time or token»."
         }
       },
       "required": [
-        "event"
+        "event_id"
       ]
     }
   },
   {
     "name": "set_assessment",
-    "description": "Submit class and criterion, quoted evidence, dimension scores and reasons, economic capture chains and impact horizon. Use recorded claims and your source judgments; identify the M1 venue with criterion_venue. Provide structured measured magnitude bases, timing evidence and mechanism flags rather than expecting quote-keyword inference. Tank applies the deterministic class, capture and horizon rules and mandatory caps; it does not reclassify source certainty, verified flags or stages. A final MAJOR or STRUCTURAL_SHOCK escalates official source polling to 15 seconds for 2 hours and opens reaction tracking. Returns final class and applied caps. Returns LOW with NO_UNIVERSE_CONCERN when neither mentioned tokens nor current beneficiary edges concern a registry token. For a structural criterion, criterion_quote must match a verified claim quote; supplied selected structural gate evidence must reference those supporting claims. Reaction tracking computes PRE windows immediately and schedules only the five POST checkpoints; no agent reaction jobs are needed.",
+    "description": "Submit class and criterion, the claim proving the criterion, dimension scores with reasons and claim evidence, economic capture chains and impact horizon. Cite recorded claims of the current event by claim_id and identify the M1 venue with criterion_venue_id. Provide structured measured magnitude bases, timing evidence and mechanism flags rather than expecting quote-keyword inference. Tank applies the deterministic class, capture and horizon rules and mandatory caps; it does not reclassify source certainty, verified flags or stages. A final MAJOR or STRUCTURAL_SHOCK escalates official source polling to 15 seconds for 2 hours and opens reaction tracking. Returns final class and applied caps. Returns LOW with NO_UNIVERSE_CONCERN when neither mentioned tokens nor current beneficiary edges concern a registry token. A structural criterion needs criterion_claim_id to be a verified claim, and supplied structural gate evidence must include it. Reaction tracking computes PRE windows immediately and schedules only the five POST checkpoints; no agent reaction jobs are needed.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -1162,72 +868,9 @@
                     "evidence": {
                       "type": "array",
                       "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "quote": {
-                            "type": "string"
-                          },
-                          "subject": {
-                            "type": "string"
-                          },
-                          "predicate": {
-                            "type": "string"
-                          },
-                          "object": {
-                            "type": "string"
-                          },
-                          "sources": {
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "additionalProperties": false,
-                              "properties": {
-                                "url": {
-                                  "type": "string"
-                                },
-                                "title": {
-                                  "type": "string"
-                                },
-                                "observed_at": {
-                                  "type": "string"
-                                },
-                                "excerpt": {
-                                  "type": "string"
-                                }
-                              },
-                              "anyOf": [
-                                {
-                                  "required": [
-                                    "url"
-                                  ]
-                                },
-                                {
-                                  "required": [
-                                    "title",
-                                    "observed_at"
-                                  ]
-                                },
-                                {
-                                  "required": [
-                                    "excerpt",
-                                    "observed_at"
-                                  ]
-                                }
-                              ]
-                            }
-                          },
-                          "verified": {
-                            "type": "boolean"
-                          },
-                          "stage": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "quote"
-                        ]
-                      }
+                        "type": "string"
+                      },
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                     },
                     "proposed_by": {
                       "enum": [
@@ -1272,72 +915,9 @@
                     "evidence": {
                       "type": "array",
                       "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "quote": {
-                            "type": "string"
-                          },
-                          "subject": {
-                            "type": "string"
-                          },
-                          "predicate": {
-                            "type": "string"
-                          },
-                          "object": {
-                            "type": "string"
-                          },
-                          "sources": {
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "additionalProperties": false,
-                              "properties": {
-                                "url": {
-                                  "type": "string"
-                                },
-                                "title": {
-                                  "type": "string"
-                                },
-                                "observed_at": {
-                                  "type": "string"
-                                },
-                                "excerpt": {
-                                  "type": "string"
-                                }
-                              },
-                              "anyOf": [
-                                {
-                                  "required": [
-                                    "url"
-                                  ]
-                                },
-                                {
-                                  "required": [
-                                    "title",
-                                    "observed_at"
-                                  ]
-                                },
-                                {
-                                  "required": [
-                                    "excerpt",
-                                    "observed_at"
-                                  ]
-                                }
-                              ]
-                            }
-                          },
-                          "verified": {
-                            "type": "boolean"
-                          },
-                          "stage": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "quote"
-                        ]
-                      }
+                        "type": "string"
+                      },
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                     },
                     "proposed_by": {
                       "enum": [
@@ -1382,72 +962,9 @@
                     "evidence": {
                       "type": "array",
                       "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "quote": {
-                            "type": "string"
-                          },
-                          "subject": {
-                            "type": "string"
-                          },
-                          "predicate": {
-                            "type": "string"
-                          },
-                          "object": {
-                            "type": "string"
-                          },
-                          "sources": {
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "additionalProperties": false,
-                              "properties": {
-                                "url": {
-                                  "type": "string"
-                                },
-                                "title": {
-                                  "type": "string"
-                                },
-                                "observed_at": {
-                                  "type": "string"
-                                },
-                                "excerpt": {
-                                  "type": "string"
-                                }
-                              },
-                              "anyOf": [
-                                {
-                                  "required": [
-                                    "url"
-                                  ]
-                                },
-                                {
-                                  "required": [
-                                    "title",
-                                    "observed_at"
-                                  ]
-                                },
-                                {
-                                  "required": [
-                                    "excerpt",
-                                    "observed_at"
-                                  ]
-                                }
-                              ]
-                            }
-                          },
-                          "verified": {
-                            "type": "boolean"
-                          },
-                          "stage": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "quote"
-                        ]
-                      }
+                        "type": "string"
+                      },
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                     },
                     "proposed_by": {
                       "enum": [
@@ -1492,72 +1009,9 @@
                     "evidence": {
                       "type": "array",
                       "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "quote": {
-                            "type": "string"
-                          },
-                          "subject": {
-                            "type": "string"
-                          },
-                          "predicate": {
-                            "type": "string"
-                          },
-                          "object": {
-                            "type": "string"
-                          },
-                          "sources": {
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "additionalProperties": false,
-                              "properties": {
-                                "url": {
-                                  "type": "string"
-                                },
-                                "title": {
-                                  "type": "string"
-                                },
-                                "observed_at": {
-                                  "type": "string"
-                                },
-                                "excerpt": {
-                                  "type": "string"
-                                }
-                              },
-                              "anyOf": [
-                                {
-                                  "required": [
-                                    "url"
-                                  ]
-                                },
-                                {
-                                  "required": [
-                                    "title",
-                                    "observed_at"
-                                  ]
-                                },
-                                {
-                                  "required": [
-                                    "excerpt",
-                                    "observed_at"
-                                  ]
-                                }
-                              ]
-                            }
-                          },
-                          "verified": {
-                            "type": "boolean"
-                          },
-                          "stage": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "quote"
-                        ]
-                      }
+                        "type": "string"
+                      },
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                     },
                     "proposed_by": {
                       "enum": [
@@ -1602,72 +1056,9 @@
                     "evidence": {
                       "type": "array",
                       "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "quote": {
-                            "type": "string"
-                          },
-                          "subject": {
-                            "type": "string"
-                          },
-                          "predicate": {
-                            "type": "string"
-                          },
-                          "object": {
-                            "type": "string"
-                          },
-                          "sources": {
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "additionalProperties": false,
-                              "properties": {
-                                "url": {
-                                  "type": "string"
-                                },
-                                "title": {
-                                  "type": "string"
-                                },
-                                "observed_at": {
-                                  "type": "string"
-                                },
-                                "excerpt": {
-                                  "type": "string"
-                                }
-                              },
-                              "anyOf": [
-                                {
-                                  "required": [
-                                    "url"
-                                  ]
-                                },
-                                {
-                                  "required": [
-                                    "title",
-                                    "observed_at"
-                                  ]
-                                },
-                                {
-                                  "required": [
-                                    "excerpt",
-                                    "observed_at"
-                                  ]
-                                }
-                              ]
-                            }
-                          },
-                          "verified": {
-                            "type": "boolean"
-                          },
-                          "stage": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "quote"
-                        ]
-                      }
+                        "type": "string"
+                      },
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                     },
                     "proposed_by": {
                       "enum": [
@@ -1712,72 +1103,9 @@
                     "evidence": {
                       "type": "array",
                       "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "quote": {
-                            "type": "string"
-                          },
-                          "subject": {
-                            "type": "string"
-                          },
-                          "predicate": {
-                            "type": "string"
-                          },
-                          "object": {
-                            "type": "string"
-                          },
-                          "sources": {
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "additionalProperties": false,
-                              "properties": {
-                                "url": {
-                                  "type": "string"
-                                },
-                                "title": {
-                                  "type": "string"
-                                },
-                                "observed_at": {
-                                  "type": "string"
-                                },
-                                "excerpt": {
-                                  "type": "string"
-                                }
-                              },
-                              "anyOf": [
-                                {
-                                  "required": [
-                                    "url"
-                                  ]
-                                },
-                                {
-                                  "required": [
-                                    "title",
-                                    "observed_at"
-                                  ]
-                                },
-                                {
-                                  "required": [
-                                    "excerpt",
-                                    "observed_at"
-                                  ]
-                                }
-                              ]
-                            }
-                          },
-                          "verified": {
-                            "type": "boolean"
-                          },
-                          "stage": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "quote"
-                        ]
-                      }
+                        "type": "string"
+                      },
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                     },
                     "proposed_by": {
                       "enum": [
@@ -1822,72 +1150,9 @@
                     "evidence": {
                       "type": "array",
                       "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "quote": {
-                            "type": "string"
-                          },
-                          "subject": {
-                            "type": "string"
-                          },
-                          "predicate": {
-                            "type": "string"
-                          },
-                          "object": {
-                            "type": "string"
-                          },
-                          "sources": {
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "additionalProperties": false,
-                              "properties": {
-                                "url": {
-                                  "type": "string"
-                                },
-                                "title": {
-                                  "type": "string"
-                                },
-                                "observed_at": {
-                                  "type": "string"
-                                },
-                                "excerpt": {
-                                  "type": "string"
-                                }
-                              },
-                              "anyOf": [
-                                {
-                                  "required": [
-                                    "url"
-                                  ]
-                                },
-                                {
-                                  "required": [
-                                    "title",
-                                    "observed_at"
-                                  ]
-                                },
-                                {
-                                  "required": [
-                                    "excerpt",
-                                    "observed_at"
-                                  ]
-                                }
-                              ]
-                            }
-                          },
-                          "verified": {
-                            "type": "boolean"
-                          },
-                          "stage": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "quote"
-                        ]
-                      }
+                        "type": "string"
+                      },
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                     },
                     "proposed_by": {
                       "enum": [
@@ -1941,72 +1206,9 @@
                   "evidence": {
                     "type": "array",
                     "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "quote": {
-                          "type": "string"
-                        },
-                        "subject": {
-                          "type": "string"
-                        },
-                        "predicate": {
-                          "type": "string"
-                        },
-                        "object": {
-                          "type": "string"
-                        },
-                        "sources": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": {
-                              "url": {
-                                "type": "string"
-                              },
-                              "title": {
-                                "type": "string"
-                              },
-                              "observed_at": {
-                                "type": "string"
-                              },
-                              "excerpt": {
-                                "type": "string"
-                              }
-                            },
-                            "anyOf": [
-                              {
-                                "required": [
-                                  "url"
-                                ]
-                              },
-                              {
-                                "required": [
-                                  "title",
-                                  "observed_at"
-                                ]
-                              },
-                              {
-                                "required": [
-                                  "excerpt",
-                                  "observed_at"
-                                ]
-                              }
-                            ]
-                          }
-                        },
-                        "verified": {
-                          "type": "boolean"
-                        },
-                        "stage": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "quote"
-                      ]
-                    }
+                      "type": "string"
+                    },
+                    "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                   }
                 },
                 "required": [
@@ -2043,9 +1245,12 @@
                 "LOW"
               ]
             },
-            "criterion_quote": {
-              "type": "string",
-              "description": "Verbatim supporting quote for the selected criterion, matching a recorded verified claim quote. A quote about another subject does not establish the selected structural criterion."
+            "criterion_claim_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Claim ID (CLM-…) of the recorded claim that establishes the selected criterion, or null when no claim does; a claim about another subject does not establish a structural criterion. Find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
             },
             "class_reasons": {
               "type": "array",
@@ -2099,72 +1304,9 @@
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
-                      "claim": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "quote": {
-                            "type": "string"
-                          },
-                          "subject": {
-                            "type": "string"
-                          },
-                          "predicate": {
-                            "type": "string"
-                          },
-                          "object": {
-                            "type": "string"
-                          },
-                          "sources": {
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "additionalProperties": false,
-                              "properties": {
-                                "url": {
-                                  "type": "string"
-                                },
-                                "title": {
-                                  "type": "string"
-                                },
-                                "observed_at": {
-                                  "type": "string"
-                                },
-                                "excerpt": {
-                                  "type": "string"
-                                }
-                              },
-                              "anyOf": [
-                                {
-                                  "required": [
-                                    "url"
-                                  ]
-                                },
-                                {
-                                  "required": [
-                                    "title",
-                                    "observed_at"
-                                  ]
-                                },
-                                {
-                                  "required": [
-                                    "excerpt",
-                                    "observed_at"
-                                  ]
-                                }
-                              ]
-                            }
-                          },
-                          "verified": {
-                            "type": "boolean"
-                          },
-                          "stage": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "quote"
-                        ]
+                      "claim_id": {
+                        "type": "string",
+                        "description": "Claim ID (CLM-…) of an accepted claim of the current event; find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                       },
                       "due_at": {
                         "type": "string",
@@ -2177,7 +1319,7 @@
                       }
                     },
                     "required": [
-                      "claim",
+                      "claim_id",
                       "due_at",
                       "quote"
                     ]
@@ -2187,76 +1329,13 @@
                   "type": "object",
                   "additionalProperties": false,
                   "properties": {
-                    "claim": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "quote": {
-                          "type": "string"
-                        },
-                        "subject": {
-                          "type": "string"
-                        },
-                        "predicate": {
-                          "type": "string"
-                        },
-                        "object": {
-                          "type": "string"
-                        },
-                        "sources": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": {
-                              "url": {
-                                "type": "string"
-                              },
-                              "title": {
-                                "type": "string"
-                              },
-                              "observed_at": {
-                                "type": "string"
-                              },
-                              "excerpt": {
-                                "type": "string"
-                              }
-                            },
-                            "anyOf": [
-                              {
-                                "required": [
-                                  "url"
-                                ]
-                              },
-                              {
-                                "required": [
-                                  "title",
-                                  "observed_at"
-                                ]
-                              },
-                              {
-                                "required": [
-                                  "excerpt",
-                                  "observed_at"
-                                ]
-                              }
-                            ]
-                          }
-                        },
-                        "verified": {
-                          "type": "boolean"
-                        },
-                        "stage": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "quote"
-                      ]
-                    },
-                    "instrument": {
+                    "claim_id": {
                       "type": "string",
-                      "minLength": 1
+                      "description": "Claim ID (CLM-…) of an accepted claim of the current event; find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
+                    },
+                    "instrument_id": {
+                      "type": "string",
+                      "description": "Registry instrument key (reg.instruments), venue:market:symbol, shown after « · » next to the name in Tank's messages and results, e.g. binance:spot:BTCUSDT."
                     },
                     "quote": {
                       "type": "string",
@@ -2269,8 +1348,8 @@
                     }
                   },
                   "required": [
-                    "claim",
-                    "instrument",
+                    "claim_id",
+                    "instrument_id",
                     "quote",
                     "effective_at"
                   ],
@@ -2291,8 +1370,9 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "token": {
-                    "type": "string"
+                  "token_id": {
+                    "type": "string",
+                    "description": "Registry token key (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC in «Bitcoin (BTC) · bitcoin:BTC»."
                   },
                   "headline_activity": {
                     "type": "object",
@@ -2695,72 +1775,9 @@
                       "evidence": {
                         "type": "array",
                         "items": {
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "quote": {
-                              "type": "string"
-                            },
-                            "subject": {
-                              "type": "string"
-                            },
-                            "predicate": {
-                              "type": "string"
-                            },
-                            "object": {
-                              "type": "string"
-                            },
-                            "sources": {
-                              "type": "array",
-                              "items": {
-                                "type": "object",
-                                "additionalProperties": false,
-                                "properties": {
-                                  "url": {
-                                    "type": "string"
-                                  },
-                                  "title": {
-                                    "type": "string"
-                                  },
-                                  "observed_at": {
-                                    "type": "string"
-                                  },
-                                  "excerpt": {
-                                    "type": "string"
-                                  }
-                                },
-                                "anyOf": [
-                                  {
-                                    "required": [
-                                      "url"
-                                    ]
-                                  },
-                                  {
-                                    "required": [
-                                      "title",
-                                      "observed_at"
-                                    ]
-                                  },
-                                  {
-                                    "required": [
-                                      "excerpt",
-                                      "observed_at"
-                                    ]
-                                  }
-                                ]
-                              }
-                            },
-                            "verified": {
-                              "type": "boolean"
-                            },
-                            "stage": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "quote"
-                          ]
-                        }
+                          "type": "string"
+                        },
+                        "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                       }
                     },
                     "required": [
@@ -2796,7 +1813,7 @@
                   }
                 },
                 "required": [
-                  "token",
+                  "token_id",
                   "headline_activity",
                   "eligible_activity",
                   "effective_fees",
@@ -2836,79 +1853,16 @@
                       "type": "string",
                       "minLength": 1
                     },
-                    "claim": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "quote": {
-                          "type": "string"
-                        },
-                        "subject": {
-                          "type": "string"
-                        },
-                        "predicate": {
-                          "type": "string"
-                        },
-                        "object": {
-                          "type": "string"
-                        },
-                        "sources": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": {
-                              "url": {
-                                "type": "string"
-                              },
-                              "title": {
-                                "type": "string"
-                              },
-                              "observed_at": {
-                                "type": "string"
-                              },
-                              "excerpt": {
-                                "type": "string"
-                              }
-                            },
-                            "anyOf": [
-                              {
-                                "required": [
-                                  "url"
-                                ]
-                              },
-                              {
-                                "required": [
-                                  "title",
-                                  "observed_at"
-                                ]
-                              },
-                              {
-                                "required": [
-                                  "excerpt",
-                                  "observed_at"
-                                ]
-                              }
-                            ]
-                          }
-                        },
-                        "verified": {
-                          "type": "boolean"
-                        },
-                        "stage": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "quote"
-                      ]
+                    "claim_id": {
+                      "type": "string",
+                      "description": "Claim ID (CLM-…) of an accepted claim of the current event; find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                     }
                   },
                   "required": [
                     "value",
                     "unit",
                     "quote",
-                    "claim"
+                    "claim_id"
                   ]
                 },
                 "denominator": {
@@ -2927,79 +1881,16 @@
                       "type": "string",
                       "minLength": 1
                     },
-                    "claim": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "quote": {
-                          "type": "string"
-                        },
-                        "subject": {
-                          "type": "string"
-                        },
-                        "predicate": {
-                          "type": "string"
-                        },
-                        "object": {
-                          "type": "string"
-                        },
-                        "sources": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": {
-                              "url": {
-                                "type": "string"
-                              },
-                              "title": {
-                                "type": "string"
-                              },
-                              "observed_at": {
-                                "type": "string"
-                              },
-                              "excerpt": {
-                                "type": "string"
-                              }
-                            },
-                            "anyOf": [
-                              {
-                                "required": [
-                                  "url"
-                                ]
-                              },
-                              {
-                                "required": [
-                                  "title",
-                                  "observed_at"
-                                ]
-                              },
-                              {
-                                "required": [
-                                  "excerpt",
-                                  "observed_at"
-                                ]
-                              }
-                            ]
-                          }
-                        },
-                        "verified": {
-                          "type": "boolean"
-                        },
-                        "stage": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "quote"
-                      ]
+                    "claim_id": {
+                      "type": "string",
+                      "description": "Claim ID (CLM-…) of an accepted claim of the current event; find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                     }
                   },
                   "required": [
                     "value",
                     "unit",
                     "quote",
-                    "claim"
+                    "claim_id"
                   ]
                 },
                 "denominator_window": {
@@ -3018,16 +1909,16 @@
               ],
               "description": "Optional measured economic numerator/base for the existing magnitude rubric. Each number must match its quoted accepted claim; units and base window must match the rubric. Missing evidence remains NOT_ESTIMABLE, never an inferred number from rationale text."
             },
-            "criterion_venue": {
+            "criterion_venue_id": {
               "type": "string",
-              "description": "Required for M1: the venue name or registered name. Tank resolves exact registry names and aliases and applies the six-venue class rule. It never infers the venue from the quotation."
+              "description": "Required for M1: the registry entity_id of the venue (binance, coinbase, okx, bybit, kraken or robinhood count for M1). Tank never infers the venue from the quotation."
             }
           },
           "required": [
             "dims",
             "class",
             "criterion",
-            "criterion_quote",
+            "criterion_claim_id",
             "impact_horizon"
           ]
         }
@@ -3039,7 +1930,7 @@
   },
   {
     "name": "set_beneficiaries",
-    "description": "Map positive beneficiaries, competitors and losers across the eight declared economic layers. Each edge needs accepted claim references, an explicit causal or share-loss chain, integration state/directionality and exposure 0..10. Project names and tickers must belong to the fixed registry universe; organization relevance alone does not prove token value capture. Supply reasons and NONE/UNKNOWN status for omitted layers. Negative token theses require explicit accepted causal evidence and a verbatim quote. Persists a versioned map and returns the token analysis set and per-layer reasons.",
+    "description": "Map positive beneficiaries, competitors and losers across the eight declared economic layers. Each edge names its entity and token by registry key (entity_id, token_id) or, outside the registry, by name (entity_name, token_name), cites accepted claims of the current event by claim_id, and gives an explicit causal or share-loss chain, integration state/directionality and exposure 0..10. Organization relevance alone does not prove token value capture. Supply reasons and NONE/UNKNOWN status for omitted layers. Negative token theses require explicit accepted causal evidence and a verbatim quote. Persists a versioned map and returns the token analysis set and per-layer reasons.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -3050,14 +1941,24 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "entity": {
-                "type": "string"
+              "entity_id": {
+                "type": "string",
+                "description": "Registry entity key (reg.entities), shown after « · » next to the name in Tank's messages and results, e.g. uniswap in «Uniswap · uniswap»."
               },
-              "token": {
+              "entity_name": {
+                "type": "string",
+                "description": "Name of an entity outside the registry, kept unresolved; Tank refuses a registered name."
+              },
+              "token_id": {
                 "type": [
                   "string",
                   "null"
-                ]
+                ],
+                "description": "Registry token key (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC in «Bitcoin (BTC) · bitcoin:BTC». Null when the entity has no token or the token is outside the registry."
+              },
+              "token_name": {
+                "type": "string",
+                "description": "Ticker or name of a token outside the registry (token_id null), kept unresolved and named in WHO without a market block; Tank refuses a registry token here."
               },
               "role": {
                 "enum": [
@@ -3125,72 +2026,9 @@
               "evidence": {
                 "type": "array",
                 "items": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "quote": {
-                      "type": "string"
-                    },
-                    "subject": {
-                      "type": "string"
-                    },
-                    "predicate": {
-                      "type": "string"
-                    },
-                    "object": {
-                      "type": "string"
-                    },
-                    "sources": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "url": {
-                            "type": "string"
-                          },
-                          "title": {
-                            "type": "string"
-                          },
-                          "observed_at": {
-                            "type": "string"
-                          },
-                          "excerpt": {
-                            "type": "string"
-                          }
-                        },
-                        "anyOf": [
-                          {
-                            "required": [
-                              "url"
-                            ]
-                          },
-                          {
-                            "required": [
-                              "title",
-                              "observed_at"
-                            ]
-                          },
-                          {
-                            "required": [
-                              "excerpt",
-                              "observed_at"
-                            ]
-                          }
-                        ]
-                      }
-                    },
-                    "verified": {
-                      "type": "boolean"
-                    },
-                    "stage": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "quote"
-                  ]
-                }
+                  "type": "string"
+                },
+                "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
               },
               "credibility_reasons": {
                 "type": "array",
@@ -3204,7 +2042,7 @@
                 "required": [
                   "mechanism",
                   "quote",
-                  "claims"
+                  "claim_ids"
                 ],
                 "properties": {
                   "mechanism": {
@@ -3215,83 +2053,19 @@
                     "type": "string",
                     "minLength": 1
                   },
-                  "claims": {
+                  "claim_ids": {
                     "type": "array",
                     "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "quote": {
-                          "type": "string"
-                        },
-                        "subject": {
-                          "type": "string"
-                        },
-                        "predicate": {
-                          "type": "string"
-                        },
-                        "object": {
-                          "type": "string"
-                        },
-                        "sources": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": {
-                              "url": {
-                                "type": "string"
-                              },
-                              "title": {
-                                "type": "string"
-                              },
-                              "observed_at": {
-                                "type": "string"
-                              },
-                              "excerpt": {
-                                "type": "string"
-                              }
-                            },
-                            "anyOf": [
-                              {
-                                "required": [
-                                  "url"
-                                ]
-                              },
-                              {
-                                "required": [
-                                  "title",
-                                  "observed_at"
-                                ]
-                              },
-                              {
-                                "required": [
-                                  "excerpt",
-                                  "observed_at"
-                                ]
-                              }
-                            ]
-                          }
-                        },
-                        "verified": {
-                          "type": "boolean"
-                        },
-                        "stage": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "quote"
-                      ]
-                    }
+                      "type": "string"
+                    },
+                    "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                   }
                 },
                 "description": "Explicit negative economic thesis for a LOSER edge with NEGATIVE direction. Supply the causal mechanism, a verbatim supporting quote and accepted RELATION claim references; the agent judges the quoted causal evidence; Tank applies deterministic role and dependency rules using the structured fields."
               }
             },
             "required": [
-              "entity",
-              "token",
+              "token_id",
               "role",
               "layer",
               "direction",
@@ -3300,6 +2074,18 @@
               "exposure_score",
               "edge_certainty",
               "evidence"
+            ],
+            "anyOf": [
+              {
+                "required": [
+                  "entity_id"
+                ]
+              },
+              {
+                "required": [
+                  "entity_name"
+                ]
+              }
             ]
           }
         },
@@ -3406,12 +2192,12 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "tokens": {
+        "token_ids": {
           "type": "array",
           "items": {
-            "type": "string",
-            "description": "Displayed project name and ticker, e.g. 'Bitcoin (BTC)' or 'World (WLD)'. An unambiguous ticker such as BTC or $BTC is also accepted."
-          }
+            "type": "string"
+          },
+          "description": "Registry token keys (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC or uniswap:UNI."
         },
         "cutoff": {
           "type": "string",
@@ -3443,7 +2229,7 @@
         }
       },
       "required": [
-        "tokens"
+        "token_ids"
       ]
     }
   },
@@ -3454,13 +2240,13 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "token": {
+        "token_id": {
           "type": "string",
-          "description": "Displayed project name and ticker, e.g. 'Bitcoin (BTC)' or 'World (WLD)'. An unambiguous ticker such as BTC or $BTC is also accepted."
+          "description": "Registry token key (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC in «Bitcoin (BTC) · bitcoin:BTC»."
         }
       },
       "required": [
-        "token"
+        "token_id"
       ]
     }
   },
@@ -3510,7 +2296,7 @@
   },
   {
     "name": "schedule_milestone",
-    "description": "Schedule a dated next step for the current event. Use the registered source name.",
+    "description": "Schedule a dated next step for the current event, published by the registered source_id.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -3522,8 +2308,9 @@
           "type": "string",
           "format": "date-time"
         },
-        "source": {
-          "type": "string"
+        "source_id": {
+          "type": "string",
+          "description": "Registered source key (reg.sources), shown after « · » next to the name in Tank's messages and results, e.g. S14 in «Venue instrument lists · S14»."
         },
         "due_at_prec": {
           "type": "string",
@@ -3550,13 +2337,13 @@
       "required": [
         "milestone",
         "due_at",
-        "source"
+        "source_id"
       ]
     }
   },
   {
     "name": "propose_pattern",
-    "description": "Propose a reusable pattern with displayed claims or source documents as evidence. Returns its subject and review status.",
+    "description": "Propose a reusable pattern for adversarial scout review, citing stored claims, events or source documents by ID as evidence. Returns its subject and review status.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -3569,125 +2356,46 @@
         },
         "evidence": {
           "type": "array",
+          "description": "Each entry cites one stored record by its ID: {claim_id} for a claim, {event_id} for an event or {item_id} for a source document; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»).",
           "items": {
-            "oneOf": [
+            "anyOf": [
               {
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "quote": {
-                    "type": "string"
-                  },
-                  "subject": {
-                    "type": "string"
-                  },
-                  "predicate": {
-                    "type": "string"
-                  },
-                  "object": {
-                    "type": "string"
-                  },
-                  "sources": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "url": {
-                          "type": "string"
-                        },
-                        "title": {
-                          "type": "string"
-                        },
-                        "observed_at": {
-                          "type": "string"
-                        },
-                        "excerpt": {
-                          "type": "string"
-                        }
-                      },
-                      "anyOf": [
-                        {
-                          "required": [
-                            "url"
-                          ]
-                        },
-                        {
-                          "required": [
-                            "title",
-                            "observed_at"
-                          ]
-                        },
-                        {
-                          "required": [
-                            "excerpt",
-                            "observed_at"
-                          ]
-                        }
-                      ]
-                    }
-                  },
-                  "verified": {
-                    "type": "boolean"
-                  },
-                  "stage": {
-                    "type": "string"
+                  "claim_id": {
+                    "type": "string",
+                    "description": "Claim ID (CLM-…)."
                   }
                 },
                 "required": [
-                  "quote"
+                  "claim_id"
                 ]
               },
               {
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "statement": {
-                    "type": "string"
-                  },
-                  "public_at": {
-                    "type": "string"
+                  "event_id": {
+                    "type": "string",
+                    "description": "Event ID (EVT-…)."
                   }
                 },
                 "required": [
-                  "statement"
+                  "event_id"
                 ]
               },
               {
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "url": {
-                    "type": "string"
-                  },
-                  "title": {
-                    "type": "string"
-                  },
-                  "observed_at": {
-                    "type": "string"
-                  },
-                  "excerpt": {
-                    "type": "string"
+                  "item_id": {
+                    "type": "string",
+                    "description": "Source document ID (ITM-… or web-…)."
                   }
                 },
-                "anyOf": [
-                  {
-                    "required": [
-                      "url"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "title",
-                      "observed_at"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "excerpt",
-                      "observed_at"
-                    ]
-                  }
+                "required": [
+                  "item_id"
                 ]
               }
             ]
@@ -3726,7 +2434,7 @@
   },
   {
     "name": "set_watch_condition",
-    "description": "Change the monitoring rules of this session event. ARM adds your own rule for a token: Tank evaluates it every minute and, when every listed condition holds for persist_count consecutive windows, sends you CONDITION_FIRED in this session. Agent rules have role AGENT, never change deterministic decisions, and expire after expires_in_hours (default 72, at most 168). DISARM cancels an ARMED rule of the event by its displayed condition text, expression and token (include role and creation time when needed); get_decision may later re-arm its own deterministic rules. Metrics: spot.cohort.direction, spot.cohort.cwb_buy, spot.cohort.cwb_sell, spot.classification, deriv.native_oi_chg_pct, deriv.native_oi_vs_normal, deriv.oi_class, deriv.funding_vs_normal, mt.move_class, mt.divergence_state, dc.class, price.repricing_band, price.close_vs_level, price.vs_anchor_pct, liq.depth_p1_vs_pre, liq.spread_ratio, event.state, event.contradiction_fatal. Ordered operators need numeric metrics; event.* conditions fire on the first match. Windows: W15M, W1H (default), W4H, W24H; all market conditions of one rule use the same window.",
+    "description": "Change the monitoring rules of this session event. ARM adds your own rule for a registry token_id: Tank evaluates it every minute and, when every listed condition holds for persist_count consecutive windows, sends you CONDITION_FIRED in this session. Agent rules have role AGENT, never change deterministic decisions, and expire after expires_in_hours (default 72, at most 168). DISARM cancels an ARMED rule of the event by its cond_id; get_decision may later re-arm its own deterministic rules. Metrics: spot.cohort.direction, spot.cohort.cwb_buy, spot.cohort.cwb_sell, spot.classification, deriv.native_oi_chg_pct, deriv.native_oi_vs_normal, deriv.oi_class, deriv.funding_vs_normal, mt.move_class, mt.divergence_state, dc.class, price.repricing_band, price.close_vs_level, price.vs_anchor_pct, liq.depth_p1_vs_pre, liq.spread_ratio, event.state, event.contradiction_fatal. Ordered operators need numeric metrics; event.* conditions fire on the first match. Windows: W15M, W1H (default), W4H, W24H; all market conditions of one rule use the same window.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -3737,35 +2445,13 @@
             "DISARM"
           ]
         },
-        "condition": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "text": {
-              "type": "string"
-            },
-            "conditions": {
-              "type": "object"
-            },
-            "token": {
-              "type": "string",
-              "description": "The displayed project name and ticker; include it to distinguish otherwise identical watches on different tokens."
-            },
-            "role": {
-              "type": "string",
-              "description": "The displayed watch role, when needed to distinguish otherwise identical rules."
-            },
-            "created_at": {
-              "type": "string",
-              "description": "The displayed creation time, when needed to distinguish a re-armed watch from its predecessor."
-            }
-          },
-          "required": [
-            "text"
-          ]
+        "cond_id": {
+          "type": "string",
+          "description": "DISARM only: ID of the ARMED watch condition of the current event (CND-…); find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Watch conditions of an event»."
         },
-        "token": {
-          "type": "string"
+        "token_id": {
+          "type": "string",
+          "description": "ARM only: Registry token key (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC in «Bitcoin (BTC) · bitcoin:BTC»."
         },
         "text": {
           "type": "string",

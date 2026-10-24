@@ -4,7 +4,7 @@
 
 | Topic | Rule |
 |---|---|
-| IDs | ULID-based, typed prefixes: `ITM-` item, `EVT-` event, `OBS-` observation, `CLM-` claim, `EMS-`, `EDG-` beneficiary edge, `MTA-` Market Truth assessment, `OUT-` outlook, `DEC-` decision, `CND-` watch condition, `CAL-` call, `ALR-` alert (+ integer version), `RWP-` reaction pack, `JOB-`, `PRP-` proposal, `FIX-` fixture. `source_id`, `entity_id`, `token_id`, `instrument_id` are readable slugs (e.g. `binance:spot:UNIUSDT`). Evidence bundles are content-addressed: `EVB-<sha256>`. |
+| IDs | ULID-based, typed prefixes: `ITM-` item (`web-<hash>` for a page read with `fetch_page` or a `web_search` result), `EVT-` event, `OBS-` observation, `CLM-` claim, `EMS-`, `EDG-` beneficiary edge, `MTA-` Market Truth assessment, `OUT-` outlook, `DEC-` decision, `CND-` watch condition, `CAL-` call, `ALR-` alert (+ integer version), `RWP-` reaction pack, `JOB-`, `PRP-` proposal, `FIX-` fixture. `source_id`, `entity_id`, `token_id`, `instrument_id` are readable registry keys (e.g. `binance:spot:UNIUSDT`). Evidence bundles are content-addressed: `EVB-<sha256>`. Tool arguments take these IDs and keys; how to find them: «Finding record IDs for tool arguments» below. |
 | Time | UTC everywhere; stored with microsecond resolution. Every timestamp field has a sibling precision: `EXACT`, `BUCKET(<size>)`, `COLLECTION_ONLY`. |
 | Units | Native token quantity and USD notional are separate decimal fields. Returns are decimal fractions. Funding is stored as rate per interval + `interval_h`, with derived `rate_8h_eq`. Basis in bps. |
 | Missing data | Never 0. Every measurable is `Measured{value, unit, window, observed_at, precision, coverage, reason}`; when `value = null`, `reason ∈ {NOT_SUPPORTED, SOURCE_FAILED, INCOMPLETE, NOT_APPLICABLE, NOT_ESTIMABLE, PENDING}`. |
@@ -160,7 +160,9 @@ EMSAssessment
     mechanical_flows, surprise, implementation : DimScore }
   structural_gates: [{gate: G1..G6, satisfied: bool, evidence: [claim_id]}]
   class: EMSClass
-  criterion: G1..G6 | M1..M7 | MATERIAL | LOW; criterion_quote: str   # 01 §6.3
+  criterion: G1..G6 | M1..M7 | MATERIAL | LOW; criterion_claim_id: claim_id?   # 01 §6.3
+  criterion_quote: str               # the quote of criterion_claim_id, stored with it
+  criterion_venue_id: entity_id?     # M1 only
   class_reasons: [str]               # e.g. "M2", "cap: LOW certainty"
   impact_horizon: ImpactHorizon
 
@@ -1224,6 +1226,108 @@ RETURNING *;
 ```
 
 Metric meaning and units come from the authoritative field registry, without runtime semantic-confidence or self-test gates. Any `semantic_confidence` columns retained in the physical schema are legacy storage and do not gate interpretation, Data Confidence or decisions.
+
+
+# Finding record IDs for tool arguments
+
+Tank's messages and tool results are text: they never show record IDs. Tool arguments name records only by ID, never by a description; Tank checks every ID (it exists, is of the right kind and lies in the tool's scope) and a refusal names the argument path and the query below to use.
+
+- **Registry keys** (`token_id`, `entity_id`, `instrument_id`, `source_id`) are shown with every registry object as `Name · key`: `World (WLD) · world:WLD`, `Uniswap · uniswap`, `binance SPOT BTCUSDT · binance:spot:BTCUSDT`, `Venue instrument lists · S14`. Pass the key after ` · `. A key not shown yet is in «Registry keys» below.
+- **Record IDs** (`item_id`, `event_id`, `claim_id`, `cond_id`, proposal IDs) come from read-only SQL in the sandbox, keyed by what the messages show: a URL with its observation time, a quote, a statement, a public time.
+- **Implicit records take no ID:** the current event (in every tool scoped to it), the incoming source (`record_event`, `add_observation`, `get_item`) and the current proposal (`record_review`). Pass an ID only for a different record: `get_item` or `get_event` of another record, the `merge_into` target, the `add_observation` document of a callback without an incoming source (MILESTONE, CONDITION_FIRED, CALL_EXPIRED, USER_QUESTION), claim evidence from another document, assessment and beneficiary evidence (claims of the current event), `supersedes_claim_ids`, the watch to DISARM, `propose_pattern` evidence.
+- A claim quoted from the incoming source needs no `evidence`: Tank cites the incoming source.
+
+```python
+import os
+import psycopg
+
+def q(sql, **params):
+    with psycopg.connect(os.environ["TANK_DB_URL"]) as connection:
+        return connection.execute(sql, params).fetchall()
+```
+
+## Source document by URL
+
+```python
+q("""SELECT item_id, source_id, document->>'evidence_kind' AS kind, observed_at, title
+     FROM ingest.source_items WHERE url = %(url)s ORDER BY observed_at DESC""", url="https://…")
+```
+
+A page read with `fetch_page` is its own document (`source_id = 'WEB'`, `kind = 'FETCHED_PAGE'`; a `web_search` result is `SEARCH_RESULT`), even when a collected item has the same URL: cite the document whose text holds the quote. Several captures of one URL differ by `observed_at`; take the one with the observation time you were shown (`AND observed_at = %(observed_at)s::timestamptz`). A document without a URL: `WHERE strpos(document->>'text', %(excerpt)s) > 0`.
+
+## The current event
+
+```python
+q("""SELECT e.event_id, e.statement, e.public_at, e.lifecycle
+     FROM evt.events e
+     JOIN evt.event_observations o ON o.event_id = e.event_id
+     JOIN ingest.source_items i ON i.item_id = o.item_id
+     WHERE i.url = %(url)s""", url="<URL of the incoming source>")
+```
+
+## Claims of an event
+
+```python
+q("""SELECT claim_id, claim_type, quote, subject, predicate, object, state_claim, verified
+     FROM evt.claims WHERE document->>'event_id' = %(event_id)s ORDER BY claim_id""", event_id="EVT-…")
+```
+
+Claims of the event that contains a source URL, without its event_id first:
+
+```python
+q("""SELECT c.claim_id, c.quote, c.subject, c.predicate, c.object, c.state_claim, c.verified
+     FROM evt.claims c
+     WHERE c.document->>'event_id' IN (
+       SELECT o.event_id FROM evt.event_observations o
+       JOIN ingest.source_items i ON i.item_id = o.item_id WHERE i.url = %(url)s)
+     ORDER BY c.claim_id""", url="https://…")
+```
+
+Narrow to one claim with `AND strpos(c.quote, %(quote)s) > 0`. Claim IDs sort in creation order. After `merge_into`, the claims belong to the surviving event.
+
+## Events by statement, time or token
+
+```python
+q("""SELECT event_id, statement, public_at, known_to_us_at, lifecycle, event_state
+     FROM evt.events
+     WHERE lifecycle NOT IN ('CLOSED', 'MERGED', 'INVALIDATED')
+       AND strpos(lower(statement), lower(%(words)s)) > 0
+     ORDER BY known_to_us_at DESC LIMIT 20""", words="LIBRA")
+```
+
+By public time: `AND public_at BETWEEN %(start)s::timestamptz AND %(end)s::timestamptz`. By token: `AND document->'tokens_mentioned' @> jsonb_build_array(%(token_id)s::text)`. By entity: `AND document->'entities' @> jsonb_build_array(jsonb_build_object('entity_id', %(entity_id)s::text))`. A merged event names its survivor in `merged_into`.
+
+## Watch conditions of an event
+
+```python
+q("""SELECT cond_id, token_id, status, document->>'role' AS role, document->>'human_text' AS text,
+            document->'expr' AS expr, document->>'created_at' AS created_at
+     FROM ana.watch_conditions WHERE event_id = %(event_id)s AND status = 'ARMED'
+     ORDER BY document->>'created_at'""", event_id="EVT-…")
+```
+
+## Proposals by subject
+
+```python
+q("""SELECT prp_id, hook, concept_name, document->>'duplicate_of' AS duplicate_of,
+            document->>'occurrences' AS occurrences, document->'evidence' AS evidence
+     FROM scout.expansion_proposals
+     WHERE human_action IS NULL AND strpos(lower(concept_name), lower(%(subject)s)) > 0
+     ORDER BY prp_id""", subject="…")
+```
+
+## Registry keys
+
+```python
+q("SELECT token_id, symbol, document->>'project' FROM reg.tokens WHERE upper(symbol) = upper(%(ticker)s) OR lower(document->>'project') = lower(%(name)s)", ticker="UNI", name="Uniswap")
+q("""SELECT DISTINCT e.entity_id, e.name FROM reg.entities e
+     LEFT JOIN reg.entity_aliases a ON a.entity_id = e.entity_id
+     WHERE lower(e.name) = lower(%(name)s) OR lower(a.alias) = lower(%(name)s)""", name="Uniswap Labs")
+q("SELECT instrument_id, venue, market_type, venue_symbol FROM reg.instruments WHERE token_id = %(token_id)s ORDER BY venue, market_type", token_id="bitcoin:BTC")
+q("SELECT source_id, name FROM reg.sources ORDER BY source_id")
+```
+
+A project or token outside the registry has no key: name it (`entities[].name`, `token_names`, `entity_name`, `token_name`); Tank refuses a name its registry resolves and asks for the key.
 
 
 # Executable sandbox access

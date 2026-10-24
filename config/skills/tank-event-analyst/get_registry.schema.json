@@ -4,10 +4,14 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "entity_or_token": {
-      "type": "string"
+    "token_id": {
+      "type": "string",
+      "description": "Registry token key (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC in \u00abBitcoin (BTC) \u00b7 bitcoin:BTC\u00bb."
+    },
+    "entity_id": {
+      "type": "string",
+      "description": "Registry entity key (reg.entities), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. uniswap in \u00abUniswap \u00b7 uniswap\u00bb."
     }
   },
-  "required": [],
-  "description": "Read fixed registry identity and dependency information for an entity or token: project names, aliases, contracts, official accounts and sources, plus registered causal dependencies. Registry links identify candidates; they do not alone prove a current integration, economic effect or token capture."
+  "description": "Read fixed registry identity and dependency information: project names, aliases, contracts, official accounts and sources, plus registered causal dependencies. Filter by token_id or entity_id, or omit both for the whole registry. Registry links identify candidates; they do not alone prove a current integration, economic effect or token capture."
 }

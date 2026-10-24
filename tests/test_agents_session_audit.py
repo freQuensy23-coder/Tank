@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from tank.agents import SessionService
+from tank.agents.context import CONTEXT_VERSION
 from tank.storage import MemoryRepository
 from tank.util import iso
 
@@ -25,14 +26,16 @@ def settings(replay=False):
         config_version="current-config",
         code_version="current-code",
         replay=replay,
-        load_config=lambda name: config,
+        load_config=lambda name: {"registry": {"tokens": [{"token_id": "T", "symbol": "T"}]}}.get(
+            name, config
+        ),
     )
 
 
 async def seed(repo, **changes):
     record = {
         "session_id": "s",
-        "model_context_version": 1,
+        "model_context_version": CONTEXT_VERSION,
         "event_id": "e",
         "item_id": "one",
         "status": "OPEN",

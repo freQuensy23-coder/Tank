@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from tank.agents import SessionService
+from tank.agents.context import CONTEXT_VERSION
 from tank.storage import MemoryRepository
 from tank.telegram_inbox import (
     CARD_CHANNEL,
@@ -126,7 +127,7 @@ async def seed(repo, *, status="OPEN", rich_message=None):
         "ses_1",
         {
             "session_id": "ses_1",
-            "model_context_version": 1,
+            "model_context_version": CONTEXT_VERSION,
             "event_id": "evt_1",
             "status": status,
             "runtime_status": "IDLE",
@@ -745,7 +746,7 @@ async def test_agent_watch_rules_arm_disarm_and_survive_decision_reconciliation(
         {
             "event_id": "evt_1",
             "action": "ARM",
-            "token": "bitcoin:BTC",
+            "token_id": "bitcoin:BTC",
             "text": "Wake me if OI jumps",
             "conditions": [{"metric": "deriv.native_oi_chg_pct", "op": ">", "value": 5, "persist_count": 2}],
             "expires_in_hours": 24,
@@ -766,7 +767,7 @@ async def test_agent_watch_rules_arm_disarm_and_survive_decision_reconciliation(
             {
                 "event_id": "evt_1",
                 "action": "ARM",
-                "token": "bitcoin:BTC",
+                "token_id": "bitcoin:BTC",
                 "conditions": [{"metric": "DROP TABLE", "op": ">", "value": 1}],
             },
             {},
@@ -943,7 +944,7 @@ async def test_numeric_watch_comparisons_need_numbers():
             {
                 "event_id": "evt_1",
                 "action": "ARM",
-                "token": "bitcoin:BTC",
+                "token_id": "bitcoin:BTC",
                 "conditions": [{"metric": "deriv.native_oi_chg_pct", "op": ">", "value": "HIGH"}],
             },
             {},
@@ -1080,7 +1081,7 @@ async def test_event_scoped_watches_refuse_persistence():
             {
                 "event_id": "evt_1",
                 "action": "ARM",
-                "token": "bitcoin:BTC",
+                "token_id": "bitcoin:BTC",
                 "conditions": [
                     {"metric": "event.state", "op": "==", "value": "CONFIRMED", "persist_count": 2}
                 ],
@@ -1109,7 +1110,7 @@ async def test_ordered_watch_on_categorical_metric_is_refused():
             {
                 "event_id": "evt_1",
                 "action": "ARM",
-                "token": "bitcoin:BTC",
+                "token_id": "bitcoin:BTC",
                 "conditions": [{"metric": "event.state", "op": ">", "value": 1}],
             },
             {},
@@ -1306,7 +1307,7 @@ async def test_watch_rules_refuse_mixed_windows_and_unevaluated_metrics():
     tools = object.__new__(EventToolService)
     tools.repo = repo
     tools.settings = SimpleNamespace(config_version="c", code_version="v")
-    base = {"event_id": "evt_1", "action": "ARM", "token": "bitcoin:BTC"}
+    base = {"event_id": "evt_1", "action": "ARM", "token_id": "bitcoin:BTC"}
     with pytest.raises(ValueError, match="same window"):
         await tools.set_watch_condition(
             {
@@ -1581,8 +1582,8 @@ async def test_watch_token_must_exist_in_the_registry():
         "conditions": [{"metric": "deriv.native_oi_chg_pct", "op": ">", "value": 3}],
     }
     with pytest.raises(ValueError, match="not a registry token"):
-        await tools.set_watch_condition({**arm, "token": "bitcoin:BTX"}, {})
-    assert (await tools.set_watch_condition({**arm, "token": "bitcoin:BTC"}, {}))["accepted"]
+        await tools.set_watch_condition({**arm, "token_id": "bitcoin:BTX"}, {})
+    assert (await tools.set_watch_condition({**arm, "token_id": "bitcoin:BTC"}, {}))["accepted"]
 
 
 def test_captions_are_cut_by_utf16_length_and_photos_fall_back_to_dimensions():
@@ -1637,6 +1638,7 @@ async def test_watch_mutation_hydrates_prompt_provenance_first():
     session.pop("prompt_version_basis")
     session["prompt_version"] = "legacy-label"
     await repo.put("ops.agent_sessions", "ses_1", session)
+    await repo.put("evt.events", session["event_id"], {"event_id": session["event_id"]})
     calls = []
 
     def handler(request):
@@ -2012,7 +2014,7 @@ async def test_agent_rules_are_coalesced_and_capped_per_event():
         return {
             "event_id": "evt_1",
             "action": "ARM",
-            "token": "bitcoin:BTC",
+            "token_id": "bitcoin:BTC",
             "conditions": [{"metric": "deriv.native_oi_chg_pct", "op": ">", "value": value}],
         }
 

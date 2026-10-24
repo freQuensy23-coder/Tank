@@ -1,19 +1,16 @@
-"""Adapt existing scripted actors to the public contract without changing captured inputs."""
+"""Adapt scripted actors to the public contract: the host binds the current event, incoming item and proposal."""
 
-from tank.agents.context import ModelContext
+from tank.event_tools import SCOPED_TOOLS
+
+IMPLICIT = {
+    **{tool: {"event_id"} for tool in SCOPED_TOOLS},
+    "record_event": {"item_id"},
+    "record_review": {"proposal_id"},
+}
 
 
-async def model_arguments(repo, settings, tool, arguments):
-    sessions = [row async for row in repo.iter_all("ops.agent_sessions")]
-    session = sessions[-1] if sessions else {}
-    boundary = ModelContext(repo, settings, session)
-    public = await boundary.project(arguments)
-    if tool in {"record_event", "add_observation"}:
-        public.pop("document", None)
-        for entity in public.get("entities", []):
-            entity.pop("entity", None)
-    await boundary.save()
-    return public
+def model_arguments(tool, arguments):
+    return {key: value for key, value in arguments.items() if key not in IMPLICIT.get(tool, set())}
 
 
 async def audited_result(repo, event):

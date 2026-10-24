@@ -200,7 +200,7 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
             "e", "T", chosen_boundary(end - timedelta(minutes=1), precision="BUCKET(1m)")
         )
         assert first["data_confidence"]["class"] == "LOW"
-        initial = await tools.dispatch("get_decision", {"event_id": "e", "token": "T"}, {})
+        initial = await tools.dispatch("get_decision", {"event_id": "e", "token_id": "T"}, {})
         assert initial["action"] == "WAIT"
         watch = next(row for row in initial["conditions"] if row["role"] == "UPGRADE")
         assert watch["expr"]["metric"] == "dc.class" and watch["expr"]["value"] == "HIGH"
@@ -237,7 +237,7 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
             "id": "decision",
             "type": "agent.custom_tool_use",
             "name": "get_decision",
-            "input": {"token": "T"},
+            "input": {"token_id": "T"},
         }
         try:
             async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
@@ -317,7 +317,7 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
         first = await truth.assess(
             "e", "T", chosen_boundary(end - timedelta(minutes=1), precision="BUCKET(1m)")
         )
-        decision = await tools.dispatch("get_decision", {"event_id": "e", "token": "T"}, {})
+        decision = await tools.dispatch("get_decision", {"event_id": "e", "token_id": "T"}, {})
         condition = next(row for row in decision["conditions"] if row["role"] == "UPGRADE")
         condition.update(status="FIRED", fired_at=iso())
         await repo.put("ana.watch_conditions", condition["cond_id"], condition)
@@ -326,7 +326,7 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
             "id": "cancelled",
             "type": "agent.custom_tool_use",
             "name": "get_decision",
-            "input": {"token": "T"},
+            "input": {"token_id": "T"},
         }
         acks = []
 
@@ -402,7 +402,7 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
         tools = EventToolService(repo, settings, truth, engine)
         await seed_domain(repo, settings, end)
         await truth.assess("e", "T", chosen_boundary(end - timedelta(minutes=1), precision="BUCKET(1m)"))
-        decision = await tools.dispatch("get_decision", {"event_id": "e", "token": "T"}, {})
+        decision = await tools.dispatch("get_decision", {"event_id": "e", "token_id": "T"}, {})
         condition = next(row for row in decision["conditions"] if row["role"] == "UPGRADE")
         condition.update(status="FIRED", fired_at=iso())
         await repo.put("ana.watch_conditions", condition["cond_id"], condition)
@@ -441,7 +441,7 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
                 "id": "first-condition",
                 "type": "agent.custom_tool_use",
                 "name": "get_decision",
-                "input": {"token": "T"},
+                "input": {"token_id": "T"},
             }
             pending = asyncio.create_task(sessions.process_event("s", event, 8))
             try:
@@ -518,7 +518,7 @@ async def test_event_only_risk_watch_never_waits_for_market_refresh(tmp_path, ro
     tools.get_market_truth = AsyncMock(
         side_effect=AssertionError("Event risk cannot depend on unavailable market")
     )
-    result = await tools.dispatch("get_decision", {"event_id": "e", "token": "T"}, {})
+    result = await tools.dispatch("get_decision", {"event_id": "e", "token_id": "T"}, {})
     assert result["action"] == expected
     assert result["mta_id"] == first["mta_id"]
     tools.get_market_truth.assert_not_called()
