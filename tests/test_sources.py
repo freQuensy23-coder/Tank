@@ -14,7 +14,7 @@ from source_support import (
     source_feed,
 )
 
-from tank.contracts.source_items import SourceText
+from tank.contracts.source_items import SourceText, parse_feed_source_item
 from tank.sources import SourceService, parsers
 from tank.util import new_id, sha256
 
@@ -1327,10 +1327,12 @@ async def test_seen_full_article_empty_index_deduplicates_before_new_content_gua
 
 @pytest.mark.asyncio
 async def test_declared_author_organization_precedence_and_identity_without_body_name(tmp_path: Path) -> None:
-    from tank.agents.pipeline import Pipeline
+    from tank.agents.pipeline_contracts import RoutingRegistry
+    from tank.agents.routing import RoutingItem, RoutingSelector
     from tank.settings import Settings
+    from tank.storage import MemoryRepository
 
-    repo = Repo()
+    repo = MemoryRepository()
     config = Settings(data_dir=tmp_path)
     service = SourceService(repo, config)
     source = {
@@ -1356,7 +1358,9 @@ async def test_declared_author_organization_precedence_and_identity_without_body
             record = await service.ingest(source_definition(source), captured(service, "S01", item, payload))
             assert record["author_organization"] == expected
             if external == "source":
-                assert "sec" in Pipeline(repo, config, http=object()).identities(record)
+                assert "sec" in RoutingSelector(
+                    repo, RoutingRegistry.from_wire(config.load_config("registry"))
+                ).identities(RoutingItem.from_source(parse_feed_source_item(record)))
         news = await service.ingest(
             source_definition({"source_id": "S30", "name": "BBC News"}),
             captured(
@@ -1367,7 +1371,9 @@ async def test_declared_author_organization_precedence_and_identity_without_body
             ),
         )
         assert news["author"] == "BBC News" and news["author_organization"] is None
-        assert "sec" not in Pipeline(repo, config, http=object()).identities(news)
+        assert "sec" not in RoutingSelector(
+            repo, RoutingRegistry.from_wire(config.load_config("registry"))
+        ).identities(RoutingItem.from_source(parse_feed_source_item(news)))
     finally:
         await service.close()
 

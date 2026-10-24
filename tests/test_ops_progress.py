@@ -3,10 +3,10 @@ import json
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from agent_source_fixtures import source_item_fixture
 from delivery_support import delivery_job
 from source_support import source_definition
 from test_agents_pipeline_audit import options
@@ -18,8 +18,9 @@ from test_sources import settings as source_settings
 from tank.agents.pipeline import Pipeline
 from tank.delivery import DeliveryError, DeliveryService
 from tank.event_tools import EventToolService
-from tank.ops_progress import item_progress, session_progress
+from tank.ops_progress import RepositorySourceProgress, item_progress, session_progress
 from tank.runtime import Runtime
+from tank.runtime_contracts import ItemJob
 from tank.settings import Settings
 from tank.sources import SourceService
 from tank.storage import MemoryRepository
@@ -82,8 +83,16 @@ async def test_every_ingested_material_reaches_ops_before_filtering_and_duplicat
     assert len(await repo.list("ops.jobs", filters={"type": "DELIVER"})) == len(expected)
     if decision == "ALWAYS":
         assert await repo.list("ops.jobs", filters={"type": "FILTER_ITEM"}) == []
-        await Pipeline(repo, settings, http=object()).route_item({"item_id": result["item_id"]})
-        await Pipeline(repo, settings, http=object()).route_item({"item_id": result["item_id"]})
+        async with httpx.AsyncClient() as http:
+            pipeline = Pipeline(
+                repo,
+                Settings(data_dir=tmp_path),
+                progress=RepositorySourceProgress(repo, settings),
+                http=http,
+            )
+            job = ItemJob.model_validate({"item_id": result["item_id"]})
+            await pipeline.route_item(job)
+            await pipeline.route_item(job)
         assert {row["stage"] for row in await notices(repo)} == expected | {"AGENT_QUEUED"}
         assert len(await notices(repo)) == 3
 
@@ -91,46 +100,53 @@ async def test_every_ingested_material_reaches_ops_before_filtering_and_duplicat
 @pytest.mark.parametrize(
     "score,expected", [(0.1, "JEV_REJECTED"), (0.9, "JEV_PASSED"), (None, "JEV_BYPASSED")]
 )
-async def test_filter_outcomes_and_routing_are_visible_without_publishing(score, expected) -> None:
+async def test_filter_outcomes_and_routing_are_visible_without_publishing(
+    score: float | None, expected: str
+) -> None:
     settings, _ = options()
     settings.ops_progress_enabled = True
     settings.replay = False
     repo = MemoryRepository()
-    await repo.put(
-        "ingest.source_items",
-        "i",
-        {
-            "source_id": "S30",
-            "item_id": "i",
-            "title": "Aave announcement",
-            "relevance": {"decision": "ALWAYS" if score is None else None},
-            "observed_at": iso(),
-        },
-    )
-    pipeline = Pipeline(repo, settings, http=object())
-    pipeline._score_record = AsyncMock(
-        return_value={
-            "score": score,
-            "resolved_model_id": "fixture",
-            "jev_provider": "fixture",
-            "requested_model_id": "fixture",
-            "semantic_model_id": "fixture",
-            "model_pin_evidence": {},
-            "usage_id": "usage",
-        }
-    )
-    await pipeline.filter_item({"item_id": "i"})
-    await pipeline.filter_item({"item_id": "i"})
-    assert [row["stage"] for row in await notices(repo)] == [expected]
-    if expected == "JEV_REJECTED":
-        assert await repo.list("ops.jobs", filters={"type": "ROUTE_ITEM"}) == []
-        assert "порог=0.7000" in (await notices(repo))[0]["reason"]
-    else:
-        await pipeline.route_item({"item_id": "i"})
-        await pipeline.route_item({"item_id": "i"})
-        assert len([row for row in await notices(repo) if row["stage"] == "AGENT_QUEUED"]) == 1
-        assert len(await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})) == 1
+    item = source_item_fixture("i", source_id="S01" if score is None else "S30", title="Aave announcement")
+    await repo.put("ingest.source_items", item.item_id, item.storage_record())
+
+    requests: list[httpx.Request] = []
+
+    def classify(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert score is not None
+        assert request.method == "POST"
+        return httpx.Response(
+            200,
+            json={
+                "model": "jev-1.13-free",
+                "answers": {"relevant": {"type": "noul", "noul": score}},
+                "usage": {"input_tokens": 100, "output_tokens": 0},
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(classify)) as http:
+        pipeline = Pipeline(repo, settings, progress=RepositorySourceProgress(repo, settings), http=http)
+        await pipeline.filter_item(ItemJob(item_id=item.item_id))
+        await pipeline.filter_item(ItemJob(item_id=item.item_id))
+        assert [row["stage"] for row in await notices(repo)] == [expected]
+        if expected == "JEV_REJECTED":
+            assert await repo.list("ops.jobs", filters={"type": "ROUTE_ITEM"}) == []
+            assert "порог=0.7000" in (await notices(repo))[0]["reason"]
+        else:
+            await pipeline.route_item(ItemJob(item_id=item.item_id))
+            await pipeline.route_item(ItemJob(item_id=item.item_id))
+            assert len([row for row in await notices(repo) if row["stage"] == "AGENT_QUEUED"]) == 1
+            assert len(await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})) == 1
     assert await repo.list("out.alerts") == []
+    assert len(requests) == (0 if score is None else 1)
+    usages = await repo.list("ops.llm_usage")
+    assert len(usages) == (0 if score is None else 1)
+    if score is not None:
+        from tank.agents.pipeline_contracts import JevScoreRecord
+
+        usage = JevScoreRecord.model_validate(usages[0])
+        assert usage.score == score and usage.model_pin_evidence
 
 
 @pytest.mark.parametrize("is_event", [False, True])
