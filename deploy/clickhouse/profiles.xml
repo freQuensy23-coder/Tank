@@ -1,0 +1,11 @@
+<!-- Per-query memory for Tank's queries: 4 GB each, with GROUP BY and ORDER BY spilling to disk
+     past 2 GB, so one heavy query cannot take the server's whole share. -->
+<clickhouse>
+    <profiles>
+        <default>
+            <max_memory_usage>4000000000</max_memory_usage>
+            <max_bytes_before_external_group_by>2000000000</max_bytes_before_external_group_by>
+            <max_bytes_before_external_sort>2000000000</max_bytes_before_external_sort>
+        </default>
+    </profiles>
+</clickhouse>
