@@ -9,8 +9,9 @@ from datetime import timedelta
 from tank.agents.sessions import ADMITTED_JOB_TYPES, AdmissionDeferred
 from tank.delivery import DeliveryDeferred, DeliveryService
 from tank.ops_progress import job_failure_progress
+from tank.runtime_contracts import EscalateTokensJob, MarketTruthJob
 from tank.scheduler import Scheduler
-from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
+from tank.time_precision import Timestamp, collection_clock, offset_schedule
 from tank.util import parse_time, utcnow
 
 log = logging.getLogger(__name__)
@@ -109,8 +110,8 @@ class Runtime:
             "FILTER_ITEM": pipeline.filter_item,
             "ROUTE_ITEM": pipeline.route_item,
             "AGENT_MESSAGE": sessions.send_message,
-            "ESCALATE_TOKENS": self.escalate,
-            "RUN_MARKET_TRUTH": self.assess,
+            "ESCALATE_TOKENS": self.escalate_wire,
+            "RUN_MARKET_TRUTH": self.assess_wire,
             "DELIVER": self.delivery.deliver,
             "EVAL_CONDITIONS": self.scheduler.eval_conditions,
             "MILESTONE_CHECK": self.scheduler.milestone_check,
@@ -155,33 +156,42 @@ class Runtime:
 
         validate_registry(settings)
 
-    async def escalate(self, payload):
-        tokens = payload.get("tokens") or ([payload["token_id"]] if payload.get("token_id") else None)
-        if not tokens:
-            raise ValueError("ESCALATE_TOKENS requires tokens")
-        await self.market.escalate(payload["event_id"], tokens)
+    async def escalate_wire(self, payload):
+        await self.escalate(EscalateTokensJob.model_validate(payload))
 
-    async def assess(self, payload):
+    async def assess_wire(self, payload):
+        return await self.assess(MarketTruthJob.model_validate(payload))
+
+    async def escalate(self, payload: EscalateTokensJob) -> None:
+        await self.market.escalate(payload.event_id, payload.tokens)
+
+    async def assess(self, payload: MarketTruthJob):
         from tank.market.capture import event_anchor
 
-        event = await self.repo.get("evt.events", payload["event_id"])
+        event = await self.repo.get("evt.events", payload.event_id)
         if event is None:
             raise ValueError("Market truth event does not exist")
         prerequisite = await self.market.capture_readiness(
-            payload["event_id"], payload["token_id"], anchor=event_anchor(event)["ts"]
+            payload.event_id, payload.token_id, anchor=event_anchor(event)["ts"]
         )
         if prerequisite["status"] not in {"PENDING", "RUNNING", "COMPLETE", "PARTIAL", "FAILED"}:
             raise RuntimeError("Required durable event capture was not scheduled")
         if prerequisite["status"] in {"PENDING", "RUNNING"}:
-            await self.market.wait_capture(payload["event_id"], payload["token_id"], timeout_s=CAPTURE_WAIT_S)
-        cutoff = propagate_timestamp(payload, "cutoff") if payload.get("cutoff") is not None else None
+            await self.market.wait_capture(payload.event_id, payload.token_id, timeout_s=CAPTURE_WAIT_S)
+        cutoff = (
+            Timestamp(
+                payload.cutoff, payload.cutoff_prec, payload.cutoff_prec_reason, payload.cutoff_bucket_anchor
+            )
+            if payload.cutoff is not None
+            else None
+        )
         if hasattr(self.market, "repair_windows"):
             anchor = parse_time(event_anchor(event)["ts"])
             end = parse_time(cutoff.value) if cutoff is not None and cutoff.value else utcnow()
             await self.market.repair_windows(
-                payload["token_id"], min(anchor, end) - REPAIR_LOOKBACK, end, budget_s=REPAIR_BUDGET_S
+                payload.token_id, min(anchor, end) - REPAIR_LOOKBACK, end, budget_s=REPAIR_BUDGET_S
             )
-        return await self.truth.assess(payload["event_id"], payload["token_id"], cutoff)
+        return await self.truth.assess(payload.event_id, payload.token_id, cutoff)
 
     async def scout_review(self, payload):
         if not hasattr(self.sessions, "scout_review"):

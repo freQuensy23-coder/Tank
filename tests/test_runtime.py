@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tank.runtime import Runtime
+from tank.runtime_contracts import MarketTruthJob
 from tank.storage import MemoryRepository
 from tank.util import parse_time
 
@@ -1293,7 +1294,9 @@ async def test_market_truth_repairs_windows_within_budget_before_assessing() -> 
     await repo.put("evt.events", "e", {"event_id": "e", "public_at": anchor, "known_to_us_at": anchor})
     rt = object.__new__(Runtime)
     rt.repo, rt.market, rt.truth = repo, Market(), Truth()
-    result = await rt.assess({"event_id": "e", "token_id": "T", "cutoff": "2026-10-20T13:00:00Z"})
+    result = await rt.assess(
+        MarketTruthJob(event_id="e", token_id="T", cutoff="2026-10-20T13:00:00Z", cutoff_prec="EXACT")
+    )
     assert result == {"mta_id": "MTA"} and [c[0] for c in calls] == ["repair", "assess"]
     _, token, start, end, budget = calls[0]
     assert token == "T" and budget == runtime_module.REPAIR_BUDGET_S
@@ -1302,5 +1305,5 @@ async def test_market_truth_repairs_windows_within_budget_before_assessing() -> 
 
     calls.clear()
     rt.market = SimpleNamespace(capture_readiness=Market().capture_readiness)
-    await rt.assess({"event_id": "e", "token_id": "T"})
+    await rt.assess(MarketTruthJob(event_id="e", token_id="T"))
     assert calls == [("assess", "T")]

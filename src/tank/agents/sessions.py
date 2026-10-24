@@ -16,16 +16,18 @@ from urllib.parse import quote
 
 import httpx
 from httpx_sse import aconnect_sse
+from pydantic import JsonValue
 
-from tank.agents import workflow
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
 from tank.agents.pipeline import ConfigurationError
+from tank.agents.provenance import resolve_agent_provenance
 from tank.agents.security import redact_tool_arguments
 from tank.agents.wire import tool_wire_result
+from tank.agents.workflow import SOURCE_COMPLETION_VERSION
+from tank.contracts.provenance import AgentProvenance
 from tank.delivery import DeliveryDeferred
 from tank.openma_sync import agent_tools
 from tank.ops_progress import session_progress
-from tank.settings import threshold
 from tank.telegram_inbox import DOCUMENT_LIMIT, closed_reason, question_message, record_answer
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, iso, parse_time, sha256, utcnow
@@ -147,47 +149,12 @@ class SessionService:
             else self.clock_timestamp()
         )
 
-    def agent_provenance(self, remote, config, agent_id):
-        """Bind generation to the actual resolved native session-agent snapshot."""
-        snapshot = remote.get("agent") if isinstance(remote.get("agent"), dict) else {}
-        version = snapshot.get("version")
-        basis = "RESOLVED_SESSION_AGENT"
-        if version is None:
-            version, basis = config.get("agent_version"), "DEPLOYMENT_DECLARATION"
-        pinned_skills = all(
-            isinstance(skill, dict) and skill.get("version") not in (None, "latest")
-            for skill in snapshot.get("skills", [])
+    def agent_provenance(
+        self, remote: dict[str, JsonValue], config: dict[str, JsonValue], agent_id: str | None
+    ) -> AgentProvenance:
+        return resolve_agent_provenance(
+            remote, config, declared_agent_id=agent_id, declared_model_id=self.settings.openma_model
         )
-        complete = all(field in snapshot for field in ("system", "skills", "tools")) and pinned_skills
-        prompt = {
-            field: snapshot.get(field)
-            for field in ("system", "skills", "tools", "model", "mcp_servers", "multiagent", "_oma")
-        }
-        return {
-            "agent_id": snapshot.get("id") or agent_id,
-            "model_id": (snapshot.get("model") or {}).get("id") or self.settings.openma_model,
-            "model_id_basis": "RESOLVED_SESSION_AGENT"
-            if (snapshot.get("model") or {}).get("id")
-            else "DEPLOYMENT_DECLARATION",
-            "agent_version": str(version) if version is not None else None,
-            "agent_version_basis": basis if version is not None else None,
-            "prompt_label": config.get("prompt_version"),
-            "prompt_version": sha256(prompt) if complete else None,
-            "prompt_version_basis": "RESOLVED_SESSION_AGENT_SNAPSHOT" if complete else None,
-            "prompt_version_reason": None
-            if complete
-            else "INCOMPLETE: remote resolved prompt snapshot unavailable",
-            "prompt_binding": {
-                "snapshot_fields": sorted(prompt),
-                "resolved_skill_versions": [
-                    {key: skill[key] for key in ("type", "skill_id", "version") if key in skill}
-                    for skill in snapshot.get("skills", [])
-                    if isinstance(skill, dict)
-                ],
-            }
-            if complete
-            else None,
-        }
 
     def config(self):
         config = self.settings.load_config("openma")
@@ -337,7 +304,7 @@ class SessionService:
             "proposal_id": payload.get("proposal_id"),
             "opened_by_item": item_id,
             **opened.fields("opened_at"),
-            **self.agent_provenance(remote, config, agent),
+            **self.agent_provenance(remote, config, agent).model_dump(mode="json"),
             "billing_basis": "SUBSCRIPTION",
             "effort": config.get("reasoning_effort"),
             "status": "OPEN",
@@ -463,14 +430,8 @@ class SessionService:
         descriptor = self.agent_provenance(remote, {}, session.get("agent_id"))
         async with self.repo.lock("session:" + sid):
             current = await self.repo.get("ops.agent_sessions", sid)
-            if descriptor.get("prompt_version"):
-                current.update(
-                    {
-                        key: value
-                        for key, value in descriptor.items()
-                        if key not in ("agent_id", "prompt_label")
-                    }
-                )
+            if descriptor.prompt_version:
+                current.update(descriptor.model_dump(mode="json", exclude={"agent_id", "prompt_label"}))
             current["tools_sha256"] = sha256(tools)
             if migrating:
                 current["legacy_model_message_ids"] = [
@@ -883,7 +844,7 @@ class SessionService:
             source_message = payload.get("kind") in {"NEW_ITEM", "ITEM_ADDED"}
             item = await self.repo.get("ingest.source_items", item_id) if source_message and item_id else None
             outcomes[message["message_id"]] = {
-                "version": workflow.SOURCE_COMPLETION_VERSION,
+                "version": SOURCE_COMPLETION_VERSION,
                 "item_id": item_id,
                 "native_input_id": message.get("remote_event_id"),
                 "retry_attempt": message.get("retry_count", 0),
@@ -1204,7 +1165,7 @@ class SessionService:
         remote = await self.request("GET", f"sessions/{session['session_id']}")
         remote = remote.get("data", remote)
         descriptor = self.agent_provenance(remote, {}, session.get("agent_id"))
-        if not descriptor.get("prompt_version"):
+        if descriptor.prompt_version is None:
             raise ConfigurationError(
                 "Resolved session prompt provenance unavailable; versioned outputs refused"
             )
@@ -1220,14 +1181,15 @@ class SessionService:
                     "model_id",
                 )
             }
-        descriptor["prompt_label"] = session.get("prompt_label") or value
-        recovered = {**descriptor, **self.clock_timestamp().fields("recovered_at")}
-        session.update(descriptor)
+        descriptor_data = descriptor.model_dump(mode="json")
+        descriptor_data["prompt_label"] = session.get("prompt_label") or value
+        recovered = {**descriptor_data, **self.clock_timestamp().fields("recovered_at")}
+        session.update(descriptor_data)
         session["recovered_prompt_descriptor"] = recovered
 
         async with self.repo.lock("session:" + session["session_id"]):
             current = await self.repo.get("ops.agent_sessions", session["session_id"])
-            current.update(descriptor)
+            current.update(descriptor_data)
             current["recovered_prompt_descriptor"] = recovered
             if session.get("legacy_prompt_descriptor") and "legacy_prompt_descriptor" not in current:
                 current["legacy_prompt_descriptor"] = copy.deepcopy(session["legacy_prompt_descriptor"])
@@ -2081,7 +2043,7 @@ class SessionService:
                     session["followups_only"] = True
                     await self.repo.put("ops.agent_sessions", sid, session)
             elif archive and not replay:
-                keep = threshold(self.settings, "session_keep_days", 7)
+                keep = self.settings.thresholds().session_keep_days
                 last = await self.last_message_at(session)
                 due = last + timedelta(days=keep)
                 if utcnow() < due:

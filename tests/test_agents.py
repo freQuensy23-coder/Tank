@@ -37,6 +37,9 @@ def settings(**overrides):
         "code_version": "test",
         "load_config": lambda name: config[name],
     }
+    from tank.settings import Settings
+
+    values["thresholds"] = Settings(_env_file=None).thresholds
     values.update(overrides)
     values["configured_secrets"] = lambda: frozenset(
         value
@@ -1054,8 +1057,8 @@ async def test_new_session_prompt_version_binds_actual_resolved_agent_not_static
         {"type": "custom", "skill_id": "skill", "version": "1"}
     ]
     incomplete = service.agent_provenance({"agent": {"id": "agt_1", "version": 8}}, config["openma"], "agt_1")
-    assert incomplete["prompt_version"] is None
-    assert incomplete["prompt_label"] == "test" and "INCOMPLETE" in incomplete["prompt_version_reason"]
+    assert incomplete.prompt_version is None
+    assert incomplete.prompt_label == "test" and "INCOMPLETE" in incomplete.prompt_version_reason
 
 
 def test_jev_source_view_does_not_substitute_internal_source_codes() -> None:

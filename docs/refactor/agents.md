@@ -72,3 +72,44 @@ Session persistence, stream events, tool ownership/idempotency, native session
 recovery, context projection, gateway OAuth, OpenMA sync, registry bootstrap
 and runtime orchestration still require their complete typed-domain migration.
 This evidence does not claim those unconverted modules are complete.
+
+
+## Native provenance and runtime commands
+
+agents.provenance is a dedicated native-JSON adapter. SessionService consumes
+AgentProvenance objects, serializing them only for persisted session metadata.
+ResolvedSkillVersion requires type/skill_id/version together; incomplete or
+floating native snapshots cannot produce a pinned prompt fingerprint.
+Native fields are required once their enclosing snapshot is present. Missing
+native model/version uses an explicitly labelled deployment declaration,
+never an unlabeled provider/model substitution. Historical session hydration
+can have no agent ID; explicit null preserves that absence without assigning
+the current deployment's agent to an older session.
+
+The direct package cycle was removed by importing SOURCE_COMPLETION_VERSION
+from agents.workflow rather than importing the agents reexport package.
+Session retention consumes the strict versioned Thresholds contract.
+
+runtime_contracts defines closed durable command families for item filtering/
+routing, market escalation/assessment, scheduler checks/captures, delivery,
+Telegram answers, scout reviews and all six agent message kinds. Each accepts
+dependency metadata under its existing _depends_on wire name. Serialization
+with exclude_unset preserves absent versus explicitly empty dependencies.
+ScoutReviewJob accepts the existing durable prp_id spelling explicitly at the
+adapter boundary and exposes proposal_id internally; this preserves already
+queued jobs while producers move to proposal_id. Ambiguous double spelling
+is refused. Delivery requires an explicit channel and exactly one subject.
+Market cutoff precision must be declared or have an explicit missing reason;
+it cannot be invented from the timestamp string.
+
+Market escalation and assessment now consume their models via worker adapter
+wrappers. Remaining command consumers are coordinated with the scheduler/
+delivery/Telegram and event-tool workstreams. The complete agent notification
+union references shared WatchCondition/WatchCall/MilestoneSnapshot contracts.
+An expired-call notification requires the closed EXPIRED snapshot; this exposed
+a scheduler producer bug that emitted its old OPEN record after persisting
+a different CLOSED copy.
+
+Validation: the owned cross-module unit suite passes all 315 collected cases,
+zero skips, 8.07 seconds. New runtime payload contracts add 11 passing cases.
+Strict mypy passes runtime_contracts.py and agents/provenance.py.

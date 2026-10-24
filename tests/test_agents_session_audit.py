@@ -7,6 +7,7 @@ import pytest
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
+from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.util import iso
 
@@ -20,6 +21,7 @@ def settings(replay=False):
         "reasoning_effort": "medium",
     }
     opts = SimpleNamespace(
+        thresholds=Settings(_env_file=None).thresholds,
         openma_url="http://oma",
         openma_api_key="fake-only",
         openma_model="gpt-6.1-sol",

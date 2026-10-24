@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from tank.agents import SessionService
-from tank.settings import threshold
+from tank.settings import Settings, threshold
 from tank.storage import MemoryRepository
 from tank.telegram_inbox import closed_reason
 from tank.util import iso, parse_time, utcnow
@@ -26,6 +26,9 @@ def settings(keep_days=7, replay=False):
         config_version="test",
         code_version="test",
         replay=replay,
+        thresholds=lambda: (
+            Settings(_env_file=None).thresholds().model_copy(update={"session_keep_days": keep_days})
+        ),
         load_config=lambda name: config[name],
     )
 
