@@ -17,10 +17,10 @@ async def test_different_keys_and_child_persistence_progress_during_remote_wait(
 
         await asyncio.wait_for(asyncio.create_task(score_and_persist()), 1)
         assert await repo.get("reg.tokens", "child") == {"token_id": "child"}
-    entered = set()
+    entered: set[str] = set()
     both = asyncio.Event()
 
-    async def independent(key) -> None:
+    async def independent(key: str) -> None:
         async with repo.lock(key):
             entered.add(key)
             if len(entered) == 2:
@@ -56,7 +56,7 @@ async def test_same_key_reentry_and_child_does_not_inherit_ownership() -> None:
 async def test_cancelled_waiter_does_not_release_another_tasks_key() -> None:
     repo = MemoryRepository()
     started = asyncio.Event()
-    acquired = []
+    acquired: list[bool] = []
 
     async def contender() -> None:
         started.set()

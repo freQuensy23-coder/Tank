@@ -7,15 +7,24 @@ The same typed rows go into the memory repository (put_market_batch) and into Cl
 
 import json
 import os
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
+from foundation_helpers import present, text_field
 
 from tank import clickhouse_market as chm
 from tank import market_storage as ms
+from tank.contracts.json import JsonDocument
+from tank.market_codec import StoredRow, _prepare_records
 from tank.market_schema import MARKET_COLUMNS
-from tank.storage import MemoryRepository, PostgresRepository
-from tank.util import iso
+from tank.models import Record
+from tank.storage import MemoryRepository, PostgresRepository, StorageBackend
+from tank.util import JsonInput, canonical_json, iso
+
+type PutRecords = Callable[[str, Sequence[Mapping[str, JsonInput]]], Awaitable[None]]
+type Both = tuple[MemoryRepository, PostgresRepository, PutRecords]
 
 URL = os.environ.get("CLICKHOUSE_TEST_URL")
 pytestmark = pytest.mark.integration
@@ -23,7 +32,9 @@ T0 = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
 IIDS = ["binance:spot:BTCUSDT", "okx:spot:BTC-USDT"]
 
 
-def kline(iid, minute, close, *, complete=True, recorded=None):
+def kline(
+    iid: str, minute: int, close: str, *, complete: bool = True, recorded: datetime | None = None
+) -> Record:
     at = T0 + timedelta(minutes=minute)
     return {
         "instrument_id": iid,
@@ -36,12 +47,12 @@ def kline(iid, minute, close, *, complete=True, recorded=None):
         "l": "0.5",
         "c": close,
         "complete": complete,
-        "recorded_at": iso(recorded or at + timedelta(seconds=61)),
+        "recorded_at": iso(at + timedelta(seconds=61) if recorded is None else recorded),
         "recorded_at_prec": "COLLECTION_ONLY",
     }
 
 
-def bar(iid, minute, *, complete=True, last="7"):
+def bar(iid: str, minute: int, *, complete: bool = True, last: str = "7") -> Record:
     at = T0 + timedelta(minutes=minute)
     return {
         "instrument_id": iid,
@@ -57,9 +68,9 @@ def bar(iid, minute, *, complete=True, last="7"):
     }
 
 
-def ch_row(collection, record, key):
+def ch_row(collection: str, record: StoredRow, key: str) -> Record:
     """A typed record as tank-capture inserts it (JSONEachRow)."""
-    row = {"storage_key": key, "_version": 1}
+    row: Record = {"storage_key": key, "_version": 1}
     for name, kind in MARKET_COLUMNS[collection].items():
         value = record.get(name)
         if value is None:
@@ -67,18 +78,20 @@ def ch_row(collection, record, key):
                 row[name] = []
             continue
         if kind == "timestamptz":
+            assert isinstance(value, datetime)
             row[name] = value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
         elif kind == "jsonb":
-            row[name] = json.dumps(value)
+            row[name] = canonical_json(value)
         elif kind == "numeric":
             row[name] = str(value)
         else:
-            row[name] = value
+            assert not isinstance(value, (datetime, Decimal))
+            row[name] = JsonDocument.validate_value(value)
     return row
 
 
 @pytest.fixture
-async def both():
+async def both() -> AsyncIterator[Both]:
     if not URL:
         pytest.fail("CLICKHOUSE_TEST_URL must point to an isolated ClickHouse test server")
     ch = chm.ClickHouse(URL)
@@ -90,9 +103,9 @@ async def both():
     routed = PostgresRepository("postgresql:///unused")
     routed.clickhouse = ch
 
-    async def put(collection, records) -> None:
+    async def put(collection: str, records: Sequence[Mapping[str, JsonInput]]) -> None:
         await memory.put_market_batch(collection, records)
-        prepared = ms._prepare_records(collection, records, None)
+        prepared = _prepare_records(collection, records, None)
         body = "\n".join(json.dumps(ch_row(collection, r, k)) for k, r in prepared.items())
         response = await ch.http.post(
             ch.base,
@@ -107,11 +120,11 @@ async def both():
     await ch.close()
 
 
-async def collect(gen):
+async def collect[T](gen: AsyncIterator[T]) -> list[T]:
     return [row async for row in gen]
 
 
-async def test_routed_reads_match_memory(both) -> None:
+async def test_routed_reads_match_memory(both: Both) -> None:
     memory, routed, put = both
     klines = [kline(iid, m, str(100 + m)) for iid in IIDS for m in range(6)]
     klines.append(kline(IIDS[0], 6, "0", complete=True))
@@ -122,14 +135,14 @@ async def test_routed_reads_match_memory(both) -> None:
     for repo in (memory, routed):
         assert repo is memory or chm.client(repo, "mkt.klines_1m") is not None
 
-    async def same(call):
+    async def same[T](call: Callable[[StorageBackend], Awaitable[T]]) -> T:
         a, b = await call(memory), await call(routed)
         assert a == b, (a, b)
         return a
 
-    key = ms._prepare_records("mkt.klines_1m", [klines[0]], None)
+    key = _prepare_records("mkt.klines_1m", [klines[0]], None)
     (storage_key,) = key
-    assert (await same(lambda r: r.get("mkt.klines_1m", storage_key)))["c"] == "100"
+    assert present(await same(lambda r: r.get("mkt.klines_1m", storage_key)))["c"] == "100"
     page = await same(
         lambda r: collect(
             r.iter_range(
@@ -165,7 +178,7 @@ async def test_routed_reads_match_memory(both) -> None:
             "mkt.klines_1m", time_field="open_time", cutoff=cutoff, instrument_ids=IIDS
         )
     )
-    assert sorted(x["c"] for x in latest) == ["0", "105"]
+    assert sorted(text_field(x, "c") for x in latest) == ["0", "105"]
     await same(
         lambda r: r.market_dependency_head(
             "mkt.klines_1m",
@@ -195,9 +208,14 @@ async def test_routed_reads_match_memory(both) -> None:
     )
     await same(lambda r: ms.market_kline_days_recorded_since(r, T0, cutoff))
     trades = await same(lambda r: ms.latest_market_trades(r, IIDS, start=T0))
-    assert {t["last_trade"]["trade_id"] for t in trades} == {"3"}
+    trade_ids: set[str] = set()
+    for record in trades:
+        last_trade = record["last_trade"]
+        assert isinstance(last_trade, dict)
+        trade_ids.add(text_field(last_trade, "trade_id"))
+    assert trade_ids == {"3"}
 
-    async def recorded(r):
+    async def recorded(r: StorageBackend) -> list[tuple[str, Record]]:
         return [
             (iid, rec)
             for iid, rec, _ in await ms.market_rows_recorded_since(
@@ -216,7 +234,7 @@ async def test_routed_reads_match_memory(both) -> None:
     )
 
 
-async def test_replacing_write_reads_as_the_last_one(both) -> None:
+async def test_replacing_write_reads_as_the_last_one(both: Both) -> None:
     memory, routed, put = both
     await put("mkt.flow_bars_1m", [bar(IIDS[0], 0, complete=False)])
     await put("mkt.flow_bars_1m", [bar(IIDS[0], 0, complete=True)])
@@ -224,7 +242,7 @@ async def test_replacing_write_reads_as_the_last_one(both) -> None:
     assert len(rows) == 1 and rows[0]["complete"] is True
 
 
-async def test_latest_per_instrument_reaches_past_the_recent_day(both) -> None:
+async def test_latest_per_instrument_reaches_past_the_recent_day(both: Both) -> None:
     memory, routed, put = both
     cutoff = T0 + timedelta(days=3)
     await put(
@@ -236,13 +254,19 @@ async def test_latest_per_instrument_reaches_past_the_recent_day(both) -> None:
             kline(IIDS[1], 24 * 60, "4"),
         ],
     )
-    options = {
-        "time_field": "open_time",
-        "cutoff": cutoff,
-        "start": cutoff - timedelta(days=90),
-        "instrument_ids": IIDS,
-    }
-    expected = await memory.latest_market_records("mkt.klines_1m", **options)
-    got = await routed.latest_market_records("mkt.klines_1m", **options)
+    expected = await memory.latest_market_records(
+        "mkt.klines_1m",
+        time_field="open_time",
+        cutoff=cutoff,
+        start=cutoff - timedelta(days=90),
+        instrument_ids=IIDS,
+    )
+    got = await routed.latest_market_records(
+        "mkt.klines_1m",
+        time_field="open_time",
+        cutoff=cutoff,
+        start=cutoff - timedelta(days=90),
+        instrument_ids=IIDS,
+    )
     assert got == expected
     assert [(r["instrument_id"], r["c"]) for r in got] == [(IIDS[0], "2"), (IIDS[1], "4")]

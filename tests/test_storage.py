@@ -380,7 +380,7 @@ async def test_postgres_migrations_repeat_and_nested_temporal_projection(repo: S
     await repo.migrate()
     await repo.migrate()
     eid = new_id("evt")
-    at = iso()
+    at = clock_iso()
     record: Record = {"event_id": eid, "event_time": {"value": at, "precision": "EXACT", "quote": "evidence"}}
     await repo.put("evt.events", eid, complete_fixture_record("evt.events", record))
     assert await repo.get("evt.events", eid) == record
@@ -471,7 +471,7 @@ async def test_preservation_before_market_truth_includes_beneficiary_and_benchma
     repo: StorageBackend,
 ) -> None:
     eid = new_id("evt")
-    now = iso()
+    now = clock_iso()
     await repo.put(
         "evt.events",
         eid,
@@ -576,7 +576,7 @@ async def test_latest_before_strict_cutoff_and_control_records(repo: StorageBack
         bid,
         complete_fixture_record(
             "mkt.backfill_runs",
-            {"backfill_id": bid, "status": "PENDING", "anchor": iso(), "result": {"instruments": []}},
+            {"backfill_id": bid, "status": "PENDING", "anchor": clock_iso(), "result": {"instruments": []}},
         ),
     )
     assert (present(await repo.get("mkt.backfill_runs", bid)))["result"] == {"instruments": []}
@@ -696,7 +696,7 @@ async def test_sql_typed_completeness_and_serials(repo: StorageBackend) -> None:
                     "ladder": "EVENT",
                     "to_state": "RUMOR",
                     "evidence": [],
-                    "changed_at": iso(),
+                    "changed_at": clock_iso(),
                 },
             ),
             immutable=True,
@@ -1087,7 +1087,7 @@ async def test_captures_wait_for_a_fresh_event_card(repo: StorageBackend) -> Non
                 "version": 1,
                 "event_id": event,
                 "kind": "FULL",
-                "generated_at": iso(),
+                "generated_at": clock_iso(),
             },
         ),
         immutable=True,

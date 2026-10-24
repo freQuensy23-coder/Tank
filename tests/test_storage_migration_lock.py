@@ -1,8 +1,11 @@
 """The migration lock serializes runners and never outlives a cancelled one."""
 
 import asyncio
+from collections.abc import AsyncIterator
+from typing import Literal
 
 import pytest
+from postgres_helpers import PostgresTemplate
 
 from tank.storage import PostgresRepository
 
@@ -10,18 +13,18 @@ pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 
 @pytest.fixture
-async def blank_repo(postgres_template):
+async def blank_repo(postgres_template: PostgresTemplate) -> AsyncIterator[PostgresRepository]:
     import os
 
     dsn = os.getenv("TANK_TEST_DATABASE_URL")
     if not dsn:
-        pytest.skip("TANK_TEST_DATABASE_URL required; creates only an owned disposable database")
+        pytest.fail("TANK_TEST_DATABASE_URL required; creates only an owned disposable database")
     async with postgres_template.repository(dsn, migrated=False) as repo:
         yield repo
 
 
 async def test_migration_lock_serializes_concurrent_runners_and_releases_after_cancellation(
-    blank_repo,
+    blank_repo: PostgresRepository,
 ) -> None:
     repo = blank_repo
     other = await PostgresRepository(repo.database_url).open()
@@ -55,7 +58,9 @@ async def test_migration_lock_serializes_concurrent_runners_and_releases_after_c
 
 
 @pytest.mark.parametrize("lock_kind", ["session", "transaction"])
-async def test_cancelled_waiting_migration_does_not_keep_session_lock(blank_repo, lock_kind) -> None:
+async def test_cancelled_waiting_migration_does_not_keep_session_lock(
+    blank_repo: PostgresRepository, lock_kind: Literal["session", "transaction"]
+) -> None:
     repo = blank_repo
     other = await PostgresRepository(repo.database_url).open()
     try:
