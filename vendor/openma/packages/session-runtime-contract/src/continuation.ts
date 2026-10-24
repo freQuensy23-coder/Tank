@@ -56,6 +56,13 @@ function snapshotDerivedState(snapshot: ContinuationSnapshot) {
   }
   return value;
 }
+export function lastMatching<T>(items: readonly T[], predicate: (item: T) => boolean): T | undefined {
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index]!;
+    if (predicate(item)) return item;
+  }
+  return undefined;
+}
 export const actionableInputs = (row: ContinuationExecution) => row.events.filter(e => e.type !== 'system.message');
 const eventLaneId = (e: SessionEventView) => 'sessionThreadId' in e ? e.sessionThreadId ?? 'sthr_primary' : 'sthr_primary';
 export const resultCallId = (e: SentSessionEvent): string | undefined => e.type === 'user.custom_tool_result' ? e.customToolUseId : undefined;
@@ -142,7 +149,7 @@ function committedPhases(snapshot: ContinuationSnapshot): Phase[] {
       continue;
     const after = progress.length ? snapshot.orderedEvents.indexOf(progress.at(-1)!.entry) : -1;
     const output = snapshot.orderedEvents.filter((e, i) => i > after && e.executionId === row.id && !e.executionMetadata?.progress);
-    const terminal = output.findLast(e => e.event.type === 'session.status_idle');
+    const terminal = lastMatching(output, e => e.event.type === 'session.status_idle');
     if (!terminal)
       continue;
     phases.push({
@@ -257,10 +264,10 @@ export function imageRecoveryRetryBoundary(snapshot: ContinuationSnapshot, curre
   if (allowUnfinished && suffix.every(entry => entry.executionId !== currentId
       ? entry.event.type !== 'user.interrupt' || (entry.event.sessionThreadId != null && entry.event.sessionThreadId !== row.laneId)
       : !entry.executionMetadata?.progress && ['session.status_running', 'session.status_rescheduled'].includes(entry.event.type))) {
-    return suffix.findLast(entry => entry.executionId === currentId)?.event.id ?? row.imageRecoveryAfterEventId;
+    return lastMatching(suffix, entry => entry.executionId === currentId)?.event.id ?? row.imageRecoveryAfterEventId;
   }
   if (!retryableImagePreflight(suffix, row)) return null;
-  return suffix.findLast(entry => entry.executionId === currentId)!.event.id;
+  return lastMatching(suffix, entry => entry.executionId === currentId)!.event.id;
 }
 function recoverImagePreflight(snapshot: ContinuationSnapshot): ContinuationSnapshot {
   const removed = new Set<OrderedSessionEvent>();
@@ -368,8 +375,8 @@ function planContinuation(snapshot: ContinuationSnapshot, currentId: string): Co
     previousReceiptId: progress?.entry.event.id ?? null, historyEvents: [], ...(first ? { phaseStartEventId: first.event.id } : {})
   };
   if (output.length) {
-    const terminal = output.findLast(e => e.event.type === 'session.status_idle');
-    const error = output.findLast(e => e.event.type === 'session.error' && e.event.error.retryStatus === 'terminal');
+    const terminal = lastMatching(output, e => e.event.type === 'session.status_idle');
+    const error = lastMatching(output, e => e.event.type === 'session.error' && e.event.error.retryStatus === 'terminal');
     if (error) {
       plan.mode = 'failure';
       plan.failure = 'Original execution already has terminal failure: ' + (error.event.type === 'session.error' ? error.event.error.message : '');
@@ -385,8 +392,8 @@ function planContinuation(snapshot: ContinuationSnapshot, currentId: string): Co
       }
     }
     else if (output.some(e => e.event.type.startsWith('agent.'))) {
-      const start = output.findLast(e => e.event.type === 'span.model_request_start');
-      const end = start && output.findLast(e => e.event.type === 'span.model_request_end' && e.event.modelRequestStartId === start.event.id);
+      const start = lastMatching(output, e => e.event.type === 'span.model_request_start');
+      const end = start && lastMatching(output, e => e.event.type === 'span.model_request_end' && e.event.modelRequestStartId === start.event.id);
       const latestSpan = start ? output.slice(output.indexOf(start)) : output;
       const localUses = output.filter(e => e.event.type === 'agent.tool_use' || e.event.type === 'agent.mcp_tool_use');
       const latestLocalUses = latestSpan.filter(e => e.event.type === 'agent.tool_use' || e.event.type === 'agent.mcp_tool_use');

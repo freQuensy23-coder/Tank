@@ -1,6 +1,6 @@
 import { encodeSessionEventDocument, type ExecutionProgressReceipt } from '@open-managed-agents/session-runtime-contract/history';
 import type { YieldSessionExecutionProgress, YieldSessionExecutionProgressResult } from '@open-managed-agents/session-runtime-contract/coordination';
-import { imageMismatchRecoveryBoundary, imageRecoveryRetryBoundary, planSessionContinuation, resultCallId, verifiedProgress, type ContinuationSnapshot } from '@open-managed-agents/session-runtime-contract/continuation';
+import { imageMismatchRecoveryBoundary, imageRecoveryRetryBoundary, lastMatching, planSessionContinuation, resultCallId, verifiedProgress, type ContinuationSnapshot } from '@open-managed-agents/session-runtime-contract/continuation';
 import { loadSessionContinuationSnapshot, SessionContinuationMissingError } from './continuation';
 import type {
   AdmitSessionExecution,
@@ -923,7 +923,7 @@ export class SqlSessionExecutionStore
         current.interruptRequestedAt !== null)
         return { type: 'lost' };
       const plan = planSessionContinuation(snapshot, current.id);
-      const terminal = snapshot.orderedEvents.findLast(entry => entry.executionId === current.id && entry.event.type === 'session.status_idle' && !entry.executionMetadata?.progress);
+      const terminal = lastMatching(snapshot.orderedEvents, entry => entry.executionId === current.id && entry.event.type === 'session.status_idle' && !entry.executionMetadata?.progress);
       if (plan.mode === 'blocked' || plan.mode === 'failure' || plan.remainingInputIds.length === 0 || terminal?.event.id !== input.terminalEventId ||
         plan.previousReceiptId !== input.previousReceiptId || plan.phaseStartEventId !== input.phaseStartEventId ||
         !sameSet(input.phaseInputIds, plan.phaseInputIds) || !sameSet(input.consumedInputIds, plan.consumedInputIds) ||

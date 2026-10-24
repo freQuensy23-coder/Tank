@@ -1,4 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { Buffer } from 'node:buffer';
+import { URL } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { posix } from 'node:path';
 import { unzipSync, zipSync } from 'fflate';

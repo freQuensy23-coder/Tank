@@ -632,7 +632,7 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
         : undefined;
       const runtimeUpgradeNotice = retainedLifecycle.upgradeNotice({ ...input, sessionId: input.session.id });
       const platformReminders = [
-        ...(runtimeUpgradeNotice ? [runtimeUpgradeNotice] : []),
+        ...(runtimeUpgradeNotice ? [{ source: "sandbox-runtime-upgrade", text: runtimeUpgradeNotice }] : []),
         ...(assemblySkills ? [] : buildNodeManagedSkillReminders(input.session)),
         ...buildNodeManagedAppendablePromptReminders(input.session),
       ];

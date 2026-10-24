@@ -189,7 +189,7 @@ export function pinnedBoxLiteProvider(input: {
       await assertCurrent();
       if (await inspect(name)) throw Error('retained_upgrade_target_exists');
       const directory = await mkdtemp(join(tmpdir(), 'tank-runtime-upgrade-'));
-      const guestArchive = '/tmp/tank-runtime-upgrade-' + randomUUID() + '.tar';
+      const guestArchive = '/tank-runtime-upgrade-' + randomUUID() + '.tar';
       const allowed = JSON.stringify((input.allocation.volumes ?? []).map(volume => volume.guestPath));
       let source: BoxLiteRuntime | undefined, replacement: BoxLiteRuntime | undefined;
       try {
@@ -219,6 +219,13 @@ export function pinnedBoxLiteProvider(input: {
         return replacement;
       } catch (error) {
         if (await input.isCurrent?.(fence)) {
+          for (const runtime of [source, replacement]) if (runtime) {
+            try {
+              await assertCurrent();
+              const cleanup = new RetainedBoxOperations(async operation => { await assertCurrent(); return operation(runtime); });
+              await cleanup.exec('rm', ['-f', guestArchive, guestArchive + '.part'], undefined, { cwd: '/' });
+            } catch {}
+          }
           await Promise.allSettled([source?.suspend({ kind: 'filesystem' }), replacement?.suspend({ kind: 'filesystem' })]);
         }
         if (error instanceof Error && /retained_|lease|abort/i.test(error.message)) throw error;
