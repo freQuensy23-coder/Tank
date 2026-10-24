@@ -35,7 +35,7 @@ from tank.sources.ingestion import IngestionVersions, SourceIngestion
 from tank.sources.rate_limits import shared_request_budgets
 from tank.sources.raw_store import RawItemStorage
 from tank.sources.xsensor import XSensor
-from tank.util import TimeInput, iso, parse_time, sha256, utcnow
+from tank.util import iso, parse_iso_time, parse_time, sha256, utcnow
 
 
 def tls_context():
@@ -100,10 +100,12 @@ class SourceService:
     def now(self) -> datetime:
         return utcnow()
 
-    def stamp(self, value: TimeInput | None = None) -> str:
-        return iso(self.now() if value is None else value)
+    def stamp(self, value: datetime | str | None = None) -> str:
+        return iso(parse_iso_time(self.now() if value is None else value))
 
-    def raw(self, payload, *, source_id, item_id, observed_at):
+    def raw(
+        self, payload: bytes, *, source_id: str, item_id: str, observed_at: datetime | str
+    ) -> tuple[str, str]:
         """Store the raw payload of one captured item (02 §7.2); nothing else is stored raw."""
         from tank.sources.raw_store import write_raw_item
 

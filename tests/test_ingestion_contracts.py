@@ -566,3 +566,22 @@ async def test_source_repository_validation_logs_hide_complete_input_record(
     assert marker not in caplog.text
     assert "input_value" not in caplog.text
     assert "declared source identity" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("clock", ["2026-10-20T10:00:00", "1792480800000"])
+async def test_ingestion_requires_an_aware_capture_clock(tmp_path: Path, clock: str) -> None:
+    from test_sources import captured
+
+    from tank.settings import Settings
+    from tank.sources import SourceService
+
+    repo = MemoryRepository()
+    async with httpx.AsyncClient() as http:
+        service = SourceService(repo, Settings(data_dir=tmp_path, ops_progress_enabled=False), http=http)
+        incoming = captured(service, "S30", {"external_id": "clock-test", "title": "Title", "text": "Facts"})
+        incoming["observed_at"] = clock
+        with pytest.raises(ValidationError, match="observed_at"):
+            await service.ingest(service.sources["S30"], incoming)
+    assert await repo.list("ingest.source_items") == []
+    assert await repo.list("ops.jobs") == []
