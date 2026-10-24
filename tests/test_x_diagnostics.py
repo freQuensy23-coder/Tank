@@ -202,6 +202,29 @@ async def test_actual_document_upload_preserves_every_response_byte_and_receipt(
     assert len(receipts) == 4 and [row["document_bytes"] for row in receipts[:3]] == [len(raw)] * 3
 
 
+async def test_empty_http_response_body_is_delivered_explicitly_without_invalid_empty_upload():
+    repo = MemoryRepository()
+    notice = await notice_for(repo, diagnostics(""))
+    captured = []
+
+    def send(request):
+        captured.append(request)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": len(captured)}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+        await DeliveryService(repo, telegram_settings(), http=http).deliver(
+            {"notice_id": notice["notice_id"]}
+        )
+    assert len(captured) == 2
+    metadata = json.loads(multipart(captured[1])["document"][1])
+    assert all(
+        attempt["response"]["body"] == ""
+        and attempt["response"]["bodyBytes"] == 0
+        and attempt["response"]["bodyDocument"] is None
+        for attempt in metadata["attempts"]
+    )
+
+
 async def test_oversized_response_uploads_bounded_prefix_and_explicit_truncation_metadata():
     repo = MemoryRepository()
     raw = b"a" * 2_000_050

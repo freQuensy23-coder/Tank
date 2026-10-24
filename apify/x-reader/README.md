@@ -1,42 +1,13 @@
-# X direct-fetch Actor, version 0.2
+# Tank X reader
 
-This source is prepared for the existing Actor rbf5CQKQgKNVl4SfO under the build tag `direct`.
-It is not published until deployment and the cloud checks succeed.
+Versioned source of the public-profile Apify worker, imported from build `c99YRMlKXube5V0gV` (0.2.2). `main.py` reads INPUT and writes OUTPUT once. `direct_fetch.py` validates inputs and composes snapshots; `public_profile.py` reads public X profiles without an X session, cookies or a configured proxy.
 
-The application calls POST /v2/actors/rbf5CQKQgKNVl4SfO/run-sync?build=direct&memory=256&timeout=110
-with an Authorization Bearer Apify token and JSON containing handles, optional concurrency,
-optional cursors (account to previous maximum post ID as string), and optional requestId.
+INPUT accepts `handles`, optional `concurrency` (default 6, maximum 8), `cursors`, and `requestId`. OUTPUT schema version 1 contains `health`, `posts`, `accounts`, `nextCursors`, `failedAccounts`, and `coverageGaps`. Tank owns baseline seeding, durable cursor advancement and item deduplication.
 
-The response is the OUTPUT JSON object. It contains all currently visible own posts, account
-results, errors, gap reports, and nextCursors. The first call also returns all visible posts.
-The application owns baseline seeding, post ID deduplication, scheduling, notification queues,
-and retries. Commit nextCursors in the same transaction that persists the returned posts.
-Failed accounts keep their previous cursor. A reported coverage gap requires application handling.
-Do not advance cursors if the response was not committed. Calls return snapshots, not only new posts.
+Each profile read has at most three attempts: immediately, after 1 second, then after 5 seconds. Only HTTP 408/429/5xx and transient transport failures retry; success stops the sequence. Accounts share a run deadline below the 110-second synchronous API timeout, shortened by `ACTOR_TIMEOUT_AT` when present. Failed accounts retain their cursors.
 
-HTTP success means the collection executed; inspect health, ok, failedAccounts, and coverageGaps.
-A complete source outage returns health=failed and error=PUBLIC_SOURCE_UNAVAILABLE in OUTPUT;
-partial failures return available posts with health=degraded. Invalid input fails the Actor.
+Failed accounts include `diagnostics`: the GET method/URL and empty request body, attempt times/outcomes, response status, allowlisted headers, and response body. Wire and decoded captures are each bounded to 2,000,000 bytes; truncation and known omitted wire bytes are explicit. UTF-8 bodies remain text; binary bodies are base64. Gzip decoding is bounded. Credentials and cookie headers are excluded. Tank sends response bodies and metadata as documents linked to the Ops notice and records per-document delivery receipts.
 
-The adapter reads INPUT and writes OUTPUT once. It creates no named state, history journal,
-datasets, callback requests, or request queue. Normal Apify execution still stores INPUT and OUTPUT.
-The two-write cost expectation requires verification of actual cloud run usage after deployment.
+The existing permanent CI runs `tests/test_x_reader.py`, `tests/test_x_diagnostics.py`, and `tests/test_x_reader_integration.py`, installing this directory's pinned requirements separately from the shipping Tank environment. The integration suite uses isolated real HTTP listeners for profile failures, actor snapshots and Telegram multipart uploads; it does not call paid Apify runs or production Telegram.
 
-Run tests on openclaw-dp from this directory:
-../.venv-direct/bin/python -m pytest -n auto -m 'not integration'
-../.venv-direct/bin/python -m pytest -n auto -m integration
-../.venv-direct/bin/ruff check .
-../.venv-direct/bin/ruff format --check .
-../.venv-direct/bin/mypy main.py direct_fetch.py public_profile.py
-
-Deployment helper in the parent directory:
-python3 deploy_direct.py --prepare-only
-APIFY_TOKEN supplied in environment: python3 deploy_direct.py --pause-legacy
-The helper publishes version 0.2 with tag direct, verifies the synchronous response and storage
-usage, and only then disables the existing two-minute schedule when --pause-legacy is supplied.
-It does not change the Actor default latest build or the shared Tank application.
-Existing named state and pending notifications are preserved for application-side migration.
-
-Public X pages usually expose the latest five own posts. More than five between calls can
-leave gaps. Protected posts and other authors' reposts are not collected. No personal X account,
-cookies, paid proxies, browser, or external data API key is used.
+Publication and activation belong only to the existing main-only deploy workflow with green release CI. No manual actor publication or direct production changes are part of development.

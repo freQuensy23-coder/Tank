@@ -133,6 +133,10 @@ def documents(errors):
                 if response["bodyEncoding"] == "base64"
                 else response.pop("body").encode()
             )
+            if not content:
+                response["body"] = ""
+                response["bodyDocument"] = None
+                continue
             suffix = "bin" if response["bodyEncoding"] == "base64" else "txt"
             filename = f"x-{account}-{index}-attempt-{attempt['attempt']}-{sha256(content)[:12]}.{suffix}"
             response["bodyDocument"] = filename
