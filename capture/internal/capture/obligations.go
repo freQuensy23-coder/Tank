@@ -21,18 +21,26 @@ func (s *Service) obligations(ctx context.Context) {
 		return
 	}
 	for _, row := range rows {
-		id := text(row["backfill_id"])
-		s.mu.Lock()
-		started := s.obliged[id]
-		s.mu.Unlock()
-		if started || id == "" {
+		id, validID := row["backfill_id"].(string)
+		if !validID || id == "" {
+			s.log.Error("capture obligation has no backfill identity")
 			continue
 		}
 		s.mu.Lock()
-		s.obliged[id] = true
+		if _, active := s.activeObligations[id]; active {
+			s.mu.Unlock()
+			continue
+		}
+		s.activeObligations[id] = struct{}{}
 		s.mu.Unlock()
-		row := row
-		s.spawn(func(ctx context.Context) { s.runObligation(ctx, row) })
+		s.spawn(func(ctx context.Context) {
+			defer func() {
+				s.mu.Lock()
+				delete(s.activeObligations, id)
+				s.mu.Unlock()
+			}()
+			s.runObligation(ctx, row)
+		})
 	}
 }
 
@@ -87,7 +95,7 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 		return
 	}
 	token := text(row["token_id"])
-	row["status"] = "RUNNING"
+	row["status"], row["started_at"] = "RUNNING", pytime.ISO(s.clock.Now())
 	s.putRun(ctx, row)
 	instruments := s.tokenInstruments(ctx, token)
 	ids := make([]string, len(instruments))
