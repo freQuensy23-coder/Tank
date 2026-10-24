@@ -6,12 +6,13 @@ Producers choose the correct constructor; repositories must not assign source pr
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Literal, Self
 
-from pydantic import JsonValue
+from pydantic import BaseModel, JsonValue, model_validator
 
+from tank.contracts import DomainModel
 from tank.util import TimeInput, iso, parse_time
 
 type BucketSize = str | timedelta | tuple[int | float | Decimal | str, str]
@@ -101,14 +102,29 @@ def _equivalent(left: str | None, right: str | None) -> bool:
     return False
 
 
-@dataclass(frozen=True)
-class Timestamp:
+class Timestamp(DomainModel):
     value: str | None
     precision: str | None
     precision_reason: str | None = None
-    bucket_anchor: str | None = None
+    bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
 
-    def __post_init__(self) -> None:
+    def __init__(
+        self,
+        value: str | None,
+        precision: str | None,
+        precision_reason: str | None = None,
+        bucket_anchor: str | None = None,
+    ) -> None:
+        BaseModel.__init__(
+            self,
+            value=value,
+            precision=precision,
+            precision_reason=precision_reason,
+            bucket_anchor=bucket_anchor,
+        )
+
+    @model_validator(mode="after")
+    def validate_provenance(self) -> Self:
         if self.value is not None:
             parse_time(self.value)
         if self.precision is None:
@@ -123,6 +139,7 @@ class Timestamp:
                 raise ValueError("Unsupported timestamp bucket anchor")
             if not self.precision or not _BUCKET.fullmatch(self.precision):
                 raise ValueError("Bucket anchor requires explicit bucket precision")
+        return self
 
     def fields(self, field: str, *, precision_field: str | None = None) -> dict[str, str | int | None]:
         """Emit the original field plus its canonical precision and explicit unknown reason."""

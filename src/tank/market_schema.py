@@ -4,7 +4,25 @@ The checked producer field contract is docs/verification/market-typed-field-cont
 Natural JSONB columns represent named domain structures, never a copy of the whole row.
 """
 
-MARKET_COLUMNS = {
+from typing import Literal
+
+type SQLType = Literal[
+    "bigint",
+    "boolean",
+    "char(1)",
+    "char(64)",
+    "int",
+    "jsonb",
+    "numeric",
+    "numeric(10,6)",
+    "real",
+    "smallint",
+    "text",
+    "text[]",
+    "timestamptz",
+]
+
+MARKET_COLUMNS: dict[str, dict[str, SQLType]] = {
     "mkt.flow_bars_1m": {
         "backfill_verified": "boolean",
         "bar_version": "bigint",
@@ -511,7 +529,7 @@ MARKET_COLUMNS = {
     },
 }
 
-MARKET_ALIASES = {
+MARKET_ALIASES: dict[str, dict[str, str]] = {
     "mkt.flow_bars_1m": {
         "buy_notional": "buy_usd",
         "sell_notional": "sell_usd",
@@ -527,7 +545,7 @@ MARKET_ALIASES = {
     },
 }
 
-MARKET_IDENTITIES = {
+MARKET_IDENTITIES: dict[str, tuple[str, ...]] = {
     "mkt.flow_bars_1m": ("instrument_id", "minute_start"),
     "mkt.klines_1m": ("instrument_id", "open_time"),
     "mkt.oi_obs": ("instrument_id", "metric_key", "ts"),
@@ -545,7 +563,7 @@ MARKET_IDENTITIES = {
     "mkt.capture_requests": ("request_id",),
 }
 
-MARKET_REQUIRED = {
+MARKET_REQUIRED: dict[str, list[str]] = {
     "mkt.flow_bars_1m": [
         "instrument_id",
         "minute_start",

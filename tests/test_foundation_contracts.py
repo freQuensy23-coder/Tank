@@ -6,6 +6,8 @@ from pydantic import ValidationError
 
 from tank.contracts import DomainModel
 from tank.contracts.repository import Collection, Repository
+from tank.market_codec import _prepare_records, encode, merge_point
+from tank.market_schema import MARKET_COLUMNS
 from tank.settings import Settings
 from tank.storage import ImmutableRecordError, MemoryRepository
 
@@ -78,3 +80,28 @@ async def test_repository_refuses_nested_mutation_before_write() -> None:
     with pytest.raises(ValueError):
         await repository.put("invalid", entity)
     assert await store.get("qa.fixtures", "invalid") is None
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("complete", "false"), ("n_buy", True)],
+)
+def test_market_codec_rejects_coerced_scalars(field: str, value: str | bool) -> None:
+    with pytest.raises(ValueError):
+        encode("mkt.flow_bars_1m", {field: value})
+
+
+def test_market_codec_requires_real_identity_instead_of_empty_key_parts() -> None:
+    with pytest.raises(ValueError, match="Missing typed market identity"):
+        _prepare_records(
+            "mkt.oi_obs",
+            [{"instrument_id": "btc", "ts": "2026-10-24T00:00:00Z"}],
+            None,
+            MARKET_COLUMNS["mkt.oi_obs"],
+            False,
+        )
+
+
+def test_market_codec_does_not_treat_invalid_source_metadata_as_absent() -> None:
+    with pytest.raises(ValueError, match="source_observations"):
+        merge_point("mkt.funding_obs", {}, {"source_observations": []})

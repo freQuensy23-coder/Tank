@@ -1,11 +1,11 @@
-"""Named domain schemas and flexible JSON record type."""
+"""Relational schema metadata and the JSON document persistence boundary."""
 
-from typing import Any
+from pydantic import JsonValue
 
-from tank.market_schema import MARKET_COLUMNS
+from tank.market_schema import MARKET_COLUMNS, SQLType
 
-type Record = dict[str, Any]
-TABLE_COLUMNS = {
+type Record = dict[str, JsonValue]
+TABLE_COLUMNS: dict[str, dict[str, SQLType]] = {
     "ingest.source_items": {
         "item_id": "text",
         "source_id": "text",
@@ -103,66 +103,6 @@ TABLE_COLUMNS = {
         "config_version": "text",
         "model_id": "text",
         "prompt_version": "text",
-    },
-    "mkt.flow_bars_1m": {
-        "instrument_id": "text",
-        "minute_start": "timestamptz",
-        "buy_qty": "numeric",
-        "buy_usd": "numeric",
-        "n_buy": "int",
-        "sum_sq_qty": "numeric",
-        "o": "numeric",
-        "size_buckets": "jsonb",
-        "first_trade_id": "text",
-        "complete": "boolean",
-        "gap_reason": "text",
-        "sell_qty": "numeric",
-        "sell_usd": "numeric",
-        "n_sell": "int",
-        "h": "numeric",
-        "l": "numeric",
-        "c": "numeric",
-        "vwap": "numeric",
-        "last_trade_id": "text",
-    },
-    "mkt.oi_obs": {
-        "instrument_id": "text",
-        "metric_key": "text",
-        "ts": "timestamptz",
-        "ts_prec": "text",
-        "received_ts": "timestamptz",
-        "raw_value": "numeric",
-        "raw_unit": "text",
-        "sidedness": "text",
-        "oi_native": "numeric",
-        "oi_usd": "numeric",
-    },
-    "mkt.funding_obs": {
-        "instrument_id": "text",
-        "kind": "text",
-        "rate": "numeric",
-        "interval_h": "numeric",
-        "rate_8h_eq": "numeric",
-        "funding_time": "timestamptz",
-        "as_of": "timestamptz",
-        "metric_key": "text",
-    },
-    "mkt.liq_obs": {
-        "id": "bigint",
-        "instrument_id": "text",
-        "ts": "timestamptz",
-        "side": "text",
-        "qty_native": "numeric",
-        "notional_usd": "numeric",
-        "price": "numeric",
-        "coverage": "text",
-    },
-    "mkt.hot_tokens": {
-        "token_id": "text",
-        "event_id": "text",
-        "priority": "smallint",
-        "since": "timestamptz",
-        "expires_at": "timestamptz",
     },
     "ana.market_truth": {
         "mta_id": "text",
@@ -278,7 +218,6 @@ TABLE_COLUMNS = {
         "web_searches": "int",
         "stop_reason": "text",
     },
-    "ops.budget_state": {"day": "date", "spent_usd": "numeric(10,4)", "paused_until": "timestamptz"},
     "ops.agent_sessions": {
         "session_id": "text",
         "event_id": "text",
@@ -329,31 +268,6 @@ TABLE_COLUMNS = {
         "role": "text",
         "credible": "boolean",
     },
-    "mkt.klines_1m": {
-        "instrument_id": "text",
-        "open_time": "timestamptz",
-        "o": "numeric",
-        "h": "numeric",
-        "l": "numeric",
-        "c": "numeric",
-        "volume_native": "numeric",
-        "quote_volume": "numeric",
-        "complete": "boolean",
-    },
-    "mkt.book_summaries": {
-        "instrument_id": "text",
-        "exchange_ts": "timestamptz",
-        "received_ts": "timestamptz",
-        "mid": "numeric",
-        "best_bid": "numeric",
-        "best_ask": "numeric",
-        "spread_bps": "numeric",
-        "integrity_ok": "boolean",
-    },
-    "mkt.tickers_24h": {"instrument_id": "text", "ts": "timestamptz"},
-    "mkt.unlocks": {"token_id": "text", "date": "timestamptz", "qty": "numeric"},
-    "mkt.supply_obs": {"token_id": "text", "ts": "timestamptz", "kind": "text"},
-    "mkt.supply": {"token_id": "text", "ts": "timestamptz", "kind": "text"},
     "ana.outlooks": {"out_id": "text", "event_id": "text", "token_id": "text", "cutoff": "timestamptz"},
     "ana.contradictions": {
         "contradiction_id": "text",
@@ -390,16 +304,6 @@ TABLE_COLUMNS = {
         "human_action": "text",
         "decided_at": "timestamptz",
     },
-    "mkt.capture_gaps": {
-        "gap_id": "text",
-        "instrument_id": "text",
-        "token_id": "text",
-        "start": "timestamptz",
-        "end": "timestamptz",
-        "kind": "text",
-        "reason": "text",
-        "observed_at": "timestamptz",
-    },
 }
 APPEND_ONLY = frozenset(
     [
@@ -414,19 +318,7 @@ APPEND_ONLY = frozenset(
 )
 
 TABLE_COLUMNS["ops.jobs"].update(created_at="timestamptz", finished_at="timestamptz")
-TABLE_COLUMNS["mkt.backfill_runs"] = {
-    "backfill_id": "text",
-    "event_id": "text",
-    "token_id": "text",
-    "anchor": "timestamptz",
-    "started_at": "timestamptz",
-    "finished_at": "timestamptz",
-    "status": "text",
-    "reason": "text",
-    "result": "jsonb",
-}
 
-TABLE_COLUMNS.pop("ops.budget_state", None)
 TABLE_COLUMNS["ops.scheduler_checkpoints"] = {"checkpoint_id": "text", "at": "timestamptz", "state": "jsonb"}
 
 REQUIRED_FIELDS = {
@@ -622,8 +514,6 @@ MARKET_TIME_FIELDS = {
     "mkt.supply_obs": "ts",
     "mkt.supply": "ts",
 }
-for _table_name in MARKET_TIME_FIELDS:
-    TABLE_COLUMNS[_table_name].update(recorded_at="timestamptz", received_ts="timestamptz")
 
 TABLE_COLUMNS["ops.capture_tier_transitions"] = {
     "transition_id": "text",
@@ -648,20 +538,6 @@ TIMESTAMP_PRECISION_FIELDS = {
     "evt.event_observations": {"public_at": "public_at_prec", "observed_at": "observed_at_prec"},
     "evt.state_changes": {"changed_at": "changed_at_prec"},
     "evt.ems_assessments": {"cutoff": "cutoff_prec"},
-    "mkt.flow_bars_1m": {
-        "minute_start": "minute_start_prec",
-        "recorded_at": "recorded_at_prec",
-        "received_ts": "received_ts_prec",
-    },
-    "mkt.oi_obs": {"ts": "ts_prec", "received_ts": "received_ts_prec", "recorded_at": "recorded_at_prec"},
-    "mkt.funding_obs": {
-        "funding_time": "funding_time_prec",
-        "as_of": "as_of_prec",
-        "recorded_at": "recorded_at_prec",
-        "received_ts": "received_ts_prec",
-    },
-    "mkt.liq_obs": {"ts": "ts_prec", "recorded_at": "recorded_at_prec", "received_ts": "received_ts_prec"},
-    "mkt.hot_tokens": {"since": "since_prec", "expires_at": "expires_at_prec"},
     "ana.market_truth": {"cutoff": "cutoff_prec"},
     "ana.decisions": {"cutoff": "cutoff_prec"},
     "ana.calls": {"opened_at": "opened_at_prec", "closed_at": "closed_at_prec"},
@@ -678,24 +554,6 @@ TIMESTAMP_PRECISION_FIELDS = {
     "ops.agent_sessions": {"opened_at": "opened_at_prec", "last_item_at": "last_item_at_prec"},
     "ops.tool_calls": {"requested_at": "requested_at_prec", "answered_at": "answered_at_prec"},
     "evt.beneficiary_maps": {"cutoff": "cutoff_prec"},
-    "mkt.klines_1m": {
-        "open_time": "open_time_prec",
-        "recorded_at": "recorded_at_prec",
-        "received_ts": "received_ts_prec",
-    },
-    "mkt.book_summaries": {
-        "exchange_ts": "exchange_ts_prec",
-        "received_ts": "received_ts_prec",
-        "recorded_at": "recorded_at_prec",
-    },
-    "mkt.tickers_24h": {
-        "ts": "ts_prec",
-        "recorded_at": "recorded_at_prec",
-        "received_ts": "received_ts_prec",
-    },
-    "mkt.unlocks": {"date": "date_prec"},
-    "mkt.supply_obs": {"ts": "ts_prec", "recorded_at": "recorded_at_prec", "received_ts": "received_ts_prec"},
-    "mkt.supply": {"ts": "ts_prec", "recorded_at": "recorded_at_prec", "received_ts": "received_ts_prec"},
     "ana.outlooks": {"cutoff": "cutoff_prec"},
     "ana.contradictions": {"detected_at": "detected_at_prec", "resolved_at": "resolved_at_prec"},
     "ana.watch_conditions": {"expires_at": "expires_at_prec", "fired_at": "fired_at_prec"},
@@ -707,12 +565,6 @@ TIMESTAMP_PRECISION_FIELDS = {
     "qa.fixtures": {"cutoff": "cutoff_prec"},
     "qa.replay_runs": {"at": "at_prec"},
     "scout.expansion_proposals": {"decided_at": "decided_at_prec"},
-    "mkt.capture_gaps": {"start": "start_prec", "end": "end_prec", "observed_at": "observed_at_prec"},
-    "mkt.backfill_runs": {
-        "anchor": "anchor_prec",
-        "started_at": "started_at_prec",
-        "finished_at": "finished_at_prec",
-    },
     "ops.scheduler_checkpoints": {"at": "at_prec"},
     "ops.capture_tier_transitions": {"effective_at": "effective_at_prec"},
 }
@@ -722,9 +574,6 @@ for _table_name, _fields in TIMESTAMP_PRECISION_FIELDS.items():
 TABLE_COLUMNS["ingest.source_items"]["published_at_bucket_size_s"] = "numeric"
 
 
-for _table_name in tuple(TABLE_COLUMNS):
-    if _table_name.startswith("mkt."):
-        TABLE_COLUMNS.pop(_table_name)
 TABLE_COLUMNS.update(MARKET_COLUMNS)
 TIMESTAMP_PRECISION_FIELDS.update(
     {
