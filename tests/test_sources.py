@@ -8,6 +8,7 @@ import pytest
 import zstandard
 from source_support import fetch_plan, source_configuration, source_definition, source_feed
 
+from tank.contracts.source_items import SourceText
 from tank.sources import SourceService, parsers
 from tank.util import new_id, sha256
 
@@ -955,13 +956,17 @@ def test_sec_filing_identity_boundaries_and_date_only_precision(tmp_path: Path) 
     from tank.settings import Settings
 
     svc = SourceService(Repo(), Settings(data_dir=tmp_path))
-    assert not svc.filing_matches({"title": "Linear Manufacturing S-1", "text": "Filed with SEC"})
     assert not svc.filing_matches(
-        {"title": "Quantitative Research company", "text": "Near the registered office"}
+        SourceText.model_validate({"title": "Linear Manufacturing S-1", "text": "Filed with SEC"})
     )
-    assert svc.filing_matches({"title": "Uniswap protocol filing", "text": ""})
-    assert svc.filing_matches({"title": "Bitcoin Trust ETF", "text": ""})
-    assert svc.filing_matches({"title": "Digital Asset Trust", "text": ""})
+    assert not svc.filing_matches(
+        SourceText.model_validate(
+            {"title": "Quantitative Research company", "text": "Near the registered office"}
+        )
+    )
+    assert svc.filing_matches(SourceText.model_validate({"title": "Uniswap protocol filing", "text": ""}))
+    assert svc.filing_matches(SourceText.model_validate({"title": "Bitcoin Trust ETF", "text": ""}))
+    assert svc.filing_matches(SourceText.model_validate({"title": "Digital Asset Trust", "text": ""}))
     row = parsers.json_items(
         {
             "results": [
@@ -1841,6 +1846,7 @@ async def test_conditional_304_does_not_starve_durable_pending_detail(tmp_path: 
                     "url": "https://example.org/article/one",
                     "title": "Release",
                     "text": "",
+                    "published_at": None,
                 }
             ],
             "html",
