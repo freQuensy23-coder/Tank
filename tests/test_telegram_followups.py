@@ -12,6 +12,7 @@ from tank.telegram_inbox import (
     FAILED_TEXT,
     NO_SESSION_TEXT,
     PROMPT_TEXT,
+    TERMINATED_TEXT,
     TelegramInbox,
     chunks,
     question_id_for,
@@ -27,7 +28,10 @@ def inbox_settings():
 
 
 def session_settings():
-    config = {"openma": {"agent_id": "agt_1", "environment_id": "env_1", "prompt_version": "test"}}
+    config = {
+        "openma": {"agent_id": "agt_1", "environment_id": "env_1", "prompt_version": "test"},
+        "thresholds": {"session_keep_days": 7},
+    }
     return SimpleNamespace(
         openma_api_key="secret",
         openma_url="http://oma",
@@ -364,7 +368,7 @@ async def test_failed_session_reopens_and_retires_its_failed_turn_from_the_barri
 
 
 @pytest.mark.asyncio
-async def test_terminated_session_answers_no_session_and_answer_job_replies_once():
+async def test_terminated_session_answers_only_the_reason_and_answer_job_replies_once():
     repo = MemoryRepository()
     question_id = await ask(repo)
     session = await repo.get("ops.agent_sessions", "ses_1")
@@ -383,9 +387,10 @@ async def test_terminated_session_answers_no_session_and_answer_job_replies_once
         inbox = TelegramInbox(repo, inbox_settings(), http=http)
         await inbox.answer({"question_id": question_id})
         await inbox.answer({"question_id": question_id})
-    assert [row["text"] for row in telegram.sent] == [NO_SESSION_TEXT]
+    assert [row["text"] for row in telegram.sent] == [TERMINATED_TEXT]
     assert telegram.sent[0]["reply_parameters"]["message_id"] == 9
-    assert FAILED_TEXT != NO_SESSION_TEXT
+    assert (await repo.get("out.user_questions", question_id))["answer_status"] == "TERMINATED"
+    assert FAILED_TEXT != TERMINATED_TEXT
 
 
 @pytest.mark.asyncio
@@ -1714,7 +1719,7 @@ async def test_handled_messages_bound_to_a_session_survive_pruning():
 
 
 @pytest.mark.asyncio
-async def test_question_to_a_remotely_terminated_session_answers_no_session():
+async def test_question_to_a_remotely_terminated_session_answers_terminated():
     repo = MemoryRepository()
     question_id = await ask(repo)
 
@@ -1725,7 +1730,7 @@ async def test_question_to_a_remotely_terminated_session_answers_no_session():
         service = SessionService(repo, session_settings(), None, http=http)
         payload = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
         assert await service.send_message(payload) is None
-    assert (await repo.get("out.user_questions", question_id))["answer_status"] == "NO_SESSION"
+    assert (await repo.get("out.user_questions", question_id))["answer_status"] == "TERMINATED"
     assert (await repo.get("ops.agent_sessions", "ses_1"))["remote_state"]["status"] == "terminated"
 
 
@@ -1811,7 +1816,7 @@ async def test_paired_size_notice_failure_keeps_both_messages_retryable():
 
 
 @pytest.mark.asyncio
-async def test_question_to_a_session_missing_in_openma_answers_no_session():
+async def test_question_to_a_session_missing_in_openma_answers_terminated():
     repo = MemoryRepository()
     question_id = await ask(repo)
     async with httpx.AsyncClient(
@@ -1820,7 +1825,7 @@ async def test_question_to_a_session_missing_in_openma_answers_no_session():
         service = SessionService(repo, session_settings(), None, http=http)
         payload = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
         assert await service.send_message(payload) is None
-    assert (await repo.get("out.user_questions", question_id))["answer_status"] == "NO_SESSION"
+    assert (await repo.get("out.user_questions", question_id))["answer_status"] == "TERMINATED"
 
 
 @pytest.mark.asyncio
