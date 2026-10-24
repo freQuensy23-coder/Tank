@@ -402,14 +402,14 @@ def test_verified_exact_event_time_selects_t0() -> None:
         "state_verified": True,
         "public_at": "2026-01-01T00:01:00Z",
     }
-    assert event_anchor(event) == {
+    assert event_anchor(event).to_wire() == {
         "type": "T0",
         "ts": "2026-01-01T00:00:00Z",
         "ts_prec": "EXACT",
         "ts_prec_reason": None,
     }
     event["state_verified"] = False
-    assert event_anchor(event)["type"] == "T1"
+    assert event_anchor(event).type == "T1"
 
 
 def test_missing_oi_field_is_data_error_without_runtime_semantic_promotion() -> None:
@@ -467,6 +467,14 @@ async def test_hot_expiry_protection_is_scoped_to_event_and_token(setup) -> None
 
     repo, settings, inst = setup
     service = MarketService(repo, settings)
+    with pytest.raises(ValueError, match="missing event"):
+        await service.escalate("E-protected", [inst["token_id"]])
+    assert await repo.list("mkt.hot_tokens") == []
+    await repo.put(
+        "evt.events",
+        "E-protected",
+        {"event_id": "E-protected", "known_to_us_at": iso(), "known_to_us_at_prec": "COLLECTION_ONLY"},
+    )
     await repo.put(
         "ana.calls",
         "other",

@@ -5651,7 +5651,7 @@ class MarketTruthService:
 
     async def condition_values(self, event_id, token_id, cutoff, requirements):
         event = await self.repo.get("evt.events", event_id) if event_id else None
-        anchor = event_anchor(event) if event else None
+        anchor = event_anchor(event).to_wire() if event else None
         snapshot = await self.market.condition_snapshot(
             token_id, cutoff, anchor=anchor, requirements=requirements
         )
@@ -5693,7 +5693,7 @@ class MarketTruthService:
         cutoff = cutoff or iso(parse_time(iso()).replace(second=0, microsecond=0))
         anchor = None
         if event:
-            anchor = event_anchor(event)
+            anchor = event_anchor(event).to_wire()
         snapshot = await self.market.snapshot(token_id, cutoff, anchor=anchor)
         snapshot.update(event_id=event_id, token_id=token_id)
         if event.get("public_at") is not None:

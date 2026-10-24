@@ -33,6 +33,13 @@ class EventAnchor(DomainModel):
             raise ValueError("Event anchor requires a timestamp value")
         return self
 
+    @property
+    def value(self) -> str:
+        value = self.timestamp.value
+        if value is None:
+            raise ValueError("Event anchor requires a timestamp value")
+        return value
+
     def to_wire(self) -> dict[str, JsonValue]:
         return _JSON.validate_python({"type": self.type, **self.timestamp.fields("ts")})
 
@@ -58,7 +65,7 @@ def choose_event_anchor(candidates: EventAnchorCandidates) -> EventAnchor:
     raise ValueError("Event has no verified exactT0,publicT1 orknown_to_us_at anchor")
 
 
-def event_anchor(event: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+def event_anchor(event: Mapping[str, JsonValue]) -> EventAnchor:
     """Decode timestamp provenance at the event repository boundary."""
     candidates = EventAnchorCandidates.model_validate(
         {
@@ -76,7 +83,7 @@ def event_anchor(event: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
             ),
         }
     )
-    return choose_event_anchor(candidates).to_wire()
+    return choose_event_anchor(candidates)
 
 
 def capture_boundary_points(

@@ -529,10 +529,10 @@ class MarketService:
 
     async def escalate(self, event_id, tokens):
         async with self.repo.lock("market-hot-set"), self.repo.transaction():
-            now = iso()
-            event = await self.repo.get("evt.events", event_id) or {}
-            anchor_record = event_anchor(event) if event else {"type": "KNOWN_TO_US_AT", "ts": now}
-            anchor = anchor_record["ts"]
+            event = await self.repo.get("evt.events", event_id)
+            if event is None:
+                raise ValueError("Market escalation references a missing event")
+            anchor = event_anchor(event).value
             assessment = (
                 await self.repo.get("evt.ems_assessments", event["current_ems_id"])
                 if event.get("current_ems_id")
@@ -653,7 +653,9 @@ class MarketService:
         }
         event = await self.repo.get("evt.events", event_id)
         selected = event_anchor(event) if event else None
-        precision = selected.get("ts_prec") if selected and selected["ts"] == iso(anchor) else None
+        precision = (
+            selected.timestamp.precision if selected is not None and selected.value == iso(anchor) else None
+        )
         row.update(norm.timestamp_fields("anchor", anchor, precision))
         await self._put("mkt.backfill_runs", backfill_id, row)
         self._backfills.add(marker)
@@ -849,7 +851,7 @@ class MarketService:
             for row in rows:
                 protected = await self.hot_protected(row["event_id"], row["token_id"], now)
                 event = await self.repo.get("evt.events", row["event_id"])
-                anchor = event_anchor(event)["ts"] if event else row["since"]
+                anchor = event_anchor(event).value if event else row["since"]
                 expiry = None if protected else iso(parse_time(anchor) + timedelta(hours=72))
                 if row.get("expires_at") != expiry:
                     row = {**row, "expires_at": expiry}
@@ -3328,7 +3330,7 @@ class MarketService:
         for hot in await self.repo.list("mkt.hot_tokens", limit=10000):
             event = await self.repo.get("evt.events", hot["event_id"]) or {}
             await self._schedule_event_backfill(
-                hot["event_id"], hot["token_id"], event_anchor(event)["ts"] if event else hot["since"]
+                hot["event_id"], hot["token_id"], event_anchor(event).value if event else hot["since"]
             )
 
     async def run(self, stop):

@@ -2600,7 +2600,7 @@ async def test_assessment_calls_snapshot_with_shared_canonical_anchor(
     result = await MarketTruthService(
         Repo(), SimpleNamespace(config_version="test", code_version="test"), market
     ).assess("EVT", "T", "2026-10-16T12:00:00Z")
-    assert market.calls == [event_anchor(event)]
+    assert market.calls == [event_anchor(event).to_wire()]
     assert market.calls[0]["type"] == kind
     assert result["relative"]["anchor"]["ts"] == market.calls[0]["ts"]
 

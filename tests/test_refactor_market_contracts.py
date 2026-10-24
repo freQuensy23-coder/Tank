@@ -157,10 +157,10 @@ def test_event_anchor_requires_verified_exact_event_time_and_preserves_public_pr
         "known_to_us_at_prec": "COLLECTION_ONLY",
     }
     selected = event_anchor(event)
-    assert selected["type"] == "T1"
-    assert selected["ts"] == event["public_at"]
-    assert selected["ts_prec"] == "BUCKET(1h)"
-    assert event_anchor(event | {"state_verified": True})["type"] == "T0"
+    assert selected.type == "T1"
+    assert selected.value == event["public_at"]
+    assert selected.timestamp.precision == "BUCKET(1h)"
+    assert event_anchor(event | {"state_verified": True}).type == "T0"
     with pytest.raises(ValidationError):
         event_anchor(event | {"state_verified": "true"})
 
