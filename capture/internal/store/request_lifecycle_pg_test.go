@@ -112,6 +112,28 @@ func TestSparseRequestLifecyclePreservesInvalidNumericEvidence(t *testing.T) {
 	if next != nil {
 		t.Fatalf("terminal invalid request was retried: %v", next)
 	}
+	completedKey := "storage-" + id + "complete"
+	if _, err := s.PutMarketBatch(ctx, requests, []map[string]any{request("-complete", now.Add(time.Minute))}, []string{completedKey}); err != nil {
+		t.Fatal(err)
+	}
+	completing, err := s.ClaimRequest(ctx, "complete-test-writer", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := map[string]any{"status_code": int64(200), "body": map[string]any{"quoted": "a'b", "nullable": nil}, "bytes": int64(17)}
+	completing["status"], completing["reason"], completing["result"] = "COMPLETE", nil, result
+	pytime.CollectionClock(now.Add(time.Second)).Into(completing, "finished_at")
+	if err := s.FinishRequest(ctx, completing); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := s.Get(ctx, requests, completedKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed["status"] != "COMPLETE" || completed["reason"] != nil || pyjson.Canonical(completed["result"]) != pyjson.Canonical(result) ||
+		completed["writer"] != "complete-test-writer" || completed["semantic_fingerprint"] != schema.Fingerprint(completed, requests) {
+		t.Fatalf("successful result JSON/null reason lost typed SQL binding parity: %v", completed)
+	}
 	missing := map[string]any{"request_id": id + "-missing", "status": "FAILED", "reason": "not queued"}
 	pytime.CollectionClock(now).Into(missing, "finished_at")
 	if err := s.FinishRequest(ctx, missing); err == nil {
