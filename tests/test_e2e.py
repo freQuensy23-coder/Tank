@@ -1,12 +1,13 @@
 """Synthetic offline service integration; no historical acceptance claim."""
 
 import json
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 import pytest
 from delivery_support import delivery_job
+from pydantic import ConfigDict, JsonValue, RootModel
 from score_fixtures import unassessed_score_dimensions
 from source_support import source_configuration, source_definition
 
@@ -23,6 +24,12 @@ from tank.telegram_inbox import TelegramInbox
 from tank.telegram_rich import rich_message_text
 
 pytestmark = [pytest.mark.integration]
+
+
+class CapturedRepairReport(RootModel[dict[str, JsonValue]]):
+    """Raw instrument-keyed JSON returned by the real capture queue boundary."""
+
+    model_config = ConfigDict(strict=True)
 
 
 def _native_session(session_id, agent_id="synthetic"):
@@ -1208,6 +1215,41 @@ async def test_runtime_autonomous_source_to_telegram(
             async for change in self.actual_capture_reader.capture_changes(since=since, end=end):
                 yield change
 
+        async def repair_windows(self, token_id: str, start: datetime, end: datetime, *, budget_s: float):
+            from tank.time_precision import collection_clock
+            from tank.util import utcnow
+
+            async def reject_unavailable_capture() -> None:
+                while True:
+                    requests = await repo.list(
+                        "mkt.capture_requests",
+                        filters={"kind": "REPAIR_WINDOWS", "token_id": token_id, "status": "PENDING"},
+                    )
+                    if requests:
+                        for request in requests:
+                            await repo.put(
+                                "mkt.capture_requests",
+                                request["request_id"],
+                                {
+                                    **request,
+                                    "status": "FAILED",
+                                    "reason": "SYNTHETIC_CAPTURE_INPUTS_UNAVAILABLE",
+                                    **collection_clock(utcnow()).fields("finished_at"),
+                                },
+                            )
+                        return
+                    await asyncio.sleep(0.001)
+
+            async with asyncio.TaskGroup() as tasks:
+                consumer = tasks.create_task(reject_unavailable_capture())
+                try:
+                    result = await self.actual_capture_reader.repair_windows(
+                        token_id, start, end, budget_s=budget_s
+                    )
+                    return CapturedRepairReport.model_validate(result).root
+                finally:
+                    consumer.cancel()
+
         async def demote(self, token_id, event_id=None) -> None:
             pass
 
@@ -1332,6 +1374,12 @@ async def test_runtime_autonomous_source_to_telegram(
             assert gateway.bound_port is not None and gateway.bound_port > 0
             assert gateway.settings.codex_auth_path == settings.codex_auth_path
             assert settings.codex_auth_path.name == "FAKE-codex-auth.json"
+            repair_requests = await repo.list("mkt.capture_requests", filters={"kind": "REPAIR_WINDOWS"})
+            assert repair_requests
+            assert all(
+                row["status"] == "FAILED" and row["reason"] == "SYNTHETIC_CAPTURE_INPUTS_UNAVAILABLE"
+                for row in repair_requests
+            )
 
             async with asyncio.timeout(3):
                 while not await repo.list("out.deliveries", filters={"status": "SENT"}):
