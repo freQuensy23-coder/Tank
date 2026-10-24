@@ -89,7 +89,10 @@ async def test_cancelled_waiter_does_not_lose_capacity_or_reorder_priority():
         assert gate.active == 1
 
 
-@pytest.mark.parametrize("price,quantity", [(True, "1"), ("NaN", "1"), ("1", "Infinity"), ("1", "-1")])
+@pytest.mark.parametrize(
+    "price,quantity",
+    [(True, "1"), ("NaN", "1"), ("1", "Infinity"), ("1", "-1"), ("not-price", "1"), ("1", "not-quantity")],
+)
 def test_order_book_rejects_invalid_level_quantities(price, quantity):
     from tank.market.book_contracts import BookLevel
 

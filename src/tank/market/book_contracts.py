@@ -1,7 +1,7 @@
 """Validated level-two quantities; checksum spellings are distinct from decimal values."""
 
 from collections.abc import Mapping
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Literal, Self
 
 from pydantic import Field, JsonValue, field_validator, model_validator
@@ -23,12 +23,15 @@ class BookInstrument(DomainModel):
 
     @field_validator("quote_usd_rate", "contract_multiplier", mode="before")
     @classmethod
-    def decimal_from_wire(cls, value: Number | None) -> Decimal | None:
+    def decimal_from_wire(cls, value: JsonValue | Decimal) -> Decimal | None:
         if value is None:
             return None
-        if isinstance(value, bool):
-            raise ValueError("boolean is not a decimal quantity")
-        result = Decimal(str(value))
+        if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+            raise ValueError("instrument quantity requires a decimal number")
+        try:
+            result = Decimal(str(value))
+        except InvalidOperation as exc:
+            raise ValueError("instrument quantity requires a decimal number") from exc
         if not result.is_finite():
             raise ValueError("nonfinite instrument quantity")
         return result
@@ -75,7 +78,11 @@ class BookLevel(DomainModel):
             raise ValueError("boolean is not a book quantity")
         p = format(price, "f") if isinstance(price, Decimal) else str(price)
         q = format(quantity, "f") if isinstance(quantity, Decimal) else str(quantity)
-        return cls(price=Decimal(p), quantity=Decimal(q), price_spelling=p, quantity_spelling=q)
+        try:
+            price_value, quantity_value = Decimal(p), Decimal(q)
+        except InvalidOperation as exc:
+            raise ValueError("book level requires decimal price and quantity") from exc
+        return cls(price=price_value, quantity=quantity_value, price_spelling=p, quantity_spelling=q)
 
 
 class DepthQuantity(DomainModel):

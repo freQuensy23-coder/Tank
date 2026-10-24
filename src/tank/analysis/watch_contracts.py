@@ -3,7 +3,7 @@
 from decimal import Decimal, InvalidOperation
 from typing import Literal, Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, JsonValue, field_validator, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.provenance import GenerationProvenance
@@ -178,11 +178,14 @@ class WatchCall(DomainModel):
 
     @field_validator("entry_ref_price", "invalidation_price", mode="before")
     @classmethod
-    def exact_price_from_storage(cls, value: str | int | float | Decimal) -> Decimal:
+    def exact_price_from_storage(cls, value: JsonValue | Decimal) -> Decimal:
         """Decode exact decimal text at the durable call boundary, preserving financial units."""
-        if isinstance(value, bool):
-            raise ValueError("boolean is not a call price")
-        return Decimal(str(value))
+        if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+            raise ValueError("call price requires a decimal number")
+        try:
+            return Decimal(str(value))
+        except InvalidOperation as exc:
+            raise ValueError("call price requires a decimal number") from exc
 
 
 class MilestoneSnapshot(DomainModel):
@@ -223,12 +226,15 @@ class WatchReferencePrices(DomainModel):
 
     @field_validator("anchor_price", "entry_price", "invalidation_price", mode="before")
     @classmethod
-    def exact_price(cls, value: str | int | float | Decimal | None) -> Decimal | None:
+    def exact_price(cls, value: JsonValue | Decimal) -> Decimal | None:
         if value is None:
             return None
-        if isinstance(value, bool):
-            raise ValueError("boolean is not a reference price")
-        price = Decimal(str(value))
+        if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+            raise ValueError("reference price requires a decimal number")
+        try:
+            price = Decimal(str(value))
+        except InvalidOperation as exc:
+            raise ValueError("reference price requires a decimal number") from exc
         if not price.is_finite() or price <= 0:
             raise ValueError("reference prices must be finite and positive")
         return price

@@ -74,3 +74,13 @@ def test_monitoring_policy_is_deterministic_and_identity_free() -> None:
     assert price_rule.expr.value == "10"
     assert price_rule.role == "INVALIDATION"
     assert all("cond_id" not in rule.model_dump(mode="json") for rule in first)
+
+
+@pytest.mark.parametrize("value", ["not-a-price", {"raw": "1"}, [1], True])
+def test_reference_prices_reject_malformed_wire_values_as_validation_errors(value) -> None:
+    from tank.analysis.watch_contracts import WatchReferencePrices
+
+    with pytest.raises(ValidationError):
+        WatchReferencePrices.model_validate(
+            {"anchor_price": value, "entry_price": None, "invalidation_price": None}
+        )
