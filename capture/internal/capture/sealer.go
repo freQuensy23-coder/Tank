@@ -65,6 +65,8 @@ type chain struct {
 	headNext  time.Time
 	heading   bool
 	watermark time.Time
+	downAt    time.Time
+	downWhy   string
 }
 
 func (c *chain) pending(lo, hi time.Time) bool {
@@ -180,6 +182,9 @@ func (s *Sealer) Connected(inst *venue.Instrument, conn int64, at time.Time, hot
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c := s.chain(inst)
+	if c.conn == 0 && !c.downAt.IsZero() && at.After(c.downAt) {
+		s.markDown(c, at)
+	}
 	c.conn, c.start, c.proved, c.frontier = conn, at, at, at
 	if c.first.IsZero() {
 		c.first = at
@@ -243,7 +248,28 @@ func (s *Sealer) Disconnected(inst *venue.Instrument, conn int64, reason string)
 	}
 	c.resume = pytime.MinuteFloor(c.proved)
 	c.conn = 0
+	c.downAt, c.downWhy = time.Time{}, ""
+	if reason != "MEMBER_REMOVED" {
+		c.downAt, c.downWhy = now, reason
+	}
 	c.repairs = append(dropOpen(c.repairs), span{pytime.MinuteFloor(c.proved), time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)})
+}
+
+const downReach = 24 * time.Hour
+
+func (s *Sealer) markDown(c *chain, until time.Time) {
+	from := pytime.MinuteFloor(maxTime(c.resume, until.Add(-downReach)))
+	for minute := from; minute.Before(until); minute = minute.Add(time.Minute) {
+		key := flow.KeyOf(c.inst.ID, minute)
+		if _, ok := s.acc.Bars[key]; ok || s.seals[key] != nil {
+			continue
+		}
+		if _, gone := s.versions[key]; !gone {
+			s.acc.EmptyMinute(c.inst, minute)
+		}
+	}
+	s.acc.ProveRange(c.inst.ID, c.downAt, until, false, "STREAM", c.downWhy, until)
+	c.downAt, c.downWhy = time.Time{}, ""
 }
 
 func (s *Sealer) RepairDone(iid string, start, end time.Time) {

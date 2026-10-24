@@ -272,9 +272,6 @@ sources:
   - url: https://www.okx.com/api/v5/support/announcements?annType=announcements-trading-updates
     kind: json
     interval_s: 60
-  - url: https://www.okx.com/api/v5/support/announcements?annType=latest-events
-    kind: json
-    interval_s: 60
   priority: CORE
   terms_notes: Read-only public content; honor publisher terms and Retry-After.
   limits:

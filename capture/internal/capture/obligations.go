@@ -437,7 +437,7 @@ func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, st
 		expected = 0
 	}
 	observed := func() (map[int64]bool, error) {
-		rows, err := s.store.Range(ctx, "mkt.klines_1m", "open_time", first, last, map[string]any{"instrument_id": iid})
+		rows, err := s.store.Projection(ctx, "mkt.klines_1m", []string{"open_time", "complete"}, "open_time", first, last, []string{iid})
 		if err != nil {
 			return nil, err
 		}

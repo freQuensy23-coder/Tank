@@ -2,6 +2,7 @@ package rawstore
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
@@ -52,5 +53,74 @@ func TestTradesInsertAndDeduplicate(t *testing.T) {
 	}
 	if n := rows[0]["n"]; n == nil || n.(interface{ String() string }).String() != "2" || rows[0]["p"] != "84758.8" || rows[0]["ts"] != "2026-10-21 12:00:01.500000" {
 		t.Fatalf("rows = %v", rows)
+	}
+}
+
+type lines struct{ got [][]byte }
+
+func (l *lines) Insert(_ context.Context, _ string, batch [][]byte) error {
+	l.got = append(l.got, batch...)
+	return nil
+}
+
+func TestCoinbaseReprintKeepsTheFirstStamp(t *testing.T) {
+	sink := &lines{}
+	w := New(sink, "tank-capture/test", "cfg", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ws := time.Date(2026, 10, 24, 5, 1, 50, 96235000, time.UTC)
+	live := print("11024447", ws)
+	live.InstrumentID, live.Venue, live.CaptureSource = "coinbase:spot:HYPE-USD", "coinbase", "WS"
+	rest := *live
+	rest.TS, rest.CaptureSource = ws.Add(time.Microsecond), "REST"
+	other := *live
+	other.TradeID, other.TS = "11024448", ws.Add(time.Microsecond)
+	w.Add(live)
+	w.Add(&rest)
+	w.Add(&other)
+	if err := w.Flush(ws); err != nil {
+		t.Fatal(err)
+	}
+	var stamps []string
+	for _, line := range sink.got {
+		var row map[string]any
+		if err := json.Unmarshal(line, &row); err != nil {
+			t.Fatal(err)
+		}
+		stamps = append(stamps, row["ts"].(string))
+	}
+	if stamps[0] != "2026-10-24 05:01:50.096235" || stamps[1] != stamps[0] || stamps[2] != "2026-10-24 05:01:50.096236" {
+		t.Fatalf("a REST reprint of a Coinbase trade reuses its first stamp so the row replaces itself: %v", stamps)
+	}
+	if !rest.TS.Equal(ws.Add(time.Microsecond)) {
+		t.Fatal("the caller's trade is not changed")
+	}
+}
+
+func TestKrakenReprintKeepsTheFirstStampAndOthersPassThrough(t *testing.T) {
+	sink := &lines{}
+	w := New(sink, "tank-capture/test", "cfg", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ws := time.Date(2026, 10, 24, 14, 34, 2, 347552000, time.UTC)
+	kraken := print("112806606", ws)
+	rest := *kraken
+	rest.TS = ws.Add(time.Microsecond)
+	binance := print("9", ws)
+	binance.InstrumentID, binance.Venue = "binance:spot:BTCUSDT", "binance"
+	again := *binance
+	again.TS = ws.Add(time.Microsecond)
+	for _, tr := range []*normalize.Trade{kraken, &rest, binance, &again} {
+		w.Add(tr)
+	}
+	if err := w.Flush(ws); err != nil {
+		t.Fatal(err)
+	}
+	var stamps []string
+	for _, line := range sink.got {
+		var row map[string]any
+		if err := json.Unmarshal(line, &row); err != nil {
+			t.Fatal(err)
+		}
+		stamps = append(stamps, row["ts"].(string))
+	}
+	if stamps[1] != stamps[0] || stamps[3] == stamps[2] {
+		t.Fatalf("Kraken reprints reuse the first stamp; venues that stamp consistently are written as given: %v", stamps)
 	}
 }

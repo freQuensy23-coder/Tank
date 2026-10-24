@@ -1863,7 +1863,6 @@ This manifest is generated from current `sources.yaml` and takes precedence for 
 | S10 | OKX | 60 | json | GET https://www.okx.com/api/v5/support/announcements?annType=announcements-new-listings |
 | S10 | OKX | 60 | json | GET https://www.okx.com/api/v5/support/announcements?annType=announcements-delistings |
 | S10 | OKX | 60 | json | GET https://www.okx.com/api/v5/support/announcements?annType=announcements-trading-updates |
-| S10 | OKX | 60 | json | GET https://www.okx.com/api/v5/support/announcements?annType=latest-events |
 | S11 | Bybit | 60 | json | GET https://api.bybit.com/v5/announcements/index?locale=en-US&type=new_crypto&limit=20 |
 | S11 | Bybit | 60 | json | GET https://api.bybit.com/v5/announcements/index?locale=en-US&type=delistings&limit=20 |
 | S11 | Bybit | 60 | json | GET https://api.bybit.com/v5/announcements/index?locale=en-US&type=latest_bybit_news&limit=20 |

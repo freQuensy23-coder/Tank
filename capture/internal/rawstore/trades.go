@@ -24,7 +24,12 @@ type Trades struct {
 	log          *slog.Logger
 	mu           sync.Mutex
 	buf          [][]byte
+	stamps       map[string]time.Time
 }
+
+const stampKeep = 26 * time.Hour
+
+var restStamped = map[string]bool{"coinbase": true, "kraken": true}
 
 func New(ch Inserter, code, config string, log *slog.Logger) *Trades {
 	return &Trades{ch: ch, code: code, config: config, log: log}
@@ -71,7 +76,31 @@ func (t *Trades) Row(tr *normalize.Trade, version uint64) map[string]any {
 	return row
 }
 
+func (t *Trades) stamp(tr *normalize.Trade) *normalize.Trade {
+	if !restStamped[tr.Venue] {
+		return tr
+	}
+	key := tr.InstrumentID + "\x00" + tr.TradeID
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.stamps == nil {
+		t.stamps = map[string]time.Time{}
+	}
+	first, ok := t.stamps[key]
+	if !ok {
+		t.stamps[key] = tr.TS
+		return tr
+	}
+	if first.Equal(tr.TS) {
+		return tr
+	}
+	same := *tr
+	same.TS = first
+	return &same
+}
+
 func (t *Trades) Add(tr *normalize.Trade) {
+	tr = t.stamp(tr)
 	line, err := json.Marshal(t.Row(tr, uint64(time.Now().UnixNano())))
 	if err != nil {
 		t.log.Warn("raw trade not stored", "instrument", tr.InstrumentID, "error", err.Error())
@@ -82,10 +111,15 @@ func (t *Trades) Add(tr *normalize.Trade) {
 	t.mu.Unlock()
 }
 
-func (t *Trades) Flush(time.Time) error {
+func (t *Trades) Flush(now time.Time) error {
 	t.mu.Lock()
 	lines := t.buf
 	t.buf = nil
+	for key, ts := range t.stamps {
+		if ts.Before(now.Add(-stampKeep)) {
+			delete(t.stamps, key)
+		}
+	}
 	t.mu.Unlock()
 	if len(lines) == 0 {
 		return nil
