@@ -34,6 +34,8 @@ def test_funding_requires_finite_typed_rate_positive_interval_and_declared_ident
         {"interval_h": Decimal("0")},
         {"instrument_id": ""},
         {"unexpected": True},
+        {"timestamp": "2026-06-17T00:00:00"},
+        {"timestamp": "not-a-timestamp"},
     ):
         with pytest.raises(ValidationError):
             observation(**change)

@@ -1,5 +1,6 @@
 """Pure funding calculations over validated observations and explicit clock provenance."""
 
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -25,6 +26,13 @@ class FundingObservation(DomainModel):
     def finite(cls, value: Decimal) -> Decimal:
         if not value.is_finite():
             raise ValueError("funding values must be finite")
+        return value
+
+    @field_validator("timestamp")
+    @classmethod
+    def timezone_declared(cls, value: str) -> str:
+        if datetime.fromisoformat(value).tzinfo is None:
+            raise ValueError("funding timestamp must declare its timezone")
         return value
 
     @property

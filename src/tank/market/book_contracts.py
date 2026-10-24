@@ -44,6 +44,8 @@ class BookInstrument(DomainModel):
             raise ValueError("venue has no supported perpetual order book")
         if self.venue == "hyperliquid" and self.market_type != "PERP_LINEAR":
             raise ValueError("Hyperliquid capture supports perpetual order books only")
+        if self.venue == "okx" and self.market_type == "PERP_LINEAR" and self.contract_multiplier is None:
+            raise ValueError("OKX perpetual book requires a verified base contract multiplier")
         return self
 
     @property
