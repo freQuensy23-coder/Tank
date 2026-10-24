@@ -64,3 +64,25 @@ HTTP callback annotations were corrected at 39 sites to httpx.Request, retaining
 | replay_evidence | 5 | 9 |
 
 These counts inventory open work, not a claim that every .get is wrong. Required next work is substantive domain conversion of market snapshots/results/truth, remaining decision/card use cases, event-tool requests/results/orchestration, replay packet/provenance/sealing/review/calibration, and all owned test annotations. Every remaining fallback must be justified by exact symbol at its true boundary. Immutable fixture evidence, units, missing-versus-zero distinctions and cutoff/receipt admissibility must remain intact. Final complete unit/integration checks are still required. Additive models do not close this inventory.
+
+## Capture lifecycle migration, canonical v2
+
+The active control path separates strict capture_contracts, required capture_ports, capture_lifecycle orchestration, capture_repository persistence decoding/serialization, and capture_composition. MarketService delegates escalation, protection, cap enforcement, tier changes, readiness, bounded waits, repair requests, and restart obligation scheduling. Python writes only control requests/HOT policy; Go remains the external capture producer. Canonical Go1901d63 supplies actual worker-start clocks and releases its in-flight obligation guard.
+
+Corrected defects: missing thresholds file no longer becomes empty policy; configuration validation precedes owned HTTP allocation. Permanent Python backfill markers no longer prevent retry after durableFAILED. Readiness/waits bind to the exact current/requested event anchor instead of an unrelated latest started_at row. Missing events and scope mismatches fail. Pending started_at is unavailable/PENDING rather than request creation time. Snapshot control-history ordering uses recorded_at only when started_at is explicitly unavailable; market observation cutoff clocks are unchanged. Missing declared currentEMS targets fail rather than choosing another assessment. Missing armed-watch expiry fails rather than protecting forever. Repair COMPLETE/FAILED/EXPIRED/INCOMPLETE/replayNOT_RUN outcomes are explicit. A COMPLETE empty instrument set is valid. Writes reread the durable acknowledged row even when idempotency returns no changed rows.
+
+Retained cases and exact reasons:
+- CaptureMetadata/CapturePointMetadata nullable headers mirror physical nullable market columns and retained Go rows. Unavailable historical starts remain unavailable.
+- RepairPending/Running/Failed/Expired preserve raw budget_s SQL numeric text or absence, including NaN evidence. Claim precedes worker validation; expiry can precede invalid-input classification. NewRepairRequest requires positive finite Decimal, nonempty token, ordered bounds and future deadline. RepairComplete validates usable fields. Legacy deadline-bounded missing budgets are read-only variants; new commands always provide budgets.
+- CaptureReadiness.backfill_id is absent only for NOT_REQUESTED. CaptureWaitOutcome can lack an ID when no obligation existed within its bound.
+- HotTokenIntent.expires_at=None means actual open-call/armed-watch protection. Unprotected72-hour TTL remains existing explicit policy. No assessment explicitly maps to LOW priority1; malformed metadata never does.
+- TokenEscalation.priority=None selects validated event priority; explicit zero is retained. hot_token_cap=0 disables HOT admission; negative capacity fails.
+- Maps are real keyed collections: instrument repair counts, condition expiries, token-grouped HOT rows and obligation-keyed wait observations. Repository projections/redaction/control documents are persistence boundaries, not domain blobs.
+- An absent current_ems_id permits validated history selection; a dangling declared pointer fails.
+- Empty tier history starts sequence1. Matching tier/cadence/config suppresses duplicate transitions.
+- Physical control tables store timestamp triplets, not bucket-origin columns. Source event provenance remains authoritative; application anchors retain Timestamp.
+- Current Settings.configured_secrets is materialized on each control write for recursive wire redaction, preserving rotation.
+
+Evidence: six memory adapter/application cases cover pending clocks, strict new-budget rejection versus raw claimedNaN, missing watch expiry, exact-anchor waits, explicit repair timeout, tier/demotion history. Actual PostgreSQL command roundtrip passed1case/zero skips.44 focused service/capture/adapter units passed;42 supply/selective-loader units passed after fixtures supplied real baseline thresholds. Full combined memory/PostgreSQL/Go capture proof remains required after runtime/scheduler/e2e consumers migrate.
+
+Remaining scope: MarketService snapshots/history and full persisted Market Truth still use dictionary domain processing. capture_changes/metadata readers and other owned modules still require full five-point audits. This application migration does not establish completion of those paths.
