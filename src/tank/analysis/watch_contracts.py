@@ -107,7 +107,7 @@ class WatchCondition(GenerationProvenance):
     role: Literal["UPGRADE", "DOWNGRADE", "INVALIDATION", "AGENT"]
     human_text: str
     expr: WatchExpression
-    status: Literal["ARMED", "FIRED", "CANCELLED"]
+    status: Literal["ARMED", "FIRED", "CANCELLED", "EXPIRED"]
     created_by: str
     created_at: str
     created_at_prec: str | None
@@ -202,3 +202,30 @@ class MilestoneSnapshot(DomainModel):
     missed_at_prec: str | None = None
     missed_at_prec_reason: str | None = None
     missed_at_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
+
+
+class WatchProposal(DomainModel):
+    cond_id: str = Field(min_length=1)
+    role: Literal["UPGRADE", "DOWNGRADE", "INVALIDATION"]
+    human_text: str
+    expr: WatchExpression
+    status: Literal["ARMED"] = "ARMED"
+    milestone_id: str | None = None
+
+
+class WatchReferencePrices(DomainModel):
+    anchor_price: Decimal | None
+    entry_price: Decimal | None
+    invalidation_price: Decimal | None
+
+    @field_validator("anchor_price", "entry_price", "invalidation_price", mode="before")
+    @classmethod
+    def exact_price(cls, value: str | int | float | Decimal | None) -> Decimal | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            raise ValueError("boolean is not a reference price")
+        price = Decimal(str(value))
+        if not price.is_finite() or price <= 0:
+            raise ValueError("reference prices must be finite and positive")
+        return price

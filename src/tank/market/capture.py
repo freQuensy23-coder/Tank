@@ -89,6 +89,7 @@ def capture_boundary_points(
     for minutes in (15, 60, 240, 1440):
         points.update((end - timedelta(minutes=minutes), end - timedelta(minutes=2 * minutes)))
     if anchor is not None:
+        value: TimeInput | JsonValue
         if isinstance(anchor, EventAnchor):
             value = anchor.timestamp.value
         elif isinstance(anchor, Mapping):

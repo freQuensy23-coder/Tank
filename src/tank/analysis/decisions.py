@@ -2,6 +2,8 @@
 
 from decimal import Decimal
 
+from tank.analysis.watch_contracts import WatchProposal, WatchReferencePrices
+from tank.analysis.watch_policy import _condition, _expr, build_watch_conditions
 from tank.time_precision import propagate_timestamp
 from tank.util import new_id
 
@@ -18,26 +20,6 @@ def _contradictions(event, assessment):
         for c in event.get("contradictions", []) + assessment.get("contradictions", [])
         if not c.get("resolved_at")
     ]
-
-
-def _expr(metric, op, value, window="W1H", count=1):
-    return {
-        "metric": metric,
-        "window": window,
-        "op": op,
-        "value": value,
-        "persist": {"count": count, "unit": "consecutive_windows"},
-    }
-
-
-def _condition(role, text, *expressions):
-    return {
-        "cond_id": new_id("CND"),
-        "role": role,
-        "human_text": text,
-        "expr": expressions[0] if len(expressions) == 1 else {"all": list(expressions)},
-        "status": "ARMED",
-    }
 
 
 class DecisionEngine:
@@ -277,7 +259,18 @@ class DecisionEngine:
                 "WATCH_TO_START",
                 "START_HIGH_DATA_GUARD" if data != "HIGH" else "START_UNRESOLVED_GUARD",
             )
-        watches = self._conditions(action, move, band, relative, open_call, wait_data=rule == "A1")
+        references = WatchReferencePrices.model_validate(
+            {
+                "anchor_price": (relative.get("anchor") or {}).get("ref_price"),
+                "entry_price": (relative.get("windows", {}).get("EVENT") or {}).get(
+                    "entry_ref_price", relative.get("entry_ref_price")
+                ),
+                "invalidation_price": open_call.get("invalidation_price") if open_call is not None else None,
+            }
+        )
+        watches = build_watch_conditions(
+            action, move, band, references, bool(open_call), wait_data=rule == "A1"
+        )
         milestone = event.get("next_milestone")
         if milestone:
             milestone_id = (
@@ -299,8 +292,17 @@ class DecisionEngine:
                     ),
                 ]
             )
-            for watch in watches[-2:]:
-                watch["milestone_id"] = milestone_id
+            watches[-2:] = [
+                WatchProposal(
+                    cond_id=watch.cond_id,
+                    role=watch.role,
+                    human_text=watch.human_text,
+                    expr=watch.expr,
+                    status="ARMED",
+                    milestone_id=milestone_id,
+                )
+                for watch in watches[-2:]
+            ]
 
         certainty = _enum(assessment.get("certainty", event.get("certainty")), "LOW")
         class_conf = (
@@ -444,7 +446,7 @@ class DecisionEngine:
             "tactical": tactical,
             "investigate": move in {"UNKNOWN", "REAL_MARKET_FRAGMENTATION"},
             "confidence_limiting": confidence_limiting,
-            "conditions": watches,
+            "conditions": [watch.model_dump(mode="json", exclude_unset=True) for watch in watches],
             "outlook": {
                 "direction": bias,
                 "direction_rule": bias,
@@ -466,105 +468,3 @@ class DecisionEngine:
             "code_version": getattr(self.settings, "code_version", "0.1.0"),
             "provenance": {"ems_id": assessment.get("ems_id"), "mta_id": m.get("mta_id")},
         }
-
-    def _conditions(self, action, move, band, relative, open_call, *, wait_data=False):
-        anchor = (relative.get("anchor") or {}).get("ref_price")
-        down = _condition(
-            "DOWNGRADE",
-            "Spot SELL with most volume selling for two consecutive hourly windows.",
-            _expr("spot.cohort.direction", "==", "SELL", count=2),
-            _expr("spot.cohort.cwb_sell", ">", 0.5, count=2),
-        )
-        if open_call:
-            down = _condition(
-                "DOWNGRADE",
-                "Spot cohort BROAD SELL with most volume selling for two consecutive hourly windows; REDUCE.",
-                _expr("spot.cohort.direction", "==", "SELL", count=2),
-                _expr("spot.cohort.cwb_sell", ">", 0.5, count=2),
-                _expr("spot.classification", "==", "BROAD", count=2),
-            )
-        up = _condition(
-            "UPGRADE",
-            "Spot BUY with most volume buying for two consecutive hourly windows and native OI not above normal.",
-            _expr("spot.cohort.direction", "==", "BUY", count=2),
-            _expr("spot.cohort.cwb_buy", ">", 0.5, count=2),
-            _expr("deriv.native_oi_vs_normal", "in", ["WITHIN", "BELOW"]),
-        )
-        if action == "WAIT" and wait_data:
-            up = _condition(
-                "UPGRADE", "Data confidence becomes HIGH; re-grade.", _expr("dc.class", "==", "HIGH")
-            )
-        elif action == "WAIT":
-            up = _condition(
-                "UPGRADE",
-                "Data HIGH and the move class resolves to spot-led buying (aggressor side and price response checked) or organic mixed.",
-                _expr("dc.class", "==", "HIGH"),
-                _expr("mt.move_class", "in", ["SPOT_LED_ACCUMULATION", "ORGANIC_MIXED"]),
-            )
-        if action == "DONT_CHASE":
-            if move == "LIQUIDITY_VACUUM":
-                up = _condition(
-                    "UPGRADE",
-                    "Depth above half its pre-event level and spot BUY.",
-                    _expr("liq.depth_p1_vs_pre", ">", 0.5),
-                    _expr("spot.cohort.direction", "==", "BUY"),
-                )
-            elif band == "HEAVY":
-                up = _condition(
-                    "UPGRADE",
-                    "Repricing returns to EARLY with spot BUY maintained.",
-                    _expr("price.repricing_band", "==", "EARLY"),
-                    _expr("spot.cohort.direction", "==", "BUY"),
-                )
-            else:
-                up = _condition(
-                    "UPGRADE",
-                    "Spot BUY with most volume buying while funding is not above normal.",
-                    _expr("spot.cohort.direction", "==", "BUY"),
-                    _expr("spot.cohort.cwb_buy", ">", 0.5),
-                    _expr("deriv.funding_vs_normal", "!=", "ABOVE"),
-                )
-        if action == "DONT_CHASE":
-            if move == "LIQUIDITY_VACUUM" or band == "HEAVY":
-                down = None
-            elif anchor is not None:
-                down = _condition(
-                    "DOWNGRADE",
-                    "Hourly close below the anchor price; WAIT.",
-                    _expr("price.close_vs_level", "<", str(anchor)),
-                )
-            else:
-                down = None
-        result = [c for c in [up, down] if c is not None]
-        if action == "WATCH_TO_START" and not open_call and anchor is not None:
-            result.append(
-                _condition(
-                    "DOWNGRADE",
-                    "Hourly close below the anchor price; WAIT.",
-                    _expr("price.close_vs_level", "<", str(anchor)),
-                )
-            )
-        level = (open_call or {}).get("invalidation_price")
-        if level is None and anchor is not None:
-            entry = (
-                (relative.get("windows") or {})
-                .get("EVENT", {})
-                .get("entry_ref_price", relative.get("entry_ref_price", anchor))
-            )
-            level = str(min(Decimal(str(anchor)), Decimal(str(entry))))
-        if level is not None:
-            result.append(
-                _condition(
-                    "INVALIDATION",
-                    "Hourly close below the event invalidation level.",
-                    _expr("price.close_vs_level", "<", level),
-                )
-            )
-        result.append(
-            _condition(
-                "INVALIDATION",
-                "A fatal contradiction invalidates the thesis.",
-                _expr("event.contradiction_fatal", "==", True),
-            )
-        )
-        return result
