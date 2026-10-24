@@ -6,7 +6,7 @@ from typing import Literal, Self
 from pydantic import BaseModel, ConfigDict, JsonValue, model_validator
 
 from tank.contracts import DomainModel
-from tank.contracts.score import ScoreAssessment
+from tank.contracts.score import ScoreAssessment, ScoreAssessmentView
 
 SCORE_DIMENSIONS = (
     ("Economic directness", "economic_directness"),
@@ -174,13 +174,29 @@ def message_text(message: Mapping[str, JsonValue]) -> str:
     return ""
 
 
-def _assessment(value: ScoreAssessment | Mapping[str, JsonValue]) -> ScoreAssessment:
-    if isinstance(value, ScoreAssessment):
+def _assessment(
+    value: ScoreAssessment | ScoreAssessmentView | Mapping[str, JsonValue],
+) -> ScoreAssessmentView:
+    if isinstance(value, ScoreAssessmentView):
         return value
-    return ScoreAssessment.model_validate({"dims": value["dims"]})
+    if isinstance(value, ScoreAssessment):
+        return ScoreAssessmentView.from_domain(value)
+    if "dims" not in value:
+        return ScoreAssessmentView.model_validate({})
+    dimensions = value["dims"]
+    if not isinstance(dimensions, dict):
+        raise ValueError("Assessment dimensions must be an object")
+    projected: dict[str, JsonValue] = {}
+    for name, dimension in dimensions.items():
+        if not isinstance(dimension, dict):
+            raise ValueError("Score dimension must be an object")
+        projected[name] = {
+            key: dimension[key] for key in ("value", "rationale", "reason") if key in dimension
+        }
+    return ScoreAssessmentView.model_validate({"dims": projected})
 
 
-def score_summary(assessment: ScoreAssessment | Mapping[str, JsonValue]) -> str:
+def score_summary(assessment: ScoreAssessment | ScoreAssessmentView | Mapping[str, JsonValue]) -> str:
     parts: list[str] = []
     for code, dimension in zip("DMPXFSI", _assessment(assessment).dims.ordered(), strict=True):
         parts.append(
@@ -191,7 +207,7 @@ def score_summary(assessment: ScoreAssessment | Mapping[str, JsonValue]) -> str:
     return "Scores " + " · ".join(parts)
 
 
-def _score_table(assessment: ScoreAssessment) -> ScoreTable:
+def _score_table(assessment: ScoreAssessmentView) -> ScoreTable:
     cells = [
         [
             TableCell(text=label, is_header=True, align="left", valign="top")
@@ -213,12 +229,17 @@ def _score_table(assessment: ScoreAssessment) -> ScoreTable:
     return ScoreTable(cells=cells)
 
 
-def score_table(assessment: ScoreAssessment | Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+def score_table(
+    assessment: ScoreAssessment | ScoreAssessmentView | Mapping[str, JsonValue],
+) -> dict[str, JsonValue]:
     return _score_table(_assessment(assessment)).model_dump(mode="json")
 
 
 def card_rich_message(
-    text: str, assessment: ScoreAssessment | Mapping[str, JsonValue], *, max_chars: int = CARD_TEXT_LIMIT
+    text: str,
+    assessment: ScoreAssessment | ScoreAssessmentView | Mapping[str, JsonValue],
+    *,
+    max_chars: int = CARD_TEXT_LIMIT,
 ) -> dict[str, JsonValue]:
     """Freeze approved text and scores without changing assessment decisions."""
     scores = _assessment(assessment)
