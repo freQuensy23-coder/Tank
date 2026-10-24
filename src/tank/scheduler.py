@@ -3,8 +3,11 @@
 import asyncio
 import contextlib
 import logging
+from collections.abc import Mapping
 from datetime import UTC, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
+
+from pydantic import JsonValue
 
 from tank.time_precision import chosen_boundary, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import iso, new_id, parse_time, utcnow
@@ -455,12 +458,11 @@ class Scheduler:
                     await self.message("CALL_EXPIRED", call["event_id"], call["call_id"], call=call)
 
     @staticmethod
-    def anchor(event):
+    def anchor(event: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+        """Serialize the canonical anchor only at the scheduler job-payload boundary."""
         from tank.market.capture import event_anchor
 
-        anchor = event_anchor(event)
-        selected = {"T0": "event_time", "T1": "public_at", "KNOWN_TO_US_AT": "known_to_us_at"}[anchor["type"]]
-        return {**anchor, **propagate_timestamp(event, selected).fields("ts")}
+        return event_anchor(event).to_wire()
 
     async def message(self, kind, event_id, key, **extra):
         await self.repo.enqueue(

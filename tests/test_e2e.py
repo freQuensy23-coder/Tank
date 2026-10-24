@@ -1168,7 +1168,7 @@ async def test_runtime_autonomous_source_to_telegram(
             from tank.util import sha256
 
             self.escalations.append((event_id, tokens))
-            anchor = event_anchor(await repo.get("evt.events", event_id))["ts"]
+            anchor = event_anchor(await repo.get("evt.events", event_id)).value
             for token in tokens:
                 key = "BF-" + sha256({"event_id": event_id, "token_id": token, "anchor": iso(anchor)})
                 await repo.put(
