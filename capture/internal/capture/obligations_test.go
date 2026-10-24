@@ -8,6 +8,7 @@ import (
 
 	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyval"
+	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
 func TestObligationRunsCoreRowToTerminalResult(t *testing.T) {
@@ -93,5 +94,20 @@ func TestKlineAuditsSpreadAcrossTheHour(t *testing.T) {
 			t.Fatalf("neighbouring audits start at least a minute apart: %v after %v", d, last)
 		}
 		seen[d], last = true, d
+	}
+}
+
+func TestKlineAuditWaitsForNoRepairSlot(t *testing.T) {
+	s := &Service{slots: make(chan struct{}, 1)}
+	s.slots <- struct{}{}
+	done := make(chan bool, 1)
+	go func() { done <- s.auditKlines(context.Background(), &venue.Instrument{ID: "bybit:spot:BTCUSDT"}) }()
+	select {
+	case ran := <-done:
+		if ran {
+			t.Fatal("no audit runs without a free repair slot")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the polling loop is not held while repairs hold every slot")
 	}
 }

@@ -299,6 +299,32 @@ func TestQuietMinuteOfADisconnectSealsIncomplete(t *testing.T) {
 	}
 }
 
+func TestRemovedMemberRejoiningWritesNoColdMinutes(t *testing.T) {
+	r := newRig(t, "bybit", "SPOT")
+	base := r.clock.t
+	r.s.Connected(r.inst, 1, base, nil)
+	r.s.Trade(r.inst, r.trade(1, at(base, 10)), 1)
+	r.clock.set(at(base, 40))
+	r.s.Disconnected(r.inst, 1, "MEMBER_REMOVED")
+	r.s.Connected(r.inst, 2, minuteOf(base, 600), nil)
+	if bars := len(r.s.acc.Bars); bars > 2 {
+		t.Fatalf("a token taken out of capture on purpose leaves its cold minutes alone: %d bars", bars)
+	}
+}
+
+func TestLongOutageMarksOnlyTheLastDay(t *testing.T) {
+	r := newRig(t, "bybit", "SPOT")
+	base := r.clock.t
+	r.s.Connected(r.inst, 1, base, nil)
+	r.s.Trade(r.inst, r.trade(1, at(base, 10)), 1)
+	r.clock.set(at(base, 40))
+	r.s.Disconnected(r.inst, 1, "STREAM_DISCONNECTED: NO_MESSAGE_FOR_30_SECONDS")
+	r.s.Connected(r.inst, 2, minuteOf(base, 3*24*60), nil)
+	if bars := len(r.s.acc.Bars); bars > 24*60+2 {
+		t.Fatalf("an outage of days marks at most the last day of minutes: %d bars", bars)
+	}
+}
+
 func TestPrintBeforeFirstConnectionTakesStoredPath(t *testing.T) {
 	r := newRig(t, "coinbase", "SPOT")
 	base := r.clock.t

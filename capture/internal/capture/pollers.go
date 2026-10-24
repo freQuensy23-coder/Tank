@@ -464,9 +464,8 @@ func (s *Service) instrumentLoop(ctx context.Context, inst *venue.Instrument) {
 
 		doTicker := started >= tickerDue && !hot
 		s.poll(ctx, iid, pollKinds{derivatives: doDeriv, klines: true, ticker: doTicker}, 0)
-		if s.clock.Monotonic() >= auditDue {
+		if s.clock.Monotonic() >= auditDue && s.auditKlines(ctx, inst) {
 			auditDue = s.clock.Monotonic() + time.Duration(s.opt.Threshold("kline_audit_interval_s", 3600)*float64(time.Second))
-			s.auditKlines(ctx, inst)
 		}
 		if doDeriv {
 			derivDue = s.clock.Monotonic() + time.Duration(s.opt.Threshold("base_oi_funding_interval_s", 300)*float64(time.Second))
@@ -497,16 +496,18 @@ func (s *Service) auditOffset(iid string) time.Duration {
 	return time.Minute + time.Duration(interval*float64(slot)/float64(max(len(s.opt.Order), 1))*float64(time.Second))
 }
 
-func (s *Service) auditKlines(ctx context.Context, inst *venue.Instrument) {
-	release, err := s.repairSlot(ctx)
-	if err != nil {
-		return
+func (s *Service) auditKlines(ctx context.Context, inst *venue.Instrument) bool {
+	select {
+	case s.slots <- struct{}{}:
+	default:
+		return false
 	}
-	defer release()
+	defer func() { <-s.slots }()
 	now := pytime.MinuteFloor(s.clock.Now())
 	if _, err := s.backfillKlines(ctx, s.instrument(inst.ID), now.Add(-25*time.Hour), now, false, "KLINES_GAP"); err != nil && err != ErrStopped {
 		s.gap(inst, "KLINES_GAP", err.Error(), nil, nil)
 	}
+	return true
 }
 
 func (s *Service) hotGrid(ctx context.Context, inst *venue.Instrument, interval, offset float64, kinds pollKinds) {

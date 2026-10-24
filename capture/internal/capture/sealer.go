@@ -248,12 +248,18 @@ func (s *Sealer) Disconnected(inst *venue.Instrument, conn int64, reason string)
 	}
 	c.resume = pytime.MinuteFloor(c.proved)
 	c.conn = 0
-	c.downAt, c.downWhy = now, reason
+	c.downAt, c.downWhy = time.Time{}, ""
+	if reason != "MEMBER_REMOVED" {
+		c.downAt, c.downWhy = now, reason
+	}
 	c.repairs = append(dropOpen(c.repairs), span{pytime.MinuteFloor(c.proved), time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)})
 }
 
+const downReach = 24 * time.Hour
+
 func (s *Sealer) markDown(c *chain, until time.Time) {
-	for minute := pytime.MinuteFloor(c.resume); minute.Before(until); minute = minute.Add(time.Minute) {
+	from := pytime.MinuteFloor(maxTime(c.resume, until.Add(-downReach)))
+	for minute := from; minute.Before(until); minute = minute.Add(time.Minute) {
 		key := flow.KeyOf(c.inst.ID, minute)
 		if _, ok := s.acc.Bars[key]; ok || s.seals[key] != nil {
 			continue
