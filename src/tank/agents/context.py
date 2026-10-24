@@ -4,7 +4,10 @@ Tool arguments name records by ID and registry objects by key; the host validate
 import copy
 import re
 
+from pydantic import BaseModel
+
 from tank.event_tools import SCOPED_TOOLS, validate_schema
+from tank.util import JsonInput
 
 CONTEXT_VERSION = 2
 AGENT_SKILLS = {False: "tank-event-analyst", True: "tank-scout-reviewer"}
@@ -197,36 +200,36 @@ CONTEXT_TRANSITION = {
 }
 
 
-def identifier_field(key):
+def identifier_field(key: str) -> bool:
     name = re.sub(r"([a-z])([A-Z])", r"\1_\2", str(key)).lower()
     return name in {"id", "ids", "hash", "hashes", "sha256", "version"} or name.endswith(
         ("_id", "_ids", "_hash", "_hashes", "_sha256", "_version", "_ref")
     )
 
 
-def private_field(key):
+def private_field(key: str) -> bool:
     name = re.sub(r"([a-z])([A-Z])", r"\1_\2", str(key)).lower()
     return name in PRIVATE_FIELDS or name.endswith("_provenance") or identifier_field(key)
 
 
-def clean_text(text):
+def clean_text(text: str) -> str:
     return "".join(
         part if part.startswith(("http://", "https://")) else OPAQUE.sub("[internal reference omitted]", part)
         for part in re.split(r"(https?://[^\s<>\"]+)", text)
     )
 
 
-def clean_value(value):
+def clean_value(value: JsonInput) -> JsonInput:
     """Final recursive guard for diagnostics, prose and unknown provider fields."""
+    if isinstance(value, BaseModel):
+        return clean_value(value.model_dump(mode="python"))
     if isinstance(value, dict):
         return {
-            clean_text(str(key)): item
-            if key in LITERAL_FIELDS and isinstance(item, str)
-            else clean_value(item)
+            clean_text(key): item if key in LITERAL_FIELDS and isinstance(item, str) else clean_value(item)
             for key, item in value.items()
             if not private_field(key) and not OPAQUE.search(str(key))
         }
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple, set)):
         return [clean_value(item) for item in value]
     return clean_text(value) if isinstance(value, str) else value
 

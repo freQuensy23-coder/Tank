@@ -54,7 +54,7 @@ log = logging.getLogger(__name__)
 class GatewayError(Exception):
     """Deliberately static messages; never wrap provider exceptions/bodies."""
 
-    def __init__(self, code: str, status: int = 503):
+    def __init__(self, code: str, status: int = 503) -> None:
         self.code, self.status = code, status
         super().__init__(code)
 
@@ -154,7 +154,7 @@ class Credentials(DomainModel):
 class _Redactor:
     """Retain only an incomplete secret prefix, so SSE events stream immediately."""
 
-    def __init__(self, secrets: set[bytes]):
+    def __init__(self, secrets: set[bytes]) -> None:
         self.secrets, self.pending = secrets, b""
 
     def feed(self, data: bytes, *, final: bool = False) -> bytes:
@@ -172,7 +172,9 @@ class _Redactor:
 
 
 class CodexGateway:
-    def __init__(self, settings: Settings, *, upstream_transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(
+        self, settings: Settings, *, upstream_transport: httpx.AsyncBaseTransport | None = None
+    ) -> None:
         self.settings = settings
         self._transport = upstream_transport
         self._client: httpx.AsyncClient | None = None

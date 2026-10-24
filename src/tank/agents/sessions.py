@@ -1494,9 +1494,7 @@ class SessionService:
             content=[
                 NativeText(
                     type="text",
-                    text=canonical_json(
-                        tool_wire_result(stored["tool"], projected, session_id=sid, call_id=call_id)
-                    ),
+                    text=canonical_json(tool_wire_result(projected)),
                 )
             ],
             is_error=True if stored.get("is_error") else None,
@@ -1633,11 +1631,7 @@ class SessionService:
                         "content": [
                             {
                                 "type": "text",
-                                "text": canonical_json(
-                                    tool_wire_result(
-                                        call["tool"], call["result"], session_id=sid, call_id=call["call_id"]
-                                    )
-                                ),
+                                "text": canonical_json(tool_wire_result(call["result"])),
                             }
                         ],
                     }

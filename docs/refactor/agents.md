@@ -249,3 +249,18 @@ agents-inventory.json enumerates every owned Python function, line, missing
 annotation and dynamic-map usage. Remaining entries are implementation work,
 not blanket approved exceptions; it makes unfinished scope reviewable while
 the domain migrations continue.
+
+
+The final tool wire adapter has one meaningful parameter: its projected result.
+Unused tool/session/call parameters were removed from both native emission
+paths. It accepts the shared, explicit JsonInput serialization types and returns
+validated JSON values. Its recursive guard now processes strict Pydantic results
+and tuple/set containers before serialization, so typed results cannot bypass
+internal-field removal. Decimal values are sanitized as numbers and serialized
+afterward; their exact strings are not mistaken for opaque record IDs. Two
+regressions prove nested domain results hide IDs while retaining a 34-digit
+public amount exactly. The wire module and gateway pass strict mypy, including
+explicit return annotations on all gateway constructors.101 focused context,
+migration, session-security and wire cases pass, zero skips,2.00 seconds.
+Generic JSON maps/containers here are necessary external serialization inputs;
+they are not substitutes for application domain records.
