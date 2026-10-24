@@ -6,6 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from agent_source_fixtures import source_record_fixture
 from test_agents_execution_barrier import config, idle
 from test_session_binding_concurrency import fixture_repo, seed
 
@@ -33,24 +34,26 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
         await repo.put(
             "ingest.source_items",
             "item",
-            {
-                "item_id": "item",
-                "source_id": "S01",
-                "feed": "fixture:official",
-                "external_id": "item",
-                "source_class": "PRIMARY",
-                "text": "Product announced",
-                "title": "Product announced",
-                "observed_at": at,
-                "observed_at_prec": "COLLECTION_ONLY",
-                "published_at": at,
-                "published_prec": "EXACT",
-                "raw_ref": str(tmp_path / "raw.txt"),
-                "raw_sha256": sha256("Product announced"),
-                "content_hash": sha256("Product announced"),
-                "relevance": {"decision": "ALWAYS"},
-                "extraction_status": "PENDING",
-            },
+            source_record_fixture(
+                {
+                    "item_id": "item",
+                    "source_id": "S01",
+                    "feed": "fixture:official",
+                    "external_id": "item",
+                    "source_class": "PRIMARY",
+                    "text": "Product announced",
+                    "title": "Product announced",
+                    "observed_at": at,
+                    "observed_at_prec": "COLLECTION_ONLY",
+                    "published_at": at,
+                    "published_prec": "EXACT",
+                    "raw_ref": str(tmp_path / "raw.txt"),
+                    "raw_sha256": sha256("Product announced"),
+                    "content_hash": sha256("Product announced"),
+                    "relevance": {"decision": "ALWAYS"},
+                    "extraction_status": "PENDING",
+                }
+            ),
         )
         from tank.event_tools import EventToolService
         from tank.settings import Settings
@@ -62,7 +65,9 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
             await repo.put(
                 "ingest.source_items",
                 "origin",
-                dict(original, item_id="origin", external_id="origin", extraction_status="PENDING"),
+                source_record_fixture(
+                    dict(original, item_id="origin", external_id="origin", extraction_status="PENDING")
+                ),
             )
             domain = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
             result = await domain.dispatch(
@@ -283,15 +288,17 @@ async def test_ignored_item_keeps_event_and_call_for_next_native_update(
             await repo.put(
                 "ingest.source_items",
                 item_id,
-                dict(
-                    original,
-                    item_id=item_id,
-                    external_id=item_id,
-                    text=text,
-                    title=text,
-                    content_hash=sha256(text),
-                    raw_sha256=sha256(text),
-                    extraction_status="PENDING",
+                source_record_fixture(
+                    dict(
+                        original,
+                        item_id=item_id,
+                        external_id=item_id,
+                        text=text,
+                        title=text,
+                        content_hash=sha256(text),
+                        raw_sha256=sha256(text),
+                        extraction_status="PENDING",
+                    )
                 ),
             )
         current = await repo.get("ops.agent_sessions", "s")

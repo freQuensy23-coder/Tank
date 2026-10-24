@@ -630,14 +630,13 @@ async def test_native_completion_preserves_source_failures_without_failing_sessi
             await repo.put(
                 "ingest.source_items",
                 "item",
-                source_record_fixture(
-                    {
-                        "item_id": "item",
-                        "extraction_status": source_state,
-                        "extraction_decision": "NO_EVENT",
-                        "extraction_reason": "OLD_REJECTION",
-                    }
-                ),
+                {
+                    "item_id": "item",
+                    "extraction_status": source_state,
+                    "extraction_decision": "NO_EVENT",
+                    "extraction_reason": "OLD_REJECTION",
+                    "retained_capture_prefix": "untouched",
+                },
             )
         assert (await service.completed_turn("s"))["complete"]
         current = await repo.get("ops.agent_sessions", "s")
@@ -649,6 +648,9 @@ async def test_native_completion_preserves_source_failures_without_failing_sessi
             == {"PENDING": "SKIPPED", "FAILED": "FAILED", "MISSING": "MISSING_SOURCE_ITEM"}[source_state]
         )
         source = await repo.get("ingest.source_items", "item")
+        if source_state != "MISSING":
+            assert source is not None and source["retained_capture_prefix"] == "untouched"
+            assert "source_id" not in source
         if source_state == "PENDING":
             assert source is not None
             assert source["extraction_decision"] is None

@@ -17,7 +17,7 @@ from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
 from tank.event_tools import EventToolService
 from tank.settings import Settings
-from tank.util import iso, sha256
+from tank.util import clock_iso, sha256
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
@@ -109,7 +109,7 @@ def scout_settings(tmp_path: Path):
 
 
 async def seed_event(tools, sessions):
-    at = iso()
+    at = clock_iso()
     await tools.repo.put(
         "ingest.source_items",
         "i",
