@@ -6,6 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from score_fixtures import unassessed_score_dimensions
 from source_support import source_configuration, source_definition
 
 from tank.agents.pipeline import Pipeline
@@ -214,6 +215,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
 
         event = {"event_id": "e", "event_state": "APPROVED", "state_verified": True, "freshness": "FRESH"}
         assessment = {
+            "dims": unassessed_score_dimensions(),
             "class": "MAJOR",
             "certainty": "HIGH",
             "impact_horizon": {
