@@ -2,8 +2,9 @@
 
 import asyncio
 
-from apify import Actor
 from direct_fetch import fetch_snapshot
+
+from apify import Actor
 
 
 async def main() -> None:

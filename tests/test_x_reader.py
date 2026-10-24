@@ -178,8 +178,9 @@ def test_error_body_read_honors_deadline_and_reports_prefix(reader, clock):
             clock.now += 2
             return super().read(3)
 
-    error = http_error(body=b"abcdefghij", headers={"Content-Length": "10"})
-    error.fp = SlowBody(b"abcdefghij")
+    headers = Message()
+    headers["Content-Length"] = "10"
+    error = urllib.error.HTTPError("https://x.com/alice", 503, "failure", headers, SlowBody(b"abcdefghij"))
     evidence = reader.response_evidence(error, deadline=3)
     assert evidence["body"] == "abcdef"
     assert evidence["bodyTruncated"] and evidence["omittedWireBytes"] == 4
