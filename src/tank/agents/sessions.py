@@ -9,9 +9,10 @@ import base64
 import copy
 import json
 import time
+from collections.abc import Mapping, Sequence
 from contextlib import AsyncExitStack, suppress
-from dataclasses import dataclass
 from datetime import timedelta
+from typing import Literal
 from urllib.parse import quote
 
 import httpx
@@ -22,8 +23,18 @@ from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContex
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.provenance import resolve_agent_provenance
 from tank.agents.security import redact_tool_arguments
+from tank.agents.tool_contracts import (
+    CapturedToolResult,
+    FailedToolResponse,
+    FailureCategory,
+    FailureStatus,
+    NativeText,
+    NativeToolResult,
+    ToolFailure,
+)
 from tank.agents.wire import tool_wire_result
 from tank.agents.workflow import SOURCE_COMPLETION_VERSION
+from tank.contracts.json import decode_json
 from tank.contracts.provenance import AgentProvenance
 from tank.delivery import DeliveryDeferred
 from tank.openma_sync import agent_tools
@@ -91,28 +102,6 @@ class AdmissionDeferred(Exception):
         super().__init__("Running-session cap reached; the message waits for a free slot")
 
 
-@dataclass(frozen=True)
-class CapturedToolResult:
-    """An external capture's complete outcome, not a newly successful fetch."""
-
-    result: object
-    status: str
-    is_error: bool
-
-    @classmethod
-    def from_record(cls, record):
-        status = record.get("status")
-        if status not in {"DONE", "ERROR", "REFUSED"}:
-            raise ValueError("External replay capture is not durably complete")
-        is_error = record.get("is_error", status != "DONE")
-        if not isinstance(is_error, bool) or is_error != (status != "DONE"):
-            raise ValueError("External replay capture has inconsistent outcome metadata")
-        return cls(copy.deepcopy(record["result"]), status, is_error)
-
-    def signature(self):
-        return canonical_json({"result": self.result, "status": self.status, "is_error": self.is_error})
-
-
 class SessionService:
     def __init__(self, repo, settings, tool_dispatch, *, http=None, stream_http=None):
         self.repo, self.settings, self.tool_dispatch = repo, settings, tool_dispatch
@@ -162,7 +151,7 @@ class SessionService:
             raise ConfigurationError("openma.yaml requires deployed agent_id and environment_id")
         return config
 
-    def headers(self, idem=None):
+    def headers(self, idem: str | None = None) -> dict[str, str]:
         headers = {"anthropic-beta": "managed-agents-2026-04-01"}
         if self.settings.openma_api_key:
             headers["x-api-key"] = self.settings.openma_api_key
@@ -170,16 +159,34 @@ class SessionService:
             headers["Idempotency-Key"] = idem
         return headers
 
-    def url(self, path):
+    def url(self, path: str) -> str:
         return self.settings.openma_url.rstrip("/") + "/v1/" + path
 
-    async def request(self, method, path, **kwargs):
-        headers = self.headers(kwargs.pop("idem", None))
-
-        kwargs.setdefault("timeout", REST_TIMEOUT_S)
-        response = await self.http.request(method, self.url(path), headers=headers, **kwargs)
+    async def request(
+        self,
+        method: Literal["GET", "POST"],
+        path: str,
+        *,
+        json: JsonValue = None,
+        params: Mapping[str, str | int] | Sequence[tuple[str, str]] | None = None,
+        files: Mapping[str, tuple[str, bytes, str]] | None = None,
+        idem: str | None = None,
+        timeout: float = REST_TIMEOUT_S,
+    ) -> dict[str, JsonValue]:
+        response = await self.http.request(
+            method,
+            self.url(path),
+            headers=self.headers(idem),
+            json=json,
+            params=params,
+            files=files,
+            timeout=timeout,
+        )
         response.raise_for_status()
-        return response.json()
+        payload = decode_json(response.content)
+        if not isinstance(payload, dict):
+            raise ValueError("Native endpoint returned a non-object JSON response")
+        return payload
 
     async def resolve(self, payload):
         replay_run_id = payload.get("replay_run_id") if getattr(self.settings, "replay", False) else None
@@ -1258,20 +1265,23 @@ class SessionService:
             resolved_arguments.update(copy.deepcopy(arguments))
         return await self.tool_dispatch(tool, arguments, context)
 
-    def tool_failure(self, error):
+    def tool_failure(self, error: Exception) -> tuple[ToolFailure, FailureStatus]:
         """Return a bounded audited error; never persist provider URLs/secrets."""
         if isinstance(error, ConfigurationError):
-            return {
-                "type": "ConfigurationError",
-                "reason": "Resolved session prompt provenance unavailable; versioned outputs refused",
-                "category": "PROVENANCE",
-            }, "REFUSED"
+            return ToolFailure(
+                type="ConfigurationError",
+                reason="Resolved session prompt provenance unavailable; versioned outputs refused",
+                category="PROVENANCE",
+            ), "REFUSED"
         if isinstance(error, (ValueError, KeyError)):
             safe, rejected = redact_tool_arguments({"reason": str(error)}, self.settings.configured_secrets())
             reason = (
                 "Tool input rejected; credential-bearing diagnostic withheld" if rejected else safe["reason"]
             )
-            return {"type": type(error).__name__, "reason": reason, "category": "VALIDATION"}, "REFUSED"
+            if not isinstance(reason, str):
+                raise TypeError("Redacted tool diagnostic must remain text")
+            return ToolFailure(type=type(error).__name__, reason=reason, category="VALIDATION"), "REFUSED"
+        category: FailureCategory
         if isinstance(error, httpx.HTTPStatusError):
             reason = f"Source request failed (HTTP {error.response.status_code})"
             category = "SOURCE_HTTP"
@@ -1282,7 +1292,7 @@ class SessionService:
                 "Tool execution failed; inspect the audited call and implementation",
                 "TOOL_EXECUTION",
             )
-        return {"type": type(error).__name__, "reason": reason, "category": category}, "ERROR"
+        return ToolFailure(type=type(error).__name__, reason=reason, category=category), "ERROR"
 
     async def tool(self, session, event):
         sid, call_id = session["session_id"], event["id"]
@@ -1434,7 +1444,7 @@ class SessionService:
                     captured = result
                     result = copy.deepcopy(captured.result)
                 elif refusal:
-                    result = {"ok": False, "error": refusal}
+                    result = FailedToolResponse(ok=False, error=refusal).model_dump(mode="json")
                 context = self.tool_context(session, call_id)
                 stored.update(
                     {
@@ -1479,20 +1489,19 @@ class SessionService:
                 if isinstance(projected, dict)
                 else {"result": projected, "context_update": note}
             )
-        body = {
-            "type": "user.custom_tool_result",
-            "custom_tool_use_id": call_id,
-            "content": [
-                {
-                    "type": "text",
-                    "text": canonical_json(
+        body = NativeToolResult(
+            type="user.custom_tool_result",
+            custom_tool_use_id=call_id,
+            content=[
+                NativeText(
+                    type="text",
+                    text=canonical_json(
                         tool_wire_result(stored["tool"], projected, session_id=sid, call_id=call_id)
                     ),
-                }
+                )
             ],
-        }
-        if stored.get("is_error"):
-            body["is_error"] = True
+            is_error=True if stored.get("is_error") else None,
+        ).model_dump(mode="json", exclude_none=True)
         async with self.repo.lock("tool:" + key):
             if (
                 stored.get("native_result_body") is None

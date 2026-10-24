@@ -113,3 +113,27 @@ a different CLOSED copy.
 Validation: the owned cross-module unit suite passes all 315 collected cases,
 zero skips, 8.07 seconds. New runtime payload contracts add 11 passing cases.
 Strict mypy passes runtime_contracts.py and agents/provenance.py.
+
+
+## Tool completion ownership and native HTTP
+
+CapturedToolResult is a strict completed-outcome model with a validated JSON
+result, replacing the previous object-typed dataclass. Its error flag is
+derived from DONE/ERROR/REFUSED. Older durable captures may omit that duplicate
+flag; when present it must be an exact consistent boolean. This preserves
+old capture recovery without treating a failed/refused capture as a newly
+successful fetch. Signature equality includes the outcome and detached result.
+
+ToolFailure and FailedToolResponse close the audited failure shape. NativeText
+and NativeToolResult close the native response body before it is persisted for
+idempotent resend. Successful response bodies omit is_error; failures send true.
+Native HTTP now has explicit method/path/query/upload/idempotency/timeout
+parameters, validates decoded JSON and rejects non-object endpoint responses.
+Query mappings and repeated query-pair lists are both necessary HTTP wire forms;
+multipart mappings contain exact filename/bytes/media-type tuples.
+
+Focused session completion/retry/workflow validation: 62 tests pass, including
+10 new captured-outcome and native result contract tests, zero skips, 3.02s.
+tool_contracts.py passes strict mypy; sessions.py passes current configured mypy.
+SessionService as a whole still needs its remaining domain-record and port
+migration; current mypy passing is not a claim that all methods are annotated.
