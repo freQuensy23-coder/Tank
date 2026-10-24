@@ -17,11 +17,12 @@ from tank.contracts.progress import (
     ProgressRepository,
     ProgressSettings,
     ProgressStage,
-    ProgressSubject,
     PublicationProgressResult,
     SessionProgressView,
     SourceMessageProgress,
     ToolProgressContext,
+    UncapturedProgressOrigin,
+    progress_subject,
 )
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import clock_iso, sha256
@@ -87,9 +88,12 @@ async def item_progress(
     record = await repo.get("ingest.source_items", item_id)
     if record is None:
         return
-    subject = ProgressSubject.model_validate(
-        {field: record[field] for field in ("item_id", "source_id", "evidence_kind") if field in record}
-    )
+    subject = progress_subject(record)
+    reporting_details = details if details is not None else ProgressDetails()
+    if isinstance(subject.origin, UncapturedProgressOrigin):
+        reporting_details = ProgressDetails.model_validate(
+            reporting_details.model_copy(update={"source_provenance": "NOT_CAPTURED"})
+        )
     if subject.item_id != item_id:
         raise ValueError("Progress source identity conflicts with its stored subject")
     notice_id = "progress_" + sha256(identity.model_dump(mode="json"))
@@ -105,11 +109,13 @@ async def item_progress(
             event_id=event_id,
             reason=reason,
             text=STAGES[stage],
-            details=details if details is not None else ProgressDetails(),
+            details=reporting_details,
             created_at=created_at,
         )
         await repo.put("out.ops_notices", notice_id, notice.storage_record(), immutable=True)
-        if subject.source_id == "WEB" and subject.evidence_kind is not None:
+        if isinstance(subject.origin, UncapturedProgressOrigin) or (
+            subject.origin.source_id == "WEB" and subject.origin.evidence_kind is not None
+        ):
             return
         await repo.enqueue(
             "DELIVER",

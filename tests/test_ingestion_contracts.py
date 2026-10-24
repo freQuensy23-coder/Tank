@@ -538,3 +538,97 @@ def test_configured_source_intervals_preserve_canonical_json_and_reject_boolean(
     invalid["interval_s"] = True
     with pytest.raises(ValidationError, match="interval_s"):
         SourceDefinition.model_validate(invalid)
+
+
+@pytest.mark.asyncio
+async def test_source_repository_validation_logs_hide_complete_input_record(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    from agent_source_fixtures import source_item_fixture
+
+    from tank.contracts.repository import Repository as TypedRepository
+    from tank.contracts.source_items import SOURCE_ITEMS
+
+    repo = MemoryRepository()
+    marker = "synthetic-private-source-text-that-must-not-enter-errors"
+    document = source_item_fixture("invalid-source", text=marker).storage_record()
+    document["source_id"] = False
+    await repo.put("ingest.source_items", "invalid-source", document)
+    typed = TypedRepository(repo, SOURCE_ITEMS)
+    with pytest.raises(ValidationError) as failure:
+        await typed.get("invalid-source")
+    logging.getLogger("tank.ingestion.validation-test").error(
+        "Stored source schema rejected", exc_info=failure.value
+    )
+    assert marker not in str(failure.value)
+    assert marker not in caplog.text
+    assert "input_value" not in caplog.text
+    assert "declared source identity" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("clock", ["2026-10-20T10:00:00", "1792480800000"])
+async def test_ingestion_requires_an_aware_capture_clock(tmp_path: Path, clock: str) -> None:
+    from test_sources import captured
+
+    from tank.settings import Settings
+    from tank.sources import SourceService
+
+    repo = MemoryRepository()
+    async with httpx.AsyncClient() as http:
+        service = SourceService(repo, Settings(data_dir=tmp_path, ops_progress_enabled=False), http=http)
+        incoming = captured(service, "S30", {"external_id": "clock-test", "title": "Title", "text": "Facts"})
+        incoming["observed_at"] = clock
+        with pytest.raises(ValidationError, match="observed_at"):
+            await service.ingest(service.sources["S30"], incoming)
+    assert await repo.list("ingest.source_items") == []
+    assert await repo.list("ops.jobs") == []
+
+
+def test_endpoint_clock_declarations_preserve_wire_and_reject_conflicting_aliases() -> None:
+    from tank.contracts.sources import EndpointVerification
+    from tank.util import canonical_json
+
+    plain: dict[str, JsonValue] = {
+        "checked_at": "2026-10-17T16:54:49.052127+00:00",
+        "status": "VERIFIED",
+        "basis": "Explicit synthetic endpoint verification",
+    }
+    assert EndpointVerification.model_validate(plain).model_dump(mode="json", exclude_unset=True) == plain
+    declared = {**plain, "checked_at_prec": "EXACT", "checked_at_precision": "EXACT"}
+    assert canonical_json(
+        EndpointVerification.model_validate(declared).model_dump(mode="json", exclude_unset=True)
+    ) == canonical_json(declared)
+    with pytest.raises(ValidationError, match="Conflicting timestamp precision"):
+        EndpointVerification.model_validate(
+            {
+                **declared,
+                "checked_at_precision": "BUCKET(1m)",
+            }
+        )
+
+
+def test_explicit_source_budget_numbers_keep_their_declared_json_form() -> None:
+    from tank.contracts.sources import SourceApiLimitsConfiguration, SourceConfiguration, SourceDefinition
+    from tank.settings import Settings
+    from tank.util import canonical_json
+
+    settings = Settings()
+    raw_api_limits = settings.load_config("api_limits")
+    budgets = SourceApiLimitsConfiguration.model_validate(raw_api_limits)
+    assert canonical_json(budgets.model_dump(mode="json", exclude_unset=True)) == canonical_json(
+        raw_api_limits
+    )
+    configured = settings.load_config_as("sources", SourceConfiguration)
+    source = configured.sources[0].model_dump(mode="json", exclude_unset=True)
+    limits = source["limits"]
+    feeds = source["feeds"]
+    assert isinstance(limits, dict) and isinstance(feeds, list) and isinstance(feeds[0], dict)
+    limits["budget_fraction"] = 1
+    feeds[0]["request_weight"] = 2
+    feeds[0]["requests_per_minute"] = 60
+    feeds[0]["interval_s"] = 0.5
+    reparsed = SourceDefinition.model_validate(source)
+    assert canonical_json(reparsed.model_dump(mode="json", exclude_unset=True)) == canonical_json(source)
