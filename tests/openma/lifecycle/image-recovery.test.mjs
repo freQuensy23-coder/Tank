@@ -24,6 +24,14 @@ test('only exact image-mismatch preflight without agent effects becomes an unfin
   assert.deepEqual(snapshot.orderedEvents.map(entry => entry.event.id), ['failed-error', 'failed-idle']);
 });
 
+test('an input already committed by another execution cannot be revived from its old failed row', () => {
+  const snapshot = fixture();
+  snapshot.executions.push({ ...snapshot.executions[0], id: 'completed-copy', state: 'completed' });
+  snapshot.orderedEvents.push({ event: { id: 'committed-copy', type: 'session.status_idle', stopReason: { type: 'end_turn' } },
+    executionId: 'completed-copy', position: { revision: 3, index: 0 } });
+  assert.equal(imageMismatchRecoveryBoundary(snapshot, 'input-old'), null);
+});
+
 for (const state of ['completed', 'cancelled', 'queued', 'running']) test(`image recovery never reopens ${state} input`, () => {
   const snapshot = fixture(); snapshot.executions[0].state = state;
   assert.equal(imageMismatchRecoveryBoundary(snapshot, 'input-old'), null);

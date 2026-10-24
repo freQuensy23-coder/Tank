@@ -215,6 +215,8 @@ export function imageMismatchRecoveryBoundary(snapshot: ContinuationSnapshot, cu
   const row = snapshot.executions.find(execution => execution.id === currentId);
   if (!row || row.interruptRequestedAt !== null || row.state !== 'failed' || row.imageRecoveryAfterEventId
       || !actionableInputs(row).length) return null;
+  const inputIds = new Set(actionableInputs(row).map(event => event.id));
+  if (committedPhases(snapshot).some(phase => phase.inputIds.some(id => inputIds.has(id)))) return null;
   const output = snapshot.orderedEvents.filter(entry => entry.executionId === currentId);
   if (!output.length || !output.some(entry => entry.event.type === 'session.error')) return null;
   const first = snapshot.orderedEvents.indexOf(output[0]!);
