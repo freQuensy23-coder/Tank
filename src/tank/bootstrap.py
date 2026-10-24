@@ -3,9 +3,15 @@
 import hashlib
 import json
 
+from tank.contracts import DomainModel
 from tank.settings import Settings
 from tank.storage import Repository
 from tank.time_precision import propagate_timestamp
+
+
+class ManagedRegistryIdentity(DomainModel):
+    registry_storage_key: str
+
 
 CONFIG_TIMESTAMP_FIELDS = frozenset({"verified_at", "resolved_at", "checked_at", "identity_reviewed_at"})
 
@@ -156,12 +162,14 @@ async def sync_registry(repo: Repository, settings: Settings) -> dict[str, int]:
         for table, configured in rows.items():
             stale = []
             async for old in repo.iter_all(table, filters={"registry_managed_by": "tank.bootstrap"}):
-                key = old["registry_storage_key"]
+                key = ManagedRegistryIdentity.model_validate(
+                    {"registry_storage_key": old["registry_storage_key"]}
+                ).registry_storage_key
                 if key not in configured:
                     stale.append(key)
             for key in stale:
                 await repo.delete(table, key)
             for key, record in configured.items():
-                old = await repo.get(table, key)
-                await repo.put(table, key, {**(old or {}), **record})
+                existing = await repo.get(table, key)
+                await repo.put(table, key, record if existing is None else {**existing, **record})
     return {table: len(configured) for table, configured in rows.items()}
