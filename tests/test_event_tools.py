@@ -1627,7 +1627,7 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
 async def test_duckduckgo_results_are_durable_free_search_evidence(service) -> None:
     from pathlib import Path
 
-    from tank.search import SearchResponse
+    from tank.search import SearchHit, SearchResponse
     from tank.util import canonical_json, sha256
 
     raw = {
@@ -1641,7 +1641,7 @@ async def test_duckduckgo_results_are_durable_free_search_evidence(service) -> N
             assert query == "SEC filing"
             await on_attempt(1)
             await on_attempt(2)
-            return SearchResponse([raw], 2)
+            return SearchResponse(results=[SearchHit.model_validate(raw)], attempts=2)
 
     service.search_service = Search()
     assert not hasattr(service.settings, "tavily_api_key")
@@ -2204,7 +2204,7 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
 async def test_search_and_fetched_evidence_keep_agent_certainty(service, media_type) -> None:
     import httpx
 
-    from tank.search import SearchResponse
+    from tank.search import SearchHit, SearchResponse
     from tank.util import canonical_json
 
     quote = "SEC approved the application."
@@ -2213,7 +2213,8 @@ async def test_search_and_fetched_evidence_keep_agent_certainty(service, media_t
         async def search(self, query, *, on_attempt):
             await on_attempt(1)
             return SearchResponse(
-                [{"title": "SEC release", "href": "https://www.sec.gov/news/release", "body": quote}], 1
+                results=[SearchHit(title="SEC release", href="https://www.sec.gov/news/release", body=quote)],
+                attempts=1,
             )
 
     service.search_service = Search()

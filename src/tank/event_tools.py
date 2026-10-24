@@ -1048,11 +1048,11 @@ class EventToolService:
         items = []
         for result in response.results:
             item = await self.save_web(
-                result["href"],
-                result.get("body", ""),
-                result.get("title", ""),
+                result.href,
+                result.body,
+                result.title,
                 c,
-                raw_bytes=canonical_json(result).encode("utf-8"),
+                raw_bytes=canonical_json(result.model_dump(mode="json")).encode("utf-8"),
                 media_type="application/json",
                 evidence_kind="SEARCH_RESULT",
             )
