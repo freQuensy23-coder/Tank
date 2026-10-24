@@ -186,7 +186,11 @@ for (const [index, scenario] of scenarios.entries()) {
     const memory = await api('/v1/memory_stores/' + memoryStore.id + '/memories', { path: '/note.txt', content: 'seed:' + nonce });
     const memoryContent = () => api('/v1/memory_stores/' + memoryStore.id + '/memories/' + memory.id + '?view=full');
     receipt.memoryStoreId = memoryStore.id;
-    const session = await api('/v1/sessions', { agent: agent.id, environment_id: 'env-local-runtime', resources: [{ type: 'memory_store', memory_store_id: memoryStore.id, access: 'read_write' }], metadata: { qualification: prefix } });
+    const environment = await api('/v1/environments', { name: 'Isolated qualification runtime', config: { type: 'cloud', networking: { type: 'unrestricted' }, packages: { apt: [], cargo: [], gem: [], go: [], npm: [], pip: [] } }, metadata: { qualification: prefix } });
+    const persistedEnvironment = await api('/v1/environments/' + environment.id);
+    assert.deepEqual(persistedEnvironment, environment);
+    receipt.environmentId = environment.id;
+    const session = await api('/v1/sessions', { agent: agent.id, environment_id: environment.id, resources: [{ type: 'memory_store', memory_store_id: memoryStore.id, access: 'read_write' }], metadata: { qualification: prefix } });
     receipt.sessionId = session.id;
     const form = new FormData(); form.set('file', new Blob([uploaded]), 'qualification-upload.bin');
     const file = await api('/v1/files', form);
