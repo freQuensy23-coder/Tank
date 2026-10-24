@@ -109,7 +109,7 @@ async def test_actual_r11_intermediate_idle_does_not_complete_tool_result_execut
                 "id": "native-tool",
                 "type": "agent.custom_tool_use",
                 "name": "get_item",
-                "input": {"item_id": "item"},
+                "input": {},
             },
         )
         wire = idle(first_idle["id"], first_idle["source_position"]["execution_id"])
@@ -232,7 +232,7 @@ async def test_settled_snapshot_drains_all_pages_and_rechecks_new_tool_ack():
         "id": "same-time-late-tool",
         "type": "agent.custom_tool_use",
         "name": "get_item",
-        "input": {"item_id": "item"},
+        "input": {},
         "processed_at": start["processed_at"],
     }
 
@@ -335,7 +335,7 @@ async def test_tool_result_lost_ack_restart_reuses_result_and_records_original_a
         "id": "tool-once",
         "type": "agent.custom_tool_use",
         "name": "get_item",
-        "input": {"item_id": "item"},
+        "input": {},
     }
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, config(), dispatch, http=http)
@@ -382,7 +382,7 @@ async def test_correlated_tool_before_ack_defers_instead_of_using_previous_messa
             "type": "agent.custom_tool_use",
             "execution_id": "new-input",
             "name": "get_item",
-            "input": {"item_id": "item"},
+            "input": {},
         }
         with pytest.raises(ValueError, match="acknowledged"):
             await service.process_event("s", event)
@@ -427,7 +427,7 @@ async def test_late_previous_attempt_tool_retains_immutable_attempt_lineage():
                 "type": "agent.custom_tool_use",
                 "execution_id": "old-input",
                 "name": "get_item",
-                "input": {"item_id": "item"},
+                "input": {},
             },
         )
         call = await repo.get("ops.tool_calls", "s:late-old-tool")

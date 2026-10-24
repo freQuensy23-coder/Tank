@@ -12,6 +12,7 @@ from tank.telegram_inbox import (
     FAILED_TEXT,
     NO_SESSION_TEXT,
     PROMPT_TEXT,
+    TERMINATED_TEXT,
     TelegramInbox,
     chunks,
     question_id_for,
@@ -27,7 +28,10 @@ def inbox_settings():
 
 
 def session_settings():
-    config = {"openma": {"agent_id": "agt_1", "environment_id": "env_1", "prompt_version": "test"}}
+    config = {
+        "openma": {"agent_id": "agt_1", "environment_id": "env_1", "prompt_version": "test"},
+        "thresholds": {"session_keep_days": 7},
+    }
     return SimpleNamespace(
         openma_api_key="secret",
         openma_url="http://oma",
@@ -122,6 +126,7 @@ async def seed(repo, *, status="OPEN", rich_message=None):
         "ses_1",
         {
             "session_id": "ses_1",
+            "model_context_version": 1,
             "event_id": "evt_1",
             "status": status,
             "runtime_status": "IDLE",
@@ -363,7 +368,7 @@ async def test_failed_session_reopens_and_retires_its_failed_turn_from_the_barri
 
 
 @pytest.mark.asyncio
-async def test_terminated_session_answers_no_session_and_answer_job_replies_once():
+async def test_terminated_session_answers_only_the_reason_and_answer_job_replies_once():
     repo = MemoryRepository()
     question_id = await ask(repo)
     session = await repo.get("ops.agent_sessions", "ses_1")
@@ -382,9 +387,10 @@ async def test_terminated_session_answers_no_session_and_answer_job_replies_once
         inbox = TelegramInbox(repo, inbox_settings(), http=http)
         await inbox.answer({"question_id": question_id})
         await inbox.answer({"question_id": question_id})
-    assert [row["text"] for row in telegram.sent] == [NO_SESSION_TEXT]
+    assert [row["text"] for row in telegram.sent] == [TERMINATED_TEXT]
     assert telegram.sent[0]["reply_parameters"]["message_id"] == 9
-    assert FAILED_TEXT != NO_SESSION_TEXT
+    assert (await repo.get("out.user_questions", question_id))["answer_status"] == "TERMINATED"
+    assert FAILED_TEXT != TERMINATED_TEXT
 
 
 @pytest.mark.asyncio
@@ -865,12 +871,28 @@ async def test_reader_file_is_stored_for_the_session_and_named_in_the_agent_mess
     stored = await repo.get("ops.telegram_file_payloads", item["file_key"])
     assert base64.b64decode(stored["content_base64"]) == b"col\n1\n" and item["filename"] == "my_data.csv"
     assert "content_base64" not in await repo.get("ops.telegram_files", item["file_key"])
-    text = question_message(question)
-    assert (
-        "Посчитай по этому файлу" in text
-        and item["file_key"] in text
-        and f"/workspace/uploads/{item['file_key'][-8:]}-my_data.csv" in text
-    )
+    mounts = []
+    uploads = []
+
+    def openma(request):
+        if request.url.path == "/v1/files":
+            uploads.append(request.content)
+            return httpx.Response(200, json={"id": "file_private"})
+        mounts.append(json.loads(request.content))
+        return httpx.Response(200, json={"id": "resource_private"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(openma)) as http:
+        sessions = SessionService(repo, session_settings(), None, http=http)
+        session = await repo.get("ops.agent_sessions", "ses_1")
+        ready = await sessions.prepare_attachments(session, question)
+        again = await sessions.prepare_attachments(session, question)
+    text = question_message(ready)
+    assert "Посчитай по этому файлу" in text and item["file_key"] not in text
+    assert ready == again and len(uploads) == len(mounts) == 1
+    assert mounts[0]["file_id"] == "file_private"
+    assert mounts[0]["mount_path"] in text
+    assert mounts[0]["mount_path"].endswith("/attachment-1/my_data.csv")
+    assert "file_private" not in text and "psql" not in text
 
 
 @pytest.mark.asyncio
@@ -1632,7 +1654,7 @@ async def test_watch_mutation_hydrates_prompt_provenance_first():
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, session_settings(), dispatch, http=http)
-        result = await service.invoke_tool(session, "set_watch_condition", {"event_id": "evt_1"}, "call_w")
+        result = await service.invoke_tool(session, "set_watch_condition", {"action": "ARM"}, "call_w")
     assert calls == ["/v1/sessions/ses_1"] and len(result["prompt_version"]) == 64
 
 
@@ -1697,7 +1719,7 @@ async def test_handled_messages_bound_to_a_session_survive_pruning():
 
 
 @pytest.mark.asyncio
-async def test_question_to_a_remotely_terminated_session_answers_no_session():
+async def test_question_to_a_remotely_terminated_session_answers_terminated():
     repo = MemoryRepository()
     question_id = await ask(repo)
 
@@ -1708,7 +1730,7 @@ async def test_question_to_a_remotely_terminated_session_answers_no_session():
         service = SessionService(repo, session_settings(), None, http=http)
         payload = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
         assert await service.send_message(payload) is None
-    assert (await repo.get("out.user_questions", question_id))["answer_status"] == "NO_SESSION"
+    assert (await repo.get("out.user_questions", question_id))["answer_status"] == "TERMINATED"
     assert (await repo.get("ops.agent_sessions", "ses_1"))["remote_state"]["status"] == "terminated"
 
 
@@ -1794,7 +1816,7 @@ async def test_paired_size_notice_failure_keeps_both_messages_retryable():
 
 
 @pytest.mark.asyncio
-async def test_question_to_a_session_missing_in_openma_answers_no_session():
+async def test_question_to_a_session_missing_in_openma_answers_terminated():
     repo = MemoryRepository()
     question_id = await ask(repo)
     async with httpx.AsyncClient(
@@ -1803,7 +1825,7 @@ async def test_question_to_a_session_missing_in_openma_answers_no_session():
         service = SessionService(repo, session_settings(), None, http=http)
         payload = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
         assert await service.send_message(payload) is None
-    assert (await repo.get("out.user_questions", question_id))["answer_status"] == "NO_SESSION"
+    assert (await repo.get("out.user_questions", question_id))["answer_status"] == "TERMINATED"
 
 
 @pytest.mark.asyncio
@@ -2100,3 +2122,21 @@ async def test_rich_card_reference_and_rich_question_continue_original_session(f
     assert "Economic directness | 8 | Fees reach UNI burn." in question["reference"]["text"]
     assert "Scores D8" not in question["reference"]["text"]
     assert telegram.sent == []
+
+
+async def test_question_text_keeps_user_filenames_and_literal_hashes():
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    question = await repo.get("out.user_questions", question_id)
+    question["text"] = "Read session_notes.csv; compare checksum " + "a" * 64
+    await repo.put("out.user_questions", question_id, question)
+    posts = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(openma(posts, []))) as http:
+        sessions = SessionService(repo, session_settings(), None, http=http)
+        sessions.start_stream = lambda sid: None
+        await sessions.send_message(
+            {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
+        )
+    text = posts[0][1]["events"][0]["content"][0]["text"]
+    assert question["text"] in text
+    assert question_id not in text and "session_id" not in text

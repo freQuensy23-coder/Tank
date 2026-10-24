@@ -2,9 +2,6 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "event_id": {
-      "type": "string"
-    },
     "assessment": {
       "type": "object",
       "additionalProperties": false,
@@ -37,7 +34,71 @@
                 "evidence": {
                   "type": "array",
                   "items": {
-                    "type": "string"
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "quote": {
+                        "type": "string"
+                      },
+                      "subject": {
+                        "type": "string"
+                      },
+                      "predicate": {
+                        "type": "string"
+                      },
+                      "object": {
+                        "type": "string"
+                      },
+                      "sources": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "url": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "observed_at": {
+                              "type": "string"
+                            },
+                            "excerpt": {
+                              "type": "string"
+                            }
+                          },
+                          "anyOf": [
+                            {
+                              "required": [
+                                "url"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "title",
+                                "observed_at"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "excerpt",
+                                "observed_at"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "verified": {
+                        "type": "boolean"
+                      },
+                      "stage": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "quote"
+                    ]
                   }
                 },
                 "proposed_by": {
@@ -83,7 +144,71 @@
                 "evidence": {
                   "type": "array",
                   "items": {
-                    "type": "string"
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "quote": {
+                        "type": "string"
+                      },
+                      "subject": {
+                        "type": "string"
+                      },
+                      "predicate": {
+                        "type": "string"
+                      },
+                      "object": {
+                        "type": "string"
+                      },
+                      "sources": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "url": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "observed_at": {
+                              "type": "string"
+                            },
+                            "excerpt": {
+                              "type": "string"
+                            }
+                          },
+                          "anyOf": [
+                            {
+                              "required": [
+                                "url"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "title",
+                                "observed_at"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "excerpt",
+                                "observed_at"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "verified": {
+                        "type": "boolean"
+                      },
+                      "stage": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "quote"
+                    ]
                   }
                 },
                 "proposed_by": {
@@ -129,7 +254,71 @@
                 "evidence": {
                   "type": "array",
                   "items": {
-                    "type": "string"
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "quote": {
+                        "type": "string"
+                      },
+                      "subject": {
+                        "type": "string"
+                      },
+                      "predicate": {
+                        "type": "string"
+                      },
+                      "object": {
+                        "type": "string"
+                      },
+                      "sources": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "url": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "observed_at": {
+                              "type": "string"
+                            },
+                            "excerpt": {
+                              "type": "string"
+                            }
+                          },
+                          "anyOf": [
+                            {
+                              "required": [
+                                "url"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "title",
+                                "observed_at"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "excerpt",
+                                "observed_at"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "verified": {
+                        "type": "boolean"
+                      },
+                      "stage": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "quote"
+                    ]
                   }
                 },
                 "proposed_by": {
@@ -175,7 +364,71 @@
                 "evidence": {
                   "type": "array",
                   "items": {
-                    "type": "string"
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "quote": {
+                        "type": "string"
+                      },
+                      "subject": {
+                        "type": "string"
+                      },
+                      "predicate": {
+                        "type": "string"
+                      },
+                      "object": {
+                        "type": "string"
+                      },
+                      "sources": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "url": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "observed_at": {
+                              "type": "string"
+                            },
+                            "excerpt": {
+                              "type": "string"
+                            }
+                          },
+                          "anyOf": [
+                            {
+                              "required": [
+                                "url"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "title",
+                                "observed_at"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "excerpt",
+                                "observed_at"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "verified": {
+                        "type": "boolean"
+                      },
+                      "stage": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "quote"
+                    ]
                   }
                 },
                 "proposed_by": {
@@ -221,7 +474,71 @@
                 "evidence": {
                   "type": "array",
                   "items": {
-                    "type": "string"
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "quote": {
+                        "type": "string"
+                      },
+                      "subject": {
+                        "type": "string"
+                      },
+                      "predicate": {
+                        "type": "string"
+                      },
+                      "object": {
+                        "type": "string"
+                      },
+                      "sources": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "url": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "observed_at": {
+                              "type": "string"
+                            },
+                            "excerpt": {
+                              "type": "string"
+                            }
+                          },
+                          "anyOf": [
+                            {
+                              "required": [
+                                "url"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "title",
+                                "observed_at"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "excerpt",
+                                "observed_at"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "verified": {
+                        "type": "boolean"
+                      },
+                      "stage": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "quote"
+                    ]
                   }
                 },
                 "proposed_by": {
@@ -267,7 +584,71 @@
                 "evidence": {
                   "type": "array",
                   "items": {
-                    "type": "string"
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "quote": {
+                        "type": "string"
+                      },
+                      "subject": {
+                        "type": "string"
+                      },
+                      "predicate": {
+                        "type": "string"
+                      },
+                      "object": {
+                        "type": "string"
+                      },
+                      "sources": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "url": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "observed_at": {
+                              "type": "string"
+                            },
+                            "excerpt": {
+                              "type": "string"
+                            }
+                          },
+                          "anyOf": [
+                            {
+                              "required": [
+                                "url"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "title",
+                                "observed_at"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "excerpt",
+                                "observed_at"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "verified": {
+                        "type": "boolean"
+                      },
+                      "stage": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "quote"
+                    ]
                   }
                 },
                 "proposed_by": {
@@ -313,7 +694,71 @@
                 "evidence": {
                   "type": "array",
                   "items": {
-                    "type": "string"
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "quote": {
+                        "type": "string"
+                      },
+                      "subject": {
+                        "type": "string"
+                      },
+                      "predicate": {
+                        "type": "string"
+                      },
+                      "object": {
+                        "type": "string"
+                      },
+                      "sources": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "url": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "observed_at": {
+                              "type": "string"
+                            },
+                            "excerpt": {
+                              "type": "string"
+                            }
+                          },
+                          "anyOf": [
+                            {
+                              "required": [
+                                "url"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "title",
+                                "observed_at"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "excerpt",
+                                "observed_at"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "verified": {
+                        "type": "boolean"
+                      },
+                      "stage": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "quote"
+                    ]
                   }
                 },
                 "proposed_by": {
@@ -368,7 +813,71 @@
               "evidence": {
                 "type": "array",
                 "items": {
-                  "type": "string"
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "quote": {
+                      "type": "string"
+                    },
+                    "subject": {
+                      "type": "string"
+                    },
+                    "predicate": {
+                      "type": "string"
+                    },
+                    "object": {
+                      "type": "string"
+                    },
+                    "sources": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "url": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "observed_at": {
+                            "type": "string"
+                          },
+                          "excerpt": {
+                            "type": "string"
+                          }
+                        },
+                        "anyOf": [
+                          {
+                            "required": [
+                              "url"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "title",
+                              "observed_at"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "excerpt",
+                              "observed_at"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "verified": {
+                      "type": "boolean"
+                    },
+                    "stage": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "quote"
+                  ]
                 }
               }
             },
@@ -462,9 +971,72 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "claim_id": {
-                    "type": "string",
-                    "minLength": 1
+                  "claim": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "quote": {
+                        "type": "string"
+                      },
+                      "subject": {
+                        "type": "string"
+                      },
+                      "predicate": {
+                        "type": "string"
+                      },
+                      "object": {
+                        "type": "string"
+                      },
+                      "sources": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "url": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "observed_at": {
+                              "type": "string"
+                            },
+                            "excerpt": {
+                              "type": "string"
+                            }
+                          },
+                          "anyOf": [
+                            {
+                              "required": [
+                                "url"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "title",
+                                "observed_at"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "excerpt",
+                                "observed_at"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "verified": {
+                        "type": "boolean"
+                      },
+                      "stage": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "quote"
+                    ]
                   },
                   "due_at": {
                     "type": "string",
@@ -477,7 +1049,7 @@
                   }
                 },
                 "required": [
-                  "claim_id",
+                  "claim",
                   "due_at",
                   "quote"
                 ]
@@ -487,11 +1059,74 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "claim_id": {
-                  "type": "string",
-                  "minLength": 1
+                "claim": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "quote": {
+                      "type": "string"
+                    },
+                    "subject": {
+                      "type": "string"
+                    },
+                    "predicate": {
+                      "type": "string"
+                    },
+                    "object": {
+                      "type": "string"
+                    },
+                    "sources": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "url": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "observed_at": {
+                            "type": "string"
+                          },
+                          "excerpt": {
+                            "type": "string"
+                          }
+                        },
+                        "anyOf": [
+                          {
+                            "required": [
+                              "url"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "title",
+                              "observed_at"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "excerpt",
+                              "observed_at"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "verified": {
+                      "type": "boolean"
+                    },
+                    "stage": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "quote"
+                  ]
                 },
-                "instrument_id": {
+                "instrument": {
                   "type": "string",
                   "minLength": 1
                 },
@@ -506,8 +1141,8 @@
                 }
               },
               "required": [
-                "claim_id",
-                "instrument_id",
+                "claim",
+                "instrument",
                 "quote",
                 "effective_at"
               ],
@@ -528,7 +1163,7 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "token_id": {
+              "token": {
                 "type": "string"
               },
               "headline_activity": {
@@ -932,7 +1567,71 @@
                   "evidence": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "quote": {
+                          "type": "string"
+                        },
+                        "subject": {
+                          "type": "string"
+                        },
+                        "predicate": {
+                          "type": "string"
+                        },
+                        "object": {
+                          "type": "string"
+                        },
+                        "sources": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "url": {
+                                "type": "string"
+                              },
+                              "title": {
+                                "type": "string"
+                              },
+                              "observed_at": {
+                                "type": "string"
+                              },
+                              "excerpt": {
+                                "type": "string"
+                              }
+                            },
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "url"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "title",
+                                  "observed_at"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "excerpt",
+                                  "observed_at"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "verified": {
+                          "type": "boolean"
+                        },
+                        "stage": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "quote"
+                      ]
                     }
                   }
                 },
@@ -969,7 +1668,7 @@
               }
             },
             "required": [
-              "token_id",
+              "token",
               "headline_activity",
               "eligible_activity",
               "effective_fees",
@@ -1009,16 +1708,79 @@
                   "type": "string",
                   "minLength": 1
                 },
-                "claim_id": {
-                  "type": "string",
-                  "minLength": 1
+                "claim": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "quote": {
+                      "type": "string"
+                    },
+                    "subject": {
+                      "type": "string"
+                    },
+                    "predicate": {
+                      "type": "string"
+                    },
+                    "object": {
+                      "type": "string"
+                    },
+                    "sources": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "url": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "observed_at": {
+                            "type": "string"
+                          },
+                          "excerpt": {
+                            "type": "string"
+                          }
+                        },
+                        "anyOf": [
+                          {
+                            "required": [
+                              "url"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "title",
+                              "observed_at"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "excerpt",
+                              "observed_at"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "verified": {
+                      "type": "boolean"
+                    },
+                    "stage": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "quote"
+                  ]
                 }
               },
               "required": [
                 "value",
                 "unit",
                 "quote",
-                "claim_id"
+                "claim"
               ]
             },
             "denominator": {
@@ -1037,16 +1799,79 @@
                   "type": "string",
                   "minLength": 1
                 },
-                "claim_id": {
-                  "type": "string",
-                  "minLength": 1
+                "claim": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "quote": {
+                      "type": "string"
+                    },
+                    "subject": {
+                      "type": "string"
+                    },
+                    "predicate": {
+                      "type": "string"
+                    },
+                    "object": {
+                      "type": "string"
+                    },
+                    "sources": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "url": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "observed_at": {
+                            "type": "string"
+                          },
+                          "excerpt": {
+                            "type": "string"
+                          }
+                        },
+                        "anyOf": [
+                          {
+                            "required": [
+                              "url"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "title",
+                              "observed_at"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "excerpt",
+                              "observed_at"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "verified": {
+                      "type": "boolean"
+                    },
+                    "stage": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "quote"
+                  ]
                 }
               },
               "required": [
                 "value",
                 "unit",
                 "quote",
-                "claim_id"
+                "claim"
               ]
             },
             "denominator_window": {
@@ -1067,7 +1892,7 @@
         },
         "criterion_venue": {
           "type": "string",
-          "description": "Required for M1: the venue name or registry ID. Tank resolves exact registry names and aliases and applies the six-venue class rule. It never infers the venue from the quotation."
+          "description": "Required for M1: the venue name or registered name. Tank resolves exact registry names and aliases and applies the six-venue class rule. It never infers the venue from the quotation."
         }
       },
       "required": [
@@ -1080,7 +1905,6 @@
     }
   },
   "required": [
-    "event_id",
     "assessment"
   ],
   "$schema": "https://json-schema.org/draft/2020-12/schema",

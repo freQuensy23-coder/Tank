@@ -2,19 +2,16 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "event_id": {
-      "type": "string"
-    },
     "edges": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "entity_id": {
+          "entity": {
             "type": "string"
           },
-          "token_id": {
+          "token": {
             "type": [
               "string",
               "null"
@@ -74,7 +71,7 @@
             "type": "number",
             "minimum": 0,
             "maximum": 10,
-            "description": "TDD §4.7 exposure rubric: 10 = sole required rail with counterparty evidence; 8 = required LIVE rail; 6 = likely rail with BUILT, SUBMITTED or APPROVED integration; 4 = compatible candidate; 2 = thematic connection; 0 = none. Supply the evidence and integration state supporting the selected level."
+            "description": "TDD \u00a74.7 exposure rubric: 10 = sole required rail with counterparty evidence; 8 = required LIVE rail; 6 = likely rail with BUILT, SUBMITTED or APPROVED integration; 4 = compatible candidate; 2 = thematic connection; 0 = none. Supply the evidence and integration state supporting the selected level."
           },
           "edge_certainty": {
             "enum": [
@@ -86,9 +83,72 @@
           "evidence": {
             "type": "array",
             "items": {
-              "type": "string"
-            },
-            "minItems": 1
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "quote": {
+                  "type": "string"
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "predicate": {
+                  "type": "string"
+                },
+                "object": {
+                  "type": "string"
+                },
+                "sources": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "url": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "observed_at": {
+                        "type": "string"
+                      },
+                      "excerpt": {
+                        "type": "string"
+                      }
+                    },
+                    "anyOf": [
+                      {
+                        "required": [
+                          "url"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "title",
+                          "observed_at"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "excerpt",
+                          "observed_at"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "verified": {
+                  "type": "boolean"
+                },
+                "stage": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "quote"
+              ]
+            }
           },
           "credibility_reasons": {
             "type": "array",
@@ -102,7 +162,7 @@
             "required": [
               "mechanism",
               "quote",
-              "claim_ids"
+              "claims"
             ],
             "properties": {
               "mechanism": {
@@ -113,12 +173,74 @@
                 "type": "string",
                 "minLength": 1
               },
-              "claim_ids": {
+              "claims": {
                 "type": "array",
-                "minItems": 1,
                 "items": {
-                  "type": "string",
-                  "minLength": 1
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "quote": {
+                      "type": "string"
+                    },
+                    "subject": {
+                      "type": "string"
+                    },
+                    "predicate": {
+                      "type": "string"
+                    },
+                    "object": {
+                      "type": "string"
+                    },
+                    "sources": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "url": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "observed_at": {
+                            "type": "string"
+                          },
+                          "excerpt": {
+                            "type": "string"
+                          }
+                        },
+                        "anyOf": [
+                          {
+                            "required": [
+                              "url"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "title",
+                              "observed_at"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "excerpt",
+                              "observed_at"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "verified": {
+                      "type": "boolean"
+                    },
+                    "stage": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "quote"
+                  ]
                 }
               }
             },
@@ -126,8 +248,8 @@
           }
         },
         "required": [
-          "entity_id",
-          "token_id",
+          "entity",
+          "token",
           "role",
           "layer",
           "direction",
@@ -223,16 +345,16 @@
             "UNKNOWN"
           ]
         }
-      }
+      },
+      "required": []
     },
     "no_credible_secondary_reason": {
       "type": "string"
     }
   },
   "required": [
-    "event_id",
     "edges"
   ],
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Map positive beneficiaries, competitors and losers across the eight declared economic layers. Each edge needs accepted claim references, an explicit causal or share-loss chain, integration state/directionality and exposure 0..10. Token IDs must belong to the fixed registry universe; organization relevance alone does not prove token value capture. Supply reasons and NONE/UNKNOWN status for omitted layers. Negative token theses require explicit accepted causal evidence and a verbatim quote. Persists a versioned map and returns the token analysis set and per-layer reasons."
+  "description": "Map positive beneficiaries, competitors and losers across the eight declared economic layers. Each edge needs accepted claim references, an explicit causal or share-loss chain, integration state/directionality and exposure 0..10. Project names and tickers must belong to the fixed registry universe; organization relevance alone does not prove token value capture. Supply reasons and NONE/UNKNOWN status for omitted layers. Negative token theses require explicit accepted causal evidence and a verbatim quote. Persists a versioned map and returns the token analysis set and per-layer reasons."
 }

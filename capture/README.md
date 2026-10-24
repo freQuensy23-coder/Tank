@@ -41,8 +41,7 @@ Core starts no stream, poller, backfill or exchange REST request; it writes esca
 CI builds the image from the repository root with `GIT_SHA` set to the commit, which becomes the `code_version` of every row it writes ([DOCKER_BUILDS.md](../docs/DOCKER_BUILDS.md)).
 
 The image is a static binary on distroless, running as UID/GID 1000 like Tank. It publishes no port; the Compose healthcheck runs `/tank-capture healthcheck`,
-which calls `/healthz` inside the container. The container is limited to 3 CPUs and 1536 MiB
-(256 MiB reserved) with `GOMEMLIMIT=1400MiB`, so the Go collector tightens before the limit.
+which calls `/healthz` inside the container. It has no memory or CPU cap; the Go runtime uses its defaults.
 
 ## Single writer
 

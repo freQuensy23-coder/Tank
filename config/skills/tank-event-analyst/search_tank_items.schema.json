@@ -22,5 +22,5 @@
   "required": [
     "query"
   ],
-  "description": "Search collected source items by text over at most the preceding 90 days, returning at most 20 matching item IDs and excerpts. This queries stored observations without external network requests. Read the full item before citing an excerpt or deciding that two items describe the same event."
+  "description": "Search collected source items by text over at most the preceding 90 days, returning at most 20 matching source URL and observation times and excerpts. This queries stored observations without external network requests. Read the full item before citing an excerpt or deciding that two items describe the same event."
 }

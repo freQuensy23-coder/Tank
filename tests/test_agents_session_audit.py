@@ -32,6 +32,7 @@ def settings(replay=False):
 async def seed(repo, **changes):
     record = {
         "session_id": "s",
+        "model_context_version": 1,
         "event_id": "e",
         "item_id": "one",
         "status": "OPEN",
@@ -172,7 +173,7 @@ async def test_replay_runs_verdict_code_and_uses_fresh_remote_session():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("no_event", [False, True])
-async def test_follow_retains_open_idle_sse_and_closes_no_event_session(no_event):
+async def test_follow_retains_open_idle_sse_and_keeps_rejected_material_session_open(no_event):
     repo = MemoryRepository()
     await seed(
         repo,
@@ -241,8 +242,8 @@ async def test_follow_retains_open_idle_sse_and_closes_no_event_session(no_event
             await asyncio.gather(follower, return_exceptions=True)
     assert streamed == ["s"] and cancelled == ["s"]
     session = await repo.get("ops.agent_sessions", "s")
-    assert session["status"] == ("ENDED" if no_event else "OPEN")
-    assert posts == (["/v1/sessions/s/archive"] if no_event else [])
+    assert session["status"] == "OPEN" and posts == []
+    assert bool(session.get("archive_after")) == no_event
 
 
 @pytest.mark.asyncio

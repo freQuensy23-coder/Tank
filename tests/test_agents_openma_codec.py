@@ -58,7 +58,7 @@ def test_guarded_codec_preserves_opaque_input_but_transforms_envelope(tmp_path):
     )
 
 
-async def test_patched_actual_item_id_reaches_validated_tank_tool_unchanged(tmp_path):
+async def test_patched_actual_tool_uses_host_bound_item(tmp_path):
     import httpx
 
     from tank.agents.sessions import SessionService
@@ -73,6 +73,7 @@ async def test_patched_actual_item_id_reaches_validated_tank_tool_unchanged(tmp_
     )
     session = {
         "session_id": "s",
+        "model_context_version": 1,
         "item_id": "real-item",
         "config_version": "config",
         "code_version": "code",
@@ -87,8 +88,9 @@ async def test_patched_actual_item_id_reaches_validated_tank_tool_unchanged(tmp_
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json={}))
     ) as http:
         service = SessionService(repo, opts, tools.dispatch, http=http)
-        await service.tool(session, result["realTool"])
+        await service.tool(session, {**result["realTool"], "input": {}})
     ledger = await repo.get("ops.tool_calls", "s:call_1")
     assert ledger["status"] == "DONE" and ledger["returned_at"]
+    assert ledger["model_arguments"] == {}
     assert ledger["arguments"] == {"item_id": "real-item"}
     assert ledger["result"]["item_id"] == "real-item"

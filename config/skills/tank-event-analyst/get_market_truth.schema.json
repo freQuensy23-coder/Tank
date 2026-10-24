@@ -4,14 +4,11 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "event_id": {
-      "type": "string"
-    },
     "tokens": {
       "type": "array",
       "items": {
         "type": "string",
-        "description": "Registry token_id, e.g. 'bitcoin:BTC' or 'world:WLD'. A ticker or $TICKER is resolved to it; any other name is refused."
+        "description": "Displayed project name and ticker, e.g. 'Bitcoin (BTC)' or 'World (WLD)'. An unambiguous ticker such as BTC or $BTC is also accepted."
       }
     },
     "cutoff": {
@@ -44,7 +41,6 @@
     }
   },
   "required": [
-    "event_id",
     "tokens"
   ],
   "description": "Escalate the requested registered tokens for market collection/backfill, then assemble their Market Truth and Data Confidence. A supplied cutoff is a chosen analysis boundary with explicitly declared precision; otherwise the service selects the latest completed minute. Exchange/settlement times and completed-bar ends may not exceed that cutoff; receipt/assembly clocks describe later collection availability. Returns per-token context, observations, provenance, coverage and missing-data reasons."

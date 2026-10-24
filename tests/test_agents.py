@@ -42,6 +42,7 @@ def settings(**overrides):
 async def seed_session(repo, **changes):
     row = {
         "session_id": "ses_1",
+        "model_context_version": 1,
         "event_id": "evt_1",
         "item_id": "itm_1",
         "status": "OPEN",
@@ -349,10 +350,11 @@ async def test_new_scout_session_wire_protocol_and_isolation():
     assert posted[0] == {
         "agent": "agt_s",
         "environment_id": "env_1",
-        "metadata": {"tank_identity": sha256({"identity": "p", "scout": True})},
+        "metadata": {"tank_identity": sha256({"identity": "p", "scout": True, "model_context_version": 1})},
     }
     content = json.loads(posted[1]["events"][0]["content"][0]["text"])
-    assert content["proposal"]["prp_id"] == "p"
+    assert content["proposal"]["concept_name"] == "test"
+    assert "prp_id" not in content["proposal"]
 
 
 @pytest.mark.asyncio
@@ -480,7 +482,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
                 "id": "decision_original",
                 "type": "agent.custom_tool_use",
                 "name": "get_decision",
-                "input": {"event_id": "evt_1", "token": "world:WLD"},
+                "input": {"token": "World (WLD)"},
             },
         )
         await service.process_event(
@@ -490,7 +492,6 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
                 "type": "agent.custom_tool_use",
                 "name": "publish_card",
                 "input": {
-                    "event_id": "evt_1",
                     "kind": "FULL",
                     "what": "Product announcement",
                     "verdict": "Product announcement",
@@ -505,6 +506,9 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         assert original_alert["decisions"] == [
             (await repo.get("ops.tool_calls", "ses_1:decision_original"))["result"]["dec_id"]
         ]
+        stored_session = await repo.get("ops.agent_sessions", "ses_1")
+        stored_session["last_payload"] = {"kind": "ITEM_ADDED", "item_id": "denial"}
+        await repo.put("ops.agent_sessions", "ses_1", stored_session)
         await service.process_event(
             "ses_1",
             {
@@ -512,8 +516,6 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
                 "type": "agent.custom_tool_use",
                 "name": "add_observation",
                 "input": {
-                    "event_id": "evt_1",
-                    "item_id": "denial",
                     "link": "DENIAL",
                     "certainty": "HIGH",
                     "certainty_reason": "Official cancellation",
@@ -538,7 +540,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
                 "id": "decision_exit",
                 "type": "agent.custom_tool_use",
                 "name": "get_decision",
-                "input": {"event_id": "evt_1", "token": "world:WLD"},
+                "input": {"token": "World (WLD)"},
             },
         )
         decision = (await repo.get("ops.tool_calls", "ses_1:decision_exit"))["result"]
@@ -553,7 +555,6 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
                 "type": "agent.custom_tool_use",
                 "name": "publish_card",
                 "input": {
-                    "event_id": "evt_1",
                     "kind": "UPDATE",
                     "what": "Official cancellation",
                     "verdict": "Official cancellation",
@@ -590,6 +591,11 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
             },
             immutable=True,
         )
+        armed = await repo.list("ana.watch_conditions", filters={"event_id": "evt_1", "status": "ARMED"})
+        assert armed
+        assert not await service.can_archive(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
+        for condition in armed:
+            await repo.put("ana.watch_conditions", condition["cond_id"], {**condition, "status": "EXPIRED"})
         assert await service.can_archive(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
 
 
@@ -715,7 +721,7 @@ async def test_live_slow_and_recovered_tool_context_keep_session_provenance():
 
 
 @pytest.mark.asyncio
-async def test_market_truth_wire_omits_only_companion_full_result_survives_recovery():
+async def test_market_truth_wire_omits_internal_metadata_full_result_survives_recovery():
     from tank.analysis.truth import compute_market_truth
     from tank.util import canonical_json
 
@@ -743,7 +749,7 @@ async def test_market_truth_wire_omits_only_companion_full_result_survives_recov
         "id": "mt_call",
         "type": "agent.custom_tool_use",
         "name": "get_market_truth",
-        "input": {"event_id": "evt_1"},
+        "input": {},
     }
     async with httpx.AsyncClient(transport=httpx.MockTransport(lost)) as http:
         first = SessionService(repo, opts, dispatch, http=http)
@@ -761,16 +767,13 @@ async def test_market_truth_wire_omits_only_companion_full_result_survives_recov
         await recovered.process_event("ses_1", event, 7)
     assert dispatched == 1 and requests[0] == requests[1]
     wire = json.loads(requests[1]["events"][0]["content"][0]["text"])
-    assert wire["market_truth"][0] == {
-        key: value for key, value in truth.items() if key != "measurement_metadata"
-    }
-    assert wire["market_truth"][0]["evidence"]["measurement_metadata"] == {
-        "canonical_source_key": "must remain"
-    }
-    access = wire["measurement_metadata_access"]
-    assert access["records"][0]["mta_id"] == "MTA-wire"
-    assert "document->'measurement_metadata'" in access["records"][0]["query"]
-    assert access["full_tool_result"]["storage_key"] == "ses_1:mt_call"
+    assert wire["market_truth"][0]["cutoff"] == truth["cutoff"]
+    assert wire["market_truth"][0]["spot"] == truth["spot"]
+    assert "measurement_metadata_access" not in wire
+    assert "mta_id" not in canonical_json(wire)
+    assert "session_id" not in canonical_json(wire)
+    assert "measurement_metadata" not in wire["market_truth"][0]
+    assert "measurement_metadata" not in wire["market_truth"][0]["evidence"]
     assert len(canonical_json(wire)) < len(canonical_json(full))
     assert (await repo.get("ana.market_truth", "MTA-wire")) == truth
     assert (await repo.get("ops.tool_calls", "ses_1:mt_call"))["result"] == full
@@ -1040,3 +1043,16 @@ async def test_new_session_prompt_version_binds_actual_resolved_agent_not_static
     incomplete = service.agent_provenance({"agent": {"id": "agt_1", "version": 8}}, config["openma"], "agt_1")
     assert incomplete["prompt_version"] is None
     assert incomplete["prompt_label"] == "test" and "INCOMPLETE" in incomplete["prompt_version_reason"]
+
+
+def test_jev_source_view_does_not_substitute_internal_source_codes():
+    view = Pipeline.item_view(
+        {
+            "item_id": "internal",
+            "source_id": "S29",
+            "title": "Protocol launch",
+            "text": "New crypto protocol launches",
+        }
+    )
+    assert view["source"] == ""
+    assert "S29" not in json.dumps(view) and "item_id" not in view

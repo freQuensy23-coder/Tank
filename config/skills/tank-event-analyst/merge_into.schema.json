@@ -4,12 +4,24 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "event_id": {
-      "type": "string"
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "statement": {
+          "type": "string"
+        },
+        "public_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "statement"
+      ]
     }
   },
   "required": [
-    "event_id"
+    "event"
   ],
-  "description": "Merge this session event into an earlier open event that represents the same real-world development. The target must exist, remain open and satisfy session/event ownership checks. Preserves the evidence and source observations on the surviving event and marks the origin merged. Returns the surviving event; this does not create a new event or discard conflicting evidence."
+  "description": "Merge the current event into a displayed event selected by its exact statement and public time."
 }

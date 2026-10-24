@@ -66,6 +66,7 @@ func (c *ClickHouse) post(ctx context.Context, query string, params map[string]s
 	q.Set("output_format_json_quote_decimals", "0")
 	q.Set("max_partitions_per_insert_block", "1000")
 	q.Set("do_not_merge_across_partitions_select_final", "1")
+	q.Set("use_skip_indexes_if_final", "0")
 	q.Set("max_query_size", "268435456")
 	for k, v := range params {
 		q.Set("param_"+k, v)
@@ -285,7 +286,7 @@ var chDay = map[string]string{
 
 func (s *Store) chSelect(ctx context.Context, collection, where string, params map[string]string, tail string) ([]map[string]any, []string, error) {
 	day := chColumn(chDay[collection])
-	picked, err := s.CH.rows(ctx, "SELECT storage_key, toString("+day+") AS _day FROM "+collection+" FINAL WHERE "+where+" "+tail, params)
+	picked, err := s.CH.rows(ctx, "SELECT storage_key, instrument_id, toString("+day+") AS _day FROM "+collection+" FINAL WHERE "+where+" "+tail, params)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s: %w", collection, err)
 	}
@@ -294,8 +295,14 @@ func (s *Store) chSelect(ctx context.Context, collection, where string, params m
 	}
 	order := make([]string, len(picked))
 	low, high := "", ""
+	seen := map[string]bool{}
+	var instruments []string
 	for i, r := range picked {
 		order[i], _ = r["storage_key"].(string)
+		if iid, _ := r["instrument_id"].(string); !seen[iid] {
+			seen[iid] = true
+			instruments = append(instruments, iid)
+		}
 		d, _ := r["_day"].(string)
 		if low == "" || d < low {
 			low = d
@@ -304,9 +311,10 @@ func (s *Store) chSelect(ctx context.Context, collection, where string, params m
 			high = d
 		}
 	}
-	quoted := chArray(order)
-	rows, err := s.CH.rows(ctx, "SELECT * FROM "+collection+" FINAL WHERE "+day+" >= toDateTime64('"+low+"', 6, 'UTC') AND "+
-		day+" <= toDateTime64('"+high+"', 6, 'UTC') AND storage_key IN ("+quoted[1:len(quoted)-1]+")", nil)
+	quoted, ids := chArray(order), chArray(instruments)
+	rows, err := s.CH.rows(ctx, "SELECT * FROM "+collection+" FINAL WHERE instrument_id IN ("+ids[1:len(ids)-1]+") AND "+
+		day+" >= toDateTime64('"+low+"', 6, 'UTC') AND "+day+" <= toDateTime64('"+high+"', 6, 'UTC') AND storage_key IN ("+
+		quoted[1:len(quoted)-1]+")", nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s: %w", collection, err)
 	}

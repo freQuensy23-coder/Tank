@@ -193,7 +193,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path):
                 "published_at": "2026-10-17T00:00:00Z",
             },
         )
-        tool_event["input"] = {"item_id": item["item_id"]}
+        tool_event["input"] = {}
         pipeline = Pipeline(repo, settings, http=http)
         await pipeline.filter_item({"item_id": item["item_id"]})
         routed_origin = await pipeline.route_item({"item_id": item["item_id"]})
@@ -516,9 +516,17 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                             },
                         }
                     ]
+                from tank.agents.context import ModelContext
+
+                boundary = ModelContext(repo, settings, await repo.get("ops.agent_sessions", sid))
+                model_args = await boundary.project(args)
+                model_args.pop("document", None)
+                await boundary.save()
                 count += 1
                 call_id = f"{sid}-full-{count}"
-                active[:] = [{"id": call_id, "type": "agent.custom_tool_use", "name": name, "input": args}]
+                active[:] = [
+                    {"id": call_id, "type": "agent.custom_tool_use", "name": name, "input": model_args}
+                ]
                 if name == "get_market_truth":
                     import asyncio
 
@@ -946,6 +954,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
     async def emit(name, arguments):
         nonlocal stage
         stage += 1
+        arguments = {k: v for k, v in arguments.items() if k not in {"event_id", "item_id"}}
         body = {
             "id": f"autonomous-tool-{stage}",
             "type": "agent.custom_tool_use",
@@ -987,11 +996,11 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
             event = json.loads(request.content)["events"][0]
             if event["type"] == "user.message":
                 payload = json.loads(event["content"][0]["text"])
-                state["item_id"] = payload["item"]["item_id"]
+                assert payload["item"]["text"]
+                assert "item_id" not in payload["item"]
                 await emit(
                     "record_event",
                     {
-                        "item_id": state["item_id"],
                         "is_event": True,
                         "statement": text,
                         "certainty": "HIGH",
@@ -1026,14 +1035,14 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
             elif event["type"] == "user.custom_tool_result":
                 result = json.loads(event["content"][0]["text"])
                 if stage == 1:
-                    state["event_id"] = result["event_id"]
-                    state["claim_id"] = result["accepted_claims"][0]["claim_id"]
+                    assert "event_id" not in result
+                    state["claim"] = result["accepted_claims"][0]["claim"]
                     dims = {
                         name: {
                             "value": None,
                             "reason": "NOT_ESTIMABLE",
                             "rationale": "No synthetic economic estimate",
-                            "evidence": [state["claim_id"]],
+                            "evidence": [state["claim"]],
                         }
                         for name in [
                             "economic_directness",
@@ -1048,7 +1057,6 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                     await emit(
                         "set_assessment",
                         {
-                            "event_id": state["event_id"],
                             "assessment": {
                                 "class": "MAJOR",
                                 "criterion": "M1",
@@ -1070,11 +1078,10 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                     await emit(
                         "set_beneficiaries",
                         {
-                            "event_id": state["event_id"],
                             "edges": [
                                 {
-                                    "entity_id": "synthetic-venue",
-                                    "token_id": "T",
+                                    "entity": "synthetic-venue",
+                                    "token": "T",
                                     "role": "PRIMARY",
                                     "layer": "VENUE_DEX",
                                     "direction": "POSITIVE",
@@ -1082,23 +1089,22 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                                     "causal_chain": "Synthetic listing affects access",
                                     "exposure_score": 6,
                                     "edge_certainty": "HIGH",
-                                    "evidence": [state["claim_id"]],
+                                    "evidence": [state["claim"]],
                                 }
                             ],
                             "layer_reasons": {layer: "No other synthetic evidence" for layer in LAYERS},
                         },
                     )
                 elif stage == 3:
-                    await emit("get_market_truth", {"event_id": state["event_id"], "tokens": ["T"]})
+                    await emit("get_market_truth", {"tokens": ["T"]})
                 elif stage == 4:
                     assert result["market_truth"][0]["move_class"] == "UNKNOWN"
-                    await emit("get_decision", {"event_id": state["event_id"], "token": "T"})
+                    await emit("get_decision", {"token": "T"})
                 elif stage == 5:
                     assert result["action"] == "WAIT"
                     await emit(
                         "publish_card",
                         {
-                            "event_id": state["event_id"],
                             "kind": "FULL",
                             "what": "The synthetic listing was approved.",
                             "verdict": "The synthetic listing was approved.",
@@ -1315,6 +1321,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
             alerts = await repo.list("out.alerts")
             assert len(alerts) == 1 and "linter" not in alerts[0]
             assert (await repo.list("ops.agent_sessions"))[0]["runtime_status"] == "IDLE"
+            state["event_id"] = (await repo.get("ops.agent_sessions", "autonomous-session"))["event_id"]
             assert market.escalations == [(state["event_id"], ["T"])]
             captures = await repo.list("mkt.backfill_runs", filters={"event_id": state["event_id"]})
             assert len(captures) == 1 and captures[0]["status"] == "FAILED"

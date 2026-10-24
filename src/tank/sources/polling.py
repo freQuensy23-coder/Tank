@@ -6,6 +6,7 @@ in acquisition order; failed originals stay in the checkpoint's pending batches.
 
 import asyncio
 import json
+import logging
 import re
 from copy import deepcopy
 from dataclasses import asdict
@@ -14,9 +15,11 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
+from tank.ops_entry_errors import report_entry_errors
 from tank.sources import parsers
 from tank.util import new_id, parse_time, sha256
 
+log = logging.getLogger(__name__)
 ARTICLE_KINDS = {"html", "rendered", "rendered_html", "html_diff"}
 
 
@@ -600,7 +603,6 @@ class SourcePoller:
                     elif not current.get("last_success_at") and current["status"] == "HEALTHY":
                         current["status"] = "PENDING"
                     await self.save(key, current)
-                return {"items": 0, "errors": []}
             except Exception as exc:
                 async with self.lock(self.state_locks, key):
                     current = await self.state(key)
@@ -615,6 +617,38 @@ class SourcePoller:
                     )
                     await self.save(key, current)
                 return {"items": 0, "errors": [str(exc)]}
+            await self.report_entry_errors(
+                key, source, feed, acquired.get("entry_errors") or [], acquired.get("fetched_at") or attempted
+            )
+            return {"items": 0, "errors": []}
+
+    async def report_entry_errors(self, key, source, feed, errors, seen_at):
+        """Report this poll's entry errors and earlier polls whose report failed.
+
+        A failed report never fails acquisition. Its poll stays in the checkpoint's
+        ``entry_error_reports`` backlog and is retried on the next acquisition even if
+        the feed no longer returns the broken entry; markers make the retry idempotent.
+        """
+        svc = self.service
+        try:
+            backlog = (await self.state(key)).get("entry_error_reports") or []
+            polls = backlog + ([{"seen_at": seen_at, "entry_errors": errors}] if errors else [])
+            failed = []
+            for poll in polls:
+                try:
+                    await report_entry_errors(
+                        svc.repo, svc.settings, source, feed, poll["entry_errors"], poll["seen_at"]
+                    )
+                except Exception:
+                    log.exception("Entry error report for %s is kept for the next poll", key)
+                    failed.append(poll)
+            if failed or backlog:
+                async with self.lock(self.state_locks, key):
+                    current = await self.state(key)
+                    current["entry_error_reports"] = failed
+                    await self.save(key, current)
+        except Exception:
+            log.exception("Entry error report backlog for %s could not be saved", key)
 
     def _empty_body(self, url, detail_state):
         return {

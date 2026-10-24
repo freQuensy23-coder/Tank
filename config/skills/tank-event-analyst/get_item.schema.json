@@ -4,12 +4,44 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "item_id": {
-      "type": "string"
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "excerpt": {
+          "type": "string"
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "url"
+          ]
+        },
+        {
+          "required": [
+            "title",
+            "observed_at"
+          ]
+        },
+        {
+          "required": [
+            "excerpt",
+            "observed_at"
+          ]
+        }
+      ]
     }
   },
-  "required": [
-    "item_id"
-  ],
-  "description": "Read a collected source item by canonical item_id. Returns stored text, quoted/reposted text, source, author/publisher, URL and timestamps with provenance and missing-data reasons. Use its exact stored quotes as evidence; do not replace unknown publication time with observation time."
+  "required": [],
+  "description": "Read a displayed source document by URL and observation time; omit document to read the triggering source. Returns text, author, source and dates. Cite verbatim evidence."
 }
