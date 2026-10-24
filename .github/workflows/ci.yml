@@ -117,7 +117,7 @@ jobs:
           MYPYPATH: src:tests
         run: >-
           uv run --frozen --extra dev mypy --strict --follow-imports=silent --explicit-package-bases
-          scripts/ci scripts/capture/gen_schema.py deploy/openma_lifecycle/native_network_probe.py
+          scripts/ci scripts/capture/gen_schema.py scripts/capture/gen_pyvectors.py deploy/openma_lifecycle/native_network_probe.py
           tests/test_ci_budget.py tests/test_ci_go_results.py tests/test_capture_parity.py tests/test_native_network_probe.py
 
   test:
