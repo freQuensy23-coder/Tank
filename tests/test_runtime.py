@@ -10,9 +10,10 @@ from tank.contracts.progress import ProgressPreferences
 from tank.market.capture_contracts import CaptureReadiness
 from tank.runtime import Runtime
 from tank.runtime_contracts import MarketTruthJob
+from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.time_precision import Timestamp
-from tank.util import parse_time
+from tank.util import clock_iso, parse_time
 
 
 @pytest.mark.asyncio
@@ -98,6 +99,11 @@ def test_doctor_distinguishes_syntax_from_deployment_and_never_prints_secrets(tm
     config_dir.mkdir()
     for name in ("sources", "registry", "semantics", "dependency_map", "thresholds", "openma"):
         (config_dir / (name + ".yaml")).write_text("{}\n")
+    (config_dir / "openma.yaml").write_text(
+        json.dumps(
+            {"agent_id": None, "scout_agent_id": None, "environment_id": None, "replay_environment_id": None}
+        )
+    )
     settings = Settings(
         config_dir=config_dir,
         openma_api_key="sensitive-secret",
@@ -105,13 +111,13 @@ def test_doctor_distinguishes_syntax_from_deployment_and_never_prints_secrets(tm
         user_agent="Tank contact not configured",
     )
     checks = readiness_checks(settings)
-    by_name = {r["check"]: r["ok"] for r in checks}
+    by_name = {r.check: r.ok for r in checks}
     assert by_name["openma_syntax"]
     assert not by_name["openma_agent_id"] and not by_name["openma_scout_agent_id"]
     assert not by_name["openma_environment_id"] and not by_name["openma_replay_environment_id"]
     assert by_name["openma_api_key"]
     assert not by_name["user_agent_contact"] and not by_name["apify_api_token"]
-    assert "sensitive-secret" not in json.dumps(checks)
+    assert "sensitive-secret" not in json.dumps([check.model_dump(mode="json") for check in checks])
 
 
 def test_source_check_network_probes_are_explicit(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -318,7 +324,7 @@ async def test_runtime_quiescence_drains_old_job_dependencies_and_preserves_sess
             "call_id": "tool",
             "session_id": "session",
             "status": "DONE",
-            "returned_at": iso(),
+            "returned_at": clock_iso(),
             "config_version": "old",
             "result": {"frozen": "old"},
         },
@@ -662,27 +668,27 @@ def test_doctor_only_checks_fake_subscription_auth_presence_and_internal_key(
     original_bytes = Path.read_bytes
     original_text = Path.read_text
 
-    def read_bytes(path, *args, **kwargs):
+    def read_bytes(path: Path) -> bytes:
         if path == auth:
             raise AssertionError("Doctor must not read sign-in contents")
-        return original_bytes(path, *args, **kwargs)
+        return original_bytes(path)
 
-    def read_text(path, *args, **kwargs):
+    def read_text(
+        path: Path, encoding: str | None = None, errors: str | None = None, newline: str | None = None
+    ) -> str:
         if path == auth:
             raise AssertionError("Doctor must not read sign-in contents")
-        return original_text(path, *args, **kwargs)
+        return original_text(path, encoding=encoding, errors=errors, newline=newline)
 
     monkeypatch.setattr(Path, "read_bytes", read_bytes)
     monkeypatch.setattr(Path, "read_text", read_text)
-    settings = SimpleNamespace(
-        codex_auth_path=auth,
-        codex_gateway_key="fake-internal-secret",
-        load_config=lambda name: {},
-    )
+    from tank.settings import Settings
+
+    settings = Settings(codex_auth_path=auth, codex_gateway_key="fake-internal-secret")
     checks = readiness_checks(settings)
-    indexed = {r["check"]: r["ok"] for r in checks}
+    indexed = {r.check: r.ok for r in checks}
     assert indexed["codex_auth_file_present"] and indexed["codex_gateway_key"]
-    assert "fake-internal-secret" not in json.dumps(checks)
+    assert "fake-internal-secret" not in json.dumps([check.model_dump(mode="json") for check in checks])
 
 
 @pytest.mark.asyncio
@@ -774,7 +780,6 @@ async def test_unfinished_dependency_defers_without_error_or_attempt_cost(
 @pytest.mark.asyncio
 async def test_terminal_delivery_reconciliation_covers_expiry_restart_and_validation() -> None:
     from tank.delivery import DeliveryService
-    from tank.util import iso
 
     repo = MemoryRepository()
     runtime = object.__new__(Runtime)
@@ -788,7 +793,7 @@ async def test_terminal_delivery_reconciliation_covers_expiry_restart_and_valida
         await repo.put(
             "ops.jobs",
             job["job_id"],
-            {**job, "status": status, "finished_at": iso(), "last_error": "ValueError"},
+            {**job, "status": status, "finished_at": clock_iso(), "last_error": "ValueError"},
         )
     await runtime.reconcile_delivery_failures()
     runtime._delivery_reconciled_at = None
@@ -850,7 +855,7 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
                             if terminal_status == "PARTIAL"
                             else None,
                             "reason": "SYNTHETIC_EXTERNAL_CAPTURE_TERMINAL",
-                            "finished_at": iso(),
+                            "finished_at": clock_iso(),
                             "finished_at_prec": "COLLECTION_ONLY",
                         }
                     ],
@@ -867,7 +872,7 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
                             **request,
                             "status": "COMPLETE",
                             "result": {"instruments": {}},
-                            "finished_at": iso(),
+                            "finished_at": clock_iso(),
                             "finished_at_prec": "COLLECTION_ONLY",
                         }
                     ],
@@ -1046,7 +1051,13 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
     monkeypatch.setattr("tank.delivery.DELIVERY_LOCK_WAIT_S", 0.2)
     aid = new_id("alert")
     eid = new_id("event")
-    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = Settings(
+        telegram_token="fixture",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     sent_requests = []
 
     def send(request: httpx.Request):
@@ -1142,6 +1153,7 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
             async def run_one() -> None:
                 stop = asyncio.Event()
                 runtime = object.__new__(Runtime)
+                runtime.settings = settings
                 runtime.repo = repo
                 runtime.delivery = delivery
 
@@ -1222,7 +1234,13 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
     now = utcnow()
     held, release, acquiring = asyncio.Event(), asyncio.Event(), asyncio.Event()
     key = "event:" + eid if lock_kind == "event" else f"deliver:{aid}:1:telegram:alerts"
-    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    settings = Settings(
+        telegram_token="fixture",
+        telegram_alerts_chat="1",
+        telegram_ops_chat="2",
+        ops_progress_enabled=False,
+        replay=False,
+    )
     requests = []
 
     async def holder() -> None:
@@ -1308,6 +1326,7 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
             async def run_one() -> None:
                 stop = asyncio.Event()
                 runtime = object.__new__(Runtime)
+                runtime.settings = settings
                 runtime.repo, runtime.delivery = repo, delivery
 
                 async def handle(payload):

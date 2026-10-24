@@ -36,20 +36,17 @@ from tank.agents.wire import tool_wire_result
 from tank.agents.workflow import SOURCE_COMPLETION_VERSION
 from tank.contracts.json import decode_json
 from tank.contracts.provenance import AgentProvenance
-from tank.contracts.repository import Repository as TypedRepository
 from tank.contracts.source_items import (
-    SOURCE_ITEMS,
     FailedExtraction,
     SkippedExtraction,
-    SourceItem,
-    SourceItemDocument,
 )
+from tank.contracts.source_repository import SourceExtractionRepository
 from tank.delivery import DeliveryDeferred
 from tank.openma_sync import agent_tools
 from tank.ops_progress import session_progress
 from tank.telegram_inbox import DOCUMENT_LIMIT, closed_reason, question_message, record_answer
-from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
-from tank.util import canonical_json, iso, parse_time, sha256, utcnow
+from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
+from tank.util import canonical_json, parse_time, sha256, utcnow
 
 REST_TIMEOUT_S = 30
 
@@ -113,7 +110,7 @@ class AdmissionDeferred(Exception):
 class SessionService:
     def __init__(self, repo, settings, tool_dispatch, *, http=None, stream_http=None):
         self.repo, self.settings, self.tool_dispatch = repo, settings, tool_dispatch
-        self.source_items: TypedRepository[SourceItemDocument] = TypedRepository(repo, SOURCE_ITEMS)
+        self.source_extraction = SourceExtractionRepository(repo)
         self.http = http or httpx.AsyncClient(timeout=REST_TIMEOUT_S)
         self.owns_http = http is None
 
@@ -136,20 +133,8 @@ class SessionService:
         self.closed = False
         self.telegram = None
 
-    async def source_item(self, item_id: str) -> SourceItem | None:
-        document = await self.source_items.get(item_id)
-        if document is None:
-            return None
-        if document.root.item_id != item_id:
-            raise ValueError("Session source identity does not match its repository key")
-        return document.root
-
-    async def save_source(self, item: SourceItem) -> None:
-        await self.source_items.put(item.item_id, SourceItemDocument(item))
-
-    def clock_timestamp(self):
-
-        return collection_clock(iso())
+    def clock_timestamp(self) -> Timestamp:
+        return collection_clock()
 
     def event_timestamp(self, event):
         return (
@@ -1084,17 +1069,15 @@ class SessionService:
                     message["turn_status"] = "DONE"
                 payload = message.get("payload", {})
                 if payload.get("kind") in {"NEW_ITEM", "ITEM_ADDED"} and payload.get("item_id"):
-                    item = await self.source_item(payload["item_id"])
-                    if item is not None and item.extraction_status in {"PENDING", "RUNNING"}:
-                        await self.save_source(
-                            item.with_extraction(
-                                SkippedExtraction(
-                                    status="SKIPPED",
-                                    decision=None,
-                                    reason="NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION",
-                                )
-                            )
-                        )
+                    await self.source_extraction.transition(
+                        payload["item_id"],
+                        frozenset({"PENDING", "RUNNING"}),
+                        SkippedExtraction(
+                            status="SKIPPED",
+                            decision=None,
+                            reason="NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION",
+                        ),
+                    )
             current["active_message_id"] = None
             current["runtime_status"] = "IDLE"
             outcomes = await self.source_completion_snapshot(current)
@@ -1889,16 +1872,11 @@ class SessionService:
                     failed_payload = (active or {}).get("payload") or session.get("last_payload") or {}
                     item_id = failed_payload.get("item_id") or session.get("item_id")
                     if item_id:
-                        item = await self.source_item(item_id)
-                        if item is not None and item.extraction_status == "PENDING":
-                            await self.save_source(
-                                item.with_extraction(
-                                    FailedExtraction(
-                                        status="FAILED",
-                                        reason="NATIVE_TURN_FAILED",
-                                    )
-                                )
-                            )
+                        await self.source_extraction.transition(
+                            item_id,
+                            frozenset({"PENDING"}),
+                            FailedExtraction(status="FAILED", reason="NATIVE_TURN_FAILED"),
+                        )
             elif kind == "session.status_terminated":
                 session["status"] = "ENDED"
                 session["runtime_status"] = "IDLE"

@@ -8,7 +8,7 @@ import pytest
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.util import iso, utcnow
+from tank.util import clock_iso, iso, utcnow
 
 
 @pytest.mark.asyncio
@@ -245,8 +245,8 @@ async def test_heartbeat_preserves_unknown_llm_cost() -> None:
     from tank.settings import Settings
 
     repo = MemoryRepository()
-    await repo.put("ops.llm_usage", "unknown", {"at": iso(), "cost_usd": None})
-    await repo.put("ops.llm_usage", "known", {"at": iso(), "cost_usd": "1.25"})
+    await repo.put("ops.llm_usage", "unknown", {"at": clock_iso(), "cost_usd": None})
+    await repo.put("ops.llm_usage", "known", {"at": clock_iso(), "cost_usd": "1.25"})
     await Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds()).heartbeat(
         utcnow()
     )
@@ -1204,7 +1204,7 @@ async def test_reaction_pre_error_retries_missing_windows_and_close_cancels_owne
     import asyncio
 
     repo = MemoryRepository()
-    event = {"event_id": "e", "public_at": iso(), "public_at_prec": "EXACT"}
+    event = {"event_id": "e", "public_at": clock_iso(), "public_at_prec": "EXACT"}
     scheduler = Scheduler(repo, Settings(), object(), None, thresholds=Settings(_env_file=None).thresholds())
     scheduler.latest_assessment = AsyncMock(return_value={"class": "MAJOR"})
     scheduler.analysis_tokens = AsyncMock(return_value={"T"})

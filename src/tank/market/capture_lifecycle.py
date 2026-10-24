@@ -47,6 +47,7 @@ class CaptureLifecycle:
         if policy.thresholds.hot_token_cap < 0:
             raise ValueError("HOT token capacity must be nonnegative")
         self.waits: dict[str, CaptureWaitOutcome] = {}
+        self._last_expiry_refresh: float | None = None
 
     @staticmethod
     def backfill_identity(event_id: str, token_id: str, anchor: Timestamp) -> str:
@@ -181,13 +182,20 @@ class CaptureLifecycle:
                     status="COMPLETE", request_id=request_id, instruments=row.result.instruments
                 )
             if isinstance(row, RepairFailed):
-                return RepairUnavailable(status="FAILED", request_id=request_id, reason=row.reason)
+                return RepairUnavailable(
+                    status="FAILED", request_id=request_id, reason=row.reason, result=row.result
+                )
             if isinstance(row, RepairExpired):
-                return RepairUnavailable(status="EXPIRED", request_id=request_id, reason=row.reason)
+                return RepairUnavailable(
+                    status="EXPIRED", request_id=request_id, reason=row.reason, result=None
+                )
             remaining = until - self.clock.monotonic()
             if remaining <= 0:
                 return RepairUnavailable(
-                    status="INCOMPLETE", request_id=request_id, reason="BOUNDED_CAPTURE_REQUEST_WAIT_EXPIRED"
+                    status="INCOMPLETE",
+                    request_id=request_id,
+                    reason="BOUNDED_CAPTURE_REQUEST_WAIT_EXPIRED",
+                    result=None,
                 )
             await self.clock.sleep(min(0.25, remaining))
 
@@ -349,3 +357,22 @@ class CaptureLifecycle:
         if not self.policy.replay:
             for row in await self.repository.hot_tokens():
                 await self.schedule_backfill(row.event_id, row.token_id, await self._anchor(row.event_id))
+
+    async def record_started_tiers(self) -> None:
+        async with self.repository.hot_set_lock(), self.repository.transaction():
+            active = {row.token_id for row in await self.repository.hot_tokens()}
+            for token_id in sorted(self.known_tokens):
+                await self.record_tier(
+                    token_id, "HOT" if token_id in active else "BASE", "CAPTURE_POLICY_STARTED"
+                )
+
+    async def sync_hot_set(self) -> dict[str, str]:
+        now = self.clock.monotonic()
+        if self._last_expiry_refresh is None or now - self._last_expiry_refresh >= 60:
+            await self.refresh_hot_expiry(self.clock.now())
+            self._last_expiry_refresh = self.clock.monotonic()
+        earliest: dict[str, str] = {}
+        for row in await self.repository.hot_tokens():
+            if row.token_id not in earliest or parse_time(row.since) < parse_time(earliest[row.token_id]):
+                earliest[row.token_id] = row.since
+        return earliest

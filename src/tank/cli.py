@@ -10,7 +10,7 @@ import click
 from pydantic import Field
 
 from tank.contracts import DomainModel
-from tank.contracts.configuration import DeliveryConfiguration, Thresholds
+from tank.contracts.configuration import DeliveryConfiguration
 from tank.contracts.sources import SourceConfiguration
 from tank.logging import configure_logging
 from tank.settings import Settings, configured_values, resolve_versions
@@ -463,20 +463,26 @@ def readiness_checks(settings: Settings) -> list[ReadinessCheck]:
     checks: list[ReadinessCheck] = []
     for name in ("sources", "delivery", "registry", "semantics", "dependency_map", "thresholds", "openma"):
         try:
-            config = settings.load_config(name)
             if name == "sources":
-                SourceConfiguration.model_validate(config)
+                settings.load_config_as("sources", SourceConfiguration)
             elif name == "delivery":
-                DeliveryConfiguration.model_validate(config)
+                settings.load_config_as("delivery", DeliveryConfiguration)
+            elif name == "registry":
+                settings.registry()
+            elif name == "semantics":
+                settings.semantics()
+            elif name == "dependency_map":
+                settings.dependencies()
             elif name == "thresholds":
-                Thresholds.model_validate(config)
+                settings.thresholds()
                 checks.append(ReadinessCheck(check="calibration", ok=True))
             elif name == "openma":
+                openma_config = settings.load_config("openma")
                 identifiers = ReadinessOpenmaIds.model_validate(
                     {
-                        field: config[field]
+                        field: openma_config[field]
                         for field in ("agent_id", "scout_agent_id", "environment_id", "replay_environment_id")
-                        if field in config
+                        if field in openma_config
                     }
                 )
                 for key, value in (

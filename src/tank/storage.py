@@ -21,7 +21,6 @@ from collections.abc import (
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from contextvars import ContextVar
 from datetime import datetime, timedelta
-from decimal import Decimal
 from pathlib import Path
 from typing import Literal, Protocol, Self, overload
 
@@ -61,7 +60,7 @@ from tank.retention import (
     protected_windows,
 )
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
-from tank.util import JsonInput, TimeInput, iso, jsonable, new_id, parse_time, utcnow
+from tank.util import JsonInput, TimeInput, iso, jsonable, new_id, parse_iso_time, parse_time, utcnow
 
 
 class TaskOwner(Protocol):
@@ -295,9 +294,9 @@ DEFERRAL_LOG_S = 60
 
 def _time_field(record: Mapping[str, StoredValue], field: str) -> datetime:
     value = record[field]
-    if isinstance(value, bool) or not isinstance(value, (str, int, float, datetime, Decimal)):
-        raise ValueError(f"{field} requires a timestamp")
-    return parse_time(value)
+    if not isinstance(value, (str, datetime)):
+        raise ValueError(f"{field} requires ISO date-time text or an aware datetime")
+    return parse_iso_time(value)
 
 
 def _text_field(record: Mapping[str, StoredValue], field: str) -> str:

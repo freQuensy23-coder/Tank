@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from pydantic import JsonValue
 
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES
-from tank.util import JsonInput, iso, jsonable, parse_time
+from tank.util import JsonInput, iso, jsonable, parse_iso_time
 
 type StoredValue = JsonValue | datetime | Decimal
 type StoredRow = dict[str, StoredValue]
@@ -17,9 +17,9 @@ type IdentityValue = str | int | float | bool | datetime | Decimal
 
 
 def _timestamp(value: StoredValue) -> datetime:
-    if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal, datetime)):
-        raise ValueError("Stored timestamp requires a scalar date or number")
-    return parse_time(value)
+    if not isinstance(value, (str, datetime)):
+        raise ValueError("Stored timestamp requires ISO date-time text or an aware datetime")
+    return parse_iso_time(value)
 
 
 def _optional_object(value: JsonValue, field: str) -> dict[str, JsonValue]:
@@ -58,11 +58,25 @@ UNPROVEN = "STREAM_COVERAGE_UNPROVEN"
 def encode(collection: str, record: Mapping[str, JsonInput]) -> StoredRow:
     from tank.time_precision import propagate_timestamp
 
-    document = jsonable(dict(record))
     columns = MARKET_COLUMNS[collection]
     aliases = MARKET_ALIASES.get(collection, {})
     timestamps = {name for name, kind in columns.items() if kind == "timestamptz"}
     time_aliases = {name: target for name, target in aliases.items() if target in timestamps}
+    for key, raw in record.items():
+        if aliases.get(key, key) not in timestamps or raw is None:
+            continue
+        if isinstance(raw, Mapping):
+            if "value" in raw:
+                raw = raw["value"]
+            elif "ts" in raw:
+                raw = raw["ts"]
+            else:
+                raise ValueError("Timestamp evidence requires a declared value or ts field")
+        if raw is not None:
+            if not isinstance(raw, (str, datetime)):
+                raise ValueError("Stored timestamp requires ISO date-time text or an aware datetime")
+            parse_iso_time(raw)
+    document = jsonable(dict(record))
     precision_names = {field + "_precision": field for field in timestamps}
     precision_names.update({alias + "_precision": target for alias, target in time_aliases.items()})
     result: StoredRow = {}

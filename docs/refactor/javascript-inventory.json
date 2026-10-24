@@ -7,13 +7,13 @@
     "Python command expressions including dynamic arguments",
     "executed immutable reference programs reported separately"
   ],
-  "files": 34,
+  "files": 35,
   "counts": {
-    "object": 693,
-    "untyped_parameter": 355,
-    "untyped_return": 539,
+    "object": 699,
+    "untyped_parameter": 354,
+    "untyped_return": 538,
     "optional": 16,
-    "fallback": 64,
+    "fallback": 70,
     "embedded_python_command": 13
   },
   "modules": {
@@ -38,15 +38,19 @@
       "embedded_python_command": 1
     },
     "deploy/openma_lifecycle/native-qualification.mjs": {
-      "untyped_parameter": 26,
-      "untyped_return": 21,
-      "object": 47,
-      "fallback": 13,
+      "untyped_parameter": 25,
+      "untyped_return": 20,
+      "object": 46,
+      "fallback": 11,
       "embedded_python_command": 3
     },
     "deploy/openma_lifecycle/native-qualification.test.mts": {
-      "object": 25,
+      "object": 30,
       "embedded_python_command": 3
+    },
+    "deploy/openma_lifecycle/process-evidence.mts": {
+      "fallback": 8,
+      "object": 2
     },
     "deploy/openma_lifecycle/qualification-contracts.mts": {
       "object": 7,
@@ -1231,969 +1235,1039 @@
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 18,
+      "line": 19,
       "symbol": "json",
       "kind": "untyped_parameter",
       "expression": "path"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 18,
+      "line": 19,
       "symbol": "json",
       "kind": "untyped_parameter",
       "expression": "value"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 18,
+      "line": 19,
       "symbol": "json",
       "kind": "untyped_return",
       "expression": "async function json(path, value) { await writeFile(path, JSON.stringify(value, null, 2) + '\\n', { mode: 0o600 }); }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 18,
+      "line": 19,
       "symbol": "json",
       "kind": "object",
       "expression": "{ mode: 0o600 }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 19,
-      "symbol": "proc",
-      "kind": "untyped_parameter",
-      "expression": "pid"
-    },
-    {
-      "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 19,
-      "symbol": "proc",
-      "kind": "untyped_return",
-      "expression": "async function proc(pid) {\n  if (!Number.isSafeInteger(pid) || pid <= 0) return null;\n  try {\n    const fields = (await readFile(`/proc/${pid}/stat`, 'utf8')).split(')').slice(1).join(')').trim().split(/\\s+/);\n    const status = await readFile(`/proc/${pid}/status`, 'utf8');\n    return { pid, state: fields[0], startTime: fields[19], rssKiB: Number(status.match(/^VmRSS:\\s+(\\d+)/m)?.[1] ?? 0) };\n  } catch (error) { if (error.code === 'ENOENT' || error.code === 'ESRCH') return null; throw error; }\n}"
-    },
-    {
-      "path": "deploy/openma_lifecycle/native-qualification.mjs",
       "line": 20,
-      "symbol": "proc",
-      "kind": "fallback",
-      "expression": "!Number.isSafeInteger(pid) || pid <= 0"
-    },
-    {
-      "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 24,
-      "symbol": "proc",
-      "kind": "object",
-      "expression": "{ pid, state: fields[0], startTime: fields[19], rssKiB: Number(status.match(/^VmRSS:\\s+(\\d+)/m)?.[1] ?? 0) }"
-    },
-    {
-      "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 24,
-      "symbol": "proc",
-      "kind": "fallback",
-      "expression": "status.match(/^VmRSS:\\s+(\\d+)/m)?.[1] ?? 0"
-    },
-    {
-      "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 25,
-      "symbol": "proc",
-      "kind": "fallback",
-      "expression": "error.code === 'ENOENT' || error.code === 'ESRCH'"
-    },
-    {
-      "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 27,
       "symbol": "stopped",
       "kind": "untyped_parameter",
       "expression": "client"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 27,
+      "line": 20,
       "symbol": "stopped",
       "kind": "untyped_parameter",
       "expression": "id"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 27,
+      "line": 20,
       "symbol": "stopped",
       "kind": "untyped_parameter",
       "expression": "before"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 27,
+      "line": 20,
       "symbol": "stopped",
       "kind": "untyped_return",
-      "expression": "async function stopped(client, id, before) {\n  const info = await client.getInfo(id);\n  assert.ok(info, 'retained native resource disappeared');\n  assert.equal(info.state.running, false);\n  assert.equal(info.autoDelete, 0);\n  const after = await proc(before.pid);\n  assert.ok(!after || after.startTime !== before.startTime || after.state === 'Z', 'owned native VM process remains alive after idle stop');\n  const released = !after || after.startTime !== before.startTime || after.rssKiB === 0;\n  assert.ok(released, 'owned VM process memory remains after stop');\n  const metrics = await client.metrics();assert.equal(metrics.numRunningBoxes, 0, 'dedicated runtime still reports running VMs');\n  return { id, state: info.state, autoDelete: info.autoDelete, oldProcess: before, oldProcessAfter: after,\n    oldProcessMemoryReleased: released,\n    runtimeMetrics: metrics };\n}"
+      "expression": "async function stopped(client, id, before) {\n  const info = await client.getInfo(id);\n  assert.ok(info, 'retained native resource disappeared');\n  assert.equal(info.state.running, false);\n  assert.equal(info.autoDelete, 0);\n  const after = await processEvidence(before.pid, '/proc');\n  assert.ok(!after || after.startTime !== before.startTime || terminatedProcess(after.state), 'owned native VM process remains alive after idle stop');\n  const released = !after || after.startTime !== before.startTime || terminatedProcess(after.state) || after.rssKiB === 0;\n  assert.ok(released, 'owned VM process memory remains after stop');\n  const metrics = await client.metrics();assert.equal(metrics.numRunningBoxes, 0, 'dedicated runtime still reports running VMs');\n  return { id, state: info.state, autoDelete: info.autoDelete, oldProcess: before, oldProcessAfter: after,\n    oldProcessMemoryReleased: released,\n    runtimeMetrics: metrics };\n}"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 33,
+      "line": 26,
       "symbol": "stopped",
       "kind": "fallback",
-      "expression": "!after || after.startTime !== before.startTime || after.state === 'Z'"
+      "expression": "!after || after.startTime !== before.startTime || terminatedProcess(after.state)"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 33,
+      "line": 26,
       "symbol": "stopped",
       "kind": "fallback",
       "expression": "!after || after.startTime !== before.startTime"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 34,
+      "line": 27,
       "symbol": "stopped.released",
       "kind": "fallback",
-      "expression": "!after || after.startTime !== before.startTime || after.rssKiB === 0"
+      "expression": "!after || after.startTime !== before.startTime || terminatedProcess(after.state) || after.rssKiB === 0"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 34,
+      "line": 27,
+      "symbol": "stopped.released",
+      "kind": "fallback",
+      "expression": "!after || after.startTime !== before.startTime || terminatedProcess(after.state)"
+    },
+    {
+      "path": "deploy/openma_lifecycle/native-qualification.mjs",
+      "line": 27,
       "symbol": "stopped.released",
       "kind": "fallback",
       "expression": "!after || after.startTime !== before.startTime"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 37,
+      "line": 30,
       "symbol": "stopped",
       "kind": "object",
       "expression": "{ id, state: info.state, autoDelete: info.autoDelete, oldProcess: before, oldProcessAfter: after,\n    oldProcessMemoryReleased: released,\n    runtimeMetrics: metrics }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 41,
+      "line": 34,
       "symbol": "observeBrowser",
       "kind": "untyped_parameter",
       "expression": "sb"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 41,
+      "line": 34,
       "symbol": "observeBrowser",
       "kind": "untyped_parameter",
       "expression": "config"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 41,
+      "line": 34,
       "symbol": "observeBrowser",
       "kind": "untyped_parameter",
       "expression": "scope"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 41,
+      "line": 34,
       "symbol": "observeBrowser",
       "kind": "untyped_parameter",
       "expression": "name"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 41,
+      "line": 34,
       "symbol": "observeBrowser",
       "kind": "untyped_parameter",
       "expression": "workerSha"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 41,
+      "line": 34,
       "symbol": "observeBrowser",
       "kind": "untyped_return",
       "expression": "async function observeBrowser(sb, config, scope, name, workerSha) {\n  const guest = '/mnt/session/outputs';\n  const host = join(config.directory, 'outputs', scope.workspaceId, scope.sessionId);\n  const stem = `browser-${name}`;\n  const phasePath = join(host, stem + '-phase.json'), stopPath = join(host, stem + '-stop');\n  const script = await readFile(new URL('./native-startup-observer.py', import.meta.url));\n  await sb.writeFileBytes('/workspace/native-startup-observer.py', script);\n  const state = '/workspace/.tank-browser/' + hash(scope.sessionId).slice(0, 32);\n  const args = ['python3', '/workspace/native-startup-observer.py', '--worker', '/opt/tank/browser-worker.py', '--worker-sha', workerSha,\n    '--state', state, '--output', guest + '/' + stem + '-observer', '--phase', guest + '/' + stem + '-phase.json',\n    '--stop', guest + '/' + stem + '-stop', '--interval', '5', '--max-seconds', '175'];\n  const launch = \"import subprocess; f=open(\" + JSON.stringify(guest + '/' + stem + '-observer.log') + \", 'ab'); subprocess.Popen(\" +\n    JSON.stringify(args) + \",stdin=subprocess.DEVNULL,stdout=f,stderr=f,start_new_session=True)\";\n  await json(phasePath, { phase: 'observer_start', hostEpochMs: Date.now() });\n  await sb.exec('python3 -c ' + quote(launch), 5000);\n  const deadline = performance.now() + 5000;\n  for (;;) {\n    try { const ready = JSON.parse(await readFile(join(host, stem + '-observer', 'ready.json'), 'utf8'));\n      const initialState = ready.path_stats[state];\n      await json(join(config.directory, `browser-${name}-freshness.json`), { statePath: state, profilePath: state + '/profile', initialState, initialProfile: ready.initial_profile,\n        publicCacheReused: Boolean(config.previousProof), beforeFirstBrowserOpen: true, observerScriptSha256: hash(script) });\n      if (name === 'first') {\n        assert.equal(initialState?.exists, false, 'first browser state must be fresh even when OCI cache is reused');\n        assert.equal(ready.initial_profile.exists, false, 'first browser profile must be fresh even when OCI cache is reused');\n      }break; }\n    catch (error) { if (error.code !== 'ENOENT' || performance.now() >= deadline) throw error;await new Promise(resolve => setTimeout(resolve, 50)); }\n  }\n  return { host, scriptSha256: hash(script), state,\n    mark: phase => json(phasePath, { phase, hostEpochMs: Date.now() }),\n    stop: () => writeFile(stopPath, '', { mode: 0o600 }) };\n}"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 54,
+      "line": 47,
       "symbol": "observeBrowser",
       "kind": "object",
       "expression": "{ phase: 'observer_start', hostEpochMs: Date.now() }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 55,
+      "line": 48,
       "symbol": "observeBrowser",
       "kind": "embedded_python_command",
       "expression": "sb.exec('python3 -c ' + quote(launch), 5000)"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 60,
+      "line": 53,
       "symbol": "observeBrowser",
       "kind": "object",
       "expression": "{ statePath: state, profilePath: state + '/profile', initialState, initialProfile: ready.initial_profile,\n        publicCacheReused: Boolean(config.previousProof), beforeFirstBrowserOpen: true, observerScriptSha256: hash(script) }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 66,
+      "line": 59,
       "symbol": "observeBrowser",
       "kind": "fallback",
       "expression": "error.code !== 'ENOENT' || performance.now() >= deadline"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 66,
+      "line": 59,
       "symbol": "observeBrowser",
       "kind": "untyped_parameter",
       "expression": "resolve"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 66,
+      "line": 59,
       "symbol": "observeBrowser",
       "kind": "untyped_return",
       "expression": "resolve => setTimeout(resolve, 50)"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 68,
+      "line": 61,
       "symbol": "observeBrowser",
       "kind": "object",
       "expression": "{ host, scriptSha256: hash(script), state,\n    mark: phase => json(phasePath, { phase, hostEpochMs: Date.now() }),\n    stop: () => writeFile(stopPath, '', { mode: 0o600 }) }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 69,
+      "line": 62,
       "symbol": "observeBrowser",
       "kind": "untyped_parameter",
       "expression": "phase"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 69,
+      "line": 62,
       "symbol": "observeBrowser",
       "kind": "untyped_return",
       "expression": "phase => json(phasePath, { phase, hostEpochMs: Date.now() })"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 69,
+      "line": 62,
       "symbol": "observeBrowser",
       "kind": "object",
       "expression": "{ phase, hostEpochMs: Date.now() }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 70,
+      "line": 63,
       "symbol": "observeBrowser",
       "kind": "untyped_return",
       "expression": "() => writeFile(stopPath, '', { mode: 0o600 })"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 70,
+      "line": 63,
       "symbol": "observeBrowser",
       "kind": "object",
       "expression": "{ mode: 0o600 }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 72,
+      "line": 65,
       "symbol": "phase",
       "kind": "untyped_parameter",
       "expression": "name"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 72,
+      "line": 65,
       "symbol": "phase",
       "kind": "untyped_parameter",
       "expression": "config"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 72,
+      "line": 65,
       "symbol": "phase",
       "kind": "untyped_return",
-      "expression": "async function phase(name, config) {\n  const root = '/app';\n  const installedSdk = JSON.parse(await readFile(root + '/packages/sandbox-adapter-litebox/node_modules/@boxlite-ai/boxlite/package.json', 'utf8'));\n  assert.equal(installedSdk.version, '0.10.6');\n  const { JsBoxlite } = await import(root + '/packages/sandbox-adapter-litebox/node_modules/@boxlite-ai/boxlite/dist/index.js');\n  const providerModule = await import(root + '/packages/managed-runtime-boxlite/src/index.ts');\n  const { NodeRetainedLifecycle } = await import(root + '/packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts');\n  const { pinnedBoxLiteProvider } = await import(root + '/packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts');\n  const { LiteBoxSandbox } = await import(root + '/packages/sandbox-adapter-litebox/src/index.ts');\n  const { createBetterSqlite3SqlClient } = await import(root + '/packages/sql-client/src/index.ts');\n  const { ensureRuntimeResourceFenceSchema, SqlRuntimeResourceFencePort } = await import(root + '/packages/runtime-resource-fence-sql/src/index.ts');\n  const { createSandboxBrowserHarness } = await import(root + '/apps/agent/src/harness/tools.ts');\n  const meta = JSON.parse(await readFile(join(config.directory, 'run.json'), 'utf8'));\n  const overlay = JSON.parse(await readFile('/app/tank-overlay.json', 'utf8'));\n  assert.equal(overlay.boxlite_sdk_version, '0.10.6');\n  assert.match(overlay.sandbox_browser.worker_sha256, /^[a-f0-9]{64}$/);\n  assert.ok((await readFile(root + '/packages/control-plane-node/src/modules/node-managed.ts', 'utf8')).includes(`runtimeIdentity: \"${config.identity}\"`), 'candidate embedded runtime identity differs');\n  const sql = await createBetterSqlite3SqlClient(join(config.directory, 'resource-fences.sqlite'));\n  await ensureRuntimeResourceFenceSchema(sql);\n  const fences = new SqlRuntimeResourceFencePort(sql);\n  const client = JsBoxlite.withDefaultConfig();\n  const scope = { workspaceId: 'native_qualification', environmentId: 'native_qualification', sessionId: meta.sessionId };\n  const fullScope = { ...scope, workId: 'tank-retained-session-v1' };\n  const digest = allocation => 'sha256:' + hash(JSON.stringify({ identity: config.identity, scope, allocation, rootfsIndex: meta.rootfsIndex }));\n  const controller = mismatch => new NodeRetainedLifecycle({ fences, providerModule, client, ownerId: `proof-${name}-${process.pid}`, leaseTtlMs: 30000,\n    fingerprint: async (_context, allocation) => mismatch ? 'sha256:' + 'f'.repeat(64) : digest(allocation),\n    assertExecutionCurrent: async fence => assert.equal(fence.current, true) });\n  const context = sandbox => ({ ...scope, session: { id: scope.sessionId, environmentId: scope.environmentId },\n    environment: { id: scope.environmentId }, sandbox, executionFence: { current: true } });\n  const sandbox = async () => {\n    const sb = new LiteBoxSandbox({ image: 'native-qualification-no-registry-pull', rootfsPath: config.rootfs, cpus: 1, memoryMib: config.memoryMib,\n      tankNetwork: { mode: 'disabled' }, outputsRoot: join(config.directory, 'outputs'), scratchRoot: join(config.directory, 'scratch') });\n    await sb.mountSessionOutputs({ tenantId: scope.workspaceId, sessionId: scope.sessionId });\n    await sb.setEnvVars({ TANK_QUALIFICATION_KEY: name === 'first' ? 'FAKE_FIRST' : 'FAKE_ROTATED' });\n    return sb;\n  };\n  const expectedName = 'oma-' + hash('litebox:' + scope.sessionId).slice(0, 32);\n  if (name === 'first' && config.previousProof) {\n    assert.deepEqual(await client.listInfo(), [], 'explicit reused cache home must have no native disks before new scope');\n    const previous = JSON.parse(await readFile(join(config.previousProof, 'run.json'), 'utf8'));\n    assert.notEqual(previous.sessionId, meta.sessionId, 'cache reuse may not restore the failed scope');\n  }\n  if (name === 'cleanup') {\n    // Exact final probe cleanup only. This is NOT an OpenMA Session archive API.\n    const before = await client.getInfo(expectedName);\n    const recoveryDeadline = performance.now() + 35000;let acquisitionRetries = 0;\n    for (;;) {\n      try { await controller().archive({ ...context({}), reason: 'archived' });break; }\n      catch (error) {\n        if (error.message !== 'retained_resource_busy' || performance.now() >= recoveryDeadline) throw error;\n        acquisitionRetries++;await new Promise(resolve => setTimeout(resolve, 500));\n      }\n    }\n    assert.equal(await client.getInfo(expectedName), null);\n    await controller().archive({ ...context({}), reason: 'archived' });\n    await json(join(config.directory, 'phase-cleanup.json'), { status: 'PASS', id: before?.id ?? null, exactScopedReap: true, acquisitionRetries,\n      nativeCatalogAfter: await client.listInfo(), noGuestRestoreOrBootRequired: true, openmaSessionArchiveApiCalled: false });\n    return;\n  }\n  const first = name === 'first' ? null : JSON.parse(await readFile(join(config.directory, 'phase-first.json'), 'utf8'));\n  if (name === 'resume') {\n    const bad = await sandbox(), badContext = context(bad), badController = controller(true);\n    await badController.bind(badContext);\n    await assert.rejects(bad.exec('true'), /retained_configuration_changed/);\n    assert.equal((await client.getInfo(first.id)).state.running, false);\n    // A different scoped owner cannot start/remove the retained native identity.\n    const foreign = { ...fullScope, sessionId: meta.sessionId + '_foreign' };\n    const acquired = await fences.acquire({ scope: foreign, ownerId: 'foreign-scope-proof', ttlMs: 30000 });\n    assert.equal(acquired.type, 'acquired');\n    try {\n      const bridge = pinnedBoxLiteProvider({ module: providerModule, client, allocation: { image: 'no-create' }, leaseTtlMs: 30000, isCurrent: fence => fences.isCurrent(fence) });\n      await assert.rejects(bridge.resume({ provider: 'litebox', runtimeId: first.id }, foreign, acquired.fence, new AbortController().signal));\n    } finally { await fences.release({ fence: acquired.fence, reason: 'completed' }); }\n    assert.equal((await client.getInfo(first.id)).state.running, false);\n  }\n  const manager = controller(), sb = await sandbox(), ctx = context(sb);\n  await manager.bind(ctx);\n  const checkpoint = stage => json(join(config.directory, `progress-${name}.json`), { stage, hostEpochMs: Date.now() });\n  await checkpoint('before_native_preparation');const preparationStart = performance.now();\n  const clearPreparationWatchdog = preparationWatchdog(() => {\n    // Exit this exact child rather than letting an unresolved native operation\n    // continue into browser work. Parent finally performs exact scoped cleanup.\n    const receipt = JSON.stringify({ classification: 'PREPARATION_TIMEOUT', limitSeconds: 240, hostEpochMs: Date.now(), nativePreparationMs: performance.now() - preparationStart });\n    try { writeFileSync(join(config.directory, `preparation-${name}-timeout.json`), receipt + '\\n', { mode: 0o600 });\n      writeFileSync(join(config.directory, `progress-${name}.json`), receipt + '\\n', { mode: 0o600 }); }\n    finally { process.exit(PREPARATION_TIMEOUT_EXIT); }\n  });\n  try {\n  if (name === 'first') {\n    await sb.writeFileBytes('/root/native-retained-proof', Buffer.from(meta.nonce));\n    await sb.writeFileBytes('/workspace/native-retained-proof', Buffer.from(meta.nonce));\n    await mountedOutputNonce(sb, meta.nonce, true);\n  } else {\n    assert.equal(Buffer.from(await sb.readFileBytes('/root/native-retained-proof')).toString(), meta.nonce);\n    assert.equal(Buffer.from(await sb.readFileBytes('/workspace/native-retained-proof')).toString(), meta.nonce);\n    await mountedOutputNonce(sb, meta.nonce, false);\n  }\n  } finally { clearPreparationWatchdog(); }\n  const nativePreparationMs = performance.now() - preparationStart;await checkpoint('native_preparation_and_retained_files_complete');\n  assert.equal((await sb.exec('printf \"%s\" \"$TANK_QUALIFICATION_KEY\"')).trim(), name === 'first' ? 'FAKE_FIRST' : 'FAKE_ROTATED');\n  const info = await client.getInfo(expectedName);\n  assert.ok(info);assert.equal(info.autoDelete, 0);assert.equal(info.cpus, 1);assert.equal(info.memoryMib, config.memoryMib);\n  if (first) assert.equal(info.id, first.id);\n  const activeProcess = await proc(info.state.pid);\n  assert.ok(activeProcess && activeProcess.state !== 'Z' && activeProcess.rssKiB > 0, 'active VM process/RSS evidence missing');\n  if (name === 'first') {\n    const rival = controller(), rivalSandbox = await sandbox(), rivalContext = context(rivalSandbox);\n    await rival.bind(rivalContext);await assert.rejects(rivalSandbox.exec('true'), /retained_resource_busy/);\n    assert.equal((await client.getInfo(info.id)).state.running, true);\n  }\n  const worker = Buffer.from(await sb.readFileBytes('/opt/tank/browser-worker.py'));\n  assert.equal(hash(worker), overlay.sandbox_browser.worker_sha256, 'guest worker is not the qualified image worker');\n  // VM-local loopback site; no external service or outbound network is used.\n  const server = \"import subprocess; f=open('/tmp/native-lifecycle-http.log','ab'); subprocess.Popen(['python3','-m','http.server','8765','--bind','127.0.0.1','--directory','/workspace'],stdin=subprocess.DEVNULL,stdout=f,stderr=f,start_new_session=True)\";\n  await sb.exec('python3 -c ' + quote(server), 5000);\n  await sb.exec('python3 -c ' + quote(\"import time,urllib.request\\nfor i in range(30):\\n try: urllib.request.urlopen('http://127.0.0.1:8765',timeout=.2).read(1); break\\n except Exception:\\n  if i==29: raise\\n  time.sleep(.1)\"), 5000);\n  if (name === 'first') await sb.writeFileBytes('/workspace/index.html', Buffer.from('<!doctype html><title>Native retained proof</title><h1>native-retained-browser-proof</h1>'));\n  const observer = await observeBrowser(sb, config, scope, name, hash(worker));\n  const browser = await createSandboxBrowserHarness(sb, meta.sessionId).launch();\n  let browserProof, browserFailed = false;\n  try {\n    await checkpoint('before_browser_first_open');await observer.mark('before_first_open');const openStart = performance.now();\n    const page = await browser.page();const firstOpenMs = performance.now() - openStart;\n    await checkpoint('after_browser_first_open');await observer.mark('after_first_open');await page.goto('http://127.0.0.1:8765/');\n    browserProof = { firstOpenMs, ...await browserEvidence(page, config.directory, name), observerScriptSha256: observer.scriptSha256, state: observer.state };\n    await checkpoint('after_dom_png');await observer.mark('after_dom_png');\n    if (name === 'first') await page.evaluate(\"value => { document.cookie='lifecycle_probe='+value+'; Max-Age=3600; Path=/'; localStorage.setItem('lifecycle_probe',value); }\", meta.nonce);\n    const profile = await page.evaluate(\"() => ({cookie:document.cookie,local:localStorage.getItem('lifecycle_probe')})\");\n    assert.ok(profile.cookie.split(';').some(value => value.trim() === 'lifecycle_probe=' + meta.nonce));assert.equal(profile.local, meta.nonce);\n  } catch (error) {\n    browserFailed = true;await observer.mark('after_first_failure');\n    await json(join(config.directory, `browser-${name}-failure.json`), { hostEpochMs: Date.now(), error: error.message, observerHostDirectory: observer.host, workerSha256: hash(worker) });\n    throw error;\n  } finally {\n    try { await browser.close(); }\n    finally { if (!browserFailed) await observer.mark('after_browser_close');await observer.stop(); }\n  }\n  await checkpoint('before_idle');await manager.idle(ctx);await checkpoint('after_idle');\n  const stop = await stopped(client, info.id, activeProcess);\n  assert.equal(await readFile(join(config.directory, 'outputs', scope.workspaceId, scope.sessionId, 'native-retained-proof'), 'utf8'), meta.nonce);\n  assert.equal((await client.listInfo()).length, 1, 'qualification must retain exactly one native disk');\n  await manager.shutdown();\n  await json(join(config.directory, `phase-${name}.json`), { status: 'PASS', id: info.id, expectedName, controllerPid: process.pid,\n    fingerprint: config.identity, workerSha256: hash(worker), nativePreparationMs, browserProof, rootfsWorkspaceAndOutputRetained: true, actualChromiumCookieAndLocalStorageRetained: true,\n    nativeInfo: info, stop, fingerprintMismatchRejected: name === 'resume', foreignScopeRejected: name === 'resume', competingOwnerRejected: name === 'first',\n    noIdleArchiveOrRecreate: true, perExecFakeKeyRotation: true, openmaApiHistoryCertified: false });\n}"
+      "expression": "async function phase(name, config) {\n  const root = '/app';\n  const installedSdk = JSON.parse(await readFile(root + '/packages/sandbox-adapter-litebox/node_modules/@boxlite-ai/boxlite/package.json', 'utf8'));\n  assert.equal(installedSdk.version, '0.10.6');\n  const { JsBoxlite } = await import(root + '/packages/sandbox-adapter-litebox/node_modules/@boxlite-ai/boxlite/dist/index.js');\n  const providerModule = await import(root + '/packages/managed-runtime-boxlite/src/index.ts');\n  const { NodeRetainedLifecycle } = await import(root + '/packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts');\n  const { pinnedBoxLiteProvider } = await import(root + '/packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts');\n  const { LiteBoxSandbox } = await import(root + '/packages/sandbox-adapter-litebox/src/index.ts');\n  const { createBetterSqlite3SqlClient } = await import(root + '/packages/sql-client/src/index.ts');\n  const { ensureRuntimeResourceFenceSchema, SqlRuntimeResourceFencePort } = await import(root + '/packages/runtime-resource-fence-sql/src/index.ts');\n  const { createSandboxBrowserHarness } = await import(root + '/apps/agent/src/harness/tools.ts');\n  const meta = JSON.parse(await readFile(join(config.directory, 'run.json'), 'utf8'));\n  const overlay = JSON.parse(await readFile('/app/tank-overlay.json', 'utf8'));\n  assert.equal(overlay.boxlite_sdk_version, '0.10.6');\n  assert.match(overlay.sandbox_browser.worker_sha256, /^[a-f0-9]{64}$/);\n  assert.ok((await readFile(root + '/packages/control-plane-node/src/modules/node-managed.ts', 'utf8')).includes(`runtimeIdentity: \"${config.identity}\"`), 'candidate embedded runtime identity differs');\n  const sql = await createBetterSqlite3SqlClient(join(config.directory, 'resource-fences.sqlite'));\n  await ensureRuntimeResourceFenceSchema(sql);\n  const fences = new SqlRuntimeResourceFencePort(sql);\n  const client = JsBoxlite.withDefaultConfig();\n  const scope = { workspaceId: 'native_qualification', environmentId: 'native_qualification', sessionId: meta.sessionId };\n  const fullScope = { ...scope, workId: 'tank-retained-session-v1' };\n  const digest = allocation => 'sha256:' + hash(JSON.stringify({ identity: config.identity, scope, allocation, rootfsIndex: meta.rootfsIndex }));\n  const controller = mismatch => new NodeRetainedLifecycle({ fences, providerModule, client, ownerId: `proof-${name}-${process.pid}`, leaseTtlMs: 30000,\n    fingerprint: async (_context, allocation) => mismatch ? 'sha256:' + 'f'.repeat(64) : digest(allocation),\n    assertExecutionCurrent: async fence => assert.equal(fence.current, true) });\n  const context = sandbox => ({ ...scope, session: { id: scope.sessionId, environmentId: scope.environmentId },\n    environment: { id: scope.environmentId }, sandbox, executionFence: { current: true } });\n  const sandbox = async () => {\n    const sb = new LiteBoxSandbox({ image: 'native-qualification-no-registry-pull', rootfsPath: config.rootfs, cpus: 1, memoryMib: config.memoryMib,\n      tankNetwork: { mode: 'disabled' }, outputsRoot: join(config.directory, 'outputs'), scratchRoot: join(config.directory, 'scratch') });\n    await sb.mountSessionOutputs({ tenantId: scope.workspaceId, sessionId: scope.sessionId });\n    await sb.setEnvVars({ TANK_QUALIFICATION_KEY: name === 'first' ? 'FAKE_FIRST' : 'FAKE_ROTATED' });\n    return sb;\n  };\n  const expectedName = 'oma-' + hash('litebox:' + scope.sessionId).slice(0, 32);\n  if (name === 'first' && config.previousProof) {\n    assert.deepEqual(await client.listInfo(), [], 'explicit reused cache home must have no native disks before new scope');\n    const previous = JSON.parse(await readFile(join(config.previousProof, 'run.json'), 'utf8'));\n    assert.notEqual(previous.sessionId, meta.sessionId, 'cache reuse may not restore the failed scope');\n  }\n  if (name === 'cleanup') {\n    // Exact final probe cleanup only. This is NOT an OpenMA Session archive API.\n    const before = await client.getInfo(expectedName);\n    const recoveryDeadline = performance.now() + 35000;let acquisitionRetries = 0;\n    for (;;) {\n      try { await controller().archive({ ...context({}), reason: 'archived' });break; }\n      catch (error) {\n        if (error.message !== 'retained_resource_busy' || performance.now() >= recoveryDeadline) throw error;\n        acquisitionRetries++;await new Promise(resolve => setTimeout(resolve, 500));\n      }\n    }\n    assert.equal(await client.getInfo(expectedName), null);\n    await controller().archive({ ...context({}), reason: 'archived' });\n    await json(join(config.directory, 'phase-cleanup.json'), { status: 'PASS', id: before?.id ?? null, exactScopedReap: true, acquisitionRetries,\n      nativeCatalogAfter: await client.listInfo(), noGuestRestoreOrBootRequired: true, openmaSessionArchiveApiCalled: false });\n    return;\n  }\n  const first = name === 'first' ? null : JSON.parse(await readFile(join(config.directory, 'phase-first.json'), 'utf8'));\n  if (name === 'resume') {\n    const bad = await sandbox(), badContext = context(bad), badController = controller(true);\n    await badController.bind(badContext);\n    await assert.rejects(bad.exec('true'), /retained_configuration_changed/);\n    assert.equal((await client.getInfo(first.id)).state.running, false);\n    // A different scoped owner cannot start/remove the retained native identity.\n    const foreign = { ...fullScope, sessionId: meta.sessionId + '_foreign' };\n    const acquired = await fences.acquire({ scope: foreign, ownerId: 'foreign-scope-proof', ttlMs: 30000 });\n    assert.equal(acquired.type, 'acquired');\n    try {\n      const bridge = pinnedBoxLiteProvider({ module: providerModule, client, allocation: { image: 'no-create' }, leaseTtlMs: 30000, isCurrent: fence => fences.isCurrent(fence) });\n      await assert.rejects(bridge.resume({ provider: 'litebox', runtimeId: first.id }, foreign, acquired.fence, new AbortController().signal));\n    } finally { await fences.release({ fence: acquired.fence, reason: 'completed' }); }\n    assert.equal((await client.getInfo(first.id)).state.running, false);\n  }\n  const manager = controller(), sb = await sandbox(), ctx = context(sb);\n  await manager.bind(ctx);\n  const checkpoint = stage => json(join(config.directory, `progress-${name}.json`), { stage, hostEpochMs: Date.now() });\n  await checkpoint('before_native_preparation');const preparationStart = performance.now();\n  const clearPreparationWatchdog = preparationWatchdog(() => {\n    // Exit this exact child rather than letting an unresolved native operation\n    // continue into browser work. Parent finally performs exact scoped cleanup.\n    const receipt = JSON.stringify({ classification: 'PREPARATION_TIMEOUT', limitSeconds: 240, hostEpochMs: Date.now(), nativePreparationMs: performance.now() - preparationStart });\n    try { writeFileSync(join(config.directory, `preparation-${name}-timeout.json`), receipt + '\\n', { mode: 0o600 });\n      writeFileSync(join(config.directory, `progress-${name}.json`), receipt + '\\n', { mode: 0o600 }); }\n    finally { process.exit(PREPARATION_TIMEOUT_EXIT); }\n  });\n  try {\n  if (name === 'first') {\n    await sb.writeFileBytes('/root/native-retained-proof', Buffer.from(meta.nonce));\n    await sb.writeFileBytes('/workspace/native-retained-proof', Buffer.from(meta.nonce));\n    await mountedOutputNonce(sb, meta.nonce, true);\n  } else {\n    assert.equal(Buffer.from(await sb.readFileBytes('/root/native-retained-proof')).toString(), meta.nonce);\n    assert.equal(Buffer.from(await sb.readFileBytes('/workspace/native-retained-proof')).toString(), meta.nonce);\n    await mountedOutputNonce(sb, meta.nonce, false);\n  }\n  } finally { clearPreparationWatchdog(); }\n  const nativePreparationMs = performance.now() - preparationStart;await checkpoint('native_preparation_and_retained_files_complete');\n  assert.equal((await sb.exec('printf \"%s\" \"$TANK_QUALIFICATION_KEY\"')).trim(), name === 'first' ? 'FAKE_FIRST' : 'FAKE_ROTATED');\n  const info = await client.getInfo(expectedName);\n  assert.ok(info);assert.equal(info.autoDelete, 0);assert.equal(info.cpus, 1);assert.equal(info.memoryMib, config.memoryMib);\n  if (first) assert.equal(info.id, first.id);\n  const activeProcess = await processEvidence(info.state.pid, '/proc');\n  assert.ok(activeProcess && !terminatedProcess(activeProcess.state) && activeProcess.rssKiB !== null && activeProcess.rssKiB > 0, 'active VM process/RSS evidence missing');\n  if (name === 'first') {\n    const rival = controller(), rivalSandbox = await sandbox(), rivalContext = context(rivalSandbox);\n    await rival.bind(rivalContext);await assert.rejects(rivalSandbox.exec('true'), /retained_resource_busy/);\n    assert.equal((await client.getInfo(info.id)).state.running, true);\n  }\n  const worker = Buffer.from(await sb.readFileBytes('/opt/tank/browser-worker.py'));\n  assert.equal(hash(worker), overlay.sandbox_browser.worker_sha256, 'guest worker is not the qualified image worker');\n  // VM-local loopback site; no external service or outbound network is used.\n  const server = \"import subprocess; f=open('/tmp/native-lifecycle-http.log','ab'); subprocess.Popen(['python3','-m','http.server','8765','--bind','127.0.0.1','--directory','/workspace'],stdin=subprocess.DEVNULL,stdout=f,stderr=f,start_new_session=True)\";\n  await sb.exec('python3 -c ' + quote(server), 5000);\n  await sb.exec('python3 -c ' + quote(\"import time,urllib.request\\nfor i in range(30):\\n try: urllib.request.urlopen('http://127.0.0.1:8765',timeout=.2).read(1); break\\n except Exception:\\n  if i==29: raise\\n  time.sleep(.1)\"), 5000);\n  if (name === 'first') await sb.writeFileBytes('/workspace/index.html', Buffer.from('<!doctype html><title>Native retained proof</title><h1>native-retained-browser-proof</h1>'));\n  const observer = await observeBrowser(sb, config, scope, name, hash(worker));\n  const browser = await createSandboxBrowserHarness(sb, meta.sessionId).launch();\n  let browserProof, browserFailed = false;\n  try {\n    await checkpoint('before_browser_first_open');await observer.mark('before_first_open');const openStart = performance.now();\n    const page = await browser.page();const firstOpenMs = performance.now() - openStart;\n    await checkpoint('after_browser_first_open');await observer.mark('after_first_open');await page.goto('http://127.0.0.1:8765/');\n    browserProof = { firstOpenMs, ...await browserEvidence(page, config.directory, name), observerScriptSha256: observer.scriptSha256, state: observer.state };\n    await checkpoint('after_dom_png');await observer.mark('after_dom_png');\n    if (name === 'first') await page.evaluate(\"value => { document.cookie='lifecycle_probe='+value+'; Max-Age=3600; Path=/'; localStorage.setItem('lifecycle_probe',value); }\", meta.nonce);\n    const profile = await page.evaluate(\"() => ({cookie:document.cookie,local:localStorage.getItem('lifecycle_probe')})\");\n    assert.ok(profile.cookie.split(';').some(value => value.trim() === 'lifecycle_probe=' + meta.nonce));assert.equal(profile.local, meta.nonce);\n  } catch (error) {\n    browserFailed = true;await observer.mark('after_first_failure');\n    await json(join(config.directory, `browser-${name}-failure.json`), { hostEpochMs: Date.now(), error: error.message, observerHostDirectory: observer.host, workerSha256: hash(worker) });\n    throw error;\n  } finally {\n    try { await browser.close(); }\n    finally { if (!browserFailed) await observer.mark('after_browser_close');await observer.stop(); }\n  }\n  await checkpoint('before_idle');await manager.idle(ctx);await checkpoint('after_idle');\n  const stop = await stopped(client, info.id, activeProcess);\n  assert.equal(await readFile(join(config.directory, 'outputs', scope.workspaceId, scope.sessionId, 'native-retained-proof'), 'utf8'), meta.nonce);\n  assert.equal((await client.listInfo()).length, 1, 'qualification must retain exactly one native disk');\n  await manager.shutdown();\n  await json(join(config.directory, `phase-${name}.json`), { status: 'PASS', id: info.id, expectedName, controllerPid: process.pid,\n    fingerprint: config.identity, workerSha256: hash(worker), nativePreparationMs, browserProof, rootfsWorkspaceAndOutputRetained: true, actualChromiumCookieAndLocalStorageRetained: true,\n    nativeInfo: info, stop, fingerprintMismatchRejected: name === 'resume', foreignScopeRejected: name === 'resume', competingOwnerRejected: name === 'first',\n    noIdleArchiveOrRecreate: true, perExecFakeKeyRotation: true, openmaApiHistoryCertified: false });\n}"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 93,
+      "line": 86,
       "symbol": "phase.scope",
       "kind": "object",
       "expression": "{ workspaceId: 'native_qualification', environmentId: 'native_qualification', sessionId: meta.sessionId }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 94,
+      "line": 87,
       "symbol": "phase.fullScope",
       "kind": "object",
       "expression": "{ ...scope, workId: 'tank-retained-session-v1' }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 95,
+      "line": 88,
       "symbol": "phase.digest",
       "kind": "untyped_parameter",
       "expression": "allocation"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 95,
+      "line": 88,
       "symbol": "phase.digest",
       "kind": "untyped_return",
       "expression": "allocation => 'sha256:' + hash(JSON.stringify({ identity: config.identity, scope, allocation, rootfsIndex: meta.rootfsIndex }))"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 95,
+      "line": 88,
       "symbol": "phase.digest",
       "kind": "object",
       "expression": "{ identity: config.identity, scope, allocation, rootfsIndex: meta.rootfsIndex }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 96,
+      "line": 89,
       "symbol": "phase.controller",
       "kind": "untyped_parameter",
       "expression": "mismatch"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 96,
+      "line": 89,
       "symbol": "phase.controller",
       "kind": "untyped_return",
       "expression": "mismatch => new NodeRetainedLifecycle({ fences, providerModule, client, ownerId: `proof-${name}-${process.pid}`, leaseTtlMs: 30000,\n    fingerprint: async (_context, allocation) => mismatch ? 'sha256:' + 'f'.repeat(64) : digest(allocation),\n    assertExecutionCurrent: async fence => assert.equal(fence.current, true) })"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 96,
+      "line": 89,
       "symbol": "phase.controller",
       "kind": "object",
       "expression": "{ fences, providerModule, client, ownerId: `proof-${name}-${process.pid}`, leaseTtlMs: 30000,\n    fingerprint: async (_context, allocation) => mismatch ? 'sha256:' + 'f'.repeat(64) : digest(allocation),\n    assertExecutionCurrent: async fence => assert.equal(fence.current, true) }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 97,
+      "line": 90,
       "symbol": "phase.controller",
       "kind": "untyped_parameter",
       "expression": "_context"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 97,
+      "line": 90,
       "symbol": "phase.controller",
       "kind": "untyped_parameter",
       "expression": "allocation"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 97,
+      "line": 90,
       "symbol": "phase.controller",
       "kind": "untyped_return",
       "expression": "async (_context, allocation) => mismatch ? 'sha256:' + 'f'.repeat(64) : digest(allocation)"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 98,
+      "line": 91,
       "symbol": "phase.controller",
       "kind": "untyped_parameter",
       "expression": "fence"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 98,
+      "line": 91,
       "symbol": "phase.controller",
       "kind": "untyped_return",
       "expression": "async fence => assert.equal(fence.current, true)"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 99,
+      "line": 92,
       "symbol": "phase.context",
       "kind": "untyped_parameter",
       "expression": "sandbox"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 99,
+      "line": 92,
       "symbol": "phase.context",
       "kind": "untyped_return",
       "expression": "sandbox => ({ ...scope, session: { id: scope.sessionId, environmentId: scope.environmentId },\n    environment: { id: scope.environmentId }, sandbox, executionFence: { current: true } })"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 99,
+      "line": 92,
       "symbol": "phase.context",
       "kind": "object",
       "expression": "{ ...scope, session: { id: scope.sessionId, environmentId: scope.environmentId },\n    environment: { id: scope.environmentId }, sandbox, executionFence: { current: true } }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 99,
+      "line": 92,
       "symbol": "phase.context",
       "kind": "object",
       "expression": "{ id: scope.sessionId, environmentId: scope.environmentId }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 100,
+      "line": 93,
       "symbol": "phase.context",
       "kind": "object",
       "expression": "{ id: scope.environmentId }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 100,
+      "line": 93,
       "symbol": "phase.context",
       "kind": "object",
       "expression": "{ current: true }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 101,
+      "line": 94,
       "symbol": "phase.sandbox",
       "kind": "untyped_return",
       "expression": "async () => {\n    const sb = new LiteBoxSandbox({ image: 'native-qualification-no-registry-pull', rootfsPath: config.rootfs, cpus: 1, memoryMib: config.memoryMib,\n      tankNetwork: { mode: 'disabled' }, outputsRoot: join(config.directory, 'outputs'), scratchRoot: join(config.directory, 'scratch') });\n    await sb.mountSessionOutputs({ tenantId: scope.workspaceId, sessionId: scope.sessionId });\n    await sb.setEnvVars({ TANK_QUALIFICATION_KEY: name === 'first' ? 'FAKE_FIRST' : 'FAKE_ROTATED' });\n    return sb;\n  }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 102,
+      "line": 95,
       "symbol": "phase.sandbox.sb",
       "kind": "object",
       "expression": "{ image: 'native-qualification-no-registry-pull', rootfsPath: config.rootfs, cpus: 1, memoryMib: config.memoryMib,\n      tankNetwork: { mode: 'disabled' }, outputsRoot: join(config.directory, 'outputs'), scratchRoot: join(config.directory, 'scratch') }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 103,
+      "line": 96,
       "symbol": "phase.sandbox.sb",
       "kind": "object",
       "expression": "{ mode: 'disabled' }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 104,
+      "line": 97,
       "symbol": "phase.sandbox",
       "kind": "object",
       "expression": "{ tenantId: scope.workspaceId, sessionId: scope.sessionId }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 105,
+      "line": 98,
       "symbol": "phase.sandbox",
       "kind": "object",
       "expression": "{ TANK_QUALIFICATION_KEY: name === 'first' ? 'FAKE_FIRST' : 'FAKE_ROTATED' }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 119,
+      "line": 112,
       "symbol": "phase",
       "kind": "object",
       "expression": "{ ...context({}), reason: 'archived' }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 119,
+      "line": 112,
       "symbol": "phase",
       "kind": "object",
       "expression": "{}"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 121,
+      "line": 114,
       "symbol": "phase",
       "kind": "fallback",
       "expression": "error.message !== 'retained_resource_busy' || performance.now() >= recoveryDeadline"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 122,
+      "line": 115,
       "symbol": "phase",
       "kind": "untyped_parameter",
       "expression": "resolve"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 122,
+      "line": 115,
       "symbol": "phase",
       "kind": "untyped_return",
       "expression": "resolve => setTimeout(resolve, 500)"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 126,
+      "line": 119,
       "symbol": "phase",
       "kind": "object",
       "expression": "{ ...context({}), reason: 'archived' }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 126,
+      "line": 119,
       "symbol": "phase",
       "kind": "object",
       "expression": "{}"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 127,
+      "line": 120,
       "symbol": "phase",
       "kind": "object",
       "expression": "{ status: 'PASS', id: before?.id ?? null, exactScopedReap: true, acquisitionRetries,\n      nativeCatalogAfter: await client.listInfo(), noGuestRestoreOrBootRequired: true, openmaSessionArchiveApiCalled: false }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 127,
+      "line": 120,
       "symbol": "phase",
       "kind": "fallback",
       "expression": "before?.id ?? null"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 138,
+      "line": 131,
       "symbol": "phase.foreign",
       "kind": "object",
       "expression": "{ ...fullScope, sessionId: meta.sessionId + '_foreign' }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 139,
+      "line": 132,
       "symbol": "phase.acquired",
       "kind": "object",
       "expression": "{ scope: foreign, ownerId: 'foreign-scope-proof', ttlMs: 30000 }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 142,
+      "line": 135,
       "symbol": "phase.bridge",
       "kind": "object",
       "expression": "{ module: providerModule, client, allocation: { image: 'no-create' }, leaseTtlMs: 30000, isCurrent: fence => fences.isCurrent(fence) }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 142,
+      "line": 135,
       "symbol": "phase.bridge",
       "kind": "object",
       "expression": "{ image: 'no-create' }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 142,
+      "line": 135,
       "symbol": "phase.bridge",
       "kind": "untyped_parameter",
       "expression": "fence"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 142,
+      "line": 135,
       "symbol": "phase.bridge",
       "kind": "untyped_return",
       "expression": "fence => fences.isCurrent(fence)"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 143,
+      "line": 136,
       "symbol": "phase",
       "kind": "object",
       "expression": "{ provider: 'litebox', runtimeId: first.id }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 144,
+      "line": 137,
       "symbol": "phase",
       "kind": "object",
       "expression": "{ fence: acquired.fence, reason: 'completed' }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 149,
+      "line": 142,
       "symbol": "phase.checkpoint",
       "kind": "untyped_parameter",
       "expression": "stage"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 149,
+      "line": 142,
       "symbol": "phase.checkpoint",
       "kind": "untyped_return",
       "expression": "stage => json(join(config.directory, `progress-${name}.json`), { stage, hostEpochMs: Date.now() })"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 149,
+      "line": 142,
       "symbol": "phase.checkpoint",
       "kind": "object",
       "expression": "{ stage, hostEpochMs: Date.now() }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 151,
+      "line": 144,
       "symbol": "phase.clearPreparationWatchdog",
       "kind": "untyped_return",
       "expression": "() => {\n    // Exit this exact child rather than letting an unresolved native operation\n    // continue into browser work. Parent finally performs exact scoped cleanup.\n    const receipt = JSON.stringify({ classification: 'PREPARATION_TIMEOUT', limitSeconds: 240, hostEpochMs: Date.now(), nativePreparationMs: performance.now() - preparationStart });\n    try { writeFileSync(join(config.directory, `preparation-${name}-timeout.json`), receipt + '\\n', { mode: 0o600 });\n      writeFileSync(join(config.directory, `progress-${name}.json`), receipt + '\\n', { mode: 0o600 }); }\n    finally { process.exit(PREPARATION_TIMEOUT_EXIT); }\n  }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 154,
+      "line": 147,
       "symbol": "phase.clearPreparationWatchdog.receipt",
       "kind": "object",
       "expression": "{ classification: 'PREPARATION_TIMEOUT', limitSeconds: 240, hostEpochMs: Date.now(), nativePreparationMs: performance.now() - preparationStart }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 155,
+      "line": 148,
       "symbol": "phase.clearPreparationWatchdog",
       "kind": "object",
       "expression": "{ mode: 0o600 }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 156,
+      "line": 149,
       "symbol": "phase.clearPreparationWatchdog",
       "kind": "object",
       "expression": "{ mode: 0o600 }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 186,
+      "line": 179,
       "symbol": "phase",
       "kind": "embedded_python_command",
       "expression": "sb.exec('python3 -c ' + quote(server), 5000)"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 187,
+      "line": 180,
       "symbol": "phase",
       "kind": "embedded_python_command",
       "expression": "sb.exec('python3 -c ' + quote(\"import time,urllib.request\\nfor i in range(30):\\n try: urllib.request.urlopen('http://127.0.0.1:8765',timeout=.2).read(1); break\\n except Exception:\\n  if i==29: raise\\n  time.sleep(.1)\"), 5000)"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 196,
+      "line": 189,
       "symbol": "phase",
       "kind": "object",
       "expression": "{ firstOpenMs, ...await browserEvidence(page, config.directory, name), observerScriptSha256: observer.scriptSha256, state: observer.state }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 200,
+      "line": 193,
       "symbol": "phase",
       "kind": "untyped_parameter",
       "expression": "value"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 200,
+      "line": 193,
       "symbol": "phase",
       "kind": "untyped_return",
       "expression": "value => value.trim() === 'lifecycle_probe=' + meta.nonce"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 203,
+      "line": 196,
       "symbol": "phase",
       "kind": "object",
       "expression": "{ hostEpochMs: Date.now(), error: error.message, observerHostDirectory: observer.host, workerSha256: hash(worker) }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 214,
+      "line": 207,
       "symbol": "phase",
       "kind": "object",
       "expression": "{ status: 'PASS', id: info.id, expectedName, controllerPid: process.pid,\n    fingerprint: config.identity, workerSha256: hash(worker), nativePreparationMs, browserProof, rootfsWorkspaceAndOutputRetained: true, actualChromiumCookieAndLocalStorageRetained: true,\n    nativeInfo: info, stop, fingerprintMismatchRejected: name === 'resume', foreignScopeRejected: name === 'resume', competingOwnerRejected: name === 'first',\n    noIdleArchiveOrRecreate: true, perExecFakeKeyRotation: true, openmaApiHistoryCertified: false }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 219,
+      "line": 212,
       "symbol": "main",
       "kind": "untyped_return",
       "expression": "export async function main() {\n  const config = configuration(process.env);\n  const child = process.argv[2];\n  if (child) { assert.ok(['first', 'resume', 'cleanup'].includes(child));await phase(child, config);return; }\n  // Refuse existing proof directories: never attach this probe to old or live VMs.\n  await mkdir(config.directory, { mode: 0o700 });\n  const meta = { sessionId: 'native_proof_' + randomUUID().replaceAll('-', ''), nonce: randomUUID(),\n    rootfsIndex: hash(await readFile(join(config.rootfs, 'index.json'))), declaredHostImageId: config.imageId, identity: config.identity, cpus: 1, memoryMib: config.memoryMib };\n  if (config.previousProof) {\n    const previous = JSON.parse(await readFile(join(config.previousProof, 'run.json'), 'utf8'));\n    const cleanup = JSON.parse(await readFile(join(config.previousProof, 'phase-cleanup.json'), 'utf8'));\n    assert.equal(cleanup.status, 'PASS');assert.deepEqual(cleanup.nativeCatalogAfter, [], 'owned cache receipt must prove exact cleanup');\n    assert.match(previous.sessionId, /^native_proof_[a-f0-9]{32}$/, 'only a native diagnostic proof HOME can be reused');\n    assert.equal(cleanup.noGuestRestoreOrBootRequired, true);assert.equal(cleanup.openmaSessionArchiveApiCalled, false);\n    for (const key of ['identity', 'declaredHostImageId', 'rootfsIndex', 'cpus', 'memoryMib']) assert.equal(previous[key], meta[key], 'cache provenance mismatch: ' + key);\n    assert.notEqual(previous.sessionId, meta.sessionId);\n    meta.reusedPublicCacheFrom = config.previousProof;meta.freshScopeAndBrowserProfileRequired = true;\n  }\n  await json(join(config.directory, 'run.json'), meta);\n  const results = [];let failure;\n  try {\n    for (const name of ['first', 'resume']) {\n      const result = spawnSync(process.execPath, [...process.execArgv, fileURLToPath(import.meta.url), name], { env: process.env,\n        timeout: phaseWallSeconds[name] * 1000, killSignal: 'SIGKILL', maxBuffer: 2 * 1024 * 1024, encoding: 'utf8' });\n      await writeFile(join(config.directory, `${name}.log`), result.stdout + result.stderr, { mode: 0o600 });\n      let lastProgress = null;try { lastProgress = JSON.parse(await readFile(join(config.directory, `progress-${name}.json`), 'utf8')); } catch {}\n      results.push({ phase: name, status: result.status, signal: result.signal, spawnError: result.error?.code ?? null, lastProgress,\n        failureClassification: result.status === PREPARATION_TIMEOUT_EXIT ? 'PREPARATION_TIMEOUT' : result.error?.code === 'ETIMEDOUT' ? 'OUTER_DIAGNOSTIC_TIMEOUT_NOT_BROWSER_CLASSIFICATION' : result.status === 0 ? null : 'CHILD_PHASE_FAILURE_SEE_ARTIFACTS' });\n      if (result.status !== 0) throw Error(result.status === PREPARATION_TIMEOUT_EXIT ? 'PREPARATION_TIMEOUT: exact phase child exited before browser; inspect receipt and scoped cleanup' : result.error?.code === 'ETIMEDOUT' ? `Outer diagnostic ${name} orchestration timed out; inspect last stage (not classified as browser failure)` : `Native ${name} phase failed; inspect its bounded local log`);\n    }\n  } catch (error) { failure = error; }\n  finally {\n    const cleanup = spawnSync(process.execPath, [...process.execArgv, fileURLToPath(import.meta.url), 'cleanup'], { env: process.env,\n      timeout: phaseWallSeconds.cleanup * 1000, killSignal: 'SIGKILL', maxBuffer: 2 * 1024 * 1024, encoding: 'utf8' });\n    await writeFile(join(config.directory, 'cleanup.log'), cleanup.stdout + cleanup.stderr, { mode: 0o600 });\n    results.push({ phase: 'cleanup', status: cleanup.status, signal: cleanup.signal, spawnError: cleanup.error?.code ?? null });\n    if (cleanup.status !== 0) failure ??= Error('Exact scoped native cleanup failed; preserve proof volume for explicit owned-resource recovery');\n  }\n  const report = { status: failure ? 'FAIL' : 'PASS', scope: 'ACTUAL_NATIVE_BRIDGE_ONLY_NOT_OPENMA_API_HISTORY', ...meta, results,\n    modelCalls: 0, externalRequests: 0, idleSessionArchiveOrRecreate: false, openmaSessionHistoryProofStillRequired: true,\n    maximumPhaseWallSeconds: [phaseWallSeconds.first, phaseWallSeconds.resume, phaseWallSeconds.cleanup], failure: failure?.message ?? null };\n  await json(join(config.directory, 'result.json'), report);console.log(JSON.stringify(report));\n  if (failure) process.exitCode = 1;\n}"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 224,
+      "line": 217,
       "symbol": "main",
       "kind": "object",
       "expression": "{ mode: 0o700 }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 225,
+      "line": 218,
       "symbol": "main.meta",
       "kind": "object",
       "expression": "{ sessionId: 'native_proof_' + randomUUID().replaceAll('-', ''), nonce: randomUUID(),\n    rootfsIndex: hash(await readFile(join(config.rootfs, 'index.json'))), declaredHostImageId: config.imageId, identity: config.identity, cpus: 1, memoryMib: config.memoryMib }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 241,
+      "line": 234,
       "symbol": "main.result",
       "kind": "object",
       "expression": "{ env: process.env,\n        timeout: phaseWallSeconds[name] * 1000, killSignal: 'SIGKILL', maxBuffer: 2 * 1024 * 1024, encoding: 'utf8' }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 243,
+      "line": 236,
       "symbol": "main",
       "kind": "object",
       "expression": "{ mode: 0o600 }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 245,
+      "line": 238,
       "symbol": "main",
       "kind": "object",
       "expression": "{ phase: name, status: result.status, signal: result.signal, spawnError: result.error?.code ?? null, lastProgress,\n        failureClassification: result.status === PREPARATION_TIMEOUT_EXIT ? 'PREPARATION_TIMEOUT' : result.error?.code === 'ETIMEDOUT' ? 'OUTER_DIAGNOSTIC_TIMEOUT_NOT_BROWSER_CLASSIFICATION' : result.status === 0 ? null : 'CHILD_PHASE_FAILURE_SEE_ARTIFACTS' }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 245,
+      "line": 238,
       "symbol": "main",
       "kind": "fallback",
       "expression": "result.error?.code ?? null"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 251,
+      "line": 244,
       "symbol": "main.cleanup",
       "kind": "object",
       "expression": "{ env: process.env,\n      timeout: phaseWallSeconds.cleanup * 1000, killSignal: 'SIGKILL', maxBuffer: 2 * 1024 * 1024, encoding: 'utf8' }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 253,
+      "line": 246,
       "symbol": "main",
       "kind": "object",
       "expression": "{ mode: 0o600 }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 254,
+      "line": 247,
       "symbol": "main",
       "kind": "object",
       "expression": "{ phase: 'cleanup', status: cleanup.status, signal: cleanup.signal, spawnError: cleanup.error?.code ?? null }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 254,
+      "line": 247,
       "symbol": "main",
       "kind": "fallback",
       "expression": "cleanup.error?.code ?? null"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 257,
+      "line": 250,
       "symbol": "main.report",
       "kind": "object",
       "expression": "{ status: failure ? 'FAIL' : 'PASS', scope: 'ACTUAL_NATIVE_BRIDGE_ONLY_NOT_OPENMA_API_HISTORY', ...meta, results,\n    modelCalls: 0, externalRequests: 0, idleSessionArchiveOrRecreate: false, openmaSessionHistoryProofStillRequired: true,\n    maximumPhaseWallSeconds: [phaseWallSeconds.first, phaseWallSeconds.resume, phaseWallSeconds.cleanup], failure: failure?.message ?? null }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 259,
+      "line": 252,
       "symbol": "main.report",
       "kind": "fallback",
       "expression": "failure?.message ?? null"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 264,
+      "line": 257,
       "symbol": "",
       "kind": "untyped_parameter",
       "expression": "error"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.mjs",
-      "line": 264,
+      "line": 257,
       "symbol": "",
       "kind": "untyped_return",
       "expression": "error => { console.error(error.message);process.exitCode = 1; }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 12,
+      "line": 14,
       "symbol": "permitted",
       "kind": "object",
       "expression": "{\n  TANK_NATIVE_LIFECYCLE_GO: \"AUTHORIZED_NATIVE_PROOF\", TANK_NATIVE_MEMORY_MIB: \"2048\",\n  TANK_NATIVE_PROOF_DIR: \"/proof/native-run\", BOXLITE_HOME: \"/proof/native-run/boxlite\",\n  TANK_NATIVE_EXPECT_IDENTITY: \"a\".repeat(64), TANK_NATIVE_IMAGE_ID: \"sha256:\" + \"b\".repeat(64),\n}"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 19,
+      "line": 21,
       "symbol": "",
       "kind": "object",
       "expression": "{}"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 20,
+      "line": 22,
       "symbol": "result",
       "kind": "object",
       "expression": "{ env: {}, encoding: \"utf8\", timeout: 1000 }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 20,
+      "line": 22,
       "symbol": "result",
       "kind": "object",
       "expression": "{}"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 27,
+      "line": 29,
       "symbol": "",
       "kind": "object",
       "expression": "{ ...permitted, TANK_NATIVE_MEMORY_MIB: \"512\" }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 29,
+      "line": 31,
       "symbol": "",
       "kind": "object",
       "expression": "{ ...permitted, BOXLITE_HOME: \"/app/data/boxlite\" }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 30,
+      "line": 32,
       "symbol": "",
       "kind": "object",
       "expression": "{ ...permitted, TANK_NATIVE_PROOF_DIR: \"/app/data\" }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 31,
+      "line": 33,
       "symbol": "",
       "kind": "object",
       "expression": "{ ...permitted, TANK_NATIVE_EXPECT_IDENTITY: \"unknown\" }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 32,
+      "line": 34,
       "symbol": "",
       "kind": "object",
       "expression": "{ ...permitted, TANK_NATIVE_IMAGE_ID: \"latest\" }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 41,
+      "line": 43,
       "symbol": "page",
       "kind": "object",
       "expression": "{\n    content: async (): Promise<string> => \"<h1>native-retained-browser-proof</h1>\",\n    screenshot: async (options: { type: \"png\" }): Promise<Uint8Array> => {\n      assert.deepEqual(options, { type: \"png\" });\n      return png;\n    },\n  }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 44,
+      "line": 46,
       "symbol": "page",
       "kind": "object",
       "expression": "{ type: \"png\" }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 54,
+      "line": 56,
       "symbol": "",
       "kind": "object",
       "expression": "{\n      content: async (): Promise<string> => \"<h1>wrong site</h1>\",\n      screenshot: async (): Promise<Uint8Array> => assert.fail(\"DOM check must precede PNG capture\"),\n    }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 58,
+      "line": 60,
       "symbol": "",
       "kind": "object",
       "expression": "{\n      content: async (): Promise<string> => \"native-retained-browser-proof\",\n      screenshot: async (): Promise<Uint8Array> => Buffer.from(\"not png\"),\n    }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 63,
+      "line": 65,
       "symbol": "",
       "kind": "object",
       "expression": "{ recursive: true }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 75,
+      "line": 77,
       "symbol": "result",
       "kind": "object",
       "expression": "{ encoding: \"utf8\", timeout: 1000 }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 89,
+      "line": 91,
       "symbol": "port",
       "kind": "object",
       "expression": "{\n    writeFileBytes: (): never => { throw Error(\"unsupported mounted transfer\"); },\n    readFileBytes: (): never => { throw Error(\"unsupported mounted transfer\"); },\n    exec: async (command: string, budget: number): Promise<string> => {\n      calls.push({ command, budget });\n      const result = spawnSync(\"sh\", [\"-c\", command.replaceAll(\"/mnt/session/outputs/native-retained-proof\", target)], {\n        encoding: \"utf8\", timeout: budget, env: { PATH: directory + \":/usr/bin:/bin\" },\n      });\n      if (result.error !== undefined) throw result.error;\n      assert.equal(result.status, 0, result.stderr);\n      return result.stdout;\n    },\n  }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 93,
+      "line": 95,
       "symbol": "port",
       "kind": "object",
       "expression": "{ command, budget }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 94,
+      "line": 96,
       "symbol": "port.result",
       "kind": "object",
       "expression": "{\n        encoding: \"utf8\", timeout: budget, env: { PATH: directory + \":/usr/bin:/bin\" },\n      }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 95,
+      "line": 97,
       "symbol": "port.result",
       "kind": "object",
       "expression": "{ PATH: directory + \":/usr/bin:/bin\" }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 108,
+      "line": 110,
       "symbol": "",
       "kind": "embedded_python_command",
       "expression": "assert.ok(calls.every((call: { command: string; budget: number }): boolean => call.command.startsWith(\"python3 -c \") && call.command.includes(\"/mnt/session/outputs/native-retained-proof\")))"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 108,
+      "line": 110,
       "symbol": "",
       "kind": "embedded_python_command",
       "expression": "calls.every((call: { command: string; budget: number }): boolean => call.command.startsWith(\"python3 -c \") && call.command.includes(\"/mnt/session/outputs/native-retained-proof\"))"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 108,
+      "line": 110,
       "symbol": "",
       "kind": "embedded_python_command",
       "expression": "call.command.startsWith(\"python3 -c \")"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 112,
+      "line": 114,
       "symbol": "",
       "kind": "object",
       "expression": "{ exec: async (): Promise<string> => \"[error: failure]\" }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 114,
+      "line": 116,
       "symbol": "",
       "kind": "object",
       "expression": "{ recursive: true }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 119,
+      "line": 121,
       "symbol": "next",
       "kind": "object",
       "expression": "{ ...permitted, TANK_NATIVE_PROOF_DIR: \"/proof/native-browser-v7\", TANK_NATIVE_REUSE_CACHE_PROOF_DIR: \"/proof/native-browser-v6\", BOXLITE_HOME: \"/proof/native-browser-v6/boxlite\" }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 122,
+      "line": 124,
       "symbol": "",
       "kind": "object",
       "expression": "{ ...next, TANK_NATIVE_REUSE_CACHE_PROOF_DIR: \"/app/data\" }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 123,
+      "line": 125,
       "symbol": "",
       "kind": "object",
       "expression": "{ ...next, TANK_NATIVE_REUSE_CACHE_PROOF_DIR: \"/proof/native-browser-v7\" }"
     },
     {
       "path": "deploy/openma_lifecycle/native-qualification.test.mts",
-      "line": 124,
+      "line": 126,
       "symbol": "",
       "kind": "object",
       "expression": "{ ...next, TANK_NATIVE_REUSE_CACHE_PROOF_DIR: undefined }"
+    },
+    {
+      "path": "deploy/openma_lifecycle/native-qualification.test.mts",
+      "line": 133,
+      "symbol": "writeProcessFixture",
+      "kind": "object",
+      "expression": "{ recursive: true }"
+    },
+    {
+      "path": "deploy/openma_lifecycle/native-qualification.test.mts",
+      "line": 148,
+      "symbol": "",
+      "kind": "object",
+      "expression": "{ recursive: true, force: true }"
+    },
+    {
+      "path": "deploy/openma_lifecycle/native-qualification.test.mts",
+      "line": 158,
+      "symbol": "",
+      "kind": "object",
+      "expression": "{ recursive: true, force: true }"
+    },
+    {
+      "path": "deploy/openma_lifecycle/native-qualification.test.mts",
+      "line": 172,
+      "symbol": "",
+      "kind": "object",
+      "expression": "{ recursive: true, force: true }"
+    },
+    {
+      "path": "deploy/openma_lifecycle/native-qualification.test.mts",
+      "line": 181,
+      "symbol": "",
+      "kind": "object",
+      "expression": "{ recursive: true, force: true }"
+    },
+    {
+      "path": "deploy/openma_lifecycle/process-evidence.mts",
+      "line": 13,
+      "symbol": "terminatedProcess",
+      "kind": "fallback",
+      "expression": "state === \"Z\" || state === \"X\" || state === \"x\""
+    },
+    {
+      "path": "deploy/openma_lifecycle/process-evidence.mts",
+      "line": 13,
+      "symbol": "terminatedProcess",
+      "kind": "fallback",
+      "expression": "state === \"Z\" || state === \"X\""
+    },
+    {
+      "path": "deploy/openma_lifecycle/process-evidence.mts",
+      "line": 17,
+      "symbol": "processEvidence",
+      "kind": "fallback",
+      "expression": "!Number.isSafeInteger(pid) || pid <= 0"
+    },
+    {
+      "path": "deploy/openma_lifecycle/process-evidence.mts",
+      "line": 24,
+      "symbol": "processEvidence",
+      "kind": "fallback",
+      "expression": "error.code === \"ENOENT\" || error.code === \"ESRCH\""
+    },
+    {
+      "path": "deploy/openma_lifecycle/process-evidence.mts",
+      "line": 32,
+      "symbol": "processEvidence",
+      "kind": "fallback",
+      "expression": "state === undefined || !/^[A-Za-z]$/.test(state) || startTime === undefined || !/^\\d+$/.test(startTime)"
+    },
+    {
+      "path": "deploy/openma_lifecycle/process-evidence.mts",
+      "line": 32,
+      "symbol": "processEvidence",
+      "kind": "fallback",
+      "expression": "state === undefined || !/^[A-Za-z]$/.test(state) || startTime === undefined"
+    },
+    {
+      "path": "deploy/openma_lifecycle/process-evidence.mts",
+      "line": 32,
+      "symbol": "processEvidence",
+      "kind": "fallback",
+      "expression": "state === undefined || !/^[A-Za-z]$/.test(state)"
+    },
+    {
+      "path": "deploy/openma_lifecycle/process-evidence.mts",
+      "line": 38,
+      "symbol": "processEvidence",
+      "kind": "object",
+      "expression": "{ pid, state, startTime, rssKiB: null, rssUnavailableReason: \"KERNEL_OMITTED_VMRSS_FOR_TERMINATED_PROCESS\" }"
+    },
+    {
+      "path": "deploy/openma_lifecycle/process-evidence.mts",
+      "line": 41,
+      "symbol": "processEvidence",
+      "kind": "fallback",
+      "expression": "!Number.isSafeInteger(rssKiB) || rssKiB < 0"
+    },
+    {
+      "path": "deploy/openma_lifecycle/process-evidence.mts",
+      "line": 42,
+      "symbol": "processEvidence",
+      "kind": "object",
+      "expression": "{ pid, state, startTime, rssKiB, rssUnavailableReason: null }"
     },
     {
       "path": "deploy/openma_lifecycle/qualification-contracts.mts",

@@ -9,13 +9,14 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import pytest
+from agent_source_fixtures import source_record_fixture
 from test_agents_execution_barrier import config
 
 from tank.agents.sessions import SessionService
 from tank.event_tools import EventToolService
 from tank.settings import Settings
 from tank.storage import MemoryRepository, PostgresRepository
-from tank.util import iso, sha256
+from tank.util import clock_iso, sha256
 
 
 @asynccontextmanager
@@ -56,27 +57,29 @@ async def fixture_repo(backend, postgres_template=None):
 
 
 async def seed(repo):
-    at = iso()
+    at = clock_iso()
     await repo.put(
         "ingest.source_items",
         "i",
-        {
-            "item_id": "i",
-            "source_id": "S01",
-            "feed": "fixture",
-            "external_id": "i",
-            "text": "Product announced",
-            "source_class": "PRIMARY",
-            "observed_at": at,
-            "observed_at_prec": "COLLECTION_ONLY",
-            "published_at": at,
-            "published_prec": "EXACT",
-            "raw_ref": "/fixture/raw",
-            "raw_sha256": sha256("Product announced"),
-            "content_hash": sha256("Product announced"),
-            "relevance": {"decision": "ALWAYS"},
-            "extraction_status": "PENDING",
-        },
+        source_record_fixture(
+            {
+                "item_id": "i",
+                "source_id": "S01",
+                "feed": "fixture",
+                "external_id": "i",
+                "text": "Product announced",
+                "source_class": "PRIMARY",
+                "observed_at": at,
+                "observed_at_prec": "COLLECTION_ONLY",
+                "published_at": at,
+                "published_prec": "EXACT",
+                "raw_ref": "/fixture/raw",
+                "raw_sha256": sha256("Product announced"),
+                "content_hash": sha256("Product announced"),
+                "relevance": {"decision": "ALWAYS"},
+                "extraction_status": "PENDING",
+            }
+        ),
     )
     session = {
         "session_id": "s",
@@ -98,6 +101,7 @@ async def seed(repo):
             {
                 "message_id": "m",
                 "remote_event_id": "input",
+                "turn_status": "RUNNING",
                 "retry_count": 0,
                 "payload": {"kind": "NEW_ITEM", "item_id": "i"},
             }

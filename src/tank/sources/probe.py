@@ -8,7 +8,7 @@ import httpx
 import tank.sources.parsers as parsers
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.time_precision import collection_clock
-from tank.util import iso, sha256
+from tank.util import clock_iso, sha256
 
 
 async def probe_feeds(service):
@@ -16,7 +16,7 @@ async def probe_feeds(service):
     semaphore = asyncio.Semaphore(4)
 
     async def probe(source, index, feed):
-        started = iso()
+        started = clock_iso()
         sid = source.source_id
         result = {
             "source_id": sid,

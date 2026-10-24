@@ -8,6 +8,7 @@ import httpx
 import pytest
 from agent_source_fixtures import source_item_fixture
 from delivery_support import delivery_job
+from pydantic import JsonValue
 from source_support import source_definition
 from test_agents_pipeline_audit import options
 from test_event_tools import seed
@@ -25,7 +26,7 @@ from tank.settings import Settings
 from tank.sources import SourceService
 from tank.storage import MemoryRepository
 from tank.telegram_rich import SCORE_DIMENSIONS, score_summary
-from tank.util import iso, utcnow
+from tank.util import clock_iso, iso, utcnow
 
 
 async def notices(repo):
@@ -264,7 +265,7 @@ async def test_agent_acceptance_completion_and_failure_are_not_confused_with_app
                 "message_id": "m",
                 "retry_count": 0,
                 "payload": {"kind": "NEW_ITEM", "item_id": "i"},
-                "sent_at": iso(),
+                "sent_at": clock_iso(),
                 "turn_status": "PENDING",
             }
         ],
@@ -486,3 +487,37 @@ async def test_failed_source_job_requires_its_reporting_subject() -> None:
         )
     assert await repo.list("out.ops_notices") == []
     assert await repo.list("ops.jobs", filters={"type": "DELIVER"}) == []
+
+
+@pytest.mark.asyncio
+async def test_retained_source_prefix_keeps_local_terminal_outcome_without_inventing_collector() -> None:
+    from tank.contracts.progress import ProgressPreferences
+
+    repo = MemoryRepository()
+    prefix: dict[str, JsonValue] = {
+        "item_id": "retained-source",
+        "extraction_status": "SKIPPED",
+        "extraction_reason": "NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION",
+    }
+    await repo.put("ingest.source_items", "retained-source", prefix)
+    preferences = ProgressPreferences(ops_progress_enabled=True, replay=False)
+    session: dict[str, JsonValue] = {
+        "session_id": "native-session",
+        "message_log": [
+            {
+                "message_id": "native-message",
+                "retry_count": 0,
+                "turn_status": "DONE",
+                "payload": {"kind": "NEW_ITEM", "item_id": "retained-source"},
+            }
+        ],
+    }
+    await session_progress(repo, preferences, session)
+    await session_progress(repo, preferences, session)
+    rows = await repo.list("out.ops_notices")
+    assert len(rows) == 1
+    assert rows[0]["stage"] == "AGENT_REJECTED"
+    assert rows[0]["reason"] == "NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION"
+    assert rows[0]["details"] == {"source_provenance": "NOT_CAPTURED"}
+    assert await repo.list("ops.jobs") == []
+    assert await repo.get("ingest.source_items", "retained-source") == prefix
