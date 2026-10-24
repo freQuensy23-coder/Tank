@@ -3,7 +3,7 @@
 from decimal import Decimal
 from typing import Annotated, Literal, Self
 
-from pydantic import ConfigDict, Field, PositiveInt, RootModel, model_validator
+from pydantic import ConfigDict, Field, JsonValue, PositiveInt, RootModel, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
@@ -367,6 +367,25 @@ class CaptureWaitOutcome(DomainModel):
     bounded_wait_s: float = Field(ge=0)
     observed_at: Timestamp
     incomplete_windows_excluded: Literal[True] = True
+
+    @model_validator(mode="after")
+    def observed_collection_clock(self) -> Self:
+        if self.observed_at.value is None or self.observed_at.precision != "COLLECTION_ONLY":
+            raise ValueError("Capture waits require an observed collection clock")
+        return self
+
+    def to_wire(self) -> dict[str, JsonValue]:
+        observed = self.observed_at.value
+        if observed is None:
+            raise ValueError("Capture wait requires its observation clock")
+        return {
+            "status": self.status,
+            "backfill_id": self.backfill_id,
+            "reason": self.reason,
+            "bounded_wait_s": self.bounded_wait_s,
+            "observed_at": observed,
+            "incomplete_windows_excluded": self.incomplete_windows_excluded,
+        }
 
 
 class RepairCompleted(DomainModel):

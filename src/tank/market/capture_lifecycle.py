@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
 
+from tank.market.cadences import supply_cadences
 from tank.market.capture_contracts import (
     BackfillRun,
     CaptureCadences,
@@ -27,7 +28,6 @@ from tank.market.capture_contracts import (
     TokenEscalation,
 )
 from tank.market.capture_ports import CaptureClock, CaptureInvariantError, CaptureRepositoryPort
-from tank.market.supply import supply_cadences
 from tank.time_precision import Timestamp, chosen_boundary, collection_clock
 from tank.util import iso, parse_time, sha256
 

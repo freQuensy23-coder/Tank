@@ -4,7 +4,7 @@ import time
 from datetime import timedelta
 from decimal import Decimal as D
 
-from tank.market.capture_contracts import SupplyKind
+from tank.market.cadences import supply_cadences as supply_cadences
 from tank.market.errors import SemanticError
 from tank.market.precision import async_precise, precise
 from tank.time_precision import collection_clock, propagate_timestamp
@@ -41,18 +41,6 @@ def refresh_due(age_s, cadence_s, cycle_s):
     kind stale for a few minutes per period. Refresh at 0.9 x cadence, or earlier by two full
     poll cycles (longest pass + loop sleep), whichever comes first."""
     return age_s >= max(0.0, min(0.9 * cadence_s, cadence_s - 2 * cycle_s))
-
-
-def supply_cadences(hot: bool) -> dict[SupplyKind, int]:
-    """The implemented §5.6 refresh periods, shared by polling and snapshots."""
-    return {
-        "EXCHANGE_INVENTORY": 900 if hot else 21600,
-        "WALLET_FLOWS": 900 if hot else 21600,
-        "UNLOCKS": 86400,
-        "LENDING": 1800,
-        "CHAIN_LIQUIDITY": 21600,
-        "FUNDAMENTALS": 21600,
-    }
 
 
 @precise
