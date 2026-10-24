@@ -15,7 +15,8 @@ from tank.contracts.json import JsonDocument
 UTC = UTC
 
 type JsonInput = (
-    str
+    JsonValue
+    | str
     | int
     | float
     | bool
@@ -92,6 +93,10 @@ def new_id(prefix: str, *, timestamp: TimeInput | None = None, entropy: int | No
         chars.append(alphabet[value & 31])
         value >>= 5
     return prefix + "-" + "".join(reversed(chars))
+
+
+@overload
+def jsonable(value: dict[str, JsonValue]) -> dict[str, JsonValue]: ...
 
 
 @overload
