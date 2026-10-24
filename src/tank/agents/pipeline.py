@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import httpx
 
-from tank.agents.jev import MODEL, JevQuestion, binding, classify
+from tank.agents.jev import MODEL, JevEvent, JevItem, JevQuestion, JevState, binding, classify
 from tank.ops_progress import item_progress
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import iso, sha256, utcnow
@@ -72,7 +72,7 @@ class Pipeline:
         return float(value)
 
     @staticmethod
-    def item_view(item):
+    def item_view(item) -> JevItem:
         """The item as Jev sees it: source, author when it adds anything, title, body once, quote."""
         source = _clean(item.get("source") or item.get("source_name"))
         author = _clean(item.get("author"))
@@ -87,20 +87,18 @@ class Pipeline:
             body = body[len(title) :].lstrip(" -|:—")
         if set(_words(body)) <= set(_words(title)) | set(_words(source)):
             body = ""
-        view = {"source": source}
-        if author and author.casefold() != source.casefold():
-            view["author"] = author
-        if title:
-            view["title"] = title
-        if body:
-            view["text"] = _truncate(body)
-        if _clean(item.get("quoted")):
-            view["quoted"] = _truncate(_clean(item["quoted"]))
-        return view
+        quoted = _clean(item.get("quoted"))
+        return JevItem(
+            source=source,
+            author=author if author and author.casefold() != source.casefold() else None,
+            title=title if title else None,
+            text=_truncate(body) if body else None,
+            quoted=_truncate(quoted) if quoted else None,
+        )
 
     @classmethod
-    def state(cls, item):
-        return {"item": cls.item_view(item)}
+    def state(cls, item) -> JevState:
+        return JevState(item=cls.item_view(item))
 
     async def score(self, item, name, state):
         return (await self._score_record(item, name, state))["score"]
@@ -113,13 +111,14 @@ class Pipeline:
             )
         }
         pinned = binding(getattr(self.settings, "opencode_api_key", None))
-        state_fingerprint = sha256(state)
+        wire_state = state.to_wire()
+        state_fingerprint = sha256(wire_state)
         wire_questions = {
             name: question.model_dump(exclude_none=True) for name, question in questions.items()
         }
         question_fingerprint = sha256(wire_questions)
         request_fingerprint = sha256(
-            {"model": pinned.request_model, "state": state, "questions": wire_questions}
+            {"model": pinned.request_model, "state": wire_state, "questions": wire_questions}
         )
         key = sha256(
             {
@@ -323,7 +322,7 @@ class Pipeline:
                 result.update([row.get("entity_id"), row.get("token_id")])
         return result - {None}
 
-    def event_view(self, event):
+    def event_view(self, event) -> JevEvent:
         """The candidate event as Jev sees it: the agent's statement, readable names, stage."""
         registry = self.settings.load_config("registry")
         names = {
@@ -337,22 +336,20 @@ class Pipeline:
             key = str(key).removeprefix("UNRESOLVED:")
             return table.get(key) or key.split(":")[-1]
 
-        view = {"statement": _clean(event.get("statement"))}
         entities = list(dict.fromkeys(label(e, names) for e in event.get("entities", [])))
         tokens = list(
             dict.fromkeys(label(t, symbols) for t in event.get("tokens_mentioned", event.get("tokens", [])))
         )
-        if entities:
-            view["entities"] = entities
-        if tokens:
-            view["tokens"] = tokens
         stage = event.get("event_state", event.get("stage"))
-        if stage:
-            view["stage"] = str(stage).lower()
-        return view
+        return JevEvent(
+            statement=_clean(event.get("statement")),
+            entities=entities,
+            tokens=tokens,
+            stage=str(stage).lower() if stage else None,
+        )
 
-    def routing_state(self, item, event):
-        return {"item": self.item_view(item), "event": self.event_view(event)}
+    def routing_state(self, item, event) -> JevState:
+        return JevState(item=self.item_view(item), event=self.event_view(event))
 
     async def _candidate_events(self, identities, since, now):
 

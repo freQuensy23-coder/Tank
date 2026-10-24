@@ -4,7 +4,7 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from tank.agents.jev import JevQuestion, JevResponse, classify
+from tank.agents.jev import JevItem, JevQuestion, JevResponse, JevState, classify
 
 
 @pytest.mark.parametrize("names", [[], ["other"], ["relevant", "other"]])
@@ -18,7 +18,11 @@ async def test_response_answers_match_exact_requested_names(names):
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
     ) as client:
         with pytest.raises(ValueError, match="answer names"):
-            await classify(client, state={}, questions={"relevant": JevQuestion(instructions="Classify")})
+            await classify(
+                client,
+                state=JevState(item=JevItem(source="Fixture")),
+                questions={"relevant": JevQuestion(instructions="Classify")},
+            )
 
 
 @pytest.mark.parametrize(

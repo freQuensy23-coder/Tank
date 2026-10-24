@@ -223,3 +223,14 @@ JSON field. A RUNNING job with no consumed attempt is explicitly inconsistent,
 rather than silently clamped to zero. The drain and last-attempt preservation
 cases pass, zero skips; configured runtime mypy passes against the queue-state
 contract.
+
+
+JevItem/JevEvent/JevState now carry classification inputs through Pipeline
+and the provider boundary as strict models. State dictionaries are created
+only by explicit to_wire serialization for HTTP and canonical fingerprints.
+Optional context fields preserve the previous omission rules; exact wire
+projection tests verify the online/calibration question and state shapes stay
+unchanged.86 focused pipeline/provider/agent tests pass, zero skips,2.82s.
+SourceItem repository-domain migration remains coordinated with ingestion;
+raw source/config access inside Pipeline is not declared complete by this
+classification-input migration.

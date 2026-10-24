@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from tank.agents import Pipeline
-from tank.agents.jev import JevQuestion, classify
+from tank.agents.jev import JevItem, JevQuestion, JevState, classify
 from tank.agents.pipeline import FILTER, FILTER_CRITERIA
 from tank.storage import MemoryRepository
 
@@ -45,7 +45,7 @@ async def test_free_tier_without_key_sends_no_authorization_and_caches(tmp_path)
         assert str(request.url) == URL and "authorization" not in request.headers
         assert json.loads(request.content) == {
             "model": "jev-1.13-free",
-            "state": Pipeline.state(ITEM),
+            "state": Pipeline.state(ITEM).to_wire(),
             "questions": {"relevant": {"type": "noul", "instructions": FILTER, "criteria": FILTER_CRITERIA}},
         }
         return httpx.Response(200, json=response())
@@ -90,7 +90,9 @@ async def test_resolved_model_cannot_silently_change(resolved):
         transport=httpx.MockTransport(lambda request: httpx.Response(200, json=response(model=resolved)))
     ) as http:
         with pytest.raises(ValueError, match="unexpected resolved model"):
-            await Pipeline(repo, settings(), http=http).score({"item_id": "i"}, "relevant", {"text": "data"})
+            await Pipeline(repo, settings(), http=http).score(
+                {"item_id": "i"}, "relevant", JevState(item=JevItem(source="Fixture", text="data"))
+            )
     assert await repo.list("ops.llm_usage") == []
 
 
@@ -132,7 +134,9 @@ async def test_provider_errors_are_not_retried_or_chat_wrapped(status, body):
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
         with pytest.raises(httpx.HTTPStatusError):
             await classify(
-                http, state={"text": "data"}, questions={"relevant": JevQuestion(instructions=FILTER)}
+                http,
+                state=JevState(item=JevItem(source="Fixture", text="data")),
+                questions={"relevant": JevQuestion(instructions=FILTER)},
             )
     assert len(calls) == 1
 
@@ -149,5 +153,7 @@ async def test_malformed_typed_answer_is_rejected(answer):
     ) as http:
         with pytest.raises(ValueError, match="invalid noul"):
             await classify(
-                http, state={"text": "data"}, questions={"relevant": JevQuestion(instructions=FILTER)}
+                http,
+                state=JevState(item=JevItem(source="Fixture", text="data")),
+                questions={"relevant": JevQuestion(instructions=FILTER)},
             )

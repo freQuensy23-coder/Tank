@@ -27,7 +27,7 @@ def test_filter_question_asks_the_03_3_1_condition_about_the_named_item() -> Non
     projects = FILTER.split("one of these projects: ")[1].rstrip("?")
     assert f"one of these projects: {projects}?" in design and FILTER.startswith("Is `item` about crypto")
     state = Pipeline.state({"source_name": "Outlet", "title": "Aave approved", "body": "Details"})
-    assert state == {"item": {"source": "Outlet", "title": "Aave approved", "text": "Details"}}
+    assert state.to_wire() == {"item": {"source": "Outlet", "title": "Aave approved", "text": "Details"}}
 
 
 @pytest.mark.parametrize(
@@ -315,7 +315,8 @@ async def test_candidate_questions_overlap_and_reduce_in_stable_order() -> None:
     arrived, ready = set(), asyncio.Event()
 
     async def score(item, name, state):
-        key = state["event"]["statement"]
+        assert state.event is not None
+        key = state.event.statement
         arrived.add(key)
         if len(arrived) == 3:
             ready.set()
@@ -386,7 +387,7 @@ def test_item_view_sends_title_and_body_once_without_mutating_capture(title, bod
         "published_at": "2026-10-20T10:00:00Z",
     }
     original = deepcopy(item)
-    assert Pipeline.state(item) == {
+    assert Pipeline.state(item).to_wire() == {
         "item": {"source": "OKX", **expected, "quoted": "Original quoted material"}
     }
     assert item == original
@@ -394,7 +395,7 @@ def test_item_view_sends_title_and_body_once_without_mutating_capture(title, bod
 
 def test_long_body_is_cut_at_a_sentence() -> None:
     body = "First sentence is here. " * 1000
-    text = Pipeline.item_view({"source": "SEC", "title": "Speech", "text": body})["text"]
+    text = Pipeline.item_view({"source": "SEC", "title": "Speech", "text": body}).text
     assert len(text) <= 12002 and text.endswith(". …")
 
 
@@ -410,7 +411,7 @@ def test_routing_state_names_item_and_event_with_readable_identities() -> None:
             "known_to_us_at": "2026-10-20T10:00:00.123456Z",
         },
     )
-    assert state == {
+    assert state.to_wire() == {
         "item": {"source": "Reuters", "author": "Jane Doe", "title": "Uniswap fee switch passes"},
         "event": {
             "statement": "Uniswap governance approved the fee switch.",

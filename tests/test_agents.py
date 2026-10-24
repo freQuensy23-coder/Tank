@@ -1090,5 +1090,5 @@ def test_jev_source_view_does_not_substitute_internal_source_codes() -> None:
             "text": "New crypto protocol launches",
         }
     )
-    assert view["source"] == ""
-    assert "S29" not in json.dumps(view) and "item_id" not in view
+    assert view.source == ""
+    assert "S29" not in json.dumps(view.to_wire()) and "item_id" not in view.to_wire()

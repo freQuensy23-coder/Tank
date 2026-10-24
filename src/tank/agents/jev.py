@@ -12,6 +12,43 @@ from tank.contracts import DomainModel
 MODEL = "jev-1.13.0"
 
 
+class JevItem(DomainModel):
+    source: str
+    author: str | None = None
+    title: str | None = None
+    text: str | None = None
+    quoted: str | None = None
+
+    def to_wire(self) -> dict[str, JsonValue]:
+        return self.model_dump(mode="json", exclude_none=True)
+
+
+class JevEvent(DomainModel):
+    statement: str
+    entities: list[str] = Field(default_factory=list)
+    tokens: list[str] = Field(default_factory=list)
+    stage: str | None = None
+
+    def to_wire(self) -> dict[str, JsonValue]:
+        result = self.model_dump(mode="json", exclude_none=True)
+        if not self.entities:
+            del result["entities"]
+        if not self.tokens:
+            del result["tokens"]
+        return result
+
+
+class JevState(DomainModel):
+    item: JevItem
+    event: JevEvent | None = None
+
+    def to_wire(self) -> dict[str, JsonValue]:
+        result: dict[str, JsonValue] = {"item": self.item.to_wire()}
+        if self.event is not None:
+            result["event"] = self.event.to_wire()
+        return result
+
+
 class JevQuestion(DomainModel):
     type: Literal["noul"] = "noul"
     instructions: str
@@ -58,7 +95,7 @@ async def classify(
     http: httpx.AsyncClient,
     *,
     api_key: str | None = None,
-    state: JsonValue,
+    state: JevState,
     questions: dict[str, JevQuestion],
 ) -> JevResponse:
     pinned = binding(api_key)
@@ -67,7 +104,7 @@ async def classify(
         headers={"Authorization": "Bearer " + api_key} if api_key else {},
         json={
             "model": pinned.request_model,
-            "state": state,
+            "state": state.to_wire(),
             "questions": {
                 name: question.model_dump(exclude_none=True) for name, question in questions.items()
             },
