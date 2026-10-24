@@ -200,7 +200,10 @@ async def test_x_account_failures_are_keyed_by_account():
     assert [row["entry_errors"] for row in latest] == [[{"account": "carol", "reason": "MISSING_FROM_RUN"}]]
 
 
-async def test_failed_report_does_not_fail_acquisition_and_is_retried_next_poll(tmp_path, monkeypatch):
+@pytest.mark.parametrize("second", ["broken", "recovered"])
+async def test_failed_report_does_not_fail_acquisition_and_is_retried_next_poll(
+    tmp_path, monkeypatch, second
+):
     repo = MemoryRepository()
     report = ops_entry_errors.report_entry_errors
     calls = []
@@ -212,11 +215,15 @@ async def test_failed_report_does_not_fail_acquisition_and_is_retried_next_poll(
         return await report(*args)
 
     monkeypatch.setattr("tank.sources.polling.report_entry_errors", flaky)
-    results = await poll(repo, tmp_path, [broken("Bad"), broken("Bad")])
+    results = await poll(repo, tmp_path, [broken("Bad"), broken("Bad") if second == "broken" else RSS])
     assert [result["items"] for result in results] == [1, 0]
-    assert len(calls) == 2 and len(await entry_notices(repo)) == 1
+    [notice] = await entry_notices(repo)
+    assert "«Bad»" in notice["text"] and len(await entry_jobs(repo)) == 1
     checkpoint = await repo.get("ops.source_checkpoints", "S30:0")
-    assert checkpoint["entry_errors"] and not checkpoint.get("acquisition_error")
+    assert checkpoint["entry_error_reports"] == [] and not checkpoint.get("acquisition_error")
+    assert bool(checkpoint["entry_errors"]) == (second == "broken")
+    await poll(repo, tmp_path, [RSS])
+    assert len(await entry_notices(repo)) == 1
 
 
 @pytest.mark.parametrize(
