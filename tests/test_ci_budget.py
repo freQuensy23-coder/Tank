@@ -1,41 +1,54 @@
 import importlib
+import importlib.util
 import json
-import runpy
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from types import ModuleType
+from typing import TYPE_CHECKING, Literal
 
 import pytest
+from pydantic import JsonValue
 
 CI_ROOT = Path(__file__).resolve().parents[1] / "scripts/ci"
-BUDGET = runpy.run_path(str(CI_ROOT / "ci_budget.py"))
+
+if TYPE_CHECKING:
+    from scripts.ci import ci_budget as budget
+else:
+    spec = importlib.util.spec_from_file_location("ci_budget", CI_ROOT / "ci_budget.py")
+    assert spec is not None
+    assert spec.loader is not None
+    budget = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = budget
+    spec.loader.exec_module(budget)
 
 
 @pytest.fixture
-def integration_checks(monkeypatch: pytest.MonkeyPatch):
+def integration_checks(monkeypatch: pytest.MonkeyPatch) -> tuple[ModuleType, ModuleType]:
     monkeypatch.syspath_prepend(str(CI_ROOT))
     return importlib.import_module("integration_shard"), importlib.import_module("check_integration_results")
 
 
-def test_shards_preserve_every_file_and_are_stable(integration_checks) -> None:
+def test_shards_preserve_every_file_and_are_stable(integration_checks: tuple[ModuleType, ModuleType]) -> None:
     shard, _ = integration_checks
     paths = [f"tests/test_integration_{index}.py" for index in range(500)]
     partitions = [{path for path in paths if shard.shard_for(path, 3) == index} for index in range(3)]
     assert set.union(*partitions) == set(paths)
     assert sum(map(len, partitions)) == len(paths)
     assert all(partitions)
-    assert [shard.shard_for(path, 3) for path in paths] == [
-        shard.shard_for(path, 3) for path in reversed(list(reversed(paths)))
-    ]
+    before = {path: shard.shard_for(path, 3) for path in paths}
+    assert {path: shard.shard_for(path, 3) for path in reversed(paths)} == before
+    assert {path: shard.shard_for(path, 3) for path in [*paths, "tests/new.py"] if path in before} == before
 
 
 @pytest.mark.parametrize("value", ["-1/3", "3/3", "0/0", "0", "a/3", "0/1/2"])
-def test_invalid_shard_is_rejected(integration_checks, value) -> None:
+def test_invalid_shard_is_rejected(integration_checks: tuple[ModuleType, ModuleType], value: str) -> None:
     shard, _ = integration_checks
     with pytest.raises(ValueError):
         shard.parse_shard(value)
 
 
-def reports(tmp_path: Path):
+def reports(tmp_path: Path) -> tuple[Path, list[Path]]:
     expected = [
         {"classname": "tests.test_a", "name": "first", "file": "tests/test_a.py"},
         {"classname": "tests.test_b", "name": "second", "file": "tests/test_b.py"},
@@ -52,7 +65,9 @@ def reports(tmp_path: Path):
     return manifest, paths
 
 
-def test_full_union_requires_every_case_once(integration_checks, tmp_path: Path) -> None:
+def test_full_union_requires_every_case_once(
+    integration_checks: tuple[ModuleType, ModuleType], tmp_path: Path
+) -> None:
     _, check = integration_checks
     manifest, paths = reports(tmp_path)
     assert check.verify(paths, [manifest]) == {"cases": 2, "passed": 2, "skipped": 0}
@@ -62,17 +77,23 @@ def test_full_union_requires_every_case_once(integration_checks, tmp_path: Path)
 
 
 @pytest.mark.parametrize("outcome", ["failure", "error", "skipped"])
-def test_union_rejects_unsuccessful_tests(integration_checks, tmp_path: Path, outcome) -> None:
+def test_union_rejects_unsuccessful_tests(
+    integration_checks: tuple[ModuleType, ModuleType], tmp_path: Path, outcome: str
+) -> None:
     _, check = integration_checks
     manifest, paths = reports(tmp_path)
     root = ET.parse(paths[0])
-    ET.SubElement(root.getroot().find("testcase"), outcome)
+    case = root.getroot().find("testcase")
+    assert case is not None
+    ET.SubElement(case, outcome)
     root.write(paths[0])
     with pytest.raises(ValueError, match="zero failures"):
         check.verify(paths, [manifest])
 
 
-def test_union_rejects_different_collections(integration_checks, tmp_path: Path) -> None:
+def test_union_rejects_different_collections(
+    integration_checks: tuple[ModuleType, ModuleType], tmp_path: Path
+) -> None:
     _, check = integration_checks
     manifest, paths = reports(tmp_path)
     other = tmp_path / "other.json"
@@ -81,11 +102,11 @@ def test_union_rejects_different_collections(integration_checks, tmp_path: Path)
         check.verify(paths, [manifest, other])
 
 
-def passed_jobs(completed="2026-10-23T12:03:20Z"):
-    names = sorted(BUDGET["REQUIRED_JOBS"])
-    names += [f"image ({name}, ., Dockerfile)" for name in sorted(BUDGET["REQUIRED_IMAGES"])]
+def passed_jobs(completed: str = "2026-10-23T12:03:20Z") -> list[budget.Job]:
+    names = sorted(budget.REQUIRED_JOBS)
+    names += [f"image ({name}, ., Dockerfile)" for name in sorted(budget.REQUIRED_IMAGES)]
     return [
-        {"name": name, "status": "completed", "conclusion": "success", "completed_at": completed}
+        budget.Job(name=name, status="completed", conclusion="success", completed_at=completed)
         for name in names
     ]
 
@@ -93,64 +114,103 @@ def passed_jobs(completed="2026-10-23T12:03:20Z"):
 def test_budget_starts_at_mr_creation_including_workflow_delay() -> None:
     event = {"action": "opened", "pull_request": {"created_at": "2026-10-23T12:00:00Z"}}
     run = {"created_at": "2026-10-23T12:01:00Z"}
-    assert BUDGET["origin"](event, run) == BUDGET["timestamp"]("2026-10-23T12:00:00Z")
+    assert budget.origin(
+        budget.Event.model_validate(event), budget.Run.model_validate(run)
+    ) == budget.timestamp("2026-10-23T12:00:00Z")
 
 
 def test_new_commit_gets_its_own_feedback_budget() -> None:
     event = {"action": "synchronize", "pull_request": {"created_at": "2026-10-22T12:00:00Z"}}
     run = {"created_at": "2026-10-23T12:00:00Z"}
-    assert BUDGET["origin"](event, run) == BUDGET["timestamp"](run["created_at"])
+    assert budget.origin(
+        budget.Event.model_validate(event), budget.Run.model_validate(run)
+    ) == budget.timestamp(run["created_at"])
 
 
 def test_budget_waits_for_all_lanes_and_images() -> None:
-    deadline = BUDGET["timestamp"]("2026-10-23T12:04:00Z")
+    deadline = budget.timestamp("2026-10-23T12:04:00Z")
     jobs = passed_jobs()
-    assert BUDGET["result"](jobs, deadline)
-    assert not BUDGET["result"](jobs[:-1], deadline)
-    jobs[0]["status"] = "in_progress"
-    assert not BUDGET["result"](jobs, deadline)
+    assert budget.result(jobs, deadline)
+    assert not budget.result(jobs[:-1], deadline)
+    jobs[0].status = "in_progress"
+    assert not budget.result(jobs, deadline)
 
 
 @pytest.mark.parametrize("conclusion", ["failure", "skipped", "cancelled"])
-def test_budget_cannot_be_green_when_required_lane_did_not_pass(conclusion) -> None:
+def test_budget_cannot_be_green_when_required_lane_did_not_pass(conclusion: str) -> None:
     jobs = passed_jobs()
-    jobs[0]["conclusion"] = conclusion
+    jobs[0].conclusion = conclusion
     with pytest.raises(ValueError, match="did not pass"):
-        BUDGET["result"](jobs, BUDGET["timestamp"]("2026-10-23T12:04:00Z"))
+        budget.result(jobs, budget.timestamp("2026-10-23T12:04:00Z"))
 
 
 def test_budget_rejects_late_success() -> None:
     with pytest.raises(ValueError, match="after"):
-        BUDGET["result"](
+        budget.result(
             passed_jobs("2026-10-23T12:04:01Z"),
-            BUDGET["timestamp"]("2026-10-23T12:04:00Z"),
+            budget.timestamp("2026-10-23T12:04:00Z"),
         )
 
 
 def test_queued_past_deadline_is_cancelled_without_accepting_results() -> None:
-    calls = []
+    calls: list[tuple[str, str]] = []
 
-    def api(suffix, method, deadline):
+    def api(suffix: str, method: Literal["GET", "POST"], deadline: float | None) -> JsonValue:
         calls.append((suffix, method))
         return {"created_at": "2026-10-23T12:00:00Z"} if not suffix else {}
 
-    def now():
-        return BUDGET["timestamp"]("2026-10-23T12:04:01Z")
+    def now() -> float:
+        return budget.timestamp("2026-10-23T12:04:01Z")
 
     with pytest.raises(TimeoutError):
-        BUDGET["watch"]({}, api, now=now, sleep=lambda _: pytest.fail("must not wait"))
+        budget.watch(budget.Event(), api, now=now, sleep=lambda _: pytest.fail("must not wait"))
     assert calls == [("", "GET"), ("/force-cancel", "POST")]
 
 
 def test_watcher_accepts_only_complete_results_within_budget() -> None:
-    def api(suffix, method, deadline):
+    def api(suffix: str, method: Literal["GET", "POST"], deadline: float | None) -> JsonValue:
         if not suffix:
             return {"created_at": "2026-10-23T12:00:00Z"}
         assert method == "GET"
-        return {"jobs": passed_jobs(), "total_count": len(passed_jobs())}
+        return {
+            "jobs": [job.model_dump(mode="json") for job in passed_jobs()],
+            "total_count": len(passed_jobs()),
+        }
 
-    def now():
-        return BUDGET["timestamp"]("2026-10-23T12:03:21Z")
+    def now() -> float:
+        return budget.timestamp("2026-10-23T12:03:21Z")
 
-    outcome = BUDGET["watch"]({}, api, now=now, sleep=lambda _: pytest.fail("already complete"))
-    assert outcome["elapsed_seconds"] == 201
+    outcome = budget.watch(budget.Event(), api, now=now, sleep=lambda _: pytest.fail("already complete"))
+    assert outcome.elapsed_seconds == 201
+
+
+def test_watcher_rejects_empty_nonterminal_page() -> None:
+    calls: list[str] = []
+
+    def api(suffix: str, method: Literal["GET", "POST"], deadline: float | None) -> JsonValue:
+        calls.append(suffix)
+        if not suffix:
+            return {"created_at": "2026-10-23T12:00:00Z"}
+        return {"jobs": [], "total_count": 1}
+
+    with pytest.raises(ValueError, match="pagination made no progress"):
+        budget.watch(
+            budget.Event(),
+            api,
+            now=lambda: budget.timestamp("2026-10-23T12:00:01Z"),
+            sleep=lambda _: pytest.fail("invalid pagination must not wait"),
+        )
+    assert calls == ["", "/jobs?per_page=100&page=1"]
+
+
+def test_completed_job_requires_completion_evidence() -> None:
+    jobs = passed_jobs()
+    jobs[0].completed_at = None
+    with pytest.raises(ValueError, match="no completion timestamp"):
+        budget.result(jobs, budget.timestamp("2026-10-23T12:04:00Z"))
+
+
+@pytest.mark.parametrize("total_count", ["1", -1, True])
+def test_github_page_rejects_invalid_count(total_count: str | int) -> None:
+    with pytest.raises(ValueError):
+        budget.JobPage.model_validate({"jobs": [], "total_count": total_count})
