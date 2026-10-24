@@ -14,6 +14,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Protocol
 
+from tank.contracts.jobs import JobEnvelope
 from tank.market_schema import MARKET_COLUMNS
 from tank.market_storage import decode as decode_market
 from tank.market_storage import (
@@ -236,7 +237,7 @@ def _job(kind, payload, idem_key, priority, run_after, expires_at, max_attempts)
         ("finished_at", Timestamp(None, None, "PENDING")),
     ):
         result.update(stamp.fields(field))
-    return result
+    return JobEnvelope.model_validate(result).model_dump(mode="json", exclude_unset=True)
 
 
 class QueueMixin:

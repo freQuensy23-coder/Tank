@@ -18,7 +18,11 @@ class Collection[T: BaseModel]:
         return self.schema.model_validate_json(encode_json(dict(payload)), strict=True)
 
     def encode(self, entity: T) -> dict[str, JsonValue]:
-        return entity.model_dump(mode="json")
+        if not isinstance(entity, self.schema):
+            raise TypeError(f"{self.name} requires {self.schema.__name__}")
+        payload = entity.model_dump(mode="json", warnings="error")
+        self.decode(payload)
+        return payload
 
 
 class DocumentStore(Protocol):
@@ -34,6 +38,14 @@ class DocumentStore(Protocol):
         *,
         immutable: bool = False,
     ) -> dict[str, JsonValue]: ...
+
+    async def list(
+        self,
+        collection: str,
+        *,
+        filters: dict[str, JsonValue] | None = None,
+        limit: int = 1000,
+    ) -> list[dict[str, JsonValue]]: ...
 
     async def delete(self, collection: str, key: str) -> None: ...
 
@@ -56,6 +68,10 @@ class Repository[T: BaseModel]:
             self._collection.name, key, self._collection.encode(entity), immutable=immutable
         )
         return self._collection.decode(document)
+
+    async def list(self, *, filters: dict[str, JsonValue] | None = None, limit: int = 1000) -> list[T]:
+        documents = await self._store.list(self._collection.name, filters=filters, limit=limit)
+        return [self._collection.decode(document) for document in documents]
 
     async def delete(self, key: str) -> None:
         await self._store.delete(self._collection.name, key)

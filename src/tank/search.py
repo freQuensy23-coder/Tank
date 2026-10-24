@@ -7,7 +7,6 @@ before upgrading: accepting ``backend='duckduckgo'`` alone is not a safety bound
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from importlib.metadata import version
 from typing import TypedDict
 
@@ -55,9 +54,8 @@ class SearchError(Exception):
         }
 
 
-@dataclass(frozen=True)
-class SearchResponse:
-    results: list[SearchResult]
+class SearchResponse(DomainModel):
+    results: list[SearchHit]
     attempts: int
 
 
@@ -254,7 +252,9 @@ class DuckDuckGoSearchService:
             if on_attempt is not None:
                 await on_attempt(attempt_number)
             if error is None:
-                return SearchResponse(results=results, attempts=attempt_number)
+                return SearchResponse(
+                    results=[SearchHit.model_validate(result) for result in results], attempts=attempt_number
+                )
             if not error.retryable or attempt_number == 4:
                 raise error
             await self.sleep(RETRY_DELAYS[attempt_number - 1])
