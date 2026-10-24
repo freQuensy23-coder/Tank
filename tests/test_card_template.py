@@ -609,13 +609,17 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
         assert not any(row.get("status") == "SENT" for row in await repo.list("out.deliveries"))
         sent = []
 
-        def send(request: pytest.FixtureRequest):
+        def send(request: httpx.Request):
             assert request.url.path.endswith("/sendRichMessage")
             sent.append(json.loads(request.content)["rich_message"])
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
 
         delivery_settings = SimpleNamespace(
-            telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2"
+            telegram_token="test",
+            telegram_alerts_chat="1",
+            telegram_ops_chat="2",
+            ops_progress_enabled=False,
+            replay=False,
         )
         async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
             delivery = DeliveryService(repo, delivery_settings, http=http)
