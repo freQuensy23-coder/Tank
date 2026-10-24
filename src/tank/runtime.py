@@ -4,15 +4,38 @@ import asyncio
 import contextlib
 import logging
 import traceback
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
+from typing import TYPE_CHECKING, Protocol
 
 from tank.agents.sessions import ADMITTED_JOB_TYPES, AdmissionDeferred
 from tank.delivery import DeliveryDeferred, DeliveryService
 from tank.ops_progress import job_failure_progress
 from tank.runtime_contracts import EscalateTokensJob, MarketTruthJob
 from tank.scheduler import Scheduler
+from tank.settings import Settings
+from tank.storage import Repository
 from tank.time_precision import Timestamp, collection_clock, offset_schedule
 from tank.util import parse_time, utcnow
+
+if TYPE_CHECKING:
+    from tank.agents.pipeline import Pipeline
+    from tank.agents.sessions import SessionService
+    from tank.analysis.truth import MarketTruthService
+    from tank.market.service import MarketService
+    from tank.telegram_inbox import TelegramInbox
+
+
+class RuntimeService(Protocol):
+    async def run(self, stop: asyncio.Event) -> None: ...
+    async def close(self) -> None: ...
+
+
+class GatewayPort(Protocol):
+    async def preflight(self) -> None: ...
+    async def start(self) -> None: ...
+    async def close(self) -> None: ...
+
 
 log = logging.getLogger(__name__)
 
@@ -44,68 +67,27 @@ CAPTURE_WAIT_S = 15
 class Runtime:
     def __init__(
         self,
-        repo,
-        settings,
+        repo: Repository,
+        settings: Settings,
         *,
-        sources=None,
-        market=None,
-        truth=None,
-        pipeline=None,
-        sessions=None,
-        event_tools=None,
-        delivery=None,
-        scheduler=None,
-        gateway=None,
-        inbox=None,
-    ):
-        from tank.logging import configure_logging
-
-        configure_logging(settings)
+        sources: RuntimeService,
+        market: "MarketService",
+        truth: "MarketTruthService",
+        pipeline: "Pipeline",
+        sessions: "SessionService",
+        delivery: DeliveryService,
+        scheduler: Scheduler,
+        gateway: GatewayPort,
+        inbox: "TelegramInbox",
+        bootstrap: Callable[[], Awaitable[None]],
+        validate: Callable[[], None],
+    ) -> None:
         self.repo, self.settings = repo, settings
-        self.active_jobs = set()
-        if gateway is None:
-            from tank.codex_gateway import CodexGateway
-
-            gateway = CodexGateway(settings)
-        self.gateway = gateway
-        if sources is None:
-            from tank.sources import SourceService
-
-            sources = SourceService(repo, settings)
-        if market is None:
-            from tank.market.service import MarketService
-
-            market = MarketService(repo, settings)
-        if truth is None:
-            from tank.analysis.truth import MarketTruthService
-
-            truth = MarketTruthService(repo, settings, market)
-        if pipeline is None:
-            from tank.agents.pipeline import Pipeline
-
-            pipeline = Pipeline(repo, settings)
-        if event_tools is None:
-            from tank.analysis.decisions import DecisionEngine
-            from tank.event_tools import EventToolService
-
-            event_tools = EventToolService(repo, settings, truth, DecisionEngine(settings))
-        if sessions is None:
-            from tank.agents.sessions import SessionService
-
-            sessions = SessionService(repo, settings, event_tools.dispatch)
         self.sources, self.market, self.truth = sources, market, truth
-        self.pipeline, self.sessions, self.event_tools = pipeline, sessions, event_tools
-        self.delivery = delivery or DeliveryService(repo, settings)
-        if inbox is None:
-            from tank.telegram_inbox import TelegramInbox
-
-            inbox = TelegramInbox(repo, settings)
-        self.inbox = inbox
-        if hasattr(self.sessions, "telegram"):
-            self.sessions.telegram = inbox
-        self.scheduler = scheduler or Scheduler(repo, settings, market, truth)
-        if hasattr(self.event_tools, "scheduler"):
-            self.event_tools.scheduler = self.scheduler
+        self.pipeline, self.sessions = pipeline, sessions
+        self.delivery, self.scheduler, self.gateway, self.inbox = delivery, scheduler, gateway, inbox
+        self._bootstrap, self._validate = bootstrap, validate
+        self.active_jobs: set[str] = set()
         self.handlers = {
             "FILTER_ITEM": pipeline.filter_item,
             "ROUTE_ITEM": pipeline.route_item,
@@ -120,41 +102,13 @@ class Runtime:
             "TELEGRAM_ANSWER": self.inbox.answer,
         }
 
-    def validate(self):
-        self.validate_settings(self.settings)
-        if hasattr(self.sessions, "config"):
-            self.sessions.config()
+    def validate(self) -> None:
+        self._validate()
+        self.sessions.config()
 
-    async def prepare(self):
+    async def prepare(self) -> None:
         self.validate()
         await self.gateway.preflight()
-
-    @staticmethod
-    def validate_settings(settings):
-        from tank.bootstrap import validate_registry
-
-        if settings.workers != 8:
-            raise ValueError("Tank production requires exactly eight workers")
-        for name in ("sources", "registry", "semantics", "dependency_map", "thresholds"):
-            settings.load_config(name)
-        required = (
-            "database_url",
-            "openma_url",
-            "openma_model",
-            "telegram_token",
-            "telegram_alerts_chat",
-            "telegram_ops_chat",
-        )
-        missing = [name for name in required if not getattr(settings, name, None)]
-        if missing:
-            raise ValueError("Missing required service settings: " + ", ".join(missing))
-        if not getattr(settings, "backup_dir", None):
-            raise ValueError("TANK_BACKUP_DIR is required for nightly external backups")
-        thresholds = settings.load_config("thresholds")
-        if thresholds.get("filter_cutoff") is None or thresholds.get("routing_cutoff") is None:
-            raise ValueError("Filter and routing cutoffs require calibration before live service startup")
-
-        validate_registry(settings)
 
     async def escalate_wire(self, payload):
         await self.escalate(EscalateTokensJob.model_validate(payload))
@@ -375,7 +329,7 @@ class Runtime:
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), seconds)
 
-    async def supervise(self, name, service, stop):
+    async def supervise(self, name: str, service: RuntimeService, stop: asyncio.Event) -> None:
         while not stop.is_set():
             try:
                 await service.run(stop)
@@ -387,15 +341,12 @@ class Runtime:
                 log.exception("%s loop failed; restarting", name)
                 await self.pause(stop, 1)
 
-    async def bootstrap(self):
-        from tank.bootstrap import sync_registry
+    async def bootstrap(self) -> None:
+        await self._bootstrap()
 
-        await sync_registry(self.repo, self.settings)
-
-    async def run(self, stop=None):
+    async def run(self, stop: asyncio.Event) -> None:
         from tank.sources.rate_limits import shared_request_budgets
 
-        stop = stop or asyncio.Event()
         self.validate()
         await self.bootstrap()
         await self.repo.recover_jobs()
@@ -408,20 +359,22 @@ class Runtime:
 
         self.request_ledger = shared_request_budgets.configure(self.repo, self.settings)
         intake_stop, market_stop, sessions_stop, workers_stop = [asyncio.Event() for _ in range(4)]
+        intake_services: tuple[tuple[str, RuntimeService], ...] = (
+            ("sources", self.sources),
+            ("scheduler", self.scheduler),
+            ("telegram", self.inbox),
+        )
+        support_services: tuple[tuple[str, RuntimeService, asyncio.Event], ...] = (
+            ("market", self.market, market_stop),
+            ("sessions", self.sessions, sessions_stop),
+        )
         producers = [
             asyncio.create_task(self.supervise(name, service, intake_stop), name=name)
-            for name, service in [
-                ("sources", self.sources),
-                ("scheduler", self.scheduler),
-                *([("telegram", self.inbox)] if getattr(self, "inbox", None) else []),
-            ]
+            for name, service in intake_services
         ]
         support = [
             asyncio.create_task(self.supervise(name, service, flag), name=name)
-            for name, service, flag in [
-                ("market", self.market, market_stop),
-                ("sessions", self.sessions, sessions_stop),
-            ]
+            for name, service, flag in support_services
         ]
         workers = [asyncio.create_task(self.worker(workers_stop, n), name=f"worker-{n}") for n in range(8)]
         tasks = producers + support + workers
@@ -429,9 +382,8 @@ class Runtime:
             await stop.wait()
         finally:
             intake_stop.set()
-            if hasattr(self.scheduler, "close"):
-                await self.scheduler.close()
-            deadline = asyncio.get_running_loop().time() + getattr(self.settings, "shutdown_grace_s", 30)
+            await self.scheduler.close()
+            deadline = asyncio.get_running_loop().time() + self.settings.shutdown_grace_s
             drained = False
             try:
                 while asyncio.get_running_loop().time() < deadline:
@@ -507,93 +459,13 @@ class Runtime:
             self.sessions,
             self.pipeline,
             self.delivery,
-            getattr(self, "inbox", None),
-            self.event_tools,
+            self.inbox,
             self.gateway,
         ):
-            if hasattr(service, "close"):
-                try:
-                    await service.close()
-                except Exception:
-                    log.exception("Resource close failed")
+            try:
+                await service.close()
+            except Exception:
+                log.exception("Resource close failed")
         from tank.sources.rate_limits import shared_request_budgets
 
         await shared_request_budgets.release(getattr(self, "request_ledger", None))
-
-
-class RuntimeSupervisor:
-    """Validate a complete candidate before draining and replacing the live generation."""
-
-    def __init__(self, repo, settings, *, candidate_loader=None, factory=Runtime, validator=None):
-        self.repo, self.settings = repo, settings
-        self.factory, self.validator = factory, validator or Runtime.validate_settings
-        self.candidate_loader = candidate_loader or self.load_candidate
-        self.generation = None
-
-    @staticmethod
-    def load_candidate():
-        from tank.settings import Settings, resolve_versions
-
-        return resolve_versions(Settings())
-
-    async def run(self, stop, reload_requested):
-        self.validator(self.settings)
-        runtime = self.factory(self.repo, self.settings)
-        try:
-            runtime.validate()
-            if hasattr(runtime, "prepare"):
-                await runtime.prepare()
-        except Exception:
-            await runtime.close()
-            raise
-        generation_stop = asyncio.Event()
-        task = asyncio.create_task(runtime.run(generation_stop), name="tank-generation")
-        self.generation = runtime
-        try:
-            while not stop.is_set():
-                stop_wait = asyncio.create_task(stop.wait())
-                reload_wait = asyncio.create_task(reload_requested.wait())
-                done, _ = await asyncio.wait(
-                    {task, stop_wait, reload_wait}, return_when=asyncio.FIRST_COMPLETED
-                )
-                for waiter in (stop_wait, reload_wait):
-                    if waiter not in done:
-                        waiter.cancel()
-                await asyncio.gather(stop_wait, reload_wait, return_exceptions=True)
-                if task in done:
-                    await task
-                    if not stop.is_set():
-                        raise RuntimeError("Tank generation stopped unexpectedly")
-                if stop.is_set():
-                    break
-                reload_requested.clear()
-                candidate_runtime = None
-                try:
-                    candidate = await asyncio.to_thread(self.candidate_loader)
-                    self.validator(candidate)
-                    for field in ("database_url", "openma_url", "data_dir"):
-                        if getattr(candidate, field, None) != getattr(self.settings, field, None):
-                            raise ValueError(f"{field} changes require an explicit process restart")
-                    candidate_runtime = self.factory(self.repo, candidate)
-                    candidate_runtime.validate()
-                    if hasattr(candidate_runtime, "prepare"):
-                        await candidate_runtime.prepare()
-                except Exception:
-                    log.exception("SIGHUP candidate rejected; current generation continues")
-                    if candidate_runtime is not None:
-                        await candidate_runtime.close()
-                    continue
-                if stop.is_set():
-                    await candidate_runtime.close()
-                    break
-                generation_stop.set()
-                await task
-                self.settings = candidate
-                runtime = candidate_runtime
-                self.generation = runtime
-                generation_stop = asyncio.Event()
-                task = asyncio.create_task(runtime.run(generation_stop), name="tank-generation")
-                log.info("SIGHUP loaded validated configuration version %s", candidate.config_version)
-        finally:
-            generation_stop.set()
-            await task

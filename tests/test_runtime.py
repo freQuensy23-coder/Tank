@@ -163,7 +163,7 @@ def test_manual_backup_defaults_to_no_retention_and_forwards_force(monkeypatch: 
 
 @pytest.mark.asyncio
 async def test_reload_rejects_candidate_then_drains_old_generation_before_swap() -> None:
-    from tank.runtime import RuntimeSupervisor
+    from tank.runtime_composition import RuntimeSupervisor
 
     stop = asyncio.Event()
     reload_event = asyncio.Event()
@@ -172,9 +172,27 @@ async def test_reload_rejects_candidate_then_drains_old_generation_before_swap()
     started = []
     closed = []
     loaded = []
-    old = SimpleNamespace(database_url="same-db", config_version="old", valid=True)
-    invalid = SimpleNamespace(database_url="same-db", config_version="invalid", valid=False)
-    new = SimpleNamespace(database_url="same-db", config_version="new", valid=True)
+    old = SimpleNamespace(
+        database_url="same-db",
+        openma_url="same-native",
+        data_dir=Path("/fixture"),
+        config_version="old",
+        valid=True,
+    )
+    invalid = SimpleNamespace(
+        database_url="same-db",
+        openma_url="same-native",
+        data_dir=Path("/fixture"),
+        config_version="invalid",
+        valid=False,
+    )
+    new = SimpleNamespace(
+        database_url="same-db",
+        openma_url="same-native",
+        data_dir=Path("/fixture"),
+        config_version="new",
+        valid=True,
+    )
     candidates = iter([invalid, new])
 
     def loader():
@@ -192,6 +210,9 @@ async def test_reload_rejects_candidate_then_drains_old_generation_before_swap()
 
         def validate(self) -> None:
             validate(self.settings)
+
+        async def prepare(self) -> None:
+            self.validate()
 
         async def run(self, flag) -> None:
             started.append(self.settings.config_version)
@@ -272,7 +293,7 @@ async def test_runtime_quiescence_drains_old_job_dependencies_and_preserves_sess
     runtime.sessions = Service()
     runtime.pipeline = Service()
     runtime.delivery = Service()
-    runtime.event_tools = Service()
+    runtime.inbox = Service()
     runtime.gateway = Service()
     future = await repo.enqueue("FUTURE", {}, "future", run_after=iso(utcnow() + timedelta(days=1)))
     await repo.put(
@@ -334,7 +355,7 @@ async def test_runtime_quiescence_drains_old_job_dependencies_and_preserves_sess
             runtime.sessions,
             runtime.pipeline,
             runtime.delivery,
-            runtime.event_tools,
+            runtime.inbox,
         ]
     )
 
@@ -462,7 +483,7 @@ def test_review_label_records_latest_or_explicit_alert_version(monkeypatch: pyte
 async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malformed_edit(
     tmp_path: Path,
 ) -> None:
-    from tank.runtime import RuntimeSupervisor
+    from tank.runtime_composition import RuntimeSupervisor, validate_runtime_settings
     from tank.settings import Settings, resolve_versions
 
     config = tmp_path / "config"
@@ -471,8 +492,17 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
     backup.mkdir()
     for name in ("sources", "registry", "semantics", "dependency_map", "exchange_addresses"):
         (config / f"{name}.yaml").write_text("{}\n")
+    import yaml
+
     thresholds = config / "thresholds.yaml"
-    thresholds.write_text("filter_cutoff: 0.4\nrouting_cutoff: 0.5\n")
+    threshold_values = Settings(_env_file=None).thresholds().model_dump(mode="json")
+
+    def write_thresholds(value: float) -> None:
+        thresholds.write_text(
+            yaml.safe_dump({**threshold_values, "filter_cutoff": value, "routing_cutoff": 0.5})
+        )
+
+    write_thresholds(0.4)
     base = Settings(
         config_dir=config,
         data_dir=tmp_path / "data",
@@ -492,7 +522,10 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
             self.settings = settings
 
         def validate(self) -> None:
-            Runtime.validate_settings(self.settings)
+            validate_runtime_settings(self.settings)
+
+        async def prepare(self) -> None:
+            self.validate()
 
         async def run(self, flag) -> None:
             started.append(
@@ -507,7 +540,9 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
         loads.append(True)
         return resolve_versions(base)
 
-    supervisor = RuntimeSupervisor(None, original, candidate_loader=load, factory=Generation)
+    supervisor = RuntimeSupervisor(
+        None, original, candidate_loader=load, factory=Generation, validator=validate_runtime_settings
+    )
     task = asyncio.create_task(supervisor.run(stop, reload_event))
 
     async def until(predicate) -> None:
@@ -517,7 +552,7 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
 
     try:
         await until(lambda: len(started) == 1)
-        thresholds.write_text("filter_cutoff: 0.8\nrouting_cutoff: 0.5\n")
+        write_thresholds(0.8)
         assert original.load_config("thresholds")["filter_cutoff"] == 0.4
         reload_event.set()
         await until(lambda: len(started) == 2)
@@ -529,7 +564,7 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
         await until(lambda: len(loads) == 2)
         await asyncio.sleep(0.01)
         assert len(started) == 2 and supervisor.settings.load_config("thresholds")["filter_cutoff"] == 0.8
-        thresholds.write_text("filter_cutoff: 0.8\nrouting_cutoff: 0.5\n")
+        write_thresholds(0.8)
         (config / "registry.yaml").write_text(
             "entities:\n- entity_id: broken\n  aliases: [Valid]\n"
             "  qualified_aliases:\n  - alias: Generic\n    requires_any: []\n"
@@ -577,7 +612,7 @@ async def test_controlled_generation_timeout_preserves_last_job_attempt(
         "sessions",
         "pipeline",
         "delivery",
-        "event_tools",
+        "inbox",
         "gateway",
     ):
         setattr(runtime, name, Service())
@@ -675,7 +710,7 @@ async def test_gateway_starts_in_same_runtime_before_sources_and_closes_after_dr
     runtime.bootstrap = AsyncMock()
     runtime.handlers = {}
     runtime.gateway = Gateway()
-    for name in ("sources", "scheduler", "market", "sessions", "pipeline", "delivery", "event_tools"):
+    for name in ("sources", "scheduler", "market", "sessions", "pipeline", "delivery", "inbox"):
         setattr(runtime, name, Service(name))
     task = asyncio.create_task(runtime.run(stop))
     await binding.wait()

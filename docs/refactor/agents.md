@@ -166,3 +166,31 @@ adapter now reads REST_TIMEOUT_S at each request; its stream timeout remains
 independent. Both local real-HTTP deadline integration cases pass, zero skips,
 1.18 seconds. The PostgreSQL scout integration expectation now matches its
 canonical proposal_id producer contract.
+
+
+## Required runtime composition
+
+Runtime.__init__ now requires every service and the registry-bootstrap/settings
+validation callbacks explicitly. It constructs no services and has no nullable
+dependency injections or hidden default service factories. Production
+build_runtime in runtime_composition creates and wires one generation.
+RuntimeSupervisor and production registry/config validation moved into that
+composition module, so core runtime no longer imports bootstrap/composition.
+The supervisor's factory/validator/candidate loader are required typed ports;
+build_supervisor supplies the production implementations. Candidate generations
+must implement preflight preparation, rather than using hasattr to skip it.
+Configuration identity comparisons use required database/native/data-directory
+attributes. Candidate/generation nullable state only means not constructed yet.
+
+Runner/cleanup and gateway lifecycle methods have narrow protocols. Domain
+service dependencies still use concrete types pending their exact application
+ports; this is recorded open work, not a declaration of completed inversion.
+The stateless EventToolService owns no HTTP client and is not a runtime lifecycle
+dependency: its injected client is borrowed and its temporary clients use an
+exit stack. The composition root binds its scheduler and the session's Telegram
+sender before constructing the runtime. Shutdown closes owning services only.
+
+All21 runtime/reload/drain/precision unit cases pass in1.57s with explicit
+required lifecycle fakes. Configured mypy passes both runtime modules; full
+strict runtime method migration remains open. CLI/E2E owners are coordinating
+the new build_supervisor import and explicit test construction.
