@@ -172,6 +172,26 @@ def test_response_capture_is_bounded_and_preserves_encoding(reader, kind):
         assert evidence["decodeError"] == "GZIP_DECODE_FAILED_WIRE_PREFIX"
 
 
+def test_error_body_read_honors_deadline_and_reports_prefix(reader, clock):
+    class SlowBody(io.BytesIO):
+        def read1(self, size=-1):
+            clock.now += 2
+            return super().read(3)
+
+    error = http_error(body=b"abcdefghij", headers={"Content-Length": "10"})
+    error.fp = SlowBody(b"abcdefghij")
+    evidence = reader.response_evidence(error, deadline=3)
+    assert evidence["body"] == "abcdef"
+    assert evidence["bodyTruncated"] and evidence["omittedWireBytes"] == 4
+    assert evidence["readError"] == "RESPONSE_BODY_DEADLINE_EXHAUSTED"
+
+
+def test_partial_error_response_reports_known_missing_bytes(reader):
+    evidence = reader.response_evidence(http_error(body=b"prefix", headers={"Content-Length": "20"}))
+    assert evidence["body"] == "prefix" and evidence["bodyTruncated"]
+    assert evidence["omittedWireBytes"] == 14
+
+
 def test_diagnostics_exclude_credentials_even_if_echoed_by_upstream(reader, monkeypatch):
     monkeypatch.setenv("APIFY_TOKEN", "secret-apify-value")
     evidence = reader.response_evidence(

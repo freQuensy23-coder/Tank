@@ -202,6 +202,32 @@ async def test_actual_document_upload_preserves_every_response_byte_and_receipt(
     assert len(receipts) == 4 and [row["document_bytes"] for row in receipts[:3]] == [len(raw)] * 3
 
 
+async def test_oversized_response_uploads_bounded_prefix_and_explicit_truncation_metadata():
+    repo = MemoryRepository()
+    raw = b"a" * 2_000_050
+    evidence = diagnostics(raw.decode())
+    evidence["attempts"] = evidence["attempts"][:1]
+    evidence["attempts"][0]["response"].update(bodyTruncated=True, omittedWireBytes=50, wireBytes=2_000_000)
+    notice = await notice_for(repo, evidence)
+    captured = []
+
+    def send(request):
+        captured.append(request)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": len(captured)}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+        await DeliveryService(repo, telegram_settings(), http=http).deliver(
+            {"notice_id": notice["notice_id"]}
+        )
+    assert len(captured) == 3
+    assert multipart(captured[1])["document"][1] == raw[:2_000_000]
+    metadata = json.loads(multipart(captured[2])["document"][1])
+    response = metadata["attempts"][0]["response"]
+    assert response["bodyTruncated"] and response["omittedWireBytes"] == 50
+    assert response["bodyBytes"] == 2_000_000
+    assert response["bodySha256"] == sha256(raw[:2_000_000])
+
+
 async def test_partial_document_delivery_retry_does_not_duplicate_successful_message_or_documents():
     repo = MemoryRepository()
     notice = await notice_for(repo, diagnostics("complete body"))

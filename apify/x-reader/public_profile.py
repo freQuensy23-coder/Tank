@@ -11,8 +11,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zlib
 from datetime import UTC, datetime
-from http.client import HTTPException
+from http.client import HTTPException, IncompleteRead
 
 from bs4 import BeautifulSoup
 
@@ -53,22 +54,42 @@ def redact(value):
     )
 
 
-def response_evidence(response):
+def read_body(response, deadline=None):
+    parts = []
+    size = 0
+    read_error = None
+    stream = response.fp if isinstance(response, urllib.error.HTTPError) else response
+    socket = getattr(getattr(getattr(stream, "fp", None), "raw", None), "_sock", None)
+    read = getattr(response, "read1", response.read)
+    try:
+        while size <= BODY_LIMIT:
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    read_error = "RESPONSE_BODY_DEADLINE_EXHAUSTED"
+                    break
+                if socket is not None:
+                    socket.settimeout(min(12, remaining))
+            part = read(min(65536, BODY_LIMIT + 1 - size))
+            if not part:
+                break
+            parts.append(part)
+            size += len(part)
+    except IncompleteRead as exc:
+        parts.append(exc.partial[: max(0, BODY_LIMIT + 1 - size)])
+        read_error = "RESPONSE_BODY_READ_FAILED"
+    except (OSError, EOFError, HTTPException):
+        read_error = "RESPONSE_BODY_READ_FAILED"
+    return b"".join(parts), read_error
+
+
+def response_evidence(response, deadline=None):
     headers = {
         name.lower(): redact(value)
         for name, value in response.headers.items()
         if name.lower() in DIAGNOSTIC_HEADERS
     }
-    raw = b""
-    read_error = None
-    try:
-        while len(raw) <= BODY_LIMIT:
-            part = response.read(min(65536, BODY_LIMIT + 1 - len(raw)))
-            if not part:
-                break
-            raw += part
-    except (OSError, EOFError, HTTPException):
-        read_error = "RESPONSE_BODY_READ_FAILED"
+    raw, read_error = read_body(response, deadline)
     truncated = len(raw) > BODY_LIMIT
     captured = raw[:BODY_LIMIT]
     encoding_error = None
@@ -78,7 +99,7 @@ def response_evidence(response):
                 captured = decoded.read(BODY_LIMIT + 1)
             truncated = truncated or len(captured) > BODY_LIMIT
             captured = captured[:BODY_LIMIT]
-        except (OSError, EOFError):
+        except (OSError, EOFError, zlib.error):
             encoding_error = "GZIP_DECODE_FAILED_WIRE_PREFIX"
     original = captured
     try:
@@ -93,7 +114,8 @@ def response_evidence(response):
     else:
         body = base64.b64encode(safe).decode("ascii")
     length = headers.get("content-length", "")
-    total = int(length) if length.isdigit() else None
+    total = int(length) if length.isdecimal() and len(length) <= 20 else None
+    truncated = truncated or (total is not None and total > len(raw))
     return {
         "status": response.code,
         "headers": headers,
@@ -203,7 +225,11 @@ def fetch_profile(handle, deadline=None):
                     "www.twitter.com",
                 ):
                     raise RuntimeError("UNEXPECTED_PUBLIC_PROFILE_REDIRECT")
-                compressed = response.read(BODY_LIMIT + 1)
+                compressed, read_error = read_body(response, deadline)
+                if read_error:
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("PUBLIC_PROFILE_DEADLINE_EXHAUSTED")
+                    raise OSError("PUBLIC_PROFILE_BODY_READ_FAILED")
                 if len(compressed) > BODY_LIMIT:
                     raise RuntimeError("PUBLIC_PROFILE_TOO_LARGE")
                 if response.headers.get("Content-Encoding", "").lower() == "gzip":
@@ -221,7 +247,7 @@ def fetch_profile(handle, deadline=None):
             reason = "PUBLIC_PROFILE_HTTP_" + str(exc.code)
             retryable = exc.code in (408, 429) or 500 <= exc.code <= 599
             try:
-                attempt["response"] = response_evidence(exc)
+                attempt["response"] = response_evidence(exc, deadline)
             finally:
                 exc.close()
             attempt["status"] = exc.code
@@ -230,11 +256,14 @@ def fetch_profile(handle, deadline=None):
         except (OSError, EOFError, HTTPException):
             reason = "PUBLIC_PROFILE_CONNECTION_FAILED"
             retryable = True
-        except (UnicodeError, ValueError):
+        except (UnicodeError, ValueError, zlib.error):
             reason = "PUBLIC_PROFILE_NOT_READABLE"
         attempt.update(error=reason, retryable=retryable)
         diagnostics["attempts"].append(attempt)
         diagnostics["attemptCount"] = len(diagnostics["attempts"])
+        if time.monotonic() >= deadline:
+            diagnostics["outcome"] = "deadline_exhausted"
+            break
         if not retryable:
             diagnostics["outcome"] = "permanent_failure"
             break
