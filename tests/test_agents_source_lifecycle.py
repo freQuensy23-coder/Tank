@@ -1,6 +1,9 @@
 """Historical lifecycle patches validate owned facts while retaining original capture data."""
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Self
 
 import pytest
 from pydantic import JsonValue, ValidationError
@@ -113,3 +116,60 @@ async def test_historical_projection_requires_declared_lifecycle(missing_status:
             "item", frozenset({"PENDING"}), FailedExtraction(status="FAILED", reason="ACTUAL_FAILURE")
         )
     assert await store.get("ingest.source_items", "item") == original
+
+
+class MinimalLifecycleStore:
+    def __init__(self, document: dict[str, JsonValue]) -> None:
+        self.document = dict(document)
+
+    async def get(self, collection: str, key: str) -> dict[str, JsonValue] | None:
+        assert collection == "ingest.source_items"
+        return dict(self.document)
+
+    async def put(self, collection: str, key: str, record: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        assert collection == "ingest.source_items"
+        self.document = dict(record)
+        return dict(record)
+
+    @asynccontextmanager
+    async def lock(self, key: str) -> AsyncIterator[Self]:
+        assert key == "ingest-dedup"
+        yield self
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[Self]:
+        yield self
+
+
+@pytest.mark.asyncio
+async def test_authoritative_completion_needs_only_identity_and_minimal_persistence_port() -> None:
+    original: dict[str, JsonValue] = {
+        "item_id": "historical",
+        "extraction_decision": "NO_EVENT",
+        "extraction_reason": "OLD",
+        "retained": {"n": 1, "flag": True},
+        "raw_ref": "/frozen/original",
+    }
+    store = MinimalLifecycleStore(original)
+    state = await SourceExtractionRepository(store).complete("historical")
+    assert state is not None and state.extraction_status == "DONE"
+    assert state.extraction_decision is None and state.extraction_reason is None
+    owned = {"extraction_status", "extraction_decision", "extraction_reason"}
+    assert canonical_json(
+        {key: value for key, value in store.document.items() if key not in owned}
+    ) == canonical_json({key: value for key, value in original.items() if key not in owned})
+    assert "source_id" not in store.document and "author" not in store.document
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing_identity", [False, True])
+async def test_authoritative_completion_refuses_missing_or_mismatched_identity(
+    missing_identity: bool,
+) -> None:
+    original: dict[str, JsonValue] = {"retained": "unchanged"}
+    if not missing_identity:
+        original["item_id"] = "different"
+    store = MinimalLifecycleStore(original)
+    with pytest.raises(KeyError if missing_identity else ValueError):
+        await SourceExtractionRepository(store).complete("requested")
+    assert store.document == original

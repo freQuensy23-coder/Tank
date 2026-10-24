@@ -6,32 +6,43 @@ from typing import Protocol, Self
 
 from pydantic import Field, JsonValue
 
+from tank.contracts import DomainModel
 from tank.contracts.json import decode_json
-from tank.contracts.repository import DocumentStore
 from tank.contracts.source_items import ExtractionStatus, SourceExtractionFields, SourceExtractionOutcome
 
 
-class SourceExtractionState(SourceExtractionFields):
+class SourceExtractionIdentity(DomainModel):
     item_id: str = Field(min_length=1)
 
 
-class SourceLifecycleStore(DocumentStore, Protocol):
+class SourceExtractionState(SourceExtractionFields, SourceExtractionIdentity):
+    pass
+
+
+class SourceLifecycleStore(Protocol):
+    async def get(self, collection: str, key: str) -> dict[str, JsonValue] | None: ...
+    async def put(self, collection: str, key: str, record: dict[str, JsonValue]) -> dict[str, JsonValue]: ...
     def transaction(self) -> AbstractAsyncContextManager[Self]: ...
     def lock(self, key: str) -> AbstractAsyncContextManager[Self]: ...
 
 
+def _identity(document: Mapping[str, JsonValue], item_id: str) -> SourceExtractionIdentity:
+    identity = SourceExtractionIdentity.model_validate({"item_id": document["item_id"]})
+    if identity.item_id != item_id:
+        raise ValueError("Native source identity does not match its repository key")
+    return identity
+
+
 def _state(document: Mapping[str, JsonValue], item_id: str) -> SourceExtractionState:
-    state = SourceExtractionState.model_validate(
+    identity = _identity(document, item_id)
+    return SourceExtractionState.model_validate(
         {
-            "item_id": document["item_id"],
+            "item_id": identity.item_id,
             "extraction_status": document["extraction_status"],
             "extraction_decision": document.get("extraction_decision"),
             "extraction_reason": document.get("extraction_reason"),
         }
     )
-    if state.item_id != item_id:
-        raise ValueError("Native source identity does not match its repository key")
-    return state
 
 
 class SourceExtractionRepository:
@@ -56,8 +67,27 @@ class SourceExtractionRepository:
             if state.extraction_status not in allowed:
                 return state
             updated = state.with_extraction(outcome)
-            patch = decode_json(updated.model_dump_json())
-            if not isinstance(patch, dict):
-                raise TypeError("Source lifecycle must serialize as an object")
-            await self._store.put("ingest.source_items", item_id, {**document, **patch})
+            await self._write(document, updated)
             return updated
+
+    async def complete(self, item_id: str) -> SourceExtractionState | None:
+        """Record authoritative accepted evidence without inventing a historical prior state."""
+        async with self._store.lock("ingest-dedup"), self._store.transaction():
+            document = await self._store.get("ingest.source_items", item_id)
+            if document is None:
+                return None
+            identity = _identity(document, item_id)
+            completed = SourceExtractionState(
+                item_id=identity.item_id,
+                extraction_status="DONE",
+                extraction_decision=None,
+                extraction_reason=None,
+            )
+            await self._write(document, completed)
+            return completed
+
+    async def _write(self, document: dict[str, JsonValue], state: SourceExtractionState) -> None:
+        patch = decode_json(state.model_dump_json())
+        if not isinstance(patch, dict):
+            raise TypeError("Source lifecycle must serialize as an object")
+        await self._store.put("ingest.source_items", state.item_id, {**document, **patch})
