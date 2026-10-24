@@ -97,7 +97,7 @@ class LoopbackTelegramTransport(httpx.AsyncBaseTransport):
         target = httpx.Request(
             request.method,
             self.origin + request.url.path,
-            headers={key: value for key, value in request.headers.items() if key.lower() != "host"},
+            headers=request.headers,
             stream=request.stream,
             extensions=request.extensions,
         )

@@ -3,7 +3,6 @@
 import asyncio
 
 from apify import Actor
-
 from direct_fetch import fetch_snapshot
 
 

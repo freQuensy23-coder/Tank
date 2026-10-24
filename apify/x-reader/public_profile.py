@@ -12,6 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zlib
+from contextlib import suppress
 from datetime import UTC, datetime
 from http.client import HTTPException, IncompleteRead
 
@@ -135,12 +136,10 @@ def response_evidence(response, deadline=None):
 def run_deadline():
     remaining = 100.0
     if value := os.environ.get("ACTOR_TIMEOUT_AT"):
-        try:
+        with suppress(ValueError):
             remaining = min(
                 remaining, datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() - time.time() - 2
             )
-        except ValueError:
-            pass
     return time.monotonic() + max(0, remaining)
 
 
