@@ -35,7 +35,7 @@ export interface Fences {
 }
 export interface RetainedRuntime {
   runtimeHandle(): Handle;
-  suspend(input: { kind: 'filesystem' }): Promise<unknown>;
+  suspend(input: { kind: 'filesystem'; assertCurrent?: () => Promise<void> }): Promise<unknown>;
 }
 export interface Provider<R extends RetainedRuntime> {
   allocationIntent(scope: Scope, fence: Fence, signal: AbortSignal): Promise<Handle>;
@@ -296,7 +296,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
           await this.options.provider.reap(this.handle, this.scope, this.fence, new AbortController().signal);
           await this.publish('aborted');
         } else if (this.runtime && this.fence && await this.options.fences.isCurrent(this.fence)) {
-          await this.runtime.suspend({ kind: 'filesystem' });
+          await this.runtime.suspend({ kind: 'filesystem', assertCurrent: async () => { await this.current(); } });
         }
       } catch { cleanupFailed = true; }
       if ((cleanupFailed || publicationUnknown) && created && this.handle && this.fence) {
@@ -328,7 +328,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
       try {
         await Promise.allSettled([...this.operations]);
         await assertExecutionCurrent(); await this.current();
-        await this.runtime.suspend({ kind: 'filesystem' });
+        await this.runtime.suspend({ kind: 'filesystem', assertCurrent: async () => { await assertExecutionCurrent(); await this.current(); } });
         this.runtime = null; this.phase = 'stopped';
       } catch (error) {
         this.phase = 'active';
@@ -349,7 +349,7 @@ export class RetainedSessionLifecycle<R extends RetainedRuntime> {
     try {
       await Promise.allSettled([...this.operations]);
       if (this.runtime && this.fence && await this.options.fences.isCurrent(this.fence)) {
-        await this.runtime.suspend({ kind: 'filesystem' });
+        await this.runtime.suspend({ kind: 'filesystem', assertCurrent: async () => { await this.current(); } });
       }
     } finally {
       this.runtime = null; this.handle = null; this.phase = 'idle';

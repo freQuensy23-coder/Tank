@@ -29,6 +29,8 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { BoxLiteFilesystemDurability } from "./guest-filesystem.js";
+export { BoxLiteFilesystemDurability } from "./guest-filesystem.js";
 
 export type BoxLiteManagedProviderId = "litebox" | "boxrun";
 
@@ -266,6 +268,7 @@ export class BoxLiteManagedRuntime
   readonly #client: BoxLiteClientPort;
   readonly #box: BoxLiteBoxSdkPort;
   readonly #expectedName: string;
+  readonly #filesystem: BoxLiteFilesystemDurability;
   #destroyed = false;
 
   constructor(input: {
@@ -278,6 +281,7 @@ export class BoxLiteManagedRuntime
     this.#client = input.client;
     this.#box = input.box;
     this.#expectedName = input.expectedName;
+    this.#filesystem = new BoxLiteFilesystemDurability(input.box);
   }
 
   runtimeHandle() {
@@ -301,11 +305,15 @@ export class BoxLiteManagedRuntime
     }
   }
 
-  async suspend(input: { kind: "filesystem" | "memory" }): Promise<SandboxCheckpointHandle> {
+  async flushFilesystem(assertCurrent?: () => Promise<void>): Promise<void> {
+    await this.#filesystem.flush(assertCurrent);
+  }
+
+  async suspend(input: { kind: "filesystem" | "memory"; assertCurrent?: () => Promise<void> }): Promise<SandboxCheckpointHandle> {
     if (input.kind !== "filesystem") {
       throw new Error("BoxLite retained runtime supports filesystem suspension only");
     }
-    await this.#box.stop();
+    await this.#filesystem.suspend(input.assertCurrent);
     return {
       provider: this.#providerId,
       checkpointId: this.#box.id,
@@ -334,6 +342,7 @@ export class BoxLiteManagedRuntime
   }
 
   async exec(command: string, timeoutMs = 120_000): Promise<string> {
+    this.#filesystem.assertUsable();
     const result = await executeAndCollect(
       this.#box,
       "/bin/sh",
@@ -352,6 +361,7 @@ export class BoxLiteManagedRuntime
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
+    this.#filesystem.assertUsable();
     const directory = await mkdtemp(join(tmpdir(), "openma-boxlite-read-"));
     const target = join(directory, "content");
     try {
@@ -367,6 +377,7 @@ export class BoxLiteManagedRuntime
   }
 
   async writeFileBytes(path: string, bytes: Uint8Array): Promise<string> {
+    this.#filesystem.assertUsable();
     const directory = await mkdtemp(join(tmpdir(), "openma-boxlite-write-"));
     const source = join(directory, "content");
     try {
@@ -391,6 +402,7 @@ export class BoxLiteManagedRuntime
   }
 
   async spawnDuplexProcess(spec: SandboxDuplexProcessSpec): Promise<SandboxDuplexProcess> {
+    this.#filesystem.assertUsable();
     const execution = await this.#box.exec(
       spec.command,
       spec.args === undefined ? [] : [...spec.args],

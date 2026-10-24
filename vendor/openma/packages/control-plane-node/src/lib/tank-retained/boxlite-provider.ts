@@ -1,4 +1,5 @@
 import { copyGuestFileIn, copyGuestFileOut } from './guest-file-io.js';
+import type { BoxLiteFilesystemDurability } from '@open-managed-agents/managed-runtime-boxlite';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -14,6 +15,7 @@ type Process = {
   exited: Promise<{ code: number | null; signal: string | null }>; kill(signal?: string): Promise<void>;
 };
 export interface BoxLiteRuntime extends RetainedRuntime {
+  flushFilesystem(assertCurrent?: () => Promise<void>): Promise<void>;
   readFileBytes(path: string): Promise<Uint8Array>;
   writeFileBytes(path: string, bytes: Uint8Array): Promise<string>;
   spawnDuplexProcess(spec: { command: string; args: string[]; env?: Record<string, string>; cwd?: string }): Promise<Process>;
@@ -36,6 +38,7 @@ interface PublicProvider {
   resume(handle: Handle, context: { sessionId: string; workdir: string }, env: Record<string, string>, acquisition: Acquisition): Promise<BoxLiteRuntime>;
 }
 export interface PinnedBoxLiteModule {
+  BoxLiteFilesystemDurability: typeof BoxLiteFilesystemDurability;
   createBoxLiteProvider(options: { providerId: 'litebox'; image: string; runtimeName?: (context: { sessionId: string; workdir: string }) => string }): PublicProvider;
   createBoxLiteManagedRuntime(options: { providerId: 'litebox'; image: string; leaseTtlMs: number }): {
     sandbox: { reap(input: { scope: Scope; lease: Handle; reason: 'completed' }): Promise<void> };
@@ -121,15 +124,12 @@ export function pinnedBoxLiteProvider(input: {
   };
   const stopExactPublished = async (handle: Handle, scope: Scope, fence: Fence) => {
     await current(fence);
-    const freshClient = client as unknown as { get(id: string): Promise<null | {
-      id: string; info(): { id: string; name: string; state: { running: boolean } }; stop(): Promise<void>;
-    }> };
-    const box = await freshClient.get(handle.runtimeId);
+    const box = await client.get(handle.runtimeId);
     if (!box) return;
     const info = box.info();
     if (box.id !== handle.runtimeId || info.id !== handle.runtimeId || info.name !== ownershipName(handle, scope)) throw Error('retained_cleanup_ownership_mismatch');
     await current(fence);
-    if (info.state.running) await box.stop();
+    if (info.state.running) await new input.module.BoxLiteFilesystemDurability(box).suspend(() => current(fence));
   };
   return {
     async allocationIntent(scope, fence, signal) {
@@ -210,12 +210,14 @@ export function pinnedBoxLiteProvider(input: {
         const sourceRemoved = await original.exec('rm', ['-f', guestArchive], undefined, { cwd: '/' });
         if (sourceRemoved.exitCode !== 0) throw Error('retained_upgrade_transfer_failed:archive_cleanup');
         await assertCurrent();
-        await source.suspend({ kind: 'filesystem' }); source = undefined;
+        await source.suspend({ kind: 'filesystem', assertCurrent }); source = undefined;
         await assertCurrent();
         const imported = await target.exec('python3', ['-c', workspaceTransferProgram, 'import', guestArchive, allowed, '/workspace'], undefined, { cwd: '/', timeoutSecs: 120 });
         if (imported.exitCode !== 0 || imported.stdout.trim() !== exported.stdout.trim()) throw Error('retained_upgrade_transfer_failed:workspace_validation');
         const removed = await target.exec('rm', ['-f', guestArchive], undefined, { cwd: '/' });
         if (removed.exitCode !== 0) throw Error('retained_upgrade_transfer_failed:archive_cleanup');
+        await assertCurrent();
+        await replacement.flushFilesystem(assertCurrent);
         await assertCurrent();
         return replacement;
       } catch (error) {
@@ -227,9 +229,11 @@ export function pinnedBoxLiteProvider(input: {
               await cleanup.exec('rm', ['-f', guestArchive, guestArchive + '.part'], undefined, { cwd: '/' });
             } catch {}
           }
-          await Promise.allSettled([source?.suspend({ kind: 'filesystem' }), replacement?.suspend({ kind: 'filesystem' })]);
+          await Promise.allSettled([source?.suspend({ kind: 'filesystem', assertCurrent: () => current(fence) }),
+            replacement?.suspend({ kind: 'filesystem', assertCurrent: () => current(fence) })]);
         }
         if (error instanceof Error && error.message === 'retained_exec_timeout') throw Error('retained_upgrade_transfer_failed:guest_timeout');
+        if (error instanceof Error && error.message === 'retained_filesystem_flush_failed') throw Error('retained_upgrade_transfer_failed:guest_filesystem_flush');
         if (error instanceof Error && /retained_|lease|abort/i.test(error.message)) throw error;
         throw Error('retained_upgrade_transfer_failed:provider_io');
       } finally {
@@ -253,7 +257,7 @@ export function pinnedBoxLiteProvider(input: {
       if (info.state.running) {
         const previous = await selectedProvider.resume(handle, context, {}, acquisition(scope, fence, signal));
         await current(fence);
-        await previous.suspend({ kind: 'filesystem' });
+        await previous.suspend({ kind: 'filesystem', assertCurrent: async () => { signal.throwIfAborted(); await current(fence); } });
         await current(fence);
       }
       const resumed = await selectedProvider.resume(handle, context, {}, acquisition(scope, fence, signal));

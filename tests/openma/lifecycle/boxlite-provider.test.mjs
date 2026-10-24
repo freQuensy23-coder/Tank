@@ -1,5 +1,6 @@
 const openmaSource = process.env.TANK_AUDIT_OPENMA_ROOT ? pathToFileURL(process.env.TANK_AUDIT_OPENMA_ROOT.replace(/\/?$/, '/')) : new URL('../../../vendor/openma/', import.meta.url);
 import { pathToFileURL } from 'node:url';
+import { BoxLiteFilesystemDurability } from '../../../vendor/openma/packages/managed-runtime-boxlite/src/guest-filesystem.ts';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { Readable, Writable } from 'node:stream';
@@ -21,7 +22,7 @@ test('retained writable-memory resume proves every native host binding before op
   ] };
   const record = { id: 'owned', name, options: { volumes: allocation.volumes.map(volume => ({ host_path: volume.hostPath, guest_path: volume.guestPath, read_only: volume.readOnly })) } };
   let resumes = 0;
-  const module = { createBoxLiteProvider() { return { async resume() { resumes++; return { runtimeHandle: () => ({ provider: 'litebox', runtimeId: 'owned' }) }; } }; },
+  const module = { BoxLiteFilesystemDurability, createBoxLiteProvider() { return { async resume() { resumes++; return { runtimeHandle: () => ({ provider: 'litebox', runtimeId: 'owned' }) }; } }; },
     createBoxLiteManagedRuntime() { return { sandbox: {} }; } };
   const provider = pinnedBoxLiteProvider({ module, allocation, leaseTtlMs: 30000,
     client: { async getInfo() { return { id: 'owned', name, state: { running: false } }; } }, readLegacyConfiguration: async () => record, isCurrent: async () => true });
@@ -39,6 +40,7 @@ test('retained writable-memory resume proves every native host binding before op
 test('public provider bridge resumes a fresh handle and reaps without resume or allocating secret env',async()=>{
   const calls=[];
   const module={
+    BoxLiteFilesystemDurability,
     createBoxLiteProvider(options){calls.push(['options',options]);return {
       async create(...args){calls.push(['create',...args]);return {runtimeHandle:()=>({provider:'litebox',runtimeId:'box'})};},
       async resume(...args){calls.push(['resume',...args]);return {runtimeHandle:()=>({provider:'litebox',runtimeId:'box'})};},
@@ -117,6 +119,7 @@ test('replacement normalizes a real guest timeout only inside preflight and reta
     return originalExec.call(this, command, args, env, { ...options, timeoutSecs: 0.005 });
   });
   const module = {
+    BoxLiteFilesystemDurability,
     createBoxLiteProvider() { return { async resume() { return runtime; }, async create() { assert.fail('timeout must precede replacement allocation'); } }; },
     createBoxLiteManagedRuntime() { return { sandbox: { async reap() { assert.fail('source must remain published'); } } }; },
   };
@@ -150,6 +153,7 @@ test('replacement normalizes a real guest timeout only inside preflight and reta
 test('crash recovery quiesces orphan processes then resumes using a second fresh native handle',async()=>{
   const calls=[];
   const module={
+    BoxLiteFilesystemDurability,
     createBoxLiteProvider(){return {async create(){throw Error('never allocate');},async resume(){calls.push('fresh-resume');return {async suspend(){calls.push('owned-stop');}};}};},
     createBoxLiteManagedRuntime(){return {sandbox:{async reap(){throw Error('never remove retained disk');}}};},
   };
@@ -160,7 +164,7 @@ test('crash recovery quiesces orphan processes then resumes using a second fresh
 
 test('unpublished existing native disk and missing published disk fail closed without provider allocation',async()=>{
   let effects=0;
-  const module={createBoxLiteProvider(){return {async create(){effects++;},async resume(){effects++;}};},createBoxLiteManagedRuntime(){return {sandbox:{async reap(){effects++;}}};}};
+  const module={BoxLiteFilesystemDurability,createBoxLiteProvider(){return {async create(){effects++;},async resume(){effects++;}};},createBoxLiteManagedRuntime(){return {sandbox:{async reap(){effects++;}}};}};
   const existing=pinnedBoxLiteProvider({module,client:{async getInfo(){return {state:{running:false}};}},allocation:{image:'pinned'},leaseTtlMs:30000});
   await assert.rejects(existing.create(scope,fence,signal()),/retained_unpublished_runtime_exists/);
   const missing=pinnedBoxLiteProvider({module,client:{async getInfo(){return null;}},allocation:{image:'pinned'},leaseTtlMs:30000});

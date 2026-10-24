@@ -31,7 +31,8 @@ export function setup() {
     let invalid=false;
     const value={
       runtimeHandle:()=>({provider:'litebox',runtimeId:disk.id}),
-      async suspend(){assert.equal(invalid,false);calls.push(['stop',disk.id]);invalid=true;disk.running=false;},
+      async flushFilesystem(assertCurrent){assert.equal(invalid,false);await assertCurrent?.();},
+      async suspend(input){assert.equal(invalid,false);await input?.assertCurrent?.();calls.push(['stop',disk.id]);invalid=true;disk.running=false;},
       async exec(command,env={}){assert.equal(invalid,false);assert.equal(disk.running,true);calls.push(['exec',disk.id,command]);return {disk,env};},
     };
     nativeHandles.push(value);return value;
