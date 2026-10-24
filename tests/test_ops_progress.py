@@ -26,7 +26,7 @@ from tank.settings import Settings
 from tank.sources import SourceService
 from tank.storage import MemoryRepository
 from tank.telegram_rich import SCORE_DIMENSIONS, score_summary
-from tank.util import iso, utcnow
+from tank.util import clock_iso, iso, utcnow
 
 
 async def notices(repo):
@@ -265,7 +265,7 @@ async def test_agent_acceptance_completion_and_failure_are_not_confused_with_app
                 "message_id": "m",
                 "retry_count": 0,
                 "payload": {"kind": "NEW_ITEM", "item_id": "i"},
-                "sent_at": iso(),
+                "sent_at": clock_iso(),
                 "turn_status": "PENDING",
             }
         ],
