@@ -133,6 +133,7 @@ class ClickHouse:
             "output_format_json_quote_64bit_integers": "0",
             "output_format_json_quote_decimals": "0",
             "do_not_merge_across_partitions_select_final": "1",
+            "use_skip_indexes_if_final": "0",
             "max_query_size": str(256 << 20),
         }
         for name, (value, _) in (params or {}).items():
@@ -226,6 +227,20 @@ def _filters(q, collection, filters):
             q.where(f"`{name}` = {q.param(value, TYPES[kind])}")
 
 
+def _after(q, *keys):
+    """Rows after a keyset cursor, spelled out per column: ClickHouse prunes by the sort key on
+    this form and reads the whole range again for every page on a tuple comparison."""
+    q.where(_after_clause(q, *keys))
+
+
+def _after_clause(q, *keys):
+    column, value, kind = keys[0]
+    here = q.param(value, kind)
+    if len(keys) == 1:
+        return f"{column} > {here}"
+    return f"({column} > {here} OR ({column} = {here} AND {_after_clause(q, *keys[1:])}))"
+
+
 def _ids(q, instrument_ids):
     q.where(f"instrument_id IN {q.param(list(instrument_ids), 'Array(String)')}")
 
@@ -269,13 +284,15 @@ def _table(collection):
 async def _select(ch, collection, q, order, tail="", selected="*"):
     day = MARKET_TABLES[collection]
     keys = await ch.rows(
-        f"SELECT storage_key, `{day}` AS _day FROM {_table(collection)} WHERE {q.predicate()} ORDER BY {order} {tail}",
+        f"SELECT storage_key, instrument_id, `{day}` AS _day FROM {_table(collection)} "
+        f"WHERE {q.predicate()} ORDER BY {order} {tail}",
         q.params,
     )
     if not keys:
         return []
     days = [parse_time(r["_day"]) for r in keys]
     k = Query()
+    k.where(f"instrument_id IN {k.param(sorted({r['instrument_id'] for r in keys}), 'Array(String)')}")
     k.where(f"`{day}` >= {k.param(min(days), DT)}")
     k.where(f"`{day}` <= {k.param(max(days), DT)}")
     k.where(f"storage_key IN {k.param([r['storage_key'] for r in keys], 'Array(String)')}")
@@ -302,9 +319,7 @@ async def range_page(
     if end:
         q.where(f"`{time_field}` < {q.param(parse_time(end), DT)}")
     if after is not None:
-        q.where(
-            f"(`{time_field}`, storage_key) > ({q.param(parse_time(after[0]), DT)}, {q.param(str(after[1]), 'String')})"
-        )
+        _after(q, (f"`{time_field}`", parse_time(after[0]), DT), ("storage_key", str(after[1]), "String"))
     _filters(q, collection, filters)
     rows = await _select(ch, collection, q, f"`{time_field}`, storage_key", f"LIMIT {int(limit)}")
     records = await _decode(collection, rows)
@@ -355,9 +370,7 @@ async def late_page(
     if end is not None:
         q.where(f"`{arrival_field}` < {q.param(end, DT)}")
     if after is not None:
-        q.where(
-            f"(`{arrival_field}`, storage_key) > ({q.param(after[0], DT)}, {q.param(str(after[1]), 'String')})"
-        )
+        _after(q, (f"`{arrival_field}`", after[0], DT), ("storage_key", str(after[1]), "String"))
     rows = await _select(ch, collection, q, f"`{arrival_field}`, storage_key", f"LIMIT {int(limit)}")
     records = await _decode(collection, rows)
     return [
@@ -366,27 +379,52 @@ async def late_page(
     ]
 
 
+RECENT_LATEST = timedelta(days=1)
+
+
 async def latest_market_records(
     ch, collection, *, group_by, time_field, filters, cutoff, assembled_at, start, instrument_ids
 ):
-    q = Query()
-    _filters(q, collection, filters)
-    if start is not None:
-        q.where(f"`{time_field}` >= {q.param(start, DT)}")
-    if cutoff is not None:
-        q.where(f"`{time_field}` <= {q.param(cutoff, DT)}")
-    if assembled_at is not None:
-        q.where(f"(recorded_at IS NULL OR recorded_at <= {q.param(assembled_at, DT)})")
-    if instrument_ids is not None:
-        _ids(q, instrument_ids)
+    """Latest row per group. Grouped by instrument alone, the day before the cutoff is read first
+    and only instruments without a row there read the rest of the range: the same rows, without
+    merging months of every instrument under FINAL for the last minute of each."""
     groups = ", ".join(f"`{g}`" for g in group_by)
-    rows = await _select(
-        ch,
-        collection,
-        q,
-        f"{groups}, `{time_field}` DESC NULLS LAST, storage_key DESC",
-        f"LIMIT 1 BY {groups}",
-    )
+
+    async def latest(lo, below, ids):
+        q = Query()
+        _filters(q, collection, filters)
+        if lo is not None:
+            q.where(f"`{time_field}` >= {q.param(lo, DT)}")
+        if below is not None:
+            q.where(f"`{time_field}` < {q.param(below, DT)}")
+        if cutoff is not None:
+            q.where(f"`{time_field}` <= {q.param(cutoff, DT)}")
+        if assembled_at is not None:
+            q.where(f"(recorded_at IS NULL OR recorded_at <= {q.param(assembled_at, DT)})")
+        if ids is not None:
+            _ids(q, ids)
+        return await _select(
+            ch,
+            collection,
+            q,
+            f"{groups}, `{time_field}` DESC NULLS LAST, storage_key DESC",
+            f"LIMIT 1 BY {groups}",
+        )
+
+    recent = None if cutoff is None else parse_time(cutoff) - RECENT_LATEST
+    if (
+        tuple(group_by) != ("instrument_id",)
+        or instrument_ids is None
+        or recent is None
+        or (start is not None and parse_time(start) >= recent)
+    ):
+        return await _decode(collection, await latest(start, None, instrument_ids))
+    rows = await latest(recent, None, instrument_ids)
+    found = {row["instrument_id"] for row in rows}
+    rest = [i for i in instrument_ids if i not in found]
+    if rest:
+        rows += await latest(start, recent, rest)
+        rows.sort(key=lambda row: row["instrument_id"])
     return await _decode(collection, rows)
 
 
@@ -403,23 +441,31 @@ async def market_dependency_head(
         q.where(f"recorded_at <= {q.param(assembled_at, DT)}")
     if instrument_ids is not None:
         _ids(q, instrument_ids)
+    picks = {
+        "availability": "argMax",
+        "semantic_latest": "argMax",
+        "semantic_earliest": "argMin",
+    }
+    row = f"tuple(storage_key, recorded_at, semantic_fingerprint, `{semantic_field}`)"
+    heads = ", ".join(
+        f"{picks[order]}({row}, tuple({'recorded_at' if order == 'availability' else f'`{semantic_field}`'}, "
+        f"storage_key)) AS `{order}`"
+        for order in wanted
+    )
+    rows = await ch.rows(
+        f"SELECT count() AS n, {heads} FROM {_table(collection)} WHERE {q.predicate()}", q.params
+    )
+    if not wanted or not rows or not int(rows[0]["n"]):
+        return {}
     found = {}
     for order in wanted:
-        direction = "ASC" if order == "semantic_earliest" else "DESC"
-        by = "recorded_at" if order == "availability" else f"`{semantic_field}`"
-        rows = await ch.rows(
-            f"SELECT storage_key, recorded_at, semantic_fingerprint, `{semantic_field}` AS semantic "
-            f"FROM {_table(collection)} WHERE {q.predicate()} ORDER BY {by} {direction}, storage_key {direction} LIMIT 1",
-            q.params,
-        )
-        if rows:
-            row = rows[0]
-            found[order] = {
-                "storage_key": row["storage_key"],
-                "recorded_at": iso(parse_time(row["recorded_at"])),
-                "semantic_fingerprint": row.get("semantic_fingerprint"),
-                semantic_field: iso(parse_time(row["semantic"])),
-            }
+        key, recorded, fingerprint, semantic = rows[0][order]
+        found[order] = {
+            "storage_key": key,
+            "recorded_at": iso(parse_time(recorded)),
+            "semantic_fingerprint": fingerprint,
+            semantic_field: iso(parse_time(semantic)),
+        }
     return found
 
 
@@ -438,9 +484,7 @@ async def projection_page(
     if instrument_ids is not None:
         _ids(q, instrument_ids)
     if after is not None:
-        q.where(
-            f"(`{time_field}`, storage_key) > ({q.param(after[0], DT)}, {q.param(str(after[1]), 'String')})"
-        )
+        _after(q, (f"`{time_field}`", after[0], DT), ("storage_key", str(after[1]), "String"))
     expressions = ", ".join(f"`{field}` AS `{requested}`" for requested, field in selected.items())
     rows = await ch.rows(
         f"SELECT {expressions}, `{time_field}` AS _cursor_time, storage_key AS _cursor_key "
@@ -542,10 +586,7 @@ async def market_rows_recorded_since(ch, collection, time_field, instrument_ids,
     q.where(f"`{time_field}` >= {q.param(start, DT)}")
     q.where(f"`{time_field}` < {q.param(end, DT)}")
     _filters(q, collection, filters)
-    rows = await ch.rows(
-        f"SELECT * FROM {_table(collection)} WHERE {q.predicate()} ORDER BY instrument_id, `{time_field}`, storage_key",
-        q.params,
-    )
+    rows = await _select(ch, collection, q, f"instrument_id, `{time_field}`, storage_key")
     records = await _decode(collection, rows)
     return [(row["instrument_id"], rec, row["storage_key"]) for row, rec in zip(rows, records, strict=True)]
 
@@ -582,9 +623,11 @@ async def range_by_instrument_page(
         q.where(f"`{time_field}` < {q.param(parse_time(end), DT)}")
     _filters(q, collection, filters)
     if after is not None:
-        q.where(
-            f"(instrument_id, `{time_field}`, storage_key) > ({q.param(after[0], 'String')}, "
-            f"{q.param(after[1], DT)}, {q.param(after[2], 'String')})"
+        _after(
+            q,
+            ("instrument_id", after[0], "String"),
+            (f"`{time_field}`", after[1], DT),
+            ("storage_key", after[2], "String"),
         )
     selected = "*" if levels else "* EXCEPT (bids, asks)" if collection == "mkt.book_summaries" else "*"
     rows = await _select(

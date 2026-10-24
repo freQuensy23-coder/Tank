@@ -276,6 +276,55 @@ func TestReconnectBridgeKeepsMinutesOpenUntilRepaired(t *testing.T) {
 	}
 }
 
+func TestQuietMinuteOfADisconnectSealsIncomplete(t *testing.T) {
+	r := newRig(t, "bybit", "SPOT")
+	base := r.clock.t
+	r.s.Connected(r.inst, 1, base, nil)
+	r.s.Trade(r.inst, r.trade(1, at(base, 10)), 1)
+	r.clock.set(at(base, 40))
+	r.s.Disconnected(r.inst, 1, "STREAM_DISCONNECTED: NO_MESSAGE_FOR_30_SECONDS")
+	bridge := r.s.Connected(r.inst, 2, at(base, 150), nil)
+	r.s.Trade(r.inst, r.trade(9, at(base, 185)), 2)
+	r.s.RepairDone(r.inst.ID, bridge.start, bridge.end)
+	r.tick(at(base, 250))
+	row := r.last(minuteOf(base, 1))
+	if row == nil || row["complete"] != false || row["zero_trade_minute"] != true {
+		t.Fatalf("a minute with no prints while the stream was down is written incomplete, not left out: %v", row)
+	}
+	if reason, _ := row["gap_reason"].(string); reason != "STREAM_DISCONNECTED: NO_MESSAGE_FOR_30_SECONDS" {
+		t.Fatalf("the quiet minute carries the disconnect reason: %v", row["gap_reason"])
+	}
+	if row := r.last(base); row["complete"] != false {
+		t.Fatalf("the minute the stream dropped in stays incomplete: %v", row)
+	}
+}
+
+func TestRemovedMemberRejoiningWritesNoColdMinutes(t *testing.T) {
+	r := newRig(t, "bybit", "SPOT")
+	base := r.clock.t
+	r.s.Connected(r.inst, 1, base, nil)
+	r.s.Trade(r.inst, r.trade(1, at(base, 10)), 1)
+	r.clock.set(at(base, 40))
+	r.s.Disconnected(r.inst, 1, "MEMBER_REMOVED")
+	r.s.Connected(r.inst, 2, minuteOf(base, 600), nil)
+	if bars := len(r.s.acc.Bars); bars > 2 {
+		t.Fatalf("a token taken out of capture on purpose leaves its cold minutes alone: %d bars", bars)
+	}
+}
+
+func TestLongOutageMarksOnlyTheLastDay(t *testing.T) {
+	r := newRig(t, "bybit", "SPOT")
+	base := r.clock.t
+	r.s.Connected(r.inst, 1, base, nil)
+	r.s.Trade(r.inst, r.trade(1, at(base, 10)), 1)
+	r.clock.set(at(base, 40))
+	r.s.Disconnected(r.inst, 1, "STREAM_DISCONNECTED: NO_MESSAGE_FOR_30_SECONDS")
+	r.s.Connected(r.inst, 2, minuteOf(base, 3*24*60), nil)
+	if bars := len(r.s.acc.Bars); bars > 24*60+2 {
+		t.Fatalf("an outage of days marks at most the last day of minutes: %d bars", bars)
+	}
+}
+
 func TestPrintBeforeFirstConnectionTakesStoredPath(t *testing.T) {
 	r := newRig(t, "coinbase", "SPOT")
 	base := r.clock.t
