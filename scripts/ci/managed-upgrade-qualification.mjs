@@ -126,7 +126,7 @@ for (const [index, scenario] of scenarios.entries()) {
   const api = async (path, body, method = body === undefined ? 'GET' : 'POST') => {
     const response = await fetch(base + path, { method, headers: { 'x-api-key': credentials.OMA_API_KEY, 'anthropic-beta': 'managed-agents-2026-04-01,files-api-2025-04-14,agent-memory-2026-07-22', ...(body === undefined || body instanceof FormData ? {} : { 'content-type': 'application/json' }) }, body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body), signal: AbortSignal.timeout(path.endsWith('/archive') ? 180000 : 15000) });
     const text = await response.text();
-    assert.ok(response.ok, `Managed API ${method} ${path}: ${response.status} ${sanitized(text)}`);
+    if (!response.ok) throw Object.assign(Error(`Managed API ${method} ${path}: ${response.status} ${sanitized(text)}`), { fatal: true });
     return JSON.parse(text);
   };
   const publication = () => {
