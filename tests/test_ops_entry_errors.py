@@ -117,7 +117,7 @@ async def test_restart_and_concurrent_reports_are_idempotent(tmp_path: Path) -> 
     await poll(repo, tmp_path, [broken("Bad")])
     await poll(repo, tmp_path, [broken("Bad")])
     assert len(await entry_notices(repo)) == 1
-    settings = SimpleNamespace(ops_progress_enabled=True)
+    settings = SimpleNamespace(ops_progress_enabled=True, replay=False)
     errors = [{"reason": "PENDING_PROPOSAL_UNAVAILABLE", "proposal_id": "0xabc", "payload_sha256": "a" * 64}]
     source = {"source_id": "S24", "name": "Snapshot"}
     feed = {"url": "https://hub.snapshot.org/graphql"}
@@ -179,6 +179,7 @@ async def test_publisher_json_entry_error_is_reported_and_delivered_to_ops(tmp_p
         telegram_token="test",
         telegram_alerts_chat="alerts",
         telegram_ops_chat="ops",
+        replay=False,
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
         delivery = DeliveryService(repo, settings, http=http)
@@ -191,7 +192,7 @@ async def test_publisher_json_entry_error_is_reported_and_delivered_to_ops(tmp_p
 
 async def test_x_account_failures_are_keyed_by_account() -> None:
     repo = MemoryRepository()
-    settings = SimpleNamespace(ops_progress_enabled=True)
+    settings = SimpleNamespace(ops_progress_enabled=True, replay=False)
     source = {"source_id": "S29", "name": "X"}
     feed = {"url": "https://api.apify.com/v2/actors/test/run-sync", "kind": "x"}
     first = [
@@ -245,7 +246,7 @@ async def test_failed_report_does_not_fail_acquisition_and_is_retried_next_poll(
 )
 async def test_entry_error_notices_persist_and_deduplicate_in_storage(backend, postgres_template) -> None:
     async with fixture_repo(backend, postgres_template) as repo:
-        settings = SimpleNamespace(ops_progress_enabled=True)
+        settings = SimpleNamespace(ops_progress_enabled=True, replay=False)
         source = {"source_id": "S30", "name": "Fixture blog"}
         errors = [{"reason": "ENTRY_WITHOUT_ID_OR_URL", "entry_sha256": "e" * 64, "payload_sha256": "a" * 64}]
         ids = await asyncio.gather(

@@ -2,10 +2,13 @@ package capture
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/freQuensy23-coder/Tank/capture/internal/pyjson"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyval"
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
@@ -39,6 +42,7 @@ func TestObligationRunsCoreRowToTerminalResult(t *testing.T) {
 		t.Fatalf("coverage per instrument: %v", result)
 	}
 	coverage := pyval.Map(pyval.List(result["instruments"])[0])
+	saveProducerEvidence(t, "backfill-terminal", row)
 	flow := pyval.Map(pyval.Map(pyval.Map(coverage["windows"])["W1H"])["flow"])
 	if flow["complete"] != true {
 		t.Fatalf("the last hour before the anchor is complete from REST: %v", flow)
@@ -62,6 +66,7 @@ func TestCaptureRequestRepairsWithinBudget(t *testing.T) {
 		"start": pytime.ISO(r.base), "end": pytime.ISO(r.base.Add(30 * time.Minute)),
 		"deadline": pytime.ISO(now.Add(-time.Second)), "status": "PENDING",
 	}}
+
 	r.s.requests(context.Background())
 	r.s.wg.Wait()
 	done := map[string]map[string]any{}
@@ -71,6 +76,8 @@ func TestCaptureRequestRepairsWithinBudget(t *testing.T) {
 	if done["CR-1"]["status"] != "COMPLETE" {
 		t.Fatalf("request finished: %v", done["CR-1"])
 	}
+	saveProducerEvidence(t, "repair-complete", done["CR-1"])
+	saveProducerEvidence(t, "repair-expired", done["CR-2"])
 	result := pyval.Map(pyval.Map(done["CR-1"]["result"])["instruments"])[r.inst.ID]
 	counts := pyval.Map(result)
 	if counts["incomplete_before"] != int64(30) || counts["incomplete_after"] != int64(0) {
@@ -113,5 +120,27 @@ func TestKlineAuditWaitsForNoRepairSlot(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("the polling loop is not held while repairs hold every slot")
+	}
+}
+
+func saveProducerEvidence(t *testing.T, name string, row map[string]any) {
+	t.Helper()
+	directory := os.Getenv("TANK_CAPTURE_PRODUCER_EVIDENCE_DIR")
+	if directory == "" {
+		return
+	}
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	body, err := pyjson.Dumps(row, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, name+".json")
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("refusing to overwrite producer evidence at %s", path)
+	}
+	if err := os.WriteFile(path, append(body, '\n'), 0600); err != nil {
+		t.Fatal(err)
 	}
 }

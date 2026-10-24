@@ -173,13 +173,24 @@ func (m *memStore) BackfillRuns(_ context.Context, statuses []string) ([]map[str
 	return out, nil
 }
 
-func (m *memStore) ClaimRequest(context.Context, string, time.Time) (map[string]any, error) {
+func (m *memStore) ClaimRequest(_ context.Context, writer string, now time.Time) (map[string]any, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, r := range m.requests {
-		if r["status"] == "PENDING" {
-			r["status"] = "RUNNING"
-			return copyRow(r), nil
+	for _, row := range m.requests {
+		if row["status"] != "PENDING" {
+			continue
+		}
+		deadline, err := requestTimestamp(row["deadline"])
+		if err == nil && !deadline.After(now) {
+			row["status"], row["reason"] = "EXPIRED", "REQUEST_DEADLINE_PASSED"
+			pytime.CollectionClock(now).Into(row, "finished_at")
+		}
+	}
+	for _, row := range m.requests {
+		if row["status"] == "PENDING" {
+			row["status"], row["writer"] = "RUNNING", writer
+			pytime.CollectionClock(now).Into(row, "started_at")
+			return copyRow(row), nil
 		}
 	}
 	return nil, nil

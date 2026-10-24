@@ -65,6 +65,9 @@ func TestSparseRequestLifecyclePreservesInvalidNumericEvidence(t *testing.T) {
 	if claimed == nil || claimed["request_id"] != id+"-live" || claimed["status"] != "RUNNING" || claimed["budget_s"] != "NaN" {
 		t.Fatalf("invalid persisted numeric evidence could not enter explicit lifecycle handling: %v", claimed)
 	}
+	if claimed["started_at"] != pytime.ISO(now) || claimed["started_at_prec"] != pytime.CollectionOnly || claimed["started_at_prec_reason"] != nil {
+		t.Fatalf("claim did not persist the actual collection start clock: %v", claimed)
+	}
 	snapshots = append(snapshots, lifecycleSnapshot{Stage: "claimed_running", Record: claimed})
 	if pyjson.Canonical(claimed["request"]) != pyjson.Canonical(body) {
 		t.Fatalf("claim rewrote opaque request evidence: %v", claimed)
@@ -92,6 +95,11 @@ func TestSparseRequestLifecyclePreservesInvalidNumericEvidence(t *testing.T) {
 	}
 	if pyjson.Canonical(stored["request"]) != pyjson.Canonical(body) || stored["config_version"] != "retained-config" || stored["code_version"] != "retained-code" {
 		t.Fatalf("terminal update changed original request provenance: %v", stored)
+	}
+	if stored["writer"] != "sparse-test-writer" || stored["started_at"] != claimed["started_at"] ||
+		stored["finished_at"] != pytime.ISO(now.Add(time.Second)) || stored["finished_at_prec"] != pytime.CollectionOnly ||
+		stored["finished_at_prec_reason"] != nil || stored["result"] != nil {
+		t.Fatalf("terminal update lost claim identity or exact clock/null bindings: %v", stored)
 	}
 	snapshots = append(snapshots, lifecycleSnapshot{Stage: "failed", Record: stored})
 	if stored["semantic_fingerprint"] != schema.Fingerprint(stored, requests) {

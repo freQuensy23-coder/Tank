@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
+from tank.contracts.progress import ProgressPreferences
+from tank.market.capture_contracts import CaptureReadiness
 from tank.runtime import Runtime
 from tank.runtime_contracts import MarketTruthJob
 from tank.storage import MemoryRepository
@@ -777,7 +779,8 @@ async def test_terminal_delivery_reconciliation_covers_expiry_restart_and_valida
     repo = MemoryRepository()
     runtime = object.__new__(Runtime)
     runtime.repo = repo
-    runtime.delivery = DeliveryService(repo, SimpleNamespace(), http=SimpleNamespace())
+    runtime.settings = ProgressPreferences(ops_progress_enabled=False, replay=False)
+    runtime.delivery = DeliveryService(repo, runtime.settings, http=SimpleNamespace())
     for key, status in [("expired", "EXPIRED"), ("validation", "FAILED")]:
         job = await repo.enqueue(
             "DELIVER", {"alert_id": key, "version": 1, "channel": "telegram:alerts"}, key, max_attempts=1
@@ -843,6 +846,9 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
                         {
                             **claimed,
                             "status": terminal_status,
+                            "result": {"instruments": [], "benchmark_klines": []}
+                            if terminal_status == "PARTIAL"
+                            else None,
                             "reason": "SYNTHETIC_EXTERNAL_CAPTURE_TERMINAL",
                             "finished_at": iso(),
                             "finished_at_prec": "COLLECTION_ONLY",
@@ -884,6 +890,8 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
     settings = SimpleNamespace(
         load_config=lambda name: configs[name],
         thresholds=lambda: complete_thresholds,
+        configured_secrets=lambda: frozenset(),
+        replay=False,
         data_dir=tmp_path,
         config_version="fixture",
         code_version="fixture",
@@ -908,7 +916,7 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
             .eval_conditions,
         }
         runtime.active_jobs = set()
-        await market._schedule_event_backfill("e", "T", anchor)
+        await market._schedule_event_backfill("e", "T", Timestamp(anchor, "EXACT", None))
         capture_task = asyncio.create_task(external_capture_worker())
         job = await repo.enqueue(
             "RUN_MARKET_TRUTH",
@@ -952,10 +960,14 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
                     "status": "COMPLETE",
                 },
             )
-            assert (await market.capture_readiness("e", "T", anchor=anchor))["status"] == "RUNNING"
+            assert (
+                await market.capture_readiness("e", "T", anchor=Timestamp(anchor, "EXACT", None))
+            ).status == "RUNNING"
             release_capture.set()
             async with asyncio.timeout(3):
-                while (await market.capture_readiness("e", "T", anchor=anchor))["status"] != terminal_status:
+                while (
+                    await market.capture_readiness("e", "T", anchor=Timestamp(anchor, "EXACT", None))
+                ).status != terminal_status:
                     await asyncio.sleep(0.01)
             next_job = await repo.enqueue(
                 "RUN_MARKET_TRUTH",
@@ -1346,8 +1358,17 @@ async def test_market_truth_repairs_windows_within_budget_before_assessing() -> 
     anchor = "2026-10-20T12:00:00Z"
 
     class Market:
-        async def capture_readiness(self, event_id, token_id, *, anchor):
-            return {"status": "COMPLETE"}
+        async def capture_readiness(
+            self, event_id: str, token_id: str, *, anchor: Timestamp
+        ) -> CaptureReadiness:
+            return CaptureReadiness(
+                event_id=event_id,
+                token_id=token_id,
+                status="COMPLETE",
+                reason=None,
+                backfill_id="capture",
+                anchor=anchor.value,
+            )
 
         async def repair_windows(self, token_id, start, end, *, budget_s=None) -> None:
             calls.append(("repair", token_id, start, end, budget_s))

@@ -1271,6 +1271,8 @@ class EventToolService:
             ),
         )
         item["extraction_status"] = "DONE"
+        item.pop("extraction_decision", None)
+        item.pop("extraction_reason", None)
         await self.repo.put("ingest.source_items", item["item_id"], item)
         await item_progress(
             self.repo, self.settings, item["item_id"], "EVENT_RECORDED", x["statement"], event_id=eid
@@ -1525,6 +1527,8 @@ class EventToolService:
             ),
         )
         item["extraction_status"] = "DONE"
+        item.pop("extraction_decision", None)
+        item.pop("extraction_reason", None)
         await self.repo.put("ingest.source_items", item["item_id"], item)
         await item_progress(
             self.repo, self.settings, item["item_id"], "OBSERVATION_ADDED", link, event_id=event["event_id"]

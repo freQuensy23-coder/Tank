@@ -1,6 +1,5 @@
 """Pinned, validated Jev classification through OpenCode System One."""
 
-from dataclasses import dataclass
 from decimal import Decimal
 from typing import Literal
 
@@ -54,6 +53,15 @@ class JevQuestion(DomainModel):
     instructions: str
     criteria: dict[str, str] | None = None
 
+    def to_wire(self) -> dict[str, JsonValue]:
+        fields: dict[str, JsonValue] = {"type": self.type, "instructions": self.instructions}
+        if self.criteria is not None:
+            criteria: dict[str, JsonValue] = {
+                name: description for name, description in self.criteria.items()
+            }
+            fields["criteria"] = criteria
+        return fields
+
 
 class JevAnswer(DomainModel):
     type: Literal["noul"]
@@ -74,13 +82,12 @@ class JevResponse(DomainModel):
     provider: str | None = None
 
 
-@dataclass(frozen=True)
-class JevBinding:
-    provider: str = "opencode"
-    base_url: str = "https://opencode.ai/inference/systemone"
-    request_model: str = "jev-1.13-free"
+class JevBinding(DomainModel):
+    provider: Literal["opencode"] = "opencode"
+    base_url: Literal["https://opencode.ai/inference/systemone"] = "https://opencode.ai/inference/systemone"
+    request_model: Literal["jev-1.13-free", "jev-1.13"] = "jev-1.13-free"
     resolved_models: tuple[str, ...] = ("jev-1.13-free",)
-    semantic_model: str = MODEL
+    semantic_model: Literal["jev-1.13.0"] = "jev-1.13.0"
 
 
 FREE = JevBinding()
@@ -105,9 +112,7 @@ async def classify(
         json={
             "model": pinned.request_model,
             "state": state.to_wire(),
-            "questions": {
-                name: question.model_dump(exclude_none=True) for name, question in questions.items()
-            },
+            "questions": {name: question.to_wire() for name, question in questions.items()},
         },
     )
     response.raise_for_status()

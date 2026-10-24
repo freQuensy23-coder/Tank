@@ -22,6 +22,8 @@ def config(tmp_path: Path, sources):
         config_version="test",
         code_version="test",
         load_config=lambda name: source_configuration({"sources": sources}) if name == "sources" else {},
+        ops_progress_enabled=False,
+        replay=False,
     )
 
 

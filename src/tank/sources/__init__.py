@@ -18,6 +18,7 @@ import certifi
 import httpx
 
 import tank.sources.parsers as parsers
+from tank.contracts.source_items import SourceText
 from tank.contracts.sources import HttpFetchPlan, SourceConfiguration, SourceDefinition
 from tank.ops_progress import item_progress
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
@@ -270,7 +271,7 @@ class SourceService:
             from tank.sources.organization import resolve_author_organization
 
             author_organization = resolve_author_organization(source, item, self.accounts)
-            from tank.sources.policy import is_filtered_source
+            from tank.sources.policy import initial_relevance, is_filtered_source
 
             filtered = is_filtered_source(sid, item.get("subtype"), role)
             priority = (
@@ -329,9 +330,9 @@ class SourceService:
                 if item.get("published_at")
                 else item.get("published_at_reason") or item.get("published_prec_reason") or "INCOMPLETE",
                 source_class=source.source_class,
-                relevance={"decision": None, "pending_reason": "AWAITING_FILTER"}
-                if filtered
-                else {"decision": "ALWAYS"},
+                relevance=initial_relevance(sid, item.get("subtype"), role).model_dump(
+                    mode="json", exclude_unset=True
+                ),
                 extraction_status="PENDING",
                 observation_count=1,
                 config_version=self.settings.config_version,
@@ -409,8 +410,8 @@ class SourceService:
         self._filing_cache = (self.settings.config_version, pattern)
         return pattern
 
-    def filing_matches(self, item):
-        value = (item.get("title", "") + " " + item.get("text", "")).lower()
+    def filing_matches(self, item: SourceText) -> bool:
+        value = (item.title + " " + item.text).lower()
         if re.search(r"\blighter\b", value) and re.search(r"\blit\b", value):
             return True
         if re.search(r"\bplasma\b", value) and re.search(r"\bxpl\b", value):

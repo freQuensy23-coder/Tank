@@ -51,7 +51,7 @@ The assertion inventory detects literal assertions and direct self-comparisons w
 
 ## Inventory and remaining work
 
-`baseline-inventory.json` was produced from an untouched git archive of `1216b4b`. It includes every active Python/Go file selected by the source roots, per-area/module/symbol candidate counts, source import edges, and strongly connected import components. Third-party/upstream/vendor/history, retained fixture payload trees, and caches are excluded. Active Python fixture-staging code remains included.
+`baseline-inventory.json` was produced from an untouched git archive of `1216b4b`. It includes every active Python/Go file selected by the source roots, per-area/module/symbol candidate counts, source import edges, and strongly connected import components. That original baseline excluded retained fixture trees and must not be interpreted as exhaustive executable coverage. The current inventory observes executable programs inside data directories, separates two exact hash-pinned historical Python oracle recipes, and reports the executed immutable OpenMA codec reference separately. See executable-boundaries.md for exact paths, hashes, reachability, and the diagnostic-worker exception. Third-party/upstream/vendor/history and caches remain excluded.
 
 | Baseline area | Untyped parameters | Untyped returns | Dictionary candidates | get/or candidates | Dynamic Go lines |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -77,3 +77,23 @@ Add `--details` for exact source expressions/lines. The current quality-only bra
 - Dedicated Go capture+REST run: 134 actual cases passed with zero skips, verified by the results checker from `/srv/tank-refactor-evidence/quality-fetch-final.jsonl`; exit file is zero. This is not PostgreSQL/ClickHouse integration qualification.
 - The earlier `go test ./...` package exit was zero, but was not a zero-skip service integration proof and is not used as one.
 - Root owns the actual disposable PostgreSQL/ClickHouse integration run, full collection/timing evidence, cross-domain validation, GitHub CI, and Codex review. Those remain required before declaring the global refactor complete.
+
+## Canonical v2 checkpoint
+
+The quality branch preserves the original branch and starts from shared CI/review checkpoint 0f3c5f6. Canonical foundation aee73d6 was merged at 5f6421e; canonical agents f630c73 (including 940833e) was merged at b29371c. These are exact dependency merges, not copied implementations.
+
+Commit b7b3f7d removes the old storage attr-defined and search assignment/override mypy exemptions after the foundation owner's independent strict proof. CI now checks the signed-off foundation source family with strict flags and actual imported interfaces. The separate completed quality helper lane checks sixteen files. Default configured mypy passes 99 source files at b29371c; this is not proof that remaining application and test bodies are fully typed.
+
+The typed Node runner requires Node 24.22.0, npm ci --prefix scripts/typescript, and TANK_FILE_IO_TEST_PYTHON pointing to the pinned Python 3.13.13 environment. Current commands are in docs/TESTING.md. The original green CI Node lanes collected only six unit and seven contract cases because moved paths were silently filtered. The restored lanes run fifty unit and twenty-one contract cases with nonempty, zero-skip TAP gates. Historical counts remain historical evidence, not current collection claims.
+
+The native network diagnostic worker is now a typed standalone standard-library program. Its qualified Python 3.12 guest image has no declared Pydantic dependency; named frozen records validate its exact JSON output. This constrained probe exception is limited to deploy/openma_lifecycle/native_network_probe.py and does not exempt application code or other deployment helpers.
+
+Go capture request lifecycle writes now update only validated status, identity, reason, and actual clock fields. This preserves malformed stored numeric evidence such as NaN instead of retrying a failing full-row numeric write forever. A real PostgreSQL regression proves terminal persistence, original payload retention, exact fingerprint behavior, and no reclaim. Lifecycle mutations now return named requestBindings records and execute fixed SQL with explicit typed arguments; no generic patch map, dynamic assignment builder, or project-level argument slice remains. The raw persisted-row/fingerprint projection remains explicit typing backlog. The real PostgreSQL regression also asserts claim writer preservation, exact collection clocks, and null result binding.
+
+Go backfill ownership is now active-inflight ownership released on every exit. A failure followed by a durable same-ID PENDING retry executes again; concurrent polls do not duplicate capture. RUNNING records stamp the actual worker start clock. Fifty-four capture race cases passed with zero skips.
+
+Commit b3abbab optionally exports unchanged rows from existing real producer tests. The retained backfill PARTIAL, repair COMPLETE, and repair EXPIRED snapshots are memory-store producer output, not physical SQL envelopes. No missing provenance or numeric fields were enriched. The analysis owner validates their nested results and explicitly distinguishes sparse legacy records from full SQL envelopes.
+
+The current executable ledger includes capture/internal/budget/testdata/gen_vectors.py and capture/internal/rest/testdata/gen_vectors.py as exact hash-pinned historical oracle recipes from ef68a822ceafeca3e37b405535a9cb310e4fa35a. Current tests consume their frozen output; supported CI does not execute these retired Python producer recipes. Their AST observations remain separate from active-code completion.
+
+The global backlog remains open: remaining Python functions and tests, first-party deployment JavaScript controllers, Go dynamic records and unjustified fallback paths, and whole-tree strict enforcement. Inventory candidates guide review; they are not behavioral evidence or a compliance result.

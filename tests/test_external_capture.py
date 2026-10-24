@@ -21,7 +21,7 @@ from tank.market.service import CAPTURE_REQUEST_GRACE_S, EXCHANGE_REST_OWNER, Ma
 from tank.settings import Settings
 from tank.sources.rate_limits import RequestLedger, SharedRequestBudgets
 from tank.storage import MemoryRepository
-from tank.time_precision import collection_clock
+from tank.time_precision import Timestamp, collection_clock
 from tank.util import iso, parse_time, sha256, utcnow
 
 SPOT, PERP, HL = "binance:spot:ABCUSDT", "binance:usdm:ABCUSDT", "hyperliquid:perp:ABC"
@@ -44,6 +44,7 @@ def instrument(iid, venue, market_type, symbol):
 def make_settings(tmp_path: Path, **values):
     config = tmp_path / "config"
     config.mkdir(exist_ok=True)
+    (config / "thresholds.yaml").write_bytes(Settings().read_config_bytes("thresholds.yaml"))
     registry = {
         "tokens": [{"token_id": TOKEN, "symbol": "ABC", "sector": "A"}],
         "instruments": [
@@ -111,7 +112,11 @@ async def test_external_escalation_writes_the_obligation_and_starts_nothing(sett
     assert run["backfill_id"] == "BF-" + sha256(
         {"event_id": "EVT-1", "token_id": TOKEN, "anchor": run["anchor"]}
     )
-    assert (await service.capture_readiness("EVT-1", TOKEN, anchor=run["anchor"]))["status"] == "PENDING"
+    assert (
+        await service.capture_readiness(
+            "EVT-1", TOKEN, anchor=Timestamp(run["anchor"], run["anchor_prec"], run["anchor_prec_reason"])
+        )
+    ).status == "PENDING"
 
     await update(repo, "mkt.backfill_runs", run["backfill_id"], status="RUNNING")
     restarted = MarketService(repo, settings)
@@ -145,7 +150,8 @@ async def repair_round_trip(repo, service) -> None:
         TOKEN, "2026-10-20T10:00:30Z", "2026-10-21T10:00:00Z", budget_s=10
     )
     await worker
-    assert repaired == result
+    assert repaired.status == "COMPLETE"
+    assert {iid: counts.model_dump() for iid, counts in repaired.instruments.items()} == result
     (request,) = seen
     assert request["kind"] == "REPAIR_WINDOWS" and request["token_id"] == TOKEN
     assert request["start"] == "2026-10-20T10:00:00Z" and request["start_prec"] == "EXACT"
@@ -163,15 +169,14 @@ async def repair_round_trip(repo, service) -> None:
     )
 
     worker = asyncio.create_task(capture_worker(repo, {"status": "FAILED", "reason": "venue down"}, []))
-    assert (
-        await service.repair_windows(TOKEN, "2026-10-20T10:00:00Z", "2026-10-21T10:00:00Z", budget_s=10) == {}
-    )
+    failed = await service.repair_windows(TOKEN, "2026-10-20T10:00:00Z", "2026-10-21T10:00:00Z", budget_s=10)
+    assert failed.status == "FAILED" and failed.reason == "venue down"
     await worker
     started = time.monotonic()
-    assert (
-        await service.repair_windows(TOKEN, "2026-10-20T10:00:00Z", "2026-10-21T10:00:00Z", budget_s=0.2)
-        == {}
+    timed_out = await service.repair_windows(
+        TOKEN, "2026-10-20T10:00:00Z", "2026-10-21T10:00:00Z", budget_s=0.2
     )
+    assert timed_out.status == "INCOMPLETE" and timed_out.reason == "BOUNDED_CAPTURE_REQUEST_WAIT_EXPIRED"
     assert time.monotonic() - started < 0.2 + CAPTURE_REQUEST_GRACE_S + 1
 
 
@@ -294,6 +299,7 @@ async def test_external_run_keeps_tiers_and_obligations_and_captures_nothing(
     repo = MemoryRepository()
     service = MarketService(repo, settings)
     since = "2026-10-21T10:00:00Z"
+    await repo.put("evt.events", "EVT-1", {**capture_event(), "public_at": since})
     await put(
         repo,
         "mkt.hot_tokens",
@@ -379,7 +385,10 @@ async def test_external_contract_on_postgres(migrated, tmp_path: Path) -> None:
     )
     await service.escalate("EVT-1", [TOKEN])
     (run,) = await migrated.list("mkt.backfill_runs")
-    assert run["status"] == "PENDING" and run["started_at_prec"] == "COLLECTION_ONLY"
+    assert run["status"] == "PENDING"
+    assert run["started_at"] is None and run["started_at_prec"] is None
+    assert run["started_at_prec_reason"] == "PENDING"
+    assert run["recorded_at"] is not None and run["recorded_at_prec"] == "COLLECTION_ONLY"
     await service.close()
 
 

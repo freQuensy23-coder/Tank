@@ -5,17 +5,28 @@ import logging
 import time
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
+from collections.abc import Sequence
 from contextlib import suppress
 from contextvars import ContextVar
 from copy import deepcopy
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
 import httpx
 
 from tank.market import normalize as norm
-from tank.market.capture import event_anchor
+from tank.market.capture import TimeInput
+from tank.market.capture_composition import build_capture_lifecycle
+from tank.market.capture_contracts import (
+    BackfillRun,
+    CaptureReadiness,
+    CaptureTier,
+    CaptureWaitOutcome,
+    HotToken,
+    RepairOutcome,
+    TokenEscalation,
+)
 from tank.market.rate_gate import PriorityGate
 from tank.market_storage import (
     market_dependency_head,
@@ -237,12 +248,24 @@ def funding_confirmations(observations, *, distinct_paths=False):
     return pairs
 
 
+class _MarketCaptureClock:
+    def now(self) -> datetime:
+        return utcnow()
+
+    def monotonic(self) -> float:
+        return time.monotonic()
+
+    async def sleep(self, delay_s: float) -> None:
+        await asyncio.sleep(delay_s)
+
+    def identity(self, prefix: str) -> str:
+        return new_id(prefix)
+
+
 class MarketService:
     def __init__(self, repo, settings, *, http=None):
         self.repo = repo
         self.settings = settings
-        self.http = http or httpx.AsyncClient(timeout=30, headers={"User-Agent": settings.user_agent})
-        self._owns_http = http is None
         registry = settings.load_config("registry")
         self.tokens = {r["token_id"]: r for r in registry["tokens"]}
         self.sector_baskets = deepcopy(registry.get("sector_baskets", []))
@@ -268,13 +291,15 @@ class MarketService:
         self._last_request = {}
         self._request_locks = {}
         self._request_pace_locks = {}
-        self._backfills = set()
-        self._capture_waits = {}
         self._last_hot_expiry_refresh = 0
-        try:
-            self.thresholds = settings.load_config("thresholds")
-        except FileNotFoundError:
-            self.thresholds = {}
+        self.thresholds = settings.load_config("thresholds")
+        self._capture = build_capture_lifecycle(repo, settings, frozenset(self.tokens), _MarketCaptureClock())
+        self.http = (
+            httpx.AsyncClient(timeout=30, headers={"User-Agent": settings.user_agent})
+            if http is None
+            else http
+        )
+        self._owns_http = http is None
 
     def _redact(self, value):
         secrets = [
@@ -477,188 +502,35 @@ class MarketService:
                 return json.loads(response.content, parse_float=Decimal)
         raise RuntimeError(f"{host}: rate limited after bounded retries")
 
-    async def repair_windows(self, token_id, start, end, *, budget_s=None):
-        """Ask tank-capture to repair every incomplete or missing persisted minute of
-        [start, end) for a token's instruments within budget_s (03 §5.1 fill order, §5.2
-        step 2). Returns {instrument_id: {"incomplete_before", "incomplete_after"}}."""
-        if getattr(self.settings, "replay", False):
-            return {}
-        return await self._request_repair(token_id, start, end, budget_s)
-
-    async def _request_repair(self, token_id, start, end, budget_s):
-        """repair_windows run by tank-capture: a mkt.capture_requests row it claims and
-        finishes within the budget. Its result, or {} when none arrived in time."""
-        requested = utcnow()
-        budget = float(budget_s) if budget_s else CAPTURE_REQUEST_DEFAULT_S
-        lo, hi = parse_time(start).replace(second=0, microsecond=0), parse_time(end)
-        request_id = "CR-" + sha256(
-            {"token_id": token_id, "start": iso(lo), "end": iso(hi), "requested_at": iso(requested)}
+    async def repair_windows(
+        self,
+        token_id: str,
+        start: TimeInput,
+        end: TimeInput,
+        *,
+        budget_s: Decimal | float | int | None = None,
+    ) -> RepairOutcome:
+        budget = None if budget_s is None else Decimal(str(budget_s))
+        return await self._capture.repair_windows(
+            token_id,
+            chosen_boundary(parse_time(start), precision="EXACT"),
+            chosen_boundary(parse_time(end), precision="EXACT"),
+            budget_s=budget,
         )
-        pending = Timestamp(None, None, "PENDING")
-        await self._put(
-            "mkt.capture_requests",
-            request_id,
-            {
-                "request_id": request_id,
-                "kind": "REPAIR_WINDOWS",
-                "token_id": token_id,
-                **chosen_boundary(lo, precision="EXACT").fields("start"),
-                **chosen_boundary(hi, precision="EXACT").fields("end"),
-                "budget_s": budget,
-                **collection_clock(requested).fields("requested_at"),
-                **collection_clock(requested + timedelta(seconds=budget)).fields("deadline"),
-                **pending.fields("started_at"),
-                **pending.fields("finished_at"),
-                "status": "PENDING",
-                "reason": None,
-                "result": None,
-            },
-        )
-        until = time.monotonic() + budget + CAPTURE_REQUEST_GRACE_S
-        while True:
-            row = await self.repo.get("mkt.capture_requests", request_id) or {}
-            if row.get("status") in CAPTURE_REQUEST_TERMINAL or time.monotonic() >= until:
-                break
-            await asyncio.sleep(0.25)
-        if row.get("status") in ("COMPLETE", "PARTIAL"):
-            return (row.get("result") or {}).get("instruments") or {}
-        log.warning(
-            "window repair %s for %s: %s", request_id, token_id, row.get("reason") or row.get("status")
-        )
-        return {}
 
-    async def escalate(self, event_id, tokens):
-        async with self.repo.lock("market-hot-set"), self.repo.transaction():
-            event = await self.repo.get("evt.events", event_id)
-            if event is None:
-                raise ValueError("Market escalation references a missing event")
-            anchor = event_anchor(event).value
-            assessment = (
-                await self.repo.get("evt.ems_assessments", event["current_ems_id"])
-                if event.get("current_ems_id")
-                else None
-            )
-            if assessment is None:
-                assessments = await self.repo.list(
-                    "evt.ems_assessments", filters={"event_id": event_id}, limit=10000
-                )
-                assessment = (
-                    max(assessments, key=lambda r: (int(r.get("version", 0)), r.get("cutoff", "")))
-                    if assessments
-                    else {}
-                )
-            event_priority = {"LOW": 1, "MATERIAL": 2, "MAJOR": 3, "STRUCTURAL_SHOCK": 4}.get(
-                assessment.get("class"), 1
-            )
-            for value in tokens:
-                token_id = value["token_id"] if isinstance(value, dict) else value
-                if token_id not in self.tokens:
-                    raise ValueError("unknown token " + token_id)
-                priority = (
-                    int(value.get("priority", event_priority)) if isinstance(value, dict) else event_priority
-                )
-                key = token_id + ":" + event_id
-                existing = await self.repo.get("mkt.hot_tokens", key)
-                protected = await self.hot_protected(event_id, token_id)
-                await self._put(
-                    "mkt.hot_tokens",
-                    key,
-                    {
-                        "token_id": token_id,
-                        "event_id": event_id,
-                        "priority": priority,
-                        "since": existing.get("since", anchor) if existing else anchor,
-                        "expires_at": None if protected else iso(parse_time(anchor) + timedelta(hours=72)),
-                    },
-                )
-            hot = await self.repo.list("mkt.hot_tokens", limit=10000)
-            group = {}
-            for r in hot:
-                group.setdefault(r["token_id"], []).append(r)
-            cap = int(self.thresholds.get("hot_token_cap", 15))
-            ranked = sorted(
-                group,
-                key=lambda t: (
-                    max(x["priority"] for x in group[t]),
-                    max(
-                        x["since"] for x in group[t] if x["priority"] == max(y["priority"] for y in group[t])
-                    ),
-                ),
-                reverse=True,
-            )
-            for token_id in ranked[cap:]:
-                for r in group[token_id]:
-                    await self.repo.delete("mkt.hot_tokens", token_id + ":" + r["event_id"])
-            retained = set(ranked[:cap])
-            for token_id in group:
-                await self._record_capture_tier(
-                    token_id, "HOT" if token_id in retained else "BASE", "ESCALATION_CAP"
-                )
-        if self.settings.replay:
-            return
-        await self._sync_hot_set()
-        for token_id in retained:
-            if token_id in [v.get("token_id") if isinstance(v, dict) else v for v in tokens]:
-                await self._schedule_event_backfill(event_id, token_id, anchor)
+    async def escalate(self, event_id: str, tokens: Sequence[str | TokenEscalation]) -> None:
+        requests = [TokenEscalation(token_id=value) if isinstance(value, str) else value for value in tokens]
+        await self._capture.escalate(event_id, requests)
+        if not self.settings.replay:
+            await self._sync_hot_set()
 
-    async def wait_capture(self, event_id, token_id, *, timeout_s=30):
-        """Await durable prerequisite or return an explicit bounded incomplete result.
+    async def wait_capture(
+        self, event_id: str, token_id: str, *, timeout_s: float = 30
+    ) -> CaptureWaitOutcome:
+        return await self._capture.wait_capture(event_id, token_id, timeout_s=timeout_s)
 
-        Capture workers and sockets continue independently; cancellation never cancels
-        the prerequisite capture obligation.
-        """
-        started = time.monotonic()
-        latest = None
-        while True:
-            rows = await self.repo.list(
-                "mkt.backfill_runs", filters={"event_id": event_id, "token_id": token_id}, limit=10000
-            )
-            latest = max(rows, key=lambda row: row["started_at"]) if rows else None
-            elapsed = time.monotonic() - started
-            terminal = latest and latest["status"] in ("COMPLETE", "PARTIAL", "FAILED")
-            if terminal or elapsed >= timeout_s:
-                result = {
-                    "status": latest["status"] if terminal else "INCOMPLETE",
-                    "backfill_id": latest["backfill_id"] if latest else None,
-                    "reason": latest.get("reason") if terminal else "BOUNDED_PREREQUISITE_WAIT_EXPIRED",
-                    "bounded_wait_s": elapsed,
-                    "observed_at": iso(),
-                    "incomplete_windows_excluded": True,
-                }
-                if latest:
-                    self._capture_waits[latest["backfill_id"]] = result
-                return result
-            await asyncio.sleep(min(0.25, max(0, timeout_s - elapsed)))
-
-    async def _schedule_event_backfill(self, event_id, token_id, anchor):
-        marker = (token_id, event_id, iso(anchor))
-        if marker in self._backfills:
-            return
-        backfill_id = "BF-" + sha256({"event_id": event_id, "token_id": token_id, "anchor": iso(anchor)})
-        old = await self.repo.get("mkt.backfill_runs", backfill_id)
-
-        if old and old.get("status") in ("COMPLETE", "PARTIAL", "PENDING", "RUNNING"):
-            self._backfills.add(marker)
-            return
-        row = {
-            "backfill_id": backfill_id,
-            "event_id": event_id,
-            "token_id": token_id,
-            "anchor": iso(anchor),
-            "started_at": iso(),
-            "finished_at": None,
-            "status": "PENDING",
-            "reason": "PRE_EVENT_CAPTURE_PENDING",
-            "result": None,
-        }
-        event = await self.repo.get("evt.events", event_id)
-        selected = event_anchor(event) if event else None
-        precision = (
-            selected.timestamp.precision if selected is not None and selected.value == iso(anchor) else None
-        )
-        row.update(norm.timestamp_fields("anchor", anchor, precision))
-        await self._put("mkt.backfill_runs", backfill_id, row)
-        self._backfills.add(marker)
+    async def _schedule_event_backfill(self, event_id: str, token_id: str, anchor: Timestamp) -> BackfillRun:
+        return await self._capture.schedule_backfill(event_id, token_id, anchor)
 
     async def capture_changes(self, since=None, end=None):
         """Durable historical completions and coalesced actual late normalized data."""
@@ -802,130 +674,25 @@ class MarketService:
                     "reason": "Actual late normalized data became available after frozen reaction capture",
                 }
 
-    async def capture_readiness(self, event_id, token_id, *, anchor=None):
-        if anchor is not None:
-            backfill_id = "BF-" + sha256({"event_id": event_id, "token_id": token_id, "anchor": iso(anchor)})
-            row = await self.repo.get("mkt.backfill_runs", backfill_id)
-            if (
-                row
-                and row.get("event_id") == event_id
-                and row.get("token_id") == token_id
-                and iso(row["anchor"]) == iso(anchor)
-            ):
-                return row
-            return {
-                "status": "NOT_REQUESTED",
-                "reason": "NO_DURABLE_CAPTURE_REQUEST_FOR_EXACT_ANCHOR",
-                "anchor": iso(anchor),
-            }
-        latest = None
-        async for row in self.repo.iter_range(
-            "mkt.backfill_runs",
-            "started_at",
-            filters={"event_id": event_id, "token_id": token_id},
-            batch_size=1000,
-        ):
-            if latest is None or row["started_at"] > latest["started_at"]:
-                latest = row
-        return latest or {"status": "NOT_REQUESTED", "reason": "NO_DURABLE_CAPTURE_REQUEST"}
+    async def capture_readiness(
+        self, event_id: str, token_id: str, *, anchor: Timestamp | None = None
+    ) -> CaptureReadiness:
+        return await self._capture.readiness(event_id, token_id, anchor=anchor)
 
-    async def hot_protected(self, event_id, token_id, now=None):
-        now = parse_time(now) if now is not None else utcnow()
-        calls = await self.repo.list(
-            "ana.calls", filters={"event_id": event_id, "token_id": token_id, "status": "OPEN"}, limit=1
-        )
-        if calls:
-            return True
-        async for condition in self.repo.iter_all(
-            "ana.watch_conditions", filters={"event_id": event_id, "token_id": token_id, "status": "ARMED"}
-        ):
-            if condition.get("expires_at") is None or parse_time(condition["expires_at"]) > now:
-                return True
-        return False
+    async def hot_protected(self, event_id: str, token_id: str, now: TimeInput | None = None) -> bool:
+        observed = utcnow() if now is None else parse_time(now)
+        return await self._capture.hot_protected(event_id, token_id, observed)
 
-    async def refresh_hot_expiry(self, now=None):
-        """Reconcile persisted protection after restart and call/watch transitions."""
-        async with self.repo.lock("market-hot-set"), self.repo.transaction():
-            rows = await self.repo.list("mkt.hot_tokens", limit=10000)
-            result = []
-            for row in rows:
-                protected = await self.hot_protected(row["event_id"], row["token_id"], now)
-                event = await self.repo.get("evt.events", row["event_id"])
-                anchor = event_anchor(event).value if event else row["since"]
-                expiry = None if protected else iso(parse_time(anchor) + timedelta(hours=72))
-                if row.get("expires_at") != expiry:
-                    row = {**row, "expires_at": expiry}
-                    await self._put("mkt.hot_tokens", row["token_id"] + ":" + row["event_id"], row)
-                result.append(row)
-            return result
+    async def refresh_hot_expiry(self, now: TimeInput | None = None) -> list[HotToken]:
+        observed = utcnow() if now is None else parse_time(now)
+        return await self._capture.refresh_hot_expiry(observed)
 
-    async def demote(self, token_id, event_id=None):
-        async with self.repo.lock("market-hot-set"), self.repo.transaction():
-            for row in await self.repo.list("mkt.hot_tokens", filters={"token_id": token_id}, limit=10000):
-                if event_id is None or row["event_id"] == event_id:
-                    await self.repo.delete("mkt.hot_tokens", token_id + ":" + row["event_id"])
-            remaining = await self.repo.list("mkt.hot_tokens", filters={"token_id": token_id}, limit=1)
-            await self._record_capture_tier(token_id, "HOT" if remaining else "BASE", "DEMOTION")
+    async def demote(self, token_id: str, event_id: str | None = None) -> None:
+        await self._capture.demote(token_id, event_id)
         await self._sync_hot_set()
 
-    async def _record_capture_tier(self, token_id, tier, reason):
-        from tank.market.supply import supply_cadences
-
-        cadences = {
-            "oi_funding_s": float(
-                self.thresholds.get(
-                    "hot_oi_funding_interval_s" if tier == "HOT" else "base_oi_funding_interval_s",
-                    60 if tier == "HOT" else 300,
-                )
-            ),
-            "kline_s": float(self.thresholds.get("base_kline_interval_s", 60)),
-            "book_s": float(self.thresholds.get("book_interval_s", 10)),
-            "supply_by_kind": supply_cadences(tier == "HOT"),
-        }
-        rows = [
-            row
-            async for row in self.repo.iter_all(
-                "ops.capture_tier_transitions", filters={"token_id": token_id}
-            )
-        ]
-        latest = (
-            max(
-                rows,
-                key=lambda row: (
-                    parse_time(row["effective_at"]),
-                    row.get("transition_seq", 0),
-                    row["transition_id"],
-                ),
-            )
-            if rows
-            else None
-        )
-        if (
-            latest
-            and latest["tier"] == tier
-            and latest.get("capture_cadences") == cadences
-            and latest.get("config_version") == self.settings.config_version
-        ):
-            return
-        review_id = new_id("TIER")
-        event_ids = sorted(
-            row["event_id"]
-            for row in await self.repo.list("mkt.hot_tokens", filters={"token_id": token_id}, limit=10000)
-        )
-        await self._put(
-            "ops.capture_tier_transitions",
-            review_id,
-            {
-                "transition_id": review_id,
-                "transition_seq": max((row.get("transition_seq", 0) for row in rows), default=0) + 1,
-                "event_ids": event_ids,
-                "token_id": token_id,
-                "tier": tier,
-                **collection_clock(iso()).fields("effective_at"),
-                "reason": reason,
-                "capture_cadences": cadences,
-            },
-        )
+    async def _record_capture_tier(self, token_id: str, tier: CaptureTier, reason: str) -> None:
+        await self._capture.record_tier(token_id, tier, reason)
 
     async def _sync_hot_set(self):
         """Hot expiry and the hot set this process scales supply by; tank-capture subscribes
@@ -3157,7 +2924,14 @@ class MarketService:
         )
         runs = [r for r in runs if anchor_ts is None or parse_time(r["anchor"]) == parse_time(anchor_ts)]
         result["backfill_runs"] = runs
-        latest = max(runs, key=lambda r: r["started_at"]) if runs else None
+        latest = (
+            max(
+                runs,
+                key=lambda r: parse_time(r["recorded_at"] if r["started_at"] is None else r["started_at"]),
+            )
+            if runs
+            else None
+        )
         result["capture_status"] = {
             "status": latest["status"] if latest else "NOT_REQUESTED",
             "reason": latest.get("reason") if latest else "NO_DURABLE_CAPTURE_REQUEST",
@@ -3166,11 +2940,11 @@ class MarketService:
             "bounded_wait_s": 0,
             "incomplete_windows_excluded": True,
         }
-        if latest and latest["backfill_id"] in self._capture_waits:
-            waited = self._capture_waits[latest["backfill_id"]]
-            result["capture_status"]["bounded_wait_s"] = waited["bounded_wait_s"]
+        if latest and latest["backfill_id"] in self._capture.waits:
+            waited = self._capture.waits[latest["backfill_id"]]
+            result["capture_status"]["bounded_wait_s"] = waited.bounded_wait_s
             if latest["status"] in ("PENDING", "RUNNING"):
-                result["capture_status"].update(waited)
+                result["capture_status"].update(waited.to_wire())
         result["funding_source_observations"] = [
             observation
             for point in result["funding"]
@@ -3326,12 +3100,8 @@ class MarketService:
                     token_id, "HOT" if token_id in active_tokens else "BASE", "CAPTURE_POLICY_STARTED"
                 )
 
-    async def _schedule_hot_backfills(self):
-        for hot in await self.repo.list("mkt.hot_tokens", limit=10000):
-            event = await self.repo.get("evt.events", hot["event_id"]) or {}
-            await self._schedule_event_backfill(
-                hot["event_id"], hot["token_id"], event_anchor(event).value if event else hot["since"]
-            )
+    async def _schedule_hot_backfills(self) -> None:
+        await self._capture.schedule_hot_backfills()
 
     async def run(self, stop):
         """tank-capture holds the streams, pollers, backfills and exchange REST; this process
