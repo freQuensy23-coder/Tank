@@ -1,0 +1,3 @@
+ALTER TABLE out.ops_notices DROP CONSTRAINT current_notice_kind;
+ALTER TABLE out.ops_notices ADD CONSTRAINT current_notice_kind
+    CHECK (kind IN ('DELIVERY_FAILED', 'ENTRY_ERROR', 'ENTRY_ERRORS', 'HEARTBEAT', 'ITEM_PROGRESS')) NOT VALID;
