@@ -1086,8 +1086,18 @@ async def test_shared_weight_budget_large_waiter_does_not_block_fitting_baseline
         await asyncio.wait_for(sleep_started.wait(), timeout=1)
         await asyncio.wait_for(budget.acquire("binance.spot", 100, 60, weight=2), timeout=1)
         assert not optional.done()
-        assert sum(weight for _, weight in budget.windows[("binance.spot", 60.0, 100.0)]) == 100
-        assert not budget.locks[("binance.spot", 60.0, 100.0)].locked()
+        assert (
+            sum(
+                row.weight
+                for row in budget.windows[
+                    module.BudgetBucket(key="binance.spot", window_s=60.0, capacity=100.0)
+                ]
+            )
+            == 100
+        )
+        assert not budget.locks[
+            module.BudgetBucket(key="binance.spot", window_s=60.0, capacity=100.0)
+        ].locked()
     finally:
         optional.cancel()
         with pytest.raises(asyncio.CancelledError):
