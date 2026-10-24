@@ -214,3 +214,25 @@ def test_completed_job_requires_completion_evidence() -> None:
 def test_github_page_rejects_invalid_count(total_count: str | int) -> None:
     with pytest.raises(ValueError):
         budget.JobPage.model_validate({"jobs": [], "total_count": total_count})
+
+
+def test_budget_workflow_provisions_frozen_runtime_before_launch() -> None:
+    import yaml
+
+    workflow = yaml.safe_load((CI_ROOT.parents[1] / ".github/workflows/ci.yml").read_text())
+    steps = workflow["jobs"]["budget"]["steps"]
+    setup = next(
+        index for index, step in enumerate(steps) if step.get("uses", "").startswith("astral-sh/setup-uv@")
+    )
+    sync = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("run") == "uv sync --python 3.13.13 --frozen --extra dev"
+    )
+    launch = next(
+        index for index, step in enumerate(steps) if "scripts/ci/ci_budget.py" in step.get("run", "")
+    )
+    assert setup < sync < launch
+    assert steps[setup]["with"]["version"] == "0.11.7"
+    assert steps[setup]["with"]["python-version"] == "3.13.13"
+    assert steps[launch]["run"] == "uv run --frozen --extra dev python scripts/ci/ci_budget.py"
