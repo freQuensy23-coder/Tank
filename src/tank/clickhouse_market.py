@@ -14,16 +14,20 @@ import asyncio
 import json
 import re
 import time
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
-from pydantic import JsonValue
+from pydantic import Field, JsonValue
 
+from tank.contracts import DomainModel
 from tank.contracts.json import decode_json
+from tank.market_codec import IdentityValue, StoredRow, StoredValue, _timestamp
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES
+from tank.models import Record
 from tank.settings import Settings
 from tank.util import canonical_json, iso, parse_time
 
@@ -192,7 +196,11 @@ def _json_lines(body: bytes) -> list[dict[str, JsonValue]]:
     return rows
 
 
-def _literal(value):
+type QueryValue = StoredValue | Sequence[IdentityValue]
+type QueryKey = tuple[str, QueryValue, str]
+
+
+def _literal(value: QueryValue) -> str:
     """A value as ClickHouse parameter text."""
     if isinstance(value, datetime):
         return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
@@ -208,34 +216,35 @@ def _literal(value):
 class Query:
     """Clauses and server-side parameters of one statement."""
 
-    def __init__(self):
-        self.clauses, self.params = [], {}
+    def __init__(self) -> None:
+        self.clauses: list[str] = []
+        self.params: dict[str, tuple[str, str]] = {}
 
-    def param(self, value, kind):
+    def param(self, value: QueryValue, kind: str) -> str:
         if isinstance(value, (list, tuple)):
             return "(" + (_literal(value)[1:-1] or "NULL") + ")"
         name = f"p{len(self.params)}"
         self.params[name] = (_literal(value), kind)
         return "{" + name + ":" + kind + "}"
 
-    def where(self, clause):
+    def where(self, clause: str) -> None:
         self.clauses.append(clause)
 
-    def predicate(self):
+    def predicate(self) -> str:
         return " AND ".join(self.clauses) if self.clauses else "1"
 
 
 DT = "DateTime64(6, 'UTC')"
 
 
-def _column(collection, name):
+def _column(collection: str, name: str) -> str:
     name = MARKET_ALIASES.get(collection, {}).get(name, name)
     if name != "storage_key" and name not in MARKET_COLUMNS[collection]:
         raise ValueError(f"Unknown typed market filter {collection}.{name}")
     return name
 
 
-def _filters(q, collection, filters):
+def _filters(q: Query, collection: str, filters: Mapping[str, StoredValue] | None) -> None:
     """_exact_predicate: typed equality, None as IS NULL."""
     for key, value in (filters or {}).items():
         name = _column(collection, key)
@@ -243,7 +252,7 @@ def _filters(q, collection, filters):
         if value is None:
             q.where(f"`{name}` IS NULL")
         elif kind == "timestamptz":
-            q.where(f"`{name}` = {q.param(parse_time(value), DT)}")
+            q.where(f"`{name}` = {q.param(_timestamp(value), DT)}")
         elif kind == "jsonb":
             q.where(f"`{name}` = {q.param(canonical_json(value), 'String')}")
         elif kind == "numeric":
@@ -252,13 +261,13 @@ def _filters(q, collection, filters):
             q.where(f"`{name}` = {q.param(value, TYPES[kind])}")
 
 
-def _after(q, *keys):
+def _after(q: Query, *keys: QueryKey) -> None:
     """Rows after a keyset cursor, spelled out per column: ClickHouse prunes by the sort key on
     this form and reads the whole range again for every page on a tuple comparison."""
     q.where(_after_clause(q, *keys))
 
 
-def _after_clause(q, *keys):
+def _after_clause(q: Query, *keys: QueryKey) -> str:
     column, value, kind = keys[0]
     here = q.param(value, kind)
     if len(keys) == 1:
@@ -266,47 +275,63 @@ def _after_clause(q, *keys):
     return f"({column} > {here} OR ({column} = {here} AND {_after_clause(q, *keys[1:])}))"
 
 
-def _ids(q, instrument_ids):
+def _ids(q: Query, instrument_ids: Sequence[str]) -> None:
     q.where(f"instrument_id IN {q.param(list(instrument_ids), 'Array(String)')}")
 
 
-def _record(collection, row):
+def _record(collection: str, row: Record) -> Record:
     """A ClickHouse row as the typed values a PostgreSQL row carries (then decode)."""
     from tank.market_codec import decode
 
-    out = {}
+    out: StoredRow = {}
     for name, kind in MARKET_COLUMNS[collection].items():
         value = row.get(name)
         if value is None:
             out[name] = None
         elif kind == "timestamptz":
-            out[name] = parse_time(value)
+            out[name] = _timestamp(value)
         elif kind == "jsonb":
-            out[name] = json.loads(value)
+            if not isinstance(value, str):
+                raise ValueError(f"{collection}.{name} requires encoded JSON")
+            out[name] = decode_json(value)
         elif kind == "text[]":
-            out[name] = list(value) or None
+            if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+                raise ValueError(f"{collection}.{name} requires an array of text")
+            out[name] = value if value else None
         elif kind == "numeric":
+            if not isinstance(value, str):
+                raise ValueError(f"{collection}.{name} requires decimal text")
             out[name] = Decimal(value)
         else:
             out[name] = value
     return decode(collection, out)
 
 
-def _records(collection, rows):
+def _records(collection: str, rows: Sequence[Record]) -> list[Record]:
     return [_record(collection, r) for r in rows]
 
 
-async def _decode(collection, rows):
+async def _decode(collection: str, rows: Sequence[Record]) -> list[Record]:
     if len(rows) > 1000:
         return await asyncio.to_thread(_records, collection, rows)
     return _records(collection, rows)
 
 
-def _table(collection):
+def _table(collection: str) -> str:
+    if collection not in MARKET_TABLES:
+        raise ValueError(f"Unknown ClickHouse market table: {collection}")
     return f"{collection} FINAL"
 
 
-async def _select(ch, collection, q, order, tail="", selected="*"):
+class MarketSelectionKey(DomainModel):
+    storage_key: str
+    instrument_id: str
+    day: str = Field(validation_alias="_day")
+
+
+async def _select(
+    ch: ClickHouse, collection: str, q: Query, order: str, tail: str = "", selected: str = "*"
+) -> list[Record]:
     day = MARKET_TABLES[collection]
     keys = await ch.rows(
         f"SELECT storage_key, instrument_id, `{day}` AS _day FROM {_table(collection)} "
@@ -315,18 +340,21 @@ async def _select(ch, collection, q, order, tail="", selected="*"):
     )
     if not keys:
         return []
-    days = [parse_time(r["_day"]) for r in keys]
+    selected_keys = [MarketSelectionKey.model_validate(row) for row in keys]
+    days = [parse_time(row.day) for row in selected_keys]
     k = Query()
-    k.where(f"instrument_id IN {k.param(sorted({r['instrument_id'] for r in keys}), 'Array(String)')}")
+    k.where(
+        f"instrument_id IN {k.param(sorted({row.instrument_id for row in selected_keys}), 'Array(String)')}"
+    )
     k.where(f"`{day}` >= {k.param(min(days), DT)}")
     k.where(f"`{day}` <= {k.param(max(days), DT)}")
-    k.where(f"storage_key IN {k.param([r['storage_key'] for r in keys], 'Array(String)')}")
+    k.where(f"storage_key IN {k.param([row.storage_key for row in selected_keys], 'Array(String)')}")
     return await ch.rows(
         f"SELECT {selected} FROM {_table(collection)} WHERE {k.predicate()} ORDER BY {order}", k.params
     )
 
 
-async def get(ch, collection, key):
+async def get(ch: ClickHouse, collection: str, key: str) -> Record | None:
     q = Query()
     q.where(f"storage_key = {q.param(str(key), 'String')}")
     rows = await _select(ch, collection, q, "storage_key", "LIMIT 1")

@@ -3,7 +3,6 @@
 import asyncio
 import copy
 import hashlib
-import json
 import logging
 import random
 import time
@@ -20,6 +19,7 @@ from typing import Literal, Protocol, Self
 from psycopg import AsyncConnection
 from psycopg.abc import PQGen
 from psycopg_pool import AsyncConnectionPool
+from pydantic import JsonValue
 
 from tank.clickhouse_market import ClickHouse
 from tank.contracts import DomainModel
@@ -55,6 +55,22 @@ class AdvisoryLockResult(DomainModel):
 
 class MigrationAdoption(DomainModel):
     adopt: bool
+
+
+class HeldCaps(DomainModel):
+    held: list[str]
+
+
+class ClaimResult(DomainModel):
+    document: Record | None
+    analysis_busy: bool
+    fresh_event: bool
+    deferred: int
+
+
+class ImmutableDocument(DomainModel):
+    document: Record
+    immutable: bool
 
 
 class ImmutableRecordError(ValueError):
@@ -760,7 +776,15 @@ class MemoryRepository(QueueMixin):
             return count
 
 
-def _projection(collection, record):
+def _optional_document(value: JsonValue, field: str) -> Record:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{field} must be an object")
+    return value
+
+
+def _projection(collection: str, record: Record) -> Record:
     """Map §2 nested names to §14 indexed columns without changing the document."""
     values = dict(record)
     aliases = {
@@ -792,16 +816,17 @@ def _projection(collection, record):
             ("route", {"decision": "route_decision", "event_id": "route_event_id", "p_same": "route_p"}),
         ]:
             for source, target in mappings.items():
-                if isinstance(record.get(obj), dict) and source in record[obj]:
-                    values[target] = record[obj][source]
+                nested = record.get(obj)
+                if isinstance(nested, dict) and source in nested:
+                    values[target] = nested[source]
     if collection == "ops.llm_usage":
-        for column, aliases in {
+        for column, alternatives in {
             "at": ("created_at",),
             "model": ("model_id",),
             "subject_id": ("event_id", "item_id", "session_id", "proposal_id"),
         }.items():
             if values.get(column) is None:
-                selected = next((a for a in aliases if record.get(a) is not None), None)
+                selected = next((a for a in alternatives if record.get(a) is not None), None)
                 values[column] = record[selected] if selected is not None else None
                 if (
                     column == "at"
@@ -817,7 +842,7 @@ def _projection(collection, record):
                             if key != "at"
                         }
                     )
-        usage = record.get("usage") or {}
+        usage = _optional_document(record.get("usage"), "usage")
         for column in (
             "input_tokens",
             "cache_read_tokens",
@@ -829,24 +854,26 @@ def _projection(collection, record):
             if values.get(column) is None and usage.get(column) is not None:
                 values[column] = usage[column]
     if collection == "ana.calls":
-        if isinstance(record.get("opened_by"), (list, tuple)):
-            values["opened_by_alert"], values["opened_by_version"] = record["opened_by"]
-        elif isinstance(record.get("opened_by"), dict):
-            values["opened_by_alert"] = record["opened_by"].get("alert_id")
-            values["opened_by_version"] = record["opened_by"].get("version")
+        opened_by = record.get("opened_by")
+        if isinstance(opened_by, list):
+            values["opened_by_alert"], values["opened_by_version"] = opened_by
+        elif isinstance(opened_by, dict):
+            values["opened_by_alert"] = opened_by.get("alert_id")
+            values["opened_by_version"] = opened_by.get("version")
     if collection == "evt.claims":
         measured = record.get("value")
         if isinstance(measured, dict):
             values.setdefault("value_num", measured.get("number"))
             values.setdefault("value_unit", measured.get("unit"))
-        if not values.get("quote") and record.get("evidence"):
-            first_evidence = record["evidence"][0]
+        evidence = record.get("evidence")
+        if values.get("quote") is None and isinstance(evidence, list) and evidence:
+            first_evidence = evidence[0]
             if isinstance(first_evidence, dict):
                 values["quote"] = first_evidence.get("quote")
-    if collection == "ana.decisions" and not values.get("mta_id"):
-        values["mta_id"] = (record.get("provenance") or {}).get("mta_id")
+    if collection == "ana.decisions" and values.get("mta_id") is None:
+        values["mta_id"] = _optional_document(record.get("provenance"), "provenance").get("mta_id")
     if collection == "ana.market_truth":
-        detail = copy.deepcopy(values.get("detail") or {})
+        detail = copy.deepcopy(_optional_document(values.get("detail"), "detail"))
         for key in ("spot", "derivatives", "liquidity", "supply", "relative"):
             if key in record:
                 detail[key] = record[key]
@@ -863,7 +890,7 @@ def _projection(collection, record):
             if not isinstance(array, (list, tuple)):
                 raise ValueError(f"{collection}.{column} must be an array")
             id_field = id_arrays.get((collection, column))
-            projected_array = []
+            projected_array: list[JsonValue] = []
             for element in array:
                 if isinstance(element, dict) and id_field:
                     element = element.get(id_field)
@@ -874,9 +901,11 @@ def _projection(collection, record):
                     )
                 projected_array.append(element)
             values[column] = projected_array
-        if datatype == "timestamptz" and isinstance(values.get(column), dict):
-            temporal = values[column]
-            values[column] = temporal.get("value", temporal.get("ts"))
+        temporal = values.get(column)
+        if datatype == "timestamptz" and isinstance(temporal, dict):
+            if "value" in temporal and "ts" in temporal and temporal["value"] != temporal["ts"]:
+                raise ValueError(f"Conflicting timestamp value aliases for {column}")
+            values[column] = temporal["value"] if "value" in temporal else temporal.get("ts")
 
     for field, precision_field in TIMESTAMP_PRECISION_FIELDS.get(collection, {}).items():
         names = {precision_field, field + "_prec", field + "_precision"}
@@ -947,6 +976,7 @@ class PostgresRepository(QueueMixin):
 
     def __init__(self, database_url: str) -> None:
         self.database_url = database_url
+        self._last_deferral: tuple[float, int, tuple[str, ...]] | None = None
         self._pool: AsyncConnectionPool[AsyncConnection[StoredRow]] | None = None
         self._connection: ContextVar[
             tuple[weakref.ReferenceType[AsyncConnection[StoredRow]], weakref.ReferenceType[TaskOwner]] | None
@@ -1117,15 +1147,22 @@ class PostgresRepository(QueueMixin):
             async with _stable_transaction(conn):
                 await conn.execute((Path(__file__).parent / "agent_grants.sql").read_text(), prepare=False)
 
-    async def put(self, collection, key, record, *, immutable=False):
+    async def put(
+        self, collection: str, key: str, record: Mapping[str, JsonInput], *, immutable: bool = False
+    ) -> Record:
         if collection in MARKET_COLUMNS:
             changed = await self.put_market_batch(collection, [record], keys=[str(key)])
-            return changed[0] if changed else await self.get(collection, key)
+            if changed:
+                return changed[0]
+            stored = await self.get(collection, key)
+            if stored is None:
+                raise RuntimeError("Market write did not produce a persisted record")
+            return stored
         from psycopg import sql
         from psycopg.types.json import Jsonb
 
         _table(collection)
-        key, record = str(key), jsonable(record)
+        key, document = str(key), jsonable(dict(record))
         async with self.lock(f"record:{collection}:{key}"):
             conn = self._conn()
             table = sql.Identifier(*collection.split("."))
@@ -1135,28 +1172,30 @@ class PostgresRepository(QueueMixin):
                     (key,),
                 )
             ).fetchone()
-            if old and (old["immutable"] or immutable or collection in APPEND_ONLY):
-                if old["document"] != record:
+            previous = None if old is None else ImmutableDocument.model_validate(old)
+            if previous is not None and (previous.immutable or immutable or collection in APPEND_ONLY):
+                if previous.document != document:
                     raise ImmutableRecordError(f"Immutable record: {collection}/{key}")
-                if immutable and not old["immutable"]:
+                if immutable and not previous.immutable:
                     await conn.execute(
                         sql.SQL("UPDATE {} SET immutable=true WHERE storage_key=%s").format(table), (key,)
                     )
-                return old["document"]
-            projected = _projection(collection, record)
+                return previous.document
+            projected = _projection(collection, document)
             if collection in SERIAL_TABLES and projected.get("id") is None:
                 projected.pop("id", None)
-            values = [key, Jsonb(record), immutable or collection in APPEND_ONLY]
+            values: list[StoredValue | Jsonb] = [key, Jsonb(document), immutable or collection in APPEND_ONLY]
             for column, value in projected.items():
                 datatype = TABLE_COLUMNS[collection][column]
+                parameter: StoredValue | Jsonb = value
                 if value is not None:
                     if datatype == "jsonb":
-                        value = Jsonb(value)
+                        parameter = Jsonb(value)
                     elif datatype == "timestamptz":
-                        value = parse_time(value)
+                        parameter = _time_field(projected, column)
                     elif datatype == "text" and not isinstance(value, str):
-                        value = json.dumps(value, sort_keys=True)
-                values.append(value)
+                        raise ValueError(f"{collection}.{column} requires text")
+                values.append(parameter)
             names = ["storage_key", "document", "immutable", *projected]
             columns = sql.SQL(",").join(map(sql.Identifier, names))
             assignments = sql.SQL(",").join(
@@ -1166,9 +1205,9 @@ class PostgresRepository(QueueMixin):
                 "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT(storage_key) DO UPDATE SET {}"
             ).format(table, columns, sql.SQL(",").join(sql.Placeholder() for _ in names), assignments)
             await conn.execute(query, values)
-            return copy.deepcopy(record)
+            return copy.deepcopy(document)
 
-    async def get(self, collection, key):
+    async def get(self, collection: str, key: str) -> Record | None:
         from psycopg import sql
 
         from tank import clickhouse_market as chm
@@ -1189,9 +1228,11 @@ class PostgresRepository(QueueMixin):
             ).fetchone()
             return _read_record(collection, row) if row else None
 
-    async def list(self, collection, *, filters=None, limit=1000):
+    async def list(
+        self, collection: str, *, filters: Record | None = None, limit: int = 1000
+    ) -> list[Record]:
         if collection in MARKET_COLUMNS:
-            result = []
+            result: list[Record] = []
             async for row in self.iter_all(collection, filters=filters, batch_size=max(1, limit)):
                 if len(result) >= limit:
                     break
@@ -1204,7 +1245,8 @@ class PostgresRepository(QueueMixin):
         if limit < 0:
             raise ValueError("limit must be nonnegative")
 
-        clauses, args = [], []
+        clauses: list[sql.Composable] = []
+        args: list[StoredValue | Jsonb] = []
         for k, v in (filters or {}).items():
             clauses.append(sql.SQL("document -> %s = %s"))
             args.extend([k, Jsonb(jsonable(v))])
@@ -1215,12 +1257,9 @@ class PostgresRepository(QueueMixin):
                 and datatype not in ("jsonb", "text[]")
                 and not isinstance(v, (dict, list))
             ):
-                typed_value = v
+                typed_value: StoredValue = v
                 if datatype == "timestamptz":
-                    try:
-                        typed_value = parse_time(v)
-                    except (ValueError, TypeError):
-                        continue
+                    typed_value = _time_field({k: v}, k)
                 clauses.append(sql.SQL("{} = %s").format(sql.Identifier(k)))
                 args.append(typed_value)
         where = sql.SQL(" AND ").join(clauses) if clauses else sql.SQL("TRUE")
@@ -1235,7 +1274,7 @@ class PostgresRepository(QueueMixin):
             ).fetchall()
             return [_read_record(collection, r) for r in rows]
 
-    async def delete(self, collection, key):
+    async def delete(self, collection: str, key: str) -> None:
         from psycopg import sql
 
         _table(collection)
@@ -1269,14 +1308,14 @@ class PostgresRepository(QueueMixin):
                 (str(key),),
             )
 
-    async def claim_job(self):
+    async def claim_job(self) -> Record | None:
         started = time.monotonic()
         job = await self._claim_job()
         elapsed = time.monotonic() - started
 
         late = None
         if job and job.get("type") == "DELIVER" and job.get("attempts") == 1 and job.get("run_after"):
-            late = (utcnow() - parse_time(job["run_after"])).total_seconds()
+            late = (utcnow() - _time_field(job, "run_after")).total_seconds()
         if elapsed > CLAIM_SLOW_S or (late is not None and late > DELIVER_LATE_S):
             log.info(
                 "claim_job %.2f s, type %s, %s",
@@ -1286,11 +1325,11 @@ class PostgresRepository(QueueMixin):
             )
         return job
 
-    async def _claim_job(self):
+    async def _claim_job(self) -> Record | None:
         async with self.transaction():
             conn = self._conn()
 
-            held = (
+            held = HeldCaps.model_validate(
                 await (
                     await conn.execute(
                         "SELECT coalesce(array_agg(t), '{}') AS held FROM unnest(%s::text[]) AS t"
@@ -1298,7 +1337,7 @@ class PostgresRepository(QueueMixin):
                         (list(RUNNING_CAPS),),
                     )
                 ).fetchone()
-            )["held"]
+            ).held
             row = await (
                 await conn.execute(
                     """WITH expired AS (
@@ -1352,23 +1391,24 @@ class PostgresRepository(QueueMixin):
                     },
                 )
             ).fetchone()
-            if row["deferred"]:
-                self._log_deferral(row["deferred"], row["analysis_busy"], row["fresh_event"])
-            return row["document"]
+            result = ClaimResult.model_validate(row)
+            if result.deferred:
+                self._log_deferral(result.deferred, result.analysis_busy, result.fresh_event)
+            return result.document
 
-    def _log_deferral(self, count, busy, fresh):
+    def _log_deferral(self, count: int, busy: bool, fresh: bool) -> None:
         """Log deferred captures when the picture changes, and at least once a minute."""
         reasons = tuple(
             r for r, on in (("analysis job running or due", busy), ("event without FULL card", fresh)) if on
         )
         now = time.monotonic()
-        last = getattr(self, "_last_deferral", None)
-        if last and last[1:] == (count, reasons) and now - last[0] < DEFERRAL_LOG_S:
+        last = self._last_deferral
+        if last is not None and last[1:] == (count, reasons) and now - last[0] < DEFERRAL_LOG_S:
             return
         self._last_deferral = (now, count, reasons)
         log.info("deferring %d due REACTION_CAPTURE behind event analysis: %s", count, ", ".join(reasons))
 
-    async def recover_jobs(self):
+    async def recover_jobs(self) -> int:
         async with self.transaction():
             cursor = await self._conn().execute("""UPDATE ops.jobs
               SET status=CASE WHEN expires_at<=now() THEN 'EXPIRED' ELSE 'QUEUED' END,
@@ -2026,5 +2066,10 @@ async def _iter_metadata(self, collection, fields, *, filters=None, batch_size=1
         after = page[-1]["storage_key"]
 
 
-def _read_record(collection, row):
-    return decode_market(collection, row) if collection in MARKET_COLUMNS else row["document"]
+def _read_record(collection: str, row: StoredRow) -> Record:
+    if collection in MARKET_COLUMNS:
+        return decode_market(collection, row)
+    document = row["document"]
+    if not isinstance(document, dict):
+        raise ValueError("Stored document must be an object")
+    return document
