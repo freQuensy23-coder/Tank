@@ -11,9 +11,11 @@ from importlib.metadata import version
 from typing import TypedDict
 
 import httpx
+from ddgs.base import BaseSearchEngine
 from ddgs.ddgs import DDGS
 from ddgs.engines.duckduckgo import Duckduckgo
 from ddgs.exceptions import DDGSException, RatelimitException, TimeoutException
+from ddgs.results import TextResult
 
 from tank.contracts import DomainModel
 
@@ -160,8 +162,18 @@ class _DuckDuckGoHTTP:
 class _DuckDuckGoEngine(Duckduckgo):
     def __init__(self, transport: _DuckDuckGoHTTP) -> None:
 
-        self.http_client = transport
+        self.transport = transport
         self.results = []
+
+    def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        data: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> str:
+        return self.transport.request(method, url, data=data, headers=headers).text
 
 
 class _DuckDuckGoOnly(DDGS):
@@ -170,7 +182,7 @@ class _DuckDuckGoOnly(DDGS):
         self._timeout = 20
         self.engine = engine
 
-    def _get_engines(self, category: str, backend: str) -> list[_DuckDuckGoEngine]:
+    def _get_engines(self, category: str, backend: str) -> list[BaseSearchEngine[TextResult]]:
         if category != "text" or backend != "duckduckgo":
             raise SearchError("POLICY", "Only DuckDuckGo text search is allowed")
 
