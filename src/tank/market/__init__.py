@@ -1,6 +1,5 @@
-"""Market capture, strict semantics and auditable public exchange history."""
+"""Market domain calculations and explicit capture/service adapters.
 
-from tank.market.normalize import SemanticError
-from tank.market.service import MarketService
-
-__all__ = ["MarketService", "SemanticError"]
+Import MarketService from tank.market.service and SemanticError from
+ tank.market.normalize. Loading pure contracts must not initialize service adapters.
+"""
