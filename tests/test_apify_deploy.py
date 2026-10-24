@@ -22,6 +22,13 @@ SHA = "a" * 40
 NEXT_SHA = "b" * 40
 BUILD = "A" * 17
 OTHER_BUILD = "B" * 17
+HISTORICAL_RELEASES = [
+    "ec4f1e1ff6785d1e4aa39f13efefef0cfa4390ff",
+    "002605350ca05fe3ea52d82dbdf74d169ebc954d",
+    "36731eba17d50cdb462bc1fb03b104640ff1f145",
+    "8d2dd4431e6dd40afc2328f44a2a175ee912d179",
+    "fb66082796bed342116c04710c2bccd921312404",
+]
 
 
 @pytest.fixture
@@ -97,6 +104,55 @@ def test_source_digest_includes_paths_bytes_and_build_manifest(release):
     assert deploy.digest(renamed) != baseline
 
 
+def test_journal_replacement_and_removal_sync_parent_after_effect(tmp_path, monkeypatch):
+    instance = deploy.Publisher(None, tmp_path, tmp_path / "apify-state", SHA)
+    instance.write("pending.json", {"old": True})
+    events = []
+    original = deploy.os.fsync
+
+    def sync(descriptor):
+        original(descriptor)
+        events.append((stat.S_ISDIR(os.fstat(descriptor).st_mode), instance.read("pending.json")))
+
+    monkeypatch.setattr(deploy.os, "fsync", sync)
+    instance.write("pending.json", {"new": True})
+    instance.remove("pending.json")
+    assert events == [(False, {"old": True}), (True, {"new": True}), (True, None)]
+    assert not list(instance.state.glob("*.tmp"))
+
+
+@pytest.mark.parametrize("change", ["permissions", "replacement"])
+def test_invalid_staging_is_not_published_or_unowned_staging_removed(tmp_path, monkeypatch, change):
+    instance = deploy.Publisher(None, tmp_path, tmp_path / "apify-state", SHA)
+    instance.write("active.json", {"old": True})
+    witness = tmp_path / "witness"
+    witness.write_text("untouched")
+    original = deploy.os.fsync
+    staging = []
+
+    def sync(descriptor):
+        original(descriptor)
+        if stat.S_ISREG(os.fstat(descriptor).st_mode):
+            path = Path(os.readlink(f"/proc/self/fd/{descriptor}"))
+            staging.append(path)
+            if change == "permissions":
+                path.chmod(0o644)
+            else:
+                path.unlink()
+                path.symlink_to(witness)
+
+    monkeypatch.setattr(deploy.os, "fsync", sync)
+    with pytest.raises(deploy.DeployError):
+        instance.write("active.json", {"new": True})
+    assert instance.read("active.json") == {"old": True}
+    assert witness.read_text() == "untouched"
+    assert len(staging) == 1
+    if change == "replacement":
+        assert staging[0].is_symlink()
+    else:
+        assert not staging[0].exists()
+
+
 class ApifyStand:
     def __init__(self):
         self.direct = deploy.BASELINE_BUILD
@@ -106,6 +162,13 @@ class ApifyStand:
                 "id": deploy.BASELINE_BUILD,
                 "actId": deploy.ACTOR_ID,
                 "status": "SUCCEEDED",
+                "buildNumber": "0.2.2",
+                "actVersion": {
+                    "sourceType": "SOURCE_FILES",
+                    "versionNumber": "0.2",
+                    "buildTag": "direct",
+                    "sourceFiles": [{"name": "main.py", "format": "TEXT", "content": "legacy fixture\n"}],
+                },
             }
         }
         self.requests = []
@@ -166,8 +229,9 @@ class ApifyStand:
 
 
 @pytest.fixture
-def apify_stand():
+def apify_stand(monkeypatch):
     stand = ApifyStand()
+    monkeypatch.setattr(deploy, "BASELINE_DIGEST", deploy.digest({"main.py": b"legacy fixture\n"}))
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -430,6 +494,7 @@ def test_actual_deploy_shell_restores_actor_before_tank_rollback(
         "import importlib.util, pathlib, sys\n"
         f"spec = importlib.util.spec_from_file_location('publisher', {str(ROOT / 'scripts/deploy/apify_deploy.py')!r})\n"
         "module = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\n"
+        f"module.BASELINE_DIGEST = {deploy.BASELINE_DIGEST!r}\n"
         f"api = module.Api('synthetic-token', {apify_stand.base!r})\n"
         "publisher = module.Publisher(api, pathlib.Path(sys.argv[4]), pathlib.Path('apify-state'), sys.argv[3])\n"
         "getattr(publisher, sys.argv[2])()\n"
@@ -485,3 +550,283 @@ def test_actual_deploy_shell_restores_actor_before_tank_rollback(
         if method == "PUT" and path.endswith(deploy.ACTOR_ID)
     ]
     assert tag_updates == [BUILD, deploy.BASELINE_BUILD]
+
+
+def shell_host(tmp_path, stand, artifact, sha=SHA):
+    host = tmp_path / "host"
+    host.mkdir()
+    shutil.copy(ROOT / "scripts/deploy/deploy.sh", host / "deploy.sh")
+    shutil.copytree(artifact, host / "releases" / sha)
+    shutil.copy(ROOT / "scripts/deploy/apify_deploy.py", host / "releases" / sha / "apify_deploy.py")
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    wrapper = tmp_path / "publisher_wrapper.py"
+    wrapper.write_text(
+        "import importlib.util, os, pathlib, stat, sys\n"
+        "spec = importlib.util.spec_from_file_location('publisher', sys.argv[1])\n"
+        "module = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\n"
+        f"module.BASELINE_DIGEST = {deploy.BASELINE_DIGEST!r}\n"
+        f"api = module.Api('synthetic-token', {stand.base!r})\n"
+        "publisher = module.Publisher(api, pathlib.Path(sys.argv[4]), pathlib.Path('apify-state'), sys.argv[3])\n"
+        "if os.environ.get('INTERRUPT_JOURNAL'):\n"
+        "    original = module.os.fsync\n"
+        "    def interrupted(descriptor):\n"
+        "        original(descriptor)\n"
+        "        if stat.S_ISREG(os.fstat(descriptor).st_mode): os._exit(73)\n"
+        "    module.os.fsync = interrupted\n"
+        "getattr(publisher, sys.argv[2])()\n"
+    )
+    (binary / "python3").write_text(f'#!/bin/bash\nexec {sys.executable} {wrapper} "$@"\n')
+    (binary / "docker").write_text(
+        '#!/bin/bash\nprintf \'%s %s\\n\' "$TANK_VERSION" "$*" >> docker-events\n'
+        f'if [[ "$*" == *\'pull -q\'* && "$TANK_VERSION" == {sha} ]]; then exit 1; fi\n'
+        'if [[ "$1" == inspect ]]; then if [[ "$*" == *State.Pid* ]]; then echo 42; else echo healthy; fi; fi\n'
+        'if [[ "$1" == ps && -f capture-created ]]; then echo capture-new; fi\n'
+        'if [[ "$*" == *--scale* ]]; then touch capture-created; fi\nexit 0\n'
+    )
+    (binary / "nsenter").write_text("#!/bin/bash\nexit 0\n")
+    for path in binary.iterdir():
+        path.chmod(0o755)
+    environment = {**os.environ, "PATH": str(binary) + os.pathsep + os.environ["PATH"]}
+    return host, environment
+
+
+@pytest.mark.integration
+@pytest.mark.process
+@pytest.mark.parametrize("journal", ["pending", "active", "cache"])
+def test_deploy_retry_recovers_process_death_before_journal_rename(apify_stand, release, tmp_path, journal):
+    host, environment = shell_host(tmp_path, apify_stand, release)
+    artifact = host / "releases" / SHA
+    manifest = json.loads((artifact / "manifest.json").read_bytes())
+    manifest["release_sha"] = NEXT_SHA
+    (artifact / "manifest.json").write_bytes(deploy.canonical(manifest))
+    original = publisher(apify_stand, artifact, host, NEXT_SHA)
+    original.prepare()
+    finish_release(original, host)
+    active = original.read("active.json")
+    (artifact / "worker/main.py").write_text("value = 2\n")
+    manifest.update(release_sha=SHA, source_digest=deploy.digest(deploy.source_files(artifact / "worker")))
+    (artifact / "manifest.json").write_bytes(deploy.canonical(manifest))
+    newer = publisher(apify_stand, artifact, host)
+    if journal != "cache":
+        newer.prepare()
+    if journal == "active":
+        newer.activate()
+    action = {"cache": "prepare", "pending": "activate", "active": "commit"}[journal]
+    interrupted = subprocess.run(
+        ["python3", str(artifact / "apify_deploy.py"), action, SHA, str(artifact)],
+        cwd=host,
+        env={**environment, "INTERRUPT_JOURNAL": "yes"},
+        capture_output=True,
+        timeout=10,
+    )
+    assert interrupted.returncode == 73
+    staging = list(newer.state.glob("*.tmp"))
+    assert len(staging) == 1
+    abandoned = staging[0].read_bytes()
+    assert abandoned
+    fixed_staging = newer.state / (
+        manifest["source_digest"] + ".tmp" if journal == "cache" else journal + ".tmp"
+    )
+    fixed_staging.write_text("abandoned old publisher staging")
+    fixed_staging.chmod(0o600)
+    result = subprocess.run(
+        ["bash", str(host / "deploy.sh"), SHA],
+        cwd=host,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 1
+    assert f"rolled back to {NEXT_SHA}" in result.stdout
+    assert "worker rollback failed" not in result.stdout
+    assert apify_stand.direct == BUILD
+    assert newer.read("active.json") == active
+    assert newer.read("pending.json") is None
+    assert (host / "deployed").read_text().strip() == NEXT_SHA
+    assert staging[0].read_bytes() == abandoned
+    assert fixed_staging.read_text() == "abandoned old publisher staging"
+    if journal == "cache":
+        assert newer.read(manifest["source_digest"] + ".json")["build_id"] == OTHER_BUILD
+
+
+@pytest.mark.integration
+@pytest.mark.process
+@pytest.mark.parametrize("sha", HISTORICAL_RELEASES)
+def test_workflow_packages_historical_main_with_current_orchestrator(tmp_path, sha):
+    import yaml
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/deploy.yml").read_text())
+    steps = workflow["jobs"]["deploy"]["steps"]
+    target = next(step for step in steps if step.get("id") == "target")
+    package_step = next(step for step in steps if step.get("name", "").startswith("Package the selected"))
+    production_step = next(step for step in steps if step.get("name") == "Deploy on the production host")
+    repository = tmp_path / "repository"
+    subprocess.run(
+        ["git", "clone", "--shared", "--no-checkout", str(ROOT), str(repository)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "--detach", "HEAD"], cwd=repository, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "update-ref", "refs/remotes/origin/main", sha],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+    runner = tmp_path / "runner"
+    runner.mkdir()
+    output = tmp_path / "output"
+    environment = {**os.environ, "INPUT_SHA": sha, "RUNNER_TEMP": str(runner), "GITHUB_OUTPUT": str(output)}
+    subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", target["run"]],
+        cwd=repository,
+        env=environment,
+        check=True,
+        capture_output=True,
+    )
+    assert output.read_text() == f"sha={sha}\n"
+    assert not (repository / "scripts/deploy/apify_deploy.py").exists()
+    assert not (repository / "apify/x-reader").exists()
+    subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", package_step["run"]],
+        cwd=repository,
+        env={**environment, "SHA": sha},
+        check=True,
+        capture_output=True,
+    )
+    artifact = runner / sha
+    manifest = json.loads((artifact / "manifest.json").read_bytes())
+    assert manifest["release_sha"] == sha
+    assert manifest["contract"] == deploy.LEGACY_CONTRACT
+    assert manifest["worker_mode"] == ("unused" if sha == HISTORICAL_RELEASES[-1] else "legacy")
+    assert manifest["build_id"] == deploy.BASELINE_BUILD
+    assert manifest["source_digest"] == deploy.BASELINE_DIGEST
+    assert not (artifact / "worker").exists()
+    assert (artifact / "apify_deploy.py").read_bytes() == (
+        ROOT / "scripts/deploy/apify_deploy.py"
+    ).read_bytes()
+    assert (runner / "tank-orchestrator/deploy.sh").read_bytes() == (
+        ROOT / "scripts/deploy/deploy.sh"
+    ).read_bytes()
+    assert 'compose.yaml "$RUNNER_TEMP/tank-orchestrator/deploy.sh"' in production_step["run"]
+    with (repository / "config/sources.yaml").open("a") as stream:
+        stream.write("\nunreviewed: changed\n")
+    subprocess.run(["git", "add", "config/sources.yaml"], cwd=repository, check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=CI",
+            "-c",
+            "user.email=ci@example.invalid",
+            "commit",
+            "-qm",
+            "unreviewed compatibility",
+        ],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+    changed = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
+    rejected = subprocess.run(
+        [
+            sys.executable,
+            str(runner / "tank-orchestrator/apify_deploy.py"),
+            "package",
+            changed,
+            str(runner / changed),
+        ],
+        cwd=repository,
+        text=True,
+        capture_output=True,
+    )
+    assert rejected.returncode != 0
+    assert "historical worker compatibility not verified" in rejected.stderr
+    assert not (runner / changed).exists()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("mode", ["legacy", "unused"])
+def test_historical_worker_selection_never_rebuilds_or_relabels_source(apify_stand, release, tmp_path, mode):
+    current = publisher(apify_stand, release, tmp_path)
+    current.prepare()
+    finish_release(current, tmp_path)
+    original = current.read("active.json")
+    historical = tmp_path / "historical"
+    historical.mkdir()
+    compatibility = next(key for key, value in deploy.LEGACY_INPUTS.items() if value == mode)
+    (historical / "manifest.json").write_bytes(
+        deploy.canonical(
+            {
+                "release_sha": NEXT_SHA,
+                "actor_id": deploy.ACTOR_ID,
+                "contract": deploy.LEGACY_CONTRACT,
+                "worker_mode": mode,
+                "compatibility_digest": compatibility,
+                "source_digest": deploy.BASELINE_DIGEST,
+                "build_id": deploy.BASELINE_BUILD,
+            }
+        )
+    )
+    instance = publisher(apify_stand, historical, tmp_path, NEXT_SHA)
+    instance.prepare()
+    instance.activate()
+    instance.commit()
+    instance.rollback()
+    instance.rollback_finish()
+    assert instance.read("active.json") == original
+    assert apify_stand.direct == BUILD
+    assert (tmp_path / "deployed").read_text().strip() == SHA
+    instance.prepare()
+    finish_release(instance, tmp_path)
+    expected_build = deploy.BASELINE_BUILD if mode == "legacy" else BUILD
+    assert apify_stand.direct == expected_build
+    active = instance.read("active.json")
+    assert active["release_sha"] == NEXT_SHA
+    assert active["build_id"] == expected_build
+    if mode == "legacy":
+        assert "release_sha" not in active["build"]
+        assert active["build"]["build_number"] == "0.2.2"
+    else:
+        assert active["build"] == original["build"]
+    assert len([item for item in apify_stand.requests if item[0] == "POST" and "/builds?" in item[1]]) == 1
+    instance.prepare()
+    instance.activate()
+    instance.rollback()
+    instance.rollback_finish()
+    assert instance.read("active.json") == active
+    assert apify_stand.direct == expected_build
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("change", ["source", "version", "build_number", "status", "actor"])
+def test_legacy_build_drift_blocks_bootstrap_and_rollback(apify_stand, release, tmp_path, change):
+    instance = publisher(apify_stand, release, tmp_path)
+    instance.prepare()
+    instance.activate()
+    baseline = apify_stand.builds[deploy.BASELINE_BUILD]
+    if change == "source":
+        baseline["actVersion"]["sourceFiles"][0]["content"] = "changed"
+    elif change == "version":
+        baseline["actVersion"]["versionNumber"] = "9.9"
+    elif change == "build_number":
+        baseline["buildNumber"] = "0.2.3"
+    elif change == "status":
+        baseline["status"] = "FAILED"
+    else:
+        baseline["actId"] = "unrelated"
+    with pytest.raises(deploy.DeployError):
+        instance.rollback()
+    assert apify_stand.direct == BUILD
+    assert instance.read("pending.json")["activation_attempted"]
+    assert not instance.read("pending.json").get("rolled_back")
+    (tmp_path / "separate").mkdir()
+    separate = publisher(apify_stand, release, tmp_path / "separate")
+    apify_stand.direct = deploy.BASELINE_BUILD
+    with pytest.raises(deploy.DeployError):
+        separate.prepare()
+    assert separate.read("pending.json") is None

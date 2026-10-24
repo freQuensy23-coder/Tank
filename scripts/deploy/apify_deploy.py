@@ -6,6 +6,7 @@ import os
 import re
 import stat
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -16,6 +17,15 @@ BASELINE_BUILD = "c99YRMlKXube5V0gV"
 CONTRACT = "tank-x-reader-v1"
 MARKER = "tank-release.json"
 VERSION = "0.3"
+BASELINE_DIGEST = "a9a53d45f1cdc30634da29a71ae9d6a0a4a5b57e1f60eaf8a443c7cb7568e310"
+LEGACY_CONTRACT = "tank-x-reader-legacy-0.2.2"
+LEGACY_INPUTS = {
+    "1dcfa5489d2f3622ddcad2d8d45a5515d9734407c4d5a3533e15e3fce6b3ba39": "legacy",
+    "1be5c4cadef74c3bf1dd77c10fde968d068ef1baad6bbb3969836ccd74a54800": "legacy",
+    "431febb05a9303605ba57962214df687363f223b33a0aaaca85e15e9033c0061": "legacy",
+    "0da234b567166f735ae2c1c33e6de74890a0681088d06b640b1edf470d84a36e": "legacy",
+    "67141bdf567e9c73678efb290e3cae04bae0f11bbd5ad2087db8520bd035035a": "unused",
+}
 
 
 class DeployError(RuntimeError):
@@ -70,7 +80,29 @@ def package(sha, destination):
     names = subprocess.check_output(
         ["git", "ls-tree", "-r", "--name-only", sha, "apify/x-reader"], text=True
     ).splitlines()
-    require(names, "worker source not tracked")
+    if not names:
+        inputs = {
+            name: subprocess.check_output(["git", "show", f"{sha}:{name}"])
+            for name in ["config/sources.yaml", "src/tank/sources/xsensor.py"]
+        }
+        compatibility = digest(inputs)
+        require(compatibility in LEGACY_INPUTS, "historical worker compatibility not verified")
+        destination.mkdir(parents=True, exist_ok=False)
+        (destination / "manifest.json").write_bytes(
+            canonical(
+                {
+                    "release_sha": sha,
+                    "actor_id": ACTOR_ID,
+                    "contract": LEGACY_CONTRACT,
+                    "worker_mode": LEGACY_INPUTS[compatibility],
+                    "compatibility_digest": compatibility,
+                    "source_digest": BASELINE_DIGEST,
+                    "build_id": BASELINE_BUILD,
+                }
+            )
+        )
+        (destination / "apify_deploy.py").write_bytes(Path(__file__).read_bytes())
+        return
     files = {}
     for name in names:
         mode = subprocess.check_output(["git", "ls-tree", sha, name], text=True).split()[0]
@@ -90,8 +122,7 @@ def package(sha, destination):
             {"release_sha": sha, "source_digest": digest(files), "contract": CONTRACT, "actor_id": ACTOR_ID}
         )
     )
-    publisher = subprocess.check_output(["git", "show", f"{sha}:scripts/deploy/apify_deploy.py"])
-    (destination / "apify_deploy.py").write_bytes(publisher)
+    (destination / "apify_deploy.py").write_bytes(Path(__file__).read_bytes())
 
 
 def private_path(path, directory=False):
@@ -194,16 +225,47 @@ class Publisher:
 
     def write(self, name, value):
         path = self.state / name
-        temporary = path.with_suffix(".tmp")
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        private_path(self.state, directory=True)
+        descriptor, temporary_name = tempfile.mkstemp(prefix=f".{name}.", suffix=".tmp", dir=self.state)
+        temporary = Path(temporary_name)
+        identity = os.fstat(descriptor)
         try:
             with os.fdopen(descriptor, "wb") as stream:
                 stream.write(canonical(value))
                 stream.flush()
                 os.fsync(stream.fileno())
+            private_path(temporary)
+            actual = temporary.lstat()
+            require(
+                (actual.st_dev, actual.st_ino) == (identity.st_dev, identity.st_ino) and actual.st_nlink == 1,
+                "deployment staging file changed",
+            )
             temporary.replace(path)
+            self.sync_directory()
         finally:
-            temporary.unlink(missing_ok=True)
+            if temporary.exists() or temporary.is_symlink():
+                actual = temporary.lstat()
+                if (actual.st_dev, actual.st_ino, actual.st_uid) == (
+                    identity.st_dev,
+                    identity.st_ino,
+                    os.geteuid(),
+                ):
+                    temporary.unlink()
+                    self.sync_directory()
+
+    def sync_directory(self):
+        descriptor = os.open(self.state, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    def remove(self, name):
+        path = self.state / name
+        if path.exists() or path.is_symlink():
+            private_path(path)
+            path.unlink()
+            self.sync_directory()
 
     def current(self):
         actor = self.api.request("GET", self.actor)
@@ -230,6 +292,25 @@ class Publisher:
         version = build.get("actVersion", {})
         require(version.get("sourceType") == "SOURCE_FILES", "build source snapshot unavailable")
         files = decoded_files(version.get("sourceFiles", []))
+        if build_id == BASELINE_BUILD:
+            require(
+                build.get("buildNumber") == "0.2.2"
+                and version.get("versionNumber") == "0.2"
+                and version.get("buildTag") == "direct"
+                and digest(files) == BASELINE_DIGEST,
+                "legacy build provenance mismatch",
+            )
+            require(
+                expected_digest is None or expected_digest == BASELINE_DIGEST,
+                "legacy build does not match release source",
+            )
+            return {
+                "actor_id": ACTOR_ID,
+                "contract": LEGACY_CONTRACT,
+                "source_digest": BASELINE_DIGEST,
+                "build_id": BASELINE_BUILD,
+                "build_number": "0.2.2",
+            }
         require(MARKER in files, "build release provenance missing")
         marker = json.loads(files.pop(MARKER))
         require(
@@ -253,28 +334,41 @@ class Publisher:
             "invalid previous Tank release",
         )
         manifest = json.loads((self.release / "manifest.json").read_bytes())
-        files = source_files(self.release / "worker")
-        require(
-            manifest
-            == {
+        legacy = manifest.get("contract") == LEGACY_CONTRACT
+        files = {} if legacy else source_files(self.release / "worker")
+        if legacy:
+            compatibility = manifest.get("compatibility_digest")
+            require(compatibility in LEGACY_INPUTS, "historical worker compatibility not verified")
+            expected = {
+                "release_sha": self.sha,
+                "actor_id": ACTOR_ID,
+                "contract": LEGACY_CONTRACT,
+                "worker_mode": LEGACY_INPUTS[compatibility],
+                "compatibility_digest": compatibility,
+                "source_digest": BASELINE_DIGEST,
+                "build_id": BASELINE_BUILD,
+            }
+        else:
+            expected = {
                 "release_sha": self.sha,
                 "source_digest": digest(files),
                 "contract": CONTRACT,
                 "actor_id": ACTOR_ID,
-            },
-            "release artifact provenance mismatch",
-        )
+            }
+        require(manifest == expected, "release artifact provenance mismatch")
         previous = self.current()
         active = self.read("active.json")
         if active is None:
             require(previous == BASELINE_BUILD, "unknown legacy direct build")
-            self.build(previous)
+            self.provenance(previous)
         else:
             require(active["build_id"] == previous, "active worker changed outside deployment")
             require(active["release_sha"] == previous_release, "Tank and worker release markers disagree")
             require(self.provenance(previous) == active["build"], "active worker provenance mismatch")
-        cached = self.read(manifest["source_digest"] + ".json")
-        if cached is not None:
+        cached = None if legacy else self.read(manifest["source_digest"] + ".json")
+        if legacy:
+            candidate = self.provenance(previous if manifest["worker_mode"] == "unused" else BASELINE_BUILD)
+        elif cached is not None:
             candidate = self.provenance(cached["build_id"], manifest["source_digest"])
             require(candidate == cached, "cached build provenance mismatch")
         else:
@@ -338,7 +432,7 @@ class Publisher:
             },
         )
         print(
-            f"worker prepared release={self.sha} digest={manifest['source_digest']} build={candidate['build_id']}"
+            f"worker prepared release={self.sha} digest={candidate['source_digest']} build={candidate['build_id']}"
         )
 
     def pending(self):
@@ -394,7 +488,7 @@ class Publisher:
         require(
             self.current() == transaction["candidate"]["build_id"], "worker tag changed before completion"
         )
-        (self.state / "pending.json").unlink()
+        self.remove("pending.json")
 
     def rollback(self):
         if self.read("pending.json") is None:
@@ -403,7 +497,7 @@ class Publisher:
         previous = transaction["previous"]
         if transaction["previous_active"] is None:
             require(previous == BASELINE_BUILD, "invalid bootstrap rollback build")
-            self.build(previous)
+            self.provenance(previous)
         else:
             require(
                 self.provenance(previous) == transaction["previous_active"]["build"],
@@ -419,7 +513,7 @@ class Publisher:
                 self.tag(previous)
             require(self.current() == previous, "worker rollback verification failed")
         if transaction["previous_active"] is None:
-            (self.state / "active.json").unlink(missing_ok=True)
+            self.remove("active.json")
         else:
             self.write("active.json", transaction["previous_active"])
         transaction["rolled_back"] = True
@@ -441,7 +535,7 @@ class Publisher:
         deployed = self.state.parent / "deployed"
         previous_release = deployed.read_text().strip() if deployed.exists() else ""
         require(previous_release == transaction["previous_release_sha"], "Tank rollback marker mismatch")
-        (self.state / "pending.json").unlink()
+        self.remove("pending.json")
 
 
 def main():
