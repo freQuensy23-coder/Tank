@@ -1,5 +1,6 @@
 import hashlib
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -30,7 +31,7 @@ def read_sealed(root, entry):
     return [json.loads(line) for line in content.splitlines()]
 
 
-def test_sealed_empty_run_binds_cutoff_and_rejects_reuse(tmp_path):
+def test_sealed_empty_run_binds_cutoff_and_rejects_reuse(tmp_path: Path) -> None:
     inputs = SimpleNamespace(
         assembled_at="2099-01-01T00:00:00Z", cutoff="2026-10-18T12:00:00Z", config={}, _records=[]
     )
@@ -45,7 +46,7 @@ def test_sealed_empty_run_binds_cutoff_and_rejects_reuse(tmp_path):
         seal_replay_evidence(inputs, "RPL-test", tmp_path / "RPL-test", input_sha256="a" * 64)
 
 
-def test_sealed_evidence_refuses_path_escape(tmp_path):
+def test_sealed_evidence_refuses_path_escape(tmp_path: Path) -> None:
     inputs = SimpleNamespace(
         assembled_at="2099-01-01T00:00:00Z", cutoff="2026-10-18T12:00:00Z", config={}, _records=[]
     )
@@ -53,7 +54,7 @@ def test_sealed_evidence_refuses_path_escape(tmp_path):
         seal_replay_evidence(inputs, "../escape", tmp_path / "out", input_sha256="a" * 64)
 
 
-def test_packet_prints_are_sealed_before_the_cutoff_only(tmp_path):
+def test_packet_prints_are_sealed_before_the_cutoff_only(tmp_path: Path) -> None:
     inputs = SimpleNamespace(
         assembled_at="2099-01-01T00:00:00Z",
         cutoff="2026-10-18T12:00:17Z",
@@ -70,7 +71,7 @@ def test_packet_prints_are_sealed_before_the_cutoff_only(tmp_path):
     assert [row["trade_id"] for row in read_sealed(tmp_path / "RPL-prints", entry)] == ["1"]
 
 
-def test_conflicting_prints_of_one_identity_are_refused(tmp_path):
+def test_conflicting_prints_of_one_identity_are_refused(tmp_path: Path) -> None:
     first = print_row("1", "2026-10-18T12:00:10Z", "2026-10-18T12:00:10Z")
     second = print_row("1", "2026-10-18T12:00:10Z", "2026-10-18T12:00:10Z")
     second["record"]["price"] = "9"
@@ -85,7 +86,7 @@ def test_conflicting_prints_of_one_identity_are_refused(tmp_path):
         seal_replay_evidence(inputs, "RPL-conflict", tmp_path / "RPL-conflict", input_sha256="c" * 64)
 
 
-def test_same_guest_directory_exposes_only_each_message_prefix(tmp_path):
+def test_same_guest_directory_exposes_only_each_message_prefix(tmp_path: Path) -> None:
     inputs = SimpleNamespace(
         assembled_at="2099-01-01T00:00:00Z",
         cutoff="2026-10-17T12:01:00Z",
@@ -120,7 +121,7 @@ def test_same_guest_directory_exposes_only_each_message_prefix(tmp_path):
     assert len(view.receipts) == 2
 
 
-def test_as_of_projection_waits_for_actual_receipt(tmp_path):
+def test_as_of_projection_waits_for_actual_receipt(tmp_path: Path) -> None:
     inputs = SimpleNamespace(
         cutoff="2026-10-18T12:01:00Z",
         assembled_at=None,

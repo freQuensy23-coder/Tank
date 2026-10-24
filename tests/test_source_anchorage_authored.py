@@ -64,7 +64,7 @@ def retained_captures():
 @pytest.mark.historical
 @pytest.mark.integration
 @pytest.mark.parametrize("index", list(QUOTES))
-def test_actual_anchorage_payload_has_authored_body_not_form_label(index, retained_captures):
+def test_actual_anchorage_payload_has_authored_body_not_form_label(index, retained_captures) -> None:
     item, payload, quote = retained_captures[list(QUOTES).index(index)]
     parsed = parsers.article(payload, source_id="S28")
     assert quote in parsed["text"]
@@ -83,7 +83,7 @@ def test_actual_anchorage_payload_has_authored_body_not_form_label(index, retain
         '<div class="insight-rich-text w-richtext">one</div><div class="insight-rich-text w-richtext">two</div>',
     ],
 )
-def test_missing_empty_or_ambiguous_authored_node_refuses_nav_fallback(authored):
+def test_missing_empty_or_ambiguous_authored_node_refuses_nav_fallback(authored) -> None:
     html = "<h1>Release</h1><article>Institution Type</article><main>Navigation</main>" + authored
     with pytest.raises(ValueError, match="one nonempty authored body"):
         parsers.article(html, source_id="S28")
@@ -94,8 +94,8 @@ def test_missing_empty_or_ambiguous_authored_node_refuses_nav_fallback(authored)
 @pytest.mark.historical
 @pytest.mark.integration
 async def test_normal_anchorage_poll_uses_actual_retained_bodies_and_source_ingest(
-    tmp_path, retained_captures
-):
+    tmp_path: Path, retained_captures
+) -> None:
     fixtures = retained_captures
     index_url = "https://www.anchorage.com/insights"
     index_html = (
@@ -109,7 +109,7 @@ async def test_normal_anchorage_poll_uses_actual_retained_bodies_and_source_inge
     pages = {item["url"]: payload for item, payload, _ in fixtures}
     requested = []
 
-    def transport(request):
+    def transport(request: pytest.FixtureRequest):
         requested.append(str(request.url))
         return httpx.Response(
             200, content=index_html.encode() if str(request.url) == index_url else pages[str(request.url)]

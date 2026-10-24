@@ -1,5 +1,7 @@
 """Offline startup registry coverage against the actual captured configuration."""
 
+from pathlib import Path
+
 import pytest
 import yaml
 
@@ -9,14 +11,14 @@ from tank.storage import MemoryRepository
 
 
 class PagedRepository(MemoryRepository):
-    async def list(self, *args, **kwargs):
+    async def list(self, *args, **kwargs) -> None:
         raise AssertionError("Registry reconciliation must use uncapped iteration")
 
     def iter_all(self, collection, *, filters=None, batch_size=1000):
         return super().iter_all(collection, filters=filters, batch_size=7)
 
 
-def assert_config_retained(stored, configured):
+def assert_config_retained(stored, configured) -> None:
     if isinstance(configured, dict):
         for key, value in configured.items():
             assert_config_retained(stored[key], value)
@@ -28,7 +30,7 @@ def assert_config_retained(stored, configured):
         assert stored == configured
 
 
-async def test_canonical_registry_bootstrap_and_idempotence():
+async def test_canonical_registry_bootstrap_and_idempotence() -> None:
     repo = PagedRepository()
     settings = Settings(_env_file=None, config_version="test-config", code_version="test-code")
     counts = await sync_registry(repo, settings)
@@ -92,7 +94,7 @@ async def test_canonical_registry_bootstrap_and_idempotence():
     assert all(row["commit"] and row["repository"] for row in wallets)
 
 
-async def test_sync_removes_configured_tail_and_preserves_discovery(tmp_path):
+async def test_sync_removes_configured_tail_and_preserves_discovery(tmp_path: Path) -> None:
     settings = Settings(_env_file=None, config_dir=tmp_path)
     for name, contents in {
         "sources": {"sources": [{"source_id": f"S{i}", "name": str(i)} for i in range(35)]},
@@ -115,7 +117,7 @@ async def test_sync_removes_configured_tail_and_preserves_discovery(tmp_path):
     assert len([row async for row in repo.iter_all("reg.sources")]) == 2
 
 
-async def test_duplicate_source_ids_fail_before_any_mutation(tmp_path):
+async def test_duplicate_source_ids_fail_before_any_mutation(tmp_path: Path) -> None:
     (tmp_path / "sources.yaml").write_text("sources: [{source_id: S01}, {source_id: S01}]")
     repo = PagedRepository()
     with pytest.raises(ValueError, match="Duplicate configured registry key"):
@@ -123,7 +125,7 @@ async def test_duplicate_source_ids_fail_before_any_mutation(tmp_path):
     assert [row async for row in repo.iter_all("reg.sources")] == []
 
 
-async def test_static_config_clocks_preserve_declared_precision_and_unknown_legacy(tmp_path):
+async def test_static_config_clocks_preserve_declared_precision_and_unknown_legacy(tmp_path: Path) -> None:
     sources = {
         "sources": [
             {
@@ -175,7 +177,7 @@ async def test_static_config_clocks_preserve_declared_precision_and_unknown_lega
     assert await repo.get("reg.sources", "S01") == source
 
 
-async def test_conflicting_static_clock_precision_refused_before_registry_mutation(tmp_path):
+async def test_conflicting_static_clock_precision_refused_before_registry_mutation(tmp_path: Path) -> None:
     (tmp_path / "sources.yaml").write_text(
         yaml.safe_dump(
             {
@@ -196,7 +198,7 @@ async def test_conflicting_static_clock_precision_refused_before_registry_mutati
     assert [row async for row in repo.iter_all("reg.sources")] == []
 
 
-async def test_alias_projection_never_promotes_display_names_or_drops_qualifiers(tmp_path):
+async def test_alias_projection_never_promotes_display_names_or_drops_qualifiers(tmp_path: Path) -> None:
     for name, value in {
         "sources": {},
         "registry": {
@@ -234,7 +236,7 @@ async def test_alias_projection_never_promotes_display_names_or_drops_qualifiers
         {"qualified_aliases": [{"alias": "Lighter"}]},
     ],
 )
-async def test_invalid_routing_alias_policy_refused_before_registry_mutation(tmp_path, policy):
+async def test_invalid_routing_alias_policy_refused_before_registry_mutation(tmp_path: Path, policy) -> None:
     (tmp_path / "sources.yaml").write_text("sources: [{source_id: replacement}]")
     (tmp_path / "registry.yaml").write_text(
         yaml.safe_dump({"entities": [{"entity_id": "example", **policy}]})

@@ -57,12 +57,12 @@ def run(posts, accounts, cursors, *, health="healthy", error=None):
 class Actor:
     """The run-sync endpoint: records requests and answers with the queued responses."""
 
-    def __init__(self, *responses):
+    def __init__(self, *responses) -> None:
         self.responses = list(responses)
         self.requests = []
         self.sent = []
 
-    def __call__(self, request):
+    def __call__(self, request: pytest.FixtureRequest):
         self.requests.append(request)
         status, body = self.responses.pop(0)
         self.sent.append(json.dumps(body).encode())
@@ -73,7 +73,7 @@ class Actor:
 
 
 @pytest.mark.asyncio
-async def test_first_run_is_a_baseline_then_only_posts_above_the_cursor_are_new():
+async def test_first_run_is_a_baseline_then_only_posts_above_the_cursor_are_new() -> None:
     actor = Actor(
         (
             201,
@@ -111,7 +111,7 @@ async def test_first_run_is_a_baseline_then_only_posts_above_the_cursor_are_new(
 
 
 @pytest.mark.asyncio
-async def test_a_failed_or_unreadable_run_raises():
+async def test_a_failed_or_unreadable_run_raises() -> None:
     actor = Actor(
         (201, run([], [failed("ethereum")], {}, health="failed", error="PUBLIC_SOURCE_UNAVAILABLE")),
         (400, {"error": {"type": "run-failed", "message": "Actor run did not succeed"}}),
@@ -141,7 +141,7 @@ async def test_a_failed_or_unreadable_run_raises():
     ]
     token = "FAKE secret\n"
 
-    def illegal_header(request):
+    def illegal_header(request: pytest.FixtureRequest) -> None:
         raise httpx.LocalProtocolError("Illegal header value " + repr(("Bearer " + token).encode()))
 
     with pytest.raises(RuntimeError) as leaked:
@@ -155,7 +155,7 @@ async def test_a_failed_or_unreadable_run_raises():
 
 
 @pytest.mark.asyncio
-async def test_s29_poll_stores_new_posts_and_moves_cursors_only_after_them(tmp_path):
+async def test_s29_poll_stores_new_posts_and_moves_cursors_only_after_them(tmp_path: Path) -> None:
     source = {"source_id": "S29", "name": "X", "feeds": [{"kind": "x", "url": URL}]}
     config = settings(tmp_path, [source])
     config.apify_api_token = "FAKE-token"

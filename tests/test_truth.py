@@ -81,7 +81,7 @@ def _fresh_spot_snapshot(*, flow_minutes=1):
     return snapshot
 
 
-def _add_fresh_perp_fields(snapshot):
+def _add_fresh_perp_fields(snapshot) -> None:
     """Two real endpoint observations suffice for cadence/synchronization units."""
     end = parse_time(snapshot["cutoff"])
     start = end - timedelta(hours=4)
@@ -130,7 +130,7 @@ def _add_fresh_perp_fields(snapshot):
     )
 
 
-def test_oi_formula_vectors():
+def test_oi_formula_vectors() -> None:
     d = decomposition(100, 108.18, 1, 1.0705)
     assert d["position"] == Decimal("8.18")
     assert d["markup"] == Decimal("7.05")
@@ -159,7 +159,7 @@ def flow_case(values, qs):
     return spot_truth(rows, [], [], start, end)
 
 
-def test_t3_capital_weighted_broad_sell():
+def test_t3_capital_weighted_broad_sell() -> None:
     s = flow_case([("A", 600, -40), ("B", 250, -10), ("C", 100, 5), ("D", 25, 6), ("E", 25, 3)], [1] * 5)
     assert s["direction"] == "SELL"
     assert s["classification"] == "BROAD"
@@ -168,14 +168,14 @@ def test_t3_capital_weighted_broad_sell():
     assert s["concentration"]["others_cwb_dir"] == 0.625
 
 
-def test_t4_single_venue_spike():
+def test_t4_single_venue_spike() -> None:
     s = flow_case([("A", 300, 60), ("B", 300, -2), ("C", 300, 1), ("D", 100, 0)], [1, 4, 4, 4])
     assert s["classification"] == "CONCENTRATED"
     assert s["composite_max"]["cvd"] == 59
     assert s["concentration"]["others_cwb_dir"] == 0
 
 
-def test_missing_is_not_zero_and_no_leakage():
+def test_missing_is_not_zero_and_no_leakage() -> None:
     s = compute_market_truth(
         dict(
             token_id="WLD",
@@ -200,19 +200,19 @@ def test_missing_is_not_zero_and_no_leakage():
     assert s["spot"]["W1H"]["coverage"]["n_complete"] == 0
 
 
-def test_repricing_and_baseline_context():
+def test_repricing_and_baseline_context() -> None:
     assert repricing(0.23, [-0.03, 0, 0.02, 0.05], [-0.04, 0, 0.02, 0.046]) == "HEAVY"
     assert market_context(-0.0325, 0.0045, [-0.0301, -0.0085, 0, 0.02], [0.003, 0.005, 0.01]) == "STRESS"
 
 
-def test_walk_book_requires_actual_fill():
+def test_walk_book_requires_actual_fill() -> None:
     assert walk_book([[100, 1000], [101, 1000]], 100000, 100) == 0
     assert walk_book([[100, 1]], 100000, 100) is None
 
 
 @pytest.mark.historical
 @pytest.mark.integration
-def test_real_rest_fixture_endpoints():
+def test_real_rest_fixture_endpoints() -> None:
     path = Path(__file__).resolve().parents[1] / "fixture_check/data/rest_openInterestHist_fixtures.json"
     data = json.loads(path.read_text())["data"]
     cases = [
@@ -233,7 +233,7 @@ def test_real_rest_fixture_endpoints():
         assert result["oi_native_chg_pct"] == pytest.approx(expected, abs=0.0001)
 
 
-def test_t6_funding_and_t8_funding_freshness():
+def test_t6_funding_and_t8_funding_freshness() -> None:
     from tank.analysis.truth import data_confidence, derivatives_truth
 
     end = parse_time("2026-10-16T12:00:00Z")
@@ -264,7 +264,7 @@ def test_t6_funding_and_t8_funding_freshness():
 
 @pytest.mark.historical
 @pytest.mark.integration
-def test_real_archive_oi_regressions():
+def test_real_archive_oi_regressions() -> None:
     import csv
     import io
     import zipfile
@@ -317,7 +317,7 @@ def fixture_klines(filename, token, interval_s):
 
 @pytest.mark.historical
 @pytest.mark.integration
-def test_real_f08_does_not_invent_anchor_trades_or_spot_coverage():
+def test_real_f08_does_not_invent_anchor_trades_or_spot_coverage() -> None:
     from tank.analysis.truth import relative_truth
 
     end = parse_time("2026-09-24T20:15:00Z")
@@ -351,7 +351,7 @@ def test_real_f08_does_not_invent_anchor_trades_or_spot_coverage():
 
 @pytest.mark.historical
 @pytest.mark.integration
-def test_real_f16_baseline_stress_is_exposed():
+def test_real_f16_baseline_stress_is_exposed() -> None:
     from tank.analysis.truth import relative_truth
 
     end = parse_time("2026-09-16T00:00:00Z")
@@ -363,7 +363,7 @@ def test_real_f16_baseline_stress_is_exposed():
     assert "known_rule_mismatch" not in result["context_inputs"]
 
 
-def test_t5_pairwise_constant_cohort():
+def test_t5_pairwise_constant_cohort() -> None:
     from tank.analysis.truth import enrich_evidence
 
     def truth(values):
@@ -395,7 +395,7 @@ def test_t5_pairwise_constant_cohort():
 
 
 @pytest.mark.asyncio
-async def test_assessment_persists_with_event_anchor():
+async def test_assessment_persists_with_event_anchor() -> None:
     from types import SimpleNamespace
 
     from tank.analysis.truth import MarketTruthService
@@ -427,7 +427,7 @@ async def test_assessment_persists_with_event_anchor():
 
 
 @pytest.mark.parametrize("side", ["BUY", "SELL"])
-def test_asymmetric_depth_uses_actual_hit_side_and_excludes_perps(side):
+def test_asymmetric_depth_uses_actual_hit_side_and_excludes_perps(side) -> None:
     from tank.analysis.truth import liquidity_truth
 
     end = parse_time("2026-10-16T12:00:00Z")
@@ -475,7 +475,7 @@ def test_asymmetric_depth_uses_actual_hit_side_and_excludes_perps(side):
     assert len(r["per_venue"]) == 1
 
 
-def test_descriptive_semantics_cannot_replace_actual_spot_coverage():
+def test_descriptive_semantics_cannot_replace_actual_spot_coverage() -> None:
     from tank.analysis.truth import data_confidence
 
     end = parse_time("2026-10-16T12:00:00Z")
@@ -494,7 +494,7 @@ def test_descriptive_semantics_cannot_replace_actual_spot_coverage():
     assert "critical_semantics_verified" not in result
 
 
-def test_confidence_requires_present_fresh_reference_and_books():
+def test_confidence_requires_present_fresh_reference_and_books() -> None:
     from tank.analysis.truth import data_confidence
 
     end = parse_time("2026-10-16T12:00:00Z")
@@ -539,7 +539,7 @@ def test_confidence_requires_present_fresh_reference_and_books():
     )
 
 
-def test_nonminute_event_anchor_uses_true_asof_bounds_and_reports_precision():
+def test_nonminute_event_anchor_uses_true_asof_bounds_and_reports_precision() -> None:
     from runpy import run_path
 
     from tank.analysis.truth import relative_truth
@@ -561,7 +561,7 @@ def test_nonminute_event_anchor_uses_true_asof_bounds_and_reports_precision():
     assert result["anchor"]["ts"] == iso(start)
 
 
-def test_btc_benchmark_is_judged_by_its_raw_return_against_its_own_raw_history():
+def test_btc_benchmark_is_judged_by_its_raw_return_against_its_own_raw_history() -> None:
     """P0 (MTA-01M5E69YTSW72QGR0HAVWZNS9J): for BTC itself beta = 1 makes r_btc_adj identically 0,
     so its history range was [0, 0] and 1e-16 noise read as beyond normal and HEAVY."""
     from runpy import run_path
@@ -607,7 +607,7 @@ def test_btc_benchmark_is_judged_by_its_raw_return_against_its_own_raw_history()
     assert fact["text"].startswith("W15M price move (benchmark, raw)")
 
 
-def test_degenerate_float_history_range_is_unavailable():
+def test_degenerate_float_history_range_is_unavailable() -> None:
     from tank.analysis.truth import float_normal, range_reason, repricing
 
     noise = [1.4e-16, -2.2e-17, 0.0, 0.0, 3.1e-17] * 40
@@ -620,7 +620,7 @@ def test_degenerate_float_history_range_is_unavailable():
 
 
 @pytest.mark.parametrize("confirmation", ["VALID", "FLAG_ONLY", "FUTURE", "NO_REST_GAP"])
-def test_fragmentation_needs_actual_cutoff_safe_independent_rest_gap(confirmation):
+def test_fragmentation_needs_actual_cutoff_safe_independent_rest_gap(confirmation) -> None:
     from tank.analysis.truth import enrich_evidence
 
     end = parse_time("2026-10-16T12:00:00Z")
@@ -735,7 +735,7 @@ def _fragmentation_of(quotes):
     return liquidity["fragmentation"]
 
 
-def test_usdt_usd_basis_is_not_fragmentation():
+def test_usdt_usd_basis_is_not_fragmentation() -> None:
     """E2E #7 (MTA-01M5EM1TGWBN38TRFNGYAE5DYF): every USDT venue against every USD venue read as
     REAL_MARKET_FRAGMENTATION. USDT 3 bp under USD with no dislocation: compared in USD, no gap."""
     frag = _fragmentation_of({"A": ("100.030009", "USDT", "0.9997"), "B": ("100", "USD", None)})
@@ -744,13 +744,13 @@ def test_usdt_usd_basis_is_not_fragmentation():
     assert frag["cross_quote_not_evaluated"] == []
 
 
-def test_same_quote_ten_bp_dislocation_is_fragmentation():
+def test_same_quote_ten_bp_dislocation_is_fragmentation() -> None:
     frag = _fragmentation_of({"A": ("100", "USD", None), "B": ("100.10", "USD", None)})
     assert frag["persistent_gap"] is True
     assert frag["venues"] == [["A", "B"]]
 
 
-def test_cross_quote_gap_must_clear_conversion_uncertainty_and_needs_a_rate():
+def test_cross_quote_gap_must_clear_conversion_uncertainty_and_needs_a_rate() -> None:
 
     frag = _fragmentation_of({"A": ("100.045", "USDT", "0.9997"), "B": ("100", "USD", None)})
     assert frag["persistent_gap"] is False and frag["quote_conversion_uncertainty_bps"] == 2
@@ -763,7 +763,7 @@ def test_cross_quote_gap_must_clear_conversion_uncertainty_and_needs_a_rate():
     assert frag["cross_quote_not_evaluated"] == [["A", "B"]]
 
 
-def test_vacuum_detects_loss_on_sell_side_despite_deep_asks():
+def test_vacuum_detects_loss_on_sell_side_despite_deep_asks() -> None:
     from tank.analysis.truth import liquidity_truth
 
     end = parse_time("2026-10-16T12:00:00Z")
@@ -846,7 +846,7 @@ def _e2e8_liquidity(c_notional, covered_c=False):
     return liquidity_truth({"books": books, "flow_bars": flow}, start, end, spot, relative)
 
 
-def test_net_flow_is_native_so_a_missing_quote_rate_does_not_null_elasticity():
+def test_net_flow_is_native_so_a_missing_quote_rate_does_not_null_elasticity() -> None:
     result = _e2e8_liquidity(c_notional=False)
     elasticity = result["elasticity"]
     assert elasticity["depth_unit"] == "NATIVE"
@@ -854,7 +854,7 @@ def test_net_flow_is_native_so_a_missing_quote_rate_does_not_null_elasticity():
     assert elasticity["hit_side"] == "ask"
 
 
-def test_partial_band_coverage_gives_a_depth_lower_bound_not_null():
+def test_partial_band_coverage_gives_a_depth_lower_bound_not_null() -> None:
     """03 §5.5: OKX/Bybit channel depth does not reach 1%, so their band is unknown; the covered
     venues still bound the depth from below: net 45 < 220 means the response is not weak."""
     result = _e2e8_liquidity(c_notional=True)
@@ -873,7 +873,7 @@ def test_partial_band_coverage_gives_a_depth_lower_bound_not_null():
     assert full["hit_side_coverage_complete"] is True and full["hit_side_depth_lower_bound"] == 720
 
 
-def test_decisive_facts_print_ranges_as_percents_and_singular_venues():
+def test_decisive_facts_print_ranges_as_percents_and_singular_venues() -> None:
     from tank.analysis.truth import canonical_fact_text, decisive_facts
 
     end = parse_time("2026-10-16T12:00:00Z")
@@ -907,7 +907,7 @@ def test_decisive_facts_print_ranges_as_percents_and_singular_venues():
     assert flow["text"].endswith("1 complete venue.")
 
 
-def test_oi_seconds_anchor_uses_actual_synchronized_observation_duration():
+def test_oi_seconds_anchor_uses_actual_synchronized_observation_duration() -> None:
     end = parse_time("2026-10-16T12:00:00Z")
     start = end - timedelta(hours=4, seconds=-17)
     rows = [
@@ -922,7 +922,7 @@ def test_oi_seconds_anchor_uses_actual_synchronized_observation_duration():
     assert result["oi_class"] == "REAL_NATIVE"
 
 
-def test_oi_history_pairs_use_requested_window_on_300s_grid_with_live_end_point():
+def test_oi_history_pairs_use_requested_window_on_300s_grid_with_live_end_point() -> None:
     """Live: the end point is a WebSocket/REST sample off the 300 s history grid, so the observed
     length (14 min 37 s) never equals a history offset; pairs use the requested 15 min window."""
     end = parse_time("2026-10-16T12:00:00Z")
@@ -944,7 +944,7 @@ def test_oi_history_pairs_use_requested_window_on_300s_grid_with_live_end_point(
     assert result["oi_class"] is not None
 
 
-def test_oi_rows_derive_usd_from_ticker_mark_without_mutating_inputs():
+def test_oi_rows_derive_usd_from_ticker_mark_without_mutating_inputs() -> None:
     """03 §5.4: Bybit singleOpenInterest x markPrice, Binance oi_native x mark; Bybit OI rows carry
     no mark, the instrument's ticker within the sync tolerance does."""
     from tank.analysis.truth import _oi_rows
@@ -969,7 +969,7 @@ def test_oi_rows_derive_usd_from_ticker_mark_without_mutating_inputs():
     assert oi[0]["oi_usd"] is None and "oi_usd_source" not in oi[0]
 
 
-def test_derivatives_oi_classifies_with_usd_from_ticker_mark():
+def test_derivatives_oi_classifies_with_usd_from_ticker_mark() -> None:
     from tank.analysis.truth import derivatives_truth
 
     iid = "bybit:perp_linear:BTCUSDT"
@@ -1007,7 +1007,7 @@ def test_derivatives_oi_classifies_with_usd_from_ticker_mark():
     assert oi[0]["oi_usd"] is None
 
 
-def test_freshness_counts_only_the_assessed_tokens_fields_not_peer_closes():
+def test_freshness_counts_only_the_assessed_tokens_fields_not_peer_closes() -> None:
     """§5.10: a BTC assessment never fails freshness on a sector peer's kline (MORPHO on a BTC card)."""
     from tank.analysis.truth import available_field_freshness
 
@@ -1049,7 +1049,7 @@ def test_freshness_counts_only_the_assessed_tokens_fields_not_peer_closes():
     assert checks[0]["fresh"] is True
 
 
-def test_once_per_interval_oi_is_fresh_within_two_intervals_plus_publish_lag():
+def test_once_per_interval_oi_is_fresh_within_two_intervals_plus_publish_lag() -> None:
     """03 §5.10 'within its own cadence': Bybit publishes 5-min singleOpenInterest ~60-80 s after
     the sample time, so a HOT 60 s cadence can never be met; it is judged by 2 x 300 s + lag."""
     from tank.analysis.truth import available_field_freshness
@@ -1102,7 +1102,7 @@ def test_once_per_interval_oi_is_fresh_within_two_intervals_plus_publish_lag():
     assert check(61, "binance.usdm.openInterest", "binance:perp_linear:BTCUSDT")["fresh"] is False
 
 
-def test_capture_cadence_prefers_the_per_metric_cadence():
+def test_capture_cadence_prefers_the_per_metric_cadence() -> None:
     from tank.analysis.truth import capture_cadence
 
     entry = {"cadence_s": 60, "cadence_s_by_metric": {"bybit.linear.open-interest": 300}}
@@ -1117,7 +1117,7 @@ def test_capture_cadence_prefers_the_per_metric_cadence():
     )
 
 
-def test_data_confidence_required_oi_uses_the_interval_rule_for_bybit_5min():
+def test_data_confidence_required_oi_uses_the_interval_rule_for_bybit_5min() -> None:
     from tank.analysis.truth import data_confidence
 
     end = parse_time("2026-10-21T00:31:00Z")
@@ -1163,7 +1163,7 @@ def test_data_confidence_required_oi_uses_the_interval_rule_for_bybit_5min():
     assert failed(700)
 
 
-def test_liquidation_freshness_comes_from_stream_watermark_not_last_event():
+def test_liquidation_freshness_comes_from_stream_watermark_not_last_event() -> None:
     """A quiet market has no liquidations; the proven socket watermark keeps the stream fresh.
     Without a watermark the failure says the connection is unproven, not that events are stale."""
     from tank.analysis.truth import available_field_freshness
@@ -1195,7 +1195,7 @@ def test_liquidation_freshness_comes_from_stream_watermark_not_last_event():
     assert check["detail"] == "STREAM_CONNECTION_UNPROVEN"
 
 
-def test_derived_oi_usd_serves_window_endpoints_only_and_usd_range_needs_seven_days_of_usd_pairs():
+def test_derived_oi_usd_serves_window_endpoints_only_and_usd_range_needs_seven_days_of_usd_pairs() -> None:
     """Lead ruling 2026-10-21 (03 §0, §5.4): a ticker-mark USD value is derived only for the
     window endpoints; history uses stored oi_usd, so Bybit (no stored USD) has no USD normal
     range, and stored USD covering < 7 days gives none either. Native is unaffected."""
@@ -1254,7 +1254,7 @@ def test_derived_oi_usd_serves_window_endpoints_only_and_usd_range_needs_seven_d
     assert stats["usd_normal_range"] is not None
 
 
-def test_synchronized_composite_keeps_native_range_and_endpoint_usd_with_endpoint_only_derivation():
+def test_synchronized_composite_keeps_native_range_and_endpoint_usd_with_endpoint_only_derivation() -> None:
     from tank.analysis.truth import derivatives_truth
 
     end = parse_time("2026-10-16T12:00:00Z")
@@ -1296,7 +1296,7 @@ def test_synchronized_composite_keeps_native_range_and_endpoint_usd_with_endpoin
     assert sync["usd_normal_range"] is not None
 
 
-def test_native_only_oi_preserves_native_and_sync_without_inventing_usd():
+def test_native_only_oi_preserves_native_and_sync_without_inventing_usd() -> None:
     from runpy import run_path
 
     from tank.analysis.truth import data_confidence, derivatives_truth
@@ -1332,7 +1332,7 @@ def test_native_only_oi_preserves_native_and_sync_without_inventing_usd():
     assert not any(f["condition"] == "derivatives_coverage" for f in conf["failed"])
 
 
-def test_supply_wrappers_preserve_unavailable_and_do_not_treat_unlock_as_sale():
+def test_supply_wrappers_preserve_unavailable_and_do_not_treat_unlock_as_sale() -> None:
     from tank.analysis.truth import supply_truth
 
     end = parse_time("2026-10-16T12:00:00Z")
@@ -1354,7 +1354,7 @@ def test_supply_wrappers_preserve_unavailable_and_do_not_treat_unlock_as_sale():
     assert result["unlocks_next_14d"][0]["inference"] == "POTENTIAL_SUPPLY_IS_NOT_A_SALE"
 
 
-def test_supply_without_observations_is_na_with_reason_not_empty():
+def test_supply_without_observations_is_na_with_reason_not_empty() -> None:
     """FR-T-13: no unlock data is n/a with a reason; [] only after a schedule was read."""
     from tank.analysis.truth import supply_truth
 
@@ -1375,7 +1375,7 @@ def test_supply_without_observations_is_na_with_reason_not_empty():
     assert result["unlocks_next_14d"] == [] and "unlocks" not in result["unavailable"]
 
 
-def test_supply_inventory_own_history_wrapped_flows_chain_and_lending():
+def test_supply_inventory_own_history_wrapped_flows_chain_and_lending() -> None:
     from tank.analysis.truth import supply_truth
 
     end = parse_time("2026-10-16T12:00:00Z")
@@ -1446,7 +1446,7 @@ def test_supply_inventory_own_history_wrapped_flows_chain_and_lending():
     assert result["lending"]["pools"][0]["borrow_apy"] == 7
 
 
-def test_derivative_windows_keep_one_hour_watch_separate_from_four_hour_crowding():
+def test_derivative_windows_keep_one_hour_watch_separate_from_four_hour_crowding() -> None:
     from runpy import run_path
 
     snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
@@ -1486,7 +1486,7 @@ def test_derivative_windows_keep_one_hour_watch_separate_from_four_hour_crowding
     )
 
 
-def test_reference_requires_complete_24h_flow_and_last_actual_trade():
+def test_reference_requires_complete_24h_flow_and_last_actual_trade() -> None:
     from runpy import run_path
 
     from tank.analysis.truth import relative_truth
@@ -1521,7 +1521,7 @@ def test_reference_requires_complete_24h_flow_and_last_actual_trade():
     assert result["repricing_band"] is None
 
 
-def test_slug_identity_wld_sector_is_not_applicable_and_self_is_excluded():
+def test_slug_identity_wld_sector_is_not_applicable_and_self_is_excluded() -> None:
     from runpy import run_path
 
     from tank.analysis.truth import relative_truth
@@ -1548,7 +1548,7 @@ def test_slug_identity_wld_sector_is_not_applicable_and_self_is_excluded():
 
 @pytest.mark.historical
 @pytest.mark.integration
-def test_dense_minute_btc_context_matches_saved_hourly_downsample():
+def test_dense_minute_btc_context_matches_saved_hourly_downsample() -> None:
     from tank.analysis.truth import relative_truth
 
     end = parse_time("2026-09-16T00:00:00Z")
@@ -1580,7 +1580,7 @@ def test_dense_minute_btc_context_matches_saved_hourly_downsample():
     assert b["market_context"] == a["market_context"]
 
 
-def test_supported_move_has_decisive_measured_facts_and_capture_readiness():
+def test_supported_move_has_decisive_measured_facts_and_capture_readiness() -> None:
     from runpy import run_path
 
     snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
@@ -1603,7 +1603,7 @@ def test_supported_move_has_decisive_measured_facts_and_capture_readiness():
     assert result["data_confidence"]["capture_readiness"]["prerequisite_pending"] is True
 
 
-def test_fractional_window_boundary_trades_need_continuity_proof_and_are_exact():
+def test_fractional_window_boundary_trades_need_continuity_proof_and_are_exact() -> None:
     start = parse_time("2026-10-16T12:00:17Z")
     end = parse_time("2026-10-16T12:02:17Z")
     rows = []
@@ -1719,7 +1719,9 @@ def test_fractional_window_boundary_trades_need_continuity_proof_and_are_exact()
 
 
 @pytest.mark.asyncio
-async def test_assessment_cpu_runs_off_event_loop_and_default_cutoff_is_closed_minute(monkeypatch):
+async def test_assessment_cpu_runs_off_event_loop_and_default_cutoff_is_closed_minute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import threading
     from types import SimpleNamespace
 
@@ -1756,7 +1758,7 @@ async def test_assessment_cpu_runs_off_event_loop_and_default_cutoff_is_closed_m
     assert parse_time(explicit["cutoff"]).second == 17
 
 
-def test_closed_bar_collection_latency_is_not_future_market_data():
+def test_closed_bar_collection_latency_is_not_future_market_data() -> None:
     from runpy import run_path
 
     snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
@@ -1780,7 +1782,7 @@ def test_closed_bar_collection_latency_is_not_future_market_data():
 
 
 @pytest.mark.integration
-def test_canonical_text_facts_print_units_windows_and_preserve_audit_companion():
+def test_canonical_text_facts_print_units_windows_and_preserve_audit_companion() -> None:
     from runpy import run_path
 
     from tank.analysis.cards import compose_card
@@ -1807,7 +1809,7 @@ def test_canonical_text_facts_print_units_windows_and_preserve_audit_companion()
     assert "complete spot venues" in card
 
 
-def test_hot_derivative_cadence_is_60s_and_base_is_300s():
+def test_hot_derivative_cadence_is_60s_and_base_is_300s() -> None:
     from tank.analysis.truth import available_field_freshness
 
     end = parse_time("2026-10-16T12:00:00Z")
@@ -1836,7 +1838,7 @@ def test_hot_derivative_cadence_is_60s_and_base_is_300s():
     assert next(x for x in scoped if x["collection"] == "oi")["cadence_s"] == 30
 
 
-def test_stale_available_noncritical_supply_prevents_high_but_missing_is_na():
+def test_stale_available_noncritical_supply_prevents_high_but_missing_is_na() -> None:
     from tank.analysis.truth import data_confidence, supply_truth
 
     snapshot = _fresh_spot_snapshot()
@@ -1873,7 +1875,7 @@ def test_stale_available_noncritical_supply_prevents_high_but_missing_is_na():
 )
 def test_klines_poll_watermark_keeps_quiet_spot_venue_fresh_without_inventing_candles(
     quiet, watermark_offset_s, missing, expected_class
-):
+) -> None:
     """A poll can prove availability; it cannot manufacture a price observation."""
     from tank.analysis.truth import data_confidence
 
@@ -1914,7 +1916,7 @@ def test_klines_poll_watermark_keeps_quiet_spot_venue_fresh_without_inventing_ca
     "watermark_offset_s, expected_class",
     [pytest.param(0, "HIGH", id="current-poll"), pytest.param(60, "MEDIUM", id="future-poll")],
 )
-def test_market_truth_propagates_quiet_spot_poll_watermark(watermark_offset_s, expected_class):
+def test_market_truth_propagates_quiet_spot_poll_watermark(watermark_offset_s, expected_class) -> None:
     """Exercise kernel wiring with only one hour of spot flow, no derivative history."""
     snapshot = _fresh_spot_snapshot(flow_minutes=60)
     end = parse_time(snapshot["cutoff"])
@@ -1939,7 +1941,7 @@ def test_market_truth_propagates_quiet_spot_poll_watermark(watermark_offset_s, e
     assert snapshot == original
 
 
-def test_previous_window_bars_without_usd_rate_do_not_crash_size_profile():
+def test_previous_window_bars_without_usd_rate_do_not_crash_size_profile() -> None:
     """Live COW run: bars before the window carried size_buckets=None (no historical USD rate)."""
     from runpy import run_path
 
@@ -1963,7 +1965,7 @@ def test_previous_window_bars_without_usd_rate_do_not_crash_size_profile():
     assert profile["sell_share_rising"] is None
 
 
-def test_benchmark_reaction_return_uses_largest_spot_venue_base_klines():
+def test_benchmark_reaction_return_uses_largest_spot_venue_base_klines() -> None:
     """03 §8.1 benchmark (lead ruling 2026-10-20): raw return from base klines; the rest NOT_APPLICABLE."""
     from tank.analysis.truth import benchmark_reaction_values
 
@@ -2003,7 +2005,7 @@ def test_benchmark_reaction_return_uses_largest_spot_venue_base_klines():
     assert stale["r_raw"] is None and stale["r_raw_reason"] == "INCOMPLETE"
 
 
-def test_oi_fact_reports_venue_decomposition_when_synchronized_class_unavailable():
+def test_oi_fact_reports_venue_decomposition_when_synchronized_class_unavailable() -> None:
     """F-11 (03 §11.3): REAL_NATIVE with the markup component reported, also when the synchronized
     USD decomposition is INCOMPLETE because one venue's mark is missing (§5.4: OI with its decomposition)."""
     from tank.analysis.truth import decisive_facts
@@ -2064,7 +2066,7 @@ def test_oi_fact_reports_venue_decomposition_when_synchronized_class_unavailable
     )
 
 
-def test_hourly_archive_bars_with_binance_close_time_join_minute_bars_on_the_hour():
+def test_hourly_archive_bars_with_binance_close_time_join_minute_bars_on_the_hour() -> None:
     """F-16: Binance closeTime is hh:59:59.999; prices are keyed by the bar boundary (open + interval)."""
     from tank.analysis.truth import _price_groups
 
@@ -2102,7 +2104,7 @@ def test_hourly_archive_bars_with_binance_close_time_join_minute_bars_on_the_hou
     assert len(hourly) == 2
 
 
-def test_benchmark_gap_leaves_btc_adjusted_return_na_not_raw():
+def test_benchmark_gap_leaves_btc_adjusted_return_na_not_raw() -> None:
     """Prod 20 Oct (WLD): BTC base klines missing 10:00-15:28 made r_btc_adj equal r_raw (BTC return 0)."""
     from runpy import run_path
 
@@ -2127,7 +2129,7 @@ def test_benchmark_gap_leaves_btc_adjusted_return_na_not_raw():
     assert gap["r_btc_adj"] is None
 
 
-def test_null_measurements_have_companion_context_without_wrapping_literal_fields():
+def test_null_measurements_have_companion_context_without_wrapping_literal_fields() -> None:
     from runpy import run_path
 
     snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
@@ -2144,7 +2146,7 @@ def test_null_measurements_have_companion_context_without_wrapping_literal_field
     assert isinstance(result["relative"]["windows"]["EVENT"]["r_raw"], float)
 
 
-def test_hot_90_second_derivative_points_are_medium_without_weakening_sync_rule():
+def test_hot_90_second_derivative_points_are_medium_without_weakening_sync_rule() -> None:
     from tank.analysis.truth import data_confidence, derivatives_truth
 
     snapshot = _fresh_spot_snapshot()
@@ -2183,7 +2185,7 @@ def test_hot_90_second_derivative_points_are_medium_without_weakening_sync_rule(
     assert derivatives["synchronized"] is None
 
 
-def test_freshness_uses_semantic_point_time_and_snapshot_assembly_availability():
+def test_freshness_uses_semantic_point_time_and_snapshot_assembly_availability() -> None:
     from tank.analysis.truth import available_field_freshness
 
     end = parse_time("2026-10-16T12:00:00Z")
@@ -2207,7 +2209,7 @@ def test_freshness_uses_semantic_point_time_and_snapshot_assembly_availability()
     assert available_field_freshness(snapshot, end) == []
 
 
-def test_outcome_btc_reference_and_horizon_ranges_are_frozen_from_entry_history():
+def test_outcome_btc_reference_and_horizon_ranges_are_frozen_from_entry_history() -> None:
     from runpy import run_path
 
     from tank.analysis.truth import relative_truth
@@ -2244,7 +2246,7 @@ def test_outcome_btc_reference_and_horizon_ranges_are_frozen_from_entry_history(
     assert again["beta_btc"] == relative["beta_btc"]
 
 
-def test_complete_liquidation_total_requires_whole_window_capture_not_recent_connection():
+def test_complete_liquidation_total_requires_whole_window_capture_not_recent_connection() -> None:
     from tank.analysis.truth import derivatives_truth
 
     end = parse_time("2026-10-16T12:00:00Z")
@@ -2290,7 +2292,7 @@ def test_complete_liquidation_total_requires_whole_window_capture_not_recent_con
     assert incomplete["liquidations"]["complete_venues_total"] == {"long": None, "short": None}
 
 
-def test_native_sums_preserve_large_and_tiny_quantities_without_float_roundtrip():
+def test_native_sums_preserve_large_and_tiny_quantities_without_float_roundtrip() -> None:
     from tank.analysis.truth import _sum
 
     value = _sum([{"qty": "1E150"}, {"qty": "1E-40"}], "qty")
@@ -2299,7 +2301,7 @@ def test_native_sums_preserve_large_and_tiny_quantities_without_float_roundtrip(
     assert _sum([{"qty": "0.0000000000000000000000000000000000000001"}] * 3, "qty") == Decimal("3E-40")
 
 
-def test_decimal_significance_does_not_round_a_subthreshold_flow_into_buy():
+def test_decimal_significance_does_not_round_a_subthreshold_flow_into_buy() -> None:
     end = parse_time("2026-10-16T12:00:00Z")
     start = end - timedelta(minutes=1)
     rows = [
@@ -2322,7 +2324,7 @@ def test_decimal_significance_does_not_round_a_subthreshold_flow_into_buy():
     assert all(v["sign"] == 1 for v in exact["venues"])
 
 
-def test_exact_usd_decomposition_and_funding_interval_conversion():
+def test_exact_usd_decomposition_and_funding_interval_conversion() -> None:
     from decimal import localcontext
 
     from tank.analysis.truth import derivatives_truth
@@ -2360,7 +2362,7 @@ def test_exact_usd_decomposition_and_funding_interval_conversion():
     assert result["per_venue"][0]["funding_8h_eq"] == Decimal("8E-40")
 
 
-def test_successful_measurements_have_unit_precision_coverage_and_exact_json_values():
+def test_successful_measurements_have_unit_precision_coverage_and_exact_json_values() -> None:
     from runpy import run_path
 
     snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
@@ -2382,7 +2384,7 @@ def test_successful_measurements_have_unit_precision_coverage_and_exact_json_val
     assert normal["coverage"]["sample_count"] > 0 and normal["observed_at"] is not None
 
 
-def test_market_truth_json_preserves_exact_large_plus_tiny_native_volume():
+def test_market_truth_json_preserves_exact_large_plus_tiny_native_volume() -> None:
     from runpy import run_path
 
     snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
@@ -2405,7 +2407,7 @@ def test_market_truth_json_preserves_exact_large_plus_tiny_native_volume():
     )
 
 
-def test_position_majority_rule_uses_exact_dollar_terms_not_rounded_display_share():
+def test_position_majority_rule_uses_exact_dollar_terms_not_rounded_display_share() -> None:
     position = Decimal("0.5000000000000000000000000000000000000001")
     dec = {"position": position, "markup": Decimal(".5"), "interaction": Decimal(0), "pos_share": 0.5}
     assert oi_class(0.08, 0.1, dec, [-0.01, 0.01], [-0.01, 0.01]) == "REAL_NATIVE"
@@ -2438,7 +2440,7 @@ def exact_selling_spot(epsilon):
     return spot_truth(rows, [], [], start, end)
 
 
-def test_exact_capital_majority_drives_distribution_without_rounded_display_rule():
+def test_exact_capital_majority_drives_distribution_without_rounded_display_rule() -> None:
     from tank.analysis.truth import select_move, spot_majority
 
     tiny = exact_selling_spot(Decimal("1E-40"))
@@ -2471,7 +2473,7 @@ def test_exact_capital_majority_drives_distribution_without_rounded_display_rule
 
 
 @pytest.mark.parametrize("epsilon,expected", [(Decimal("1E-40"), True), (Decimal(0), False)])
-def test_cohort_majority_uses_exact_volume_not_rounded_share(epsilon, expected):
+def test_cohort_majority_uses_exact_volume_not_rounded_share(epsilon, expected) -> None:
     from decimal import localcontext
 
     from tank.analysis.truth import enrich_evidence
@@ -2510,7 +2512,7 @@ def test_cohort_majority_uses_exact_volume_not_rounded_share(epsilon, expected):
     assert spots["W1H"]["cohort_consistent"]["W24H"] is expected
 
 
-def test_distribution_cohort_buy_to_sell_does_not_require_current_selling_majority():
+def test_distribution_cohort_buy_to_sell_does_not_require_current_selling_majority() -> None:
     from tank.analysis.truth import select_move
 
     spot = {
@@ -2564,7 +2566,7 @@ def test_distribution_cohort_buy_to_sell_does_not_require_current_selling_majori
 )
 async def test_assessment_calls_snapshot_with_shared_canonical_anchor(
     event_time, precision, state_verified, kind
-):
+) -> None:
     from types import SimpleNamespace
 
     from tank.analysis.truth import MarketTruthService
@@ -2582,7 +2584,7 @@ async def test_assessment_calls_snapshot_with_shared_canonical_anchor(
         async def get(self, *args):
             return event
 
-        async def put(self, *args, **kwargs):
+        async def put(self, *args, **kwargs) -> None:
             pass
 
     class Market:
@@ -2614,7 +2616,7 @@ async def test_assessment_calls_snapshot_with_shared_canonical_anchor(
 )
 def test_price_markup_flag_keeps_measured_venue_when_composite_is_unavailable(
     classification, usd_change, expected
-):
+) -> None:
     from tank.analysis.truth import select_move
 
     spot = {"direction": "INSUFFICIENT_DATA", "classification": "INSUFFICIENT_DATA"}
@@ -2662,7 +2664,7 @@ def _sync_cohort(end, spans_days, levels, usd_days=None):
     return cohort
 
 
-def test_synchronized_oi_history_counts_each_past_window_over_venues_seen_at_both_bounds():
+def test_synchronized_oi_history_counts_each_past_window_over_venues_seen_at_both_bounds() -> None:
     """03 §0/§5.4: OKX joined on 18 Oct, Binance and Bybit have months of base tier; the
     composite's normal range comes from past windows over the venues observed at their bounds."""
     from tank.analysis.truth import _composite_history, normal, synchronized_oi
@@ -2692,7 +2694,7 @@ def test_synchronized_oi_history_counts_each_past_window_over_venues_seen_at_bot
     assert hn and max(map(abs, hn)) == 0 and max(map(abs, hu)) == 0
 
 
-def test_synchronized_oi_history_stays_unavailable_under_seven_days():
+def test_synchronized_oi_history_stays_unavailable_under_seven_days() -> None:
     from tank.analysis.truth import synchronized_oi
 
     end = parse_time("2026-10-21T03:00:00Z")
@@ -2706,7 +2708,7 @@ def test_synchronized_oi_history_stays_unavailable_under_seven_days():
     assert result["oi_class"] is None
 
 
-def test_full_assessments_run_one_at_a_time_per_process(monkeypatch):
+def test_full_assessments_run_one_at_a_time_per_process(monkeypatch: pytest.MonkeyPatch) -> None:
     """Concurrent compute_market_truth calls in worker threads never overlap (GIL share of the
     event loop thread); a waiting call simply runs after the current one."""
     import threading

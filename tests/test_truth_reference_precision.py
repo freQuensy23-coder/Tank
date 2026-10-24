@@ -11,7 +11,7 @@ synthetic_start_snapshot = run_path(str(Path(__file__).with_name("test_truth_sta
 ]
 
 
-def test_raw_trade_references_survive_truth_json_and_call_freeze_boundary():
+def test_raw_trade_references_survive_truth_json_and_call_freeze_boundary() -> None:
     packet = synthetic_start_snapshot()
     anchor = "10000000000000000.01"
     entry = "10000000000000000.02"
@@ -25,7 +25,7 @@ def test_raw_trade_references_survive_truth_json_and_call_freeze_boundary():
     assert relative["windows"]["EVENT"]["r_raw"] > 0
 
 
-def test_kline_fallback_saved_entry_and_hourly_close_remain_exact():
+def test_kline_fallback_saved_entry_and_hourly_close_remain_exact() -> None:
     packet = synthetic_start_snapshot()
     exact = "100.00000000000000000000000000001"
     for row in packet["klines"]:
@@ -41,7 +41,7 @@ def test_kline_fallback_saved_entry_and_hourly_close_remain_exact():
     assert Decimal(relative["outcome_btc_reference"]["entry_ref_price"]) == Decimal(exact)
 
 
-def test_resilience_does_not_round_a_real_new_low_into_an_equal_low():
+def test_resilience_does_not_round_a_real_new_low_into_an_equal_low() -> None:
     from tank.util import parse_time
 
     audit = run_path(str(Path(__file__).with_name("test_market_audit_paths.py")))

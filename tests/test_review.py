@@ -1,4 +1,5 @@
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 from review_typed_fixtures import put_boundary, put_flow
@@ -12,7 +13,7 @@ END = "2026-10-01T01:00:00Z"
 
 
 @pytest.mark.asyncio
-async def test_hash_corruption_and_pending():
+async def test_hash_corruption_and_pending() -> None:
     repo = MemoryRepository()
     service = ReviewService(repo)
     await repo.put("out.evidence_bundles", "bad", {"sha256": "bad", "payload": {"event": {}}})
@@ -24,7 +25,7 @@ async def test_hash_corruption_and_pending():
 
 
 @pytest.mark.asyncio
-async def test_no_borrowed_future_bar_or_partial_boundary():
+async def test_no_borrowed_future_bar_or_partial_boundary() -> None:
     repo = MemoryRepository()
     service = ReviewService(repo)
     await put_flow(
@@ -52,7 +53,7 @@ async def test_no_borrowed_future_bar_or_partial_boundary():
 
 
 @pytest.mark.asyncio
-async def test_empty_report_and_unverified_human_checks():
+async def test_empty_report_and_unverified_human_checks() -> None:
     repo = MemoryRepository()
     service = ReviewService(repo)
     report = await service.report(START, END)
@@ -63,7 +64,7 @@ async def test_empty_report_and_unverified_human_checks():
 
 
 @pytest.mark.asyncio
-async def test_outcome_immutable_revision_and_frozen_beta():
+async def test_outcome_immutable_revision_and_frozen_beta() -> None:
     repo = MemoryRepository()
     service = ReviewService(repo)
     alert = {"alert_id": "a", "version": 1, "event_id": "e", "generated_at": START}
@@ -123,7 +124,7 @@ async def test_outcome_immutable_revision_and_frozen_beta():
 
 
 @pytest.mark.asyncio
-async def test_subminute_boundaries_require_typed_segments_and_exclude_outside_prices():
+async def test_subminute_boundaries_require_typed_segments_and_exclude_outside_prices() -> None:
     repo = MemoryRepository()
     service = ReviewService(repo)
     start = parse_time("2026-10-01T00:00:30Z")
@@ -173,7 +174,7 @@ async def test_subminute_boundaries_require_typed_segments_and_exclude_outside_p
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_path):
+async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_path: Path) -> None:
     from test_truth_start_fixture import synthetic_start_snapshot
 
     from tank.analysis.decisions import DecisionEngine
@@ -302,7 +303,7 @@ async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_pa
     settings.telegram_token = "offline"
     settings.telegram_alerts_chat = "1"
 
-    async def telegram(request):
+    async def telegram(request: pytest.FixtureRequest):
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 123}})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
@@ -327,7 +328,7 @@ async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_metrics_version_labels_shown_tokens_and_uncarded_event_audit():
+async def test_metrics_version_labels_shown_tokens_and_uncarded_event_audit() -> None:
     repo = MemoryRepository()
     service = ReviewService(repo)
     for version, label in [(1, "NOISE"), (2, "CATCH")]:
@@ -407,7 +408,7 @@ async def test_metrics_version_labels_shown_tokens_and_uncarded_event_audit():
 
 
 @pytest.mark.asyncio
-async def test_date_only_latency_and_stale_boundary_keep_precision_unknown():
+async def test_date_only_latency_and_stale_boundary_keep_precision_unknown() -> None:
     repo = MemoryRepository()
     service = ReviewService(repo)
     known = "2026-10-04T12:00:00Z"
@@ -468,7 +469,7 @@ async def test_date_only_latency_and_stale_boundary_keep_precision_unknown():
 
 
 @pytest.mark.asyncio
-async def test_typed_boundaries_require_adjacent_pieces_and_never_slice_whole_bar():
+async def test_typed_boundaries_require_adjacent_pieces_and_never_slice_whole_bar() -> None:
     class TypedOnlyRepository(MemoryRepository):
         def iter_range(self, collection, *args, **kwargs):
             assert collection not in {"mkt.trades", "mkt.klines_1m"}
@@ -524,7 +525,7 @@ async def test_typed_boundaries_require_adjacent_pieces_and_never_slice_whole_ba
 
 
 @pytest.mark.asyncio
-async def test_list_and_show_page_with_next_after_cursor():
+async def test_list_and_show_page_with_next_after_cursor() -> None:
     repo = MemoryRepository()
     service = ReviewService(repo)
     for version in (1, 2, 3):
@@ -549,7 +550,7 @@ async def test_list_and_show_page_with_next_after_cursor():
     assert [v["alert"]["version"] for v in shown["versions"]] == [3]
 
 
-def test_cli_after_takes_the_printed_cursor():
+def test_cli_after_takes_the_printed_cursor() -> None:
     import click
 
     from tank.cli import page_cursor

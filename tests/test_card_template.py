@@ -1,6 +1,7 @@
 """Literal PRD §7.1 card layout and detailed exclusion rendering."""
 
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 
@@ -133,7 +134,7 @@ def render(inputs):
     )
 
 
-def test_telegram_emphasis_preserves_text_and_escapes_untrusted_markup():
+def test_telegram_emphasis_preserves_text_and_escapes_untrusted_markup() -> None:
     import html
     import re
 
@@ -150,7 +151,7 @@ def test_telegram_emphasis_preserves_text_and_escapes_untrusted_markup():
     assert html.unescape(re.sub(r"</?b>", "", formatted)) == text
 
 
-def test_literal_prd_card_template():
+def test_literal_prd_card_template() -> None:
     values = card_inputs()
     card = render(values)
     assert (
@@ -225,7 +226,7 @@ CONFIDENCE: HIGH — main unknown: none recorded"""
         ({"reason": "INCOMPLETE"}, "coverage incomplete; specific cause unavailable"),
     ],
 )
-def test_excluded_venue_displays_recorded_cause_without_inventing_one(exclusion, expected):
+def test_excluded_venue_displays_recorded_cause_without_inventing_one(exclusion, expected) -> None:
     values = card_inputs()
     values[4]["spot"] = {"W4H": {"coverage": {"excluded": [dict(exclusion, venue="Bybit")]}}}
     card = render(values)
@@ -235,7 +236,7 @@ def test_excluded_venue_displays_recorded_cause_without_inventing_one(exclusion,
         assert "current day archive" not in card
 
 
-def test_impact_and_no_secondary_reasons_stay_in_existing_template_fields():
+def test_impact_and_no_secondary_reasons_stay_in_existing_template_fields() -> None:
     values = card_inputs()
     values[1]["impact_horizon"] = {
         "impact_start": "WEEKS",
@@ -262,7 +263,7 @@ def test_impact_and_no_secondary_reasons_stay_in_existing_template_fields():
         ("truth", "MISSING_MARKET_TRUTH"),
     ],
 )
-def test_selected_token_never_gets_a_fabricated_wait(missing, error):
+def test_selected_token_never_gets_a_fabricated_wait(missing, error) -> None:
     e, a, b, d, m = deepcopy(card_inputs())
     if missing == "action":
         d.pop("action")
@@ -270,7 +271,7 @@ def test_selected_token_never_gets_a_fabricated_wait(missing, error):
         compose_card(e, a, [b], [] if missing == "decision" else [d], [] if missing == "truth" else [m])
 
 
-def test_inline_code_conditions_are_not_misrepresented_as_current_market_observations():
+def test_inline_code_conditions_are_not_misrepresented_as_current_market_observations() -> None:
     e, a, b, d, m = card_inputs()
     m["spot"] = {"W4H": {"classification": "SINGLE_VENUE", "coverage": {"n_complete": 1}}}
     d["conditions"][1]["human_text"] = (
@@ -284,7 +285,7 @@ def test_inline_code_conditions_are_not_misrepresented_as_current_market_observa
     )
 
 
-def test_missing_fields_are_explained_and_structural_shock_uses_literal_heading():
+def test_missing_fields_are_explained_and_structural_shock_uses_literal_heading() -> None:
     e, a, b, d, m = card_inputs()
     a["class"] = "STRUCTURAL_SHOCK"
     d["outlook"]["potential"] = None
@@ -296,7 +297,7 @@ def test_missing_fields_are_explained_and_structural_shock_uses_literal_heading(
     assert "None" not in card
 
 
-def test_missing_scores_explain_the_gap_without_inventing_an_estimate():
+def test_missing_scores_explain_the_gap_without_inventing_an_estimate() -> None:
     values = card_inputs()
     values[1]["dims"].update(
         magnitude={
@@ -316,7 +317,7 @@ def test_missing_scores_explain_the_gap_without_inventing_an_estimate():
     assert values == original
 
 
-def test_who_excludes_unjustified_links_and_never_repeats_primary_as_secondary():
+def test_who_excludes_unjustified_links_and_never_repeats_primary_as_secondary() -> None:
     e, a, primary, d, m = card_inputs()
     primary.update(token_id="uniswap:UNI", entity_id="uniswap")
     d["token_id"] = m["token_id"] = primary["token_id"]
@@ -355,7 +356,7 @@ def test_who_excludes_unjustified_links_and_never_repeats_primary_as_secondary()
     assert "secondary none" not in who and "No listing identified" not in card
 
 
-def test_secondary_outside_universe_is_named_without_market_block():
+def test_secondary_outside_universe_is_named_without_market_block() -> None:
     """W7 (PRD §4.1): a beneficiary outside the 22 tokens is named on the card,
     with no market block; dependency-map candidates stay unnamed."""
     e, a, primary, d, m = card_inputs()
@@ -379,7 +380,7 @@ def test_secondary_outside_universe_is_named_without_market_block():
     assert card.count("── ") == 1
 
 
-def test_tokens_are_named_by_project_never_ticker_alone():
+def test_tokens_are_named_by_project_never_ticker_alone() -> None:
     """W8 (PRD hard rule 16): Lighter and Litentry never both print as "LIT"."""
     from tank.analysis.cards import token_name
 
@@ -394,7 +395,7 @@ def test_tokens_are_named_by_project_never_ticker_alone():
 @pytest.mark.parametrize(
     "action,shown", [("START", True), ("WAIT", False), ("DONT_CHASE", False), ("REDUCE", False)]
 )
-def test_tactical_label_only_on_positive_actions(action, shown):
+def test_tactical_label_only_on_positive_actions(action, shown) -> None:
     """W9 (FR-O-03, 03 §4.8): "(tactical)" never follows WAIT or DON'T CHASE."""
     values = card_inputs()
     values[3].update(action=action, tactical=True, thesis_grade="C")
@@ -402,7 +403,7 @@ def test_tactical_label_only_on_positive_actions(action, shown):
     assert ("(tactical)" in line) is shown
 
 
-def test_missing_card_fields_print_reason_not_dash():
+def test_missing_card_fields_print_reason_not_dash() -> None:
     """W13 (03 §7.5): missing fields print n/a (<reason>), never a bare dash."""
     values = card_inputs()
     values[4]["decisive_facts"][0].pop("window")
@@ -419,7 +420,7 @@ def test_missing_card_fields_print_reason_not_dash():
 
 
 @pytest.mark.parametrize("confirmation", [None, "ABSORPTION_CANDIDATE", "ABSORPTION_CONFIRMED", "flag"])
-def test_absorption_candidate_is_uncertain_and_keeps_recorded_alternatives(confirmation):
+def test_absorption_candidate_is_uncertain_and_keeps_recorded_alternatives(confirmation) -> None:
     values = card_inputs()
     truth = values[4]
     truth["move_class"] = "PASSIVE_SPOT_ABSORPTION"
@@ -437,7 +438,7 @@ def test_absorption_candidate_is_uncertain_and_keeps_recorded_alternatives(confi
 
 
 @pytest.mark.parametrize("source_reason", ["CURRENT_DAY_ARCHIVE_UNAVAILABLE", "WEBSOCKET_GAP"])
-def test_actual_spot_exclusion_cause_reaches_the_card(source_reason):
+def test_actual_spot_exclusion_cause_reaches_the_card(source_reason) -> None:
     from datetime import timedelta
 
     from tank.analysis.truth import spot_truth
@@ -492,8 +493,8 @@ def test_actual_spot_exclusion_cause_reaches_the_card(source_reason):
     ],
 )
 async def test_current_full_publication_uses_literal_render_and_excludes_undecided_token(
-    tmp_path, verdict, why
-):
+    tmp_path: Path, verdict, why
+) -> None:
     """Actual publication, storage and delivery with a mocked Telegram transport."""
     import json
     from types import SimpleNamespace
@@ -608,7 +609,7 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
         assert not any(row.get("status") == "SENT" for row in await repo.list("out.deliveries"))
         sent = []
 
-        def send(request):
+        def send(request: pytest.FixtureRequest):
             assert request.url.path.endswith("/sendRichMessage")
             sent.append(json.loads(request.content)["rich_message"])
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
@@ -625,7 +626,7 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
         await repo.close()
 
 
-def test_header_preserves_agent_supplied_sentence_and_structured_action():
+def test_header_preserves_agent_supplied_sentence_and_structured_action() -> None:
     event, assessment, beneficiary, decision, truth = card_inputs()
     event["statement"] = "The institution selected the protocol for its planned network."
     verdict = "The institution chose this protocol as infrastructure for its planned network."
@@ -661,7 +662,7 @@ def test_header_preserves_agent_supplied_sentence_and_structured_action():
 )
 def test_public_clock_preserves_declared_precision_without_inventing_intraday_time(
     value, precision, expected
-):
+) -> None:
     inputs = card_inputs()
     inputs[0].update(public_at=value, public_at_prec=precision)
     card = render(inputs)
@@ -670,7 +671,7 @@ def test_public_clock_preserves_declared_precision_without_inventing_intraday_ti
     assert len(card) <= 3500
 
 
-def test_end_labelled_bucket_and_unknown_edge_are_not_reinterpreted():
+def test_end_labelled_bucket_and_unknown_edge_are_not_reinterpreted() -> None:
     inputs = card_inputs()
     inputs[0].update(
         public_at="2026-09-25T00:00:00Z", public_at_prec="BUCKET(1d)", public_at_bucket_anchor="END"
@@ -680,7 +681,7 @@ def test_end_labelled_bucket_and_unknown_edge_are_not_reinterpreted():
     assert "public n/a (bucket edge unknown; BUCKET(1d))" in render(inputs)
 
 
-def test_nested_precision_and_known_collection_clock_are_preserved_independently():
+def test_nested_precision_and_known_collection_clock_are_preserved_independently() -> None:
     inputs = card_inputs()
     inputs[0].pop("public_at_prec")
     inputs[0]["public_at"] = {"value": "2026-09-24", "precision": "BUCKET_1D"}
@@ -688,7 +689,7 @@ def test_nested_precision_and_known_collection_clock_are_preserved_independently
     assert "public 2026-09-24 (day precision) · known 20:15Z (collection)" in render(inputs)
 
 
-def test_current_claim_view_uses_only_explicit_replacements_and_preserves_full():
+def test_current_claim_view_uses_only_explicit_replacements_and_preserves_full() -> None:
     inputs = card_inputs()
     event = inputs[0]
     event["claims"] = [
@@ -748,7 +749,7 @@ def test_current_claim_view_uses_only_explicit_replacements_and_preserves_full()
     assert "Official confirmation needed" in render(inputs)
 
 
-def test_each_layer_reason_is_visible_without_generic_rule_reference_or_mutation():
+def test_each_layer_reason_is_visible_without_generic_rule_reference_or_mutation() -> None:
     inputs = card_inputs()
     event = inputs[0]
     layers = {
@@ -773,7 +774,7 @@ def test_each_layer_reason_is_visible_without_generic_rule_reference_or_mutation
     assert "Additional independent uncertainty" in render(inputs)
 
 
-def test_card_length_diagnostics_preserve_full_preview_and_structured_guidance():
+def test_card_length_diagnostics_preserve_full_preview_and_structured_guidance() -> None:
     import json
 
     inputs = card_inputs()
@@ -796,7 +797,7 @@ def test_card_length_diagnostics_preserve_full_preview_and_structured_guidance()
     assert render(inputs) == diagnostic["preview"]
 
 
-def test_market_truth_names_venue_oi_class_markup_and_spot_breadth():
+def test_market_truth_names_venue_oi_class_markup_and_spot_breadth() -> None:
     """F-11 (03 §11.3): per-venue OI class with the markup component and the
     spot venues on each side are printed, each with venue and window."""
     values = card_inputs()
@@ -828,7 +829,7 @@ def test_market_truth_names_venue_oi_class_markup_and_spot_breadth():
     assert "4h: spot venues net buying: kraken 2.8%; net selling: none" in market
 
 
-def test_no_event_premise_prints_scenario_reason_and_no_accumulation_word():
+def test_no_event_premise_prints_scenario_reason_and_no_accumulation_word() -> None:
     """03 §7.5: the template never names a missing event and never writes
     "accumulation" (L11) in its own condition texts."""
     from tank.analysis.decisions import DecisionEngine
@@ -846,7 +847,7 @@ def test_no_event_premise_prints_scenario_reason_and_no_accumulation_word():
     assert all("accumulation" not in c["human_text"].lower() for c in result["conditions"])
 
 
-def test_market_context_and_trade_notch_are_printed():
+def test_market_context_and_trade_notch_are_printed() -> None:
     """F-16 (03 §5.7, §4.9): STRESS with its BTC input, and the notch reason."""
     values = card_inputs()
     values[4]["relative"].update(
@@ -863,7 +864,7 @@ def test_market_context_and_trade_notch_are_printed():
     assert "· Trade not lowered: already D" in render(values)
 
 
-def test_falling_native_oi_is_stated_as_positions_closing():
+def test_falling_native_oi_is_stated_as_positions_closing() -> None:
     """F-14 (03 §11.3): native OI down is positions closing, in native units."""
     values = card_inputs()
     values[4]["derivatives"] = {
@@ -883,7 +884,7 @@ def test_falling_native_oi_is_stated_as_positions_closing():
     "vs_normal,ending",
     [("WITHIN", "; within its normal range"), (None, "; normal range n/a (not available)")],
 )
-def test_native_oi_fall_inside_its_range_is_not_called_positions_closing(vs_normal, ending):
+def test_native_oi_fall_inside_its_range_is_not_called_positions_closing(vs_normal, ending) -> None:
     """F-09 (r106): a native OI fall within its normal range is printed as a
     figure, not as positions closing (that wording needs BELOW, F-14)."""
     values = card_inputs()
@@ -897,7 +898,7 @@ def test_native_oi_fall_inside_its_range_is_not_called_positions_closing(vs_norm
     assert line.endswith(ending) and "positions closing" not in line
 
 
-def test_btc_priced_line_names_the_benchmark_instead_of_a_missing_net_move():
+def test_btc_priced_line_names_the_benchmark_instead_of_a_missing_net_move() -> None:
     """BTC is the benchmark: Market Truth reports r_btc_adj n/a (NOT_APPLICABLE_BENCHMARK)."""
     values = card_inputs()
     values[4]["relative"]["windows"]["EVENT"] = {
@@ -925,7 +926,7 @@ def test_btc_priced_line_names_the_benchmark_instead_of_a_missing_net_move():
         ("HIGH", "HIGH", "SPOT_LED_ACCUMULATION", "none recorded"),
     ],
 )
-def test_confidence_names_the_limiting_input(data, certainty, move, expected):
+def test_confidence_names_the_limiting_input(data, certainty, move, expected) -> None:
     """E2E #5 msg 19: CONFIDENCE LOW printed "none recorded". §6.5 sets confidence
     as min(data, certainty, class); the card names the input at the minimum
     (data -> certainty -> class), "none recorded" only when HIGH."""
@@ -955,7 +956,7 @@ def test_confidence_names_the_limiting_input(data, certainty, move, expected):
 
 
 @pytest.mark.parametrize("kind", ["PARTIAL", "FULL", "UPDATE"])
-def test_what_precedes_analysis_and_preserves_every_other_section(kind):
+def test_what_precedes_analysis_and_preserves_every_other_section(kind) -> None:
     import html
     import re
 
@@ -985,7 +986,7 @@ def test_what_precedes_analysis_and_preserves_every_other_section(kind):
     assert rich_message_text(rich).splitlines()[1] == "WHAT: " + what
 
 
-def test_what_counts_toward_card_limit_without_truncation():
+def test_what_counts_toward_card_limit_without_truncation() -> None:
     import json
 
     from tank.telegram_rich import card_rich_message, rich_message_text

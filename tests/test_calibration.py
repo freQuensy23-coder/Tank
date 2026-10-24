@@ -2,6 +2,7 @@
 
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -61,7 +62,7 @@ def packet(items, events):
     }
 
 
-def test_history_is_replayed_in_clock_order_not_list_order():
+def test_history_is_replayed_in_clock_order_not_list_order() -> None:
     rows, events, _ = load_packet(
         packet([item(1, hours=5, event_id="e1", source_id="S30"), item(0, hours=1, event_id="e1")], ["e1"])
     )
@@ -71,20 +72,20 @@ def test_history_is_replayed_in_clock_order_not_list_order():
     assert events["e1"]["known_to_us_at"] == iso(T0 + timedelta(hours=1))
 
 
-def test_labels_that_contradict_the_routing_window_are_refused():
+def test_labels_that_contradict_the_routing_window_are_refused() -> None:
     with pytest.raises(CalibrationError, match="routing window"):
         load_packet(packet([item(0, hours=0, event_id="e1"), item(1, hours=73, event_id="e1")], ["e1"]))
     with pytest.raises(CalibrationError, match="routed items"):
         load_packet(packet([item(0, hours=0, event_id="e1", source_id="S30", relevant=False)], ["e1"]))
 
 
-def test_filter_cutoff_is_highest_value_keeping_95_percent_of_relevant():
+def test_filter_cutoff_is_highest_value_keeping_95_percent_of_relevant() -> None:
     rows = [{"relevant": True, "filter_score": s / 100} for s in range(80, 100)]
     rows += [{"relevant": False, "filter_score": 0.99}]
     assert filter_cutoff(rows) == 0.81
 
 
-def test_routing_cutoff_is_highest_meeting_both_targets_or_none():
+def test_routing_cutoff_is_highest_meeting_both_targets_or_none() -> None:
     def row(target, *candidates):
         return {
             "item_id": "x",
@@ -102,7 +103,7 @@ def test_routing_cutoff_is_highest_meeting_both_targets_or_none():
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_acquire_scores_the_service_inputs_at_the_historical_clock(tmp_path):
+async def test_acquire_scores_the_service_inputs_at_the_historical_clock(tmp_path: Path) -> None:
     items = [
         item(0, hours=0, event_id="old"),
         item(1, hours=100, event_id="e1"),
@@ -113,7 +114,7 @@ async def test_acquire_scores_the_service_inputs_at_the_historical_clock(tmp_pat
     path.write_text(json.dumps(packet(items, ["old", "e1"])))
     calls = []
 
-    def jev(request):
+    def jev(request: pytest.FixtureRequest):
         body = json.loads(request.content)
         calls.append(body)
         assert str(request.url) == "https://opencode.ai/inference/systemone/v1/systemone"

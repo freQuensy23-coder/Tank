@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -65,7 +66,9 @@ def retained(sid):
 
 
 @pytest.mark.parametrize("sid", ["S03", "S25"])
-async def test_normal_poll_preserves_actual_author_and_exposes_exact_pruner_organization(tmp_path, sid):
+async def test_normal_poll_preserves_actual_author_and_exposes_exact_pruner_organization(
+    tmp_path: Path, sid
+) -> None:
     src, _, payload = retained(sid)
     registry = Settings().load_config("registry")
     config = SimpleNamespace(
@@ -80,7 +83,7 @@ async def test_normal_poll_preserves_actual_author_and_exposes_exact_pruner_orga
     )
     requests = []
 
-    def response(request):
+    def response(request: pytest.FixtureRequest):
         requests.append(str(request.url))
         assert str(request.url) == src["feeds"][0]["url"]
         return httpx.Response(200, content=payload)

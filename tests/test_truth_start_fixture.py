@@ -251,7 +251,7 @@ def compact_start_snapshot():
     return deepcopy(_compact_start_seed())
 
 
-def test_synthetic_start_truth_positive_path():
+def test_synthetic_start_truth_positive_path() -> None:
     result = compute_market_truth(compact_start_snapshot())
     assert result["data_confidence"]["class"] == "HIGH", result["data_confidence"]
     assert result["move_class"] == "SPOT_LED_ACCUMULATION", result
@@ -259,7 +259,7 @@ def test_synthetic_start_truth_positive_path():
     assert result["liquidity"]["liquidity_state"] == "NORMAL"
 
 
-def test_confidence_diagnostics_do_not_add_unlisted_grade_conditions():
+def test_confidence_diagnostics_do_not_add_unlisted_grade_conditions() -> None:
     snapshot = compact_start_snapshot()
     snapshot["capture_status"] = {"status": "RUNNING", "reason": "BACKFILL_PENDING"}
 
@@ -271,7 +271,7 @@ def test_confidence_diagnostics_do_not_add_unlisted_grade_conditions():
     assert result["data_confidence"]["failed"] == []
 
 
-def test_threshold_configuration_is_consumed_and_isolated_between_calls():
+def test_threshold_configuration_is_consumed_and_isolated_between_calls() -> None:
     snapshot = compact_start_snapshot()
 
     end = parse_time(snapshot["cutoff"])
@@ -324,7 +324,7 @@ def legacy_semantic_baseline():
 @pytest.mark.parametrize("status", ["DOCUMENTED_UNTESTED", "UNKNOWN", "INFERRED"])
 def test_legacy_semantic_status_cannot_reduce_confidence_or_mask_real_freshness(
     legacy_semantic_baseline, status
-):
+) -> None:
     snapshot, baseline = legacy_semantic_baseline()
     for row in snapshot["semantics"]:
         row["semantic_confidence"] = status
@@ -338,7 +338,7 @@ def test_legacy_semantic_status_cannot_reduce_confidence_or_mask_real_freshness(
         assert missing["data_confidence"]["limiting"]["condition"] == "freshness"
 
 
-def test_missing_instrument_registry_and_selftest_records_do_not_cap_observed_confidence():
+def test_missing_instrument_registry_and_selftest_records_do_not_cap_observed_confidence() -> None:
     snapshot = compact_start_snapshot()
     end = parse_time(snapshot["cutoff"])
     baseline = compute_market_truth(snapshot)
@@ -376,7 +376,7 @@ async def _assess_loser_snapshot():
                 {"map_version": 2, "edge_id": "new", "role": "LOSER"},
             ]
 
-        async def put(self, collection, key, record, **kwargs):
+        async def put(self, collection, key, record, **kwargs) -> None:
             assert collection == "ana.market_truth" and kwargs["immutable"] is True
 
     class Market:
@@ -388,7 +388,7 @@ async def _assess_loser_snapshot():
     ).assess("EVT", "T", "2026-10-16T12:00:00Z")
 
 
-def test_latest_durable_beneficiary_role_sets_loser_repricing_direction():
+def test_latest_durable_beneficiary_role_sets_loser_repricing_direction() -> None:
     import asyncio
 
     result = asyncio.run(_assess_loser_snapshot())

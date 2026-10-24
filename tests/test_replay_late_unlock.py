@@ -8,6 +8,7 @@ cutoff keep their actual availability; source evidence never gets this exception
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -47,7 +48,7 @@ def unlock(
     return row
 
 
-def write(tmp_path, rows, assembled="2026-10-20T17:54:49Z"):
+def write(tmp_path: Path, rows, assembled="2026-10-20T17:54:49Z"):
     packet = {
         "cutoff": CUTOFF,
         "config_version": "test",
@@ -69,7 +70,9 @@ def settings():
 
 
 @pytest.mark.parametrize("tranche", ["2026-09-19T19:04:31Z", "2026-10-05T00:00:00Z"])
-def test_late_unlock_known_schedule_is_visible_for_past_and_upcoming_tranches(tmp_path, tranche):
+def test_late_unlock_known_schedule_is_visible_for_past_and_upcoming_tranches(
+    tmp_path: Path, tranche
+) -> None:
     inputs = load_inputs(write(tmp_path, [unlock(tranche)]), settings())
     assert [row["date"] for row in inputs.records("mkt.unlocks")] == [tranche]
 
@@ -89,12 +92,12 @@ def test_late_unlock_known_schedule_is_visible_for_past_and_upcoming_tranches(tm
         (unlock("2026-09-19T19:04:31Z", mode=None), "2026-10-20T17:54:49Z", "HISTORICAL_RECONSTRUCTION"),
     ],
 )
-def test_late_unlock_is_refused_unless_strict(tmp_path, row, assembled, message):
+def test_late_unlock_is_refused_unless_strict(tmp_path: Path, row, assembled, message) -> None:
     with pytest.raises(ReplayError, match=message):
         load_inputs(write(tmp_path, [row], assembled), settings())
 
 
-def test_calendar_captured_before_cutoff_keeps_actual_availability(tmp_path):
+def test_calendar_captured_before_cutoff_keeps_actual_availability(tmp_path: Path) -> None:
     early = unlock("2026-12-01T00:00:00Z", as_of=None, received="2026-09-20T00:00:00Z", mode=None)
     inputs = load_inputs(write(tmp_path, [early], assembled=None), settings())
     assert [row["date"] for row in inputs.records("mkt.unlocks")] == ["2026-12-01T00:00:00Z"]

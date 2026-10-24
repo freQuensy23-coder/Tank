@@ -3,7 +3,7 @@ import pytest
 from tank.market.supply import unlock_schedule
 
 
-def test_unlock_delta_is_potential_supply_not_sale():
+def test_unlock_delta_is_potential_supply_not_sale() -> None:
     data = {
         "documentedData": {
             "data": [

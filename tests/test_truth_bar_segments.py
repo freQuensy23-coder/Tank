@@ -95,7 +95,7 @@ def fractional_packet():
     return snapshot
 
 
-def test_exact_bar_segments_support_fractional_window_and_current_cutoff_without_raw_trades():
+def test_exact_bar_segments_support_fractional_window_and_current_cutoff_without_raw_trades() -> None:
     snapshot = fractional_packet()
     assert not any(key in snapshot for key in ("trades", "boundary_trades", "anchor_trades", "cutoff_trades"))
     result = compute_market_truth(snapshot)
@@ -107,7 +107,7 @@ def test_exact_bar_segments_support_fractional_window_and_current_cutoff_without
     assert len(event["venues"][0]["boundary_segments"]) == 2
 
 
-def test_unregistered_boundary_is_incomplete_and_raw_trade_arrays_cannot_override_bars():
+def test_unregistered_boundary_is_incomplete_and_raw_trade_arrays_cannot_override_bars() -> None:
     snapshot = fractional_packet()
     for row in snapshot["flow_bars"]:
         row["boundary_segments"] = []

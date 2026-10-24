@@ -11,7 +11,7 @@ from tank.storage import MemoryRepository
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("returned_target", [None, 41, 99])
-async def test_requested_and_returned_reply_targets_are_separate(returned_target):
+async def test_requested_and_returned_reply_targets_are_separate(returned_target) -> None:
     repo = MemoryRepository()
     for alert_id in ("a", "b"):
         await repo.put(
@@ -28,7 +28,7 @@ async def test_requested_and_returned_reply_targets_are_separate(returned_target
         )
     count = 0
 
-    def send(request):
+    def send(request: pytest.FixtureRequest):
         nonlocal count
         count += 1
         result = {"message_id": 40 + count}

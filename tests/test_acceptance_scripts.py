@@ -15,7 +15,7 @@ def load(name):
     return module
 
 
-def test_percentile_nearest_rank():
+def test_percentile_nearest_rank() -> None:
     common = load("common")
     values = list(range(1, 101))
     assert common.percentile(values, 95) == 95
@@ -23,7 +23,7 @@ def test_percentile_nearest_rank():
     assert common.percentile([], 95) is None
 
 
-def test_summary_unmeasured_is_never_a_pass():
+def test_summary_unmeasured_is_never_a_pass() -> None:
     common = load("common")
     assert common.summary([10, None], 90)["status"] == "UNVERIFIED"
     assert common.summary([], 90)["status"] == "NO_SAMPLES"
@@ -31,7 +31,7 @@ def test_summary_unmeasured_is_never_a_pass():
     assert common.summary([80, 85, 89], 90, "max")["status"] == "PASS"
 
 
-def test_source_ratio_uses_counter_deltas_and_cadence():
+def test_source_ratio_uses_counter_deltas_and_cadence() -> None:
     health = load("v0a_health")
     start = {
         "taken_at": "2026-10-21T00:00:00Z",

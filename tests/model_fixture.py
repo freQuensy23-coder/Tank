@@ -21,7 +21,7 @@ async def audited_result(repo, event):
 
     public = json.loads(event["content"][0]["text"])
 
-    def check(value):
+    def check(value) -> None:
         if isinstance(value, dict):
             for key, item in value.items():
                 assert not identifier_field(key), key

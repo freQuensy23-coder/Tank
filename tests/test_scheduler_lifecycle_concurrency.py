@@ -12,7 +12,9 @@ from tank.util import iso, utcnow
 
 
 @pytest.mark.asyncio
-async def test_lifecycle_rereads_candidate_after_concurrent_state_update(monkeypatch):
+async def test_lifecycle_rereads_candidate_after_concurrent_state_update(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     repo = MemoryRepository()
     now = utcnow()
     original = {"event_id": "e", "lifecycle": "TRACKED", "known_to_us_at": iso(now - timedelta(days=8))}
@@ -33,7 +35,9 @@ async def test_lifecycle_rereads_candidate_after_concurrent_state_update(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_lifecycle_cannot_overwrite_update_between_predicate_read_and_write(monkeypatch):
+async def test_lifecycle_cannot_overwrite_update_between_predicate_read_and_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     repo = MemoryRepository()
     now = utcnow()
     original = {"event_id": "e", "lifecycle": "TRACKED", "known_to_us_at": iso(now - timedelta(days=8))}
@@ -49,7 +53,7 @@ async def test_lifecycle_cannot_overwrite_update_between_predicate_read_and_writ
             await release_read.wait()
         return rows
 
-    async def accepted_update():
+    async def accepted_update() -> None:
         update_attempted.set()
         async with repo.lock("event:e"), repo.transaction():
             current = await repo.get("evt.events", "e")
@@ -75,7 +79,7 @@ async def test_lifecycle_cannot_overwrite_update_between_predicate_read_and_writ
 
 
 @pytest.mark.asyncio
-async def test_fresh_observation_keeps_tracked_event_open():
+async def test_fresh_observation_keeps_tracked_event_open() -> None:
     repo = MemoryRepository()
     now = utcnow()
     event = {"event_id": "e", "lifecycle": "TRACKED", "known_to_us_at": iso(now - timedelta(days=8))}

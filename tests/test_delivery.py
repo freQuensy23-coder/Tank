@@ -31,11 +31,11 @@ async def setup_repo():
 
 
 @pytest.mark.asyncio
-async def test_delivery_sent_opens_once_and_escapes_html():
+async def test_delivery_sent_opens_once_and_escapes_html() -> None:
     repo = await setup_repo()
     requests = []
 
-    def send(request):
+    def send(request: pytest.FixtureRequest):
         requests.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
 
@@ -54,7 +54,7 @@ async def test_delivery_sent_opens_once_and_escapes_html():
 
 
 @pytest.mark.asyncio
-async def test_receipt_beyond_first_ledger_page_prevents_duplicate_delivery():
+async def test_receipt_beyond_first_ledger_page_prevents_duplicate_delivery() -> None:
     repo = await setup_repo()
     subject = {"alert_id": "a", "version": 1, "channel": "telegram:alerts"}
     for index in range(1000):
@@ -77,7 +77,7 @@ async def test_receipt_beyond_first_ledger_page_prevents_duplicate_delivery():
     assert len(ledger) == 1001
     requests = []
 
-    def send(request):
+    def send(request: pytest.FixtureRequest):
         requests.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 99}})
 
@@ -95,7 +95,7 @@ async def test_receipt_beyond_first_ledger_page_prevents_duplicate_delivery():
 
 
 @pytest.mark.asyncio
-async def test_failure_never_opens_call_and_honors_retry_after():
+async def test_failure_never_opens_call_and_honors_retry_after() -> None:
     repo = await setup_repo()
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
@@ -115,11 +115,11 @@ async def test_failure_never_opens_call_and_honors_retry_after():
 
 
 @pytest.mark.asyncio
-async def test_update_replies_to_first_event_card():
+async def test_update_replies_to_first_event_card() -> None:
     repo = await setup_repo()
     requests = []
 
-    def send(request):
+    def send(request: pytest.FixtureRequest):
         requests.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": len(requests) + 40}})
 
@@ -143,7 +143,7 @@ async def test_update_replies_to_first_event_card():
 
 
 @pytest.mark.asyncio
-async def test_invalidated_session_finalizes_only_after_sent_terminal_correction_without_call():
+async def test_invalidated_session_finalizes_only_after_sent_terminal_correction_without_call() -> None:
     repo = MemoryRepository()
     await repo.put("evt.events", "e", {"event_id": "e", "lifecycle": "INVALIDATED"})
     await repo.put(
@@ -186,7 +186,7 @@ async def test_invalidated_session_finalizes_only_after_sent_terminal_correction
 
 
 @pytest.mark.asyncio
-async def test_invalidated_session_waits_for_every_call_to_close():
+async def test_invalidated_session_waits_for_every_call_to_close() -> None:
     repo = MemoryRepository()
     await repo.put("evt.events", "e", {"event_id": "e", "lifecycle": "INVALIDATED"})
     await repo.put(
@@ -240,7 +240,7 @@ async def test_invalidated_session_waits_for_every_call_to_close():
 
 
 @pytest.mark.asyncio
-async def test_structural_first_delivery_measures_missed_three_minute_target():
+async def test_structural_first_delivery_measures_missed_three_minute_target() -> None:
     from datetime import timedelta
 
     from tank.util import iso, utcnow
@@ -278,7 +278,7 @@ async def test_structural_first_delivery_measures_missed_three_minute_target():
 
 
 @pytest.mark.asyncio
-async def test_expiry_notice_never_reopens_frozen_start_and_consumes_only_delivered_ids():
+async def test_expiry_notice_never_reopens_frozen_start_and_consumes_only_delivered_ids() -> None:
     repo = MemoryRepository()
     await repo.put(
         "evt.events", "e", {"event_id": "e", "call_expired": True, "call_expired_ids": ["c", "later"]}
@@ -338,7 +338,9 @@ async def test_expiry_notice_never_reopens_frozen_start_and_consumes_only_delive
 
 
 @pytest.mark.asyncio
-async def test_held_update_is_never_sent_after_a_newer_immediate_exit(monkeypatch):
+async def test_held_update_is_never_sent_after_a_newer_immediate_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """W2: a held DON'T CHASE update must not reach the operator after the EXIT
     that superseded it was sent at once."""
     import json
@@ -406,7 +408,7 @@ async def test_held_update_is_never_sent_after_a_newer_immediate_exit(monkeypatc
     settings = SimpleNamespace(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2")
     requests = []
 
-    def send(request):
+    def send(request: pytest.FixtureRequest):
         requests.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 43}})
 
@@ -449,7 +451,9 @@ async def test_held_update_is_never_sent_after_a_newer_immediate_exit(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_normal_update_sends_at_fifteen_minutes_and_is_idempotent(monkeypatch):
+async def test_normal_update_sends_at_fifteen_minutes_and_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from datetime import timedelta
 
     import tank.delivery as delivery_module
@@ -506,7 +510,7 @@ async def test_normal_update_sends_at_fifteen_minutes_and_is_idempotent(monkeypa
     settings = SimpleNamespace(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2")
     requests = []
 
-    def send(request):
+    def send(request: pytest.FixtureRequest):
         requests.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 43}})
 
@@ -521,7 +525,7 @@ async def test_normal_update_sends_at_fifteen_minutes_and_is_idempotent(monkeypa
 @pytest.mark.parametrize(
     "cause", [ValueError("invalid frozen decision"), TimeoutError(), "EXPIRED", "RESTART_EXHAUSTED"]
 )
-async def test_terminal_failure_is_durable_once_and_never_opens_calls(cause):
+async def test_terminal_failure_is_durable_once_and_never_opens_calls(cause) -> None:
     repo = await setup_repo()
     settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
     async with httpx.AsyncClient(
@@ -538,7 +542,7 @@ async def test_terminal_failure_is_durable_once_and_never_opens_calls(cause):
 
 
 @pytest.mark.asyncio
-async def test_terminal_ops_failure_never_recurses_and_sent_is_preserved():
+async def test_terminal_ops_failure_never_recurses_and_sent_is_preserved() -> None:
     repo = await setup_repo()
     settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
     async with httpx.AsyncClient(
@@ -557,7 +561,7 @@ async def test_terminal_ops_failure_never_recurses_and_sent_is_preserved():
 
 
 @pytest.mark.asyncio
-async def test_fifth_http_failure_records_terminal_and_single_notice():
+async def test_fifth_http_failure_records_terminal_and_single_notice() -> None:
     repo = await setup_repo()
     settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
     async with httpx.AsyncClient(
@@ -575,7 +579,7 @@ async def test_fifth_http_failure_records_terminal_and_single_notice():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("current_resolution", ["resolution-1", "resolution-2"])
-async def test_milestone_resolution_consumed_only_on_matching_sent_snapshot(current_resolution):
+async def test_milestone_resolution_consumed_only_on_matching_sent_snapshot(current_resolution) -> None:
     repo = MemoryRepository()
     history = [{"resolution_id": "resolution-1"}, {"resolution_id": "resolution-2"}]
     await repo.put(
@@ -624,7 +628,7 @@ async def test_milestone_resolution_consumed_only_on_matching_sent_snapshot(curr
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_first_sent_persists_alerted_until_subsequent_scheduler_transition():
+async def test_first_sent_persists_alerted_until_subsequent_scheduler_transition() -> None:
     from tank.scheduler import Scheduler
     from tank.util import iso, utcnow
 
@@ -644,7 +648,7 @@ async def test_first_sent_persists_alerted_until_subsequent_scheduler_transition
 
 
 @pytest.mark.asyncio
-async def test_explicit_ordinary_update_flag_preserves_rate_with_persistent_safety():
+async def test_explicit_ordinary_update_flag_preserves_rate_with_persistent_safety() -> None:
     from datetime import timedelta
 
     from tank.util import iso, utcnow
@@ -702,7 +706,7 @@ async def test_explicit_ordinary_update_flag_preserves_rate_with_persistent_safe
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("precision", ["BUCKET(1m)", None])
-async def test_delivery_ledger_and_calls_keep_source_precision_and_actual_clocks(precision):
+async def test_delivery_ledger_and_calls_keep_source_precision_and_actual_clocks(precision) -> None:
     repo = await setup_repo()
 
     alert = {
@@ -742,7 +746,7 @@ async def test_delivery_ledger_and_calls_keep_source_precision_and_actual_clocks
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("precision", ["BUCKET(1m)", None])
-async def test_delivery_due_guard_preserves_sent_anchor_and_records_no_attempt(precision):
+async def test_delivery_due_guard_preserves_sent_anchor_and_records_no_attempt(precision) -> None:
     from datetime import timedelta
 
     from tank.util import iso, utcnow
@@ -802,7 +806,7 @@ async def test_delivery_due_guard_preserves_sent_anchor_and_records_no_attempt(p
 )
 async def test_accepted_immutable_card_is_not_semantically_recensored_by_delivery(
     freshness, event_class, legacy_rate_limited, reason
-):
+) -> None:
     repo = MemoryRepository()
     await repo.put(
         "out.alerts",
@@ -836,7 +840,7 @@ async def test_accepted_immutable_card_is_not_semantically_recensored_by_deliver
 
 
 @pytest.mark.asyncio
-async def test_historical_suppression_is_preserved_without_censoring_explicit_retry():
+async def test_historical_suppression_is_preserved_without_censoring_explicit_retry() -> None:
     repo = await setup_repo()
     suppressed = {
         "alert_id": "a",
@@ -850,7 +854,7 @@ async def test_historical_suppression_is_preserved_without_censoring_explicit_re
     await repo.put("out.deliveries", "old-suppression", suppressed, immutable=True)
     requests = []
 
-    def send(request):
+    def send(request: pytest.FixtureRequest):
         requests.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
 
@@ -870,8 +874,8 @@ async def test_historical_suppression_is_preserved_without_censoring_explicit_re
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
 async def test_newer_held_update_supersedes_older_and_keeps_spacing_through_restart(
-    monkeypatch, backend, postgres_template
-):
+    monkeypatch: pytest.MonkeyPatch, backend, postgres_template
+) -> None:
     """W2 (03 §7.4, FR-A-04): every version carries the whole card, so an older
     held update is never sent once a newer version exists; the newest one waits
     for its own slot and survives a restart."""
@@ -901,7 +905,7 @@ async def test_newer_held_update_supersedes_older_and_keeps_spacing_through_rest
         settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
         requests = []
 
-        def send(request):
+        def send(request: pytest.FixtureRequest):
             requests.append(json.loads(request.content))
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 42 + len(requests)}})
 

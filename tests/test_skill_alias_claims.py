@@ -18,7 +18,7 @@ def binding():
     return {"name": "tank-data", "skill_id": "skill-one", "version": "123", "archive_sha256": "a" * 64}
 
 
-def test_claim_is_durable_before_files_and_same_binding_restarts(tmp_path):
+def test_claim_is_durable_before_files_and_same_binding_restarts(tmp_path: Path) -> None:
     plan = binding()
     claims.apply([plan], "check", tmp_path)
     assert not (tmp_path / "home").exists()
@@ -35,7 +35,7 @@ def test_claim_is_durable_before_files_and_same_binding_restarts(tmp_path):
 @pytest.mark.parametrize(
     "key,value", [("skill_id", "other"), ("version", "124"), ("archive_sha256", "b" * 64)]
 )
-def test_rebinding_refused_without_touching_alias_bytes(tmp_path, key, value):
+def test_rebinding_refused_without_touching_alias_bytes(tmp_path: Path, key, value) -> None:
     plan = binding()
     claims.apply([plan], "claim", tmp_path)
     file = tmp_path / "home/user/.skills/tank-data/SKILL.md"
@@ -46,10 +46,12 @@ def test_rebinding_refused_without_touching_alias_bytes(tmp_path, key, value):
 
 
 @pytest.mark.parametrize("same", [True, False])
-def test_concurrent_exclusive_receipt_claim_is_revalidated(tmp_path, monkeypatch, same):
+def test_concurrent_exclusive_receipt_claim_is_revalidated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, same
+) -> None:
     plan = binding()
 
-    def raced_link(source, destination, **kwargs):
+    def raced_link(source, destination, **kwargs) -> None:
         competitor = plan if same else {**plan, "version": "unrelated"}
         Path(destination).write_text(json.dumps(competitor))
         raise FileExistsError("concurrent claim")
@@ -64,7 +66,7 @@ def test_concurrent_exclusive_receipt_claim_is_revalidated(tmp_path, monkeypatch
         assert not (tmp_path / "home/user/.skills/tank-data").exists()
 
 
-def test_unbound_existing_directory_and_nested_symlinks_fail_closed(tmp_path):
+def test_unbound_existing_directory_and_nested_symlinks_fail_closed(tmp_path: Path) -> None:
     alias = tmp_path / "home/user/.skills/tank-data"
     alias.mkdir(parents=True)
     with pytest.raises(ValueError, match="Unbound"):
@@ -79,7 +81,7 @@ def test_unbound_existing_directory_and_nested_symlinks_fail_closed(tmp_path):
     assert not list(outside.iterdir())
 
 
-def test_all_bindings_checked_before_any_claim_and_invalid_sizes_rejected(tmp_path):
+def test_all_bindings_checked_before_any_claim_and_invalid_sizes_rejected(tmp_path: Path) -> None:
     good, bad = binding(), {**binding(), "name": "../escape"}
     with pytest.raises(ValueError, match="name"):
         claims.apply([good, bad], "claim", tmp_path)
@@ -92,7 +94,7 @@ def test_all_bindings_checked_before_any_claim_and_invalid_sizes_rejected(tmp_pa
         claims.apply([good] * 1000, "claim", tmp_path)
 
 
-def test_corrupt_receipt_is_never_treated_as_absent(tmp_path):
+def test_corrupt_receipt_is_never_treated_as_absent(tmp_path: Path) -> None:
     claims.apply([binding()], "claim", tmp_path)
     receipt = tmp_path / "home/user/.skills/.openma-bindings/tank-data.json"
     receipt.write_text("{partial")
@@ -100,10 +102,12 @@ def test_corrupt_receipt_is_never_treated_as_absent(tmp_path):
         claims.apply([binding()], "claim", tmp_path)
 
 
-def test_failed_atomic_publication_leaves_no_partial_receipt_and_retries(tmp_path, monkeypatch):
+def test_failed_atomic_publication_leaves_no_partial_receipt_and_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     original = claims.os.link
 
-    def fail(*args, **kwargs):
+    def fail(*args, **kwargs) -> None:
         raise OSError("interrupted publication")
 
     monkeypatch.setattr(claims.os, "link", fail)

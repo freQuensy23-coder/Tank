@@ -9,7 +9,7 @@ import pytest
 from tank.settings import Settings, resolve_versions
 
 
-def test_image_config_version_is_the_build_commit(tmp_path):
+def test_image_config_version_is_the_build_commit(tmp_path: Path) -> None:
     config = tmp_path / "config"
     config.mkdir()
     (config / "rules.yaml").write_text("value: 1\n")
@@ -17,7 +17,7 @@ def test_image_config_version_is_the_build_commit(tmp_path):
     assert resolve_versions(settings).config_version == "a" * 40
 
 
-def test_development_config_version_follows_the_content(tmp_path):
+def test_development_config_version_follows_the_content(tmp_path: Path) -> None:
     config = tmp_path / "config"
     config.mkdir()
     (config / "rules.yaml").write_text("value: 1\n")
@@ -33,7 +33,7 @@ def test_development_config_version_follows_the_content(tmp_path):
 
 @pytest.mark.integration
 @pytest.mark.process
-def test_packaged_json_resource_changes_code_version_in_cold_process(tmp_path):
+def test_packaged_json_resource_changes_code_version_in_cold_process(tmp_path: Path) -> None:
     package_root = tmp_path / "package"
     copied_package = package_root / "tank"
     shutil.copytree(Path(__file__).resolve().parents[1] / "src/tank", copied_package)

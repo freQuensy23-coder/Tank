@@ -6,7 +6,7 @@ from runpy import run_path
 from tank.analysis.truth import capture_cadence, compute_market_truth
 
 
-def test_unknown_historical_capture_tier_does_not_fall_back_to_base():
+def test_unknown_historical_capture_tier_does_not_fall_back_to_base() -> None:
     fixture = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))
     snapshot = fixture["synthetic_start_snapshot"]()
     snapshot["capture_metadata"] = {

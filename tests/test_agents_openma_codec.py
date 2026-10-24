@@ -14,7 +14,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.node, pytest.mark.process]
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run_codec(tmp_path, patched):
+def run_codec(tmp_path: Path, patched):
     source = (ROOT / "tests/fixtures/openma/runtime-codec.ts").read_text()
     if patched:
         for patch in json.loads((ROOT / "tests/fixtures/openma/opaque-input-fixes.json").read_text()):
@@ -42,7 +42,7 @@ console.log(JSON.stringify({opaque,raw,decoded,encoded,resultHistory,resultDecod
     return json.loads(result.stdout)
 
 
-def test_guarded_codec_preserves_opaque_input_but_transforms_envelope(tmp_path):
+def test_guarded_codec_preserves_opaque_input_but_transforms_envelope(tmp_path: Path) -> None:
     result = run_codec(tmp_path, True)
     assert result["decoded"]["input"] == result["opaque"] == result["encoded"]["input"]
     assert result["decoded"]["processedAt"] == "2026-10-18T00:00:00Z"
@@ -60,7 +60,7 @@ def test_guarded_codec_preserves_opaque_input_but_transforms_envelope(tmp_path):
     )
 
 
-async def test_patched_actual_tool_uses_host_bound_item(tmp_path):
+async def test_patched_actual_tool_uses_host_bound_item(tmp_path: Path) -> None:
     import httpx
 
     from tank.agents.sessions import SessionService

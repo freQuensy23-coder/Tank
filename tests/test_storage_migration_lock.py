@@ -20,13 +20,15 @@ async def blank_repo(postgres_template):
         yield repo
 
 
-async def test_migration_lock_serializes_concurrent_runners_and_releases_after_cancellation(blank_repo):
+async def test_migration_lock_serializes_concurrent_runners_and_releases_after_cancellation(
+    blank_repo,
+) -> None:
     repo = blank_repo
     other = await PostgresRepository(repo.database_url).open()
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def hold():
+    async def hold() -> None:
         async with repo._migration_connection():
             entered.set()
             await release.wait()
@@ -53,7 +55,7 @@ async def test_migration_lock_serializes_concurrent_runners_and_releases_after_c
 
 
 @pytest.mark.parametrize("lock_kind", ["session", "transaction"])
-async def test_cancelled_waiting_migration_does_not_keep_session_lock(blank_repo, lock_kind):
+async def test_cancelled_waiting_migration_does_not_keep_session_lock(blank_repo, lock_kind) -> None:
     repo = blank_repo
     other = await PostgresRepository(repo.database_url).open()
     try:

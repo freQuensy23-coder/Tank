@@ -2,6 +2,7 @@
 
 import copy
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -12,14 +13,14 @@ from tank.util import iso, utcnow
 
 
 @pytest.fixture
-async def owner_service(tmp_path):
+async def owner_service(tmp_path: Path):
     repo = MemoryRepository()
     await repo.open()
     return EventToolService(repo, Settings(data_dir=tmp_path), None, None)
 
 
 @pytest.mark.parametrize("query", [{"entity_id": "world"}, {"token_id": "world:WLD"}])
-async def test_registry_filter_preserves_registered_authority(owner_service, query):
+async def test_registry_filter_preserves_registered_authority(owner_service, query) -> None:
     result = await owner_service.get_registry(query, {})
     account = next(row for row in result["x_accounts"] if row["handle"] == "sama")
     assert {row["entity_id"] for row in account["official_authorities"]} == {"world", "openai"}
@@ -27,7 +28,7 @@ async def test_registry_filter_preserves_registered_authority(owner_service, que
     assert result == await owner_service.get_registry({"entity_id": "world"}, {})
 
 
-async def test_registry_filter_returns_only_the_named_identity(owner_service):
+async def test_registry_filter_returns_only_the_named_identity(owner_service) -> None:
     result = await owner_service.get_registry({"entity_id": "openai"}, {})
     assert [row["entity_id"] for row in result["entities"]] == ["openai"]
     assert result["x_accounts"] == [] and result["tokens"] == [] and result["instruments"] == []
@@ -106,7 +107,7 @@ def assessment(proof, *, klass="MATERIAL", criterion="MATERIAL"):
 
 
 @pytest.mark.parametrize("verified", [True, False])
-async def test_agent_claim_time_certainty_and_stage_are_not_readjudicated(owner_service, verified):
+async def test_agent_claim_time_certainty_and_stage_are_not_readjudicated(owner_service, verified) -> None:
     result, supplied = await create(owner_service, verified=verified)
     event = await owner_service.repo.get("evt.events", result["event_id"])
     claim = result["accepted_claims"][0]
@@ -123,7 +124,7 @@ async def test_agent_claim_time_certainty_and_stage_are_not_readjudicated(owner_
     assert event["entities"] == [{"entity_id": "world", "role": "ACTOR"}]
 
 
-async def test_observation_uses_explicit_certainty_not_automatic_primary_promotion(owner_service):
+async def test_observation_uses_explicit_certainty_not_automatic_primary_promotion(owner_service) -> None:
     result, args = await create(owner_service, certainty="MEDIUM")
     eid = result["event_id"]
     observation = {
@@ -142,7 +143,7 @@ async def test_observation_uses_explicit_certainty_not_automatic_primary_promoti
     assert (event["certainty"], event["certainty_reason"]) == ("LOW", "Agent revised confidence")
 
 
-async def test_magnitude_is_agent_owned_but_implementation_is_deterministic(owner_service):
+async def test_magnitude_is_agent_owned_but_implementation_is_deterministic(owner_service) -> None:
     result, _ = await create(owner_service)
     proof = result["accepted_claims"][0]["claim_id"]
     supplied = assessment(proof)
@@ -155,7 +156,7 @@ async def test_magnitude_is_agent_owned_but_implementation_is_deterministic(owne
 
 
 @pytest.mark.parametrize("klass,criterion", [("MATERIAL", "MATERIAL"), ("MAJOR", "M2"), ("LOW", "LOW")])
-async def test_assessment_without_universe_concern_is_low(owner_service, klass, criterion):
+async def test_assessment_without_universe_concern_is_low(owner_service, klass, criterion) -> None:
     result, _ = await create(owner_service)
     event = await owner_service.repo.get("evt.events", result["event_id"])
     event.update(tokens_mentioned=[], entities=[{"entity_id": "sec", "role": "REGULATOR"}])
@@ -182,7 +183,9 @@ async def test_assessment_without_universe_concern_is_low(owner_service, klass, 
         ("HIGH", "LIVE", "M2", None, "MAJOR"),
     ],
 )
-async def test_explicit_class_caps_still_apply(owner_service, certainty, state, criterion, venue, expected):
+async def test_explicit_class_caps_still_apply(
+    owner_service, certainty, state, criterion, venue, expected
+) -> None:
     result, _ = await create(owner_service, certainty=certainty, state=state)
     supplied = assessment(result["accepted_claims"][0]["claim_id"], klass="MAJOR", criterion=criterion)
     if venue:
@@ -192,7 +195,7 @@ async def test_explicit_class_caps_still_apply(owner_service, certainty, state, 
     assert out["criterion_quote"] == result["accepted_claims"][0]["quote"]
 
 
-async def test_major_without_a_criterion_claim_is_material(owner_service):
+async def test_major_without_a_criterion_claim_is_material(owner_service) -> None:
     result, _ = await create(owner_service)
     supplied = assessment(None, klass="MAJOR", criterion="M2")
     for dimension in supplied["dims"].values():
@@ -205,7 +208,7 @@ async def test_major_without_a_criterion_claim_is_material(owner_service):
 
 
 @pytest.mark.parametrize("venue", [None, "", "   "])
-async def test_m1_requires_explicit_venue_without_guessing_from_prose(owner_service, venue):
+async def test_m1_requires_explicit_venue_without_guessing_from_prose(owner_service, venue) -> None:
     result, _ = await create(owner_service)
     supplied = assessment(result["accepted_claims"][0]["claim_id"], klass="MAJOR", criterion="M1")
     if venue is not None:
@@ -214,7 +217,7 @@ async def test_m1_requires_explicit_venue_without_guessing_from_prose(owner_serv
         await owner_service.set_assessment({"event_id": result["event_id"], "assessment": supplied}, {})
 
 
-async def test_m1_venue_outside_the_registry_is_refused_not_guessed(owner_service):
+async def test_m1_venue_outside_the_registry_is_refused_not_guessed(owner_service) -> None:
     result, _ = await create(owner_service)
     supplied = assessment(result["accepted_claims"][0]["claim_id"], klass="MAJOR", criterion="M1")
     supplied["criterion_venue_id"] = "upbit"
@@ -222,7 +225,7 @@ async def test_m1_venue_outside_the_registry_is_refused_not_guessed(owner_servic
         await owner_service.set_assessment({"event_id": result["event_id"], "assessment": supplied}, {})
 
 
-async def test_observation_link_is_not_reclassified_by_the_host(owner_service):
+async def test_observation_link_is_not_reclassified_by_the_host(owner_service) -> None:
     result, args = await create(owner_service)
     observation = {
         "event_id": result["event_id"],
@@ -236,7 +239,7 @@ async def test_observation_link_is_not_reclassified_by_the_host(owner_service):
     assert update["link_type"] == "STATE_UPDATE"
 
 
-async def test_capture_caps_and_source_side_integration_remain_deterministic(owner_service):
+async def test_capture_caps_and_source_side_integration_remain_deterministic(owner_service) -> None:
     result, _ = await create(owner_service, state="LIVE")
     eid = result["event_id"]
     proof = result["accepted_claims"][0]["claim_id"]
@@ -289,7 +292,7 @@ async def test_capture_caps_and_source_side_integration_remain_deterministic(own
 )
 async def test_structural_criterion_claim_binds_selected_gate_verified_claim(
     owner_service, binding, expected
-):
+) -> None:
     import copy
 
     created, _ = await create(owner_service)
@@ -335,7 +338,7 @@ async def test_structural_criterion_claim_binds_selected_gate_verified_claim(
     assert (await owner_service.repo.get("evt.claims", proof))["evidence"][0]["quote"] == primary_quote
 
 
-async def test_watched_token_beneficiary_preserves_outside_primary_event_class(owner_service):
+async def test_watched_token_beneficiary_preserves_outside_primary_event_class(owner_service) -> None:
     created, _ = await create(owner_service)
     eid = created["event_id"]
     event = await owner_service.repo.get("evt.events", eid)

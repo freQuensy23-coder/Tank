@@ -16,7 +16,7 @@ registry = yaml.safe_load((Path(__file__).resolve().parents[1] / "config/registr
 
 
 @pytest.mark.asyncio
-async def test_full_registry_baskets_and_optional_sector_peer_prices_reach_normal_snapshot(setup):
+async def test_full_registry_baskets_and_optional_sector_peer_prices_reach_normal_snapshot(setup) -> None:
     repo, settings, _ = setup
     captured = copy.deepcopy(registry)
     for token in captured["tokens"]:

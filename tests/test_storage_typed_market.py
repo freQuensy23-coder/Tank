@@ -38,7 +38,7 @@ def flow(at="2026-10-18T00:00:00Z"):
     }
 
 
-async def test_ticker_partial_point_merge_and_read_queries(typed_repo):
+async def test_ticker_partial_point_merge_and_read_queries(typed_repo) -> None:
     repo = typed_repo
     await repo.migrate()
     a = {
@@ -65,7 +65,7 @@ async def test_ticker_partial_point_merge_and_read_queries(typed_repo):
     )["mark_price"] == "10"
 
 
-async def test_funding_source_merge_survives_partial_restart(typed_repo):
+async def test_funding_source_merge_survives_partial_restart(typed_repo) -> None:
     repo = typed_repo
     await repo.migrate()
     base = {
@@ -102,7 +102,7 @@ async def test_funding_source_merge_survives_partial_restart(typed_repo):
     assert result["source_disagreement"]["present"] is True
 
 
-async def test_memory_market_batch_uses_same_typed_contract():
+async def test_memory_market_batch_uses_same_typed_contract() -> None:
     from tank.storage import MemoryRepository
 
     repo = MemoryRepository()
@@ -113,7 +113,7 @@ async def test_memory_market_batch_uses_same_typed_contract():
 
 
 @pytest.mark.parametrize("reverse", [False, True])
-async def test_same_batch_funding_and_ticker_equal_sequential(typed_repo, reverse):
+async def test_same_batch_funding_and_ticker_equal_sequential(typed_repo, reverse) -> None:
     repo = typed_repo
     await repo.migrate()
     base = {
@@ -222,13 +222,13 @@ async def test_same_batch_funding_and_ticker_equal_sequential(typed_repo, revers
 
 
 @pytest.mark.parametrize("reverse", [False, True])
-async def test_same_batch_point_fold_memory(reverse):
+async def test_same_batch_point_fold_memory(reverse) -> None:
     from tank.storage import MemoryRepository
 
     await test_same_batch_funding_and_ticker_equal_sequential(MemoryRepository(), reverse)
 
 
-async def test_typed_retention_preserves_major_day_and_prunes_expired(typed_repo):
+async def test_typed_retention_preserves_major_day_and_prunes_expired(typed_repo) -> None:
     from datetime import timedelta
 
     from test_storage import complete_fixture_record
@@ -262,7 +262,7 @@ async def test_typed_retention_preserves_major_day_and_prunes_expired(typed_repo
     assert await repo.get("mkt.flow_bars_1m", "expired") is None
 
 
-def test_typed_timestamp_alias_validation_and_unknown_policy():
+def test_typed_timestamp_alias_validation_and_unknown_policy() -> None:
     from tank.market_storage import decode, encode
 
     sample = {
@@ -298,7 +298,7 @@ def test_typed_timestamp_alias_validation_and_unknown_policy():
     )
 
 
-async def exercise_dependency_head(repo):
+async def exercise_dependency_head(repo) -> None:
     await repo.migrate()
     source = dict(
         flow("2026-10-18T00:00:00Z"),
@@ -354,17 +354,17 @@ async def exercise_dependency_head(repo):
         await repo.market_dependency_head("mkt.flow_bars_1m", "not_a_clock", "2026-10-18T02:00:00Z")
 
 
-async def test_market_dependency_head_clickhouse(typed_repo):
+async def test_market_dependency_head_clickhouse(typed_repo) -> None:
     await exercise_dependency_head(typed_repo)
 
 
-async def test_market_dependency_head_memory():
+async def test_market_dependency_head_memory() -> None:
     from tank.storage import MemoryRepository
 
     await exercise_dependency_head(MemoryRepository())
 
 
-async def exercise_bounded_latest_market_records(repo):
+async def exercise_bounded_latest_market_records(repo) -> None:
     await repo.migrate()
     rows = [
         dict(flow("2026-10-18T00:00:00Z"), recorded_at="2026-10-18T00:01:00Z"),
@@ -440,17 +440,17 @@ async def exercise_bounded_latest_market_records(repo):
             await repo.latest_market_records("mkt.flow_bars_1m", **options, instrument_ids=invalid)
 
 
-async def test_latest_market_records_bounds_clickhouse(typed_repo):
+async def test_latest_market_records_bounds_clickhouse(typed_repo) -> None:
     await exercise_bounded_latest_market_records(typed_repo)
 
 
-async def test_latest_market_records_bounds_memory():
+async def test_latest_market_records_bounds_memory() -> None:
     from tank.storage import MemoryRepository
 
     await exercise_bounded_latest_market_records(MemoryRepository())
 
 
-async def test_dependency_heads_cover_advancing_semantic_boundaries():
+async def test_dependency_heads_cover_advancing_semantic_boundaries() -> None:
     from tank.storage import MemoryRepository
 
     repo = MemoryRepository()
@@ -485,7 +485,7 @@ async def test_dependency_heads_cover_advancing_semantic_boundaries():
         await head("2026-10-18T02:30:00Z", "arbitrary SQL")
 
 
-async def exercise_compact_market_projection(repo):
+async def exercise_compact_market_projection(repo) -> None:
     await repo.migrate()
 
     def candle(iid, minute, close="1.2345678901234567890123456789", **updates):
@@ -546,17 +546,17 @@ async def exercise_compact_market_projection(repo):
     ] == []
 
 
-async def test_compact_market_projection_clickhouse(typed_repo):
+async def test_compact_market_projection_clickhouse(typed_repo) -> None:
     await exercise_compact_market_projection(typed_repo)
 
 
-async def test_compact_market_projection_memory():
+async def test_compact_market_projection_memory() -> None:
     from tank.storage import MemoryRepository
 
     await exercise_compact_market_projection(MemoryRepository())
 
 
-def test_oi_anchor_is_named_and_scoped_not_generic_extra():
+def test_oi_anchor_is_named_and_scoped_not_generic_extra() -> None:
     from tank.market_storage import decode, encode
 
     sample = {"ts": "2026-10-18T10:00:00Z", "ts_prec": "BUCKET(300s)", "ts_bucket_anchor": "END"}
@@ -567,7 +567,7 @@ def test_oi_anchor_is_named_and_scoped_not_generic_extra():
         encode("mkt.oi_obs", dict(sample, ts_bucket_anchor="GUESSED"))
 
 
-async def _unproven_writes_keep_complete_bars(repo):
+async def _unproven_writes_keep_complete_bars(repo) -> None:
     proven = flow()
     await repo.put_market_batch("mkt.flow_bars_1m", [proven], keys=["bar"])
 
@@ -588,18 +588,18 @@ async def _unproven_writes_keep_complete_bars(repo):
     assert len(await repo.put_market_batch("mkt.flow_bars_1m", [proven], keys=["bar"])) == 1
 
 
-async def test_unproven_flow_bar_never_replaces_a_complete_one_memory():
+async def test_unproven_flow_bar_never_replaces_a_complete_one_memory() -> None:
     from tank.storage import MemoryRepository
 
     await _unproven_writes_keep_complete_bars(MemoryRepository())
 
 
-async def test_unproven_flow_bar_never_replaces_a_complete_one_clickhouse(typed_repo):
+async def test_unproven_flow_bar_never_replaces_a_complete_one_clickhouse(typed_repo) -> None:
     await typed_repo.migrate()
     await _unproven_writes_keep_complete_bars(typed_repo)
 
 
-async def test_dependency_heads_in_one_round_trip_equal_single_heads(typed_repo):
+async def test_dependency_heads_in_one_round_trip_equal_single_heads(typed_repo) -> None:
     from tank.market_storage import market_dependency_head
 
     await typed_repo.migrate()
@@ -618,7 +618,7 @@ async def test_dependency_heads_in_one_round_trip_equal_single_heads(typed_repo)
     assert batched["availability"]["minute_start"] == "2026-10-18T00:01:00Z"
 
 
-async def test_batched_range_read_gives_the_loop_turns_while_it_decodes(typed_repo):
+async def test_batched_range_read_gives_the_loop_turns_while_it_decodes(typed_repo) -> None:
     import asyncio
     from datetime import timedelta
 
@@ -632,7 +632,7 @@ async def test_batched_range_read_gives_the_loop_turns_while_it_decodes(typed_re
     turns = [0]
     done = asyncio.Event()
 
-    async def other_task():
+    async def other_task() -> None:
         while not done.is_set():
             turns[0] += 1
             await asyncio.sleep(0)
@@ -656,7 +656,7 @@ async def test_batched_range_read_gives_the_loop_turns_while_it_decodes(typed_re
     assert turns[0] - before >= 2
 
 
-async def test_kline_days_recorded_since_match_memory_on_clickhouse(typed_repo):
+async def test_kline_days_recorded_since_match_memory_on_clickhouse(typed_repo) -> None:
     from tank.market_storage import market_kline_days_recorded_since
     from tank.storage import MemoryRepository
     from tank.util import parse_time
@@ -695,7 +695,7 @@ async def test_kline_days_recorded_since_match_memory_on_clickhouse(typed_repo):
     assert found == {("A", parse_time("2026-10-16T00:00:00Z")), ("B", parse_time("2026-10-17T00:00:00Z"))}
 
 
-async def test_sampled_history_decodes_json_rows_off_the_loop_on_clickhouse(typed_repo):
+async def test_sampled_history_decodes_json_rows_off_the_loop_on_clickhouse(typed_repo) -> None:
     from tank.market_storage import sampled_market_history
     from tank.storage import MemoryRepository
 
@@ -721,7 +721,7 @@ async def test_sampled_history_decodes_json_rows_off_the_loop_on_clickhouse(type
     assert sampled[0]["first_trade"] == {"price": "123.456789012345678901"}
 
 
-async def test_rows_recorded_since_match_memory_on_clickhouse(typed_repo):
+async def test_rows_recorded_since_match_memory_on_clickhouse(typed_repo) -> None:
     from tank.market_storage import market_rows_recorded_since
     from tank.storage import MemoryRepository
 

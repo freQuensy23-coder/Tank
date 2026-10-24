@@ -8,6 +8,7 @@ nothing the operator is told changes.
 import json
 import os
 import uuid
+from pathlib import Path
 
 import httpx
 import pytest
@@ -74,10 +75,10 @@ def native_session(session_id):
 
 
 class FakeOpenMA:
-    def __init__(self):
+    def __init__(self) -> None:
         self.posted = []
 
-    def __call__(self, request):
+    def __call__(self, request: pytest.FixtureRequest):
         if request.method == "GET" and request.url.path == "/v1/sessions":
             return httpx.Response(200, json={"data": [], "next_page": None})
         if request.method == "GET":
@@ -89,7 +90,7 @@ class FakeOpenMA:
         return httpx.Response(200, json={"data": [{"id": "in_" + uuid.uuid4().hex[:8]}]})
 
 
-def scout_settings(tmp_path):
+def scout_settings(tmp_path: Path):
     settings = Settings(data_dir=tmp_path, openma_url="http://openma:8787", openma_api_key="test")
     config = settings.load_config
 
@@ -192,7 +193,7 @@ async def seed_event(tools, sessions):
 
 
 @pytest.mark.asyncio
-async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_path):
+async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_path: Path) -> None:
     repository, dsn = repo
     settings = scout_settings(tmp_path)
     tools = EventToolService(repository, settings, None, None)

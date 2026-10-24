@@ -93,7 +93,7 @@ async def prepare(
 @pytest.mark.parametrize(
     "stage,exposure", [("PROPOSED", 6), ("RUMOR", 7), ("APPROVED", 8), ("SIGNED", 8), ("DEPLOYED", 9)]
 )
-async def test_primary_rejects_rating_above_proven_event_anchor(stage, exposure):
+async def test_primary_rejects_rating_above_proven_event_anchor(stage, exposure) -> None:
     service, args = await prepare(event_state=stage, claim_state=stage, exposure=exposure)
     with pytest.raises(ValueError, match="requires applicable"):
         await service.set_beneficiaries(args, {})
@@ -103,7 +103,7 @@ async def test_primary_rejects_rating_above_proven_event_anchor(stage, exposure)
 @pytest.mark.parametrize(
     "stage,exposure", [("APPROVED", 6), ("SIGNED", 7), ("LIVE", 8), ("MONEY_FLOWING", 9)]
 )
-async def test_primary_uses_event_ladder_and_preserves_credible_approved(stage, exposure):
+async def test_primary_uses_event_ladder_and_preserves_credible_approved(stage, exposure) -> None:
     service, args = await prepare(event_state=stage, claim_state=stage, exposure=exposure)
     await service.set_beneficiaries(args, {})
     edge = (await service.repo.list("evt.beneficiary_edges"))[0]
@@ -125,7 +125,7 @@ async def test_primary_uses_event_ladder_and_preserves_credible_approved(stage, 
 )
 async def test_secondary_uses_derived_integration_evidence_not_submitted_live(
     claim_state, direction, exposure, accepted
-):
+) -> None:
     service, args = await prepare(
         role="SECONDARY", claim_state=claim_state, direction=direction, exposure=exposure
     )
@@ -140,7 +140,7 @@ async def test_secondary_uses_derived_integration_evidence_not_submitted_live(
         assert edge["integration_state"] == claim_state
 
 
-async def test_exact_ten_rejects_source_side_only_without_quiet_clamp():
+async def test_exact_ten_rejects_source_side_only_without_quiet_clamp() -> None:
     service, args = await prepare(exposure=10, direction="SOURCE_SIDE_SUPPORT")
     with pytest.raises(ValueError, match="requires accepted counterparty"):
         await service.set_beneficiaries(args, {})
@@ -148,7 +148,7 @@ async def test_exact_ten_rejects_source_side_only_without_quiet_clamp():
     assert await service.repo.list("evt.beneficiary_edges") == []
 
 
-async def test_exact_ten_does_not_invent_live_or_relation_claim_type_requirement():
+async def test_exact_ten_does_not_invent_live_or_relation_claim_type_requirement() -> None:
     service, args = await prepare(exposure=10, event_state="APPROVED", claim_type="STATE")
 
     args["edges"][0]["causal_chain"] = "Counterparty selected this as the sole required rail."
@@ -156,13 +156,13 @@ async def test_exact_ten_does_not_invent_live_or_relation_claim_type_requirement
     assert (await service.repo.list("evt.beneficiary_edges"))[0]["exposure_score"] == 10
 
 
-async def test_accepted_medium_evidence_is_not_silently_required_to_be_high():
+async def test_accepted_medium_evidence_is_not_silently_required_to_be_high() -> None:
     service, args = await prepare(certainty="MEDIUM", exposure=6)
     await service.set_beneficiaries(args, {})
     assert (await service.repo.list("evt.beneficiary_edges"))[0]["credible"] is True
 
 
-async def test_approved_selection_rating_rejected_and_supported_six_retained():
+async def test_approved_selection_rating_rejected_and_supported_six_retained() -> None:
     service, args = await prepare(event_state="APPROVED", exposure=8)
     with pytest.raises(ValueError, match="requires applicable LIVE"):
         await service.set_beneficiaries(args, {})
@@ -172,7 +172,7 @@ async def test_approved_selection_rating_rejected_and_supported_six_retained():
     assert (await service.repo.list("evt.beneficiary_edges"))[0]["exposure_score"] == 6
 
 
-async def test_primary_own_official_live_does_not_borrow_secondary_source_side_cap():
+async def test_primary_own_official_live_does_not_borrow_secondary_source_side_cap() -> None:
     service, args = await prepare(
         event_state="LIVE", claim_state="LIVE", exposure=8, direction="SOURCE_SIDE_SUPPORT"
     )
@@ -185,7 +185,9 @@ async def test_primary_own_official_live_does_not_borrow_secondary_source_side_c
 @pytest.mark.parametrize(
     "direction,accepted", [("COUNTERPARTY_ADOPTION", True), ("SOURCE_SIDE_SUPPORT", False)]
 )
-async def test_proposed_sole_rail_rating_has_no_invented_stage_gate_and_cannot_start(direction, accepted):
+async def test_proposed_sole_rail_rating_has_no_invented_stage_gate_and_cannot_start(
+    direction, accepted
+) -> None:
     from tank.analysis.decisions import DecisionEngine
 
     service, args = await prepare(

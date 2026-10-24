@@ -1,6 +1,7 @@
 import asyncio
 import html
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -43,13 +44,13 @@ async def entry_jobs(repo):
     ]
 
 
-async def poll(repo, tmp_path, payloads, *, enabled=True, replay=False, source=SOURCE):
+async def poll(repo, tmp_path: Path, payloads, *, enabled=True, replay=False, source=SOURCE):
     settings = source_settings(tmp_path, [source])
     settings.ops_progress_enabled = enabled
     settings.replay = replay
     feed = iter(payloads)
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         return httpx.Response(200, content=next(feed))
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
@@ -58,7 +59,7 @@ async def poll(repo, tmp_path, payloads, *, enabled=True, replay=False, source=S
     return results
 
 
-async def test_first_poll_reports_unparsed_entry_once_with_identity_and_hashes(tmp_path):
+async def test_first_poll_reports_unparsed_entry_once_with_identity_and_hashes(tmp_path: Path) -> None:
     repo = MemoryRepository()
     results = await poll(repo, tmp_path, [broken("Bad entry without identity")])
     assert results[0]["items"] == 1
@@ -76,7 +77,7 @@ async def test_first_poll_reports_unparsed_entry_once_with_identity_and_hashes(t
     assert "Обнаружено: " in text and notice["seen_at"] == checkpoint["fetched_at"]
 
 
-async def test_repeat_polls_do_not_report_same_entry_and_new_entry_is_reported_alone(tmp_path):
+async def test_repeat_polls_do_not_report_same_entry_and_new_entry_is_reported_alone(tmp_path: Path) -> None:
     repo = MemoryRepository()
     await poll(repo, tmp_path, [broken("Stuck entry"), broken("Stuck entry"), broken("Stuck entry")])
     assert len(await entry_notices(repo)) == 1
@@ -89,7 +90,7 @@ async def test_repeat_polls_do_not_report_same_entry_and_new_entry_is_reported_a
     assert "Stuck entry" not in latest["text"] and len(latest["entry_errors"]) == 1
 
 
-async def test_burst_of_broken_entries_is_one_message_clipped_to_telegram_limit(tmp_path):
+async def test_burst_of_broken_entries_is_one_message_clipped_to_telegram_limit(tmp_path: Path) -> None:
     repo = MemoryRepository()
     titles = [f"Broken entry {n} " + "\U0001f680" * 150 for n in range(60)]
     await poll(repo, tmp_path, [broken(*titles)])
@@ -101,7 +102,7 @@ async def test_burst_of_broken_entries_is_one_message_clipped_to_telegram_limit(
 
 
 @pytest.mark.parametrize("enabled,replay", [(False, False), (True, True)])
-async def test_disabled_or_replay_reports_nothing(tmp_path, enabled, replay):
+async def test_disabled_or_replay_reports_nothing(tmp_path: Path, enabled, replay) -> None:
     repo = MemoryRepository()
     await poll(repo, tmp_path, [broken("Bad")], enabled=enabled, replay=replay)
     assert await entry_notices(repo) == [] and await entry_jobs(repo) == []
@@ -109,7 +110,7 @@ async def test_disabled_or_replay_reports_nothing(tmp_path, enabled, replay):
     assert checkpoint["entry_errors"]
 
 
-async def test_restart_and_concurrent_reports_are_idempotent(tmp_path):
+async def test_restart_and_concurrent_reports_are_idempotent(tmp_path: Path) -> None:
     repo = MemoryRepository()
     await poll(repo, tmp_path, [broken("Bad")])
     await poll(repo, tmp_path, [broken("Bad")])
@@ -132,7 +133,7 @@ async def test_restart_and_concurrent_reports_are_idempotent(tmp_path):
     assert "предложение 0xabc" in snapshot["text"]
 
 
-async def test_publisher_json_entry_error_is_reported_and_delivered_to_ops(tmp_path):
+async def test_publisher_json_entry_error_is_reported_and_delivered_to_ops(tmp_path: Path) -> None:
     repo = MemoryRepository()
     source = {
         "source_id": "S03",
@@ -160,7 +161,7 @@ async def test_publisher_json_entry_error_is_reported_and_delivered_to_ops(tmp_p
     assert "«Malformed original without identifier»" in notice["text"]
     requests = []
 
-    def respond(request):
+    def respond(request: pytest.FixtureRequest):
         requests.append(json.loads(request.content))
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 7, "date": 1}})
 
@@ -179,7 +180,7 @@ async def test_publisher_json_entry_error_is_reported_and_delivered_to_ops(tmp_p
     assert requests[0]["text"] == html.escape(notice["text"])
 
 
-async def test_x_account_failures_are_keyed_by_account():
+async def test_x_account_failures_are_keyed_by_account() -> None:
     repo = MemoryRepository()
     settings = SimpleNamespace(ops_progress_enabled=True)
     source = {"source_id": "S29", "name": "X"}
@@ -202,8 +203,8 @@ async def test_x_account_failures_are_keyed_by_account():
 
 @pytest.mark.parametrize("second", ["broken", "recovered"])
 async def test_failed_report_does_not_fail_acquisition_and_is_retried_next_poll(
-    tmp_path, monkeypatch, second
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, second
+) -> None:
     repo = MemoryRepository()
     report = ops_entry_errors.report_entry_errors
     calls = []
@@ -229,7 +230,7 @@ async def test_failed_report_does_not_fail_acquisition_and_is_retried_next_poll(
 @pytest.mark.parametrize(
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
-async def test_entry_error_notices_persist_and_deduplicate_in_storage(backend, postgres_template):
+async def test_entry_error_notices_persist_and_deduplicate_in_storage(backend, postgres_template) -> None:
     async with fixture_repo(backend, postgres_template) as repo:
         settings = SimpleNamespace(ops_progress_enabled=True)
         source = {"source_id": "S30", "name": "Fixture blog"}

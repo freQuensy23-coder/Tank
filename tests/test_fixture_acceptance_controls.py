@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 from fixture_acceptance import (
@@ -20,7 +21,7 @@ def save(path, value):
     return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
-def complete_case(tmp_path):
+def complete_case(tmp_path: Path):
     raw = tmp_path / "public/raw.txt"
     raw.parent.mkdir()
     raw.write_text("Issuer 7 proposed a rule.")
@@ -84,7 +85,7 @@ def complete_case(tmp_path):
     return case, packet, sealed
 
 
-def test_complete_declared_control_passes(tmp_path):
+def test_complete_declared_control_passes(tmp_path: Path) -> None:
     case, _, _ = complete_case(tmp_path)
     assert check_ready(tmp_path, case) == []
     assert check_completed(tmp_path, case) == []
@@ -104,7 +105,7 @@ def test_complete_declared_control_passes(tmp_path):
         "tampered_evidence",
     ],
 )
-def test_required_manual_clauses_are_bound_and_cannot_be_ignored(tmp_path, failure):
+def test_required_manual_clauses_are_bound_and_cannot_be_ignored(tmp_path: Path, failure) -> None:
     case, _, sealed = complete_case(tmp_path)
     requirement = "A durable milestone job is scheduled at the source's vote end."
     sealed["manual_predicates"] = [{"requirement": requirement}]
@@ -158,7 +159,7 @@ def test_required_manual_clauses_are_bound_and_cannot_be_ignored(tmp_path, failu
         "oracle_for_different_input",
     ],
 )
-def test_missing_or_contaminated_fixture_cannot_pass(tmp_path, failure):
+def test_missing_or_contaminated_fixture_cannot_pass(tmp_path: Path, failure) -> None:
     case, packet, sealed = complete_case(tmp_path)
     if failure == "placeholder":
         packet = {"fixture_status": "INSUFFICIENT_FIXTURE"}
@@ -202,14 +203,14 @@ def test_missing_or_contaminated_fixture_cannot_pass(tmp_path, failure):
     assert any(expected in error for error in check_ready(tmp_path, case))
 
 
-def test_ready_fixture_does_not_mean_executed(tmp_path):
+def test_ready_fixture_does_not_mean_executed(tmp_path: Path) -> None:
     case, _, _ = complete_case(tmp_path)
     case.pop("acceptance_run")
     assert not check_ready(tmp_path, case)
     assert check_completed(tmp_path, case)
 
 
-def test_success_label_cannot_hide_a_failed_assertion(tmp_path):
+def test_success_label_cannot_hide_a_failed_assertion(tmp_path: Path) -> None:
     case, packet, _ = complete_case(tmp_path)
     result = {"event_state": "LIVE"}
     case["acceptance_run"] = save(
@@ -231,14 +232,14 @@ def test_success_label_cannot_hide_a_failed_assertion(tmp_path):
     assert any("assertion failed" in error for error in check_completed(tmp_path, case))
 
 
-def test_post_run_oracle_is_not_a_preregistered_expectation(tmp_path):
+def test_post_run_oracle_is_not_a_preregistered_expectation(tmp_path: Path) -> None:
     case, _, sealed = complete_case(tmp_path)
     sealed["sealed_at"] = "2026-10-18T02:00:00Z"
     case["sealed_outcomes"] = save(tmp_path / "evaluator/sealed.json", sealed)
     assert any("after the run" in error for error in check_completed(tmp_path, case))
 
 
-def test_date_precision_is_preserved_without_inventing_a_midnight_publication():
+def test_date_precision_is_preserved_without_inventing_a_midnight_publication() -> None:
     case = {"fixture_id": "F-18", "cutoff_spec": "13 Oct 2026"}
     packet = {
         "cutoff": "2026-10-14T00:00:00Z",
@@ -252,7 +253,7 @@ def test_date_precision_is_preserved_without_inventing_a_midnight_publication():
     assert cutoff_errors(case, packet)
 
 
-def test_whole_minute_reference_requires_all_declared_precision_fields():
+def test_whole_minute_reference_requires_all_declared_precision_fields() -> None:
     case = {"fixture_id": "F-05", "cutoff_spec": "26 Sep 2026 03:50"}
     reference = {
         "cutoff_policy": "UTC_MINUTE_END_EXCLUSIVE",
@@ -270,7 +271,7 @@ def test_whole_minute_reference_requires_all_declared_precision_fields():
     assert cutoff_errors(case, dict(packet, cutoff="2026-09-26T03:52:00Z"))
 
 
-def test_literal_sets_bounds_and_conditional_tactical_apply_to_every_token():
+def test_literal_sets_bounds_and_conditional_tactical_apply_to_every_token() -> None:
     predicate = {
         "path": ["decisions", "*"],
         "satisfies": {
@@ -317,13 +318,13 @@ def test_literal_sets_bounds_and_conditional_tactical_apply_to_every_token():
         ("equals", 1, True, False),
     ],
 )
-def test_predicates_reject_missing_values_and_bool_number_coercion(operator, expected, value, passes):
+def test_predicates_reject_missing_values_and_bool_number_coercion(operator, expected, value, passes) -> None:
     predicate = {"path": ["value"], operator: expected}
     assert assertion_passes({"value": value}, predicate) is passes
     assert not assertion_passes({}, predicate)
 
 
-def test_ambiguous_and_unknown_operators_are_not_executable():
+def test_ambiguous_and_unknown_operators_are_not_executable() -> None:
     for predicate in [
         {"path": ["value"], "equals": 1, "lte": 2},
         {"path": ["value"], "eval": "True"},
@@ -333,14 +334,14 @@ def test_ambiguous_and_unknown_operators_are_not_executable():
             assertion_passes({"value": 1}, predicate)
 
 
-def test_existential_token_predicate_needs_a_matching_row():
+def test_existential_token_predicate_needs_a_matching_row() -> None:
     predicate = {"path": ["edges"], "some": {"path": ["token_id"], "equals": "asset-7"}}
     assert assertion_passes({"edges": [{"token_id": "asset-2"}, {"token_id": "asset-7"}]}, predicate)
     for output in [{}, {"edges": []}, {"edges": [{"token_id": "asset-2"}]}, {"edges": [{}]}]:
         assert not assertion_passes(output, predicate)
 
 
-def test_proper_name_mask_preserves_common_geographic_noun(tmp_path):
+def test_proper_name_mask_preserves_common_geographic_noun(tmp_path: Path) -> None:
     case, packet, sealed = complete_case(tmp_path)
     mapping = {"replacements": {"World": "Issuer 7"}, "case_sensitive_names": ["World"]}
     case["private_name_map"] = save(tmp_path / "evaluator/map.json", mapping)
@@ -360,7 +361,7 @@ def test_proper_name_mask_preserves_common_geographic_noun(tmp_path):
         assert not errors or any("original identities" in error for error in errors)
 
 
-def test_empty_map_only_for_exact_already_anonymous_f25(tmp_path):
+def test_empty_map_only_for_exact_already_anonymous_f25(tmp_path: Path) -> None:
     case, packet, sealed = complete_case(tmp_path)
     lead = "Yesterday we shipped X and told all the press, sorry for posting late"
     authority = save(

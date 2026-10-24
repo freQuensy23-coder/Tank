@@ -29,7 +29,7 @@ def _admin_dsn():
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
-async def prepared_seed(request):
+async def prepared_seed(request: pytest.FixtureRequest):
     admin_dsn = _admin_dsn()
     configured = request.config.getoption("postgres_schema_template")
     name = configured or "tank_test_schema_regression_" + uuid.uuid4().hex
@@ -42,7 +42,9 @@ async def prepared_seed(request):
             await _drop_database(admin_dsn, name)
 
 
-async def test_external_schema_clones_isolate_writes_keep_blank_upgrades_and_preserve_seed(prepared_seed):
+async def test_external_schema_clones_isolate_writes_keep_blank_upgrades_and_preserve_seed(
+    prepared_seed,
+) -> None:
     admin_dsn, seed = prepared_seed
     factory = PostgresTemplate(schema_template=seed)
     children = []
@@ -90,7 +92,7 @@ async def test_external_schema_clones_isolate_writes_keep_blank_upgrades_and_pre
 
 
 @pytest.mark.parametrize("state", ["unsealed", "wrong_marker", "connected"])
-async def test_invalid_external_seed_is_refused_before_any_clone_ddl(state):
+async def test_invalid_external_seed_is_refused_before_any_clone_ddl(state) -> None:
     admin_dsn = _admin_dsn()
     seed = await _create_database(admin_dsn)
     role = "tank_test_no_create_" + uuid.uuid4().hex

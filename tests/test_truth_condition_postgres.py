@@ -21,8 +21,8 @@ pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 @pytest.mark.asyncio
 async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
-    tmp_path, monkeypatch, postgres_template
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, postgres_template
+) -> None:
     from psycopg.conninfo import conninfo_to_dict
 
     dsn = os.getenv("TANK_TEST_DATABASE_URL")
@@ -220,7 +220,7 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
         repo.iter_range = ranges
 
         class Probe:
-            def __init__(self, conn):
+            def __init__(self, conn) -> None:
                 self.conn = conn
 
             async def execute(self, query, *args, **kwargs):
@@ -232,7 +232,7 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
 
         repo._conn = lambda: Probe(original_conn())
 
-        async def forbidden(*args, **kwargs):
+        async def forbidden(*args, **kwargs) -> None:
             raise AssertionError("No flush/full snapshot/MTA persistence in condition evaluation")
 
         monkeypatch.setattr(repo, "put", forbidden)

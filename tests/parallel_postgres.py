@@ -70,7 +70,7 @@ def parallel_requested(args: Sequence[str]) -> bool:
 
 
 @pytest.hookimpl(tryfirst=True)
-def pytest_load_initial_conftests(early_config, parser, args):
+def pytest_load_initial_conftests(early_config, parser, args) -> None:
     """Run before conftest reads or validates inherited test database routes."""
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     if worker_id is None and not parallel_requested(args):

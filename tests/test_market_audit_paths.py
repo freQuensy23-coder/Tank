@@ -207,7 +207,7 @@ def derive(packet, start=START, end=END):
     return spot, deriv, liquidity, supply, relative
 
 
-def test_raw_native_volume_and_basis_support_require_complete_own_history():
+def test_raw_native_volume_and_basis_support_require_complete_own_history() -> None:
     packet = raw_packet()
     _, deriv, _, _, _ = derive(packet)
     f = deriv["support_features"]
@@ -227,7 +227,7 @@ def test_raw_native_volume_and_basis_support_require_complete_own_history():
     assert f["spot_volume_up_beyond_normal"] is None and f["perp_volume_up_beyond_normal"] is None
 
 
-def test_raw_perp_taker_significance_and_basis_widening_have_negative_controls():
+def test_raw_perp_taker_significance_and_basis_widening_have_negative_controls() -> None:
     packet = raw_packet()
     for row in packet["oi"]:
         if parse_time(row["ts"]) == END:
@@ -242,7 +242,7 @@ def test_raw_perp_taker_significance_and_basis_widening_have_negative_controls()
     assert derive(packet)[1]["support_features"]["perp_taker_flow_buy"] is None
 
 
-def test_raw_lead_increment_ticket_and_depth_support_values():
+def test_raw_lead_increment_ticket_and_depth_support_values() -> None:
     spot, deriv, liq, supply, _ = derive(raw_packet())
     assert deriv["lead_lag"]["first_mover"] == "SPOT"
     assert spot["size_profile"]["large_ticket_buy_majority"] is True
@@ -259,7 +259,7 @@ def test_raw_lead_increment_ticket_and_depth_support_values():
     assert liq["depth_drop"] <= 0
 
 
-def test_raw_large_ticket_minority_and_ask_refill_include_missing_and_failed_controls():
+def test_raw_large_ticket_minority_and_ask_refill_include_missing_and_failed_controls() -> None:
     packet = raw_packet()
     for row in packet["flow_bars"]:
         row["size_buckets"]["B4"] = dict(buy_notional="1000", sell_notional="1000")
@@ -279,7 +279,7 @@ def test_raw_large_ticket_minority_and_ask_refill_include_missing_and_failed_con
     assert derive(packet)[1]["support_features"]["ask_replenishment"] is None
 
 
-def test_raw_first_half_liquidation_majority_is_not_event_count_majority():
+def test_raw_first_half_liquidation_majority_is_not_event_count_majority() -> None:
     packet = raw_packet()
     packet["liquidations"] = [
         dict(
@@ -309,7 +309,7 @@ def test_raw_first_half_liquidation_majority_is_not_event_count_majority():
     assert feature() is None
 
 
-def test_raw_funding_dispersion_fragmentation_needs_independent_complete_path():
+def test_raw_funding_dispersion_fragmentation_needs_independent_complete_path() -> None:
     packet = raw_packet()
     for row in packet["funding"]:
         if row["instrument_id"] == "Q:perp:T" and parse_time(row["settlement_time"]) == END:
@@ -347,7 +347,7 @@ def test_raw_funding_dispersion_fragmentation_needs_independent_complete_path():
     assert derive(packet)[2]["fragmentation"]["funding_path_validated"] is False
 
 
-def test_raw_alternating_top_venue_signs_do_not_invent_second_path():
+def test_raw_alternating_top_venue_signs_do_not_invent_second_path() -> None:
     packet = raw_packet()
     start = END - timedelta(minutes=45)
     packet["flow_bars"] = []
@@ -395,7 +395,7 @@ def test_raw_alternating_top_venue_signs_do_not_invent_second_path():
     assert derive(packet, start, END)[2]["fragmentation"]["top_sign_flips"] is not True
 
 
-def test_exact_majority_flags_survive_float_presentation_rounding():
+def test_exact_majority_flags_survive_float_presentation_rounding() -> None:
     assert strict_majority(Decimal("2"), Decimal("3.9999999999999999999999999999999999999999")) is True
     assert strict_majority(Decimal("2"), Decimal("4")) is False
 
@@ -520,12 +520,12 @@ def raw_scores(packet, cls, qualifier_native=None):
         ("REAL_MARKET_FRAGMENTATION", 2),
     ],
 )
-def test_each_section58_class_counts_all_raw_derived_support_terms(cls, expected):
+def test_each_section58_class_counts_all_raw_derived_support_terms(cls, expected) -> None:
     scores, _ = raw_scores(positive_packet(cls), cls)
     assert scores[cls] == expected
 
 
-def test_raw_support_missing_evidence_never_counts_as_zero_or_positive():
+def test_raw_support_missing_evidence_never_counts_as_zero_or_positive() -> None:
     packet = dict(token_id="T", _primary="EVENT", klines=[], flow_bars=[], oi=[], books=[], liquidations=[])
     d = dict(per_venue=[])
     f = support_features(packet, START, END, dict(size_profile={}), d, {}, dict(flows=[]))
@@ -574,7 +574,7 @@ SUPPORT_TERMS = [
 
 
 @pytest.mark.parametrize("cls,term,maximum", SUPPORT_TERMS, ids=[f"{c}-{t}" for c, t, _ in SUPPORT_TERMS])
-def test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed(cls, term, maximum):
+def test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed(cls, term, maximum) -> None:
     packet = positive_packet(cls)
     scores, native = raw_scores(packet, cls)
     assert scores[cls] == maximum

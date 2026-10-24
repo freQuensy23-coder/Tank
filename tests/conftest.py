@@ -27,7 +27,7 @@ TEST_DATABASE_VARIABLES = frozenset(
 TEST_CLICKHOUSE = "CLICKHOUSE_TEST_URL"
 
 
-def scrub_inherited_environment(environment):
+def scrub_inherited_environment(environment) -> None:
     """Inspect names only; discard operator configuration without reading values."""
     for name in tuple(environment):
         upper = name.upper()
@@ -78,7 +78,7 @@ def test_database_hosts(environment):
     return hosts
 
 
-def check_test_databases(environment):
+def check_test_databases(environment) -> None:
     """Tests truncate and drop; they run only on dedicated tank_test_* databases.
 
     Each workstream uses its own database, e.g. tank_test_<session>, created on the
@@ -116,7 +116,7 @@ os.environ.update(
 )
 
 
-def _cleanup_home():
+def _cleanup_home() -> None:
     import shutil
 
     shutil.rmtree(_OFFLINE_HOME, ignore_errors=True)
@@ -158,7 +158,7 @@ _PROTECTED_CREDENTIAL_FILES = {
 }
 
 
-def _check_credential_file(file, mode):
+def _check_credential_file(file, mode) -> None:
     if isinstance(file, int) or not isinstance(file, (str, bytes, os.PathLike)):
         return
     if "r" not in mode and "+" not in mode:
@@ -197,7 +197,7 @@ def permitted_host(host):
         return False
 
 
-def check_address(sock, address):
+def check_address(sock, address) -> None:
     if sock.family == socket.AF_UNIX:
         return
     if (
@@ -252,7 +252,7 @@ if _ORIGINAL_SENDMSG is not None:
 
 
 @pytest.fixture(autouse=True)
-def offline_credentials(monkeypatch, tmp_path):
+def offline_credentials(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Synthetic default locations; explicit constructor/fake env values still win."""
     from pydantic_settings.sources import DotEnvSettingsSource
 
@@ -272,14 +272,14 @@ def offline_credentials(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def _fresh_quote_usd_history(monkeypatch):
+def _fresh_quote_usd_history(monkeypatch: pytest.MonkeyPatch) -> None:
     """The stablecoin USD samples are process state; no test inherits another's."""
     from tank.market import normalize
 
     monkeypatch.setattr(normalize, "QUOTE_USD_HISTORY", {})
 
 
-def pytest_addoption(parser):
+def pytest_addoption(parser) -> None:
     parser.addoption(
         "--postgres-schema-template",
         metavar="tank_test_NAME",
@@ -288,7 +288,7 @@ def pytest_addoption(parser):
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
-async def postgres_template(request):
+async def postgres_template(request: pytest.FixtureRequest):
     """Create databases lazily; memory-only runs never inspect database settings."""
     from postgres_helpers import PostgresTemplate
 

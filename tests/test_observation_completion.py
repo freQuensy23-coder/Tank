@@ -1,5 +1,7 @@
 """A routed item completes atomically with its accepted observation."""
 
+from pathlib import Path
+
 import pytest
 from test_session_binding_concurrency import fixture_repo
 
@@ -13,8 +15,8 @@ from tank.util import iso, new_id, sha256
 )
 @pytest.mark.parametrize("fail_item_write", [False, True])
 async def test_observation_and_source_completion_are_atomic(
-    tmp_path, monkeypatch, backend, fail_item_write, postgres_template
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend, fail_item_write, postgres_template
+) -> None:
     async with fixture_repo(backend, postgres_template) as repo:
         service = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
         first, second, stamp = new_id("item"), new_id("item"), iso()

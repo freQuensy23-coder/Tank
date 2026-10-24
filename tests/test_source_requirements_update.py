@@ -14,7 +14,7 @@ from tank.sources import SourceService, parsers
 from tank.storage import MemoryRepository
 
 
-def config(tmp_path, sources):
+def config(tmp_path: Path, sources):
     return SimpleNamespace(
         data_dir=tmp_path,
         user_agent="Tank source regression",
@@ -25,7 +25,7 @@ def config(tmp_path, sources):
 
 
 @pytest.mark.asyncio
-async def test_dtcc_official_html_only_and_zero_links_stays_degraded(tmp_path):
+async def test_dtcc_official_html_only_and_zero_links_stays_degraded(tmp_path: Path) -> None:
     source = next(
         s
         for s in yaml.safe_load(Path("config/sources.yaml").read_text())["sources"]
@@ -38,7 +38,7 @@ async def test_dtcc_official_html_only_and_zero_links_stays_degraded(tmp_path):
     mode = ["release"]
     calls = []
 
-    def transport(request):
+    def transport(request: pytest.FixtureRequest):
         calls.append((request.method, str(request.url)))
         assert request.url.host == "www.dtcc.com"
         assert not request.headers.get("authorization")
@@ -71,7 +71,7 @@ async def test_dtcc_official_html_only_and_zero_links_stays_degraded(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_duplicate_preserves_capture_and_counts_one_observation(tmp_path):
+async def test_duplicate_preserves_capture_and_counts_one_observation(tmp_path: Path) -> None:
     repo = MemoryRepository()
     source = {"source_id": "S30", "name": "Original publisher", "feeds": []}
     service = SourceService(repo, config(tmp_path, [source]))
@@ -117,7 +117,9 @@ async def test_duplicate_preserves_capture_and_counts_one_observation(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_poll_and_loop_never_reconstruct_legacy_binance_body_or_metadata(tmp_path, monkeypatch):
+async def test_poll_and_loop_never_reconstruct_legacy_binance_body_or_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo = MemoryRepository()
     source = {"source_id": "S09", "feeds": []}
     service = SourceService(repo, config(tmp_path, [source]))
@@ -151,7 +153,7 @@ async def test_poll_and_loop_never_reconstruct_legacy_binance_body_or_metadata(t
     }
     await repo.put("ingest.source_items", "legacy", deepcopy(original))
 
-    def forbidden(*args, **kwargs):
+    def forbidden(*args, **kwargs) -> None:
         raise AssertionError("Captured news must not be reparsed")
 
     monkeypatch.setattr(parsers, "binance_body", forbidden)

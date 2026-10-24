@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -10,7 +11,9 @@ from tank.util import parse_time
 
 
 @pytest.mark.asyncio
-async def test_timeout_reports_suspended_operation_without_exception_values(monkeypatch, caplog):
+async def test_timeout_reports_suspended_operation_without_exception_values(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     import tank.runtime as module
 
     repo = MemoryRepository()
@@ -37,7 +40,7 @@ async def test_timeout_reports_suspended_operation_without_exception_values(monk
 
 
 @pytest.mark.asyncio
-async def test_worker_survives_bad_job_and_persists_result():
+async def test_worker_survives_bad_job_and_persists_result() -> None:
     repo = MemoryRepository()
     stop = asyncio.Event()
     bad = await repo.enqueue("BAD", {}, "bad", max_attempts=1)
@@ -60,7 +63,7 @@ async def test_worker_survives_bad_job_and_persists_result():
 
 
 @pytest.mark.asyncio
-async def test_worker_refuses_failed_dependency():
+async def test_worker_refuses_failed_dependency() -> None:
     repo = MemoryRepository()
     stop = asyncio.Event()
     dep = await repo.enqueue("ESCALATE_TOKENS", {}, "dep", max_attempts=1)
@@ -80,7 +83,7 @@ async def test_worker_refuses_failed_dependency():
     runtime.handlers["RUN_MARKET_TRUTH"].assert_not_called()
 
 
-def test_doctor_distinguishes_syntax_from_deployment_and_never_prints_secrets(tmp_path):
+def test_doctor_distinguishes_syntax_from_deployment_and_never_prints_secrets(tmp_path: Path) -> None:
     import json
 
     from tank.cli import readiness_checks
@@ -106,7 +109,7 @@ def test_doctor_distinguishes_syntax_from_deployment_and_never_prints_secrets(tm
     assert "sensitive-secret" not in json.dumps(checks)
 
 
-def test_source_check_network_probes_are_explicit(monkeypatch):
+def test_source_check_network_probes_are_explicit(monkeypatch: pytest.MonkeyPatch) -> None:
     from click.testing import CliRunner
 
     import tank.sources
@@ -115,14 +118,14 @@ def test_source_check_network_probes_are_explicit(monkeypatch):
     calls = []
 
     class Source:
-        def __init__(self, *args):
+        def __init__(self, *args) -> None:
             pass
 
         async def check(self, **kwargs):
             calls.append(kwargs)
             return []
 
-        async def close(self):
+        async def close(self) -> None:
             pass
 
     monkeypatch.setattr(tank.sources, "SourceService", Source)
@@ -133,7 +136,7 @@ def test_source_check_network_probes_are_explicit(monkeypatch):
     assert calls[-1] == {"probe": True, "check_accounts": True}
 
 
-def test_manual_backup_defaults_to_no_retention_and_forwards_force(monkeypatch):
+def test_manual_backup_defaults_to_no_retention_and_forwards_force(monkeypatch: pytest.MonkeyPatch) -> None:
     from click.testing import CliRunner
 
     import tank.scheduler
@@ -142,7 +145,7 @@ def test_manual_backup_defaults_to_no_retention_and_forwards_force(monkeypatch):
     calls = []
 
     class Scheduler:
-        def __init__(self, *args):
+        def __init__(self, *args) -> None:
             pass
 
         async def maintenance(self, now, **kwargs):
@@ -158,7 +161,7 @@ def test_manual_backup_defaults_to_no_retention_and_forwards_force(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_reload_rejects_candidate_then_drains_old_generation_before_swap():
+async def test_reload_rejects_candidate_then_drains_old_generation_before_swap() -> None:
     from tank.runtime import RuntimeSupervisor
 
     stop = asyncio.Event()
@@ -178,18 +181,18 @@ async def test_reload_rejects_candidate_then_drains_old_generation_before_swap()
         loaded.append(candidate.config_version)
         return candidate
 
-    def validate(settings):
+    def validate(settings) -> None:
         if not settings.valid:
             raise ValueError("Invalid candidate configuration")
 
     class Generation:
-        def __init__(self, repo, settings):
+        def __init__(self, repo, settings) -> None:
             self.settings = settings
 
-        def validate(self):
+        def validate(self) -> None:
             validate(self.settings)
 
-        async def run(self, flag):
+        async def run(self, flag) -> None:
             started.append(self.settings.config_version)
             await flag.wait()
             if self.settings.config_version == "old":
@@ -197,13 +200,13 @@ async def test_reload_rejects_candidate_then_drains_old_generation_before_swap()
                 await allow_finish.wait()
             await self.close()
 
-        async def close(self):
+        async def close(self) -> None:
             closed.append(self.settings.config_version)
 
     supervisor = RuntimeSupervisor(None, old, candidate_loader=loader, factory=Generation, validator=validate)
     task = asyncio.create_task(supervisor.run(stop, reload_event))
 
-    async def until(predicate):
+    async def until(predicate) -> None:
         async with asyncio.timeout(2):
             while not predicate():
                 await asyncio.sleep(0.001)
@@ -228,7 +231,9 @@ async def test_reload_rejects_candidate_then_drains_old_generation_before_swap()
 
 
 @pytest.mark.asyncio
-async def test_runtime_quiescence_drains_old_job_dependencies_and_preserves_session_provenance(monkeypatch):
+async def test_runtime_quiescence_drains_old_job_dependencies_and_preserves_session_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from datetime import timedelta
 
     import tank.runtime as module
@@ -240,18 +245,18 @@ async def test_runtime_quiescence_drains_old_job_dependencies_and_preserves_sess
     release = asyncio.Event()
 
     class Service:
-        def __init__(self):
+        def __init__(self) -> None:
             self.stopped = asyncio.Event()
             self.closed = False
 
-        async def start(self):
+        async def start(self) -> None:
             pass
 
-        async def run(self, flag):
+        async def run(self, flag) -> None:
             await flag.wait()
             self.stopped.set()
 
-        async def close(self):
+        async def close(self) -> None:
             self.closed = True
 
     runtime = object.__new__(Runtime)
@@ -333,7 +338,9 @@ async def test_runtime_quiescence_drains_old_job_dependencies_and_preserves_sess
     )
 
 
-def test_review_cli_forwards_period_paging_and_structured_checks(monkeypatch, tmp_path):
+def test_review_cli_forwards_period_paging_and_structured_checks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     import json
 
     from click.testing import CliRunner
@@ -344,7 +351,7 @@ def test_review_cli_forwards_period_paging_and_structured_checks(monkeypatch, tm
     calls = []
 
     class Review:
-        def __init__(self, *args):
+        def __init__(self, *args) -> None:
             pass
 
         async def list(self, **kwargs):
@@ -419,14 +426,14 @@ def test_review_cli_forwards_period_paging_and_structured_checks(monkeypatch, tm
     assert calls[-1] == ("report", since, until, {"checks": checks})
 
 
-def test_review_label_records_latest_or_explicit_alert_version(monkeypatch):
+def test_review_label_records_latest_or_explicit_alert_version(monkeypatch: pytest.MonkeyPatch) -> None:
     from click.testing import CliRunner
 
     from tank import cli
 
     repo = MemoryRepository()
 
-    async def seed():
+    async def seed() -> None:
         for version in (1, 2):
             await repo.put(
                 "out.alerts",
@@ -451,7 +458,9 @@ def test_review_label_records_latest_or_explicit_alert_version(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malformed_edit(tmp_path):
+async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malformed_edit(
+    tmp_path: Path,
+) -> None:
     from tank.runtime import RuntimeSupervisor
     from tank.settings import Settings, resolve_versions
 
@@ -478,19 +487,19 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
     reload_event = asyncio.Event()
 
     class Generation:
-        def __init__(self, repo, settings):
+        def __init__(self, repo, settings) -> None:
             self.settings = settings
 
-        def validate(self):
+        def validate(self) -> None:
             Runtime.validate_settings(self.settings)
 
-        async def run(self, flag):
+        async def run(self, flag) -> None:
             started.append(
                 (self.settings.config_version, self.settings.load_config("thresholds")["filter_cutoff"])
             )
             await flag.wait()
 
-        async def close(self):
+        async def close(self) -> None:
             pass
 
     def load():
@@ -500,7 +509,7 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
     supervisor = RuntimeSupervisor(None, original, candidate_loader=load, factory=Generation)
     task = asyncio.create_task(supervisor.run(stop, reload_event))
 
-    async def until(predicate):
+    async def until(predicate) -> None:
         async with asyncio.timeout(2):
             while not predicate():
                 await asyncio.sleep(0.001)
@@ -535,7 +544,9 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
 
 
 @pytest.mark.asyncio
-async def test_controlled_generation_timeout_preserves_last_job_attempt(monkeypatch):
+async def test_controlled_generation_timeout_preserves_last_job_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import tank.runtime as module
 
     repo = MemoryRepository()
@@ -543,13 +554,13 @@ async def test_controlled_generation_timeout_preserves_last_job_attempt(monkeypa
     started = asyncio.Event()
 
     class Service:
-        async def start(self):
+        async def start(self) -> None:
             pass
 
-        async def run(self, flag):
+        async def run(self, flag) -> None:
             await flag.wait()
 
-        async def close(self):
+        async def close(self) -> None:
             pass
 
     runtime = object.__new__(Runtime)
@@ -570,7 +581,7 @@ async def test_controlled_generation_timeout_preserves_last_job_attempt(monkeypa
     ):
         setattr(runtime, name, Service())
 
-    async def unfinished(payload):
+    async def unfinished(payload) -> None:
         started.set()
         await asyncio.Event().wait()
 
@@ -588,7 +599,9 @@ async def test_controlled_generation_timeout_preserves_last_job_attempt(monkeypa
     assert preserved["run_after_prec"] == preserved["interrupted_at_prec"] == "COLLECTION_ONLY"
 
 
-def test_doctor_only_checks_fake_subscription_auth_presence_and_internal_key(monkeypatch, tmp_path):
+def test_doctor_only_checks_fake_subscription_auth_presence_and_internal_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     import json
     from pathlib import Path
 
@@ -623,7 +636,7 @@ def test_doctor_only_checks_fake_subscription_auth_presence_and_internal_key(mon
 
 
 @pytest.mark.asyncio
-async def test_gateway_starts_in_same_runtime_before_sources_and_closes_after_drain():
+async def test_gateway_starts_in_same_runtime_before_sources_and_closes_after_drain() -> None:
     repo = MemoryRepository()
     stop = asyncio.Event()
     binding = asyncio.Event()
@@ -631,26 +644,26 @@ async def test_gateway_starts_in_same_runtime_before_sources_and_closes_after_dr
     order = []
 
     class Service:
-        def __init__(self, name):
+        def __init__(self, name) -> None:
             self.name = name
             self.started = asyncio.Event()
 
-        async def run(self, flag):
+        async def run(self, flag) -> None:
             order.append("run:" + self.name)
             self.started.set()
             await flag.wait()
 
-        async def close(self):
+        async def close(self) -> None:
             order.append("close:" + self.name)
 
     class Gateway:
-        async def start(self):
+        async def start(self) -> None:
             order.append("gateway:binding")
             binding.set()
             await allow_bind.wait()
             order.append("gateway:ready")
 
-        async def close(self):
+        async def close(self) -> None:
             order.append("gateway:closed")
 
     runtime = object.__new__(Runtime)
@@ -676,7 +689,9 @@ async def test_gateway_starts_in_same_runtime_before_sources_and_closes_after_dr
 
 
 @pytest.mark.asyncio
-async def test_unfinished_dependency_defers_without_error_or_attempt_cost(caplog):
+async def test_unfinished_dependency_defers_without_error_or_attempt_cost(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     from datetime import timedelta
 
     from tank.util import iso, parse_time, utcnow
@@ -707,7 +722,7 @@ async def test_unfinished_dependency_defers_without_error_or_attempt_cost(caplog
 
 
 @pytest.mark.asyncio
-async def test_terminal_delivery_reconciliation_covers_expiry_restart_and_validation():
+async def test_terminal_delivery_reconciliation_covers_expiry_restart_and_validation() -> None:
     from tank.delivery import DeliveryService
     from tank.util import iso
 
@@ -741,8 +756,8 @@ async def test_terminal_delivery_reconciliation_covers_expiry_restart_and_valida
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_status", ["PARTIAL", "FAILED"])
 async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_history(
-    tmp_path, terminal_status, monkeypatch
-):
+    tmp_path: Path, terminal_status, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from datetime import timedelta
 
     import httpx
@@ -758,7 +773,7 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
     capture_started, release_capture, stop_capture = (asyncio.Event() for _ in range(3))
     requests = []
 
-    async def external_capture_worker():
+    async def external_capture_worker() -> None:
         claimed = None
         while not stop_capture.is_set():
             if claimed is None:
@@ -938,8 +953,8 @@ async def transport_database(backend, postgres_template):
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
 async def test_delivery_order_wait_requeues_without_spending_network_attempts(
-    monkeypatch, backend, transport_database
-):
+    monkeypatch: pytest.MonkeyPatch, backend, transport_database
+) -> None:
     from datetime import timedelta
 
     import httpx
@@ -962,7 +977,7 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
     settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
     sent_requests = []
 
-    def send(request):
+    def send(request: pytest.FixtureRequest):
         sent_requests.append(request)
         if len(sent_requests) == 1:
             return httpx.Response(503, json={"ok": False})
@@ -1048,7 +1063,7 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
         async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
             delivery = DeliveryService(repo, settings, http=http)
 
-            async def run_one():
+            async def run_one() -> None:
                 stop = asyncio.Event()
                 runtime = object.__new__(Runtime)
                 runtime.repo = repo
@@ -1065,7 +1080,7 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
 
             held, release = asyncio.Event(), asyncio.Event()
 
-            async def other_worker_send():
+            async def other_worker_send() -> None:
                 async with repo.lock("event:" + eid):
                     held.set()
                     await release.wait()
@@ -1114,8 +1129,8 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
 )
 @pytest.mark.parametrize("lock_kind", ["event", "delivery"])
 async def test_contended_delivery_lock_is_scheduling_then_sends_once(
-    monkeypatch, backend, lock_kind, transport_database
-):
+    monkeypatch: pytest.MonkeyPatch, backend, lock_kind, transport_database
+) -> None:
 
     import httpx
 
@@ -1134,7 +1149,7 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
     settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
     requests = []
 
-    async def holder():
+    async def holder() -> None:
         async with repo.lock(key):
             held.set()
             await release.wait()
@@ -1186,7 +1201,7 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
         holder_task = asyncio.create_task(holder())
         await asyncio.wait_for(held.wait(), 2)
 
-        def transport(request):
+        def transport(request: pytest.FixtureRequest):
             requests.append(request)
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
 
@@ -1209,7 +1224,7 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
                 await waiter
             assert not requests and not await repo.list("out.deliveries", filters={"alert_id": aid})
 
-            async def run_one():
+            async def run_one() -> None:
                 stop = asyncio.Event()
                 runtime = object.__new__(Runtime)
                 runtime.repo, runtime.delivery = repo, delivery
@@ -1253,7 +1268,7 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
 
 
 @pytest.mark.asyncio
-async def test_market_truth_repairs_windows_within_budget_before_assessing():
+async def test_market_truth_repairs_windows_within_budget_before_assessing() -> None:
     from datetime import timedelta
     from types import SimpleNamespace
 
@@ -1266,7 +1281,7 @@ async def test_market_truth_repairs_windows_within_budget_before_assessing():
         async def capture_readiness(self, event_id, token_id, *, anchor):
             return {"status": "COMPLETE"}
 
-        async def repair_windows(self, token_id, start, end, *, budget_s=None):
+        async def repair_windows(self, token_id, start, end, *, budget_s=None) -> None:
             calls.append(("repair", token_id, start, end, budget_s))
 
     class Truth:

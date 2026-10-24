@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 import yaml
@@ -8,7 +9,7 @@ import yaml
 from tank.settings import Settings, resolve_versions
 
 
-def test_runtime_generation_freezes_config_and_preserves_exact_recovery_inputs(tmp_path):
+def test_runtime_generation_freezes_config_and_preserves_exact_recovery_inputs(tmp_path: Path) -> None:
     config = tmp_path / "config"
     config.mkdir()
     (config / "thresholds.yaml").write_text("filter_cutoff: 0.71\n")
@@ -40,7 +41,7 @@ def test_runtime_generation_freezes_config_and_preserves_exact_recovery_inputs(t
         old.read_config_bytes("../outside")
 
 
-def test_invalid_candidate_cannot_replace_valid_snapshot(tmp_path):
+def test_invalid_candidate_cannot_replace_valid_snapshot(tmp_path: Path) -> None:
     config = tmp_path / "config"
     config.mkdir()
     (config / "thresholds.yaml").write_text("filter_cutoff: 0.71\n")
@@ -53,7 +54,7 @@ def test_invalid_candidate_cannot_replace_valid_snapshot(tmp_path):
     assert len(list((settings.data_dir / "config_versions").glob("*.json"))) == 1
 
 
-def test_secrets_come_from_the_environment_names_of_the_env_file(monkeypatch):
+def test_secrets_come_from_the_environment_names_of_the_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
     values = {
         "TELEGRAM_BOT_TOKEN": "FAKE-telegram",
         "CODEX_GATEWAY_KEY": "FAKE-internal-key",
@@ -85,7 +86,7 @@ def test_secrets_come_from_the_environment_names_of_the_env_file(monkeypatch):
     )
 
 
-def test_config_snapshots_refuse_auth_files_inside_config(tmp_path):
+def test_config_snapshots_refuse_auth_files_inside_config(tmp_path: Path) -> None:
     config = tmp_path / "config"
     config.mkdir()
     (config / "thresholds.yaml").write_text("filter_cutoff: 0.71\n")
@@ -98,7 +99,7 @@ def test_config_snapshots_refuse_auth_files_inside_config(tmp_path):
     assert not settings.data_dir.exists()
 
 
-def test_deployment_values_come_from_frozen_config_with_explicit_override(tmp_path):
+def test_deployment_values_come_from_frozen_config_with_explicit_override(tmp_path: Path) -> None:
     config = tmp_path / "config"
     config.mkdir()
     (config / "delivery.yaml").write_text("alerts_chat_id: '-1000000000001'\nops_chat_id: '-1000000000002'\n")
@@ -117,7 +118,7 @@ def test_deployment_values_come_from_frozen_config_with_explicit_override(tmp_pa
     assert frozen.telegram_ops_chat == "-1000000000002"
 
 
-def test_opencode_alias_and_secret(tmp_path, monkeypatch):
+def test_opencode_alias_and_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TANK_OPENCODE_API_KEY", raising=False)
     monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
     assert Settings(_env_file=None).opencode_api_key is None
@@ -131,7 +132,7 @@ def test_opencode_alias_and_secret(tmp_path, monkeypatch):
     assert "jev_provider" not in Settings.model_fields
 
 
-def test_codex_auth_default_only_resolves_path(tmp_path, monkeypatch):
+def test_codex_auth_default_only_resolves_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from pathlib import Path
 
     monkeypatch.delenv("TANK_CODEX_AUTH_PATH", raising=False)
@@ -146,7 +147,7 @@ def test_codex_auth_default_only_resolves_path(tmp_path, monkeypatch):
     )
 
 
-def test_readiness_checks_opencode_key(tmp_path):
+def test_readiness_checks_opencode_key(tmp_path: Path) -> None:
     from tank.cli import readiness_checks
 
     settings = Settings(_env_file=None, opencode_api_key="FAKE-ready-key")
@@ -158,14 +159,16 @@ def test_readiness_checks_opencode_key(tmp_path):
 
 
 @pytest.mark.parametrize("name", ["TANK_USER_AGENT", "TANK_TELEGRAM_ALERTS_CHAT", "TANK_TELEGRAM_OPS_CHAT"])
-def test_configuration_values_never_come_from_environment(monkeypatch, caplog, name):
+def test_configuration_values_never_come_from_environment(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, name
+) -> None:
     monkeypatch.setenv(name, "FAKE-environment-value")
     settings = Settings(_env_file=None)
     assert getattr(settings, name.removeprefix("TANK_").lower()) != "FAKE-environment-value"
     assert name in caplog.text and "FAKE-environment-value" not in caplog.text
 
 
-def test_user_agent_and_chats_from_configuration(tmp_path):
+def test_user_agent_and_chats_from_configuration(tmp_path: Path) -> None:
     from tank.cli import readiness_checks
 
     config = tmp_path / "config"
@@ -184,7 +187,7 @@ def test_user_agent_and_chats_from_configuration(tmp_path):
     assert not {row["check"]: row for row in readiness_checks(legacy)}["user_agent_contact"]["ok"]
 
 
-def test_database_urls_from_the_role_passwords(monkeypatch):
+def test_database_urls_from_the_role_passwords(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in ("TANK_DATABASE_URL", "TANK_OPENMA_DATABASE_URL"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("TANK_DB_PASSWORD", "FAKE p@ss/word")
@@ -198,7 +201,9 @@ def test_database_urls_from_the_role_passwords(monkeypatch):
     assert Settings(_env_file=None).database_url == "postgresql://explicit/tank_test_x"
 
 
-def test_frozen_config_is_parsed_once_and_callers_get_copies(tmp_path, monkeypatch):
+def test_frozen_config_is_parsed_once_and_callers_get_copies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import yaml
 
     import tank.settings as module

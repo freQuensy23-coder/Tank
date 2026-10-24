@@ -2,6 +2,7 @@
 
 import copy
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -25,8 +26,8 @@ from tank.util import sha256
     ],
 )
 async def test_settled_turn_accepts_agent_choice_without_source_observation(
-    tmp_path, backend, outcome, bound, postgres_template
-):
+    tmp_path: Path, backend, outcome, bound, postgres_template
+) -> None:
     async with fixture_repo(backend, postgres_template) as repo:
         at = "2026-10-18T23:00:00Z"
         await repo.put(
@@ -130,7 +131,7 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
         )
         posts, accepted = [], []
 
-        def handler(request):
+        def handler(request: pytest.FixtureRequest):
             if request.method == "POST":
                 event = json.loads(request.content)["events"][0]
                 identity = "retry" if event["type"] == "user.message" else "ack-" + str(len(accepted) + 1)
@@ -266,7 +267,9 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
 @pytest.mark.parametrize(
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
-async def test_ignored_item_keeps_event_and_call_for_next_native_update(tmp_path, backend, postgres_template):
+async def test_ignored_item_keeps_event_and_call_for_next_native_update(
+    tmp_path: Path, backend, postgres_template
+) -> None:
     from tank.event_tools import EventToolService
     from tank.settings import Settings
 
@@ -314,7 +317,7 @@ async def test_ignored_item_keeps_event_and_call_for_next_native_update(tmp_path
         before = copy.deepcopy(await repo.get("evt.events", eid))
         accepted = []
 
-        def handler(request):
+        def handler(request: pytest.FixtureRequest):
             if request.method == "POST":
                 assert request.url.path == "/v1/sessions/s/events"
                 accepted.append(json.loads(request.content)["events"][0])

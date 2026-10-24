@@ -24,7 +24,7 @@ async def isolated_routing_repo(postgres_template):
 @pytest.mark.asyncio
 async def test_independent_routing_calls_overlap_preserve_source_updates_and_deduplicate(
     isolated_routing_repo,
-):
+) -> None:
     repo = isolated_routing_repo
     marker, at = new_id("ROUTING-TEST"), iso()
     entity = marker + "-entity"
@@ -154,7 +154,7 @@ async def test_independent_routing_calls_overlap_preserve_source_updates_and_ded
 @pytest.mark.parametrize("interruption", ["failure", "cancellation"])
 async def test_parallel_candidate_scores_survive_retry_without_partial_winner(
     interruption, isolated_routing_repo
-):
+) -> None:
     import json
 
     import httpx
@@ -193,7 +193,7 @@ async def test_parallel_candidate_scores_survive_retry_without_partial_winner(
     arrived, calls, ready = set(), {}, asyncio.Event()
     retry = False
 
-    async def transport(request):
+    async def transport(request: pytest.FixtureRequest):
         body = json.loads(request.content)
         key = body["state"]["event"]["statement"]
         calls[key] = calls.get(key, 0) + 1
@@ -252,7 +252,9 @@ async def test_parallel_candidate_scores_survive_retry_without_partial_winner(
 
 
 @pytest.mark.asyncio
-async def test_candidate_window_equal_batch_clock_is_inclusive_without_future_rows(isolated_routing_repo):
+async def test_candidate_window_equal_batch_clock_is_inclusive_without_future_rows(
+    isolated_routing_repo,
+) -> None:
     from datetime import timedelta
 
     from tank.util import utcnow
@@ -333,7 +335,7 @@ async def test_candidate_window_equal_batch_clock_is_inclusive_without_future_ro
 @pytest.mark.parametrize("reported_cost", [None, 0, 0.123456789])
 async def test_jev_billed_cost_or_explicit_unknown_persists_under_sql_contract(
     reported_cost, isolated_routing_repo
-):
+) -> None:
     """Real SQL constraints accept unknown billing only with its canonical reason."""
     import httpx
 
@@ -346,7 +348,7 @@ async def test_jev_billed_cost_or_explicit_unknown_persists_under_sql_contract(
     item = {"item_id": new_id("COST-TEST"), "source_id": "S30", "text": "Ethereum news"}
     calls = []
 
-    def transport(request):
+    def transport(request: pytest.FixtureRequest):
         calls.append(request)
         usage = {"input_tokens": 10}
         if reported_cost is not None:

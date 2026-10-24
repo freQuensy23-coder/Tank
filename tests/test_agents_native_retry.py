@@ -73,7 +73,7 @@ async def setup():
     states = {INITIAL: "COMPLETED", CALLBACK: "FAILED", RETRY: "RUNNING"}
     posts, history = [], []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         if request.method == "POST":
             assert request.url.path == "/v1/sessions/s/events"
             posts.append({"body": json.loads(request.content), "key": request.headers["idempotency-key"]})
@@ -111,7 +111,7 @@ async def setup():
 
 
 @pytest.mark.parametrize("outcome", ["COMPLETED", "EXHAUSTED", "QUEUE_FAILED", "TERMINATED"])
-async def test_retained_old_exhausted_new_retrying_sequence_waits_for_actual_outcome(outcome):
+async def test_retained_old_exhausted_new_retrying_sequence_waits_for_actual_outcome(outcome) -> None:
     repo, service, http, states, posts, history = await setup()
     try:
         await service.process_event("s", error("old-exhausted", CALLBACK, "exhausted"))
@@ -171,7 +171,7 @@ async def test_retained_old_exhausted_new_retrying_sequence_waits_for_actual_out
         await http.aclose()
 
 
-async def test_restart_keeps_native_retry_execution_and_does_not_post_again():
+async def test_restart_keeps_native_retry_execution_and_does_not_post_again() -> None:
     repo, service, http, states, posts, history = await setup()
     try:
         await service.process_event("s", error("old-exhausted", CALLBACK, "exhausted"))
@@ -196,7 +196,7 @@ async def test_restart_keeps_native_retry_execution_and_does_not_post_again():
         await http.aclose()
 
 
-async def test_native_startup_retry_does_not_consume_first_host_retry():
+async def test_native_startup_retry_does_not_consume_first_host_retry() -> None:
     repo, service, http, states, posts, _history = await setup()
     try:
         states[INITIAL] = "RUNNING"
@@ -213,7 +213,7 @@ async def test_native_startup_retry_does_not_consume_first_host_retry():
         await http.aclose()
 
 
-async def test_unknown_execution_retry_notification_cannot_adopt_the_active_turn():
+async def test_unknown_execution_retry_notification_cannot_adopt_the_active_turn() -> None:
     repo, service, http, _states, posts, _history = await setup()
     try:
         before = copy.deepcopy(await repo.get("ops.agent_sessions", "s"))

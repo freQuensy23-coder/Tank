@@ -1,6 +1,7 @@
 import asyncio
 import json
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -40,8 +41,8 @@ def delivery_settings():
 
 @pytest.mark.parametrize("source_id,decision", [("S30", None), ("S01", "ALWAYS")])
 async def test_every_ingested_material_reaches_ops_before_filtering_and_duplicates_are_silent(
-    tmp_path, source_id, decision
-):
+    tmp_path: Path, source_id, decision
+) -> None:
     repo = MemoryRepository()
     source = {"source_id": source_id, "name": "Fixture source"}
     settings = source_settings(tmp_path, [source])
@@ -86,7 +87,7 @@ async def test_every_ingested_material_reaches_ops_before_filtering_and_duplicat
 @pytest.mark.parametrize(
     "score,expected", [(0.1, "JEV_REJECTED"), (0.9, "JEV_PASSED"), (None, "JEV_BYPASSED")]
 )
-async def test_filter_outcomes_and_routing_are_visible_without_publishing(score, expected):
+async def test_filter_outcomes_and_routing_are_visible_without_publishing(score, expected) -> None:
     settings, _ = options()
     settings.ops_progress_enabled = True
     repo = MemoryRepository()
@@ -127,7 +128,7 @@ async def test_filter_outcomes_and_routing_are_visible_without_publishing(score,
 
 
 @pytest.mark.parametrize("is_event", [False, True])
-async def test_agent_extraction_and_publication_gate_explain_silence(tmp_path, is_event):
+async def test_agent_extraction_and_publication_gate_explain_silence(tmp_path: Path, is_event) -> None:
     repo = MemoryRepository()
     service = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
     extraction = await seed(service)
@@ -165,7 +166,9 @@ async def test_agent_extraction_and_publication_gate_explain_silence(tmp_path, i
 
 
 @pytest.mark.parametrize("success", [True, False])
-async def test_generated_card_only_becomes_sent_after_telegram_receipt(tmp_path, monkeypatch, success):
+async def test_generated_card_only_becomes_sent_after_telegram_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, success
+) -> None:
     import tank.analysis.cards as cards
 
     repo = MemoryRepository()
@@ -195,7 +198,7 @@ async def test_generated_card_only_becomes_sent_after_telegram_receipt(tmp_path,
     payload = {"alert_id": result["alert_id"], "version": result["version"]}
     requests = []
 
-    def respond(request):
+    def respond(request: pytest.FixtureRequest):
         requests.append(json.loads(request.content))
         return (
             httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
@@ -219,7 +222,7 @@ async def test_generated_card_only_becomes_sent_after_telegram_receipt(tmp_path,
     assert all(request["chat_id"] == "alerts" for request in requests)
 
 
-async def test_agent_acceptance_completion_and_failure_are_not_confused_with_approval():
+async def test_agent_acceptance_completion_and_failure_are_not_confused_with_approval() -> None:
     repo = MemoryRepository()
     settings = delivery_settings()
     await repo.put("ingest.source_items", "i", {"item_id": "i", "extraction_status": "PENDING"})
@@ -259,7 +262,7 @@ async def test_agent_acceptance_completion_and_failure_are_not_confused_with_app
 
 @pytest.mark.parametrize("kind", ["FILTER_ITEM", "ROUTE_ITEM", "AGENT_MESSAGE"])
 @pytest.mark.parametrize("status", ["FAILED", "EXPIRED"])
-async def test_terminal_jobs_and_restart_reconciliation_report_where_processing_stopped(kind, status):
+async def test_terminal_jobs_and_restart_reconciliation_report_where_processing_stopped(kind, status) -> None:
     repo = MemoryRepository()
     runtime = object.__new__(Runtime)
     runtime.repo, runtime.settings = repo, delivery_settings()
@@ -278,7 +281,9 @@ async def test_terminal_jobs_and_restart_reconciliation_report_where_processing_
 @pytest.mark.parametrize(
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
-async def test_outbox_is_transactional_and_concurrent_retries_create_one_notice(backend, postgres_template):
+async def test_outbox_is_transactional_and_concurrent_retries_create_one_notice(
+    backend, postgres_template
+) -> None:
     async with fixture_repo(backend, postgres_template) as repo:
         at = iso(utcnow() - timedelta(seconds=1))
         await repo.put(
@@ -313,7 +318,7 @@ async def test_outbox_is_transactional_and_concurrent_retries_create_one_notice(
 
 
 @pytest.mark.parametrize("flag,replay", [(False, False), (True, True)])
-async def test_disabled_or_replay_does_not_create_live_ops_notices(flag, replay):
+async def test_disabled_or_replay_does_not_create_live_ops_notices(flag, replay) -> None:
     repo = MemoryRepository()
     await repo.put("ingest.source_items", "i", {"item_id": "i"})
     await item_progress(repo, SimpleNamespace(ops_progress_enabled=flag, replay=replay), "i", "RECEIVED")

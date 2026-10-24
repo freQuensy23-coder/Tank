@@ -12,7 +12,7 @@ fixture = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))
 
 
 @pytest.mark.parametrize("missing_side,other_side", [("LONG_LIQ", "SHORT_LIQ"), ("SHORT_LIQ", "LONG_LIQ")])
-def test_actual_truth_keeps_liquidation_sides_independent_when_fx_missing(missing_side, other_side):
+def test_actual_truth_keeps_liquidation_sides_independent_when_fx_missing(missing_side, other_side) -> None:
     snapshot = fixture["synthetic_start_snapshot"]()
     iid = "binance:perp:T"
     snapshot["capture_metadata"] = {
@@ -67,7 +67,7 @@ def test_actual_truth_keeps_liquidation_sides_independent_when_fx_missing(missin
 
 
 @pytest.mark.parametrize("registry_present", [True, False])
-def test_missing_oi_does_not_drop_independent_funding_and_liquidation_observations(registry_present):
+def test_missing_oi_does_not_drop_independent_funding_and_liquidation_observations(registry_present) -> None:
     snapshot = fixture["synthetic_start_snapshot"]()
     snapshot["oi"] = []
     iid = "binance:perp:T"

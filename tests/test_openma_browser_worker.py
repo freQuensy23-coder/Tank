@@ -10,7 +10,7 @@ import pytest
 
 
 @pytest.fixture
-def transport(monkeypatch, tmp_path):
+def transport(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     path = Path(__file__).resolve().parents[1] / "deploy/openma_browser/browser-worker.py"
     spec = importlib.util.spec_from_file_location("tank_browser_worker", path)
     worker = importlib.util.module_from_spec(spec)
@@ -23,21 +23,21 @@ def transport(monkeypatch, tmp_path):
     monkeypatch.setattr(worker, "paths", lambda state: (tmp_path / "rpc.sock", tmp_path / "start.lock"))
 
     class Socket:
-        def __init__(self, *_args):
+        def __init__(self, *_args) -> None:
             self.timeouts = []
             self.chunks = list(options.chunks)
             sockets.append(self)
 
-        def settimeout(self, timeout):
+        def settimeout(self, timeout) -> None:
             self.timeout = timeout
             self.timeouts.append(timeout)
 
-        def connect(self, _path):
+        def connect(self, _path) -> None:
             attempts.append(clock.now)
             if clock.now < options.ready_at:
                 raise FileNotFoundError
 
-        def sendall(self, data):
+        def sendall(self, data) -> None:
             options.written = json.loads(data)
             assert options.written["op"] == "open"
 
@@ -48,13 +48,13 @@ def transport(monkeypatch, tmp_path):
                 raise TimeoutError("socket response deadline")
             return self.chunks.pop(0) if self.chunks else b""
 
-        def close(self):
+        def close(self) -> None:
             pass
 
         def __enter__(self):
             return self
 
-        def __exit__(self, *_args):
+        def __exit__(self, *_args) -> None:
             self.close()
 
     monkeypatch.setattr(worker.socket, "socket", Socket)
@@ -76,7 +76,9 @@ def transport(monkeypatch, tmp_path):
     )
 
 
-def test_healthy_microvm_startup_over_fifteen_seconds_uses_remaining_rpc_budget(transport, capsys):
+def test_healthy_microvm_startup_over_fifteen_seconds_uses_remaining_rpc_budget(
+    transport, capsys: pytest.CaptureFixture[str]
+) -> None:
     transport.call()
     assert capsys.readouterr().out == transport.worker.REPLY_PREFIX + '{"ok":true}\n'
     assert transport.clock.now >= 18
@@ -84,14 +86,14 @@ def test_healthy_microvm_startup_over_fifteen_seconds_uses_remaining_rpc_budget(
     assert transport.sockets[-1].timeouts[-1] == pytest.approx(80 - transport.clock.now)
 
 
-def test_slow_response_does_not_receive_a_second_full_timeout(transport):
+def test_slow_response_does_not_receive_a_second_full_timeout(transport) -> None:
     transport.options.response_delay = 65
     with pytest.raises(TimeoutError):
         transport.call()
     assert transport.clock.now == pytest.approx(80)
 
 
-def test_partial_response_chunks_share_the_same_absolute_deadline(transport):
+def test_partial_response_chunks_share_the_same_absolute_deadline(transport) -> None:
     transport.options.ready_at = 0
     transport.options.response_delay = 30
     transport.options.chunks = [b'{"ok":', b"true", b"}\n"]
@@ -100,8 +102,10 @@ def test_partial_response_chunks_share_the_same_absolute_deadline(transport):
     assert transport.clock.now == pytest.approx(80)
 
 
-def test_startup_lock_wait_is_bounded_by_the_request_budget(transport, monkeypatch):
-    def locked(*_args):
+def test_startup_lock_wait_is_bounded_by_the_request_budget(
+    transport, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def locked(*_args) -> None:
         raise BlockingIOError
 
     monkeypatch.setattr(transport.worker.fcntl, "flock", locked)
@@ -111,20 +115,22 @@ def test_startup_lock_wait_is_bounded_by_the_request_budget(transport, monkeypat
     assert transport.spawned == []
 
 
-def test_dead_startup_process_reports_exit_without_waiting_out_budget(transport):
+def test_dead_startup_process_reports_exit_without_waiting_out_budget(transport) -> None:
     transport.options.exit_code = 7
     with pytest.raises(RuntimeError, match=r"exited during startup \(exit 7\)"):
         transport.call()
     assert transport.clock.now == 0
 
 
-def test_daemon_receives_the_original_absolute_budget_after_slow_startup(transport):
+def test_daemon_receives_the_original_absolute_budget_after_slow_startup(transport) -> None:
     transport.call()
     assert transport.clock.now >= 18
     assert transport.options.written["deadline"] == 75
 
 
-def test_response_grace_never_extends_the_daemon_operation_budget(transport, capsys):
+def test_response_grace_never_extends_the_daemon_operation_budget(
+    transport, capsys: pytest.CaptureFixture[str]
+) -> None:
     transport.options.response_delay = 60
     transport.options.chunks = [b'{"version":1,"ok":false,"error":"worker recycled"}\n']
     transport.call()

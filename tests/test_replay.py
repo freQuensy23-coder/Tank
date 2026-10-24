@@ -10,7 +10,7 @@ from tank.storage import MemoryRepository
 
 
 @pytest.fixture
-def packet(tmp_path):
+def packet(tmp_path: Path):
     p = tmp_path / "input.json"
     p.write_text(
         json.dumps(
@@ -32,7 +32,7 @@ def settings():
     return Settings(config_version="test", code_version="test", replay=True)
 
 
-async def test_sealed_outcomes_only_after_freeze_and_immutable(packet, tmp_path):
+async def test_sealed_outcomes_only_after_freeze_and_immutable(packet, tmp_path: Path) -> None:
     async def runner(inputs, repo):
         assert not hasattr(inputs, "outcomes")
         return {"action": "WAIT"}
@@ -50,7 +50,7 @@ async def test_sealed_outcomes_only_after_freeze_and_immutable(packet, tmp_path)
         await replay_bundle(packet, MemoryRepository(), settings(), runner=changed, output_dir=out)
 
 
-async def test_default_runs_validated_tool(packet):
+async def test_default_runs_validated_tool(packet) -> None:
     data = json.loads(packet.read_text())
     data["config"]["replay_tool_calls"] = [
         {
@@ -73,7 +73,7 @@ async def test_default_runs_validated_tool(packet):
     assert result["output"]["tool_calls"][0]["result"]["text"] == "Synthetic test item"
 
 
-async def test_missing_captures_explicit(packet):
+async def test_missing_captures_explicit(packet) -> None:
     with pytest.raises(ReplayError, match="insufficient_fixture"):
         await replay_bundle(packet, MemoryRepository(), settings())
 
@@ -82,7 +82,7 @@ async def test_missing_captures_explicit(packet):
     "change",
     [{"outcomes": {}}, {"code_version": "wrong"}, {"records": [{"available_at": "2027-01-01T00:00:00Z"}]}],
 )
-def test_reject_contaminated_or_unpinned(packet, change):
+def test_reject_contaminated_or_unpinned(packet, change) -> None:
     data = json.loads(packet.read_text())
     data.update(change)
     packet.write_text(json.dumps(data))
@@ -90,7 +90,7 @@ def test_reject_contaminated_or_unpinned(packet, change):
         load_inputs(packet, settings())
 
 
-def test_clock_and_query_bounds(packet):
+def test_clock_and_query_bounds(packet) -> None:
     inputs = load_inputs(packet, settings())
     with pytest.raises(ReplayError):
         inputs.records("x", cutoff="2027-01-01T00:00:00Z")
@@ -99,7 +99,7 @@ def test_clock_and_query_bounds(packet):
         clock.advance("2026-09-24T09:00:00Z")
 
 
-async def test_bundle_reproduction_reexecutes_captured_tools(packet, tmp_path):
+async def test_bundle_reproduction_reexecutes_captured_tools(packet, tmp_path: Path) -> None:
     from tank.replay import digest, replay_bundle, reproduce_bundle
 
     data = json.loads(packet.read_text())
@@ -133,7 +133,7 @@ async def test_bundle_reproduction_reexecutes_captured_tools(packet, tmp_path):
     assert second["reproduced"] and second["output_sha256"] == first["output_sha256"]
 
 
-async def test_reused_repository_cannot_expose_future_row(packet):
+async def test_reused_repository_cannot_expose_future_row(packet) -> None:
     data = json.loads(packet.read_text())
     data["config"]["replay_tool_calls"] = [
         {
@@ -154,7 +154,7 @@ async def test_reused_repository_cannot_expose_future_row(packet):
         await replay_bundle(packet, repo, settings())
 
 
-def test_claimed_availability_cannot_hide_future_observation(packet):
+def test_claimed_availability_cannot_hide_future_observation(packet) -> None:
     data = json.loads(packet.read_text())
     data["records"] = [
         {
@@ -169,7 +169,7 @@ def test_claimed_availability_cannot_hide_future_observation(packet):
         load_inputs(packet, settings())
 
 
-async def test_replays_mutation_and_remaps_captured_generated_ids(packet):
+async def test_replays_mutation_and_remaps_captured_generated_ids(packet) -> None:
     data = json.loads(packet.read_text())
     stamp = data["cutoff"]
     quote = "Synthetic token deployment is now live."
@@ -236,7 +236,7 @@ async def test_replays_mutation_and_remaps_captured_generated_ids(packet):
     assert first["output"]["tool_calls"][1]["result"]["event"]["event_state"] == "LIVE"
 
 
-def test_masking_preserves_original_and_private_map_is_not_pipeline_input(packet, tmp_path):
+def test_masking_preserves_original_and_private_map_is_not_pipeline_input(packet, tmp_path: Path) -> None:
     from tank.replay import prepare_masked_packet
 
     data = json.loads(packet.read_text())
@@ -277,8 +277,8 @@ def test_masking_preserves_original_and_private_map_is_not_pipeline_input(packet
 @pytest.mark.parametrize("captured_http_status", [None, 404, 503])
 @pytest.mark.parametrize("transient_case", [None, "scope_refusal", "lost_decision_ack"])
 async def test_fresh_replay_session_reruns_market_and_decision_code(
-    packet, tmp_path, captured_http_status, transient_case
-):
+    packet, tmp_path: Path, captured_http_status, transient_case
+) -> None:
     import asyncio
     import copy
 
@@ -484,13 +484,13 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                 seq, event = await queue.get()
                 yield ("id: " + str(seq) + "\ndata: " + json.dumps(event) + "\n\n").encode()
 
-        async def aclose(self):
+        async def aclose(self) -> None:
             pass
 
     accepted_inputs = []
     decision_ack_bodies = []
 
-    async def transport(request):
+    async def transport(request: pytest.FixtureRequest):
         if request.url.path.endswith("/executions"):
             assert request.method == "GET"
             ids = request.url.params.get_list("ids[]")
@@ -729,7 +729,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
         {"error": {"type": "HTTPStatusError", "reason": "Source request failed (HTTP 503)"}},
     ],
 )
-def test_replay_error_boundary_preserves_pending_rows_and_ordinary_refusals(result):
+def test_replay_error_boundary_preserves_pending_rows_and_ordinary_refusals(result) -> None:
     from tank.replay import missing_capture_error
 
     assert not missing_capture_error({"result": result})
@@ -743,10 +743,12 @@ def test_replay_error_boundary_preserves_pending_rows_and_ordinary_refusals(resu
     )
 
 
-async def test_transcript_web_reads_use_only_captured_results(packet, monkeypatch):
+async def test_transcript_web_reads_use_only_captured_results(
+    packet, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from tank.event_tools import EventToolService
 
-    async def forbidden(*args, **kwargs):
+    async def forbidden(*args, **kwargs) -> None:
         raise AssertionError("external search reader must never run in replay")
 
     monkeypatch.setattr(EventToolService, "web_search", forbidden)
@@ -778,7 +780,7 @@ async def test_transcript_web_reads_use_only_captured_results(packet, monkeypatc
         await replay_bundle(packet, MemoryRepository(), settings())
 
 
-def test_late_market_capture_requires_assembly_and_preserves_real_receipt(packet):
+def test_late_market_capture_requires_assembly_and_preserves_real_receipt(packet) -> None:
     data = json.loads(packet.read_text())
     received = "2026-10-17T00:00:00Z"
     data["assembled_at"] = "2026-10-17T01:00:00Z"
@@ -829,7 +831,7 @@ def test_late_market_capture_requires_assembly_and_preserves_real_receipt(packet
         },
     ],
 )
-def test_assembly_never_admits_future_market_or_partial_bar(packet, record):
+def test_assembly_never_admits_future_market_or_partial_bar(packet, record) -> None:
     data = json.loads(packet.read_text())
     data["assembled_at"] = "2026-10-17T01:00:00Z"
     data["records"] = [
@@ -840,7 +842,7 @@ def test_assembly_never_admits_future_market_or_partial_bar(packet, record):
         load_inputs(packet, settings())
 
 
-def test_assembly_does_not_admit_source_revision(packet):
+def test_assembly_does_not_admit_source_revision(packet) -> None:
     data = json.loads(packet.read_text())
     data["assembled_at"] = "2026-10-17T01:00:00Z"
     data["records"] = [
@@ -872,7 +874,9 @@ def test_assembly_does_not_admit_source_revision(packet):
         "unknown_observation",
     ],
 )
-def test_reconstructed_quiet_minute_preserves_collection_clock(packet, monkeypatch, case):
+def test_reconstructed_quiet_minute_preserves_collection_clock(
+    packet, monkeypatch: pytest.MonkeyPatch, case
+) -> None:
     from copy import deepcopy
 
     from tank.market import flow, normalize
@@ -948,7 +952,7 @@ def test_reconstructed_quiet_minute_preserves_collection_clock(packet, monkeypat
         "null_ts",
     ],
 )
-def test_nested_market_clocks_cannot_bypass_cutoff_or_receipt_bounds(packet, representation, case):
+def test_nested_market_clocks_cannot_bypass_cutoff_or_receipt_bounds(packet, representation, case) -> None:
     data = json.loads(packet.read_text())
     cutoff = data["cutoff"]
     receipt = "2026-10-17T00:00:00Z"
@@ -978,7 +982,9 @@ def test_nested_market_clocks_cannot_bypass_cutoff_or_receipt_bounds(packet, rep
             load_inputs(packet, settings())
 
 
-async def test_operational_replay_composes_fresh_session_not_captured_tools(packet, monkeypatch):
+async def test_operational_replay_composes_fresh_session_not_captured_tools(
+    packet, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from tank import replay
     from tank.event_tools import EventToolService
 
@@ -1003,7 +1009,7 @@ async def test_operational_replay_composes_fresh_session_not_captured_tools(pack
         assert kwargs["subsequent_messages"] == messages[1:]
         return {"mode": "FRESH_OPENMA_SESSION"}
 
-    async def forbidden(*args, **kwargs):
+    async def forbidden(*args, **kwargs) -> None:
         raise AssertionError("captured-tool diagnostic entered")
 
     monkeypatch.setattr(replay, "replay_agent_session", fresh)
@@ -1013,7 +1019,7 @@ async def test_operational_replay_composes_fresh_session_not_captured_tools(pack
     ] == "FRESH_OPENMA_SESSION"
 
 
-async def test_full_replay_refuses_missing_original_messages_without_fallback(packet, tmp_path):
+async def test_full_replay_refuses_missing_original_messages_without_fallback(packet, tmp_path: Path) -> None:
     from tank.replay import replay_fixture
 
     root = tmp_path / "replay" / "inputs"
@@ -1023,20 +1029,22 @@ async def test_full_replay_refuses_missing_original_messages_without_fallback(pa
         await replay_fixture(MemoryRepository(), settings().model_copy(update={"data_dir": tmp_path}), "F-01")
 
 
-def test_operator_cli_defaults_to_fresh_session_and_diagnostic_is_explicit(monkeypatch):
+def test_operator_cli_defaults_to_fresh_session_and_diagnostic_is_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from click.testing import CliRunner
 
     from tank import cli, replay
 
     seen = []
 
-    async def fixture(repo, settings, identifier, *, mode="fresh-session"):
+    async def fixture(repo, settings, identifier, *, mode="fresh-session") -> None:
         seen.append(("fixture", identifier, mode))
 
-    async def reproduce(repo, settings, identifier, *, mode):
+    async def reproduce(repo, settings, identifier, *, mode) -> None:
         seen.append(("bundle", identifier, mode))
 
-    def run(fn, **kwargs):
+    def run(fn, **kwargs) -> None:
         import asyncio
 
         assert kwargs == {"database_url": "postgresql://replay/isolated", "replay": True}
@@ -1065,7 +1073,7 @@ def test_operator_cli_defaults_to_fresh_session_and_diagnostic_is_explicit(monke
 @pytest.mark.parametrize("timer_divergence", [False, True])
 async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_seeding(
     packet, timer_divergence
-):
+) -> None:
     import asyncio
     import copy
 
@@ -1204,7 +1212,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
                 event = await queue.get()
                 yield event
 
-    async def emit(event):
+    async def emit(event) -> None:
         if event.get("type") == "agent.custom_tool_use":
             event = dict(event, input=model_arguments(event["name"], event["input"]))
         nonlocal seq
@@ -1216,7 +1224,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
     actor_item = None
     fresh_event_id = None
 
-    async def transport(request):
+    async def transport(request: pytest.FixtureRequest):
         nonlocal actor_stage, actor_item, fresh_event_id
         if request.url.path.endswith("/executions"):
             assert request.method == "GET"
@@ -1423,7 +1431,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
     assert session["last_item_at_prec_reason"] == "INCOMPLETE"
 
 
-def test_original_messages_use_durable_log_not_inferred_tool_calls(packet):
+def test_original_messages_use_durable_log_not_inferred_tool_calls(packet) -> None:
     from tank.replay import original_replay_messages
 
     data = json.loads(packet.read_text())
@@ -1459,7 +1467,7 @@ def test_original_messages_use_durable_log_not_inferred_tool_calls(packet):
 
 
 @pytest.mark.parametrize("change", [None, "action", "thesis_grade", "gate", "window", "evidence"])
-def test_semantic_verdict_comparison_declares_identity_only_changes(change):
+def test_semantic_verdict_comparison_declares_identity_only_changes(change) -> None:
     import copy
 
     from tank.replay import semantic_verdict_output
@@ -1516,8 +1524,8 @@ def test_semantic_verdict_comparison_declares_identity_only_changes(change):
 
 @pytest.mark.parametrize("wall_timeout", [None, 75])
 async def test_operational_replay_accepts_recorded_timer_messages_without_item(
-    packet, monkeypatch, wall_timeout
-):
+    packet, monkeypatch: pytest.MonkeyPatch, wall_timeout
+) -> None:
     from tank import replay
 
     data = json.loads(packet.read_text())
@@ -1549,7 +1557,7 @@ async def test_operational_replay_accepts_recorded_timer_messages_without_item(
 )
 async def test_timer_references_resolve_actual_fresh_lineage_not_old_snapshot(
     packet, object_kind, id_field, collection
-):
+) -> None:
     from tank.replay import resolve_replay_message_references
 
     old = {
@@ -1608,7 +1616,7 @@ async def test_timer_references_resolve_actual_fresh_lineage_not_old_snapshot(
         )
 
 
-def test_virtual_clock_preserves_selected_precision_and_does_not_invent_exactness():
+def test_virtual_clock_preserves_selected_precision_and_does_not_invent_exactness() -> None:
     from datetime import timedelta
 
     from tank.time_precision import offset_schedule, propagate_timestamp
@@ -1624,7 +1632,7 @@ def test_virtual_clock_preserves_selected_precision_and_does_not_invent_exactnes
     assert clock.timestamp().precision_reason == "INCOMPLETE"
 
 
-async def test_timer_evidence_maps_only_exact_accepted_claim_counterpart(packet):
+async def test_timer_evidence_maps_only_exact_accepted_claim_counterpart(packet) -> None:
     from tank.replay import resolve_replay_message_references
 
     old = {
@@ -1664,7 +1672,7 @@ async def test_timer_evidence_maps_only_exact_accepted_claim_counterpart(packet)
 @pytest.mark.parametrize("premature_trigger", [False, True])
 async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_expiry(
     packet, premature_trigger
-):
+) -> None:
     """Synthetic transport: actual delivery/call/expiry code, no Telegram or model HTTP."""
     import asyncio
     import copy
@@ -1865,7 +1873,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
             while True:
                 yield await queue.get()
 
-    async def emit(event):
+    async def emit(event) -> None:
         if event.get("type") == "agent.custom_tool_use":
             event = dict(event, input=model_arguments(event["name"], event["input"]))
         nonlocal seq
@@ -1875,7 +1883,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
     accepted_inputs = []
     actor_stage = None
 
-    async def control(request):
+    async def control(request: pytest.FixtureRequest):
         nonlocal actor_stage
         if request.url.path.endswith("/executions"):
             assert request.method == "GET"
@@ -2040,7 +2048,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
 
 @pytest.mark.integration
 @pytest.mark.parametrize("state", ["APPROVED", "PROPOSED"])
-async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicate(packet, state):
+async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicate(packet, state) -> None:
     """Fixture grade, real callback ledger/reconcile/watch execution; no live requests."""
     import asyncio
     import copy
@@ -2193,7 +2201,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
             while True:
                 yield await queue.get()
 
-    async def emit(event):
+    async def emit(event) -> None:
         if event.get("type") == "agent.custom_tool_use":
             event = dict(event, input=model_arguments(event["name"], event["input"]))
         nonlocal seq
@@ -2206,7 +2214,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
     settled_inputs = set()
     actor_stage = None
 
-    async def control(request):
+    async def control(request: pytest.FixtureRequest):
         nonlocal actor_stage
         if request.url.path.endswith("/executions"):
             assert request.method == "GET"
@@ -2428,8 +2436,8 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
 async def test_captured_replay_batches_market_prefix_without_per_row_writer(
-    packet, monkeypatch, backend, postgres_template
-):
+    packet, monkeypatch: pytest.MonkeyPatch, backend, postgres_template
+) -> None:
     import os
     from contextlib import AsyncExitStack
 
@@ -2486,7 +2494,7 @@ async def test_captured_replay_batches_market_prefix_without_per_row_writer(
         assert len(rows) == 1001
 
 
-def test_as_of_market_receipt_cannot_bypass_current_replay_clock():
+def test_as_of_market_receipt_cannot_bypass_current_replay_clock() -> None:
     from tank.replay import ReplayInputs
     from tank.util import parse_time
 
@@ -2504,8 +2512,8 @@ def test_as_of_market_receipt_cannot_bypass_current_replay_clock():
 
 @pytest.mark.parametrize("explicit", [False, True])
 async def test_operational_initial_view_uses_same_earliest_revision_clock(
-    packet, tmp_path, monkeypatch, explicit
-):
+    packet, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, explicit
+) -> None:
     from tank import replay
 
     data = json.loads(packet.read_text())
@@ -2549,8 +2557,8 @@ async def test_operational_initial_view_uses_same_earliest_revision_clock(
 @pytest.mark.integration
 @pytest.mark.parametrize("profile", ["first_reference", "ordinary_missing_sent"])
 async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_requires_capture(
-    tmp_path, monkeypatch, profile
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile
+) -> None:
     """Actual origin/class/map/publisher receipts; only native wire is synthetic."""
     import asyncio
     import copy
@@ -2639,7 +2647,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
     partial_card = partial_intent = None
     delivery_attempts = []
 
-    async def forbid_delivery(self, payload):
+    async def forbid_delivery(self, payload) -> None:
         delivery_attempts.append(payload)
         raise AssertionError("No reference or uncaptured delivery transport is authorized")
 
@@ -2650,7 +2658,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
             while True:
                 yield await queue.get()
 
-    async def emit(event):
+    async def emit(event) -> None:
         if event.get("type") == "agent.custom_tool_use":
             event = dict(event, input=model_arguments(event["name"], event["input"]))
         nonlocal sequence
@@ -2659,7 +2667,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
             settled.update(accepted)
         await queue.put(f"id: {sequence}\ndata: {json.dumps(event)}\n\n".encode())
 
-    async def tool(name, arguments, execution_id):
+    async def tool(name, arguments, execution_id) -> None:
         await emit(
             {
                 "id": "producer-" + name + "-" + str(stage),
@@ -2670,7 +2678,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
             }
         )
 
-    async def transport(request):
+    async def transport(request: pytest.FixtureRequest):
         nonlocal stage, event_id, publication, partial_card, partial_intent
         endpoint = request.url.path
         if endpoint.endswith("/executions"):
@@ -2888,7 +2896,9 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
 
 
 @pytest.mark.integration
-async def test_captured_tools_decision_refreshes_fired_market_watch_offline(packet, tmp_path, monkeypatch):
+async def test_captured_tools_decision_refreshes_fired_market_watch_offline(
+    packet, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from datetime import timedelta
 
     from test_market_capture_refresh import ReleasedMarket, seed_domain, shifted_snapshot

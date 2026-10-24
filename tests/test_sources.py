@@ -1,5 +1,6 @@
 import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -11,7 +12,7 @@ from tank.util import new_id, sha256
 
 
 @pytest.fixture
-def collector_http(monkeypatch):
+def collector_http(monkeypatch: pytest.MonkeyPatch):
     """Use each test's HTTP fixture as the external collector response boundary.
 
     SourceService still chooses capture_fetch, parses responses and persists its
@@ -20,7 +21,7 @@ def collector_http(monkeypatch):
     """
     from tank.sources.capture_fetch import CONDITIONAL_HEADERS, is_exchange_url
 
-    def bind(http):
+    def bind(http) -> None:
         async def fetch(repo, method, url, *, headers=None, body=None, source_id=None, budget_s=None):
             assert is_exchange_url(url)
             headers = {
@@ -44,7 +45,7 @@ RSS = b"""<rss version="2.0"><channel><title>Official</title><item><guid>release
 
 
 class Repo:
-    def __init__(self):
+    def __init__(self) -> None:
         self.rows = {}
         self.jobs = []
 
@@ -72,7 +73,7 @@ class Repo:
             if table == collection and all(row.get(k) == v for k, v in (filters or {}).items()):
                 yield deepcopy(row)
 
-    async def enqueue(self, *a, **k):
+    async def enqueue(self, *a, **k) -> None:
         self.jobs.append((a, k))
 
     @asynccontextmanager
@@ -84,7 +85,7 @@ class Repo:
         yield
 
 
-def settings(tmp_path, sources):
+def settings(tmp_path: Path, sources):
     return SimpleNamespace(
         data_dir=tmp_path,
         user_agent="Tank test",
@@ -97,7 +98,7 @@ def settings(tmp_path, sources):
     )
 
 
-def test_rss_atom():
+def test_rss_atom() -> None:
     row = parsers.feeds(RSS, "S30", {"url": "https://example.org/rss"})[0]
     assert row["external_id"] == "release-42"
     assert row["published_at"] == "2026-10-16T12:00:00Z"
@@ -107,7 +108,7 @@ def test_rss_atom():
     assert row["subtype"] == "commits" and row["text"] == "Fix routing"
 
 
-def test_html_patterns_and_article():
+def test_html_patterns_and_article() -> None:
     feed = {"url": "https://example.org/news", "article_pattern": r"^/news/[a-z]+$"}
     rows = parsers.article_links(
         '<a href="/news/test">Test</a><a href="https://evil.org/news/test">Bad</a>', feed
@@ -121,7 +122,7 @@ def test_html_patterns_and_article():
     assert row["text"] == "Title Evidence"
 
 
-def test_json_contracts():
+def test_json_contracts() -> None:
     row = parsers.json_items(
         {
             "result": {
@@ -219,15 +220,15 @@ def test_json_contracts():
         ("hyperliquid", {"universe": [{"name": "ABC", "isDelisted": False}]}, "ABC"),
     ],
 )
-def test_instrument_adapters(venue, payload, symbol):
+def test_instrument_adapters(venue, payload, symbol) -> None:
     assert parsers.instruments(payload, {"venue": venue})[symbol]["status"]
 
 
 @pytest.mark.asyncio
-async def test_raw_first_dedup_and_conditional_get(tmp_path):
+async def test_raw_first_dedup_and_conditional_get(tmp_path: Path) -> None:
     calls = []
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         calls.append(request)
         return (
             httpx.Response(304)
@@ -261,11 +262,13 @@ async def test_raw_first_dedup_and_conditional_get(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_raw_stored_only_for_captured_items_across_repeated_polls(tmp_path, collector_http):
+async def test_raw_stored_only_for_captured_items_across_repeated_polls(
+    tmp_path: Path, collector_http
+) -> None:
     """02 §7.2: an unchanged feed or instrument snapshot leaves no raw file behind."""
     phase = [0]
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         if request.url.host == "api.binance.com":
             status = "TRADING" if phase[0] < 2 else "BREAK"
             return httpx.Response(
@@ -312,7 +315,7 @@ async def test_raw_stored_only_for_captured_items_across_repeated_polls(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_sighting_in_another_feed_counts_one_observation(tmp_path):
+async def test_sighting_in_another_feed_counts_one_observation(tmp_path: Path) -> None:
     """03 §3.1: the same external_id from a second feed increments the count once."""
     http = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, content=RSS)))
     repo = Repo()
@@ -332,7 +335,7 @@ async def test_sighting_in_another_feed_counts_one_observation(tmp_path):
     await http.aclose()
 
 
-def test_all_34_source_configurations():
+def test_all_34_source_configurations() -> None:
     from tank.settings import Settings
 
     cfg = Settings().load_config("sources")["sources"]
@@ -361,7 +364,7 @@ def test_all_34_source_configurations():
                 assert feed.get("body") or feed.get("form")
 
 
-def test_binance_rich_document():
+def test_binance_rich_document() -> None:
     payload = json.dumps(
         {
             "type": "root",
@@ -374,11 +377,11 @@ def test_binance_rich_document():
 
 
 @pytest.mark.asyncio
-async def test_instrument_baseline_diff_and_bybit_cursor(tmp_path, collector_http):
+async def test_instrument_baseline_diff_and_bybit_cursor(tmp_path: Path, collector_http) -> None:
     phase = [0]
     calls = []
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         calls.append(str(request.url))
         cursor = request.url.params.get("cursor")
         if cursor:
@@ -423,7 +426,7 @@ async def test_instrument_baseline_diff_and_bybit_cursor(tmp_path, collector_htt
 
 
 @pytest.mark.asyncio
-async def test_snapshot_closed_proposal_checked_after_leaving_latest(tmp_path):
+async def test_snapshot_closed_proposal_checked_after_leaving_latest(tmp_path: Path) -> None:
     phase = [0]
 
     def proposal(state):
@@ -439,7 +442,7 @@ async def test_snapshot_closed_proposal_checked_after_leaving_latest(tmp_path):
             "space": {"id": "cow.eth"},
         }
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         query = json.loads(request.content)["query"]
         rows = [proposal("active")] if phase[0] == 0 else [proposal("closed")] if "id_in:" in query else []
         return httpx.Response(200, json={"data": {"proposals": rows}})
@@ -470,7 +473,7 @@ async def test_snapshot_closed_proposal_checked_after_leaving_latest(tmp_path):
 @pytest.mark.integration
 @pytest.mark.postgres
 @pytest.mark.asyncio
-async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path, postgres_template):
+async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path: Path, postgres_template) -> None:
     """Exercise the actual schema, not a permissive in-memory record store."""
     import os
     from pathlib import Path
@@ -557,7 +560,7 @@ async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path, pos
 
 
 @pytest.mark.asyncio
-async def test_probe_reads_current_payload_without_ingestion_jobs(tmp_path):
+async def test_probe_reads_current_payload_without_ingestion_jobs(tmp_path: Path) -> None:
     calls = []
     release = {
         "url": "https://press.example.org/press-releases/news-room/2026/launch",
@@ -566,7 +569,7 @@ async def test_probe_reads_current_payload_without_ingestion_jobs(tmp_path):
         "referenceDate": "2026-09-08",
     }
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         calls.append(request)
         if request.url.host == "blocked.example.org":
             return httpx.Response(403, content=b"Forbidden")
@@ -623,7 +626,7 @@ async def test_probe_reads_current_payload_without_ingestion_jobs(tmp_path):
     await http.aclose()
 
 
-def test_okx_live_observed_nested_details_schema():
+def test_okx_live_observed_nested_details_schema() -> None:
     payload = {
         "code": "0",
         "data": [
@@ -644,7 +647,7 @@ def test_okx_live_observed_nested_details_schema():
     assert row["external_id"] == "https://www.okx.com/help/okx-to-list-dnausd-x-perp|1792152012457"
 
 
-def test_robinhood_canonical_article_metadata_same_origin_only():
+def test_robinhood_canonical_article_metadata_same_origin_only() -> None:
     feed = {
         "url": "https://robinhood.com/newsroom/",
         "article_pattern": r"^/(?:us/en/)?newsroom/(?!category/)[A-Za-z0-9-]+/?$",
@@ -674,7 +677,9 @@ def test_robinhood_canonical_article_metadata_same_origin_only():
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_milestone_producer_drives_source_cadence_and_cancellation(tmp_path, monkeypatch):
+async def test_milestone_producer_drives_source_cadence_and_cancellation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from datetime import timedelta
 
     import tank.sources as sources_module
@@ -709,7 +714,7 @@ async def test_milestone_producer_drives_source_cadence_and_cancellation(tmp_pat
 
     calls = []
 
-    def response(request):
+    def response(request: pytest.FixtureRequest):
         calls.append(clock[0])
         return httpx.Response(200, content=RSS)
 
@@ -760,7 +765,9 @@ async def test_milestone_producer_drives_source_cadence_and_cancellation(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_run_controls_wake_within_15s_for_600s_source_without_extra_reads(tmp_path, monkeypatch):
+async def test_run_controls_wake_within_15s_for_600s_source_without_extra_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import asyncio
 
     import tank.sources as sources_module
@@ -797,7 +804,9 @@ async def test_run_controls_wake_within_15s_for_600s_source_without_extra_reads(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_major_assessment_producer_activates_15s_source_reads(tmp_path, monkeypatch):
+async def test_major_assessment_producer_activates_15s_source_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from datetime import timedelta
 
     import tank.event_tools as event_tools_module
@@ -900,7 +909,9 @@ async def test_major_assessment_producer_activates_15s_source_reads(tmp_path, mo
 
 
 @pytest.mark.asyncio
-async def test_control_ticks_do_not_overpoll_failed_normal_cadence(tmp_path, monkeypatch):
+async def test_control_ticks_do_not_overpoll_failed_normal_cadence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from datetime import timedelta
 
     import tank.sources as sources_module
@@ -933,7 +944,7 @@ async def test_control_ticks_do_not_overpoll_failed_normal_cadence(tmp_path, mon
     await http.aclose()
 
 
-def test_sec_filing_identity_boundaries_and_date_only_precision(tmp_path):
+def test_sec_filing_identity_boundaries_and_date_only_precision(tmp_path: Path) -> None:
     from tank.settings import Settings
 
     svc = SourceService(Repo(), Settings(data_dir=tmp_path))
@@ -962,10 +973,10 @@ def test_sec_filing_identity_boundaries_and_date_only_precision(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_s09_seen_articles_do_not_refetch_detail(tmp_path, collector_http):
+async def test_s09_seen_articles_do_not_refetch_detail(tmp_path: Path, collector_http) -> None:
     calls = []
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         calls.append(str(request.url))
         if "detail/query" in str(request.url):
             return httpx.Response(
@@ -1001,13 +1012,15 @@ async def test_s09_seen_articles_do_not_refetch_detail(tmp_path, collector_http)
 
 
 @pytest.mark.asyncio
-async def test_sec_provider_and_source_configured_budgets_are_shared(tmp_path, monkeypatch):
+async def test_sec_provider_and_source_configured_budgets_are_shared(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import tank.sources as module
     from tank.settings import Settings
 
     calls = []
 
-    async def acquire(key, capacity, window_s, *, weight=1, host=None):
+    async def acquire(key, capacity, window_s, *, weight=1, host=None) -> None:
         calls.append((key, capacity, window_s, weight))
 
     monkeypatch.setattr(module.shared_request_budgets, "acquire", acquire)
@@ -1024,13 +1037,15 @@ async def test_sec_provider_and_source_configured_budgets_are_shared(tmp_path, m
 
 
 @pytest.mark.asyncio
-async def test_binance_source_discovery_leaves_shared_market_weights_to_capture(tmp_path, monkeypatch):
+async def test_binance_source_discovery_leaves_shared_market_weights_to_capture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import tank.sources as module
     from tank.settings import Settings
 
     acquired = []
 
-    async def acquire(key, capacity, window_s, *, weight=1, host=None):
+    async def acquire(key, capacity, window_s, *, weight=1, host=None) -> None:
         acquired.append((key, capacity, window_s, weight))
 
     monkeypatch.setattr(module.shared_request_budgets, "acquire", acquire)
@@ -1048,7 +1063,9 @@ async def test_binance_source_discovery_leaves_shared_market_weights_to_capture(
 
 
 @pytest.mark.asyncio
-async def test_shared_weight_budget_large_waiter_does_not_block_fitting_baseline(monkeypatch):
+async def test_shared_weight_budget_large_waiter_does_not_block_fitting_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import asyncio
 
     import tank.sources.rate_limits as module
@@ -1057,7 +1074,7 @@ async def test_shared_weight_budget_large_waiter_does_not_block_fitting_baseline
     sleep_started = asyncio.Event()
     release_sleep = asyncio.Event()
 
-    async def sleep(delay):
+    async def sleep(delay) -> None:
         assert delay > 0
         sleep_started.set()
         await release_sleep.wait()
@@ -1078,12 +1095,12 @@ async def test_shared_weight_budget_large_waiter_does_not_block_fitting_baseline
 
 
 @pytest.mark.asyncio
-async def test_missing_publisher_article_keeps_raw_error_and_continues_valid_entries(tmp_path):
+async def test_missing_publisher_article_keeps_raw_error_and_continues_valid_entries(tmp_path: Path) -> None:
     from pathlib import Path
 
     calls = []
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         calls.append(request)
         if request.url.path == "/newsroom/":
             if request.headers.get("If-None-Match"):
@@ -1145,10 +1162,12 @@ async def test_missing_publisher_article_keeps_raw_error_and_continues_valid_ent
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("empty_body", [b"", b"<html><script>hydration()</script></html>"])
-async def test_empty_200_article_isolated_without_suppressing_valid_sibling(tmp_path, empty_body):
+async def test_empty_200_article_isolated_without_suppressing_valid_sibling(
+    tmp_path: Path, empty_body
+) -> None:
     from pathlib import Path
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         if request.url.path == "/newsroom/":
             return httpx.Response(
                 200, text='<a href="/newsroom/empty">Empty entry</a><a href="/newsroom/valid">Valid entry</a>'
@@ -1198,11 +1217,11 @@ async def test_empty_200_article_isolated_without_suppressing_valid_sibling(tmp_
 
 
 @pytest.mark.asyncio
-async def test_seen_full_article_empty_index_deduplicates_before_new_content_guard(tmp_path):
+async def test_seen_full_article_empty_index_deduplicates_before_new_content_guard(tmp_path: Path) -> None:
     phase = [0]
     calls = []
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         calls.append(request.url.path)
         if request.url.path == "/newsroom/":
             sibling = "" if phase[0] == 0 else '<a href="/newsroom/later">Later entry</a>'
@@ -1264,7 +1283,7 @@ async def test_seen_full_article_empty_index_deduplicates_before_new_content_gua
 
 
 @pytest.mark.asyncio
-async def test_declared_author_organization_precedence_and_identity_without_body_name(tmp_path):
+async def test_declared_author_organization_precedence_and_identity_without_body_name(tmp_path: Path) -> None:
     from tank.agents.pipeline import Pipeline
     from tank.settings import Settings
 
@@ -1310,7 +1329,7 @@ async def test_declared_author_organization_precedence_and_identity_without_body
         await service.close()
 
 
-def test_wire_timestamp_precision_survives_normalization():
+def test_wire_timestamp_precision_survives_normalization() -> None:
     row = parsers.article(
         b'<article><h1>Release</h1><time datetime="2026-10-18"></time><p>Body</p></article>'
     )
@@ -1325,11 +1344,11 @@ def test_wire_timestamp_precision_survives_normalization():
 
 
 @pytest.mark.asyncio
-async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path, collector_http):
+async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path: Path, collector_http) -> None:
     phase = ["Trading"]
     requests = []
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         requests.append(request)
         return httpx.Response(
             200,
@@ -1364,7 +1383,7 @@ async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path, col
         phase[0] = "Settling"
         original = svc.ingest
 
-        async def fail(*args):
+        async def fail(*args) -> None:
             raise RuntimeError("storage unavailable")
 
         svc.ingest = fail
@@ -1382,7 +1401,7 @@ async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path, col
 
 
 @pytest.mark.asyncio
-async def test_content_duplicate_counts_once_and_is_remembered_by_the_feed(tmp_path):
+async def test_content_duplicate_counts_once_and_is_remembered_by_the_feed(tmp_path: Path) -> None:
     repo = Repo()
     svc = SourceService(repo, settings(tmp_path, []))
     first = await svc.ingest(
@@ -1418,13 +1437,13 @@ async def test_content_duplicate_counts_once_and_is_remembered_by_the_feed(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_slow_feed_does_not_block_fast_sibling_ingestion(tmp_path):
+async def test_slow_feed_does_not_block_fast_sibling_ingestion(tmp_path: Path) -> None:
     import asyncio
 
     blocked = asyncio.Event()
     release = asyncio.Event()
 
-    async def handle(request):
+    async def handle(request: pytest.FixtureRequest):
         if request.url.path == "/slow":
             blocked.set()
             await release.wait()
@@ -1443,7 +1462,7 @@ async def test_slow_feed_does_not_block_fast_sibling_ingestion(tmp_path):
         poll = asyncio.create_task(svc.poll_once("S30"))
         await asyncio.wait_for(blocked.wait(), 1)
 
-        async def fast_ingested():
+        async def fast_ingested() -> None:
             while not any(c == "ingest.source_items" for c, _ in repo.rows):
                 await asyncio.sleep(0)
 
@@ -1456,7 +1475,9 @@ async def test_slow_feed_does_not_block_fast_sibling_ingestion(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_slow_detail_does_not_block_index_cadence_and_restart_preserves_first_seen(tmp_path):
+async def test_slow_detail_does_not_block_index_cadence_and_restart_preserves_first_seen(
+    tmp_path: Path,
+) -> None:
     import asyncio
 
     from tank.util import iso, parse_time
@@ -1465,7 +1486,7 @@ async def test_slow_detail_does_not_block_index_cadence_and_restart_preserves_fi
     detail_started = asyncio.Event()
     release = asyncio.Event()
 
-    async def handle(request):
+    async def handle(request: pytest.FixtureRequest):
         if request.url.path == "/index":
             calls.append(iso())
             return httpx.Response(200, text='<a href="/article/one">Release</a>')
@@ -1491,7 +1512,7 @@ async def test_slow_detail_does_not_block_index_cadence_and_restart_preserves_fi
         run = asyncio.create_task(svc.run(stop))
         await asyncio.wait_for(detail_started.wait(), 1)
 
-        async def three_indexes():
+        async def three_indexes() -> None:
             while len(calls) < 3:
                 await asyncio.sleep(0.005)
 
@@ -1515,14 +1536,14 @@ async def test_slow_detail_does_not_block_index_cadence_and_restart_preserves_fi
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source_id", ["S03", "S09", "S24"])
 async def test_json_discovery_burst_reads_every_page_until_durable_boundary(
-    tmp_path, source_id, collector_http
-):
+    tmp_path: Path, source_id, collector_http
+) -> None:
     import re
 
     phase = [0]
     pages = []
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         if "detail/query" in request.url.path:
             code = request.url.params["articleCode"]
             return httpx.Response(
@@ -1623,10 +1644,12 @@ async def test_json_discovery_burst_reads_every_page_until_durable_boundary(
 
 
 @pytest.mark.asyncio
-async def test_failed_later_history_page_retains_earlier_items_without_advancing_boundary(tmp_path):
+async def test_failed_later_history_page_retains_earlier_items_without_advancing_boundary(
+    tmp_path: Path,
+) -> None:
     phase = [0]
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         if phase[0] == 1 and request.url.params.get("page") == "2":
             return httpx.Response(404, text="Publisher page unavailable")
         ids = [1] if phase[0] == 0 else [3, 2] if request.url.params.get("page") != "2" else [1]
@@ -1665,7 +1688,7 @@ async def test_failed_later_history_page_retains_earlier_items_without_advancing
 
 
 @pytest.mark.parametrize("schema_type", ["Article", "BlogPosting", "NewsArticle"])
-def test_publication_metadata_extracts_actual_publication_not_modification(schema_type):
+def test_publication_metadata_extracts_actual_publication_not_modification(schema_type) -> None:
     payload = (
         '<article><h1>Actual Release</h1><p>Evidence</p></article><script type="application/ld+json">'
         + json.dumps(
@@ -1692,7 +1715,7 @@ def test_publication_metadata_extracts_actual_publication_not_modification(schem
     assert parsers.article(conflicting)["published_at"] is None
 
 
-def test_publication_meta_and_ambiguous_articles_preserve_precision():
+def test_publication_meta_and_ambiguous_articles_preserve_precision() -> None:
     row = parsers.article(
         '<article>Release</article><meta property="article:published_time" content="2026-10-17">'
     )
@@ -1715,11 +1738,11 @@ def test_publication_meta_and_ambiguous_articles_preserve_precision():
 
 
 @pytest.mark.asyncio
-async def test_completed_later_batch_cannot_erase_failed_earlier_coverage(tmp_path):
+async def test_completed_later_batch_cannot_erase_failed_earlier_coverage(tmp_path: Path) -> None:
     phase = [0]
     fail = [False]
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         ids = [1] if phase[0] == 0 else [2, 1] if phase[0] == 1 else [3, 2, 1]
         return httpx.Response(
             200,
@@ -1766,7 +1789,7 @@ async def test_completed_later_batch_cannot_erase_failed_earlier_coverage(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_conditional_304_does_not_starve_durable_pending_detail(tmp_path):
+async def test_conditional_304_does_not_starve_durable_pending_detail(tmp_path: Path) -> None:
     from tank.util import iso
 
     source = {
@@ -1810,7 +1833,7 @@ async def test_conditional_304_does_not_starve_durable_pending_detail(tmp_path):
         assert len(repo.jobs) == 1
 
 
-def test_source_timestamp_canonical_bucket_and_timezone_uncertainty():
+def test_source_timestamp_canonical_bucket_and_timezone_uncertainty() -> None:
     day = parsers.timestamp_fields("2026-10-18")
     assert day["published_prec"] == "BUCKET"
     assert day["published_at_precision"] == "BUCKET(1d)"
@@ -1831,7 +1854,9 @@ def test_source_timestamp_canonical_bucket_and_timezone_uncertainty():
 
 
 @pytest.mark.asyncio
-async def test_due_time_uses_actual_request_start_after_budget_admission(tmp_path, monkeypatch):
+async def test_due_time_uses_actual_request_start_after_budget_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from datetime import timedelta
 
     import tank.sources as source_module
@@ -1854,7 +1879,7 @@ async def test_due_time_uses_actual_request_start_after_budget_admission(tmp_pat
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
         first = [True]
 
-        async def budget(feed):
+        async def budget(feed) -> None:
             if first[0]:
                 clock[0] += timedelta(seconds=30)
                 first[0] = False
@@ -1876,7 +1901,7 @@ async def test_due_time_uses_actual_request_start_after_budget_admission(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_invalid_index_retains_source_associated_raw_before_parse_failure(tmp_path):
+async def test_invalid_index_retains_source_associated_raw_before_parse_failure(tmp_path: Path) -> None:
     from pathlib import Path
 
     source = {"source_id": "S30", "feeds": [{"url": "https://example.org/rss", "kind": "rss"}]}
@@ -1897,7 +1922,7 @@ async def test_invalid_index_retains_source_associated_raw_before_parse_failure(
         assert not repo.jobs
 
 
-def test_atom_update_time_is_not_fabricated_original_publication():
+def test_atom_update_time_is_not_fabricated_original_publication() -> None:
     updated = "<updated>2026-10-18T12:00:00Z</updated>"
     prefix = '<feed xmlns="http://www.w3.org/2005/Atom"><title>Activity</title><entry><id>entry1</id><title>Release</title><link href="https://example.org/entry1"/>'
     suffix = "<content>Actual body</content></entry></feed>"
@@ -1920,7 +1945,9 @@ def test_atom_update_time_is_not_fabricated_original_publication():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source_id", ["S03", "S30"])
-async def test_malformed_index_entry_does_not_starve_valid_sibling_or_advance_validators(tmp_path, source_id):
+async def test_malformed_index_entry_does_not_starve_valid_sibling_or_advance_validators(
+    tmp_path: Path, source_id
+) -> None:
     calls = []
     rss = RSS.replace(b"<item><guid>", b"<item><title>Bad entry without identity</title></item><item><guid>")
     data = {
@@ -1937,7 +1964,7 @@ async def test_malformed_index_entry_does_not_starve_valid_sibling_or_advance_va
         "next_page_url": None,
     }
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         calls.append(request)
         return (
             httpx.Response(200, headers={"ETag": "partial-response"}, json=data)
@@ -1965,8 +1992,8 @@ async def test_malformed_index_entry_does_not_starve_valid_sibling_or_advance_va
 
 @pytest.mark.asyncio
 async def test_paginated_instrument_change_uses_actual_page_time_and_raw_evidence(
-    tmp_path, monkeypatch, collector_http
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, collector_http
+) -> None:
     from datetime import timedelta
     from pathlib import Path
 
@@ -1978,7 +2005,7 @@ async def test_paginated_instrument_change_uses_actual_page_time_and_raw_evidenc
     monkeypatch.setattr(source_module, "iso", lambda value=None: iso(clock[0] if value is None else value))
     phase = [0]
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         clock[0] += timedelta(seconds=5)
         cursor = request.url.params.get("cursor")
         symbol = "DEFUSDT" if cursor else "ABCUSDT"
@@ -2033,7 +2060,9 @@ async def test_paginated_instrument_change_uses_actual_page_time_and_raw_evidenc
 
 
 @pytest.mark.asyncio
-async def test_long_history_catchup_refreshes_current_head_at_feed_cadence(tmp_path, monkeypatch):
+async def test_long_history_catchup_refreshes_current_head_at_feed_cadence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from datetime import timedelta
 
     import tank.sources as source_module
@@ -2045,7 +2074,7 @@ async def test_long_history_catchup_refreshes_current_head_at_feed_cadence(tmp_p
     phase = [0]
     calls = []
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         page = int(request.url.params.get("page", 1))
         calls.append((phase[0], page, clock[0]))
         clock[0] += timedelta(seconds=2)
@@ -2090,8 +2119,8 @@ async def test_long_history_catchup_refreshes_current_head_at_feed_cadence(tmp_p
 
 @pytest.mark.asyncio
 async def test_coinbase_trading_restriction_change_emits_item_without_status_enum_change(
-    tmp_path, collector_http
-):
+    tmp_path: Path, collector_http
+) -> None:
     restricted = [False]
     source = {
         "source_id": "S14",
@@ -2106,7 +2135,7 @@ async def test_coinbase_trading_restriction_change_emits_item_without_status_enu
     }
     repo = Repo()
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         return httpx.Response(
             200,
             json=[
@@ -2139,8 +2168,8 @@ async def test_coinbase_trading_restriction_change_emits_item_without_status_enu
 
 @pytest.mark.asyncio
 async def test_new_coinbase_flag_observation_does_not_fabricate_historical_status_change(
-    tmp_path, collector_http
-):
+    tmp_path: Path, collector_http
+) -> None:
     flag = [True]
     source = {
         "source_id": "S14",
@@ -2177,7 +2206,7 @@ async def test_new_coinbase_flag_observation_does_not_fabricate_historical_statu
         assert (await svc.poll_once("S14"))["items"] == 1
 
 
-def test_treasury_duplicate_designated_publication_elements_are_one_source_timestamp():
+def test_treasury_duplicate_designated_publication_elements_are_one_source_timestamp() -> None:
     payload = '<main><h1>Official release</h1><div class="field--name-field-news-publication-date"><time datetime="2026-10-16T20:00:00Z">October 16, 2026</time></div><div class="field--name-field-news-publication-date"><time datetime="2026-10-16T20:00:00Z">October 16, 2026</time></div></main>'
     row = parsers.article(payload, source_id="S07")
     assert row["published_at"] == "2026-10-16T20:00:00Z"
@@ -2188,7 +2217,9 @@ def test_treasury_duplicate_designated_publication_elements_are_one_source_times
 
 
 @pytest.mark.asyncio
-async def test_unavailable_known_snapshot_proposal_remains_pending_and_explicitly_degraded(tmp_path):
+async def test_unavailable_known_snapshot_proposal_remains_pending_and_explicitly_degraded(
+    tmp_path: Path,
+) -> None:
     source = {
         "source_id": "S24",
         "feeds": [
@@ -2216,7 +2247,7 @@ async def test_unavailable_known_snapshot_proposal_remains_pending_and_explicitl
         assert not repo.jobs
 
 
-def test_null_publisher_identity_is_not_stringified_into_fabricated_item():
+def test_null_publisher_identity_is_not_stringified_into_fabricated_item() -> None:
     rows = parsers.json_items(
         {
             "results": [
@@ -2242,7 +2273,7 @@ def test_null_publisher_identity_is_not_stringified_into_fabricated_item():
     assert len(rows.errors) == 1
 
 
-def test_raw_item_writer_exact_hld_path_utc_bytes_and_immutable_conflict(tmp_path):
+def test_raw_item_writer_exact_hld_path_utc_bytes_and_immutable_conflict(tmp_path: Path) -> None:
     from pathlib import Path
 
     from tank.sources.raw_store import write_raw_item
@@ -2262,7 +2293,9 @@ def test_raw_item_writer_exact_hld_path_utc_bytes_and_immutable_conflict(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_new_source_item_raw_path_uses_final_item_id_without_rewriting_old_reference(tmp_path):
+async def test_new_source_item_raw_path_uses_final_item_id_without_rewriting_old_reference(
+    tmp_path: Path,
+) -> None:
     from pathlib import Path
 
     repo = Repo()
@@ -2286,8 +2319,8 @@ async def test_new_source_item_raw_path_uses_final_item_id_without_rewriting_old
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure_stage", ["file", "directory"])
 async def test_raw_durability_failure_prevents_source_item_and_job_persistence(
-    tmp_path, monkeypatch, failure_stage
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_stage
+) -> None:
     import os
     import stat
     from pathlib import Path
@@ -2320,7 +2353,7 @@ async def test_raw_durability_failure_prevents_source_item_and_job_persistence(
     await svc.close()
 
 
-def test_dtcc_retained_public_release_slugs_preserve_case_dots_and_document_boundaries():
+def test_dtcc_retained_public_release_slugs_preserve_case_dots_and_document_boundaries() -> None:
     urls = [
         "https://www.dtcc.com/press-releases/2026/US-Treasury-Central-Clearing-Survey-Industry-Ready-for-Cash-Clearing-Repo-Work-Remains",
         "https://www.dtcc.com/press-releases/2026/DTCC-FundSERV-Adds-Ondo-Finance-as-First-Tokenization-Member",
@@ -2347,7 +2380,7 @@ def test_dtcc_retained_public_release_slugs_preserve_case_dots_and_document_boun
     assert all(row["external_id"] == row["url"] for row in parsed)
 
 
-def test_binance_observed_child_tree_preserves_text_not_metadata():
+def test_binance_observed_child_tree_preserves_text_not_metadata() -> None:
     body = {
         "node": "root",
         "child": [
@@ -2372,7 +2405,9 @@ def test_binance_observed_child_tree_preserves_text_not_metadata():
 
 
 @pytest.mark.asyncio
-async def test_binance_empty_body_pending_recovers_after_restart(tmp_path, monkeypatch, collector_http):
+async def test_binance_empty_body_pending_recovers_after_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, collector_http
+) -> None:
     from copy import deepcopy
     from pathlib import Path
 
@@ -2380,7 +2415,7 @@ async def test_binance_empty_body_pending_recovers_after_restart(tmp_path, monke
     detail = json.dumps({"data": {"publishDate": 1791948608368, "body": json.dumps(body)}}).encode()
     calls = []
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         calls.append(str(request.url))
         if request.url.path.endswith("/query"):
             return httpx.Response(200, content=detail)
@@ -2433,12 +2468,12 @@ async def test_binance_empty_body_pending_recovers_after_restart(tmp_path, monke
 
 
 @pytest.mark.asyncio
-async def test_read_counters_and_failed_read_rate_report(tmp_path):
+async def test_read_counters_and_failed_read_rate_report(tmp_path: Path) -> None:
     from tank.sources.read_report import rates, snapshot
 
     fail = [False]
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         if request.url.path == "/bad" or fail[0]:
             return httpx.Response(500, content=b"down")
         return httpx.Response(200, content=RSS)
@@ -2451,7 +2486,7 @@ async def test_read_counters_and_failed_read_rate_report(tmp_path):
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         svc = SourceService(repo, settings(tmp_path, sources), http=http)
 
-        async def no_wait(delay):
+        async def no_wait(delay) -> None:
             return None
 
         import tank.sources as module
@@ -2481,7 +2516,7 @@ async def test_read_counters_and_failed_read_rate_report(tmp_path):
     assert not report["all_pass"]
 
 
-def test_source_http_client_uses_standard_tls_hello(tmp_path):
+def test_source_http_client_uses_standard_tls_hello(tmp_path: Path) -> None:
     from tank.sources import tls_context
 
     assert tls_context().post_handshake_auth is True
@@ -2489,7 +2524,7 @@ def test_source_http_client_uses_standard_tls_hello(tmp_path):
     assert svc.http._transport._pool._ssl_context.post_handshake_auth is True
 
 
-def test_article_text_without_site_boilerplate():
+def test_article_text_without_site_boilerplate() -> None:
     sec = (
         b'<main><div class="main-content__sidenav">More in this Section Press Release Other release</div>'
         b'<div class="main-content__main"><h1>SEC charges firm</h1>'
@@ -2546,7 +2581,7 @@ def test_article_text_without_site_boilerplate():
 
 
 @pytest.mark.asyncio
-async def test_pending_rows_without_item_id_are_dropped_and_rediscovered(tmp_path):
+async def test_pending_rows_without_item_id_are_dropped_and_rediscovered(tmp_path: Path) -> None:
     source = {"source_id": "S30", "feeds": [{"url": "https://example.org/rss", "kind": "rss"}]}
     repo = Repo()
     old_row = {"external_id": "release-42", "url": "https://example.org/a", "title": "Old", "text": "Old"}
@@ -2568,7 +2603,7 @@ async def test_pending_rows_without_item_id_are_dropped_and_rediscovered(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_stale_article_errors_clear_when_nothing_is_pending(tmp_path):
+async def test_stale_article_errors_clear_when_nothing_is_pending(tmp_path: Path) -> None:
     source = {"source_id": "S30", "feeds": [{"url": "https://example.org/rss", "kind": "rss"}]}
     repo = Repo()
     stale = {"https://example.org/old": {"reason": "METADATA_UNVERIFIABLE"}}
@@ -2584,7 +2619,7 @@ async def test_stale_article_errors_clear_when_nothing_is_pending(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_poll_clears_stale_article_errors(tmp_path):
+async def test_poll_clears_stale_article_errors(tmp_path: Path) -> None:
     source = {"source_id": "S30", "feeds": [{"url": "https://example.org/rss", "kind": "rss"}]}
     repo = Repo()
     await repo.put(
@@ -2604,15 +2639,15 @@ async def test_poll_clears_stale_article_errors(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_instrument_snapshot_written_only_when_it_changes(tmp_path, collector_http):
+async def test_instrument_snapshot_written_only_when_it_changes(tmp_path: Path, collector_http) -> None:
     status = ["TRADING"]
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         rows = [{"symbol": "ABCUSDT", "baseAsset": "ABC", "quoteAsset": "USDT", "status": status[0]}]
         return httpx.Response(200, json={"symbols": rows})
 
     class Counting(Repo):
-        def __init__(self):
+        def __init__(self) -> None:
             super().__init__()
             self.snapshot_writes = 0
 
@@ -2644,7 +2679,7 @@ async def test_instrument_snapshot_written_only_when_it_changes(tmp_path, collec
         assert repo.snapshot_writes == 2
 
 
-def test_one_poll_of_a_venue_list_groups_symbols_that_made_the_same_move():
+def test_one_poll_of_a_venue_list_groups_symbols_that_made_the_same_move() -> None:
     from tank.sources.polling import instrument_changes
 
     feed = {"url": "https://api.kraken.com/0/public/AssetPairs", "venue": "kraken", "market_type": "SPOT"}
@@ -2678,7 +2713,7 @@ def test_one_poll_of_a_venue_list_groups_symbols_that_made_the_same_move():
     assert json.loads(by_title["OTHUSD instrument change"]["text"])["before"] is None
 
 
-def test_a_grouped_change_keeps_its_own_identity_when_the_list_returns_to_an_earlier_snapshot():
+def test_a_grouped_change_keeps_its_own_identity_when_the_list_returns_to_an_earlier_snapshot() -> None:
     from tank.sources.polling import instrument_changes
 
     feed = {"url": "https://api.kraken.com/0/public/AssetPairs", "venue": "kraken", "market_type": "SPOT"}

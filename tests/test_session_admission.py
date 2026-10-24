@@ -56,7 +56,7 @@ def settings(cap=2):
     )
 
 
-async def seed(repo):
+async def seed(repo) -> None:
     at = iso()
     for item in ("i_new", "i_idle", "i_busy", "i_e1", "i_e2", "i_e3"):
         await repo.put(
@@ -130,13 +130,13 @@ async def seed(repo):
         )
 
 
-async def until(predicate, timeout=3):
+async def until(predicate, timeout=3) -> None:
     async with asyncio.timeout(timeout):
         while not await predicate():
             await asyncio.sleep(0.05)
 
 
-async def release(repo, sid):
+async def release(repo, sid) -> None:
     session = await repo.get("ops.agent_sessions", sid)
     await repo.put(
         "ops.agent_sessions", sid, {**session, "runtime_status": "IDLE", "active_message_id": None}
@@ -149,15 +149,15 @@ async def release(repo, sid):
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
 async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasses(
-    backend, monkeypatch, postgres_template
-):
+    backend, monkeypatch: pytest.MonkeyPatch, postgres_template
+) -> None:
     async with fixture_repo(backend, postgres_template) as repo:
         await seed(repo)
         before_items = {row["item_id"]: row["observed_at"] for row in await repo.list("ingest.source_items")}
         before_known = {row["event_id"]: row["known_to_us_at"] for row in await repo.list("evt.events")}
         posted = []
 
-        def openma(request):
+        def openma(request: pytest.FixtureRequest):
             if request.method == "GET":
                 return httpx.Response(200, json={"data": [], "next_page": None})
             body = json.loads(request.content)
@@ -194,7 +194,7 @@ async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasse
 
             inspected_after_new = asyncio.Event()
 
-            async def no_delivery():
+            async def no_delivery() -> None:
 
                 if (await repo.get("ops.jobs", jobs["new"]))["status"] == "DONE":
                     inspected_after_new.set()
@@ -250,7 +250,9 @@ async def _waiting(repo, jobs, *names):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_slow_admission_check_waits_without_spending_an_attempt(monkeypatch):
+async def test_slow_admission_check_waits_without_spending_an_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     repo = MemoryRepository()
     job = await repo.enqueue("AGENT_MESSAGE", {"kind": "NEW_ITEM", "item_id": "i"}, "slow", priority=1)
     expiry = (await repo.get("ops.jobs", job["job_id"]))["expires_at"]
@@ -258,17 +260,17 @@ async def test_slow_admission_check_waits_without_spending_an_attempt(monkeypatc
     handled = []
 
     class SlowSessions:
-        async def admit(self, job):
+        async def admit(self, job) -> None:
             await asyncio.Event().wait()
 
-    async def handler(payload):
+    async def handler(payload) -> None:
         handled.append(payload)
 
     runtime = object.__new__(Runtime)
     runtime.repo, runtime.sessions, runtime.active_jobs = repo, SlowSessions(), set()
     runtime.handlers = {"AGENT_MESSAGE": handler}
 
-    async def no_delivery():
+    async def no_delivery() -> None:
         return None
 
     runtime.reconcile_delivery_failures = no_delivery

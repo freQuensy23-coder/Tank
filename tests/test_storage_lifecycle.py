@@ -22,7 +22,9 @@ async def lifecycle_repo(postgres_template):
         yield repo
 
 
-async def test_pg_early_iterator_exit_releases_transaction(lifecycle_repo, caplog):
+async def test_pg_early_iterator_exit_releases_transaction(
+    lifecycle_repo, caplog: pytest.LogCaptureFixture
+) -> None:
     repo = lifecycle_repo
     caplog.set_level(logging.WARNING)
     iterator = repo.iter_all("reg.tokens", batch_size=1)
@@ -37,7 +39,9 @@ async def test_pg_early_iterator_exit_releases_transaction(lifecycle_repo, caplo
     assert not caplog.records
 
 
-async def test_pg_repeated_cancel_during_transaction_exit(lifecycle_repo, monkeypatch, caplog):
+async def test_pg_repeated_cancel_during_transaction_exit(
+    lifecycle_repo, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     import psycopg
 
     repo = lifecycle_repo
@@ -56,7 +60,7 @@ async def test_pg_repeated_cancel_during_transaction_exit(lifecycle_repo, monkey
 
     monkeypatch.setattr(psycopg.AsyncTransaction, "__aexit__", delayed_exit)
 
-    async def worker():
+    async def worker() -> None:
         nonlocal target_connection
         async with repo.transaction():
             target_connection = repo._conn()
@@ -80,13 +84,13 @@ async def test_pg_repeated_cancel_during_transaction_exit(lifecycle_repo, monkey
     assert not caplog.records
 
 
-async def test_pg_child_task_uses_own_connection_and_savepoints(lifecycle_repo):
+async def test_pg_child_task_uses_own_connection_and_savepoints(lifecycle_repo) -> None:
     repo = lifecycle_repo
     async with repo.transaction():
         parent_connection = repo._conn()
         await parent_connection.execute("INSERT INTO reg.tokens VALUES ('parent-uncommitted','{}')")
 
-        async def child():
+        async def child() -> None:
             assert await repo.get("reg.tokens", "parent-uncommitted") is None
             async with repo.transaction():
                 assert repo._conn() is not parent_connection
@@ -103,7 +107,9 @@ async def test_pg_child_task_uses_own_connection_and_savepoints(lifecycle_repo):
     assert await repo.get("reg.tokens", "child-committed") == {}
 
 
-async def test_pg_cancel_during_enter_rolls_back_without_running_body(lifecycle_repo, monkeypatch, caplog):
+async def test_pg_cancel_during_enter_rolls_back_without_running_body(
+    lifecycle_repo, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     import psycopg
 
     entered = asyncio.Event()
@@ -121,7 +127,7 @@ async def test_pg_cancel_during_enter_rolls_back_without_running_body(lifecycle_
 
     monkeypatch.setattr(psycopg.AsyncTransaction, "__aenter__", delayed_enter)
 
-    async def worker():
+    async def worker() -> None:
         async with lifecycle_repo.transaction():
             body.append(True)
 
@@ -139,14 +145,16 @@ async def test_pg_cancel_during_enter_rolls_back_without_running_body(lifecycle_
     assert not caplog.records
 
 
-async def test_pg_cancel_active_query_keeps_connection_usable(lifecycle_repo, caplog):
+async def test_pg_cancel_active_query_keeps_connection_usable(
+    lifecycle_repo, caplog: pytest.LogCaptureFixture
+) -> None:
     import psycopg
 
     repo = lifecycle_repo
     entered = asyncio.Event()
     connections = []
 
-    async def worker():
+    async def worker() -> None:
         async with repo.transaction():
             connections.append(repo._conn())
             entered.set()
@@ -167,11 +175,11 @@ async def test_pg_cancel_active_query_keeps_connection_usable(lifecycle_repo, ca
     assert not caplog.records
 
 
-async def test_pg_child_outliving_parent_does_not_reuse_stale_binding(lifecycle_repo):
+async def test_pg_child_outliving_parent_does_not_reuse_stale_binding(lifecycle_repo) -> None:
     repo = lifecycle_repo
     release = asyncio.Event()
 
-    async def child():
+    async def child() -> None:
         await release.wait()
         with pytest.raises(RuntimeError, match="current task"):
             repo._conn()
@@ -185,7 +193,9 @@ async def test_pg_child_outliving_parent_does_not_reuse_stale_binding(lifecycle_
     assert repo._connection.get() is None
 
 
-async def test_pg_repeated_cancel_nested_advisory_wait_keeps_parent_lock(lifecycle_repo, caplog):
+async def test_pg_repeated_cancel_nested_advisory_wait_keeps_parent_lock(
+    lifecycle_repo, caplog: pytest.LogCaptureFixture
+) -> None:
     import psycopg
 
     repo = lifecycle_repo
@@ -193,7 +203,7 @@ async def test_pg_repeated_cancel_nested_advisory_wait_keeps_parent_lock(lifecyc
     connections = []
     acquired = []
 
-    async def worker():
+    async def worker() -> None:
         async with repo.transaction():
             connections.append(repo._conn())
             started.set()

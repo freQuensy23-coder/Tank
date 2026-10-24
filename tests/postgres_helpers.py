@@ -80,7 +80,7 @@ async def _finish(operation):
     return result
 
 
-async def _attach_clickhouse(repo, name):
+async def _attach_clickhouse(repo, name) -> None:
     """Each case's exchange series live in its own ClickHouse database (CLICKHOUSE_TEST_URL)."""
     import os
 
@@ -94,7 +94,7 @@ async def _attach_clickhouse(repo, name):
         await repo.clickhouse.execute(statement)
 
 
-async def _detach_clickhouse(repo):
+async def _detach_clickhouse(repo) -> None:
     ch = getattr(repo, "clickhouse", None)
     if ch is not None:
         try:
@@ -103,8 +103,8 @@ async def _detach_clickhouse(repo):
             await ch.close()
 
 
-async def _drop_database(admin_dsn, name):
-    async def drop():
+async def _drop_database(admin_dsn, name) -> None:
+    async def drop() -> None:
         admin = await psycopg.AsyncConnection.connect(admin_dsn, autocommit=True)
         try:
             await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
@@ -122,7 +122,7 @@ async def _create_database(admin_dsn, template=None, *, name=None):
         command += sql.SQL(" TEMPLATE {}").format(sql.Identifier(template))
     created = False
 
-    async def create():
+    async def create() -> None:
         nonlocal created
         admin = await psycopg.AsyncConnection.connect(admin_dsn, autocommit=True)
         try:
@@ -140,7 +140,7 @@ async def _create_database(admin_dsn, template=None, *, name=None):
     return name
 
 
-async def _validate_schema_template(admin_dsn, name):
+async def _validate_schema_template(admin_dsn, name) -> None:
     _connection_identity(admin_dsn)
     _template_name(name)
     admin = await psycopg.AsyncConnection.connect(admin_dsn, autocommit=True)
@@ -211,7 +211,7 @@ async def prepare_schema_template(admin_dsn, name):
 class PostgresTemplate:
     """Lazy template owner; an explicit sealed external seed is never owned."""
 
-    def __init__(self, *, schema_template=None):
+    def __init__(self, *, schema_template=None) -> None:
         self._external_template = _template_name(schema_template) if schema_template is not None else None
         self._templates = {}
         self._building = {}
@@ -260,7 +260,7 @@ class PostgresTemplate:
             yield repo
         finally:
 
-            async def cleanup():
+            async def cleanup() -> None:
                 try:
                     await repo.close()
                     await _detach_clickhouse(repo)
@@ -269,8 +269,8 @@ class PostgresTemplate:
 
             await _finish(cleanup())
 
-    async def close(self):
-        async def cleanup():
+    async def close(self) -> None:
+        async def cleanup() -> None:
             for identity, (admin_dsn, name) in list(self._templates.items()):
                 await _drop_database(admin_dsn, name)
                 del self._templates[identity]

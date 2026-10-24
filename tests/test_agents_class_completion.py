@@ -2,6 +2,7 @@
 
 import copy
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -32,8 +33,8 @@ from tank.settings import Settings
     ],
 )
 async def test_legacy_origin_completion_does_not_require_class_or_card(
-    tmp_path, backend, case, postgres_template
-):
+    tmp_path: Path, backend, case, postgres_template
+) -> None:
     async with fixture_repo(backend, postgres_template) as repo:
         session, args = await seed(repo)
         session["message_log"][0]["body"] = {"type": "user.message", "content": []}
@@ -43,7 +44,7 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
         tools = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
         requests, posts, accepted = [], [], []
 
-        def handler(request):
+        def handler(request: pytest.FixtureRequest):
             requests.append((request.method, request.url.path))
             if request.method == "POST":
                 event = json.loads(request.content)["events"][0]

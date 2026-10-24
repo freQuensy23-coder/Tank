@@ -90,7 +90,7 @@ async def both():
     routed = PostgresRepository("postgresql:///unused")
     routed.clickhouse = ch
 
-    async def put(collection, records):
+    async def put(collection, records) -> None:
         await memory.put_market_batch(collection, records)
         prepared = ms._prepare_records(collection, records, None, MARKET_COLUMNS[collection], False)
         body = "\n".join(json.dumps(ch_row(collection, r, k)) for k, r in prepared.items())
@@ -111,7 +111,7 @@ async def collect(gen):
     return [row async for row in gen]
 
 
-async def test_routed_reads_match_memory(both):
+async def test_routed_reads_match_memory(both) -> None:
     memory, routed, put = both
     klines = [kline(iid, m, str(100 + m)) for iid in IIDS for m in range(6)]
     klines.append(kline(IIDS[0], 6, "0", complete=True))
@@ -216,7 +216,7 @@ async def test_routed_reads_match_memory(both):
     )
 
 
-async def test_replacing_write_reads_as_the_last_one(both):
+async def test_replacing_write_reads_as_the_last_one(both) -> None:
     memory, routed, put = both
     await put("mkt.flow_bars_1m", [bar(IIDS[0], 0, complete=False)])
     await put("mkt.flow_bars_1m", [bar(IIDS[0], 0, complete=True)])
@@ -224,7 +224,7 @@ async def test_replacing_write_reads_as_the_last_one(both):
     assert len(rows) == 1 and rows[0]["complete"] is True
 
 
-async def test_latest_per_instrument_reaches_past_the_recent_day(both):
+async def test_latest_per_instrument_reaches_past_the_recent_day(both) -> None:
     memory, routed, put = both
     cutoff = T0 + timedelta(days=3)
     await put(

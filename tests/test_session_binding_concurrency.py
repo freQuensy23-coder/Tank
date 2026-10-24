@@ -4,6 +4,7 @@ import asyncio
 import os
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -127,8 +128,8 @@ async def seed(repo):
 )
 @pytest.mark.parametrize("simulate_old_boundary", [False, True])
 async def test_controller_snapshot_cannot_erase_domain_binding(
-    tmp_path, backend, simulate_old_boundary, postgres_template
-):
+    tmp_path: Path, backend, simulate_old_boundary, postgres_template
+) -> None:
     async with fixture_repo(backend, postgres_template) as repo:
         session, args = await seed(repo)
         tools = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
@@ -154,7 +155,7 @@ async def test_controller_snapshot_cannot_erase_domain_binding(
 
         repo.put, repo.lock = put, lock
 
-        def handler(request):
+        def handler(request: pytest.FixtureRequest):
             return httpx.Response(
                 200,
                 json={
@@ -193,8 +194,8 @@ async def test_controller_snapshot_cannot_erase_domain_binding(
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
 async def test_origin_scope_rechecked_after_two_unbound_preflight_snapshots(
-    tmp_path, backend, postgres_template
-):
+    tmp_path: Path, backend, postgres_template
+) -> None:
     async with fixture_repo(backend, postgres_template) as repo:
         _, args = await seed(repo)
         tools = EventToolService(repo, Settings(data_dir=tmp_path), None, None)

@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -27,7 +28,9 @@ from tank.util import new_id
         "native_terminated",
     ],
 )
-async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(tmp_path, failure_kind):
+async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
+    tmp_path: Path, failure_kind
+) -> None:
     cfg = {
         "registry": {"tokens": [{"token_id": "T", "symbol": "T"}], "entities": [], "instruments": []},
         "thresholds": {},
@@ -128,14 +131,14 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
             finally:
                 retired.set()
 
-        async def aclose(self):
+        async def aclose(self) -> None:
             if failure_kind not in {"native_terminal", "native_terminated", "lost_acceptance"}:
                 current = await repo.get("ops.agent_sessions", "owned-session")
 
                 assert current["status"] == "OPEN"
             retired.set()
 
-    async def transport(request):
+    async def transport(request: pytest.FixtureRequest):
         path = request.url.path
         if path.endswith("/archive"):
             if failure_kind != "lost_acceptance":
@@ -286,7 +289,7 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
     assert not await repo.list("out.alerts")
 
 
-async def test_replay_abort_preserves_completed_state_and_refuses_other_ownership():
+async def test_replay_abort_preserves_completed_state_and_refuses_other_ownership() -> None:
     repo = MemoryRepository()
     cfg = Settings(_env_file=None)
     source = {"item_id": "completed-source", "extraction_status": "DONE", "event_id": "accepted-event"}
@@ -332,7 +335,7 @@ async def test_replay_abort_preserves_completed_state_and_refuses_other_ownershi
         await service.close()
 
 
-async def test_native_terminal_failure_clears_runtime_but_preserves_done_messages_and_source():
+async def test_native_terminal_failure_clears_runtime_but_preserves_done_messages_and_source() -> None:
     repo = MemoryRepository()
     done = {"message_id": "done", "turn_status": "DONE", "immutable_completion": "retained"}
     active = {
@@ -385,7 +388,7 @@ async def test_native_terminal_failure_clears_runtime_but_preserves_done_message
 
 
 @pytest.mark.parametrize("turn_status", ["RUNNING", "DONE"])
-async def test_native_termination_clears_runtime_without_manufacturing_completion(turn_status):
+async def test_native_termination_clears_runtime_without_manufacturing_completion(turn_status) -> None:
     repo = MemoryRepository()
     message = {"message_id": "turn", "turn_status": turn_status, "payload": {"item_id": "done-source"}}
     if turn_status == "DONE":

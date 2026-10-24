@@ -28,7 +28,7 @@ def original():
     return dict(row, item_id="item-s13-recovery")
 
 
-def test_retained_cms_entry_declares_slug_without_replacing_canonical_identity():
+def test_retained_cms_entry_declares_slug_without_replacing_canonical_identity() -> None:
     row = original()
     assert row["publisher_cms_identity"]["entry_id"] == "59JVkSSAyZoVoQP8zH3Wkn"
     assert row["publisher_cms_slug_url"] == NEW
@@ -38,7 +38,7 @@ def test_retained_cms_entry_declares_slug_without_replacing_canonical_identity()
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mismatch", [None, "entry_id", "title", "content"])
-async def test_retained_canonical_404_recovers_only_exact_same_cms_entry(tmp_path, mismatch):
+async def test_retained_canonical_404_recovers_only_exact_same_cms_entry(tmp_path: Path, mismatch) -> None:
     detail = retained("detail")
     if mismatch:
         from selectolax.parser import HTMLParser
@@ -47,7 +47,7 @@ async def test_retained_canonical_404_recovers_only_exact_same_cms_entry(tmp_pat
         script = tree.css_first("script#__NEXT_DATA__")
         data = json.loads(script.text())
 
-        def change(x):
+        def change(x) -> None:
             if isinstance(x, dict):
                 if x.get("sys", {}).get("id") == "59JVkSSAyZoVoQP8zH3Wkn":
                     if mismatch == "entry_id":
@@ -69,7 +69,7 @@ async def test_retained_canonical_404_recovers_only_exact_same_cms_entry(tmp_pat
         detail = tree.html.encode()
     calls = []
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         calls.append(str(request.url))
         if str(request.url) == OLD:
             return httpx.Response(404, content=retained("not-found"))
@@ -103,7 +103,7 @@ async def test_retained_canonical_404_recovers_only_exact_same_cms_entry(tmp_pat
 
 
 @pytest.mark.parametrize("slug", ["../escape", "https://evil.org/article", "/absolute", "with?query"])
-def test_untrusted_slug_never_becomes_fallback(slug):
+def test_untrusted_slug_never_becomes_fallback(slug) -> None:
     payload = {
         "sys": {"id": "one"},
         "fields": {"slug": slug, "title": "Article", "content": {"nodeType": "document"}},
@@ -113,19 +113,21 @@ def test_untrusted_slug_never_becomes_fallback(slug):
 
 
 @pytest.mark.asyncio
-async def test_cms_fallback_is_not_used_for_non404_failure(tmp_path, monkeypatch):
+async def test_cms_fallback_is_not_used_for_non404_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from types import SimpleNamespace
 
     import tank.sources as source_module
 
     calls, retry_delays = [], []
 
-    async def record_retry(delay):
+    async def record_retry(delay) -> None:
         retry_delays.append(delay)
 
     monkeypatch.setattr(source_module, "asyncio", SimpleNamespace(sleep=record_retry))
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         calls.append(str(request.url))
         return httpx.Response(403, text="Forbidden")
 
@@ -147,10 +149,10 @@ async def test_cms_fallback_is_not_used_for_non404_failure(tmp_path, monkeypatch
     "fallback",
     ["https://evil.org/newsroom/article/", NEW + "?other=1", "https://robinhood.com/newsroom/other/"],
 )
-async def test_checkpoint_fallback_must_match_same_host_and_declared_slug(tmp_path, fallback):
+async def test_checkpoint_fallback_must_match_same_host_and_declared_slug(tmp_path: Path, fallback) -> None:
     calls = []
 
-    def handle(request):
+    def handle(request: pytest.FixtureRequest):
         calls.append(str(request.url))
         return httpx.Response(404, content=retained("not-found"))
 

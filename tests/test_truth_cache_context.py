@@ -75,7 +75,9 @@ def _spot_packet():
     return packet
 
 
-def test_concurrent_actual_assessments_isolate_inherited_cache_and_restore_context(monkeypatch):
+def test_concurrent_actual_assessments_isolate_inherited_cache_and_restore_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     packet = _spot_packet()
     first, second = deepcopy(packet), deepcopy(packet)
     first["event_id"], second["event_id"] = "FIRST", "SECOND"
@@ -152,7 +154,7 @@ def test_concurrent_actual_assessments_isolate_inherited_cache_and_restore_conte
         module._BASELINE_CACHE.reset(outer_cache_token)
 
 
-def test_failed_assessment_restores_all_inherited_context(monkeypatch):
+def test_failed_assessment_restores_all_inherited_context(monkeypatch: pytest.MonkeyPatch) -> None:
     cache = {"existing": "caller"}
     parameters = {"normal_range_quantiles": [0.1, 0.9]}
     inputs = {"caller": "untouched"}
@@ -163,7 +165,7 @@ def test_failed_assessment_restores_all_inherited_context(monkeypatch):
         module._ASSESSMENT_INPUTS.set(inputs),
     ]
 
-    def fail(*args, **kwargs):
+    def fail(*args, **kwargs) -> None:
         assert module._BASELINE_CACHE.get() == {}
         assert module._BASELINE_CACHE.get() is not cache
         assert module._ASSESSMENT_INPUTS.get() == {}

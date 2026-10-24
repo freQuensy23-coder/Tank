@@ -8,6 +8,7 @@ import re
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from functools import lru_cache
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -82,7 +83,7 @@ def shifted_snapshot(end, *, full_flow_history=True):
 class ReleasedMarket:
     """Only synthetic acquisition is controlled; numerical classification stays real."""
 
-    def __init__(self, snapshot):
+    def __init__(self, snapshot) -> None:
         self.source = snapshot
         self.released = False
         self.reads = []
@@ -101,13 +102,13 @@ class ReleasedMarket:
     async def condition_snapshot(self, token, cutoff, *, anchor=None, requirements=None):
         return await self.snapshot(token, cutoff, anchor=anchor)
 
-    async def escalate(self, *args, **kwargs):
+    async def escalate(self, *args, **kwargs) -> None:
         return None
 
     async def capture_readiness(self, *args, **kwargs):
         return {"status": "PARTIAL"}
 
-    async def wait_capture(self, *args, **kwargs):
+    async def wait_capture(self, *args, **kwargs) -> None:
         raise AssertionError("Terminal capture must not wait")
 
 
@@ -137,13 +138,13 @@ async def _refresh_repository(backend, postgres_template):
             yield repo
 
 
-async def seed_bound_session(repo):
+async def seed_bound_session(repo) -> None:
     session, _ = await seed_typed_session(repo)
     session["event_id"] = "e"
     await repo.put("ops.agent_sessions", "s", session)
 
 
-async def seed_domain(repo, settings, end):
+async def seed_domain(repo, settings, end) -> None:
     anchor = iso(end - timedelta(hours=4))
     event = complete_event_fixture(
         "e",
@@ -184,8 +185,8 @@ async def seed_domain(repo, settings, end):
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
 async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_ack(
-    tmp_path, backend, postgres_template, monkeypatch
-):
+    tmp_path: Path, backend, postgres_template, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async with _refresh_repository(backend, postgres_template) as repo:
         settings = Settings(data_dir=tmp_path, _env_file=None)
         end = utcnow().replace(second=0, microsecond=0)
@@ -218,7 +219,7 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
         sent = []
         native_messages = []
 
-        def transport(request):
+        def transport(request: pytest.FixtureRequest):
             body = json.loads(request.content)
             if body["events"][0]["type"] == "user.message":
                 native_messages.append(json.loads(body["events"][0]["content"][0]["text"]))
@@ -276,12 +277,12 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
                 await worker
 
 
-async def test_runtime_waits_for_capture_release_before_numerical_assessment():
+async def test_runtime_waits_for_capture_release_before_numerical_assessment() -> None:
     repo = MemoryRepository()
     await repo.put("evt.events", "e", {"event_id": "e", "public_at": iso(), "known_to_us_at": iso()})
     waiting, release = asyncio.Event(), asyncio.Event()
 
-    async def wait_capture(*args, **kwargs):
+    async def wait_capture(*args, **kwargs) -> None:
         assert kwargs["timeout_s"] == 15
         waiting.set()
         await release.wait()
@@ -305,8 +306,8 @@ async def test_runtime_waits_for_capture_release_before_numerical_assessment():
 )
 @pytest.mark.integration
 async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
-    tmp_path, backend, postgres_template
-):
+    tmp_path: Path, backend, postgres_template
+) -> None:
     async with _refresh_repository(backend, postgres_template) as repo:
         settings = Settings(data_dir=tmp_path, _env_file=None)
         end = utcnow().replace(second=0, microsecond=0)
@@ -330,7 +331,7 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
         }
         acks = []
 
-        def accepted(request):
+        def accepted(request: pytest.FixtureRequest):
             acks.append(json.loads(request.content))
             return httpx.Response(200, json={})
 
@@ -378,8 +379,8 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
 )
 @pytest.mark.integration
 async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_refresh(
-    tmp_path, backend, postgres_template
-):
+    tmp_path: Path, backend, postgres_template
+) -> None:
     async with _refresh_repository(backend, postgres_template) as repo:
         settings = Settings(data_dir=tmp_path, _env_file=None)
         end = utcnow().replace(second=0, microsecond=0)
@@ -478,7 +479,9 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
     ],
 )
 @pytest.mark.integration
-async def test_event_only_risk_watch_never_waits_for_market_refresh(tmp_path, role, metric, value, expected):
+async def test_event_only_risk_watch_never_waits_for_market_refresh(
+    tmp_path: Path, role, metric, value, expected
+) -> None:
     repo = MemoryRepository()
     settings = Settings(data_dir=tmp_path, _env_file=None)
     end = utcnow().replace(second=0, microsecond=0)

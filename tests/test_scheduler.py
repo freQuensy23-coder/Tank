@@ -1,4 +1,5 @@
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -10,7 +11,7 @@ from tank.util import iso, utcnow
 
 
 @pytest.mark.asyncio
-async def test_recursive_hourly_persistence_does_not_count_same_window_twice():
+async def test_recursive_hourly_persistence_does_not_count_same_window_twice() -> None:
     repo = MemoryRepository()
     now = utcnow().replace(minute=0, second=0, microsecond=0)
     truth = SimpleNamespace(
@@ -56,7 +57,7 @@ async def test_recursive_hourly_persistence_does_not_count_same_window_twice():
 
 
 @pytest.mark.asyncio
-async def test_tracked_event_closes_after_seven_days_without_news():
+async def test_tracked_event_closes_after_seven_days_without_news() -> None:
     repo = MemoryRepository()
     now = utcnow()
     await repo.put(
@@ -70,7 +71,7 @@ async def test_tracked_event_closes_after_seven_days_without_news():
 
 
 @pytest.mark.asyncio
-async def test_pre_event_capture_uses_pre_window_and_is_immutable(monkeypatch):
+async def test_pre_event_capture_uses_pre_window_and_is_immutable(monkeypatch: pytest.MonkeyPatch) -> None:
     import tank.analysis.truth
 
     repo = MemoryRepository()
@@ -104,7 +105,7 @@ async def test_pre_event_capture_uses_pre_window_and_is_immutable(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_missing_market_value_never_fires_not_equal_condition():
+async def test_missing_market_value_never_fires_not_equal_condition() -> None:
 
     repo = MemoryRepository()
     now = utcnow()
@@ -127,7 +128,7 @@ async def test_missing_market_value_never_fires_not_equal_condition():
 
 
 @pytest.mark.asyncio
-async def test_cooldown_requires_all_analysis_and_benchmark_checkpoints():
+async def test_cooldown_requires_all_analysis_and_benchmark_checkpoints() -> None:
     repo = MemoryRepository()
     now = utcnow()
     await repo.put(
@@ -161,7 +162,7 @@ async def test_cooldown_requires_all_analysis_and_benchmark_checkpoints():
 
 
 @pytest.mark.asyncio
-async def test_failed_backup_never_prunes_market(monkeypatch, tmp_path):
+async def test_failed_backup_never_prunes_market(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     import asyncio
 
     repo = MemoryRepository()
@@ -184,7 +185,9 @@ async def test_failed_backup_never_prunes_market(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_planned_backup_copies_bundles_and_dumps_only(monkeypatch, tmp_path):
+async def test_planned_backup_copies_bundles_and_dumps_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     import asyncio
     from pathlib import Path
 
@@ -223,7 +226,7 @@ async def test_planned_backup_copies_bundles_and_dumps_only(monkeypatch, tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_preserves_unknown_llm_cost():
+async def test_heartbeat_preserves_unknown_llm_cost() -> None:
     from tank.settings import Settings
 
     repo = MemoryRepository()
@@ -236,8 +239,8 @@ async def test_heartbeat_preserves_unknown_llm_cost():
 
 @pytest.mark.asyncio
 async def test_relocated_backup_recovers_source_web_replay_config_logs_and_both_databases(
-    monkeypatch, tmp_path
-):
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     import asyncio
     import shutil
     from pathlib import Path
@@ -309,7 +312,7 @@ async def test_relocated_backup_recovers_source_web_replay_config_logs_and_both_
     repo.prune_market.assert_awaited_once()
 
 
-async def real_decision_watch_conditions(monkeypatch, tmp_path):
+async def real_decision_watch_conditions(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Use real EventToolService persistence and real DecisionEngine condition generation."""
     from test_decisions import inputs
 
@@ -344,7 +347,9 @@ async def real_decision_watch_conditions(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_real_generated_conditions_use_two_closed_nonoverlapping_hours(monkeypatch, tmp_path):
+async def test_real_generated_conditions_use_two_closed_nonoverlapping_hours(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from tank.util import parse_time
 
     repo, settings, created, conditions = await real_decision_watch_conditions(monkeypatch, tmp_path)
@@ -380,7 +385,9 @@ async def test_real_generated_conditions_use_two_closed_nonoverlapping_hours(mon
 
 
 @pytest.mark.asyncio
-async def test_real_generated_fatal_condition_fires_next_minute_without_hour_throttle(monkeypatch, tmp_path):
+async def test_real_generated_fatal_condition_fires_next_minute_without_hour_throttle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     repo, settings, created, conditions = await real_decision_watch_conditions(monkeypatch, tmp_path)
     truth = SimpleNamespace(assess=AsyncMock(return_value={"relative": {"close_1h_price": "10"}}))
     scheduler = Scheduler(repo, settings, None, truth)
@@ -401,7 +408,7 @@ async def test_real_generated_fatal_condition_fires_next_minute_without_hour_thr
     assert (await repo.get("ana.watch_conditions", fatal["cond_id"]))["status"] == "FIRED"
 
 
-def test_condition_derivatives_use_requested_window_without_primary_fallback():
+def test_condition_derivatives_use_requested_window_without_primary_fallback() -> None:
     from tank.scheduler import metric_value
 
     truth = {
@@ -422,7 +429,7 @@ def test_condition_derivatives_use_requested_window_without_primary_fallback():
 
 
 @pytest.mark.asyncio
-async def test_post72_reaction_uses_cumulative_event_derivatives(monkeypatch):
+async def test_post72_reaction_uses_cumulative_event_derivatives(monkeypatch: pytest.MonkeyPatch) -> None:
     import tank.analysis.truth
 
     repo = MemoryRepository()
@@ -460,7 +467,9 @@ async def test_post72_reaction_uses_cumulative_event_derivatives(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_automatic_scout_hooks_dedup_and_ignore_low_confidence_or_single_unknown(tmp_path):
+async def test_automatic_scout_hooks_dedup_and_ignore_low_confidence_or_single_unknown(
+    tmp_path: Path,
+) -> None:
     from tank.settings import Settings
 
     repo = MemoryRepository()
@@ -522,7 +531,7 @@ async def test_automatic_scout_hooks_dedup_and_ignore_low_confidence_or_single_u
 
 
 @pytest.mark.asyncio
-async def test_scout_earlier_primary_discovery_and_contradictions_without_truth(tmp_path):
+async def test_scout_earlier_primary_discovery_and_contradictions_without_truth(tmp_path: Path) -> None:
     from tank.settings import Settings
 
     repo = MemoryRepository()
@@ -563,7 +572,9 @@ async def test_scout_earlier_primary_discovery_and_contradictions_without_truth(
 
 
 @pytest.mark.asyncio
-async def test_reaction_cpu_computation_does_not_block_async_heartbeat(monkeypatch):
+async def test_reaction_cpu_computation_does_not_block_async_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import asyncio
     import threading
 
@@ -590,7 +601,7 @@ async def test_reaction_cpu_computation_does_not_block_async_heartbeat(monkeypat
         None,
     )
 
-    async def heartbeat():
+    async def heartbeat() -> None:
         while not started.is_set():
             await asyncio.sleep(0)
         loop_advanced.set()
@@ -614,7 +625,9 @@ async def test_reaction_cpu_computation_does_not_block_async_heartbeat(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_reaction_revision_appends_reasoned_frozen_history_without_duplicate_storm(monkeypatch):
+async def test_reaction_revision_appends_reasoned_frozen_history_without_duplicate_storm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from copy import deepcopy
 
     import tank.analysis.truth
@@ -668,7 +681,7 @@ async def test_reaction_revision_appends_reasoned_frozen_history_without_duplica
 
 
 @pytest.mark.asyncio
-async def test_call_expiry_sets_durable_marker_before_message_and_does_not_exit():
+async def test_call_expiry_sets_durable_marker_before_message_and_does_not_exit() -> None:
     repo = MemoryRepository()
     now = utcnow()
     await repo.put("evt.events", "e", {"event_id": "e"})
@@ -696,7 +709,7 @@ async def test_call_expiry_sets_durable_marker_before_message_and_does_not_exit(
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_reports_actual_queued_and_running_analysis_backlog(tmp_path):
+async def test_heartbeat_reports_actual_queued_and_running_analysis_backlog(tmp_path: Path) -> None:
     from tank.settings import Settings
 
     repo = MemoryRepository()
@@ -717,8 +730,8 @@ async def test_heartbeat_reports_actual_queued_and_running_analysis_backlog(tmp_
 @pytest.mark.asyncio
 @pytest.mark.parametrize("auth_location", ["data", "config", "logs"])
 async def test_backup_excludes_fake_auth_secrets_and_browser_state_in_every_evidence_root(
-    monkeypatch, tmp_path, auth_location
-):
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, auth_location
+) -> None:
     import asyncio
     from pathlib import Path
 
@@ -777,7 +790,9 @@ async def test_backup_excludes_fake_auth_secrets_and_browser_state_in_every_evid
     assert all(path.exists() for path in (auth, secrets / "gateway_key"))
 
 
-def test_existing_backup_with_newly_protected_credential_is_rejected_before_read(monkeypatch, tmp_path):
+def test_existing_backup_with_newly_protected_credential_is_rejected_before_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     import hashlib
     import json
     from pathlib import Path
@@ -811,7 +826,7 @@ def test_existing_backup_with_newly_protected_credential_is_rejected_before_read
 
 
 @pytest.mark.asyncio
-async def test_tick_does_not_wait_for_backup():
+async def test_tick_does_not_wait_for_backup() -> None:
     import asyncio
 
     repo = MemoryRepository()
@@ -819,7 +834,7 @@ async def test_tick_does_not_wait_for_backup():
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def blocked(now):
+    async def blocked(now) -> None:
         entered.set()
         await release.wait()
 
@@ -838,7 +853,7 @@ async def test_tick_does_not_wait_for_backup():
 
 
 @pytest.mark.asyncio
-async def test_milestone_payload_contains_only_verified_outcome_and_quotes():
+async def test_milestone_payload_contains_only_verified_outcome_and_quotes() -> None:
     repo = MemoryRepository()
     scheduler = Scheduler(repo, SimpleNamespace(), None, None)
     event = {
@@ -869,7 +884,7 @@ async def test_milestone_payload_contains_only_verified_outcome_and_quotes():
 
 
 @pytest.mark.asyncio
-async def test_reaction_future_expiry_and_completed_checkpoint_not_recreated():
+async def test_reaction_future_expiry_and_completed_checkpoint_not_recreated() -> None:
     repo = MemoryRepository()
     now = utcnow()
     anchor = iso(now)
@@ -914,7 +929,7 @@ async def test_reaction_future_expiry_and_completed_checkpoint_not_recreated():
 
 
 @pytest.mark.asyncio
-async def test_scheduler_honors_configured_call_expiry():
+async def test_scheduler_honors_configured_call_expiry() -> None:
     repo = MemoryRepository()
     now = utcnow()
     settings = SimpleNamespace(load_config=lambda name: {"call_expiry_days": 2, "hot_token_cap": 1})
@@ -937,7 +952,7 @@ async def test_scheduler_honors_configured_call_expiry():
 
 
 @pytest.mark.asyncio
-async def test_reaction_pack_ulid_stable_for_group_across_restart_and_legacy():
+async def test_reaction_pack_ulid_stable_for_group_across_restart_and_legacy() -> None:
     repo = MemoryRepository()
     settings = SimpleNamespace()
     await repo.put(
@@ -954,7 +969,7 @@ async def test_reaction_pack_ulid_stable_for_group_across_restart_and_legacy():
 
 
 @pytest.mark.asyncio
-async def test_reaction_targets_use_current_analysis_map_not_historical_edges():
+async def test_reaction_targets_use_current_analysis_map_not_historical_edges() -> None:
     repo = MemoryRepository()
     scheduler = Scheduler(repo, SimpleNamespace(), None, None)
     await repo.put(
@@ -1000,7 +1015,9 @@ def legacy_full_backup_fixture(settings, now):
 
 
 @pytest.mark.asyncio
-async def test_reaction_measurement_releases_database_scope_and_duplicate_commit_is_idempotent(monkeypatch):
+async def test_reaction_measurement_releases_database_scope_and_duplicate_commit_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import asyncio
     from contextlib import asynccontextmanager
 
@@ -1046,7 +1063,7 @@ async def test_reaction_measurement_releases_database_scope_and_duplicate_commit
 
 
 @pytest.mark.asyncio
-async def test_reaction_creation_registers_only_five_post_jobs_and_starts_pre_without_waiting():
+async def test_reaction_creation_registers_only_five_post_jobs_and_starts_pre_without_waiting() -> None:
     import asyncio
 
     repo = MemoryRepository()
@@ -1058,7 +1075,7 @@ async def test_reaction_creation_registers_only_five_post_jobs_and_starts_pre_wi
     started, release = asyncio.Event(), asyncio.Event()
     captured = []
 
-    async def capture(payload, *, wait_for_slot=False):
+    async def capture(payload, *, wait_for_slot=False) -> None:
         assert wait_for_slot
         captured.append(payload)
         started.set()
@@ -1090,7 +1107,9 @@ async def test_reaction_creation_registers_only_five_post_jobs_and_starts_pre_wi
 
 
 @pytest.mark.asyncio
-async def test_reaction_pre_capture_restart_resumes_only_missing_immutable_rows(monkeypatch):
+async def test_reaction_pre_capture_restart_resumes_only_missing_immutable_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import asyncio
 
     monkeypatch.setattr("tank.analysis.truth.compute_market_truth", lambda *a, **k: {})
@@ -1128,7 +1147,7 @@ async def test_reaction_pre_capture_restart_resumes_only_missing_immutable_rows(
 
 
 @pytest.mark.asyncio
-async def test_reaction_pre_error_retries_missing_windows_and_close_cancels_owned_work():
+async def test_reaction_pre_error_retries_missing_windows_and_close_cancels_owned_work() -> None:
     import asyncio
 
     repo = MemoryRepository()
@@ -1142,7 +1161,7 @@ async def test_reaction_pre_error_retries_missing_windows_and_close_cancels_owne
     assert scheduler.reaction_capture.await_count == 1
     started = asyncio.Event()
 
-    async def block(payload, **_):
+    async def block(payload, **_) -> None:
         started.set()
         await asyncio.Event().wait()
 
@@ -1156,7 +1175,7 @@ async def test_reaction_pre_error_retries_missing_windows_and_close_cancels_owne
 
 
 @pytest.mark.asyncio
-async def test_dynamic_scheduler_work_does_not_retain_completed_task_frames():
+async def test_dynamic_scheduler_work_does_not_retain_completed_task_frames() -> None:
     import asyncio
 
     scheduler = Scheduler(MemoryRepository(), SimpleNamespace(), None, None)
@@ -1171,17 +1190,17 @@ async def test_dynamic_scheduler_work_does_not_retain_completed_task_frames():
 
 
 @pytest.mark.asyncio
-async def test_older_completion_callback_preserves_same_name_replacement_until_shutdown():
+async def test_older_completion_callback_preserves_same_name_replacement_until_shutdown() -> None:
     import asyncio
 
     scheduler = Scheduler(MemoryRepository(), SimpleNamespace(), None, None)
     started = asyncio.Event()
 
-    async def replacement():
+    async def replacement() -> None:
         started.set()
         await asyncio.Event().wait()
 
-    async def first():
+    async def first() -> None:
 
         asyncio.get_running_loop().call_soon(scheduler.launch, "same", replacement)
 
@@ -1195,7 +1214,7 @@ async def test_older_completion_callback_preserves_same_name_replacement_until_s
 
 
 @pytest.mark.asyncio
-async def test_rearmed_market_watch_needs_a_new_window_and_a_clear():
+async def test_rearmed_market_watch_needs_a_new_window_and_a_clear() -> None:
     """W1: a re-armed watch never fires on the evidence that fired its
     predecessor, and a lasting level does not re-fire every window."""
     repo = MemoryRepository()
@@ -1236,7 +1255,7 @@ async def test_rearmed_market_watch_needs_a_new_window_and_a_clear():
 
 
 @pytest.mark.asyncio
-async def test_rearmed_instant_watch_fires_again_only_after_it_cleared():
+async def test_rearmed_instant_watch_fires_again_only_after_it_cleared() -> None:
     """W1: an instant predicate (event.*, milestone.*) re-arms on an edge, so a
     lasting fact does not re-fire every tick."""
     repo = MemoryRepository()
@@ -1271,7 +1290,7 @@ async def test_rearmed_instant_watch_fires_again_only_after_it_cleared():
 
 
 @pytest.mark.asyncio
-async def test_rearmed_persistent_watch_clears_only_on_an_observed_false_window():
+async def test_rearmed_persistent_watch_clears_only_on_an_observed_false_window() -> None:
     """W1: an unfinished first window after arming is not a clear, so lasting
     spot BUY after START does not re-fire the same upgrade every two hours."""
     repo = MemoryRepository()
@@ -1322,7 +1341,7 @@ async def test_rearmed_persistent_watch_clears_only_on_an_observed_false_window(
 
 
 @pytest.mark.asyncio
-async def test_late_data_revisions_coalesce_to_one_queued_job_per_checkpoint():
+async def test_late_data_revisions_coalesce_to_one_queued_job_per_checkpoint() -> None:
     """03 §8.6: one queued late revision per (event, token, checkpoint); later
     capture changes do not pile up duplicate jobs ahead of live checkpoints."""
     repo = MemoryRepository()
@@ -1343,7 +1362,7 @@ async def test_late_data_revisions_coalesce_to_one_queued_job_per_checkpoint():
         )
 
     class Market:
-        def __init__(self):
+        def __init__(self) -> None:
             self.round = 0
 
         async def capture_changes(self, since, end):
@@ -1364,7 +1383,7 @@ async def test_late_data_revisions_coalesce_to_one_queued_job_per_checkpoint():
 
 
 @pytest.mark.asyncio
-async def test_late_revision_is_deferred_so_following_late_completions_fold_into_it():
+async def test_late_revision_is_deferred_so_following_late_completions_fold_into_it() -> None:
     """r114: each late completion after a restart re-queued every touched checkpoint. A late
     revision now waits LATE_REVISION_DEFER_S, so completions meanwhile fold into it; once it
     has run, a newer completion queues a new revision (frozen-once and revision history unchanged)."""
@@ -1412,7 +1431,7 @@ async def test_late_revision_is_deferred_so_following_late_completions_fold_into
 
 
 @pytest.mark.asyncio
-async def test_queued_duplicate_late_revision_is_skipped_at_run_time():
+async def test_queued_duplicate_late_revision_is_skipped_at_run_time() -> None:
     """03 §8.6: with another automatic revision of the same checkpoint still
     queued, a running one returns at once; the queued one measures all data."""
     repo = MemoryRepository()
@@ -1428,7 +1447,7 @@ async def test_queued_duplicate_late_revision_is_skipped_at_run_time():
 
 
 @pytest.mark.asyncio
-async def test_reaction_measurements_are_limited_and_extra_jobs_requeue():
+async def test_reaction_measurements_are_limited_and_extra_jobs_requeue() -> None:
     """At most REACTION_MEASUREMENT_SLOTS measurements run at once; another job
     is deferred (re-queued without an attempt) instead of holding a worker."""
     import asyncio
@@ -1470,7 +1489,7 @@ async def test_reaction_measurements_are_limited_and_extra_jobs_requeue():
 
 
 @pytest.mark.asyncio
-async def test_eval_conditions_budget_stops_cleanly_and_rotates(monkeypatch):
+async def test_eval_conditions_budget_stops_cleanly_and_rotates(monkeypatch: pytest.MonkeyPatch) -> None:
     """03 §3.8 (20 s): a slow batch stops starting conditions after its budget
     and completes; the least recently evaluated go first."""
     import tank.scheduler as scheduler_module
@@ -1518,7 +1537,7 @@ async def test_eval_conditions_budget_stops_cleanly_and_rotates(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_late_data_after_a_window_end_does_not_revise_that_window():
+async def test_late_data_after_a_window_end_does_not_revise_that_window() -> None:
     """03 §8.6: a change whose market data starts after a checkpoint window's
     end cannot change it; only windows ending at or after it are revised."""
     repo = MemoryRepository()
@@ -1556,7 +1575,9 @@ async def test_late_data_after_a_window_end_does_not_revise_that_window():
 
 
 @pytest.mark.asyncio
-async def test_eval_conditions_progresses_when_one_market_read_outlasts_the_budget(monkeypatch):
+async def test_eval_conditions_progresses_when_one_market_read_outlasts_the_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """r107: a single market read took longer than the whole job, so every batch
     died in its first condition and restarted there. The read now gets only the
     remaining budget, the attempt is recorded, cheap conditions go first and
@@ -1611,7 +1632,9 @@ async def test_eval_conditions_progresses_when_one_market_read_outlasts_the_budg
 
 
 @pytest.mark.asyncio
-async def test_eval_conditions_per_condition_budget_and_explicit_outcomes(monkeypatch):
+async def test_eval_conditions_per_condition_budget_and_explicit_outcomes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Lead ruling r108: one slow condition cannot spend the batch; the job
     completes with an outcome per condition."""
     import asyncio
@@ -1655,7 +1678,7 @@ async def test_eval_conditions_per_condition_budget_and_explicit_outcomes(monkey
 
 
 @pytest.mark.asyncio
-async def test_pre_windows_each_read_only_their_checkpoint_window(monkeypatch):
+async def test_pre_windows_each_read_only_their_checkpoint_window(monkeypatch: pytest.MonkeyPatch) -> None:
     """r110: reaction captures read days of 10 s books; each PRE window now reads its own
     checkpoint window (snapshot scope REACTION), anchored at its own start."""
     import tank.analysis.truth as truth_module
@@ -1692,7 +1715,7 @@ async def test_pre_windows_each_read_only_their_checkpoint_window(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_latest_revision_is_read_as_metadata_not_the_whole_row():
+async def test_latest_revision_is_read_as_metadata_not_the_whole_row() -> None:
     """r110: the newest revision was decoded whole (up to 2 MB of Market Truth)
     for every capture; the plan reads its fields as metadata only."""
     repo = MemoryRepository()
@@ -1711,7 +1734,7 @@ async def test_latest_revision_is_read_as_metadata_not_the_whole_row():
     await repo.put("out.reaction_checkpoints", "e:t:PRE_1H:2", row)
     scheduler = Scheduler(repo, SimpleNamespace(), None, None)
 
-    async def no_full_get(collection, key):
+    async def no_full_get(collection, key) -> None:
         raise AssertionError("full row read: " + key)
 
     repo.get = no_full_get

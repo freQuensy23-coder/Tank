@@ -1,6 +1,7 @@
 """Actual PostgreSQL certainty contract control; no service, native agent or model."""
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -11,7 +12,7 @@ from tank.util import iso, new_id, sha256
 pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 
-async def test_primary_paraphrase_persists_high_in_postgres(tmp_path, postgres_template):
+async def test_primary_paraphrase_persists_high_in_postgres(tmp_path: Path, postgres_template) -> None:
     url = os.getenv("TANK_TEST_DATABASE_URL")
     if not url:
         pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")

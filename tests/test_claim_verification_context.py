@@ -1,5 +1,7 @@
 """An analyst's verification gap survives the public tools into the card."""
 
+from pathlib import Path
+
 import pytest
 from test_card_template import card_inputs, render
 from test_event_tools import seed
@@ -10,7 +12,7 @@ from tank.storage import MemoryRepository
 
 
 @pytest.mark.parametrize("tool", ["record_event", "add_observation"])
-async def test_agent_verification_gap_reaches_card_through_public_tool(tmp_path, tool):
+async def test_agent_verification_gap_reaches_card_through_public_tool(tmp_path: Path, tool) -> None:
     repo = MemoryRepository()
     await repo.open()
     service = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
@@ -41,7 +43,7 @@ async def test_agent_verification_gap_reaches_card_through_public_tool(tmp_path,
 
 
 @pytest.mark.parametrize("provided", [False, True])
-def test_missing_verification_gap_does_not_invent_a_reason(provided):
+def test_missing_verification_gap_does_not_invent_a_reason(provided) -> None:
     values = card_inputs()
     claim = values[0]["claims"][0]
     claim["verified"] = False

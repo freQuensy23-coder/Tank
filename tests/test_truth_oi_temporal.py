@@ -59,7 +59,7 @@ def packet_with_explicit_legacy_bybit_buckets():
     return packet
 
 
-def test_legacy_unit_verified_bybit_unknown_edge_is_supplemental_only():
+def test_legacy_unit_verified_bybit_unknown_edge_is_supplemental_only() -> None:
     packet = packet_with_explicit_legacy_bybit_buckets()
     start, end = parse_time(packet["anchor"]["ts"]), parse_time(packet["cutoff"])
     assert all("semantic_confidence" not in r for r in packet["oi"])
@@ -86,7 +86,7 @@ def test_legacy_unit_verified_bybit_unknown_edge_is_supplemental_only():
 
 
 @pytest.mark.parametrize("edge", ["UNSPECIFIED", None])
-def test_explicit_unknown_bucket_edges_cannot_train_normal_ranges(edge):
+def test_explicit_unknown_bucket_edges_cannot_train_normal_ranges(edge) -> None:
     packet = packet_with_explicit_legacy_bybit_buckets()
     start, end = parse_time(packet["anchor"]["ts"]), parse_time(packet["cutoff"])
     for row in packet["oi"]:
@@ -98,7 +98,7 @@ def test_explicit_unknown_bucket_edges_cannot_train_normal_ranges(edge):
 
 
 @pytest.mark.parametrize("kind", ["END", "START", "EXACT", "ABSENT_LEGACY"])
-def test_known_edges_and_exact_or_absent_legacy_clocks_keep_requested_endpoints(kind):
+def test_known_edges_and_exact_or_absent_legacy_clocks_keep_requested_endpoints(kind) -> None:
     packet = packet_with_explicit_legacy_bybit_buckets()
     start, end = parse_time(packet["anchor"]["ts"]), parse_time(packet["cutoff"])
     for row in packet["oi"]:
@@ -119,7 +119,7 @@ def test_known_edges_and_exact_or_absent_legacy_clocks_keep_requested_endpoints(
     assert sync["native_normal_range"] == [0.0, 0.0]
 
 
-def test_sync_eligibility_flag_does_not_hide_hyperliquid_per_venue_change():
+def test_sync_eligibility_flag_does_not_hide_hyperliquid_per_venue_change() -> None:
     start, end = parse_time("2026-10-19T08:00:00Z"), parse_time("2026-10-19T12:00:00Z")
     instrument = dict(
         instrument_id="hyperliquid:perp:T",
@@ -139,7 +139,7 @@ def test_sync_eligibility_flag_does_not_hide_hyperliquid_per_venue_change():
     assert result["synchronized"] is None
 
 
-def test_unresolved_venue_does_not_poison_known_synchronized_cohort():
+def test_unresolved_venue_does_not_poison_known_synchronized_cohort() -> None:
     packet = packet_with_explicit_legacy_bybit_buckets()
     start, end = parse_time(packet["anchor"]["ts"]), parse_time(packet["cutoff"])
     bybit = packet["oi"]
@@ -159,7 +159,7 @@ def test_unresolved_venue_does_not_poison_known_synchronized_cohort():
     assert sync["oi_native_end"] == 1000
 
 
-def test_hyperliquid_cannot_enter_native_sum_even_with_legacy_eligibility_flag():
+def test_hyperliquid_cannot_enter_native_sum_even_with_legacy_eligibility_flag() -> None:
     packet = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
         "synthetic_start_snapshot"
     ]()

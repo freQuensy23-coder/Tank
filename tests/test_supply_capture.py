@@ -2,6 +2,7 @@
 
 import os
 from decimal import Decimal
+from pathlib import Path
 
 import httpx
 import pytest
@@ -13,7 +14,7 @@ from tank.settings import Settings
 from tank.storage import MemoryRepository
 
 
-def lending_market(tmp_path, transport, *, catalog=True, repo=None, tokens=None):
+def lending_market(tmp_path: Path, transport, *, catalog=True, repo=None, tokens=None):
     token = {
         "token_id": "test:T",
         "contracts": [{"chain": "Base", "address": "0x" + "1" * 40}],
@@ -54,10 +55,12 @@ def lending_market(tmp_path, transport, *, catalog=True, repo=None, tokens=None)
     )
 
 
-async def test_lending_runtime_uses_only_free_endpoint_and_exact_registered_identities(tmp_path):
+async def test_lending_runtime_uses_only_free_endpoint_and_exact_registered_identities(
+    tmp_path: Path,
+) -> None:
     calls = []
 
-    def respond(request):
+    def respond(request: pytest.FixtureRequest):
         calls.append(str(request.url))
         assert str(request.url) == "https://yields.llama.fi/lendBorrow"
         return httpx.Response(
@@ -102,10 +105,12 @@ async def test_lending_runtime_uses_only_free_endpoint_and_exact_registered_iden
         await market.http.aclose()
 
 
-async def test_lending_unknown_identity_remains_explicitly_unavailable_without_catalog(tmp_path):
+async def test_lending_unknown_identity_remains_explicitly_unavailable_without_catalog(
+    tmp_path: Path,
+) -> None:
     calls = []
 
-    def respond(request):
+    def respond(request: pytest.FixtureRequest):
         calls.append(str(request.url))
         return httpx.Response(
             200,
@@ -134,7 +139,7 @@ async def test_lending_unknown_identity_remains_explicitly_unavailable_without_c
         await market.http.aclose()
 
 
-async def test_lending_invalid_free_endpoint_schema_is_not_cached(tmp_path):
+async def test_lending_invalid_free_endpoint_schema_is_not_cached(tmp_path: Path) -> None:
     from tank.market.normalize import SemanticError
 
     token, market = lending_market(tmp_path, lambda _: httpx.Response(200, json={"data": []}))
@@ -149,7 +154,7 @@ async def test_lending_invalid_free_endpoint_schema_is_not_cached(tmp_path):
 @pytest.fixture(
     params=["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
-async def lending_repository(request, postgres_template):
+async def lending_repository(request: pytest.FixtureRequest, postgres_template):
     if request.param == "memory":
         yield await MemoryRepository().open()
         return
@@ -160,10 +165,12 @@ async def lending_repository(request, postgres_template):
         yield repo
 
 
-async def test_lending_collect_flush_typed_storage_and_22_token_cache(tmp_path, lending_repository):
+async def test_lending_collect_flush_typed_storage_and_22_token_cache(
+    tmp_path: Path, lending_repository
+) -> None:
     calls = []
 
-    def respond(request):
+    def respond(request: pytest.FixtureRequest):
         calls.append(str(request.url))
         assert str(request.url) == "https://yields.llama.fi/lendBorrow"
         return httpx.Response(
@@ -218,7 +225,9 @@ async def test_lending_collect_flush_typed_storage_and_22_token_cache(tmp_path, 
 
 
 @pytest.mark.parametrize("failure", ["plan_restriction", "invalid_decimals", "transport"])
-async def test_contract_failure_preserves_other_chains_and_uses_registry_chain_id(tmp_path, failure):
+async def test_contract_failure_preserves_other_chains_and_uses_registry_chain_id(
+    tmp_path: Path, failure
+) -> None:
     token = {
         "token_id": "test:T",
         "contracts": [
@@ -242,7 +251,7 @@ async def test_contract_failure_preserves_other_chains_and_uses_registry_chain_i
     )
     calls = []
 
-    def respond(request):
+    def respond(request: pytest.FixtureRequest):
         chain, action = int(request.url.params["chainid"]), request.url.params["action"]
         calls.append((chain, action))
         if chain == 8453:
@@ -279,7 +288,7 @@ async def test_contract_failure_preserves_other_chains_and_uses_registry_chain_i
     assert flow["transfer_queries_succeeded"] == 2
 
 
-async def test_failed_transfer_reads_do_not_become_observed_zero_flows(tmp_path):
+async def test_failed_transfer_reads_do_not_become_observed_zero_flows(tmp_path: Path) -> None:
     token = {
         "token_id": "test:T",
         "contracts": [{"chain": "Ethereum", "chain_id": 1, "address": "0x" + "1" * 40, "decimals": 6}],
@@ -298,7 +307,7 @@ async def test_failed_transfer_reads_do_not_become_observed_zero_flows(tmp_path)
         _env_file=None, config_dir=config, data_dir=tmp_path / "data", etherscan_api_key="FAKE-only"
     )
 
-    def respond(request):
+    def respond(request: pytest.FixtureRequest):
         if request.url.params["action"] == "tokenbalance":
             return httpx.Response(200, json={"status": "1", "result": "0"})
         return httpx.Response(200, json={"status": "0", "message": "NOTOK", "result": "Query unavailable"})
@@ -314,10 +323,10 @@ async def test_failed_transfer_reads_do_not_become_observed_zero_flows(tmp_path)
     assert flow["transfer_queries_succeeded"] == 0
 
 
-async def test_chain_liquidity_maps_defillama_chain_names_and_isolates_chain_gaps(tmp_path):
+async def test_chain_liquidity_maps_defillama_chain_names_and_isolates_chain_gaps(tmp_path: Path) -> None:
     paths = []
 
-    def transport(request):
+    def transport(request: pytest.FixtureRequest):
         paths.append(request.url.path)
         if request.url.path.endswith("/Polygon"):
             return httpx.Response(404, json={"error": "not found"})
@@ -343,11 +352,11 @@ async def test_chain_liquidity_maps_defillama_chain_names_and_isolates_chain_gap
     await market.http.aclose()
 
 
-async def test_restart_resumes_supply_cadences_from_stored_observations(tmp_path):
+async def test_restart_resumes_supply_cadences_from_stored_observations(tmp_path: Path) -> None:
     """A restart must not restart the 22-token cycle (03 §5.6 refresh periods)."""
     calls = []
 
-    def respond(request):
+    def respond(request: pytest.FixtureRequest):
         calls.append(str(request.url))
         return httpx.Response(200, json=[])
 
@@ -368,7 +377,7 @@ async def test_restart_resumes_supply_cadences_from_stored_observations(tmp_path
     await first.http.aclose()
 
 
-def test_supply_kind_is_refreshed_before_its_age_reaches_the_cadence():
+def test_supply_kind_is_refreshed_before_its_age_reaches_the_cadence() -> None:
     """E2E #9: FUNDAMENTALS observed 22126 s old against its 21600 s cadence, because a kind was
     refreshed only once its age reached the cadence and a pass takes minutes. Refresh at
     0.9 x cadence, or two poll cycles (longest pass + loop sleep) before it, whichever is earlier."""
@@ -382,14 +391,14 @@ def test_supply_kind_is_refreshed_before_its_age_reaches_the_cadence():
     assert refresh_due(0, 900, 600)
 
 
-async def test_poll_refreshes_a_kind_before_its_cadence_elapses(tmp_path):
+async def test_poll_refreshes_a_kind_before_its_cadence_elapses(tmp_path: Path) -> None:
     from datetime import timedelta
 
     from tank.util import utcnow
 
     calls = []
 
-    def respond(request):
+    def respond(request: pytest.FixtureRequest):
         calls.append(str(request.url))
         return httpx.Response(200, json=[])
 

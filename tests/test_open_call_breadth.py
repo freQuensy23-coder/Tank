@@ -14,7 +14,7 @@ from tank.util import iso, parse_time
 @pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("open_call,expected", [(True, "ARMED"), (False, "FIRED")])
-async def test_concentrated_sell_only_fires_weaker_watch_downgrade(open_call, expected):
+async def test_concentrated_sell_only_fires_weaker_watch_downgrade(open_call, expected) -> None:
     from test_decisions import inputs
 
     event, assessment, beneficiary, truth = inputs()
@@ -94,7 +94,7 @@ async def test_concentrated_sell_only_fires_weaker_watch_downgrade(open_call, ex
 
 
 @pytest.mark.parametrize("capture,grade", [("DIRECT", "B"), ("REVENUE_CLAIM", "B"), ("INDIRECT", "C")])
-def test_loser_uses_verified_negative_thesis_link_without_long_eligibility(capture, grade):
+def test_loser_uses_verified_negative_thesis_link_without_long_eligibility(capture, grade) -> None:
     from test_decisions import inputs
 
     event, assessment, beneficiary, truth = inputs()
@@ -140,7 +140,7 @@ async def fire_generated(condition, event, truth_rows):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_watch_anchor_fired_by_actual_evaluator_prevents_new_start():
+async def test_watch_anchor_fired_by_actual_evaluator_prevents_new_start() -> None:
     from test_decisions import inputs
 
     e, a, b, m = inputs()
@@ -177,7 +177,7 @@ async def test_watch_anchor_fired_by_actual_evaluator_prevents_new_start():
 
 
 @pytest.mark.asyncio
-async def test_wait_data_upgrade_does_not_require_class_resolution():
+async def test_wait_data_upgrade_does_not_require_class_resolution() -> None:
     from test_decisions import inputs
 
     e, a, b, m = inputs()
@@ -203,7 +203,7 @@ async def test_wait_data_upgrade_does_not_require_class_resolution():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("exact,rounded,status", [(True, 0.5, "FIRED"), (False, 0.5000000000000001, "ARMED")])
-async def test_generated_majority_uses_truth_exact_flag_over_display_rounding(exact, rounded, status):
+async def test_generated_majority_uses_truth_exact_flag_over_display_rounding(exact, rounded, status) -> None:
     from test_decisions import inputs
 
     e, a, b, m = inputs()

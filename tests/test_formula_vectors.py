@@ -5,6 +5,7 @@ Owned by tank-acceptance. These call production code only; they do not restate f
 
 from datetime import timedelta
 from decimal import ROUND_DOWN, Decimal
+from pathlib import Path
 
 import pytest
 
@@ -18,7 +19,7 @@ def pct(a, b):
     return (Decimal(str(b)) - Decimal(str(a))) / Decimal(str(a))
 
 
-def test_t1_oi_decomposition_real_native():
+def test_t1_oi_decomposition_real_native() -> None:
     n0, n1, p0, p1 = 100, 108.18, 1, 1.0705
     d = decomposition(n0, n1, p0, p1)
     usd = pct(n0 * p0, Decimal("108.18") * Decimal("1.0705"))
@@ -32,7 +33,7 @@ def test_t1_oi_decomposition_real_native():
     assert oi_class(0.0818, float(usd), d, [-0.03, 0.035], [-0.04, 0.05]) == "REAL_NATIVE"
 
 
-def test_t2_price_markup():
+def test_t2_price_markup() -> None:
     d = decomposition(100, 100.5, 1, 1.10)
     usd = pct(100, Decimal("100.5") * Decimal("1.10"))
     assert round(usd * 100, 2) == Decimal("10.55")
@@ -56,7 +57,7 @@ def flow_case(values, qs):
     return spot_truth(rows, [], [], start, END)
 
 
-def test_t3_broad_sell_small_venues_buying():
+def test_t3_broad_sell_small_venues_buying() -> None:
     s = flow_case([("A", 600, -40), ("B", 250, -10), ("C", 100, 5), ("D", 25, 6), ("E", 25, 3)], [1] * 5)
     assert s["composite_max"]["cvd"] == -36
     assert s["direction"] == "SELL"
@@ -69,7 +70,7 @@ def test_t3_broad_sell_small_venues_buying():
     assert s["classification"] == "BROAD"
 
 
-def test_t4_single_venue_spike():
+def test_t4_single_venue_spike() -> None:
     s = flow_case([("A", 300, 60), ("B", 300, -2), ("C", 300, 1), ("D", 100, 0)], [1, 4, 4, 4])
     assert s["composite_max"]["cvd"] == 59
     assert s["direction"] == "BUY"
@@ -78,7 +79,7 @@ def test_t4_single_venue_spike():
     assert s["classification"] == "CONCENTRATED"
 
 
-def test_t5_constant_cohort():
+def test_t5_constant_cohort() -> None:
     def truth(values):
         return dict(
             venues=[dict(venue=k, volume_native=v, cvd=0, sum_sq_qty=1, sign=0) for k, v in values.items()],
@@ -106,7 +107,7 @@ def test_t5_constant_cohort():
     assert spots["W1H"]["cohort_consistent"]["W24H"] is True
 
 
-def test_t6_funding_normalization_no_market_average():
+def test_t6_funding_normalization_no_market_average() -> None:
     from tank.analysis.truth import derivatives_truth
 
     funding = [
@@ -135,7 +136,7 @@ def test_t6_funding_normalization_no_market_average():
 
 
 @pytest.fixture
-async def service(tmp_path):
+async def service(tmp_path: Path):
     from tank.event_tools import EventToolService
     from tank.settings import Settings
     from tank.storage import MemoryRepository
@@ -230,7 +231,9 @@ def assessment(proof, klass, criterion, gate=None):
     "klass,criterion,gate",
     [("STRUCTURAL_SHOCK", "M4", None), ("MAJOR", "M4", None), ("STRUCTURAL_SHOCK", "G4", "G4")],
 )
-async def test_t7_fee_burn_put_to_binding_vote_is_major_never_structural(service, klass, criterion, gate):
+async def test_t7_fee_burn_put_to_binding_vote_is_major_never_structural(
+    service, klass, criterion, gate
+) -> None:
     eid, proof, _ = await recorded(service, "PROPOSED")
     out = await service.set_assessment(
         {"event_id": eid, "assessment": assessment(proof, klass, criterion, gate)}, {}
@@ -240,7 +243,7 @@ async def test_t7_fee_burn_put_to_binding_vote_is_major_never_structural(service
         assert out["class"] == "MAJOR"
 
 
-async def test_t7_verified_required_infrastructure_selection_is_structural_g4(service):
+async def test_t7_verified_required_infrastructure_selection_is_structural_g4(service) -> None:
     eid, proof, _ = await recorded(service, "LIVE")
     out = await service.set_assessment(
         {"event_id": eid, "assessment": assessment(proof, "STRUCTURAL_SHOCK", "G4", "G4")}, {}
@@ -276,7 +279,7 @@ def _three_venue_snapshot_with_stale_funding():
     return snap
 
 
-def test_t8_data_confidence_medium_funding_freshness_blocks_start():
+def test_t8_data_confidence_medium_funding_freshness_blocks_start() -> None:
     from copy import deepcopy
 
     from tank.analysis.decisions import DecisionEngine
@@ -310,7 +313,7 @@ def test_t8_data_confidence_medium_funding_freshness_blocks_start():
     assert engine.evaluate(e, a, b, n)["action"] != "START"
 
 
-def test_t9_disconnected_minutes_are_incomplete_and_exclude_the_venue():
+def test_t9_disconnected_minutes_are_incomplete_and_exclude_the_venue() -> None:
     end = parse_time("2026-10-16T13:00:00Z")
     start = end - timedelta(hours=1)
     rows = []

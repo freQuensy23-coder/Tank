@@ -2,12 +2,13 @@
 
 import sys
 
+import pytest
 from click.testing import CliRunner
 
 import tank.cli as cli
 
 
-def test_serve_sets_short_gil_switch_interval_before_running(monkeypatch):
+def test_serve_sets_short_gil_switch_interval_before_running(monkeypatch: pytest.MonkeyPatch) -> None:
     seen = []
     monkeypatch.setattr(cli, "run_db", lambda fn, **kwargs: seen.append(sys.getswitchinterval()))
     before = sys.getswitchinterval()

@@ -1,6 +1,7 @@
 """Source completion and native settlement do not enforce the skill playbook."""
 
 from datetime import timedelta
+from pathlib import Path
 
 import httpx
 import pytest
@@ -30,7 +31,7 @@ from tank.util import iso, utcnow
         "SHOCK_RESUME",
     ],
 )
-async def test_actual_producer_consumer_workflow(tmp_path, backend, case, postgres_template):
+async def test_actual_producer_consumer_workflow(tmp_path: Path, backend, case, postgres_template) -> None:
     async with fixture_repo(backend, postgres_template) as repo:
         session, args = await seed(repo)
         session["message_log"][0]["body"] = {"type": "user.message", "content": []}
@@ -63,7 +64,7 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case, postgr
             args["freshness"] = "STALE"
         posts = []
 
-        def handler(request):
+        def handler(request: pytest.FixtureRequest):
             if request.method == "POST":
                 posts.append(request.content)
                 return httpx.Response(200, json={"data": [{"id": "accepted-" + str(len(posts))}]})
@@ -247,7 +248,7 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case, postgr
 @pytest.mark.parametrize(
     "tools", [[], ["publish_card"], ["get_decision", "publish_card", "set_beneficiaries", "set_assessment"]]
 )
-async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(tools):
+async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(tools) -> None:
     from test_agents_execution_barrier import seeded
 
     from tank.storage import MemoryRepository
@@ -264,7 +265,7 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
     posts = []
     reads = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         if request.method == "POST":
             posts.append(request.content)
             return httpx.Response(200, json={"data": [{"id": "ack-" + str(len(posts))}]})
@@ -287,7 +288,7 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         service = SessionService(repo, config(), dispatch, http=client)
 
-        async def hydrate(session):
+        async def hydrate(session) -> None:
             pass
 
         service.hydrate_prompt_provenance = hydrate

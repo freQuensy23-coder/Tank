@@ -4,6 +4,7 @@ import asyncio
 import gzip
 import json
 from datetime import timedelta
+from pathlib import Path
 
 import httpx
 import pytest
@@ -21,11 +22,11 @@ from tank.util import iso, parse_time, utcnow
 @pytest.mark.process
 @pytest.mark.asyncio
 async def test_backfill_changes_append_reaction_revision_once_and_preserve_original(
-    tmp_path,
-    monkeypatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     parity_binary,
-    request,
-):
+    request: pytest.FixtureRequest,
+) -> None:
     import tank.scheduler as scheduler_module
 
     monkeypatch.setattr(scheduler_module, "LATE_REVISION_DEFER_S", 0)
@@ -74,10 +75,10 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         assert not output["errors"], output["errors"]
         return output
 
-    def external(req):
+    def external(req) -> None:
         raise AssertionError("Tank core must not fetch exchange data: " + str(req.url))
 
-    async def persist_capture(output, *, observed, minute):
+    async def persist_capture(output, *, observed, minute) -> None:
         for row in output["rows"]:
             await repo.put_market_batch(row["collection"], [row["row"]], keys=[row["key"]])
 

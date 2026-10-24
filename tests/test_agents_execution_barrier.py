@@ -62,7 +62,7 @@ def idle(identity, execution, reason="end_turn"):
 
 @pytest.mark.historical
 @pytest.mark.integration
-async def test_actual_r11_intermediate_idle_does_not_complete_tool_result_execution():
+async def test_actual_r11_intermediate_idle_does_not_complete_tool_result_execution() -> None:
 
     timeline = json.loads(Path("docs/verification/f01-cli-r11-2026-10-19/native-timeline.json").read_text())
     initial = next(row["id"] for row in timeline if row["type"] == "user.message")
@@ -75,7 +75,7 @@ async def test_actual_r11_intermediate_idle_does_not_complete_tool_result_execut
     history = []
     reads = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         if request.url.path.endswith("/executions"):
             ids = request.url.params.get_list("ids[]")
             reads.append(ids)
@@ -129,13 +129,13 @@ async def test_actual_r11_intermediate_idle_does_not_complete_tool_result_execut
         await service.close()
 
 
-async def test_finalizer_failure_is_not_completed_and_retry_supersedes_only_failed_attempt():
+async def test_finalizer_failure_is_not_completed_and_retry_supersedes_only_failed_attempt() -> None:
     repo = MemoryRepository()
     await seeded(repo)
     states = {"accepted-message": "FAILED", "accepted-retry": "RUNNING"}
     posts = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         if request.url.path.endswith("/executions"):
             return httpx.Response(
                 200,
@@ -172,13 +172,13 @@ async def test_finalizer_failure_is_not_completed_and_retry_supersedes_only_fail
         await service.close()
 
 
-async def test_restart_recovers_correlated_duplicate_idle_without_business_reexecution():
+async def test_restart_recovers_correlated_duplicate_idle_without_business_reexecution() -> None:
     repo = MemoryRepository()
     session = await seeded(repo)
     session.update(runtime_status="IDLE", processed_events=["old-idle"])
     await repo.put("ops.agent_sessions", "s", session)
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         if request.url.path.endswith("/executions"):
             return httpx.Response(
                 200,
@@ -204,7 +204,7 @@ async def test_restart_recovers_correlated_duplicate_idle_without_business_reexe
         await service.close()
 
 
-def test_no_card_outputs_still_compare_state_class_and_observation_references():
+def test_no_card_outputs_still_compare_state_class_and_observation_references() -> None:
     first = {
         "decisions": [],
         "alerts": [],
@@ -224,7 +224,7 @@ def test_no_card_outputs_still_compare_state_class_and_observation_references():
     assert semantic_verdict_output(first) != semantic_verdict_output(changed)
 
 
-async def test_settled_snapshot_drains_all_pages_and_rechecks_new_tool_ack():
+async def test_settled_snapshot_drains_all_pages_and_rechecks_new_tool_ack() -> None:
     repo = MemoryRepository()
     await seeded(repo)
     states = {"accepted-message": "COMPLETED", "accepted-late-tool": "RUNNING"}
@@ -239,7 +239,7 @@ async def test_settled_snapshot_drains_all_pages_and_rechecks_new_tool_ack():
         "processed_at": start["processed_at"],
     }
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         if request.url.path.endswith("/executions"):
             return httpx.Response(
                 200,
@@ -275,7 +275,7 @@ async def test_settled_snapshot_drains_all_pages_and_rechecks_new_tool_ack():
         await service.close()
 
 
-async def test_message_lost_ack_reuses_durable_exact_body_after_source_changes():
+async def test_message_lost_ack_reuses_durable_exact_body_after_source_changes() -> None:
     repo = MemoryRepository()
     session = await seeded(repo)
     session.update(messages=[], message_log=[], active_message_id=None)
@@ -284,7 +284,7 @@ async def test_message_lost_ack_reuses_durable_exact_body_after_source_changes()
     bodies = []
     keys = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         bodies.append(request.content)
         keys.append(request.headers.get("Idempotency-Key"))
         if len(bodies) == 1:
@@ -318,13 +318,13 @@ async def test_message_lost_ack_reuses_durable_exact_body_after_source_changes()
         await restarted.close()
 
 
-async def test_tool_result_lost_ack_restart_reuses_result_and_records_original_accepted_id():
+async def test_tool_result_lost_ack_restart_reuses_result_and_records_original_accepted_id() -> None:
     repo = MemoryRepository()
     await seeded(repo)
     bodies = []
     dispatched = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         bodies.append(request.content)
         if len(bodies) == 1:
             raise httpx.ReadError("lost reply", request=request)
@@ -354,7 +354,7 @@ async def test_tool_result_lost_ack_restart_reuses_result_and_records_original_a
         await restarted.close()
 
 
-async def test_correlated_tool_before_ack_defers_instead_of_using_previous_message():
+async def test_correlated_tool_before_ack_defers_instead_of_using_previous_message() -> None:
     repo = MemoryRepository()
     session = await seeded(repo, "old-input")
     session["message_log"].append(
@@ -404,7 +404,7 @@ async def test_correlated_tool_before_ack_defers_instead_of_using_previous_messa
         await service.close()
 
 
-async def test_late_previous_attempt_tool_retains_immutable_attempt_lineage():
+async def test_late_previous_attempt_tool_retains_immutable_attempt_lineage() -> None:
     repo = MemoryRepository()
     session = await seeded(repo, "retry-input")
     session["message_log"][0].update(
@@ -415,7 +415,7 @@ async def test_late_previous_attempt_tool_retains_immutable_attempt_lineage():
     session["superseded_native_inputs"] = {"old-input": {"reason": "TURN_FAILED_AND_RETRIED"}}
     await repo.put("ops.agent_sessions", "s", session)
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         return httpx.Response(200, json={"data": [{"id": "late-result"}]})
 
     async def dispatch(*args):
@@ -449,7 +449,7 @@ async def test_late_previous_attempt_tool_retains_immutable_attempt_lineage():
         await service.close()
 
 
-async def test_equal_time_terminal_then_running_order_uses_committed_queue_not_last_arrival():
+async def test_equal_time_terminal_then_running_order_uses_committed_queue_not_last_arrival() -> None:
     repo = MemoryRepository()
     await seeded(repo)
     ended = idle("a-idle", "accepted-message")
@@ -461,7 +461,7 @@ async def test_equal_time_terminal_then_running_order_uses_committed_queue_not_l
     }
     reads = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         if request.url.path.endswith("/executions"):
             reads.append(True)
             return httpx.Response(
@@ -489,12 +489,12 @@ async def test_equal_time_terminal_then_running_order_uses_committed_queue_not_l
         await service.close()
 
 
-async def test_settled_open_turn_reuses_proof_without_history_or_session_writes():
+async def test_settled_open_turn_reuses_proof_without_history_or_session_writes() -> None:
     repo = MemoryRepository()
     await seeded(repo)
     requests = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         requests.append(request.url.path)
         if request.url.path.endswith("/executions"):
             return httpx.Response(
@@ -539,12 +539,12 @@ async def test_settled_open_turn_reuses_proof_without_history_or_session_writes(
         assert changed["status"] == "OPEN"
 
 
-async def test_retry_lost_ack_recovers_durable_failure_intent_without_second_retry():
+async def test_retry_lost_ack_recovers_durable_failure_intent_without_second_retry() -> None:
     repo = MemoryRepository()
     await seeded(repo)
     posted = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         if request.method == "POST":
             posted.append((request.headers["idempotency-key"], request.content))
             if len(posted) == 1:
@@ -572,7 +572,7 @@ async def test_retry_lost_ack_recovers_durable_failure_intent_without_second_ret
 
 
 @pytest.mark.parametrize("source_state", ["PENDING", "FAILED", "MISSING"])
-async def test_native_completion_preserves_source_failures_without_failing_session(source_state):
+async def test_native_completion_preserves_source_failures_without_failing_session(source_state) -> None:
     repo = MemoryRepository()
     session = await seeded(repo)
     session["message_log"][0]["turn_status"] = "DONE"
@@ -587,7 +587,7 @@ async def test_native_completion_preserves_source_failures_without_failing_sessi
     await repo.put("ops.agent_sessions", "s", session)
     posts = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         if request.method == "POST":
             posts.append(request.content)
             return httpx.Response(200, json={"data": [{"id": "replacement"}]})
@@ -631,7 +631,7 @@ async def test_native_completion_preserves_source_failures_without_failing_sessi
 
 
 @pytest.mark.parametrize("pending", [False, True])
-async def test_legacy_semantic_repair_receipt_is_audited_without_retry_or_failure(pending):
+async def test_legacy_semantic_repair_receipt_is_audited_without_retry_or_failure(pending) -> None:
     repo = MemoryRepository()
     session = await seeded(repo)
     original = {"type": "user.message", "content": [{"type": "text", "text": "original NEW_ITEM"}]}
@@ -654,7 +654,7 @@ async def test_legacy_semantic_repair_receipt_is_audited_without_retry_or_failur
     await repo.put("evt.events", "bound-event", event)
     await repo.put("ana.calls", "open-call", call)
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest) -> None:
         raise AssertionError("Legacy semantic repair must not call OpenMA")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:

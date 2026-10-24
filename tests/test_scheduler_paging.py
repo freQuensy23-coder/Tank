@@ -1,6 +1,7 @@
 """Regression coverage for uncapped timer scans and bounded history queries."""
 
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -11,7 +12,7 @@ from tank.util import iso, utcnow
 
 
 class SmallPageRepository(MemoryRepository):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.scans = []
         self.yielded = []
@@ -39,7 +40,7 @@ class SmallPageRepository(MemoryRepository):
 
 
 @pytest.mark.asyncio
-async def test_active_events_and_lifecycle_reach_late_history_and_checkpoint_pages(tmp_path):
+async def test_active_events_and_lifecycle_reach_late_history_and_checkpoint_pages(tmp_path: Path) -> None:
     repo = SmallPageRepository()
     now = utcnow()
     for i in range(9):
@@ -83,7 +84,7 @@ async def test_active_events_and_lifecycle_reach_late_history_and_checkpoint_pag
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_counts_all_pages_with_time_bounds(tmp_path):
+async def test_heartbeat_counts_all_pages_with_time_bounds(tmp_path: Path) -> None:
     repo = SmallPageRepository()
     now = utcnow().replace(hour=12, minute=0, second=0, microsecond=0)
     for status in ("QUEUED", "RUNNING"):
@@ -115,7 +116,7 @@ async def test_heartbeat_counts_all_pages_with_time_bounds(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_scout_recent_truth_pages_and_checkpoint_resume(tmp_path):
+async def test_scout_recent_truth_pages_and_checkpoint_resume(tmp_path: Path) -> None:
     repo = SmallPageRepository()
     now = utcnow().replace(microsecond=0)
     scheduler = Scheduler(repo, Settings(data_dir=tmp_path), None, None)

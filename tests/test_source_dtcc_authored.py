@@ -45,7 +45,7 @@ def retained():
 
 @pytest.mark.historical
 @pytest.mark.integration
-def test_all_actual_dtcc_pages_use_ordered_authored_blocks_without_rewriting_capture():
+def test_all_actual_dtcc_pages_use_ordered_authored_blocks_without_rewriting_capture() -> None:
     for index, row, payload in retained():
         original = json.dumps(row, sort_keys=True)
         parsed = parsers.article(payload, source_id="S08")
@@ -81,7 +81,7 @@ def test_all_actual_dtcc_pages_use_ordered_authored_blocks_without_rewriting_cap
         '<div class="content-item--richtextblock"><div class="rtf">outer<div class="rtf">inner</div></div></div>',
     ],
 )
-def test_dtcc_missing_empty_nested_authored_nodes_refuse_without_nav_fallback(body):
+def test_dtcc_missing_empty_nested_authored_nodes_refuse_without_nav_fallback(body) -> None:
     html = "<main><article>Unrelated sidebar</article>" + body + "</main>"
     with pytest.raises(ValueError, match="DTCC release"):
         parsers.article(html, source_id="S08")
@@ -90,7 +90,7 @@ def test_dtcc_missing_empty_nested_authored_nodes_refuse_without_nav_fallback(bo
 
 @pytest.mark.historical
 @pytest.mark.integration
-async def test_normal_dtcc_poll_uses_actual_retained_release_bodies(tmp_path):
+async def test_normal_dtcc_poll_uses_actual_retained_release_bodies(tmp_path: Path) -> None:
     fixtures = [entry for entry in retained() if entry[0] in {932, 1067}]
     pages = {row["url"]: payload for _, row, payload in fixtures}
     index_url = "https://www.dtcc.com/press-releases"
@@ -108,7 +108,7 @@ async def test_normal_dtcc_poll_uses_actual_retained_release_bodies(tmp_path):
         ],
     }
 
-    def transport(request):
+    def transport(request: pytest.FixtureRequest):
         if str(request.url) == index_url:
             return httpx.Response(200, text=index_html)
         assert request.method == "GET" and not request.headers.get("Authorization")

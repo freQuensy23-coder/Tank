@@ -19,7 +19,7 @@ from tank.util import iso, new_id, utcnow
 @pytest.mark.parametrize(
     "backend", ["memory", pytest.param("database", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
-async def test_actual_flow_batch_producer_to_stored_review(subminute, backend, postgres_template):
+async def test_actual_flow_batch_producer_to_stored_review(subminute, backend, postgres_template) -> None:
     async with AsyncExitStack() as resources:
         if backend == "database":
             url = os.getenv("TANK_TEST_DATABASE_URL")

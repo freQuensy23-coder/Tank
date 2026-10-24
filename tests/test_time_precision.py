@@ -7,7 +7,7 @@ from tank.time_precision import chosen_boundary, collection_clock, offset_schedu
 AT = "2026-10-18T00:00:00Z"
 
 
-def test_collection_clock_policy_and_canonical_fields():
+def test_collection_clock_policy_and_canonical_fields() -> None:
     assert collection_clock(AT).fields("created_at") == {
         "created_at": AT,
         "created_at_prec": "COLLECTION_ONLY",
@@ -17,7 +17,7 @@ def test_collection_clock_policy_and_canonical_fields():
         collection_clock(AT, policy="EXACT")
 
 
-def test_propagation_preserves_bucket_duration_and_existing_sql_alias():
+def test_propagation_preserves_bucket_duration_and_existing_sql_alias() -> None:
     stamp = propagate_timestamp(
         {"published_prec": "BUCKET", "published_at_precision": "BUCKET(1d)", "published_at": AT},
         "published_at",
@@ -35,14 +35,14 @@ def test_propagation_preserves_bucket_duration_and_existing_sql_alias():
     assert offset_schedule(stamp, timedelta(hours=24)).value == "2026-10-19T00:00:00Z"
 
 
-def test_legacy_unknown_never_infers_exact_from_microseconds():
+def test_legacy_unknown_never_infers_exact_from_microseconds() -> None:
     stamp = propagate_timestamp({"cutoff": "2026-10-18T00:00:00.123456Z"}, "cutoff")
     assert stamp.precision is None and stamp.precision_reason == "INCOMPLETE"
     assert offset_schedule(stamp, timedelta(seconds=60)).precision_reason == "INCOMPLETE"
     assert propagate_timestamp({"last_item_at": None}, "last_item_at").value is None
 
 
-def test_explicit_boundaries_and_bucket_units():
+def test_explicit_boundaries_and_bucket_units() -> None:
     assert chosen_boundary(AT, precision="EXACT").precision == "EXACT"
     assert chosen_boundary(AT, precision="BUCKET", bucket_size=(300, "s")).precision == "BUCKET(300s)"
     with pytest.raises(TypeError):
@@ -53,7 +53,7 @@ def test_explicit_boundaries_and_bucket_units():
         chosen_boundary(AT, precision="UNKNOWN")
 
 
-def test_conflicting_aliases_refused_and_generic_alias_explicit():
+def test_conflicting_aliases_refused_and_generic_alias_explicit() -> None:
     with pytest.raises(ValueError):
         propagate_timestamp(
             {"public_at": AT, "public_at_prec": "EXACT", "public_at_precision": "BUCKET(1d)"}, "public_at"
@@ -63,14 +63,14 @@ def test_conflicting_aliases_refused_and_generic_alias_explicit():
     assert propagate_timestamp(raw, "ts", precision_aliases=("timestamp_precision",)).precision == "EXACT"
 
 
-def test_nested_event_timestamp_and_selection_keep_precision():
+def test_nested_event_timestamp_and_selection_keep_precision() -> None:
     source = {"event_time": {"value": AT, "precision": "BUCKET_1D", "quote": "yesterday"}}
     stamp = propagate_timestamp(source, "event_time")
     assert stamp.fields("event_time")["event_time_prec"] == "BUCKET(1d)"
     assert offset_schedule(stamp, timedelta(hours=-24)).precision == "BUCKET(1d)"
 
 
-def test_missing_publication_preserves_declared_collection_only():
+def test_missing_publication_preserves_declared_collection_only() -> None:
     stamp = propagate_timestamp(
         {"published_at": None, "published_prec": "COLLECTION_ONLY", "published_at_reason": "NOT_ESTIMABLE"},
         "published_at",
@@ -79,7 +79,7 @@ def test_missing_publication_preserves_declared_collection_only():
     assert stamp.fields("published_at")["published_at_reason"] == "NOT_ESTIMABLE"
 
 
-def test_bucket_duration_and_bounds_preserve_explicit_anchor():
+def test_bucket_duration_and_bounds_preserve_explicit_anchor() -> None:
     from tank.time_precision import bucket_duration, interval_bounds
     from tank.util import parse_time
 
@@ -99,7 +99,7 @@ def test_bucket_duration_and_bounds_preserve_explicit_anchor():
         bucket_duration("BUCKET(0.0000001s)")
 
 
-def test_end_labelled_source_bucket_preserves_raw_time_and_roundtrips():
+def test_end_labelled_source_bucket_preserves_raw_time_and_roundtrips() -> None:
     from tank.time_precision import interval_bounds
     from tank.util import parse_time
 
@@ -113,7 +113,7 @@ def test_end_labelled_source_bucket_preserves_raw_time_and_roundtrips():
     assert interval_bounds(later) == (parse_time(AT), parse_time(AT) + timedelta(hours=1))
 
 
-def test_unknown_source_bucket_edge_does_not_invent_an_interval():
+def test_unknown_source_bucket_edge_does_not_invent_an_interval() -> None:
     from tank.time_precision import interval_bounds
 
     stamp = propagate_timestamp({"ts": AT, "ts_prec": "BUCKET(5m)", "ts_bucket_anchor": "UNSPECIFIED"}, "ts")
@@ -127,7 +127,7 @@ def test_unknown_source_bucket_edge_does_not_invent_an_interval():
 
 
 @pytest.mark.parametrize("precision", ["EXACT", "COLLECTION_ONLY", None])
-def test_bucket_edge_cannot_upgrade_or_conflict_with_precision(precision):
+def test_bucket_edge_cannot_upgrade_or_conflict_with_precision(precision) -> None:
     with pytest.raises(ValueError, match="Bucket anchor requires"):
         propagate_timestamp({"ts": AT, "ts_prec": precision, "ts_bucket_anchor": "END"}, "ts")
     with pytest.raises(ValueError, match="Conflicting timestamp bucket anchors"):

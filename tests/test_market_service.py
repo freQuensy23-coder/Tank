@@ -1,5 +1,6 @@
 import asyncio
 from datetime import timedelta
+from pathlib import Path
 
 import httpx
 import pytest
@@ -11,7 +12,7 @@ from tank.storage import MemoryRepository
 from tank.util import iso, parse_time, utcnow
 
 
-def test_market_redaction_covers_nested_keys_and_values_and_current_credentials():
+def test_market_redaction_covers_nested_keys_and_values_and_current_credentials() -> None:
     from types import SimpleNamespace
 
     market = object.__new__(MarketService)
@@ -24,7 +25,7 @@ def test_market_redaction_covers_nested_keys_and_values_and_current_credentials(
 
 
 @pytest.fixture
-def setup(tmp_path):
+def setup(tmp_path: Path):
     config = tmp_path / "config"
     config.mkdir()
 
@@ -70,7 +71,7 @@ def setup(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_snapshot_exact_cutoff_anchor_and_benchmark_history(setup):
+async def test_snapshot_exact_cutoff_anchor_and_benchmark_history(setup) -> None:
     repo, settings, inst = setup
     http = httpx.AsyncClient()
     service = MarketService(repo, settings, http=http)
@@ -124,7 +125,7 @@ async def test_snapshot_exact_cutoff_anchor_and_benchmark_history(setup):
 
 
 @pytest.mark.asyncio
-async def test_fundamentals_use_registered_slugs_only_and_partial_holders_revenue(setup):
+async def test_fundamentals_use_registered_slugs_only_and_partial_holders_revenue(setup) -> None:
     from tank.market.supply import SupplyCapture
 
     repo, settings, _inst = setup
@@ -136,7 +137,7 @@ async def test_fundamentals_use_registered_slugs_only_and_partial_holders_revenu
     }
     paths = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         path = request.url.path
         paths.append(path)
 
@@ -168,14 +169,14 @@ async def test_fundamentals_use_registered_slugs_only_and_partial_holders_revenu
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("secret_name", ["etherscan_api_key", "opencode_api_key", "codex_gateway_key"])
-async def test_market_transport_and_recursive_metadata_never_persist_api_key(setup, secret_name):
+async def test_market_transport_and_recursive_metadata_never_persist_api_key(setup, secret_name) -> None:
     from tank.market.supply import SupplyCapture
 
     repo, settings, _inst = setup
     secret = "secret-test-provider-key"
     setattr(settings, secret_name, secret)
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest) -> None:
         raise httpx.ConnectError("Connection failed: " + str(request.url), request=request)
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -207,7 +208,7 @@ async def test_market_transport_and_recursive_metadata_never_persist_api_key(set
 
 
 @pytest.mark.asyncio
-async def test_hot_escalation_priority_age_repeat_and_event_specific_demote(setup):
+async def test_hot_escalation_priority_age_repeat_and_event_specific_demote(setup) -> None:
     repo, settings, _inst = setup
     http = httpx.AsyncClient()
     service = MarketService(repo, settings, http=http)
@@ -255,8 +256,8 @@ def add_perp_instrument(settings, spot):
 
 @pytest.mark.asyncio
 async def test_capture_tier_uses_durable_activation_and_demotion_history_not_future_hot_state(
-    setup, monkeypatch
-):
+    setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import tank.market.service as module
     from tank.util import iso, parse_time
 
@@ -307,7 +308,9 @@ async def test_capture_tier_uses_durable_activation_and_demotion_history_not_fut
 
 
 @pytest.mark.asyncio
-async def test_actual_producer_tier_metadata_controls_90second_oi_and_funding_freshness(setup, monkeypatch):
+async def test_actual_producer_tier_metadata_controls_90second_oi_and_funding_freshness(
+    setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from tank.analysis.truth import compute_market_truth
     from tank.util import iso, utcnow
 
@@ -391,7 +394,7 @@ async def test_actual_producer_tier_metadata_controls_90second_oi_and_funding_fr
     await http.aclose()
 
 
-def test_verified_exact_event_time_selects_t0():
+def test_verified_exact_event_time_selects_t0() -> None:
     from tank.market.capture import event_anchor
 
     event = {
@@ -409,7 +412,7 @@ def test_verified_exact_event_time_selects_t0():
     assert event_anchor(event)["type"] == "T1"
 
 
-def test_missing_oi_field_is_data_error_without_runtime_semantic_promotion():
+def test_missing_oi_field_is_data_error_without_runtime_semantic_promotion() -> None:
     from tank.market import normalize
 
     inst = {
@@ -423,7 +426,7 @@ def test_missing_oi_field_is_data_error_without_runtime_semantic_promotion():
 
 
 @pytest.mark.asyncio
-async def test_capture_wait_is_bounded_and_late_completion_supersedes_timeout(setup):
+async def test_capture_wait_is_bounded_and_late_completion_supersedes_timeout(setup) -> None:
     import asyncio
 
     from tank.util import iso
@@ -443,7 +446,7 @@ async def test_capture_wait_is_bounded_and_late_completion_supersedes_timeout(se
     waited = await service.wait_capture("E-wait", inst["token_id"], timeout_s=0)
     assert waited["status"] == "INCOMPLETE" and waited["reason"] == "BOUNDED_PREREQUISITE_WAIT_EXPIRED"
 
-    async def finish():
+    async def finish() -> None:
         await asyncio.sleep(0.01)
         row.update(status="COMPLETE", reason=None)
         await repo.put("mkt.backfill_runs", row["backfill_id"], row)
@@ -459,7 +462,7 @@ async def test_capture_wait_is_bounded_and_late_completion_supersedes_timeout(se
 
 
 @pytest.mark.asyncio
-async def test_hot_expiry_protection_is_scoped_to_event_and_token(setup):
+async def test_hot_expiry_protection_is_scoped_to_event_and_token(setup) -> None:
     from tank.util import iso
 
     repo, settings, inst = setup
@@ -521,11 +524,11 @@ async def test_hot_expiry_protection_is_scoped_to_event_and_token(setup):
         ("GET", "https://api.binance.com/api/v3/depth", {"params": {"limit": 1000}, "_priority": 2}),
     ],
 )
-async def test_exchange_rest_is_rejected_before_python_http(setup, method, url, kwargs):
+async def test_exchange_rest_is_rejected_before_python_http(setup, method, url, kwargs) -> None:
     repo, settings, _ = setup
     requests = []
 
-    def record(request):
+    def record(request: pytest.FixtureRequest):
         requests.append(request)
         return httpx.Response(200, json=[])
 
@@ -537,7 +540,7 @@ async def test_exchange_rest_is_rejected_before_python_http(setup, method, url, 
 
 
 @pytest.mark.asyncio
-async def test_capture_changes_are_durable_bounded_and_stable(setup):
+async def test_capture_changes_are_durable_bounded_and_stable(setup) -> None:
     repo, settings, inst = setup
     service = MarketService(repo, settings)
     for key, status, finished in [
@@ -568,7 +571,7 @@ async def test_capture_changes_are_durable_bounded_and_stable(setup):
 
 
 @pytest.mark.asyncio
-async def test_cold_bybit_oi_uses_registry_without_runtime_probe(setup):
+async def test_cold_bybit_oi_uses_registry_without_runtime_probe(setup) -> None:
     from tank.analysis.truth import derivatives_truth
     from tank.market import normalize as norm
 
@@ -612,7 +615,7 @@ async def test_cold_bybit_oi_uses_registry_without_runtime_probe(setup):
 
 
 @pytest.mark.asyncio
-async def test_bybit_legacy_temporal_proof_not_reused_by_condition_loader(setup):
+async def test_bybit_legacy_temporal_proof_not_reused_by_condition_loader(setup) -> None:
     repo, settings, inst = setup
     service = MarketService(repo, settings)
     inst = {**inst, "venue": "bybit", "market_type": "PERP_LINEAR"}
@@ -649,7 +652,9 @@ async def test_bybit_legacy_temporal_proof_not_reused_by_condition_loader(setup)
 
 
 @pytest.mark.asyncio
-async def test_series_counts_survive_an_import_evicting_a_counted_day(setup, monkeypatch):
+async def test_series_counts_survive_an_import_evicting_a_counted_day(
+    setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from tank.market import service as service_module
     from tank.util import iso
 
@@ -673,7 +678,7 @@ async def test_series_counts_survive_an_import_evicting_a_counted_day(setup, mon
 
 
 @pytest.mark.asyncio
-async def test_snapshot_keeps_book_levels_only_on_the_newest_rows(setup):
+async def test_snapshot_keeps_book_levels_only_on_the_newest_rows(setup) -> None:
     """Slippage walks only the newest integrity-checked book; older rows drop their levels."""
     from tank.market.service import BOOK_LEVEL_ROWS
     from tank.util import iso, parse_time
@@ -711,7 +716,7 @@ async def test_snapshot_keeps_book_levels_only_on_the_newest_rows(setup):
 
 
 @pytest.mark.asyncio
-async def test_bucketed_oi_cadence_is_bounded_by_its_source(setup):
+async def test_bucketed_oi_cadence_is_bounded_by_its_source(setup) -> None:
     repo, settings, inst = setup
     service = MarketService(repo, settings)
     await service._record_capture_tier(inst["token_id"], "HOT", "TEST")
@@ -723,7 +728,9 @@ async def test_bucketed_oi_cadence_is_bounded_by_its_source(setup):
 
 
 @pytest.mark.asyncio
-async def test_condition_heads_are_reused_until_their_scope_is_written(setup, monkeypatch):
+async def test_condition_heads_are_reused_until_their_scope_is_written(
+    setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from tank.market import service as service_module
     from tank.util import iso
 
@@ -783,7 +790,7 @@ async def test_condition_heads_are_reused_until_their_scope_is_written(setup, mo
     await service.close()
 
 
-async def test_snapshot_anchors_yield_widest_first_and_equal_single_snapshots(setup):
+async def test_snapshot_anchors_yield_widest_first_and_equal_single_snapshots(setup) -> None:
     """PRE windows of one token and cutoff share their reads; each snapshot equals its own call."""
     from tank.market.service import BOOK_LEVEL_ROWS
     from tank.util import iso, parse_time
@@ -828,7 +835,7 @@ async def test_snapshot_anchors_yield_widest_first_and_equal_single_snapshots(se
 
 
 @pytest.mark.asyncio
-async def test_snapshot_never_queues_behind_a_running_flush(setup):
+async def test_snapshot_never_queues_behind_a_running_flush(setup) -> None:
     repo, settings, inst = setup
     service = MarketService(repo, settings)
     flushes = []
@@ -850,7 +857,9 @@ async def test_snapshot_never_queues_behind_a_running_flush(setup):
 
 
 @pytest.mark.asyncio
-async def test_loop_watchdog_logs_the_stack_that_holds_the_loop(setup, monkeypatch, caplog):
+async def test_loop_watchdog_logs_the_stack_that_holds_the_loop(
+    setup, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     import time as clock
 
     from tank.market import service as service_module
@@ -862,7 +871,7 @@ async def test_loop_watchdog_logs_the_stack_that_holds_the_loop(setup, monkeypat
     watchdog = asyncio.create_task(service._loop_watchdog())
     await asyncio.sleep(0.1)
 
-    def hogging_the_loop():
+    def hogging_the_loop() -> None:
         clock.sleep(2.5)
 
     with caplog.at_level("WARNING", logger="tank.market.service"):
@@ -876,7 +885,9 @@ async def test_loop_watchdog_logs_the_stack_that_holds_the_loop(setup, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_reaction_snapshot_reads_books_and_tickers_only_at_the_window_bounds(setup, monkeypatch):
+async def test_reaction_snapshot_reads_books_and_tickers_only_at_the_window_bounds(
+    setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """r110: one BTC reaction capture read ~1M rows (days of 10 s books and tickers). A REACTION
     snapshot reads books/tickers only around its window bounds and the rest of the window
     collections from the earlier of the anchor and cutoff - 24 h, never 2 x the window."""
@@ -942,7 +953,9 @@ async def test_reaction_snapshot_reads_books_and_tickers_only_at_the_window_boun
     await http.aclose()
 
 
-async def test_market_truth_snapshot_reads_one_day_of_books_and_tickers_at_window_bounds(setup, monkeypatch):
+async def test_market_truth_snapshot_reads_one_day_of_books_and_tickers_at_window_bounds(
+    setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """E2E #5: the default snapshot read two days of books and tickers. Market Truth needs books
     over the last 24 h and the hour before the anchor, and tickers only around the window
     bounds (latest at or before each bound, marks next to the OI points)."""
@@ -1011,7 +1024,9 @@ async def test_market_truth_snapshot_reads_one_day_of_books_and_tickers_at_windo
 
 
 @pytest.mark.asyncio
-async def test_past_day_kline_counts_survive_a_restart_unless_their_day_was_rewritten(setup, monkeypatch):
+async def test_past_day_kline_counts_survive_a_restart_unless_their_day_was_rewritten(
+    setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from tank.market import service as service_module
 
     repo, settings, inst = setup
@@ -1068,7 +1083,9 @@ async def test_past_day_kline_counts_survive_a_restart_unless_their_day_was_rewr
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("collection", ["mkt.flow_bars_1m", "mkt.book_summaries"])
-async def test_window_cache_reads_equal_fresh_reads_through_appends_rewrites_and_late_rows(setup, collection):
+async def test_window_cache_reads_equal_fresh_reads_through_appends_rewrites_and_late_rows(
+    setup, collection
+) -> None:
     from tank.market import service as service_module
 
     repo, settings, inst = setup
@@ -1090,7 +1107,7 @@ async def test_window_cache_reads_equal_fresh_reads_through_appends_rewrites_and
             point.update(buy_qty=value, sell_qty="0", complete=True)
         return point
 
-    async def put(rows):
+    async def put(rows) -> None:
         await repo.put_market_batch(collection, rows, keys=[iso_key(r) for r in rows])
 
     def iso_key(point):
@@ -1145,7 +1162,7 @@ async def test_window_cache_reads_equal_fresh_reads_through_appends_rewrites_and
     await service.close()
 
 
-def test_window_cache_is_bounded_by_age_and_rows(monkeypatch):
+def test_window_cache_is_bounded_by_age_and_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     from tank.market import service as service_module
 
     clock = [1000.0]

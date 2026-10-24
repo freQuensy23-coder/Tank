@@ -19,7 +19,7 @@ async def stalled_http_peer():
     handlers = set()
     requests = []
 
-    async def accept(reader, writer):
+    async def accept(reader, writer) -> None:
         task = asyncio.current_task()
         handlers.add(task)
         try:
@@ -46,7 +46,9 @@ async def stalled_http_peer():
 
 @pytest.mark.integration(reason="Actual localhost TCP peer and HTTPX socket read timeout")
 @pytest.mark.parametrize("injected_unbounded_client", [False, True])
-async def test_stalled_rest_read_times_out_without_changing_sse(monkeypatch, injected_unbounded_client):
+async def test_stalled_rest_read_times_out_without_changing_sse(
+    monkeypatch: pytest.MonkeyPatch, injected_unbounded_client
+) -> None:
     async with stalled_http_peer() as (url, accepted):
         opts, _ = settings(openma_url=url)
         injected = httpx.AsyncClient(timeout=None) if injected_unbounded_client else None
@@ -74,7 +76,7 @@ async def test_stalled_rest_read_times_out_without_changing_sse(monkeypatch, inj
                 await injected.aclose()
 
 
-async def test_rest_ack_timeout_retains_result_and_reuses_native_ack_body():
+async def test_rest_ack_timeout_retains_result_and_reuses_native_ack_body() -> None:
     repo = MemoryRepository()
     await seed_session(repo)
     opts, _ = settings()
@@ -84,7 +86,7 @@ async def test_rest_ack_timeout_retains_result_and_reuses_native_ack_body():
         dispatched.append(tool)
         return {"ok": True}
 
-    def acknowledge(request):
+    def acknowledge(request: pytest.FixtureRequest):
         posts.append(json.loads(request.content)["events"][0])
         assert request.extensions["timeout"]["read"] == 30
         if len(posts) == 1:

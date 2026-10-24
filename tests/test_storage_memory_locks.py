@@ -7,11 +7,11 @@ import pytest
 from tank.storage import MemoryRepository
 
 
-async def test_different_keys_and_child_persistence_progress_during_remote_wait():
+async def test_different_keys_and_child_persistence_progress_during_remote_wait() -> None:
     repo = MemoryRepository()
     async with repo.lock("route:item"):
 
-        async def score_and_persist():
+        async def score_and_persist() -> None:
             async with repo.lock("score:candidate"):
                 await repo.put("reg.tokens", "child", {"token_id": "child"})
 
@@ -20,7 +20,7 @@ async def test_different_keys_and_child_persistence_progress_during_remote_wait(
     entered = set()
     both = asyncio.Event()
 
-    async def independent(key):
+    async def independent(key) -> None:
         async with repo.lock(key):
             entered.add(key)
             if len(entered) == 2:
@@ -31,12 +31,12 @@ async def test_different_keys_and_child_persistence_progress_during_remote_wait(
     assert not repo._locks
 
 
-async def test_same_key_reentry_and_child_does_not_inherit_ownership():
+async def test_same_key_reentry_and_child_does_not_inherit_ownership() -> None:
     repo = MemoryRepository()
     started = asyncio.Event()
     acquired = asyncio.Event()
 
-    async def child():
+    async def child() -> None:
         started.set()
         async with repo.lock("shared"):
             acquired.set()
@@ -53,12 +53,12 @@ async def test_same_key_reentry_and_child_does_not_inherit_ownership():
     assert acquired.is_set() and not repo._locks
 
 
-async def test_cancelled_waiter_does_not_release_another_tasks_key():
+async def test_cancelled_waiter_does_not_release_another_tasks_key() -> None:
     repo = MemoryRepository()
     started = asyncio.Event()
     acquired = []
 
-    async def contender():
+    async def contender() -> None:
         started.set()
         async with repo.lock("shared"):
             acquired.append(True)
@@ -78,7 +78,7 @@ async def test_cancelled_waiter_does_not_release_another_tasks_key():
     assert acquired == [True] and not repo._locks
 
 
-async def test_explicit_transaction_rollback_stays_atomic_inside_key_lock():
+async def test_explicit_transaction_rollback_stays_atomic_inside_key_lock() -> None:
     repo = MemoryRepository()
     async with repo.lock("mutation"):
         with pytest.raises(ValueError):
@@ -101,12 +101,12 @@ async def test_explicit_transaction_rollback_stays_atomic_inside_key_lock():
     assert await repo.get("reg.tokens", "committed") == {"token_id": "committed"}
 
 
-async def test_inverted_contended_lock_order_fails_without_hanging_transaction():
+async def test_inverted_contended_lock_order_fails_without_hanging_transaction() -> None:
     repo = MemoryRepository()
     held = asyncio.Event()
     release = asyncio.Event()
 
-    async def holder():
+    async def holder() -> None:
         async with repo.lock("shared"):
             held.set()
             await release.wait()
@@ -126,11 +126,11 @@ async def test_inverted_contended_lock_order_fails_without_hanging_transaction()
     assert not repo._locks
 
 
-async def test_cancelled_owner_releases_key_for_next_task():
+async def test_cancelled_owner_releases_key_for_next_task() -> None:
     repo = MemoryRepository()
     held = asyncio.Event()
 
-    async def owner():
+    async def owner() -> None:
         async with repo.lock("shared"), repo.lock("shared"):
             held.set()
             await asyncio.Event().wait()

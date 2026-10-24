@@ -26,14 +26,14 @@ DDG_HTML = """<!doctype html><html><body>
 
 
 class Time:
-    def __init__(self):
+    def __init__(self) -> None:
         self.now = 0.0
         self.delays = []
 
     def clock(self):
         return self.now
 
-    async def sleep(self, delay):
+    async def sleep(self, delay) -> None:
         self.delays.append(delay)
         self.now += delay
         await asyncio.sleep(0)
@@ -47,7 +47,7 @@ def service(attempt):
     ), timer
 
 
-def install_http(monkeypatch, respond):
+def install_http(monkeypatch: pytest.MonkeyPatch, respond) -> None:
     original = httpx.Client
 
     def make_client(**kwargs):
@@ -56,7 +56,7 @@ def install_http(monkeypatch, respond):
     monkeypatch.setattr(search.httpx, "Client", make_client)
 
 
-async def test_pinned_engine_payload_parser_and_unmodified_result(monkeypatch):
+async def test_pinned_engine_payload_parser_and_unmodified_result(monkeypatch: pytest.MonkeyPatch) -> None:
     assert version("ddgs") == "9.16.0"
     requests = []
     calls = []
@@ -71,7 +71,7 @@ async def test_pinned_engine_payload_parser_and_unmodified_result(monkeypatch):
     monkeypatch.setenv("DDGS_PROXY", "http://forbidden.test:1")
     monkeypatch.setenv("HTTPS_PROXY", "http://forbidden.test:1")
 
-    def respond(request):
+    def respond(request: pytest.FixtureRequest):
         requests.append(request)
         assert request.url == search.SEARCH_URL
         assert request.method == "POST"
@@ -82,7 +82,7 @@ async def test_pinned_engine_payload_parser_and_unmodified_result(monkeypatch):
     install_http(monkeypatch, respond)
 
     class Forbidden:
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args, **kwargs) -> None:
             pytest.fail("An alternate engine was instantiated")
 
     monkeypatch.setitem(ENGINES, "text", {"forbidden": Forbidden})
@@ -104,10 +104,12 @@ async def test_pinned_engine_payload_parser_and_unmodified_result(monkeypatch):
         (302, "Redirect to another host", "BLOCKED"),
     ],
 )
-async def test_real_ddgs_preserves_block_and_retry_contract(monkeypatch, status, html, code):
+async def test_real_ddgs_preserves_block_and_retry_contract(
+    monkeypatch: pytest.MonkeyPatch, status, html, code
+) -> None:
     requests = []
 
-    def respond(request):
+    def respond(request: pytest.FixtureRequest):
         requests.append(request)
         return httpx.Response(status, text=html, headers={"Location": "https://forbidden.test"})
 
@@ -115,7 +117,7 @@ async def test_real_ddgs_preserves_block_and_retry_contract(monkeypatch, status,
     adapter, timer = service(search._search_sync)
     accounted = []
 
-    async def account(number):
+    async def account(number) -> None:
         accounted.append(number)
 
     with pytest.raises(SearchError) as failure:
@@ -131,10 +133,10 @@ async def test_real_ddgs_preserves_block_and_retry_contract(monkeypatch, status,
 
 
 @pytest.mark.parametrize("exception", [TimeoutException("timed out"), RatelimitException("limit")])
-async def test_typed_library_timeout_and_ratelimit_retry_exactly(exception):
+async def test_typed_library_timeout_and_ratelimit_retry_exactly(exception) -> None:
     starts = []
 
-    def attempt(query, user_agent, mark):
+    def attempt(query, user_agent, mark) -> None:
         mark()
         starts.append(timer.now)
         raise exception
@@ -147,10 +149,10 @@ async def test_typed_library_timeout_and_ratelimit_retry_exactly(exception):
     assert failure.value.attempts == 4
 
 
-async def test_actual_http_timeout_preserved_without_hidden_retry(monkeypatch):
+async def test_actual_http_timeout_preserved_without_hidden_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     starts = []
 
-    def respond(request):
+    def respond(request: pytest.FixtureRequest) -> None:
         starts.append(timer.now)
         raise httpx.ReadTimeout("timeout", request=request)
 
@@ -170,8 +172,8 @@ async def test_actual_http_timeout_preserved_without_hidden_retry(monkeypatch):
         (SearchError("POLICY", "Unexpected request"), "POLICY"),
     ],
 )
-async def test_nonretryable_errors_return_once(exception, code):
-    def attempt(query, user_agent, mark):
+async def test_nonretryable_errors_return_once(exception, code) -> None:
+    def attempt(query, user_agent, mark) -> None:
         mark()
         raise exception
 
@@ -184,7 +186,9 @@ async def test_nonretryable_errors_return_once(exception, code):
     assert "do not expose internals" not in str(failure.value)
 
 
-async def test_default_limiter_is_shared_across_generations_and_concurrent_calls(monkeypatch):
+async def test_default_limiter_is_shared_across_generations_and_concurrent_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     timer = Time()
     limiter = SearchLimiter(clock=timer.clock, sleep=timer.sleep)
     monkeypatch.setattr(search, "_PROCESS_LIMITER", limiter)
@@ -202,7 +206,7 @@ async def test_default_limiter_is_shared_across_generations_and_concurrent_calls
     assert timer.delays == [2, 2]
 
 
-async def test_retries_and_other_queries_share_the_same_limiter():
+async def test_retries_and_other_queries_share_the_same_limiter() -> None:
     starts = []
     tries = {}
 
@@ -220,7 +224,7 @@ async def test_retries_and_other_queries_share_the_same_limiter():
     assert all(b[1] - a[1] >= 2 for a, b in pairwise(starts))
 
 
-async def test_blocking_search_does_not_block_ingestion_and_cancel_drains_worker():
+async def test_blocking_search_does_not_block_ingestion_and_cancel_drains_worker() -> None:
     entered, release = threading.Event(), threading.Event()
     accounted = []
 
@@ -230,7 +234,7 @@ async def test_blocking_search_does_not_block_ingestion_and_cancel_drains_worker
         assert release.wait(5)
         return [dict(RESULT)]
 
-    async def account(number):
+    async def account(number) -> None:
         accounted.append(number)
 
     adapter, _ = service(attempt)
@@ -252,11 +256,11 @@ async def test_blocking_search_does_not_block_ingestion_and_cancel_drains_worker
     assert accounted == [1]
 
 
-async def test_cancel_before_request_does_not_charge_attempt():
+async def test_cancel_before_request_does_not_charge_attempt() -> None:
     adapter, _ = service(lambda *args: pytest.fail("Cancelled request executed"))
     accounted = []
 
-    async def account(number):
+    async def account(number) -> None:
         accounted.append(number)
 
     async with adapter.limiter._lock:
@@ -268,7 +272,7 @@ async def test_cancel_before_request_does_not_charge_attempt():
     assert accounted == []
 
 
-def test_transport_rejects_other_engines_redirect_target_and_second_request():
+def test_transport_rejects_other_engines_redirect_target_and_second_request() -> None:
     requests = []
     with httpx.Client(
         transport=httpx.MockTransport(
@@ -286,14 +290,14 @@ def test_transport_rejects_other_engines_redirect_target_and_second_request():
     assert len(requests) == 1
 
 
-def test_version_drift_fails_closed(monkeypatch):
+def test_version_drift_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(search, "version", lambda name: "9.17.0")
     with pytest.raises(SearchError) as failure:
         search._search_sync("official", USER_AGENT, lambda: None)
     assert failure.value.code == "VERSION"
 
 
-async def test_no_key_needed_and_invalid_query_does_not_make_request():
+async def test_no_key_needed_and_invalid_query_does_not_make_request() -> None:
     adapter, _ = service(lambda *args: pytest.fail("Invalid query executed"))
     with pytest.raises(ValueError):
         await adapter.search(" ")

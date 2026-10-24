@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG = yaml.safe_load((ROOT / "config/openma.yaml").read_text())
 
 
-def settings_for(config_dir, tmp_path):
+def settings_for(config_dir, tmp_path: Path):
     return resolve_versions(
         Settings(
             config_dir=config_dir,
@@ -30,7 +30,7 @@ def settings_for(config_dir, tmp_path):
 class FakeOpenMA:
     """The OpenMA API shapes observed on production: normalized tools, positional skills."""
 
-    def __init__(self, settings):
+    def __init__(self, settings) -> None:
         self.requests = []
         self.cards = []
         self.skills = {}
@@ -81,7 +81,7 @@ class FakeOpenMA:
     def writes(self, prefix):
         return [(m, p) for m, p in self.requests if m == "POST" and p.startswith(prefix)]
 
-    def handler(self, request):
+    def handler(self, request: pytest.FixtureRequest):
         path = request.url.path
         self.requests.append((request.method, path))
         assert request.headers["x-api-key"] == "synthetic-oma-key"
@@ -125,7 +125,7 @@ async def run(settings, fake):
         return await openma_sync.sync(settings, client)
 
 
-async def test_first_start_versions_every_skill_and_agent_then_nothing_changes(tmp_path):
+async def test_first_start_versions_every_skill_and_agent_then_nothing_changes(tmp_path: Path) -> None:
     settings = settings_for(ROOT / "config", tmp_path)
     fake = FakeOpenMA(settings)
     first = await run(settings, fake)
@@ -146,7 +146,7 @@ async def test_first_start_versions_every_skill_and_agent_then_nothing_changes(t
     assert fake.writes("/v1/agents/") == [] and fake.writes("/v1/skills") == []
 
 
-async def test_the_serve_settings_without_a_snapshot_upload_every_skill_file(tmp_path):
+async def test_the_serve_settings_without_a_snapshot_upload_every_skill_file(tmp_path: Path) -> None:
     settings = Settings(
         config_dir=ROOT / "config",
         data_dir=tmp_path / "data",
@@ -159,13 +159,13 @@ async def test_the_serve_settings_without_a_snapshot_upload_every_skill_file(tmp
     assert report["skills"] == dict.fromkeys(openma_sync.SKILLS, "NEW_VERSION")
 
 
-def copied_config(tmp_path):
+def copied_config(tmp_path: Path):
     config = tmp_path / "config"
     shutil.copytree(ROOT / "config", config)
     return config
 
 
-async def test_a_changed_tool_definition_publishes_only_the_analyst_agent(tmp_path):
+async def test_a_changed_tool_definition_publishes_only_the_analyst_agent(tmp_path: Path) -> None:
     config = copied_config(tmp_path)
     settings = settings_for(config, tmp_path)
     fake = FakeOpenMA(settings)
@@ -184,7 +184,7 @@ async def test_a_changed_tool_definition_publishes_only_the_analyst_agent(tmp_pa
     assert len(fake.writes("/v1/agents/")) == 1
 
 
-async def test_builtin_toolset_drift_in_openma_is_corrected(tmp_path):
+async def test_builtin_toolset_drift_in_openma_is_corrected(tmp_path: Path) -> None:
     settings = settings_for(ROOT / "config", tmp_path)
     fake = FakeOpenMA(settings)
     await run(settings, fake)
@@ -196,7 +196,7 @@ async def test_builtin_toolset_drift_in_openma_is_corrected(tmp_path):
     assert [(r["name"], r["enabled"]) for r in analyst["tools"][0]["configs"]] == [("browser", True)]
 
 
-async def test_a_skill_missing_from_its_agent_is_created(tmp_path):
+async def test_a_skill_missing_from_its_agent_is_created(tmp_path: Path) -> None:
     settings = settings_for(ROOT / "config", tmp_path)
     fake = FakeOpenMA(settings)
     fake.agents[CONFIG["scout_agent_id"]]["skills"] = []
@@ -205,7 +205,9 @@ async def test_a_skill_missing_from_its_agent_is_created(tmp_path):
     assert fake.agents[CONFIG["scout_agent_id"]]["skills"][0]["skill_id"].startswith("skill_new_")
 
 
-async def test_a_differing_environment_is_reported_not_raised(tmp_path, caplog):
+async def test_a_differing_environment_is_reported_not_raised(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     settings = settings_for(ROOT / "config", tmp_path)
     fake = FakeOpenMA(settings)
     fake.environments[CONFIG["environment_id"]]["config"]["packages"]["pip"].append("pyarrow")
@@ -215,12 +217,14 @@ async def test_a_differing_environment_is_reported_not_raised(tmp_path, caplog):
     assert any("tank-analysis" in r.getMessage() for r in caplog.records)
 
 
-async def test_unreachable_openma_never_blocks_and_stops_with_the_service(tmp_path, monkeypatch):
+async def test_unreachable_openma_never_blocks_and_stops_with_the_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     settings = settings_for(ROOT / "config", tmp_path)
     monkeypatch.setattr(openma_sync, "RETRY_S", 0.01)
     calls = []
 
-    def down(request):
+    def down(request: pytest.FixtureRequest) -> None:
         calls.append(request.url.path)
         raise httpx.ConnectError("refused", request=request)
 
@@ -232,7 +236,7 @@ async def test_unreachable_openma_never_blocks_and_stops_with_the_service(tmp_pa
     assert await asyncio.wait_for(task, 1) is None
 
 
-def test_prompt_label_follows_the_analyst_skill_version():
+def test_prompt_label_follows_the_analyst_skill_version() -> None:
     skill = (ROOT / "config/skills/tank-event-analyst/SKILL.md").read_text()
     version = next(
         line.split(":", 1)[1].strip() for line in skill.splitlines() if line.startswith("version:")
@@ -241,7 +245,7 @@ def test_prompt_label_follows_the_analyst_skill_version():
 
 
 @pytest.mark.parametrize("name", openma_sync.SKILLS)
-def test_skill_upload_holds_exactly_the_baked_files(tmp_path, name):
+def test_skill_upload_holds_exactly_the_baked_files(tmp_path: Path, name) -> None:
     settings = settings_for(ROOT / "config", tmp_path)
     paths = [path for path, _ in openma_sync.skill_files(settings, name)]
     expected = sorted(

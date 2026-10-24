@@ -44,7 +44,7 @@ def session_settings():
 
 
 class FakeTelegram:
-    def __init__(self, updates=(), member="member", is_member=None, member_error=None):
+    def __init__(self, updates=(), member="member", is_member=None, member_error=None) -> None:
         self.updates = list(updates)
         self.sent = []
         self.member = member
@@ -53,7 +53,7 @@ class FakeTelegram:
         self.files = {}
         self.next_id = 1000
 
-    def __call__(self, request):
+    def __call__(self, request: pytest.FixtureRequest):
         if request.url.path.startswith("/file/"):
             return httpx.Response(200, content=self.files[request.url.path.rsplit("/", 1)[-1]])
         method = request.url.path.rsplit("/", 1)[-1]
@@ -94,7 +94,7 @@ class FakeTelegram:
         raise AssertionError(method)
 
 
-async def seed(repo, *, status="OPEN", rich_message=None):
+async def seed(repo, *, status="OPEN", rich_message=None) -> None:
     await repo.put(
         "out.alerts",
         "a:1",
@@ -161,7 +161,7 @@ def message(message_id, *, date, text=None, chat=USER, chat_type="private", **ex
     return body
 
 
-async def run_inbox(repo, telegram, now):
+async def run_inbox(repo, telegram, now) -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
         inbox = TelegramInbox(repo, inbox_settings(), http=http)
         await inbox.poll(timeout=0)
@@ -169,7 +169,7 @@ async def run_inbox(repo, telegram, now):
 
 
 @pytest.mark.asyncio
-async def test_reply_to_card_in_alerts_chat_queues_question_for_card_session():
+async def test_reply_to_card_in_alerts_chat_queues_question_for_card_session() -> None:
     repo = MemoryRepository()
     await seed(repo)
     reply = message(
@@ -195,7 +195,7 @@ async def test_reply_to_card_in_alerts_chat_queues_question_for_card_session():
 
 
 @pytest.mark.asyncio
-async def test_forward_with_comment_pairs_and_matches_card_by_origin_date():
+async def test_forward_with_comment_pairs_and_matches_card_by_origin_date() -> None:
     repo = MemoryRepository()
     await seed(repo)
     comment = message(10, date=1_800_000_200, text="А что с ликвидациями?")
@@ -215,7 +215,7 @@ async def test_forward_with_comment_pairs_and_matches_card_by_origin_date():
 
 
 @pytest.mark.asyncio
-async def test_lonely_forward_waits_then_prompts_and_reply_to_prompt_continues_session():
+async def test_lonely_forward_waits_then_prompts_and_reply_to_prompt_continues_session() -> None:
     repo = MemoryRepository()
     await seed(repo)
     forward = message(
@@ -242,7 +242,7 @@ async def test_lonely_forward_waits_then_prompts_and_reply_to_prompt_continues_s
 
 
 @pytest.mark.asyncio
-async def test_private_question_from_non_member_is_ignored_and_unknown_reference_is_explained():
+async def test_private_question_from_non_member_is_ignored_and_unknown_reference_is_explained() -> None:
     repo = MemoryRepository()
     await seed(repo)
     stranger = message(
@@ -260,7 +260,7 @@ async def test_private_question_from_non_member_is_ignored_and_unknown_reference
     assert member.sent[0]["text"] == NO_SESSION_TEXT
 
 
-def test_long_answers_split_below_telegram_limit():
+def test_long_answers_split_below_telegram_limit() -> None:
     parts = chunks(("строка " * 100 + "\n") * 20)
     assert len(parts) > 1 and all(len(part) <= 4000 for part in parts)
 
@@ -286,7 +286,7 @@ async def ask(repo, session_status="OPEN"):
 
 
 def openma(posts, history):
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         if request.method == "POST":
             body = json.loads(request.content)
             posts.append((request.url.path, body))
@@ -302,7 +302,7 @@ def openma(posts, history):
 
 
 @pytest.mark.asyncio
-async def test_question_goes_into_the_same_session_and_final_turn_text_becomes_the_answer():
+async def test_question_goes_into_the_same_session_and_final_turn_text_becomes_the_answer() -> None:
     repo = MemoryRepository()
     question_id = await ask(repo)
     posts = []
@@ -351,7 +351,7 @@ async def test_question_goes_into_the_same_session_and_final_turn_text_becomes_t
 
 
 @pytest.mark.asyncio
-async def test_failed_session_reopens_and_retires_its_failed_turn_from_the_barrier():
+async def test_failed_session_reopens_and_retires_its_failed_turn_from_the_barrier() -> None:
     repo = MemoryRepository()
     question_id = await ask(repo, session_status="FAILED")
     posts = []
@@ -369,7 +369,7 @@ async def test_failed_session_reopens_and_retires_its_failed_turn_from_the_barri
 
 
 @pytest.mark.asyncio
-async def test_terminated_session_answers_only_the_reason_and_answer_job_replies_once():
+async def test_terminated_session_answers_only_the_reason_and_answer_job_replies_once() -> None:
     repo = MemoryRepository()
     question_id = await ask(repo)
     session = await repo.get("ops.agent_sessions", "ses_1")
@@ -395,7 +395,7 @@ async def test_terminated_session_answers_only_the_reason_and_answer_job_replies
 
 
 @pytest.mark.asyncio
-async def test_session_with_delivered_card_is_kept_open_instead_of_archived():
+async def test_session_with_delivered_card_is_kept_open_instead_of_archived() -> None:
     repo = MemoryRepository()
     await seed(repo)
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma([], []))) as http:
@@ -404,7 +404,7 @@ async def test_session_with_delivered_card_is_kept_open_instead_of_archived():
 
 
 @pytest.mark.asyncio
-async def test_archived_session_answers_archived_instead_of_posting():
+async def test_archived_session_answers_archived_instead_of_posting() -> None:
     repo = MemoryRepository()
     question_id = await ask(repo, session_status="ENDED")
     posts = []
@@ -418,7 +418,7 @@ async def test_archived_session_answers_archived_instead_of_posting():
 
 
 @pytest.mark.asyncio
-async def test_retried_question_is_never_retired_by_a_concurrent_failure():
+async def test_retried_question_is_never_retired_by_a_concurrent_failure() -> None:
     repo = MemoryRepository()
     question_id = await ask(repo)
     payload = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
@@ -426,7 +426,7 @@ async def test_retried_question_is_never_retired_by_a_concurrent_failure():
     healthy = openma(posts, [])
     outage = {"left": 1}
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         if request.method == "POST" and outage["left"]:
             outage["left"] -= 1
             return httpx.Response(503, json={})
@@ -449,7 +449,7 @@ async def test_retried_question_is_never_retired_by_a_concurrent_failure():
 
 
 @pytest.mark.asyncio
-async def test_answered_question_requeues_its_lost_delivery_job():
+async def test_answered_question_requeues_its_lost_delivery_job() -> None:
     from tank.telegram_inbox import record_answer
 
     repo = MemoryRepository()
@@ -464,7 +464,7 @@ async def test_answered_question_requeues_its_lost_delivery_job():
 
 
 @pytest.mark.asyncio
-async def test_terminal_question_job_records_a_failure_answer():
+async def test_terminal_question_job_records_a_failure_answer() -> None:
     from tank.runtime import Runtime
 
     repo = MemoryRepository()
@@ -478,7 +478,7 @@ async def test_terminal_question_job_records_a_failure_answer():
 
 
 @pytest.mark.asyncio
-async def test_restricted_user_counts_only_while_still_a_member():
+async def test_restricted_user_counts_only_while_still_a_member() -> None:
     repo = MemoryRepository()
     await seed(repo)
     question = message(
@@ -496,7 +496,7 @@ async def test_restricted_user_counts_only_while_still_a_member():
 
 
 @pytest.mark.asyncio
-async def test_reply_resolves_the_session_recorded_on_the_alert():
+async def test_reply_resolves_the_session_recorded_on_the_alert() -> None:
     repo = MemoryRepository()
     await seed(repo)
     alert = await repo.get("out.alerts", "a:1")
@@ -528,7 +528,7 @@ async def test_reply_resolves_the_session_recorded_on_the_alert():
 
 
 @pytest.mark.asyncio
-async def test_first_question_is_answered_while_a_second_is_still_running():
+async def test_first_question_is_answered_while_a_second_is_still_running() -> None:
     repo = MemoryRepository()
     first = await ask(repo)
     await repo.put(
@@ -550,7 +550,7 @@ async def test_first_question_is_answered_while_a_second_is_still_running():
         {"id": "r2", "type": "session.status_running", "execution_id": "in_q2"},
     ]
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         if request.method == "POST":
             posts.append(json.loads(request.content))
             return httpx.Response(200, json={"data": [{"id": next(ids)}]})
@@ -578,7 +578,7 @@ async def test_first_question_is_answered_while_a_second_is_still_running():
 
 
 @pytest.mark.asyncio
-async def test_failed_session_without_answer_is_reconciled_after_restart():
+async def test_failed_session_without_answer_is_reconciled_after_restart() -> None:
     repo = MemoryRepository()
     question_id = await ask(repo)
     session = await repo.get("ops.agent_sessions", "ses_1")
@@ -595,7 +595,7 @@ async def test_failed_session_without_answer_is_reconciled_after_restart():
 
 
 @pytest.mark.asyncio
-async def test_terminal_answer_job_is_recorded_once_and_marked_reconciled():
+async def test_terminal_answer_job_is_recorded_once_and_marked_reconciled() -> None:
     from tank.runtime import Runtime
 
     repo = MemoryRepository()
@@ -619,7 +619,9 @@ async def test_terminal_answer_job_is_recorded_once_and_marked_reconciled():
 @pytest.mark.parametrize(
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
-async def test_answer_ledger_rows_satisfy_the_delivery_schema_and_route_replies(backend, postgres_template):
+async def test_answer_ledger_rows_satisfy_the_delivery_schema_and_route_replies(
+    backend, postgres_template
+) -> None:
     import os
     from contextlib import AsyncExitStack
 
@@ -655,7 +657,7 @@ async def test_answer_ledger_rows_satisfy_the_delivery_schema_and_route_replies(
         assert (await repo.get("out.user_questions", "q_pg"))["status"] == "DELIVERED"
 
 
-def test_question_message_is_plain_text_with_truncated_reference():
+def test_question_message_is_plain_text_with_truncated_reference() -> None:
     from tank.telegram_inbox import question_message
 
     text = question_message({"text": "А дальше?", "reference": {"text": "x" * 5000}})
@@ -663,7 +665,7 @@ def test_question_message_is_plain_text_with_truncated_reference():
 
 
 @pytest.mark.asyncio
-async def test_send_telegram_file_replies_with_the_session_output_once():
+async def test_send_telegram_file_replies_with_the_session_output_once() -> None:
     repo = MemoryRepository()
     question_id = await ask(repo)
     session = await repo.get("ops.agent_sessions", "ses_1")
@@ -673,7 +675,7 @@ async def test_send_telegram_file_replies_with_the_session_output_once():
     await repo.put("ops.agent_sessions", "ses_1", session)
     documents = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         if request.url.host == "oma":
             assert request.url.path == "/v1/sessions/ses_1/outputs/report.pdf"
             return httpx.Response(200, content=b"%PDF-1.7 tank")
@@ -693,7 +695,7 @@ async def test_send_telegram_file_replies_with_the_session_output_once():
 
 
 @pytest.mark.asyncio
-async def test_send_telegram_file_outside_a_follow_up_is_refused():
+async def test_send_telegram_file_outside_a_follow_up_is_refused() -> None:
     repo = MemoryRepository()
     await seed(repo)
     session = await repo.get("ops.agent_sessions", "ses_1")
@@ -705,7 +707,7 @@ async def test_send_telegram_file_outside_a_follow_up_is_refused():
 
 
 @pytest.mark.asyncio
-async def test_idle_session_receives_the_current_tools_once():
+async def test_idle_session_receives_the_current_tools_once() -> None:
     repo = MemoryRepository()
     await seed(repo)
     custom = [{"name": "send_telegram_file", "description": "d", "input_schema": {"type": "object"}}]
@@ -713,7 +715,7 @@ async def test_idle_session_receives_the_current_tools_once():
     settings.read_config_json = lambda relative: custom
     requests = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         requests.append((request.method, request.url.path, json.loads(request.content or b"{}")))
         if request.method == "GET":
             return httpx.Response(200, json={"id": "ses_1", "agent": {"id": "agt_1"}})
@@ -734,7 +736,7 @@ async def test_idle_session_receives_the_current_tools_once():
 
 
 @pytest.mark.asyncio
-async def test_agent_watch_rules_arm_disarm_and_survive_decision_reconciliation():
+async def test_agent_watch_rules_arm_disarm_and_survive_decision_reconciliation() -> None:
     from tank.event_tools import EventToolService
 
     repo = MemoryRepository()
@@ -794,7 +796,7 @@ async def asked(repo, telegram, message_id=20, text="Почему не шорт?
 
 
 @pytest.mark.asyncio
-async def test_reply_to_the_readers_own_follow_up_continues_the_same_session():
+async def test_reply_to_the_readers_own_follow_up_continues_the_same_session() -> None:
     repo = MemoryRepository()
     await seed(repo)
     telegram = FakeTelegram()
@@ -815,7 +817,7 @@ async def test_reply_to_the_readers_own_follow_up_continues_the_same_session():
 
 
 @pytest.mark.asyncio
-async def test_forward_of_own_follow_up_continues_its_session_and_hidden_senders_are_rejected():
+async def test_forward_of_own_follow_up_continues_its_session_and_hidden_senders_are_rejected() -> None:
     repo = MemoryRepository()
     await seed(repo)
     telegram = FakeTelegram()
@@ -847,7 +849,7 @@ async def test_forward_of_own_follow_up_continues_its_session_and_hidden_senders
 
 
 @pytest.mark.asyncio
-async def test_reader_file_is_stored_for_the_session_and_named_in_the_agent_message():
+async def test_reader_file_is_stored_for_the_session_and_named_in_the_agent_message() -> None:
     import base64
 
     from tank.telegram_inbox import question_message
@@ -875,7 +877,7 @@ async def test_reader_file_is_stored_for_the_session_and_named_in_the_agent_mess
     mounts = []
     uploads = []
 
-    def openma(request):
+    def openma(request: pytest.FixtureRequest):
         if request.url.path == "/v1/files":
             uploads.append(request.content)
             return httpx.Response(200, json={"id": "file_private"})
@@ -897,7 +899,7 @@ async def test_reader_file_is_stored_for_the_session_and_named_in_the_agent_mess
 
 
 @pytest.mark.asyncio
-async def test_files_over_20_mb_are_refused_with_a_notice():
+async def test_files_over_20_mb_are_refused_with_a_notice() -> None:
     from tank.telegram_inbox import TOO_LARGE_TEXT
 
     repo = MemoryRepository()
@@ -918,7 +920,7 @@ async def test_files_over_20_mb_are_refused_with_a_notice():
 
 
 @pytest.mark.asyncio
-async def test_transient_membership_failure_retries_instead_of_ignoring():
+async def test_transient_membership_failure_retries_instead_of_ignoring() -> None:
     repo = MemoryRepository()
     await seed(repo)
     question = message(
@@ -931,7 +933,7 @@ async def test_transient_membership_failure_retries_instead_of_ignoring():
 
 
 @pytest.mark.asyncio
-async def test_numeric_watch_comparisons_need_numbers():
+async def test_numeric_watch_comparisons_need_numbers() -> None:
     from tank.event_tools import EventToolService
 
     repo = MemoryRepository()
@@ -951,7 +953,7 @@ async def test_numeric_watch_comparisons_need_numbers():
         )
 
 
-def test_reopening_fails_queued_follow_ups_of_the_failed_session():
+def test_reopening_fails_queued_follow_ups_of_the_failed_session() -> None:
     service = object.__new__(SessionService)
     service.clock_timestamp = lambda: __import__("tank.time_precision", fromlist=["x"]).collection_clock()
     session = {
@@ -976,7 +978,7 @@ def test_reopening_fails_queued_follow_ups_of_the_failed_session():
 
 
 @pytest.mark.asyncio
-async def test_unsized_file_that_telegram_refuses_is_set_aside_without_blocking_the_inbox():
+async def test_unsized_file_that_telegram_refuses_is_set_aside_without_blocking_the_inbox() -> None:
     from tank.telegram_inbox import TOO_LARGE_TEXT
 
     repo = MemoryRepository()
@@ -1006,7 +1008,7 @@ async def test_unsized_file_that_telegram_refuses_is_set_aside_without_blocking_
 
 
 @pytest.mark.asyncio
-async def test_output_filename_is_one_encoded_path_segment():
+async def test_output_filename_is_one_encoded_path_segment() -> None:
     repo = MemoryRepository()
     question_id = await ask(repo)
     session = await repo.get("ops.agent_sessions", "ses_1")
@@ -1015,7 +1017,7 @@ async def test_output_filename_is_one_encoded_path_segment():
     session["active_message_id"] = "mq"
     paths = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         if request.url.host == "oma":
             paths.append(request.url.raw_path)
             return httpx.Response(200, content=b"x")
@@ -1029,7 +1031,7 @@ async def test_output_filename_is_one_encoded_path_segment():
 
 
 @pytest.mark.asyncio
-async def test_fired_agent_watch_wakes_the_session_that_armed_it():
+async def test_fired_agent_watch_wakes_the_session_that_armed_it() -> None:
     from datetime import timedelta
     from unittest.mock import AsyncMock
 
@@ -1068,7 +1070,7 @@ async def test_fired_agent_watch_wakes_the_session_that_armed_it():
 
 
 @pytest.mark.asyncio
-async def test_event_scoped_watches_refuse_persistence():
+async def test_event_scoped_watches_refuse_persistence() -> None:
     from tank.event_tools import EventToolService
 
     repo = MemoryRepository()
@@ -1090,14 +1092,14 @@ async def test_event_scoped_watches_refuse_persistence():
         )
 
 
-def test_ordered_comparison_on_a_non_number_never_matches():
+def test_ordered_comparison_on_a_non_number_never_matches() -> None:
     from tank.scheduler import compare
 
     assert compare("ANALYZING", ">", 1) is False and compare("2", ">", 1) is True
 
 
 @pytest.mark.asyncio
-async def test_ordered_watch_on_categorical_metric_is_refused():
+async def test_ordered_watch_on_categorical_metric_is_refused() -> None:
     from tank.event_tools import EventToolService
 
     repo = MemoryRepository()
@@ -1119,7 +1121,7 @@ async def test_ordered_watch_on_categorical_metric_is_refused():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status,raises", [(503, True), (429, True), (400, False)])
-async def test_tool_sync_retries_transient_rejections_only(status, raises):
+async def test_tool_sync_retries_transient_rejections_only(status, raises) -> None:
     repo = MemoryRepository()
     await seed(repo)
     settings = session_settings()
@@ -1140,7 +1142,7 @@ async def test_tool_sync_retries_transient_rejections_only(status, raises):
 
 
 @pytest.mark.asyncio
-async def test_interrupted_file_send_is_not_repeated_blindly():
+async def test_interrupted_file_send_is_not_repeated_blindly() -> None:
     repo = MemoryRepository()
     question_id = await ask(repo)
     await repo.put(
@@ -1164,7 +1166,7 @@ async def test_interrupted_file_send_is_not_repeated_blindly():
 
 
 @pytest.mark.asyncio
-async def test_ambiguous_forward_of_own_messages_is_refused():
+async def test_ambiguous_forward_of_own_messages_is_refused() -> None:
     repo = MemoryRepository()
     await seed(repo)
     for message_id, session_id in ((60, "ses_1"), (61, "ses_2")):
@@ -1194,7 +1196,7 @@ async def test_ambiguous_forward_of_own_messages_is_refused():
 
 
 @pytest.mark.asyncio
-async def test_prompt_is_sent_once_even_if_marking_the_forward_fails():
+async def test_prompt_is_sent_once_even_if_marking_the_forward_fails() -> None:
     repo = MemoryRepository()
     await seed(repo)
     forward = message(
@@ -1211,7 +1213,7 @@ async def test_prompt_is_sent_once_even_if_marking_the_forward_fails():
         target = await inbox.forwarded_target(row["message"], BOT)
         original = inbox.mark
 
-        async def broken(*args, **kwargs):
+        async def broken(*args, **kwargs) -> None:
             raise RuntimeError("lost write")
 
         inbox.mark = broken
@@ -1224,7 +1226,7 @@ async def test_prompt_is_sent_once_even_if_marking_the_forward_fails():
 
 
 @pytest.mark.asyncio
-async def test_two_forwards_with_one_comment_are_not_guessed():
+async def test_two_forwards_with_one_comment_are_not_guessed() -> None:
     repo = MemoryRepository()
     await seed(repo)
     comment = message(80, date=1_800_011_000, text="Что это значит?")
@@ -1249,7 +1251,7 @@ async def test_two_forwards_with_one_comment_are_not_guessed():
 
 
 @pytest.mark.asyncio
-async def test_prompt_is_resent_after_a_definite_telegram_rejection():
+async def test_prompt_is_resent_after_a_definite_telegram_rejection() -> None:
     repo = MemoryRepository()
     await seed(repo)
     forward = message(
@@ -1262,7 +1264,7 @@ async def test_prompt_is_resent_after_a_definite_telegram_rejection():
     outage = {"left": 1}
     original = telegram.__call__
 
-    def flaky(request):
+    def flaky(request: pytest.FixtureRequest):
         if request.url.path.endswith("/sendMessage") and outage["left"]:
             outage["left"] -= 1
             return httpx.Response(429, json={"ok": False, "parameters": {"retry_after": 1}})
@@ -1278,7 +1280,7 @@ async def test_prompt_is_resent_after_a_definite_telegram_rejection():
 
 
 @pytest.mark.asyncio
-async def test_reader_files_expire_after_thirty_days():
+async def test_reader_files_expire_after_thirty_days() -> None:
     from datetime import timedelta
 
     from tank.util import iso, utcnow
@@ -1299,7 +1301,7 @@ async def test_reader_files_expire_after_thirty_days():
 
 
 @pytest.mark.asyncio
-async def test_watch_rules_refuse_mixed_windows_and_unevaluated_metrics():
+async def test_watch_rules_refuse_mixed_windows_and_unevaluated_metrics() -> None:
     from tank.event_tools import EventToolService
 
     repo = MemoryRepository()
@@ -1333,7 +1335,7 @@ async def test_watch_rules_refuse_mixed_windows_and_unevaluated_metrics():
 
 
 @pytest.mark.asyncio
-async def test_answer_chunks_resend_only_after_definite_rejection():
+async def test_answer_chunks_resend_only_after_definite_rejection() -> None:
     repo = MemoryRepository()
     question_id = await ask(repo)
     question = await repo.get("out.user_questions", question_id)
@@ -1356,7 +1358,7 @@ async def test_answer_chunks_resend_only_after_definite_rejection():
 
 
 @pytest.mark.asyncio
-async def test_card_reply_ignores_deliveries_recorded_for_another_chat():
+async def test_card_reply_ignores_deliveries_recorded_for_another_chat() -> None:
     repo = MemoryRepository()
     await seed(repo)
     await repo.put(
@@ -1381,7 +1383,7 @@ async def test_card_reply_ignores_deliveries_recorded_for_another_chat():
 
 
 @pytest.mark.asyncio
-async def test_forward_already_linked_to_a_question_is_marked_paired_without_prompt():
+async def test_forward_already_linked_to_a_question_is_marked_paired_without_prompt() -> None:
     repo = MemoryRepository()
     await seed(repo)
     await repo.put(
@@ -1409,7 +1411,7 @@ async def test_forward_already_linked_to_a_question_is_marked_paired_without_pro
 
 
 @pytest.mark.asyncio
-async def test_abandoned_question_retires_its_unsent_intent_but_keeps_accepted_ones():
+async def test_abandoned_question_retires_its_unsent_intent_but_keeps_accepted_ones() -> None:
     repo = MemoryRepository()
     await seed(repo)
     session = await repo.get("ops.agent_sessions", "ses_1")
@@ -1437,7 +1439,7 @@ async def test_abandoned_question_retires_its_unsent_intent_but_keeps_accepted_o
 
 
 @pytest.mark.asyncio
-async def test_follow_up_to_a_busy_session_with_stale_tools_is_deferred():
+async def test_follow_up_to_a_busy_session_with_stale_tools_is_deferred() -> None:
     from tank.delivery import DeliveryDeferred
 
     repo = MemoryRepository()
@@ -1458,7 +1460,7 @@ async def test_follow_up_to_a_busy_session_with_stale_tools_is_deferred():
 
 
 @pytest.mark.asyncio
-async def test_answer_lookup_reads_history_only_back_to_the_question():
+async def test_answer_lookup_reads_history_only_back_to_the_question() -> None:
     repo = MemoryRepository()
     await seed(repo)
     session = await repo.get("ops.agent_sessions", "ses_1")
@@ -1482,7 +1484,7 @@ async def test_answer_lookup_reads_history_only_back_to_the_question():
     ]
     pages = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         page = int(request.url.params.get("page") or 0)
         pages.append(page)
         newest = history[::-1]
@@ -1496,7 +1498,7 @@ async def test_answer_lookup_reads_history_only_back_to_the_question():
     assert answers["mq"] == {"text": "Ответ", "ended": True} and pages == [0]
 
 
-def test_chunks_respect_telegram_utf16_length():
+def test_chunks_respect_telegram_utf16_length() -> None:
     from tank.telegram_inbox import utf16_length
 
     parts = chunks("😀" * 5000)
@@ -1505,7 +1507,7 @@ def test_chunks_respect_telegram_utf16_length():
 
 
 @pytest.mark.asyncio
-async def test_oversized_session_output_is_refused_while_streaming(monkeypatch):
+async def test_oversized_session_output_is_refused_while_streaming(monkeypatch: pytest.MonkeyPatch) -> None:
     import tank.agents.sessions as module
 
     monkeypatch.setattr(module, "DOCUMENT_LIMIT", 10)
@@ -1517,7 +1519,7 @@ async def test_oversized_session_output_is_refused_while_streaming(monkeypatch):
     session["active_message_id"] = "mq"
     sent = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         if request.url.host == "oma":
             return httpx.Response(200, content=b"x" * 100)
         sent.append(request)
@@ -1532,7 +1534,7 @@ async def test_oversized_session_output_is_refused_while_streaming(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_forwarded_prompt_matches_by_the_text_actually_sent():
+async def test_forwarded_prompt_matches_by_the_text_actually_sent() -> None:
     repo = MemoryRepository()
     await seed(repo)
     forward = message(
@@ -1564,7 +1566,7 @@ async def test_forwarded_prompt_matches_by_the_text_actually_sent():
 
 
 @pytest.mark.asyncio
-async def test_watch_token_must_exist_in_the_registry():
+async def test_watch_token_must_exist_in_the_registry() -> None:
     from tank.event_tools import EventToolService
 
     repo = MemoryRepository()
@@ -1586,7 +1588,7 @@ async def test_watch_token_must_exist_in_the_registry():
     assert (await tools.set_watch_condition({**arm, "token_id": "bitcoin:BTC"}, {}))["accepted"]
 
 
-def test_captions_are_cut_by_utf16_length_and_photos_fall_back_to_dimensions():
+def test_captions_are_cut_by_utf16_length_and_photos_fall_back_to_dimensions() -> None:
     from tank.telegram_inbox import media, utf16_length, utf16_prefix
 
     assert utf16_length(utf16_prefix("😀" * 900, 1024)) == 1024
@@ -1603,7 +1605,7 @@ def test_captions_are_cut_by_utf16_length_and_photos_fall_back_to_dimensions():
 
 
 @pytest.mark.asyncio
-async def test_notice_is_retried_after_a_transient_failure_and_sent_once():
+async def test_notice_is_retried_after_a_transient_failure_and_sent_once() -> None:
     from tank.telegram_inbox import HINT_TEXT
 
     repo = MemoryRepository()
@@ -1613,7 +1615,7 @@ async def test_notice_is_retried_after_a_transient_failure_and_sent_once():
     outage = {"left": 1}
     original = telegram.__call__
 
-    def flaky(request):
+    def flaky(request: pytest.FixtureRequest):
         if request.url.path.endswith("/sendMessage") and outage["left"]:
             outage["left"] -= 1
             return httpx.Response(503, json={"ok": False})
@@ -1631,7 +1633,7 @@ async def test_notice_is_retried_after_a_transient_failure_and_sent_once():
 
 
 @pytest.mark.asyncio
-async def test_watch_mutation_hydrates_prompt_provenance_first():
+async def test_watch_mutation_hydrates_prompt_provenance_first() -> None:
     repo = MemoryRepository()
     await seed(repo)
     session = await repo.get("ops.agent_sessions", "ses_1")
@@ -1641,7 +1643,7 @@ async def test_watch_mutation_hydrates_prompt_provenance_first():
     await repo.put("evt.events", session["event_id"], {"event_id": session["event_id"]})
     calls = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         calls.append(request.url.path)
         return httpx.Response(
             200,
@@ -1661,7 +1663,7 @@ async def test_watch_mutation_hydrates_prompt_provenance_first():
 
 
 @pytest.mark.asyncio
-async def test_one_permanently_failing_message_never_blocks_the_others():
+async def test_one_permanently_failing_message_never_blocks_the_others() -> None:
     repo = MemoryRepository()
     await seed(repo)
     lonely = message(98, date=1_800_016_000, text="просто текст")
@@ -1676,7 +1678,7 @@ async def test_one_permanently_failing_message_never_blocks_the_others():
     telegram = FakeTelegram([{"update_id": 1, "message": lonely}, {"update_id": 2, "message": reply}])
     original = telegram.__call__
 
-    def blocked(request):
+    def blocked(request: pytest.FixtureRequest):
         if request.url.path.endswith("/sendMessage") and json.loads(request.content)["chat_id"] == str(USER):
             return httpx.Response(
                 403, json={"ok": False, "description": "Forbidden: bot was blocked by the user"}
@@ -1693,7 +1695,7 @@ async def test_one_permanently_failing_message_never_blocks_the_others():
 
 
 @pytest.mark.asyncio
-async def test_handled_messages_bound_to_a_session_survive_pruning():
+async def test_handled_messages_bound_to_a_session_survive_pruning() -> None:
     from datetime import timedelta
 
     from tank.util import iso, utcnow
@@ -1721,11 +1723,11 @@ async def test_handled_messages_bound_to_a_session_survive_pruning():
 
 
 @pytest.mark.asyncio
-async def test_question_to_a_remotely_terminated_session_answers_terminated():
+async def test_question_to_a_remotely_terminated_session_answers_terminated() -> None:
     repo = MemoryRepository()
     question_id = await ask(repo)
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         return httpx.Response(200, json={"id": "ses_1", "status": "terminated"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
@@ -1737,7 +1739,7 @@ async def test_question_to_a_remotely_terminated_session_answers_terminated():
 
 
 @pytest.mark.asyncio
-async def test_too_large_file_in_a_pair_settles_both_messages():
+async def test_too_large_file_in_a_pair_settles_both_messages() -> None:
     from tank.telegram_inbox import HINT_TEXT, TOO_LARGE_TEXT
 
     repo = MemoryRepository()
@@ -1764,7 +1766,7 @@ async def test_too_large_file_in_a_pair_settles_both_messages():
 
 
 @pytest.mark.asyncio
-async def test_legacy_card_deliveries_stop_matching_after_the_alerts_chat_changes():
+async def test_legacy_card_deliveries_stop_matching_after_the_alerts_chat_changes() -> None:
     repo = MemoryRepository()
     await seed(repo)
     async with httpx.AsyncClient(transport=httpx.MockTransport(FakeTelegram())) as http:
@@ -1781,7 +1783,7 @@ async def test_legacy_card_deliveries_stop_matching_after_the_alerts_chat_change
 
 
 @pytest.mark.asyncio
-async def test_paired_size_notice_failure_keeps_both_messages_retryable():
+async def test_paired_size_notice_failure_keeps_both_messages_retryable() -> None:
     from tank.telegram_inbox import TOO_LARGE_TEXT
 
     repo = MemoryRepository()
@@ -1799,7 +1801,7 @@ async def test_paired_size_notice_failure_keeps_both_messages_retryable():
     outage = {"left": 1}
     original = telegram.__call__
 
-    def flaky(request):
+    def flaky(request: pytest.FixtureRequest):
         if request.url.path.endswith("/sendMessage") and outage["left"]:
             outage["left"] -= 1
             return httpx.Response(502, json={"ok": False})
@@ -1818,7 +1820,7 @@ async def test_paired_size_notice_failure_keeps_both_messages_retryable():
 
 
 @pytest.mark.asyncio
-async def test_question_to_a_session_missing_in_openma_answers_terminated():
+async def test_question_to_a_session_missing_in_openma_answers_terminated() -> None:
     repo = MemoryRepository()
     question_id = await ask(repo)
     async with httpx.AsyncClient(
@@ -1831,7 +1833,7 @@ async def test_question_to_a_session_missing_in_openma_answers_terminated():
 
 
 @pytest.mark.asyncio
-async def test_expired_file_payloads_are_deleted_with_their_metadata():
+async def test_expired_file_payloads_are_deleted_with_their_metadata() -> None:
     from datetime import timedelta
 
     from tank.util import iso, utcnow
@@ -1849,7 +1851,7 @@ async def test_expired_file_payloads_are_deleted_with_their_metadata():
 
 
 @pytest.mark.asyncio
-async def test_paired_size_notice_settles_both_rows_in_one_transaction():
+async def test_paired_size_notice_settles_both_rows_in_one_transaction() -> None:
     repo = MemoryRepository()
     await seed(repo)
     comment = message(
@@ -1868,7 +1870,7 @@ async def test_paired_size_notice_settles_both_rows_in_one_transaction():
         original = inbox.mark
         calls = []
 
-        async def failing_second(row, status, **extra):
+        async def failing_second(row, status, **extra) -> None:
             calls.append(row["message_id"])
             if len(calls) == 2:
                 raise RuntimeError("write lost")
@@ -1886,7 +1888,7 @@ async def test_paired_size_notice_settles_both_rows_in_one_transaction():
     assert [body["text"] for body in telegram.sent].count(PROMPT_TEXT) == 0
 
 
-def test_equality_watches_compare_numeric_text_and_numbers():
+def test_equality_watches_compare_numeric_text_and_numbers() -> None:
     from tank.scheduler import compare
 
     breadth = {"kind": "EXACT_STRICT_MAJORITY", "value": "0.6", "strict_majority": True}
@@ -1897,7 +1899,7 @@ def test_equality_watches_compare_numeric_text_and_numbers():
 
 
 @pytest.mark.asyncio
-async def test_known_oversize_file_in_a_pair_settles_both_messages():
+async def test_known_oversize_file_in_a_pair_settles_both_messages() -> None:
     from tank.telegram_inbox import TOO_LARGE_TEXT
 
     repo = MemoryRepository()
@@ -1923,7 +1925,7 @@ async def test_known_oversize_file_in_a_pair_settles_both_messages():
 
 
 @pytest.mark.asyncio
-async def test_connection_failure_before_sending_keeps_the_notice_retryable():
+async def test_connection_failure_before_sending_keeps_the_notice_retryable() -> None:
     from tank.telegram_inbox import HINT_TEXT
 
     repo = MemoryRepository()
@@ -1933,7 +1935,7 @@ async def test_connection_failure_before_sending_keeps_the_notice_retryable():
     outage = {"left": 1}
     original = telegram.__call__
 
-    def flaky(request):
+    def flaky(request: pytest.FixtureRequest):
         if request.url.path.endswith("/sendMessage") and outage["left"]:
             outage["left"] -= 1
             raise httpx.ConnectError("connection refused", request=request)
@@ -1949,7 +1951,7 @@ async def test_connection_failure_before_sending_keeps_the_notice_retryable():
 
 
 @pytest.mark.asyncio
-async def test_unmatched_forward_pair_settles_both_rows_together():
+async def test_unmatched_forward_pair_settles_both_rows_together() -> None:
     repo = MemoryRepository()
     await seed(repo)
     comment = message(150, date=1_800_022_000, text="Что это?")
@@ -1966,7 +1968,7 @@ async def test_unmatched_forward_pair_settles_both_rows_together():
         original = inbox.mark
         calls = []
 
-        async def failing_second(row, status, **extra):
+        async def failing_second(row, status, **extra) -> None:
             calls.append(row["message_id"])
             if len(calls) == 2:
                 raise RuntimeError("write lost")
@@ -1986,7 +1988,7 @@ async def test_unmatched_forward_pair_settles_both_rows_together():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("name", [".", ".."])
-async def test_dot_segment_output_names_are_refused(name):
+async def test_dot_segment_output_names_are_refused(name) -> None:
     repo = MemoryRepository()
     question_id = await ask(repo)
     session = await repo.get("ops.agent_sessions", "ses_1")
@@ -2001,7 +2003,7 @@ async def test_dot_segment_output_names_are_refused(name):
 
 
 @pytest.mark.asyncio
-async def test_agent_rules_are_coalesced_and_capped_per_event():
+async def test_agent_rules_are_coalesced_and_capped_per_event() -> None:
     from tank.event_tools import MAX_AGENT_WATCHES, EventToolService
 
     repo = MemoryRepository()
@@ -2028,7 +2030,7 @@ async def test_agent_rules_are_coalesced_and_capped_per_event():
 
 
 @pytest.mark.asyncio
-async def test_text_of_a_failed_attempt_is_never_the_answer():
+async def test_text_of_a_failed_attempt_is_never_the_answer() -> None:
     repo = MemoryRepository()
     await seed(repo)
     session = await repo.get("ops.agent_sessions", "ses_1")
@@ -2063,7 +2065,7 @@ async def test_text_of_a_failed_attempt_is_never_the_answer():
 
 
 @pytest.mark.asyncio
-async def test_reused_attachment_keeps_its_recorded_size():
+async def test_reused_attachment_keeps_its_recorded_size() -> None:
     repo = MemoryRepository()
     await seed(repo)
     telegram = FakeTelegram()
@@ -2081,7 +2083,7 @@ async def test_reused_attachment_keeps_its_recorded_size():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("forwarded", [False, True])
-async def test_rich_card_reference_and_rich_question_continue_original_session(forwarded):
+async def test_rich_card_reference_and_rich_question_continue_original_session(forwarded) -> None:
     from tank.telegram_rich import card_rich_message, score_summary
 
     repo = MemoryRepository()
@@ -2126,7 +2128,7 @@ async def test_rich_card_reference_and_rich_question_continue_original_session(f
     assert telegram.sent == []
 
 
-async def test_question_text_keeps_user_filenames_and_literal_hashes():
+async def test_question_text_keeps_user_filenames_and_literal_hashes() -> None:
     repo = MemoryRepository()
     question_id = await ask(repo)
     question = await repo.get("out.user_questions", question_id)

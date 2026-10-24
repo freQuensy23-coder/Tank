@@ -3,6 +3,8 @@
 import random
 from datetime import timedelta
 
+import pytest
+
 from tank.market import service
 from tank.market.service import funding_confirmations
 from tank.util import iso, parse_time
@@ -50,7 +52,7 @@ def observations(seed):
     return rows
 
 
-def test_indexed_confirmations_equal_the_pairwise_scan_including_ties_and_edges():
+def test_indexed_confirmations_equal_the_pairwise_scan_including_ties_and_edges() -> None:
     for seed in range(20):
         rows = observations(seed)
         for distinct in (False, True):
@@ -59,7 +61,7 @@ def test_indexed_confirmations_equal_the_pairwise_scan_including_ties_and_edges(
             assert [(id(a), id(b)) for a, b in got] == [(id(a), id(b)) for a, b in want]
 
 
-def test_each_websocket_row_is_parsed_once(monkeypatch):
+def test_each_websocket_row_is_parsed_once(monkeypatch: pytest.MonkeyPatch) -> None:
     rows = observations(7)
     calls = []
     real = service.parse_time

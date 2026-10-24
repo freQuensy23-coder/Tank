@@ -2,6 +2,7 @@
 
 import copy
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import httpx
@@ -17,7 +18,9 @@ from tank.storage import MemoryRepository
 
 
 @pytest.mark.parametrize("second_kind,event_count", [("NEW_ITEM", 2), ("ITEM_ADDED", 1)])
-async def test_explicit_replay_session_boundaries(tmp_path, monkeypatch, second_kind, event_count):
+async def test_explicit_replay_session_boundaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, second_kind, event_count
+) -> None:
     cfg = {
         "registry": {"tokens": []},
         "thresholds": {},

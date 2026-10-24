@@ -22,7 +22,7 @@ from tank.util import parse_time, sha256
         (None, None),
     ],
 )
-def test_decision_inherits_selected_truth_cutoff(precision, expected):
+def test_decision_inherits_selected_truth_cutoff(precision, expected) -> None:
     from test_decisions import inputs
 
     e, a, b, m = inputs()
@@ -35,7 +35,7 @@ def test_decision_inherits_selected_truth_cutoff(precision, expected):
 
 
 @pytest.mark.asyncio
-async def test_review_horizon_and_public_bucket_preserve_true_interval_anchor():
+async def test_review_horizon_and_public_bucket_preserve_true_interval_anchor() -> None:
     repo = MemoryRepository()
     service = ReviewService(repo)
     at = "2026-10-01T00:03:00Z"
@@ -74,12 +74,12 @@ async def test_review_horizon_and_public_bucket_preserve_true_interval_anchor():
     assert unknown["start_prec_reason"] and unknown["end_prec_reason"]
 
 
-def test_review_label_and_scout_human_action_use_collection_clock(monkeypatch):
+def test_review_label_and_scout_human_action_use_collection_clock(monkeypatch: pytest.MonkeyPatch) -> None:
     from tank import cli
 
     repo = MemoryRepository()
 
-    async def seed():
+    async def seed() -> None:
         await repo.put("evt.events", "e", {"event_id": "e"})
         await repo.put("scout.expansion_proposals", "p", {"prp_id": "p"})
 
@@ -98,7 +98,9 @@ def test_review_label_and_scout_human_action_use_collection_clock(monkeypatch):
 @pytest.mark.integration
 @pytest.mark.postgres
 @pytest.mark.asyncio
-async def test_postgres_completed_outcome_preserves_precision_and_typed_local_clock(postgres_template):
+async def test_postgres_completed_outcome_preserves_precision_and_typed_local_clock(
+    postgres_template,
+) -> None:
     import os
 
     from tank.util import iso, new_id

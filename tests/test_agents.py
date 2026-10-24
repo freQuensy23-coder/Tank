@@ -1,5 +1,6 @@
 import json
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -65,13 +66,13 @@ async def seed_session(repo, **changes):
 
 
 @pytest.mark.asyncio
-async def test_filter_requires_calibration_and_logs_typed_usage():
+async def test_filter_requires_calibration_and_logs_typed_usage() -> None:
     repo = MemoryRepository()
     opts, config = settings()
     await repo.put("ingest.source_items", "i", {"item_id": "i", "text": "Aave release", "source": "issuer"})
     calls = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         calls.append(json.loads(request.content))
         return httpx.Response(
             200,
@@ -103,7 +104,7 @@ async def test_filter_requires_calibration_and_logs_typed_usage():
 
 
 @pytest.mark.asyncio
-async def test_routing_whole_word_alias_three_day_and_best_score():
+async def test_routing_whole_word_alias_three_day_and_best_score() -> None:
     repo = MemoryRepository()
     opts, _ = settings()
     await repo.put(
@@ -143,7 +144,7 @@ async def test_routing_whole_word_alias_three_day_and_best_score():
 
 
 @pytest.mark.asyncio
-async def test_tool_result_lost_reply_restart_reuses_completed_result():
+async def test_tool_result_lost_reply_restart_reuses_completed_result() -> None:
     repo = MemoryRepository()
     opts, _ = settings()
     await seed_session(repo)
@@ -156,7 +157,7 @@ async def test_tool_result_lost_reply_restart_reuses_completed_result():
         await repo.put("evt.events", "evt_1", {"event_id": "evt_1", "result": args})
         return {"ok": True}
 
-    def broken(req):
+    def broken(req) -> None:
         posts.append(req)
         raise httpx.ReadError("lost response", request=req)
 
@@ -185,12 +186,12 @@ async def test_tool_result_lost_reply_restart_reuses_completed_result():
 
 
 @pytest.mark.asyncio
-async def test_failed_dispatch_rolls_back_and_replays():
+async def test_failed_dispatch_rolls_back_and_replays() -> None:
     repo = MemoryRepository()
     opts, _ = settings()
     await seed_session(repo)
 
-    async def bad(*args):
+    async def bad(*args) -> None:
         await repo.put("evt.events", "oops", {"event_id": "oops"})
         raise ValueError("bad data")
 
@@ -208,7 +209,7 @@ async def test_failed_dispatch_rolls_back_and_replays():
 
 
 @pytest.mark.asyncio
-async def test_sse_resume_and_paginated_recovery_dedup_usage():
+async def test_sse_resume_and_paginated_recovery_dedup_usage() -> None:
     repo = MemoryRepository()
     opts, _ = settings()
     await seed_session(repo, last_event_seq=3)
@@ -247,7 +248,7 @@ async def test_sse_resume_and_paginated_recovery_dedup_usage():
 
 
 @pytest.mark.asyncio
-async def test_message_running_session_posted_and_retry_failure():
+async def test_message_running_session_posted_and_retry_failure() -> None:
     repo = MemoryRepository()
     opts, _ = settings()
     await seed_session(repo, status="RUNNING")
@@ -275,7 +276,7 @@ async def test_message_running_session_posted_and_retry_failure():
 
 
 @pytest.mark.asyncio
-async def test_canonical_event_routing_and_added_message():
+async def test_canonical_event_routing_and_added_message() -> None:
     repo = MemoryRepository()
     opts, _ = settings()
     await repo.put(
@@ -324,7 +325,7 @@ async def test_canonical_event_routing_and_added_message():
 
 
 @pytest.mark.asyncio
-async def test_new_scout_session_wire_protocol_and_isolation():
+async def test_new_scout_session_wire_protocol_and_isolation() -> None:
     repo = MemoryRepository()
     opts, _ = settings()
     await repo.put("scout.expansion_proposals", "p", {"prp_id": "p", "concept_name": "test"})
@@ -363,7 +364,7 @@ async def test_new_scout_session_wire_protocol_and_isolation():
 
 
 @pytest.mark.asyncio
-async def test_stream_processing_preserves_concurrent_added_message():
+async def test_stream_processing_preserves_concurrent_added_message() -> None:
     repo = MemoryRepository()
     opts, _ = settings()
     await seed_session(repo)
@@ -375,7 +376,7 @@ async def test_stream_processing_preserves_concurrent_added_message():
         service.start_stream = lambda sid: None
         original_usage = service.usage
 
-        async def usage(session, event):
+        async def usage(session, event) -> None:
             await service.send_message({"kind": "ITEM_ADDED", "event_id": "evt_1", "item_id": "itm_2"})
             await original_usage(session, event)
 
@@ -389,7 +390,9 @@ async def test_stream_processing_preserves_concurrent_added_message():
 
 
 @pytest.mark.asyncio
-async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch, tmp_path):
+async def test_slow_denial_turn_remains_until_exit_update_delivered(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from tank.analysis import cards
     from tank.analysis.decisions import DecisionEngine
     from tank.event_tools import EventToolService
@@ -605,7 +608,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
 
 
 @pytest.mark.asyncio
-async def test_unpublished_invalidated_event_can_end_when_idle_without_marker():
+async def test_unpublished_invalidated_event_can_end_when_idle_without_marker() -> None:
     repo = MemoryRepository()
     opts, _ = settings()
     event = {"event_id": "evt_1", "lifecycle": "INVALIDATED", "current_ems_id": "ems"}
@@ -625,7 +628,7 @@ async def test_unpublished_invalidated_event_can_end_when_idle_without_marker():
 
 
 @pytest.mark.asyncio
-async def test_concurrent_items_without_event_candidates_open_distinct_idempotent_sessions():
+async def test_concurrent_items_without_event_candidates_open_distinct_idempotent_sessions() -> None:
     import asyncio
 
     repo = MemoryRepository()
@@ -636,7 +639,7 @@ async def test_concurrent_items_without_event_candidates_open_distinct_idempoten
         )
     creates, messages = [], []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         assert request.url.host != "opencode.ai"
         if request.method == "GET":
             return httpx.Response(200, json={"data": [], "next_page": None})
@@ -670,7 +673,7 @@ async def test_concurrent_items_without_event_candidates_open_distinct_idempoten
 
 
 @pytest.mark.asyncio
-async def test_live_slow_and_recovered_tool_context_keep_session_provenance():
+async def test_live_slow_and_recovered_tool_context_keep_session_provenance() -> None:
     repo = MemoryRepository()
     opts, _ = settings(config_version="new_config", code_version="new_code", openma_model="new_model")
     session = await seed_session(
@@ -726,7 +729,7 @@ async def test_live_slow_and_recovered_tool_context_keep_session_provenance():
 
 
 @pytest.mark.asyncio
-async def test_market_truth_wire_omits_internal_metadata_full_result_survives_recovery():
+async def test_market_truth_wire_omits_internal_metadata_full_result_survives_recovery() -> None:
     from tank.analysis.truth import compute_market_truth
     from tank.util import canonical_json
 
@@ -746,7 +749,7 @@ async def test_market_truth_wire_omits_internal_metadata_full_result_survives_re
         dispatched += 1
         return full
 
-    def lost(request):
+    def lost(request: pytest.FixtureRequest) -> None:
         requests.append(json.loads(request.content))
         raise httpx.ReadError("lost response", request=request)
 
@@ -763,7 +766,7 @@ async def test_market_truth_wire_omits_internal_metadata_full_result_survives_re
     stored = await repo.get("ops.tool_calls", "ses_1:mt_call")
     assert stored["result"] == full and "measurement_metadata" in stored["result"]["market_truth"][0]
 
-    def accepted(request):
+    def accepted(request: pytest.FixtureRequest):
         requests.append(json.loads(request.content))
         return httpx.Response(200, json={})
 
@@ -785,7 +788,7 @@ async def test_market_truth_wire_omits_internal_metadata_full_result_survives_re
 
 
 @pytest.mark.asyncio
-async def test_routing_and_resume_find_late_history_with_one_row_pages():
+async def test_routing_and_resume_find_late_history_with_one_row_pages() -> None:
     import asyncio
 
     class TinyPages(MemoryRepository):
@@ -868,7 +871,7 @@ async def test_routing_and_resume_find_late_history_with_one_row_pages():
         stop = asyncio.Event()
         resumed = []
 
-        def resume(sid):
+        def resume(sid) -> None:
             resumed.append(sid)
             stop.set()
 
@@ -878,7 +881,7 @@ async def test_routing_and_resume_find_late_history_with_one_row_pages():
 
 
 @pytest.mark.asyncio
-async def test_session_acceptance_and_tools_keep_clock_and_source_precision_separate():
+async def test_session_acceptance_and_tools_keep_clock_and_source_precision_separate() -> None:
     repo = MemoryRepository()
     opts, _ = settings()
     await repo.put(
@@ -892,7 +895,7 @@ async def test_session_acceptance_and_tools_keep_clock_and_source_precision_sepa
         },
     )
 
-    def transport(request):
+    def transport(request: pytest.FixtureRequest):
         if request.url.path.endswith("/sessions"):
             return (
                 httpx.Response(200, json={"data": []})
@@ -942,7 +945,7 @@ async def test_session_acceptance_and_tools_keep_clock_and_source_precision_sepa
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("precision", [None, "BUCKET(1s)"])
-async def test_usage_propagates_provider_processed_precision_without_inference(precision):
+async def test_usage_propagates_provider_processed_precision_without_inference(precision) -> None:
     repo, (opts, _) = MemoryRepository(), settings()
     session = await seed_session(repo)
     event = {
@@ -967,12 +970,12 @@ async def test_usage_propagates_provider_processed_precision_without_inference(p
 @pytest.mark.parametrize("failure_kind", ["http", "type"])
 async def test_tool_execution_error_is_durable_returned_and_never_redispatched_after_lost_reply(
     tool_name, failure_kind
-):
+) -> None:
     repo, (opts, _) = MemoryRepository(), settings()
     await seed_session(repo)
     invocations, responses = 0, []
 
-    async def dispatch(*args):
+    async def dispatch(*args) -> None:
         nonlocal invocations
         invocations += 1
         if failure_kind == "type":
@@ -982,7 +985,7 @@ async def test_tool_execution_error_is_durable_returned_and_never_redispatched_a
             "FAKE_CREDENTIAL_IN_EXCEPTION", request=request, response=httpx.Response(500, request=request)
         )
 
-    def control(request):
+    def control(request: pytest.FixtureRequest):
         responses.append(json.loads(request.content)["events"][0])
         if len(responses) == 1:
             raise httpx.ConnectError("Lost tool response acknowledgement", request=request)
@@ -1007,7 +1010,7 @@ async def test_tool_execution_error_is_durable_returned_and_never_redispatched_a
 
 
 @pytest.mark.asyncio
-async def test_new_session_prompt_version_binds_actual_resolved_agent_not_static_label():
+async def test_new_session_prompt_version_binds_actual_resolved_agent_not_static_label() -> None:
     import copy
 
     repo, (opts, config) = MemoryRepository(), settings()
@@ -1021,7 +1024,7 @@ async def test_new_session_prompt_version_binds_actual_resolved_agent_not_static
     }
     created = 0
 
-    def control(request):
+    def control(request: pytest.FixtureRequest):
         nonlocal created
         if request.url.path.endswith("/sessions"):
             if request.method == "GET":
@@ -1050,7 +1053,7 @@ async def test_new_session_prompt_version_binds_actual_resolved_agent_not_static
     assert incomplete["prompt_label"] == "test" and "INCOMPLETE" in incomplete["prompt_version_reason"]
 
 
-def test_jev_source_view_does_not_substitute_internal_source_codes():
+def test_jev_source_view_does_not_substitute_internal_source_codes() -> None:
     view = Pipeline.item_view(
         {
             "item_id": "internal",

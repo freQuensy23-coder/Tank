@@ -2,6 +2,7 @@
 
 import json
 from datetime import UTC
+from pathlib import Path
 
 import httpx
 import pytest
@@ -56,7 +57,7 @@ def _fixture_thresholds():
     return thresholds
 
 
-def _fake_gateway_settings(tmp_path):
+def _fake_gateway_settings(tmp_path: Path):
     """Explicit fake credentials: never consult operator Codex authentication."""
     import base64
 
@@ -95,7 +96,7 @@ def _fake_gateway_settings(tmp_path):
     }
 
 
-async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path):
+async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path) -> None:
     config = {
         "sources": {"sources": [{"source_id": "S30", "feeds": []}]},
         "api_limits": _fixture_api_limits(),
@@ -138,7 +139,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path):
     failures = [True]
     tool_event = {"id": "tool1", "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
 
-    def transport(request):
+    def transport(request: pytest.FixtureRequest):
         path = request.url.path
         if request.url.host == "opencode.ai":
             body = json.loads(request.content)
@@ -271,7 +272,9 @@ async def isolated_e2e_database(postgres_template):
 )
 @pytest.mark.parametrize("complete_market", [False, True])
 @pytest.mark.postgres
-async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch, isolated_e2e_database):
+async def test_full_sse_pipeline_postgres(
+    tmp_path: Path, complete_market, monkeypatch: pytest.MonkeyPatch, isolated_e2e_database
+) -> None:
     """Whole synthetic call graph on PostgreSQL, including validated publication."""
     import importlib
     from datetime import datetime
@@ -530,7 +533,7 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                 if name == "get_market_truth":
                     import asyncio
 
-                    async def market_jobs():
+                    async def market_jobs() -> None:
                         while True:
                             for job in await repo.list(
                                 "ops.jobs", filters={"status": "QUEUED"}, limit=100000
@@ -823,7 +826,9 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
     reason="requires disposable PostgreSQL16 admin connection",
 )
 @pytest.mark.postgres
-async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, caplog, isolated_e2e_database):
+async def test_runtime_autonomous_source_to_telegram(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, isolated_e2e_database
+) -> None:
     """Only external wire inputs are fed; Runtime's eight workers perform every stage."""
     import asyncio
     import importlib
@@ -950,10 +955,10 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                     + "\n\n"
                 ).encode()
 
-        async def aclose(self):
+        async def aclose(self) -> None:
             pass
 
-    async def emit(name, arguments):
+    async def emit(name, arguments) -> None:
         nonlocal stage
         stage += 1
         arguments = {k: v for k, v in arguments.items() if k not in {"event_id", "item_id"}}
@@ -966,7 +971,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
         wire.append(body)
         await queue.put({"seq": stage, "body": body})
 
-    async def transport(request):
+    async def transport(request: pytest.FixtureRequest):
         nonlocal stage
         path = request.url.path
         if request.url.host == "synthetic.invalid":
@@ -1144,16 +1149,16 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
     class CapturedMarket:
         """External captured-data adapter; no domain rule or queue processing here."""
 
-        def __init__(self, http):
+        def __init__(self, http) -> None:
             from tank.market.service import MarketService
 
             self.escalations = []
             self.actual_capture_reader = MarketService(repo, settings, http=http)
 
-        async def run(self, event):
+        async def run(self, event) -> None:
             await event.wait()
 
-        async def escalate(self, event_id, tokens):
+        async def escalate(self, event_id, tokens) -> None:
             from tank.market.capture import event_anchor
             from tank.util import sha256
 
@@ -1186,7 +1191,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
             async for change in self.actual_capture_reader.capture_changes(since=since, end=end):
                 yield change
 
-        async def demote(self, token_id, event_id=None):
+        async def demote(self, token_id, event_id=None) -> None:
             pass
 
         async def snapshot(self, token_id, cutoff, anchor=None):
@@ -1220,7 +1225,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                 "instruments": [],
             }
 
-        async def close(self):
+        async def close(self) -> None:
             await self.actual_capture_reader.close()
 
     runtime_task = None

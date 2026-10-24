@@ -1,6 +1,7 @@
 import copy
 import json
 from datetime import UTC
+from pathlib import Path
 
 import pytest
 from model_fixture import audited_result, model_arguments
@@ -11,7 +12,7 @@ from tank.util import parse_time, sha256
 
 
 @pytest.fixture
-def reference_packet(tmp_path):
+def reference_packet(tmp_path: Path):
     body = "Synthetic original official publication text; fixture evidence only."
     raw = ("<html><time>21 Sep 2022</time><p>" + body + "</p></html>").encode()
     path = tmp_path / "original-publication.html"
@@ -89,7 +90,7 @@ def reference_packet(tmp_path):
     return tmp_path / "reference.json", packet
 
 
-def save(path, packet):
+def save(path, packet) -> None:
     packet.pop("input_sha256", None)
     packet["input_sha256"] = digest(packet)
     path.write_text(json.dumps(packet))
@@ -99,7 +100,7 @@ def settings():
     return Settings(replay=True, config_version="test", code_version="test", _env_file=None)
 
 
-def test_explicit_first_reference_preserves_actual_receipts_and_day_bucket(reference_packet):
+def test_explicit_first_reference_preserves_actual_receipts_and_day_bucket(reference_packet) -> None:
     path, packet = reference_packet
     frozen = copy.deepcopy(packet)
     save(path, packet)
@@ -114,7 +115,7 @@ def test_explicit_first_reference_preserves_actual_receipts_and_day_bucket(refer
     assert inputs.record_visible(inputs._records[0], parse_time(packet["cutoff"]))
 
 
-def test_captured_unlock_calendar_uses_observation_time_not_future_release(reference_packet):
+def test_captured_unlock_calendar_uses_observation_time_not_future_release(reference_packet) -> None:
     path, packet = reference_packet
     observed = "2022-09-21T12:00:00Z"
     schedule = {
@@ -147,7 +148,7 @@ def test_captured_unlock_calendar_uses_observation_time_not_future_release(refer
 
 
 @pytest.mark.parametrize("bad", ["backdated", "simulated", "analysis_seed"])
-def test_unlock_calendar_cannot_backdate_or_seed_a_verdict(reference_packet, bad):
+def test_unlock_calendar_cannot_backdate_or_seed_a_verdict(reference_packet, bad) -> None:
     path, packet = reference_packet
     observed = "2022-09-21T12:00:00Z"
     row = {
@@ -182,7 +183,7 @@ def test_unlock_calendar_cannot_backdate_or_seed_a_verdict(reference_packet, bad
         "missing_hash",
     ],
 )
-def test_reference_exception_is_explicit_frozen_and_as_of_only(reference_packet, change):
+def test_reference_exception_is_explicit_frozen_and_as_of_only(reference_packet, change) -> None:
     path, packet = reference_packet
     row = packet["records"][0]
     if change == "no_mode":
@@ -216,7 +217,7 @@ def test_reference_exception_is_explicit_frozen_and_as_of_only(reference_packet,
         load_inputs(path, settings())
 
 
-def test_exact_reference_cutoff_keeps_original_human_literal(reference_packet):
+def test_exact_reference_cutoff_keeps_original_human_literal(reference_packet) -> None:
     path, packet = reference_packet
     chosen = "2022-09-21T15:02:07Z"
     packet["fixture_reference"].update(
@@ -232,7 +233,7 @@ def test_exact_reference_cutoff_keeps_original_human_literal(reference_packet):
     assert inputs.cutoff == chosen
 
 
-def test_trusted_reference_clock_binds_body_and_preserves_physical_observation(reference_packet):
+def test_trusted_reference_clock_binds_body_and_preserves_physical_observation(reference_packet) -> None:
     from tank.fixture_reference import TrustedFixtureClock
 
     path, packet = reference_packet
@@ -256,7 +257,7 @@ def test_trusted_reference_clock_binds_body_and_preserves_physical_observation(r
         clock.known_at({**source, "item_id": "unknown"})
 
 
-def test_minute_only_fixture_cutoff_remains_insufficient(reference_packet):
+def test_minute_only_fixture_cutoff_remains_insufficient(reference_packet) -> None:
     path, packet = reference_packet
     packet["fixture_reference"].update(
         cutoff_spec="11 Oct2026 03:30", cutoff_policy="EXACT", cutoff_instant="2026-10-11T03:30:00Z"
@@ -267,7 +268,7 @@ def test_minute_only_fixture_cutoff_remains_insufficient(reference_packet):
         load_inputs(path, settings())
 
 
-def test_declared_raw_derivation_rejects_independently_matching_false_body(reference_packet):
+def test_declared_raw_derivation_rejects_independently_matching_false_body(reference_packet) -> None:
     from pathlib import Path
 
     from tank.fixture_reference import verify_derivation
@@ -291,8 +292,8 @@ def test_declared_raw_derivation_rejects_independently_matching_false_body(refer
 
 
 async def test_operational_runner_injects_only_exact_preregistered_reference_clock(
-    reference_packet, tmp_path, monkeypatch
-):
+    reference_packet, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from tank import replay
     from tank.fixture_reference import TrustedFixtureClock
     from tank.storage import MemoryRepository
@@ -318,7 +319,7 @@ async def test_operational_runner_injects_only_exact_preregistered_reference_clo
     assert called == [True]
 
 
-def test_minute_selected_start_keeps_later_source_ineligible(reference_packet):
+def test_minute_selected_start_keeps_later_source_ineligible(reference_packet) -> None:
     path, packet = reference_packet
     ref = packet["fixture_reference"]
     ref.update(
@@ -342,7 +343,7 @@ def test_minute_selected_start_keeps_later_source_ineligible(reference_packet):
         load_inputs(path, settings())
 
 
-def test_manifest_bound_synthetic_relative_source(reference_packet):
+def test_manifest_bound_synthetic_relative_source(reference_packet) -> None:
     from pathlib import Path
 
     path, packet = reference_packet
@@ -394,7 +395,7 @@ def test_manifest_bound_synthetic_relative_source(reference_packet):
         load_inputs(path, settings())
 
 
-def test_signed_snapshot_cid_binds_body_identity_and_publication():
+def test_signed_snapshot_cid_binds_body_identity_and_publication() -> None:
     import base64
     import hashlib
 
@@ -460,7 +461,7 @@ def test_signed_snapshot_cid_binds_body_identity_and_publication():
         ),
     ],
 )
-def test_selected_original_transport_excludes_future_canary(kind, selector, original):
+def test_selected_original_transport_excludes_future_canary(kind, selector, original) -> None:
     from tank.fixture_reference import project_original_source
 
     raw = json.dumps(original).encode()
@@ -471,7 +472,7 @@ def test_selected_original_transport_excludes_future_canary(kind, selector, orig
     assert project_original_source(kind, raw, selector) == projected
 
 
-def test_packaged_fixture_authority_contains_inputs_only():
+def test_packaged_fixture_authority_contains_inputs_only() -> None:
     from importlib.resources import files
 
     authority = json.loads(files("tank").joinpath("resources/fixture-input-authority-v1.json").read_bytes())
@@ -486,7 +487,7 @@ def test_packaged_fixture_authority_contains_inputs_only():
     )
 
 
-def test_insufficient_catalog_refuses_before_configuration_or_session(tmp_path):
+def test_insufficient_catalog_refuses_before_configuration_or_session(tmp_path: Path) -> None:
     path = tmp_path / "missing.json"
     path.write_text(
         json.dumps(
@@ -502,7 +503,7 @@ def test_insufficient_catalog_refuses_before_configuration_or_session(tmp_path):
         load_inputs(path, settings())
 
 
-def test_declared_empty_synthetic_lookup_is_not_a_fabricated_source(reference_packet):
+def test_declared_empty_synthetic_lookup_is_not_a_fabricated_source(reference_packet) -> None:
 
     from tank.fixture_reference import validate
 
@@ -516,7 +517,7 @@ def test_declared_empty_synthetic_lookup_is_not_a_fabricated_source(reference_pa
         validate(packet, lambda row: False)
 
 
-def test_retrospective_day_schedule_is_narrow_to_authorized_tch_cases(reference_packet):
+def test_retrospective_day_schedule_is_narrow_to_authorized_tch_cases(reference_packet) -> None:
     path, packet = reference_packet
     ref = packet["fixture_reference"]
     ref.update(
@@ -541,7 +542,9 @@ def test_retrospective_day_schedule_is_narrow_to_authorized_tch_cases(reference_
         load_inputs(path, settings())
 
 
-async def test_reference_missing_market_is_unknown_not_zero_or_captured(reference_packet, tmp_path):
+async def test_reference_missing_market_is_unknown_not_zero_or_captured(
+    reference_packet, tmp_path: Path
+) -> None:
     from importlib.resources import files
 
     from tank.analysis.truth import compute_market_truth
@@ -700,7 +703,7 @@ def phased_packet(reference_packet):
     return path, packet
 
 
-def test_f24_declared_phases_preserve_initial_boundary_and_hide_future(reference_packet):
+def test_f24_declared_phases_preserve_initial_boundary_and_hide_future(reference_packet) -> None:
 
     path, packet = phased_packet(reference_packet)
     save(path, packet)
@@ -714,7 +717,7 @@ def test_f24_declared_phases_preserve_initial_boundary_and_hide_future(reference
 
 
 @pytest.mark.parametrize("mutation", ["initial", "reverse", "case", "unassigned", "outcome", "early_source"])
-def test_f24_phase_admission_refuses_invalid_timeline(reference_packet, mutation):
+def test_f24_phase_admission_refuses_invalid_timeline(reference_packet, mutation) -> None:
     path, p = phased_packet(reference_packet)
     if mutation == "initial":
         p["fixture_reference"]["cutoff_instant"] = "2026-10-16T12:02:00Z"
@@ -744,7 +747,7 @@ def test_f24_phase_admission_refuses_invalid_timeline(reference_packet, mutation
 )
 async def test_phased_capture_and_market_cannot_advance_to_future(
     reference_packet, tool, argument, kind, value
-):
+) -> None:
     from tank.replay import ReplayMarketReader
 
     path, p = phased_packet(reference_packet)
@@ -780,7 +783,7 @@ async def test_phased_capture_and_market_cannot_advance_to_future(
         await reader.snapshot("T", "2026-10-16T12:05:00Z")
 
 
-def test_uniform_minute_reference_convention_preserves_all_original_literals(reference_packet):
+def test_uniform_minute_reference_convention_preserves_all_original_literals(reference_packet) -> None:
     import re
     from datetime import datetime, timedelta
     from pathlib import Path
@@ -833,8 +836,8 @@ def test_uniform_minute_reference_convention_preserves_all_original_literals(ref
 @pytest.mark.integration
 @pytest.mark.parametrize("publication", [False, True])
 async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoints(
-    reference_packet, tmp_path, publication, repository=None, fail_later=False, missing_lookup=None
-):
+    reference_packet, tmp_path: Path, publication, repository=None, fail_later=False, missing_lookup=None
+) -> None:
     """Actual source/observation producers; MATERIAL stop isolates timeline mechanics from economic fixtures."""
     import asyncio
 
@@ -917,7 +920,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
             while True:
                 yield await queue.get()
 
-    async def emit(event):
+    async def emit(event) -> None:
         if event.get("type") == "agent.custom_tool_use":
             event = dict(event, input=model_arguments(event["name"], event["input"]))
         nonlocal seq
@@ -926,7 +929,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
             settled.update(accepted)
         await queue.put(f"id: {seq}\ndata: {json.dumps(event)}\n\n".encode())
 
-    async def tool(name, args, execution):
+    async def tool(name, args, execution) -> None:
         await emit(
             {
                 "id": "call-" + str(seq),
@@ -937,7 +940,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
             }
         )
 
-    async def transport_body(request):
+    async def transport_body(request: pytest.FixtureRequest):
         nonlocal stage, item, eid, claim_id
         route = request.url.path
         if route.endswith("/executions"):
@@ -1232,7 +1235,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
             return httpx.Response(200, json={"data": [{"id": identity}]})
         raise AssertionError(route)
 
-    async def transport(request):
+    async def transport(request: pytest.FixtureRequest):
         return await transport_body(request)
 
     reader = ReplayMarketReader(inputs)
@@ -1369,11 +1372,11 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
 @pytest.mark.integration
 @pytest.mark.parametrize("tool", ["web_search", "fetch_page"])
 async def test_reference_session_reports_missing_lookup_without_network_or_abort(
-    reference_packet, tmp_path, monkeypatch, tool, repository=None
-):
+    reference_packet, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool, repository=None
+) -> None:
     from tank.event_tools import EventToolService
 
-    async def forbidden(*args, **kwargs):
+    async def forbidden(*args, **kwargs) -> None:
         raise AssertionError("A missing replay answer must never make a live lookup")
 
     monkeypatch.setattr(EventToolService, "web_search", forbidden)
@@ -1385,7 +1388,9 @@ async def test_reference_session_reports_missing_lookup_without_network_or_abort
 
 @pytest.mark.postgres
 @pytest.mark.integration
-async def test_reference_missing_lookup_postgres(reference_packet, tmp_path, monkeypatch, postgres_template):
+async def test_reference_missing_lookup_postgres(
+    reference_packet, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, postgres_template
+) -> None:
     from test_session_binding_concurrency import fixture_repo
 
     async with fixture_repo("postgres", postgres_template) as repo:
@@ -1394,7 +1399,7 @@ async def test_reference_missing_lookup_postgres(reference_packet, tmp_path, mon
         )
 
 
-def test_ambiguous_reference_capture_still_aborts(reference_packet):
+def test_ambiguous_reference_capture_still_aborts(reference_packet) -> None:
     from dataclasses import replace
 
     from tank.replay import missing_capture_error
@@ -1426,7 +1431,9 @@ def test_ambiguous_reference_capture_still_aborts(reference_packet):
 @pytest.mark.postgres
 @pytest.mark.integration
 @pytest.mark.parametrize("publication", [False, True])
-async def test_actual_f24_phases_postgres(reference_packet, tmp_path, publication, postgres_template):
+async def test_actual_f24_phases_postgres(
+    reference_packet, tmp_path: Path, publication, postgres_template
+) -> None:
     from test_session_binding_concurrency import fixture_repo
 
     async with fixture_repo("postgres", postgres_template) as repo:
@@ -1436,7 +1443,9 @@ async def test_actual_f24_phases_postgres(reference_packet, tmp_path, publicatio
 
 
 @pytest.mark.integration
-async def test_failed_second_phase_preserves_committed_first_checkpoint(reference_packet, tmp_path):
+async def test_failed_second_phase_preserves_committed_first_checkpoint(
+    reference_packet, tmp_path: Path
+) -> None:
     await test_actual_f24_phased_producers_keep_session_and_immutable_checkpoints(
         reference_packet, tmp_path, False, fail_later=True
     )
@@ -1449,7 +1458,7 @@ async def test_failed_second_phase_preserves_committed_first_checkpoint(referenc
         ("web_search", "query", "EMPTY_OFFICIAL_SEARCH_LOOKUP", "Issuer Seven Asset K official announcement"),
     ],
 )
-def test_phased_empty_lookup_requires_explicit_expiry(reference_packet, tool, argument, kind, value):
+def test_phased_empty_lookup_requires_explicit_expiry(reference_packet, tool, argument, kind, value) -> None:
     path, packet = phased_packet(reference_packet)
     packet["tool_results"] = [
         {
@@ -1474,7 +1483,9 @@ def test_phased_empty_lookup_requires_explicit_expiry(reference_packet, tool, ar
 @pytest.mark.parametrize(
     "mutation", ["http_claim", "result", "arguments_type", "empty_query", "extra_argument", "tool"]
 )
-def test_synthetic_search_never_claims_acquisition_or_expands_its_contract(reference_packet, mutation):
+def test_synthetic_search_never_claims_acquisition_or_expands_its_contract(
+    reference_packet, mutation
+) -> None:
     path, packet = phased_packet(reference_packet)
     capture = {
         "origin": "DECLARED_SYNTHETIC_TOOL_RESPONSE",
@@ -1579,7 +1590,7 @@ def _topic_post_packet(reference_packet, topic, post_number=5):
     return packet, view
 
 
-def test_discourse_topic_post_projection_admits_one_unedited_reply(reference_packet):
+def test_discourse_topic_post_projection_admits_one_unedited_reply(reference_packet) -> None:
     packet, view = _topic_post_packet(reference_packet, _discourse_topic())
     save(reference_packet[0], packet)
     inputs = load_inputs(reference_packet[0], settings())
@@ -1589,14 +1600,14 @@ def test_discourse_topic_post_projection_admits_one_unedited_reply(reference_pac
     assert inputs.records("ingest.source_items")[0]["published_at"] == "2022-09-21T10:48:47.970Z"
 
 
-def test_discourse_topic_post_refuses_edited_reply(reference_packet):
+def test_discourse_topic_post_refuses_edited_reply(reference_packet) -> None:
     packet, _ = _topic_post_packet(reference_packet, _discourse_topic(post5_version=2))
     save(reference_packet[0], packet)
     with pytest.raises(ReplayError, match="version is unproven"):
         load_inputs(reference_packet[0], settings())
 
 
-def test_discourse_topic_post_refuses_missing_post_number():
+def test_discourse_topic_post_refuses_missing_post_number() -> None:
     from tank.fixture_reference import project_original_source
 
     raw = json.dumps(_discourse_topic()).encode()
@@ -1606,7 +1617,7 @@ def test_discourse_topic_post_refuses_missing_post_number():
         project_original_source("DISCOURSE_TOPIC_POST_V1", raw, {"post_number": "5"})
 
 
-def test_discourse_topic_post_refuses_publication_after_cutoff(reference_packet):
+def test_discourse_topic_post_refuses_publication_after_cutoff(reference_packet) -> None:
     packet, _ = _topic_post_packet(reference_packet, _discourse_topic(created="2022-09-23T08:00:00.000Z"))
     save(reference_packet[0], packet)
     with pytest.raises(ReplayError, match="publication precision interval"):

@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -38,11 +39,13 @@ REQUIREMENTS = [
 ]
 
 
-def test_selective_same_input_parity_and_no_unrequested_domains(monkeypatch, baseline_truth):
+def test_selective_same_input_parity_and_no_unrequested_domains(
+    monkeypatch: pytest.MonkeyPatch, baseline_truth
+) -> None:
     packet = snapshot()
     full = baseline_truth()
 
-    def forbidden(*args, **kwargs):
+    def forbidden(*args, **kwargs) -> None:
         raise AssertionError("Unrequested full/cross-domain assessment")
 
     for name in (
@@ -61,7 +64,9 @@ def test_selective_same_input_parity_and_no_unrequested_domains(monkeypatch, bas
     assert "_condition_evaluation" in selected and "mta_id" not in selected
 
 
-def test_identical_closed_window_inputs_reused_but_corrected_row_invalidates(monkeypatch):
+def test_identical_closed_window_inputs_reused_but_corrected_row_invalidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     packet = snapshot()
     cache = {}
     calls = []
@@ -84,7 +89,9 @@ def test_identical_closed_window_inputs_reused_but_corrected_row_invalidates(mon
     assert third["_condition_evaluation"]["request_key"] != first["_condition_evaluation"]["request_key"]
 
 
-def test_native_baseline_reused_when_only_current_observation_changes(monkeypatch):
+def test_native_baseline_reused_when_only_current_observation_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     packet = snapshot()
     baseline = {}
     original = module.normal
@@ -105,7 +112,7 @@ def test_native_baseline_reused_when_only_current_observation_changes(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_service_uses_only_light_loader_and_never_writes_assessments():
+async def test_service_uses_only_light_loader_and_never_writes_assessments() -> None:
     packet = snapshot()
     reads = []
 
@@ -114,10 +121,10 @@ async def test_service_uses_only_light_loader_and_never_writes_assessments():
             reads.append(collection)
             return {"public_at": packet["anchor"]["ts"]}
 
-        async def put(self, *args, **kwargs):
+        async def put(self, *args, **kwargs) -> None:
             raise AssertionError("Transient conditions must never persist")
 
-        async def list(self, *args, **kwargs):
+        async def list(self, *args, **kwargs) -> None:
             raise AssertionError("No full assessment history query")
 
     class Market:
@@ -125,7 +132,7 @@ async def test_service_uses_only_light_loader_and_never_writes_assessments():
             assert requirements == REQUIREMENTS[:2]
             return packet
 
-        async def snapshot(self, *args, **kwargs):
+        async def snapshot(self, *args, **kwargs) -> None:
             raise AssertionError("No full market snapshot")
 
     service = module.MarketTruthService(
@@ -136,7 +143,7 @@ async def test_service_uses_only_light_loader_and_never_writes_assessments():
     assert result["spot"]["W1H"]["direction"] == "BUY"
 
 
-def test_composite_requests_do_not_execute_full_assessment(monkeypatch):
+def test_composite_requests_do_not_execute_full_assessment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         module, "compute_market_truth", lambda *args, **kwargs: pytest.fail("Full inline recomputation")
     )
@@ -147,7 +154,7 @@ def test_composite_requests_do_not_execute_full_assessment(monkeypatch):
     assert evaluation["request_key"]
 
 
-def test_unchanged_cached_funding_never_overrides_its_actual_capture_cadence():
+def test_unchanged_cached_funding_never_overrides_its_actual_capture_cadence() -> None:
     from datetime import timedelta
 
     from tank.util import parse_time
@@ -166,7 +173,7 @@ def test_unchanged_cached_funding_never_overrides_its_actual_capture_cadence():
         assert proof["observations"][0]["cadence_s"] == 60
 
 
-def test_completed_close_uses_actual_largest_complete_reference_venue():
+def test_completed_close_uses_actual_largest_complete_reference_venue() -> None:
     packet = snapshot()
     for row in packet["flow_bars"]:
         if row["instrument_id"] == "B:spot:T":
@@ -181,7 +188,7 @@ def test_completed_close_uses_actual_largest_complete_reference_venue():
     assert selected["relative"]["close_1h_price"] == full["relative"]["close_1h_price"]
 
 
-def test_funding_baseline_reused_when_only_current_estimate_changes(monkeypatch):
+def test_funding_baseline_reused_when_only_current_estimate_changes(monkeypatch: pytest.MonkeyPatch) -> None:
     packet = snapshot()
     baseline = {}
     original = module.normal
@@ -209,7 +216,7 @@ def test_funding_baseline_reused_when_only_current_estimate_changes(monkeypatch)
     assert metric_value(value, {}, "deriv.funding_vs_normal", "W1H") == "ABOVE"
 
 
-def test_missing_completed_hour_close_is_not_replaced_by_an_older_hour():
+def test_missing_completed_hour_close_is_not_replaced_by_an_older_hour() -> None:
     from datetime import timedelta
 
     from tank.util import parse_time
@@ -226,7 +233,9 @@ def test_missing_completed_hour_close_is_not_replaced_by_an_older_hour():
     assert result["_condition_evaluation"]["unavailable_metrics"][0]["reason"] == "INCOMPLETE"
 
 
-def test_proven_source_heads_avoid_serializing_full_history_for_cache_identity(monkeypatch):
+def test_proven_source_heads_avoid_serializing_full_history_for_cache_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     packet = snapshot()
     packet["domain_dependency_fingerprints"] = {"oi": "ACTUAL-SOURCE-HEAD"}
     packet["history_dependency_fingerprints"] = {"oi": {"W1H": "ACTUAL-ELIGIBLE-HISTORY-HEAD"}}
@@ -245,7 +254,9 @@ def test_proven_source_heads_avoid_serializing_full_history_for_cache_identity(m
 
 
 @pytest.mark.asyncio
-async def test_actual_market_loader_selective_sql_footprint_and_no_assessment_writes(tmp_path, monkeypatch):
+async def test_actual_market_loader_selective_sql_footprint_and_no_assessment_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import httpx
 
     from tank.market.service import MarketService
@@ -275,7 +286,7 @@ async def test_actual_market_loader_selective_sql_footprint_and_no_assessment_wr
 
     repo.get = get
 
-    async def forbidden(*args, **kwargs):
+    async def forbidden(*args, **kwargs) -> None:
         raise AssertionError("Selective evaluation cannot write/flush/persist full truth")
 
     repo.put = forbidden
@@ -315,8 +326,8 @@ async def test_actual_market_loader_selective_sql_footprint_and_no_assessment_wr
     "case", ["HIGH", "UNVERIFIED", "UNKNOWN", "STALE_BOOK", "MISSING_USD", "STALE_SUPPLY"]
 )
 def test_selective_confidence_matches_full_rules_without_relative_liquidity_or_support(
-    case, monkeypatch, baseline_truth
-):
+    case, monkeypatch: pytest.MonkeyPatch, baseline_truth
+) -> None:
     from datetime import timedelta
 
     from tank.util import iso, parse_time
@@ -341,7 +352,7 @@ def test_selective_confidence_matches_full_rules_without_relative_liquidity_or_s
         ]
     full = baseline_truth() if case == "HIGH" else module.compute_market_truth(packet)
 
-    def forbidden(*args, **kwargs):
+    def forbidden(*args, **kwargs) -> None:
         raise AssertionError("DC must not compute statistical repricing/liquidity/support/class")
 
     for name in (
@@ -360,7 +371,9 @@ def test_selective_confidence_matches_full_rules_without_relative_liquidity_or_s
     assert not selected["_condition_evaluation"]["requires_market_truth"]
 
 
-def test_depth_ratio_uses_only_actual_books_and_reuses_pre_event_baseline(monkeypatch, baseline_truth):
+def test_depth_ratio_uses_only_actual_books_and_reuses_pre_event_baseline(
+    monkeypatch: pytest.MonkeyPatch, baseline_truth
+) -> None:
     packet = snapshot()
     full = baseline_truth()
     monkeypatch.setattr(
@@ -378,7 +391,7 @@ def test_depth_ratio_uses_only_actual_books_and_reuses_pre_event_baseline(monkey
     assert not selected["_condition_evaluation"]["requires_market_truth"]
 
 
-def test_compact_statistical_projections_preserve_full_catalog_and_exact_prices():
+def test_compact_statistical_projections_preserve_full_catalog_and_exact_prices() -> None:
     from array import array
 
     raw = snapshot()
@@ -446,7 +459,7 @@ def test_compact_statistical_projections_preserve_full_catalog_and_exact_prices(
     assert actual["_condition_evaluation"]["requires_market_truth"] == []
 
 
-def test_compact_native_volume_keeps_exact_sums_and_continuity():
+def test_compact_native_volume_keeps_exact_sums_and_continuity() -> None:
     from array import array
 
     end = module.parse_time("2026-10-19T12:00:00Z")
@@ -494,7 +507,9 @@ def test_compact_native_volume_keeps_exact_sums_and_continuity():
     assert missing["spot_volume_up_beyond_normal"] is None
 
 
-def test_composite_primary_graph_reused_across_requested_windows(monkeypatch, baseline_truth):
+def test_composite_primary_graph_reused_across_requested_windows(
+    monkeypatch: pytest.MonkeyPatch, baseline_truth
+) -> None:
     packet = snapshot()
     full = baseline_truth()
     calls = []
@@ -523,7 +538,7 @@ def test_composite_primary_graph_reused_across_requested_windows(monkeypatch, ba
     assert len(calls) == 1
 
 
-def test_composite_conditions_change_from_unknown_when_actual_evidence_arrives():
+def test_composite_conditions_change_from_unknown_when_actual_evidence_arrives() -> None:
     complete = snapshot()
     missing = deepcopy(complete)
     missing["flow_bars"] = []
@@ -539,7 +554,7 @@ def test_composite_conditions_change_from_unknown_when_actual_evidence_arrives()
 
 
 @pytest.mark.asyncio
-async def test_selective_relative_uses_canonical_latest_beneficiary_direction():
+async def test_selective_relative_uses_canonical_latest_beneficiary_direction() -> None:
     packet = snapshot()
 
     class Repo:
@@ -553,7 +568,7 @@ async def test_selective_relative_uses_canonical_latest_beneficiary_direction():
                 {"map_version": 2, "edge_id": "new", "role": "LOSER"},
             ]
 
-        async def put(self, *args, **kwargs):
+        async def put(self, *args, **kwargs) -> None:
             raise AssertionError("Transient conditions must not persist assessments")
 
     class Market:
@@ -573,7 +588,7 @@ async def test_selective_relative_uses_canonical_latest_beneficiary_direction():
     assert actual["relative"]["repricing_band"] == expected["relative"]["repricing_band"]
 
 
-def test_beneficiary_direction_invalidates_market_head_cache():
+def test_beneficiary_direction_invalidates_market_head_cache() -> None:
     packet = snapshot()
     packet["domain_dependency_fingerprints"] = {"relative": "unchanged-price-source-head"}
     cache = {}
@@ -589,7 +604,7 @@ def test_beneficiary_direction_invalidates_market_head_cache():
     assert second["_condition_evaluation"]["proofs"][0]["reused"] is False
 
 
-def test_complete_market_condition_catalog_matches_same_input_full_truth(baseline_truth):
+def test_complete_market_condition_catalog_matches_same_input_full_truth(baseline_truth) -> None:
     packet = snapshot()
     catalog = sorted(
         module.SPOT_CONDITION_METRICS
@@ -608,7 +623,7 @@ def test_complete_market_condition_catalog_matches_same_input_full_truth(baselin
 
 @pytest.mark.parametrize("days,ready", [(6, False), (7, True)])
 @pytest.mark.parametrize("compact", [False, True])
-def test_native_volume_weekly_cycle_uses_only_eligible_pre_window_samples(days, ready, compact):
+def test_native_volume_weekly_cycle_uses_only_eligible_pre_window_samples(days, ready, compact) -> None:
     """TDD§0 full weekly history is historical; the current24h cannot complete it."""
     from array import array
 
@@ -649,7 +664,9 @@ def test_native_volume_weekly_cycle_uses_only_eligible_pre_window_samples(days, 
     assert features["spot_volume_within_normal"] is (True if ready else None)
 
 
-def test_compact_native_prefix_extends_only_with_proven_append_and_rebuilds_correction(monkeypatch):
+def test_compact_native_prefix_extends_only_with_proven_append_and_rebuilds_correction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from array import array
 
     end = module.parse_time("2026-10-19T12:00:00Z")

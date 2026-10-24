@@ -44,7 +44,7 @@ def native_bar():
     return accumulator.record((instrument["instrument_id"], iso(at)), complete=True)
 
 
-async def test_native_flow_roundtrip_preserves_quantities_and_unavailable_usd(native_flow_repo):
+async def test_native_flow_roundtrip_preserves_quantities_and_unavailable_usd(native_flow_repo) -> None:
     typed_fields = (
         "buy_qty",
         "sell_qty",
@@ -79,7 +79,7 @@ async def test_native_flow_roundtrip_preserves_quantities_and_unavailable_usd(na
 
 @pytest.mark.parametrize("field", ["buy_usd", "sell_usd", "size_buckets"])
 @pytest.mark.parametrize("reason", [None, "", " ", "made up", {"reason": "INCOMPLETE"}])
-async def test_missing_usd_requires_its_own_valid_reason(native_flow_repo, field, reason):
+async def test_missing_usd_requires_its_own_valid_reason(native_flow_repo, field, reason) -> None:
     row = native_bar()
     row["null_reasons"][field] = reason
     with pytest.raises(RequiredFieldError) as failure:
@@ -88,7 +88,7 @@ async def test_missing_usd_requires_its_own_valid_reason(native_flow_repo, field
 
 
 @pytest.mark.parametrize("field", ["buy_qty", "sell_qty", "n_buy", "n_sell", "sum_sq_qty", "complete"])
-async def test_usd_reason_does_not_make_native_fields_optional(native_flow_repo, field):
+async def test_usd_reason_does_not_make_native_fields_optional(native_flow_repo, field) -> None:
     row = native_bar()
     row[field] = None
     row["null_reasons"][field] = "INCOMPLETE"
@@ -97,7 +97,7 @@ async def test_usd_reason_does_not_make_native_fields_optional(native_flow_repo,
     assert failure.value.constraint == "required_" + field
 
 
-async def test_null_buckets_cannot_bypass_missing_reason(native_flow_repo):
+async def test_null_buckets_cannot_bypass_missing_reason(native_flow_repo) -> None:
     repo = native_flow_repo
     row = native_bar()
     key = new_id("null-buckets")

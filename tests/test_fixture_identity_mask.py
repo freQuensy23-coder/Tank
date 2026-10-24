@@ -10,7 +10,7 @@ from tank.replay import ReplayError, load_inputs
 from tank.util import canonical_json, sha256
 
 
-def fixture(tmp_path):
+def fixture(tmp_path: Path):
     outside = tmp_path / "private"
     outside.mkdir()
     inputs = tmp_path / "inputs"
@@ -61,7 +61,7 @@ def fixture(tmp_path):
     return packet, private, path, inputs / "packet.json"
 
 
-def test_identity_transform_and_unmasked_behavior(tmp_path):
+def test_identity_transform_and_unmasked_behavior(tmp_path: Path) -> None:
     p, _, mp, ip = fixture(tmp_path)
     assert m._masked_synthetic_leads(p, {"source_leads": ["Robinhood to list LIT"]}, mp, ip) == [
         "IssuerSeven to list ASSETK"
@@ -86,7 +86,7 @@ def test_identity_transform_and_unmasked_behavior(tmp_path):
         "map-in-inputs",
     ],
 )
-def test_fail_closed(tmp_path, bad):
+def test_fail_closed(tmp_path: Path, bad) -> None:
     p, private, mp, ip = fixture(tmp_path)
     if bad == "no-map":
         mp = None
@@ -115,7 +115,7 @@ def test_fail_closed(tmp_path, bad):
 
 
 @pytest.mark.parametrize("bad", ["raw", "alias-prose", "unknown-identity", "author", "outside-scope"])
-def test_additional_boundaries(tmp_path, bad):
+def test_additional_boundaries(tmp_path: Path, bad) -> None:
     p, private, mp, ip = fixture(tmp_path)
     if bad == "raw":
         Path(p["records"][0]["as_of_evidence"]["raw_ref"]).write_text("IssuerSeven cancels ASSETK")
@@ -144,14 +144,14 @@ def test_additional_boundaries(tmp_path, bad):
         ("known_to_us_at", "2030-01-01T00:00:00Z"),
     ],
 )
-def test_no_unbound_role_or_clock_fields(tmp_path, field, value):
+def test_no_unbound_role_or_clock_fields(tmp_path: Path, field, value) -> None:
     p, _, mp, ip = fixture(tmp_path)
     p["records"][0]["record"][field] = value
     with pytest.raises(ValueError, match="metadata"):
         m._masked_synthetic_leads(p, {"source_leads": ["Robinhood to list LIT"]}, mp, ip)
 
 
-def signed_fixture(tmp_path, fixture_id="F-17"):
+def signed_fixture(tmp_path: Path, fixture_id="F-17"):
     import base64
 
     p, private, mp, ip = fixture(tmp_path)
@@ -192,7 +192,7 @@ def signed_fixture(tmp_path, fixture_id="F-17"):
 
 
 @pytest.mark.parametrize("fixture_id", ["F-01", "F-17"])
-def test_signed_original_cid_then_exact_masked_view(tmp_path, fixture_id):
+def test_signed_original_cid_then_exact_masked_view(tmp_path: Path, fixture_id) -> None:
     p, _, mp, ip = signed_fixture(tmp_path, fixture_id)
     context = m._host_identity_mask(p, mp, ip)
     row = p["records"][0]
@@ -208,7 +208,7 @@ def test_signed_original_cid_then_exact_masked_view(tmp_path, fixture_id):
 
 @pytest.mark.parametrize("bad", ["original-cid", "masked-body", "original-role", "precision"])
 @pytest.mark.parametrize("fixture_id", ["F-01", "F-17"])
-def test_signed_derivative_negatives(tmp_path, bad, fixture_id):
+def test_signed_derivative_negatives(tmp_path: Path, bad, fixture_id) -> None:
     p, private, mp, ip = signed_fixture(tmp_path, fixture_id)
     if bad == "original-cid":
         op = Path(private["original_packet_path"])
@@ -231,7 +231,7 @@ def test_signed_derivative_negatives(tmp_path, bad, fixture_id):
         m._host_identity_mask(p, mp, ip)
 
 
-def test_f25_explicit_already_anonymous_noop(tmp_path):
+def test_f25_explicit_already_anonymous_noop(tmp_path: Path) -> None:
     p, private, mp, ip = fixture(tmp_path)
     op = Path(private["original_packet_path"])
     original = json.loads(op.read_text())
@@ -255,7 +255,7 @@ def test_f25_explicit_already_anonymous_noop(tmp_path):
         m._host_identity_mask(p, mp, ip)
 
 
-def test_explicit_exact_case_variants_are_reversible(tmp_path):
+def test_explicit_exact_case_variants_are_reversible(tmp_path: Path) -> None:
     p, private, mp, ip = fixture(tmp_path)
     private["replacements"] = {"Robinhood": "IssuerSeven", "LIT": "ASSETK", "Lit": "AssetName"}
     private["case_sensitive_names"] = ["LIT", "Lit"]
@@ -268,7 +268,7 @@ def test_explicit_exact_case_variants_are_reversible(tmp_path):
 
 @pytest.mark.parametrize("bad", [None, "contract", "body", "symbol"])
 @pytest.mark.parametrize("symbol", ["USAT", "USDQ"])
-def test_structured_signed_token_identity(tmp_path, bad, symbol):
+def test_structured_signed_token_identity(tmp_path: Path, bad, symbol) -> None:
     import base64
 
     p, private, mp, ip = signed_fixture(tmp_path)
@@ -326,7 +326,7 @@ def test_structured_signed_token_identity(tmp_path, bad, symbol):
         assert context["signed_originals"]["one"][1]["version_id"] == cid
 
 
-def test_private_map_shape_does_not_ban_public_replacements(tmp_path):
+def test_private_map_shape_does_not_ban_public_replacements(tmp_path: Path) -> None:
     path = tmp_path / "input.json"
     packet = {
         "cutoff": "2026-09-24T12:00:00Z",

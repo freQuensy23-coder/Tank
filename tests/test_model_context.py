@@ -16,7 +16,7 @@ from tank.util import iso, new_id, sha256
 
 
 @pytest.fixture
-async def context(tmp_path):
+async def context(tmp_path: Path):
     repo = MemoryRepository()
     settings = Settings(data_dir=tmp_path, _env_file=None)
     stamp = iso()
@@ -51,7 +51,7 @@ async def context(tmp_path):
     return repo, settings, session, item
 
 
-def assert_public(value):
+def assert_public(value) -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             assert not identifier_field(key), key
@@ -132,7 +132,7 @@ def observation(**changes):
     }
 
 
-async def test_initial_message_is_text_and_the_incoming_item_stays_implicit(context):
+async def test_initial_message_is_text_and_the_incoming_item_stays_implicit(context) -> None:
     repo, settings, session, item = context
     original = copy.deepcopy(item)
     boundary = ModelContext(repo, settings, session)
@@ -150,12 +150,12 @@ async def test_initial_message_is_text_and_the_incoming_item_stays_implicit(cont
         await boundary.arguments("get_item", {"document": message["item"]["document"]})
 
 
-async def test_real_record_and_followup_tools_take_ids_and_reply_without_them(context):
+async def test_real_record_and_followup_tools_take_ids_and_reply_without_them(context) -> None:
     repo, settings, session, item = context
     tools = EventToolService(repo, settings, None, None)
     requests = []
 
-    def receive(request):
+    def receive(request: pytest.FixtureRequest):
         requests.append(json.loads(request.content))
         return httpx.Response(200, json={"data": []})
 
@@ -226,7 +226,7 @@ async def test_real_record_and_followup_tools_take_ids_and_reply_without_them(co
         ),
     ],
 )
-async def test_unknown_ids_are_refused_with_the_lookup_query(context, tool, arguments, message):
+async def test_unknown_ids_are_refused_with_the_lookup_query(context, tool, arguments, message) -> None:
     repo, settings, session, _ = context
     with pytest.raises(ValueError, match=message) as refused:
         await ModelContext(repo, settings, session).arguments(tool, arguments)
@@ -236,7 +236,7 @@ async def test_unknown_ids_are_refused_with_the_lookup_query(context, tool, argu
     assert ("Look it up with read-only SQL" in str(refused.value)) is not registry_key
 
 
-async def test_an_id_of_the_wrong_kind_is_named_as_such(context):
+async def test_an_id_of_the_wrong_kind_is_named_as_such(context) -> None:
     repo, settings, session, item = context
     event = await bound_event(repo, session)
     claim = await claim_of(repo, event["event_id"])
@@ -281,7 +281,7 @@ async def test_an_id_of_the_wrong_kind_is_named_as_such(context):
 )
 async def test_old_description_references_are_refused_and_name_the_id_field(
     context, tool, arguments, replacement
-):
+) -> None:
     repo, settings, session, _ = context
     await bound_event(repo, session)
     with pytest.raises(ValueError, match="no longer accepted: pass " + replacement) as refused:
@@ -296,7 +296,7 @@ async def test_old_description_references_are_refused_and_name_the_id_field(
         ["structural_gates", 0, "evidence"],
     ],
 )
-async def test_claim_descriptions_in_assessment_evidence_are_refused(context, path):
+async def test_claim_descriptions_in_assessment_evidence_are_refused(context, path) -> None:
     repo, settings, session, _ = context
     await bound_event(repo, session)
     dimensions = (
@@ -335,7 +335,7 @@ async def test_claim_descriptions_in_assessment_evidence_are_refused(context, pa
         await ModelContext(repo, settings, session).arguments("set_assessment", args)
 
 
-async def test_scoped_tools_bind_the_current_event_and_refuse_an_explicit_one(context):
+async def test_scoped_tools_bind_the_current_event_and_refuse_an_explicit_one(context) -> None:
     repo, settings, session, _ = context
     boundary = ModelContext(repo, settings, session)
     with pytest.raises(ValueError, match="works on the current event; record it with record_event first"):
@@ -351,7 +351,7 @@ async def test_scoped_tools_bind_the_current_event_and_refuse_an_explicit_one(co
     }
 
 
-async def test_authored_text_cannot_carry_internal_ids_but_quotes_and_queries_can(context):
+async def test_authored_text_cannot_carry_internal_ids_but_quotes_and_queries_can(context) -> None:
     repo, settings, session, item = context
     text = "The release includes session_notes.csv and checksum " + "a" * 64
     boundary = ModelContext(repo, settings, session)
@@ -365,7 +365,7 @@ async def test_authored_text_cannot_carry_internal_ids_but_quotes_and_queries_ca
         await boundary.arguments("record_event", args)
 
 
-async def test_merge_into_by_event_id_works_when_the_session_never_displayed_the_target(context):
+async def test_merge_into_by_event_id_works_when_the_session_never_displayed_the_target(context) -> None:
     repo, settings, session, item = context
     target = {
         "event_id": new_id("evt"),
@@ -391,7 +391,7 @@ async def test_merge_into_by_event_id_works_when_the_session_never_displayed_the
         await boundary.arguments("merge_into", {"event_id": current["event_id"]})
     posts = []
 
-    def receive(request):
+    def receive(request: pytest.FixtureRequest):
         posts.append(json.loads(request.content))
         return httpx.Response(200, json={"data": []})
 
@@ -413,7 +413,7 @@ async def test_merge_into_by_event_id_works_when_the_session_never_displayed_the
         await ModelContext(repo, settings, session).arguments("merge_into", {"event_id": merged["event_id"]})
 
 
-async def test_market_results_keep_values_units_coverage_and_discard_audit_companions(context):
+async def test_market_results_keep_values_units_coverage_and_discard_audit_companions(context) -> None:
     repo, settings, session, _ = context
     raw = {
         "market_truth": [
@@ -438,11 +438,11 @@ async def test_market_results_keep_values_units_coverage_and_discard_audit_compa
     assert raw["market_truth"][0]["mta_id"]
 
 
-def test_every_id_field_of_the_model_contracts_is_validated():
+def test_every_id_field_of_the_model_contracts_is_validated() -> None:
     root = Path(__file__).resolve().parents[1] / "config/skills"
     seen = set()
 
-    def visit(schema):
+    def visit(schema) -> None:
         for key, value in schema.get("properties", {}).items():
             if identifier_field(key):
                 assert key in ID_FIELDS, key
@@ -462,7 +462,7 @@ def test_every_id_field_of_the_model_contracts_is_validated():
     assert 'psql "$TANK_DB_URL"' in (root / "tank-data/SKILL.md").read_text()
 
 
-async def test_registry_objects_are_shown_with_their_key_and_the_key_is_what_tools_take(context):
+async def test_registry_objects_are_shown_with_their_key_and_the_key_is_what_tools_take(context) -> None:
     repo, settings, session, _ = context
     boundary = ModelContext(repo, settings, session)
     projected = await boundary.result("get_registry", settings.load_config("registry"))
@@ -486,14 +486,14 @@ async def test_registry_objects_are_shown_with_their_key_and_the_key_is_what_too
     }
 
 
-async def test_a_source_registered_only_in_the_database_is_accepted(context):
+async def test_a_source_registered_only_in_the_database_is_accepted(context) -> None:
     repo, settings, session, _ = context
     await repo.put("reg.sources", "S99", {"source_id": "S99", "name": "Replay-only source"})
     arguments = {"query": "x", "source_ids": ["S99"]}
     assert await ModelContext(repo, settings, session).arguments("search_tank_items", arguments) == arguments
 
 
-async def test_no_id_guards_strip_record_ids_but_keep_registry_keys(context):
+async def test_no_id_guards_strip_record_ids_but_keep_registry_keys(context) -> None:
     repo, settings, session, item = context
     boundary = ModelContext(repo, settings, session)
     event_id = new_id("evt")
@@ -514,7 +514,7 @@ async def test_no_id_guards_strip_record_ids_but_keep_registry_keys(context):
     assert (await boundary.arguments("record_event", args))["statement"] == args["statement"]
 
 
-async def test_scout_review_binds_its_proposal_and_names_the_duplicate_by_id(context):
+async def test_scout_review_binds_its_proposal_and_names_the_duplicate_by_id(context) -> None:
     repo, settings, session, item = context
     event = {"event_id": new_id("evt"), "statement": "A separate launch"}
     await repo.put("evt.events", event["event_id"], event)
@@ -553,7 +553,7 @@ async def test_scout_review_binds_its_proposal_and_names_the_duplicate_by_id(con
         )
 
 
-async def test_source_url_with_external_hash_remains_a_working_citation(context):
+async def test_source_url_with_external_hash_remains_a_working_citation(context) -> None:
     repo, settings, session, item = context
     item["url"] = "https://example.org/release/" + "a" * 40
     public = await ModelContext(repo, settings, session).result("fetch_page", item)
@@ -561,7 +561,7 @@ async def test_source_url_with_external_hash_remains_a_working_citation(context)
     assert_public(public)
 
 
-async def test_active_input_binds_origin_even_when_another_source_is_already_queued(context):
+async def test_active_input_binds_origin_even_when_another_source_is_already_queued(context) -> None:
     repo, settings, session, item = context
     session.update(
         active_message_id="active",
@@ -574,7 +574,7 @@ async def test_active_input_binds_origin_even_when_another_source_is_already_que
     assert result["item_id"] == item["item_id"]
 
 
-async def test_document_without_url_or_title_uses_its_text_and_clock(context):
+async def test_document_without_url_or_title_uses_its_text_and_clock(context) -> None:
     repo, settings, session, item = context
     item.pop("url")
     item.pop("title")
@@ -583,7 +583,7 @@ async def test_document_without_url_or_title_uses_its_text_and_clock(context):
     assert public["document"] == {"excerpt": item["text"], "observed_at": item["observed_at"]}
 
 
-async def test_verbatim_source_content_survives_identifier_shaped_prose(context):
+async def test_verbatim_source_content_survives_identifier_shaped_prose(context) -> None:
     repo, settings, session, item = context
     text = "The release includes session_notes.csv and checksum " + "a" * 64
     item.update(text=text, title="agent_status update")
@@ -593,7 +593,7 @@ async def test_verbatim_source_content_survives_identifier_shaped_prose(context)
     assert "raw_sha256" not in public and "item_id" not in public
 
 
-async def test_real_domain_refusal_uses_display_names_and_keeps_raw_audit(context):
+async def test_real_domain_refusal_uses_display_names_and_keeps_raw_audit(context) -> None:
     repo, settings, session, _ = context
     event = await bound_event(repo, session, current_ems_id="ems")
     await repo.put("evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": event["event_id"]})
@@ -604,7 +604,7 @@ async def test_real_domain_refusal_uses_display_names_and_keeps_raw_audit(contex
     )
     posts = []
 
-    def receive(request):
+    def receive(request: pytest.FixtureRequest):
         posts.append(json.loads(request.content))
         return httpx.Response(200, json={"data": []})
 
@@ -621,7 +621,7 @@ async def test_real_domain_refusal_uses_display_names_and_keeps_raw_audit(contex
     assert "Uniswap (UNI) · uniswap:UNI" in text and "token_id" in text
 
 
-async def test_diagnostics_map_registry_keys_to_names_without_rewriting_quotes_or_urls(context):
+async def test_diagnostics_map_registry_keys_to_names_without_rewriting_quotes_or_urls(context) -> None:
     repo, settings, session, _ = context
     boundary = ModelContext(repo, settings, session)
     text = "Use registry token_id uniswap:UNI, entity_id bitcoin, instrument_id binance:spot:BTCUSDT and source_id S01."
@@ -652,7 +652,7 @@ async def test_diagnostics_map_registry_keys_to_names_without_rewriting_quotes_o
 
 
 @pytest.mark.parametrize("token", ["uniswap:UNI", "cow:COW"])
-async def test_identical_watches_on_different_tokens_are_disarmed_by_cond_id(context, token):
+async def test_identical_watches_on_different_tokens_are_disarmed_by_cond_id(context, token) -> None:
     repo, settings, session, _ = context
     event = await bound_event(repo, session)
     watches = [
@@ -691,7 +691,7 @@ async def test_identical_watches_on_different_tokens_are_disarmed_by_cond_id(con
         assert (await repo.get("ana.watch_conditions", row["cond_id"]))["status"] == expected
 
 
-async def test_watch_of_another_event_cannot_be_disarmed(context):
+async def test_watch_of_another_event_cannot_be_disarmed(context) -> None:
     repo, settings, session, _ = context
     await bound_event(repo, session)
     foreign = {
@@ -707,7 +707,7 @@ async def test_watch_of_another_event_cannot_be_disarmed(context):
         )
 
 
-async def test_watch_audit_relationships_are_removed_entirely_without_mutating_storage(context):
+async def test_watch_audit_relationships_are_removed_entirely_without_mutating_storage(context) -> None:
     repo, settings, session, _ = context
     row = {
         "cond_id": new_id("CND"),
@@ -747,7 +747,7 @@ async def test_watch_audit_relationships_are_removed_entirely_without_mutating_s
 
 
 @pytest.mark.parametrize("kind", ["MILESTONE", "CONDITION_FIRED", "CALL_EXPIRED", "USER_QUESTION"])
-async def test_callback_without_source_requires_an_explicit_document_id(context, kind):
+async def test_callback_without_source_requires_an_explicit_document_id(context, kind) -> None:
     repo, settings, session, item = context
     await bound_event(repo, session)
     session.update(
@@ -762,7 +762,7 @@ async def test_callback_without_source_requires_an_explicit_document_id(context,
     assert restored["item_id"] == item["item_id"] and restored["event_id"] == session["event_id"]
 
 
-async def test_incoming_source_binding_rejects_override_but_allows_other_claim_evidence(context):
+async def test_incoming_source_binding_rejects_override_but_allows_other_claim_evidence(context) -> None:
     repo, settings, session, item = context
     await bound_event(repo, session)
     other = {**item, "item_id": new_id("itm"), "url": "https://example.org/other"}
@@ -784,7 +784,7 @@ async def test_incoming_source_binding_rejects_override_but_allows_other_claim_e
         await boundary.arguments("add_observation", observation(claims=[claim]))
 
 
-async def test_superseded_claims_must_belong_to_the_current_event(context):
+async def test_superseded_claims_must_belong_to_the_current_event(context) -> None:
     repo, settings, session, item = context
     event = await bound_event(repo, session)
     own = await claim_of(repo, event["event_id"])
@@ -800,7 +800,7 @@ async def test_superseded_claims_must_belong_to_the_current_event(context):
         await boundary.arguments("add_observation", observation(claims=[claim]))
 
 
-async def test_milestone_callback_confirms_from_the_fetched_official_document_by_id(context):
+async def test_milestone_callback_confirms_from_the_fetched_official_document_by_id(context) -> None:
     from datetime import timedelta
 
     from tank.util import utcnow
@@ -830,7 +830,7 @@ async def test_milestone_callback_confirms_from_the_fetched_official_document_by
     quote = "The SEC approved the application."
     url = "https://www.sec.gov/news/approval"
 
-    def receive(request):
+    def receive(request: pytest.FixtureRequest):
         if request.method == "GET" and str(request.url) == url:
             return httpx.Response(
                 200, text=f"<html><body>{quote}</body></html>", headers={"content-type": "text/html"}

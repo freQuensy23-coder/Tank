@@ -12,11 +12,11 @@ from tank.market.service import MarketService
 
 
 @pytest.mark.asyncio
-async def test_gate_admits_capacity_holders_then_lowest_priority_first():
+async def test_gate_admits_capacity_holders_then_lowest_priority_first() -> None:
     gate = PriorityGate(2)
     order, release = [], asyncio.Event()
 
-    async def hold(name, priority):
+    async def hold(name, priority) -> None:
         async with gate.enter(priority):
             order.append(name)
             await release.wait()
@@ -30,12 +30,12 @@ async def test_gate_admits_capacity_holders_then_lowest_priority_first():
 
 
 @pytest.mark.asyncio
-async def test_concurrent_requests_overlap_but_start_one_interval_apart(setup):
+async def test_concurrent_requests_overlap_but_start_one_interval_apart(setup) -> None:
     repo, settings, _ = setup
     starts, active, peak = [], [0], [0]
     release = asyncio.Event()
 
-    async def handler(request):
+    async def handler(request: pytest.FixtureRequest):
         starts.append(time.monotonic())
         active[0] += 1
         peak[0] = max(peak[0], active[0])
@@ -56,14 +56,14 @@ async def test_concurrent_requests_overlap_but_start_one_interval_apart(setup):
 
 
 @pytest.mark.asyncio
-async def test_a_negative_priority_request_takes_a_full_budget_first():
+async def test_a_negative_priority_request_takes_a_full_budget_first() -> None:
     from tank.sources.rate_limits import SharedRequestBudgets
 
     budgets = SharedRequestBudgets()
     await budgets.acquire("host", 1, 0.2)
     order = []
 
-    async def request(name, priority):
+    async def request(name, priority) -> None:
         await budgets.acquire("host", 1, 0.2, priority=priority)
         order.append(name)
 
@@ -78,7 +78,7 @@ async def test_a_negative_priority_request_takes_a_full_budget_first():
 class ControlledClock:
     """Drive only the SUT module's clock/sleep; pytest's event loop stays real."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.now = 10.0
         self.sleeping = asyncio.Queue()
         self.pending = []
@@ -86,13 +86,13 @@ class ControlledClock:
     def monotonic(self):
         return self.now
 
-    async def sleep(self, delay):
+    async def sleep(self, delay) -> None:
         future = asyncio.get_running_loop().create_future()
         self.pending.append((self.now + delay, future))
         self.sleeping.put_nowait(delay)
         await future
 
-    def advance(self, seconds):
+    def advance(self, seconds) -> None:
         self.now += seconds
         ready, self.pending = self.pending, []
         for deadline, future in ready:
@@ -104,7 +104,7 @@ class ControlledClock:
                 self.pending.append((deadline, future))
 
 
-def control_request_clock(monkeypatch):
+def control_request_clock(monkeypatch: pytest.MonkeyPatch):
     from tank.market import service as module
 
     clock = ControlledClock()
@@ -114,13 +114,15 @@ def control_request_clock(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_overdue_request_starts_are_spaced_from_actual_admission(setup, monkeypatch):
+async def test_overdue_request_starts_are_spaced_from_actual_admission(
+    setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo, settings, _ = setup
     clock = control_request_clock(monkeypatch)
     starts, active, peak = [], 0, 0
     entered, release = asyncio.Queue(), asyncio.Event()
 
-    async def handler(request):
+    async def handler(request: pytest.FixtureRequest):
         nonlocal active, peak
         starts.append(clock.monotonic())
         active += 1
@@ -156,12 +158,14 @@ async def test_overdue_request_starts_are_spaced_from_actual_admission(setup, mo
 
 
 @pytest.mark.asyncio
-async def test_cancelled_pacing_wait_does_not_reserve_a_future_start(setup, monkeypatch):
+async def test_cancelled_pacing_wait_does_not_reserve_a_future_start(
+    setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo, settings, _ = setup
     clock = control_request_clock(monkeypatch)
     starts, entered, release = [], asyncio.Queue(), asyncio.Event()
 
-    async def handler(request):
+    async def handler(request: pytest.FixtureRequest):
         starts.append(clock.monotonic())
         entered.put_nowait(None)
         await release.wait()
@@ -195,13 +199,15 @@ async def test_cancelled_pacing_wait_does_not_reserve_a_future_start(setup, monk
 
 
 @pytest.mark.asyncio
-async def test_delayed_response_frees_saturated_slot_without_restarting_pacer(setup, monkeypatch):
+async def test_delayed_response_frees_saturated_slot_without_restarting_pacer(
+    setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo, settings, _ = setup
     clock = control_request_clock(monkeypatch)
     starts, entered = [], asyncio.Queue()
     releases = [asyncio.Event() for _ in range(4)]
 
-    async def handler(request):
+    async def handler(request: pytest.FixtureRequest):
         index = len(starts)
         starts.append(clock.monotonic())
         entered.put_nowait(index)

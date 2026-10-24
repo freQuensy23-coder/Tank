@@ -20,7 +20,7 @@ async def test_comparator_projection_matches_dense_reader_with_sparse_boundaries
     target_gap,
     long_event,
     invalid_peer_close,
-):
+) -> None:
     repo, settings, target = setup
     path = settings.config_dir / "registry.yaml"
     registry = yaml.safe_load(path.read_text())

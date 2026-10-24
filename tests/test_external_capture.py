@@ -8,6 +8,7 @@ written there and read here; ops.request_budget_ledger is shared by both.
 import asyncio
 import time
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -39,7 +40,7 @@ def instrument(iid, venue, market_type, symbol):
     }
 
 
-def make_settings(tmp_path, **values):
+def make_settings(tmp_path: Path, **values):
     config = tmp_path / "config"
     config.mkdir(exist_ok=True)
     registry = {
@@ -56,24 +57,24 @@ def make_settings(tmp_path, **values):
 
 
 @pytest.fixture
-def settings(tmp_path):
+def settings(tmp_path: Path):
     return make_settings(tmp_path)
 
 
-async def put(repo, collection, row, key):
+async def put(repo, collection, row, key) -> None:
     await repo.put_market_batch(collection, [row], keys=[key])
 
 
-async def update(repo, collection, key, **fields):
+async def update(repo, collection, key, **fields) -> None:
     """What tank-capture writes into a row this process created."""
     await put(repo, collection, {**await repo.get(collection, key), **fields}, key)
 
 
-async def finish(repo, collection, key, **fields):
+async def finish(repo, collection, key, **fields) -> None:
     await update(repo, collection, key, **collection_clock(utcnow()).fields("finished_at"), **fields)
 
 
-async def test_external_escalation_writes_the_obligation_and_starts_nothing(settings):
+async def test_external_escalation_writes_the_obligation_and_starts_nothing(settings) -> None:
     repo = MemoryRepository()
     service = MarketService(repo, settings)
     service._stop = asyncio.Event()
@@ -98,7 +99,7 @@ async def test_external_escalation_writes_the_obligation_and_starts_nothing(sett
         await market.close()
 
 
-async def capture_worker(repo, outcome, seen):
+async def capture_worker(repo, outcome, seen) -> None:
     """A tank-capture stand-in: claims the first PENDING request and finishes it."""
     while not (rows := await repo.list("mkt.capture_requests", filters={"status": "PENDING"})):
         await asyncio.sleep(0.01)
@@ -108,7 +109,7 @@ async def capture_worker(repo, outcome, seen):
     await finish(repo, "mkt.capture_requests", key, **outcome)
 
 
-async def repair_round_trip(repo, service):
+async def repair_round_trip(repo, service) -> None:
     result = {SPOT: {"incomplete_before": 3, "incomplete_after": 1}}
     seen = []
     worker = asyncio.create_task(
@@ -148,7 +149,7 @@ async def repair_round_trip(repo, service):
     assert time.monotonic() - started < 0.2 + CAPTURE_REQUEST_GRACE_S + 1
 
 
-async def test_external_repair_windows_is_a_capture_request(settings):
+async def test_external_repair_windows_is_a_capture_request(settings) -> None:
     repo = MemoryRepository()
     service = MarketService(repo, settings)
     await repair_round_trip(repo, service)
@@ -196,7 +197,7 @@ def stream_rows(now, *, perp_updated, spot_updated):
     ]
 
 
-async def check_stream_state(repo, service):
+async def check_stream_state(repo, service) -> None:
     now = utcnow()
     rows = stream_rows(now, perp_updated=now, spot_updated=now - timedelta(seconds=60))
     await repo.put_market_batch(
@@ -230,17 +231,17 @@ async def check_stream_state(repo, service):
     assert liquidations["observed_through"] == {} and liquidations["coverage_start"] == {}
 
 
-async def test_external_stream_state_comes_from_capture_streams(settings):
+async def test_external_stream_state_comes_from_capture_streams(settings) -> None:
     repo = MemoryRepository()
     service = MarketService(repo, settings)
     await check_stream_state(repo, service)
     await service.close()
 
 
-async def test_external_capture_never_calls_exchange_rest(settings):
+async def test_external_capture_never_calls_exchange_rest(settings) -> None:
     hosts = []
 
-    def respond(request):
+    def respond(request: pytest.FixtureRequest):
         hosts.append(request.url.host)
         return httpx.Response(200, json={"ok": True})
 
@@ -261,7 +262,9 @@ async def test_external_capture_never_calls_exchange_rest(settings):
         await service.close()
 
 
-async def test_external_run_keeps_tiers_and_obligations_and_captures_nothing(settings, monkeypatch):
+async def test_external_run_keeps_tiers_and_obligations_and_captures_nothing(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo = MemoryRepository()
     service = MarketService(repo, settings)
     since = "2026-10-21T10:00:00Z"
@@ -272,7 +275,7 @@ async def test_external_run_keeps_tiers_and_obligations_and_captures_nothing(set
         TOKEN + ":EVT-1",
     )
 
-    async def idle():
+    async def idle() -> None:
         await service._stop.wait()
 
     monkeypatch.setattr(service, "_supply_loop", idle)
@@ -307,7 +310,7 @@ async def ledger_rows(repo):
 
 @pytest.mark.integration
 @pytest.mark.postgres
-async def test_request_ledger_is_one_budget_for_every_process(migrated):
+async def test_request_ledger_is_one_budget_for_every_process(migrated) -> None:
     first, second = SharedRequestBudgets(), SharedRequestBudgets()
     first.ledger = RequestLedger(migrated.database_url, "first")
     second.ledger = RequestLedger(migrated.database_url, "second")
@@ -339,7 +342,7 @@ async def test_request_ledger_is_one_budget_for_every_process(migrated):
 
 @pytest.mark.integration
 @pytest.mark.postgres
-async def test_external_contract_on_postgres(migrated, tmp_path):
+async def test_external_contract_on_postgres(migrated, tmp_path: Path) -> None:
     service = MarketService(migrated, make_settings(tmp_path))
     await repair_round_trip(migrated, service)
     await check_stream_state(migrated, service)
@@ -351,7 +354,7 @@ async def test_external_contract_on_postgres(migrated, tmp_path):
 
 @pytest.mark.integration
 @pytest.mark.postgres
-async def test_ledger_is_configured_for_every_postgres_process(migrated):
+async def test_ledger_is_configured_for_every_postgres_process(migrated) -> None:
     budgets = SharedRequestBudgets()
     assert budgets.configure(MemoryRepository(), SimpleNamespace()) is None and budgets.ledger is None
     ledger = budgets.configure(migrated, SimpleNamespace())
@@ -366,7 +369,7 @@ async def test_ledger_is_configured_for_every_postgres_process(migrated):
 class Instant:
     """asyncio for the service module, without the waits of its request gate."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.elapsed = 0.0
 
     def __getattr__(self, name):
@@ -375,29 +378,31 @@ class Instant:
     def monotonic(self):
         return time.monotonic() + self.elapsed
 
-    async def sleep(self, seconds):
+    async def sleep(self, seconds) -> None:
         self.elapsed += seconds
 
 
 class FakeLedger:
-    def __init__(self):
+    def __init__(self) -> None:
         self.blocks = []
 
     async def wait_s(self, bucket, capacity, window_s, weight, host):
         return 0.0
 
-    async def block(self, host, until, reason):
+    async def block(self, host, until, reason) -> None:
         self.blocks.append((host, until, reason))
 
 
-async def test_shared_ledger_closes_hosts_on_429_and_418(tmp_path, monkeypatch):
+async def test_shared_ledger_closes_hosts_on_429_and_418(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from tank.sources.rate_limits import shared_request_budgets
 
     ledger = FakeLedger()
     monkeypatch.setattr(shared_request_budgets, "ledger", ledger)
     replies = []
 
-    def respond(request):
+    def respond(request: pytest.FixtureRequest):
         return replies.pop(0)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:

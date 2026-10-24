@@ -2,6 +2,7 @@
 
 import json
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -23,7 +24,7 @@ STAMP = "2026-10-17T12:00:00Z"
         ("public_at", {}, "T1", None),
     ],
 )
-def test_selected_event_anchor_preserves_provenance(field, extra, kind, precision):
+def test_selected_event_anchor_preserves_provenance(field, extra, kind, precision) -> None:
     anchor = Scheduler.anchor({field: STAMP, **extra})
     assert anchor["type"] == kind
     assert anchor["ts_prec"] == precision
@@ -32,7 +33,7 @@ def test_selected_event_anchor_preserves_provenance(field, extra, kind, precisio
 
 
 @pytest.mark.asyncio
-async def test_tick_preserves_source_milestone_and_offset_job_precision():
+async def test_tick_preserves_source_milestone_and_offset_job_precision() -> None:
     repo = MemoryRepository()
     now = parse_time(STAMP)
     scheduler = Scheduler(repo, SimpleNamespace(), None, None)
@@ -76,7 +77,9 @@ async def test_tick_preserves_source_milestone_and_offset_job_precision():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("precision", ["BUCKET(1h)", None])
-async def test_reaction_windows_inherit_anchor_and_capture_clock_is_collection(monkeypatch, precision):
+async def test_reaction_windows_inherit_anchor_and_capture_clock_is_collection(
+    monkeypatch: pytest.MonkeyPatch, precision
+) -> None:
     monkeypatch.setattr("tank.analysis.truth.compute_market_truth", lambda *a, **kw: {})
     repo = MemoryRepository()
     market = SimpleNamespace(snapshot=AsyncMock(return_value={}))
@@ -107,7 +110,7 @@ async def test_reaction_windows_inherit_anchor_and_capture_clock_is_collection(m
 
 
 @pytest.mark.asyncio
-async def test_retention_json_records_clock_and_offset_cutoffs(tmp_path):
+async def test_retention_json_records_clock_and_offset_cutoffs(tmp_path: Path) -> None:
     repo = SimpleNamespace(
         prune_market=AsyncMock(), prune_jobs=AsyncMock(), get=AsyncMock(return_value=None), put=AsyncMock()
     )
@@ -120,7 +123,7 @@ async def test_retention_json_records_clock_and_offset_cutoffs(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_legacy_condition_cutoff_stays_explicit_unknown():
+async def test_legacy_condition_cutoff_stays_explicit_unknown() -> None:
     repo = MemoryRepository()
     scheduler = Scheduler(repo, SimpleNamespace(), None, SimpleNamespace(assess=AsyncMock(return_value={})))
     await repo.put("evt.events", "e", {"event_id": "e"})
@@ -144,7 +147,9 @@ async def test_legacy_condition_cutoff_stays_explicit_unknown():
 
 
 @pytest.mark.asyncio
-async def test_provenance_only_addition_does_not_create_late_data_revision(monkeypatch):
+async def test_provenance_only_addition_does_not_create_late_data_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr("tank.analysis.truth.compute_market_truth", lambda *a, **kw: {})
     repo = MemoryRepository()
     scheduler = Scheduler(

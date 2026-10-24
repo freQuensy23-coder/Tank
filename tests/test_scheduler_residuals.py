@@ -1,6 +1,7 @@
 """Residual scheduler behavior against literal job/lifecycle contracts."""
 
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -28,8 +29,8 @@ def quiet_scheduler(repo):
 
 @pytest.mark.asyncio
 async def test_verified_backup_is_cached_per_process_day_but_force_and_restart_reverify(
-    monkeypatch, tmp_path
-):
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     final = tmp_path / f"tank-{NOW.date()}"
     final.mkdir()
     (final / "COMPLETE").write_text(iso(NOW))
@@ -51,13 +52,15 @@ async def test_verified_backup_is_cached_per_process_day_but_force_and_restart_r
 
 
 @pytest.mark.asyncio
-async def test_failed_backup_verification_never_enters_cache(monkeypatch, tmp_path):
+async def test_failed_backup_verification_never_enters_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     final = tmp_path / f"tank-{NOW.date()}"
     final.mkdir()
     (final / "COMPLETE").write_text(iso(NOW))
     count = 0
 
-    def fail(*args, **kwargs):
+    def fail(*args, **kwargs) -> None:
         nonlocal count
         count += 1
         raise ValueError("checksum mismatch")
@@ -73,7 +76,7 @@ async def test_failed_backup_verification_never_enters_cache(monkeypatch, tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_expired_milestone_is_timer_missed_not_failed_source_outcome():
+async def test_expired_milestone_is_timer_missed_not_failed_source_outcome() -> None:
     repo = MemoryRepository()
     scheduler = Scheduler(repo, SimpleNamespace(), None, None)
     await repo.put(
@@ -105,7 +108,7 @@ async def test_expired_milestone_is_timer_missed_not_failed_source_outcome():
 
 
 @pytest.mark.asyncio
-async def test_terminal_capture_is_recorded_as_gap_and_not_resurrected_or_claimed_captured():
+async def test_terminal_capture_is_recorded_as_gap_and_not_resurrected_or_claimed_captured() -> None:
     repo = MemoryRepository()
     scheduler = quiet_scheduler(repo)
     await repo.put(
@@ -135,7 +138,9 @@ async def test_terminal_capture_is_recorded_as_gap_and_not_resurrected_or_claime
 
 
 @pytest.mark.asyncio
-async def test_checkpoint_expiry_does_not_slide_on_later_ticks_and_scans_are_batched(monkeypatch):
+async def test_checkpoint_expiry_does_not_slide_on_later_ticks_and_scans_are_batched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     repo = MemoryRepository()
     scheduler = quiet_scheduler(repo)
     origin = NOW - timedelta(hours=1)
@@ -166,7 +171,7 @@ async def test_checkpoint_expiry_does_not_slide_on_later_ticks_and_scans_are_bat
 
 
 @pytest.mark.asyncio
-async def test_conditions_share_truth_for_identical_event_token_cutoff():
+async def test_conditions_share_truth_for_identical_event_token_cutoff() -> None:
     repo = MemoryRepository()
     truth = SimpleNamespace(assess=AsyncMock(return_value={"move_class": "SPOT_LED_ACCUMULATION"}))
     scheduler = Scheduler(repo, SimpleNamespace(), None, truth)
@@ -189,7 +194,9 @@ async def test_conditions_share_truth_for_identical_event_token_cutoff():
 
 
 @pytest.mark.asyncio
-async def test_backup_cache_reverifies_replaced_manifest_identity(monkeypatch, tmp_path):
+async def test_backup_cache_reverifies_replaced_manifest_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     final = tmp_path / f"tank-{NOW.date()}"
     final.mkdir()
     (final / "COMPLETE").write_text(iso(NOW))
@@ -211,7 +218,7 @@ async def test_backup_cache_reverifies_replaced_manifest_identity(monkeypatch, t
 
 
 @pytest.mark.asyncio
-async def test_selective_condition_union_never_calls_full_assess_or_persists_missing_truth():
+async def test_selective_condition_union_never_calls_full_assess_or_persists_missing_truth() -> None:
     repo = MemoryRepository()
     truth = SimpleNamespace(
         assess=AsyncMock(side_effect=AssertionError("full assessment must not run in minute evaluator")),
@@ -259,7 +266,7 @@ async def test_selective_condition_union_never_calls_full_assess_or_persists_mis
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("late_value", [None, "SELL"])
-async def test_closed_hour_completion_or_correction_is_rechecked_without_double_count(late_value):
+async def test_closed_hour_completion_or_correction_is_rechecked_without_double_count(late_value) -> None:
     repo = MemoryRepository()
     first = NOW.replace(hour=7)
     second = NOW.replace(hour=8)
@@ -311,7 +318,7 @@ async def test_closed_hour_completion_or_correction_is_rechecked_without_double_
 
 
 @pytest.mark.asyncio
-async def test_late_correction_of_preceding_closed_hour_cannot_false_fire():
+async def test_late_correction_of_preceding_closed_hour_cannot_false_fire() -> None:
     repo = MemoryRepository()
     first, second = NOW.replace(hour=7), NOW.replace(hour=8)
     values = {iso(first): "BUY", iso(second): "BUY"}
@@ -344,7 +351,7 @@ async def test_late_correction_of_preceding_closed_hour_cannot_false_fire():
     assert condition["counters"]["root"]["history"][0]["matched"] is False
 
 
-def test_depth_ratio_preserves_strict_decimal_boundary():
+def test_depth_ratio_preserves_strict_decimal_boundary() -> None:
     from tank.scheduler import compare, depth_ratio
 
     ratio = depth_ratio(

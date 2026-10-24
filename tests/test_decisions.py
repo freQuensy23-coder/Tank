@@ -28,7 +28,7 @@ def inputs():
     )
 
 
-def test_start_and_ordered_blockers():
+def test_start_and_ordered_blockers() -> None:
     e, a, b, m = inputs()
     engine = DecisionEngine()
     assert engine.evaluate(e, a, b, m)["action"] == "START"
@@ -49,7 +49,7 @@ def test_start_and_ordered_blockers():
     assert engine.evaluate(e, a, b, m)["action"] == "WAIT"
 
 
-def test_risk_classes_and_absorption():
+def test_risk_classes_and_absorption() -> None:
     e, a, b, m = inputs()
     engine = DecisionEngine()
     for cls, action in [
@@ -69,7 +69,7 @@ def test_risk_classes_and_absorption():
     assert engine.evaluate(e, a, b, m)["action"] == "START"
 
 
-def test_context_lifecycle_safety():
+def test_context_lifecycle_safety() -> None:
     e, a, b, m = inputs()
     engine = DecisionEngine()
     call = {"invalidation_price": "9"}
@@ -96,7 +96,7 @@ def test_context_lifecycle_safety():
     assert not alert_gate(e, a)[0]
 
 
-def test_card_diagnostics_and_probability():
+def test_card_diagnostics_and_probability() -> None:
     e, a, b, m = inputs()
     m["move_class"] = "PERP_LED_CHASE"
     m["divergence"] = {"state": "PERP_LED_MARKUP", "trigger": True, "unresolved": ["ABSORPTION_CANDIDATE"]}
@@ -105,7 +105,7 @@ def test_card_diagnostics_and_probability():
     assert "ABSORPTION_CANDIDATE" in text and len(text) <= 3500
 
 
-def test_three_token_template_with_structured_figures():
+def test_three_token_template_with_structured_figures() -> None:
     e, a, b, m = inputs()
     bs = []
     ds = []
@@ -133,7 +133,7 @@ def test_three_token_template_with_structured_figures():
     assert len(text) <= 3500 and text.count("WHAT TO DO:") == 3
 
 
-def test_all_no_call_action_rows():
+def test_all_no_call_action_rows() -> None:
     engine = DecisionEngine()
     cases = [
         ({}, {}, {}, {}, "A5", "START"),
@@ -180,7 +180,7 @@ def test_all_no_call_action_rows():
         assert (result["action_rule"], result["action"]) == (rule, action)
 
 
-def test_start_blocker_combinations_and_secondary_requirements():
+def test_start_blocker_combinations_and_secondary_requirements() -> None:
     e, a, b, m = inputs()
     engine = DecisionEngine()
     b.update(role="SECONDARY", exposure_score=8)
@@ -201,7 +201,7 @@ def test_start_blocker_combinations_and_secondary_requirements():
     assert engine.evaluate(e, a, b, m)["action_rule"] == "A0"
 
 
-def test_open_call_precedence_and_conditions():
+def test_open_call_precedence_and_conditions() -> None:
     e, a, b, m = inputs()
     engine = DecisionEngine()
     call = {"invalidation_price": "8"}
@@ -231,7 +231,9 @@ def test_open_call_precedence_and_conditions():
 
 @pytest.mark.parametrize("relationship", ["PRIMARY", "LOSER"])
 @pytest.mark.parametrize("unresolved", [False, True])
-def test_add_uses_literal_b3_without_extra_relationship_or_contradiction_veto(relationship, unresolved):
+def test_add_uses_literal_b3_without_extra_relationship_or_contradiction_veto(
+    relationship, unresolved
+) -> None:
     event, assessment, beneficiary, truth = inputs()
     beneficiary.update(role=relationship, thesis_link_credible=True)
     if unresolved:
@@ -250,7 +252,7 @@ def test_add_uses_literal_b3_without_extra_relationship_or_contradiction_veto(re
 
 
 @pytest.mark.parametrize("higher_priority", ["DOWNGRADE", "INVALIDATION", "FATAL"])
-def test_add_never_overrides_literal_b1_b2_precedence(higher_priority):
+def test_add_never_overrides_literal_b1_b2_precedence(higher_priority) -> None:
     event, assessment, beneficiary, truth = inputs()
     fired = [{"role": "UPGRADE", "status": "FIRED"}]
     if higher_priority == "FATAL":
@@ -265,7 +267,7 @@ def test_add_never_overrides_literal_b1_b2_precedence(higher_priority):
     )
 
 
-def test_update_gate_materiality_rate_limit_and_safety():
+def test_update_gate_materiality_rate_limit_and_safety() -> None:
     e, a, b, m = inputs()
     previous = {
         "event_state": "ANNOUNCED",
@@ -284,7 +286,7 @@ def test_update_gate_materiality_rate_limit_and_safety():
     assert alert_gate(e, a, previous=previous, decisions=[d], now="2026-10-17T00:01:00Z")[0]
 
 
-def test_horizons_and_scenarios_no_probabilities():
+def test_horizons_and_scenarios_no_probabilities() -> None:
     e, a, b, m = inputs()
     engine = DecisionEngine()
     for impact, horizon in [
@@ -301,7 +303,7 @@ def test_horizons_and_scenarios_no_probabilities():
         assert not any(re.search(r"\d|probability|chance", s) for s in d["outlook"]["scenarios"].values())
 
 
-def test_canonical_claim_evidence_and_verification_update():
+def test_canonical_claim_evidence_and_verification_update() -> None:
     e, a, b, m = inputs()
     e["evidence_labels"] = {"ITM-24": "Issuer announcement"}
     e["claims"] = [
@@ -335,7 +337,7 @@ def test_canonical_claim_evidence_and_verification_update():
     assert alert_gate(e, a, previous=previous, decisions=[dict(d, action="EXIT")])[1] == "STALE_STATE_CHANGE"
 
 
-def test_crowding_uses_fixed_four_hour_window():
+def test_crowding_uses_fixed_four_hour_window() -> None:
     e, a, b, m = inputs()
     m["derivatives"] = {
         "synchronized": {"native_oi_vs_normal": "WITHIN"},
@@ -352,7 +354,7 @@ def test_crowding_uses_fixed_four_hour_window():
     assert d["trade_grade"] == "C" and d["outlook"]["potential"] == "LOW"
 
 
-def test_card_keeps_secondary_layer_explanations_and_least_repriced():
+def test_card_keeps_secondary_layer_explanations_and_least_repriced() -> None:
     e, a, b, m = inputs()
     a["impact_horizon"].update(
         ramp_shape="STEP",
@@ -383,7 +385,7 @@ def test_card_keeps_secondary_layer_explanations_and_least_repriced():
     assert e["beneficiary_map"]["layers"]["ORACLE"]["note"] == "Dependency not verified."
 
 
-def test_structural_partial_has_facts_without_market_forecast():
+def test_structural_partial_has_facts_without_market_forecast() -> None:
     e, a, _b, _m = inputs()
     a["class"] = "STRUCTURAL_SHOCK"
     text = compose_card(e, a, [], [], [], kind="PARTIAL", verdict="Issuer confirms approval.", why=[])
@@ -391,7 +393,7 @@ def test_structural_partial_has_facts_without_market_forecast():
     assert "WHAT TO DO:" not in text and "OUTLOOK:" not in text and "──" not in text
 
 
-def test_class_specific_scenarios_and_unknown():
+def test_class_specific_scenarios_and_unknown() -> None:
     e, a, b, m = inputs()
     engine = DecisionEngine()
     seen = set()
@@ -417,7 +419,7 @@ def test_class_specific_scenarios_and_unknown():
     assert engine.evaluate(e, a, b, m)["outlook"]["scenarios"]["base"].startswith("UNKNOWN")
 
 
-def test_full_who_names_outside_primary_but_omits_unverified_compatibility_candidate():
+def test_full_who_names_outside_primary_but_omits_unverified_compatibility_candidate() -> None:
     e, a, b, m = inputs()
     b["token_id"] = "1INCH"
     m["token_id"] = "1INCH"
@@ -433,7 +435,7 @@ def test_full_who_names_outside_primary_but_omits_unverified_compatibility_candi
     assert "2.10% raw; 1.30% net BTC" in text and "WHAT CHANGES THE ACTION:" in text
 
 
-def test_expired_call_is_tracking_notice_without_action():
+def test_expired_call_is_tracking_notice_without_action() -> None:
     e, a, b, m = inputs()
     d = DecisionEngine().evaluate(e, a, b, m)
     d.update(tracking_ended=True, actionable=False, conditions=[])
@@ -442,7 +444,7 @@ def test_expired_call_is_tracking_notice_without_action():
     assert "WHAT TO DO:" not in text and "WHAT CHANGES THE ACTION:" not in text
 
 
-def test_stale_expiry_never_bypasses_publication_gate():
+def test_stale_expiry_never_bypasses_publication_gate() -> None:
     e, a, b, m = inputs()
     e.update(freshness="STALE", call_expired=True)
     frozen = {"token_id": "T", "action": "START", "tracking_ended": True, "actionable": False}
@@ -467,7 +469,7 @@ def test_stale_expiry_never_bypasses_publication_gate():
     assert "token removed from current beneficiary map." in text
 
 
-def test_exact_majority_flag_preserves_tiny_sell_boundary():
+def test_exact_majority_flag_preserves_tiny_sell_boundary() -> None:
     e, a, b, m = inputs()
 
     m["spot"] = {
@@ -488,7 +490,7 @@ def test_exact_majority_flag_preserves_tiny_sell_boundary():
     assert DecisionEngine().evaluate(e, a, b, m)["trade_grade"] == "D"
 
 
-def test_b16_fraction_percent_exclusions_and_header_proof():
+def test_b16_fraction_percent_exclusions_and_header_proof() -> None:
     e, a, b, m = inputs()
     e.update(
         public_at="2026-10-17T12:30:00Z",
@@ -517,7 +519,7 @@ def test_b16_fraction_percent_exclusions_and_header_proof():
     assert "Spot venue coverage is incomplete: only partial coverage" in text
 
 
-def test_versioned_card_limits_and_missing_decisions():
+def test_versioned_card_limits_and_missing_decisions() -> None:
     e, a, b, m = inputs()
     e["thresholds"] = {"version": "test-v1", "card_max_chars": 10, "update_rate_limit_s": 1800}
     import pytest
@@ -531,7 +533,7 @@ def test_versioned_card_limits_and_missing_decisions():
     assert alert_gate(e, a, previous=previous, now="2026-10-17T00:16:00Z") == (False, "UPDATE_RATE_LIMIT")
 
 
-def test_dont_chase_conditions_exact_library_rows():
+def test_dont_chase_conditions_exact_library_rows() -> None:
     e, a, b, m = inputs()
     engine = DecisionEngine()
     m["move_class"] = "PERP_LED_CHASE"
@@ -551,13 +553,13 @@ def test_dont_chase_conditions_exact_library_rows():
         assert d["action"] == "DONT_CHASE" and not any(c["role"] == "DOWNGRADE" for c in d["conditions"])
 
 
-def test_trade_base_a_reason_is_preserved():
+def test_trade_base_a_reason_is_preserved() -> None:
     e, a, b, m = inputs()
     d = DecisionEngine().evaluate(e, a, b, m)
     assert d["trade_reasons"] == ["TRADE_BASE_A"]
 
 
-def test_persistent_safety_is_silent_but_new_fatal_and_action_transition_are_immediate():
+def test_persistent_safety_is_silent_but_new_fatal_and_action_transition_are_immediate() -> None:
     event = {
         "event_state": "APPROVED",
         "freshness": "NORMAL",
@@ -600,7 +602,7 @@ def test_persistent_safety_is_silent_but_new_fatal_and_action_transition_are_imm
 @pytest.mark.parametrize("prior_stage,prior_verified", [("APPROVED", True), ("LIVE", False)])
 def test_old_stage_does_not_resurface_on_timer_but_new_action_and_safety_facts_can_publish(
     prior_stage, prior_verified
-):
+) -> None:
     event = {
         "event_state": "LIVE",
         "state_verified": True,
@@ -634,7 +636,7 @@ def test_old_stage_does_not_resurface_on_timer_but_new_action_and_safety_facts_c
 
 @pytest.mark.parametrize("event_class", ["LOW", "MATERIAL", "MAJOR", "STRUCTURAL_SHOCK"])
 @pytest.mark.parametrize("trigger", ["START", "EXIT", "FATAL", "EXPIRY"])
-def test_never_sent_rules_apply_before_update_rate_exceptions(event_class, trigger):
+def test_never_sent_rules_apply_before_update_rate_exceptions(event_class, trigger) -> None:
     event, assessment, _, _ = inputs()
     assessment["class"] = event_class
     event["freshness"] = "STALE"
@@ -650,7 +652,7 @@ def test_never_sent_rules_apply_before_update_rate_exceptions(event_class, trigg
     assert allowed is (event_class in {"MAJOR", "STRUCTURAL_SHOCK"})
 
 
-def test_unverified_stage_advance_is_stored_but_does_not_trigger_a_standalone_update():
+def test_unverified_stage_advance_is_stored_but_does_not_trigger_a_standalone_update() -> None:
     event = {"event_state": "LIVE", "state_verified": False, "freshness": "FRESH"}
     assessment = {"class": "MAJOR"}
     previous = {
@@ -670,7 +672,7 @@ def test_unverified_stage_advance_is_stored_but_does_not_trigger_a_standalone_up
     assert event == original
 
 
-def test_agent_verified_stage_advance_can_trigger_an_update():
+def test_agent_verified_stage_advance_can_trigger_an_update() -> None:
     event = {"event_state": "LIVE", "state_verified": True, "freshness": "FRESH"}
     previous = {
         "card_struct": {"event": {"event_state": "APPROVED", "state_verified": True}},
@@ -686,7 +688,7 @@ def test_agent_verified_stage_advance_can_trigger_an_update():
 
 
 @pytest.mark.parametrize("prior_stage", ["APPROVED", "LIVE"])
-def test_unverified_stage_does_not_suppress_an_independent_start(prior_stage):
+def test_unverified_stage_does_not_suppress_an_independent_start(prior_stage) -> None:
     event = {"event_state": "LIVE", "state_verified": False, "freshness": "FRESH"}
     previous = {
         "card_struct": {"event": {"event_state": prior_stage, "state_verified": False}},
@@ -704,7 +706,7 @@ def test_unverified_stage_does_not_suppress_an_independent_start(prior_stage):
 
 
 @pytest.mark.parametrize("move,expect", [("UNKNOWN", False), ("SPOT_LED_ACCUMULATION", True)])
-def test_tactical_only_for_positive_action_on_weak_capture(move, expect):
+def test_tactical_only_for_positive_action_on_weak_capture(move, expect) -> None:
     """W9 (FR-O-03, 03 §4.8 row C): thesis C labels only a positive action."""
     from tank.analysis.decisions import POSITIVE_ACTIONS, DecisionEngine
 
@@ -726,7 +728,7 @@ def test_tactical_only_for_positive_action_on_weak_capture(move, expect):
 
 
 @pytest.mark.parametrize("data", ["MEDIUM", "HIGH"])
-def test_unknown_move_with_usable_data_names_the_observed_flow(data):
+def test_unknown_move_with_usable_data_names_the_observed_flow(data) -> None:
     """03 §5.8/§6.4: an UNKNOWN move with usable data is not "evidence
     incomplete"; the scenarios name the observed flow and the upgrade path
     (live: Telegram msg 15, ALR-01M5DVXXBJGHH8EYRJE5W5PDDD)."""
@@ -756,7 +758,7 @@ def test_unknown_move_with_usable_data_names_the_observed_flow(data):
     assert not re.search(r"\d", text)
 
 
-def test_low_data_keeps_the_incomplete_evidence_scenarios():
+def test_low_data_keeps_the_incomplete_evidence_scenarios() -> None:
     truth = {"token_id": "T", "move_class": "UNKNOWN", "data_confidence": {"class": "LOW"}, "relative": {}}
     result = DecisionEngine().evaluate(
         {"event_id": "e"}, {"class": "MAJOR"}, {"token_id": "T", "role": "PRIMARY"}, truth
@@ -765,7 +767,7 @@ def test_low_data_keeps_the_incomplete_evidence_scenarios():
 
 
 @pytest.mark.parametrize("direction,breadth", [("BUY", "BROAD"), ("SELL", "BROAD"), ("NEUTRAL", "NARROW")])
-def test_price_markup_scenarios_follow_the_spot_direction(direction, breadth):
+def test_price_markup_scenarios_follow_the_spot_direction(direction, breadth) -> None:
     """E2E #8 (msg 22): PRICE_MARKUP_FAKE_OI printed the perp-led "spot does not
     confirm" texts while spot was BUY BROAD on all venues. Its scenarios state
     the price markup (L2) and never deny spot buying; no numbers (L7)."""

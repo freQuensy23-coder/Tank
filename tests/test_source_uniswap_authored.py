@@ -44,7 +44,7 @@ def retained():
 
 @pytest.mark.historical
 @pytest.mark.integration
-def test_all_seventeen_retained_uniswap_articles_preserve_authored_facts_and_clocks():
+def test_all_seventeen_retained_uniswap_articles_preserve_authored_facts_and_clocks() -> None:
     count = 0
     canary = "SYNTHETIC_FUTURE_RELATED_CARD_NOT_AN_AUTHORED_CLAIM"
     for index, row, payload in retained():
@@ -94,14 +94,14 @@ def test_all_seventeen_retained_uniswap_articles_preserve_authored_facts_and_clo
         '<div class="ArticleContent">outer<div class="ArticleContent">inner</div></div>',
     ],
 )
-def test_uniswap_missing_empty_or_ambiguous_body_refuses_without_fallback(authored):
+def test_uniswap_missing_empty_or_ambiguous_body_refuses_without_fallback(authored) -> None:
     payload = "<h1>Article</h1><main><article>Unrelated current card</article>" + authored + "</main>"
     with pytest.raises(ValueError, match="Uniswap article"):
         parsers.article(payload, source_id="S15")
     assert "Unrelated current card" in parsers.article(payload, source_id="S27")["text"]
 
 
-def test_uniswap_discovery_excludes_navigation_but_preserves_real_article_links(tmp_path):
+def test_uniswap_discovery_excludes_navigation_but_preserves_real_article_links(tmp_path: Path) -> None:
     settings = Settings(data_dir=tmp_path)
     source = next(x for x in settings.load_config("sources")["sources"] if x["source_id"] == "S15")
     feed = source["feeds"][0]
@@ -117,8 +117,8 @@ def test_uniswap_discovery_excludes_navigation_but_preserves_real_article_links(
 @pytest.mark.integration
 @pytest.mark.parametrize("malformed_sibling", [False, True])
 async def test_normal_uniswap_poll_uses_retained_authored_body_and_never_fetches_index(
-    tmp_path, malformed_sibling
-):
+    tmp_path: Path, malformed_sibling
+) -> None:
     fixtures = [entry for entry in retained() if entry[0] in {206, 216}]
     pages = {row["url"]: payload for _, row, payload in fixtures}
     settings = Settings(data_dir=tmp_path)
@@ -132,7 +132,7 @@ async def test_normal_uniswap_poll_uses_retained_authored_body_and_never_fetches
         links += f'<a href="{malformed_url}">Malformed sibling</a>'
     seen = []
 
-    def transport(request):
+    def transport(request: pytest.FixtureRequest):
         url = str(request.url)
         seen.append(url)
         if url == feed_url:

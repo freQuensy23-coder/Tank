@@ -9,7 +9,7 @@ from tank.market.flow import FlowAccumulator
 TS = 1781654400000
 
 
-def test_market_timestamp_precision_tracks_source_and_collection_clocks():
+def test_market_timestamp_precision_tracks_source_and_collection_clocks() -> None:
     row = n.liquidation(
         instrument("binance", "PERP_LINEAR"), {"S": "SELL", "z": "1", "ap": "2", "T": TS}, received_ts=TS + 12
     )
@@ -105,7 +105,7 @@ def instrument(venue, market="SPOT", **kwargs):
         ),
     ],
 )
-def test_nine_trade_paths_exact_native_and_aggressor(venue, market, raw, side, qty):
+def test_nine_trade_paths_exact_native_and_aggressor(venue, market, raw, side, qty) -> None:
     t = n.trade(instrument(venue, market), raw, received_ts=TS)
     assert t["side"] == side and t["qty_native"] == qty
     expected = (
@@ -117,7 +117,7 @@ def test_nine_trade_paths_exact_native_and_aggressor(venue, market, raw, side, q
     assert t["trade_id"] in ("1", "uuid")
 
 
-def test_missing_or_future_usd_rate_never_assumed():
+def test_missing_or_future_usd_rate_never_assumed() -> None:
     i = instrument("binance")
     i.pop("quote_usd_rate")
     raw = {"a": 1, "p": "2", "q": "3", "T": TS, "m": False}
@@ -126,7 +126,7 @@ def test_missing_or_future_usd_rate_never_assumed():
     assert n.trade(i, raw)["notional_usd"] is None
 
 
-def test_bybit_oi_no_division_fallback_and_immediate_registry_eligibility():
+def test_bybit_oi_no_division_fallback_and_immediate_registry_eligibility() -> None:
     i = instrument("bybit", "PERP_LINEAR")
     with pytest.raises(n.SemanticError, match="cannot substitute"):
         n.oi(i, {"openInterest": "200", "timestamp": TS})
@@ -139,21 +139,21 @@ def test_bybit_oi_no_division_fallback_and_immediate_registry_eligibility():
     assert row["synchronized_eligible"]
 
 
-def test_hyperliquid_sidedness_never_eligible():
+def test_hyperliquid_sidedness_never_eligible() -> None:
     i = instrument("hyperliquid", "PERP_LINEAR")
     i["semantic_verified_keys"] = ["hyperliquid.perp.ctx"]
     row = n.oi(i, {"openInterest": "10"}, received_ts=TS)
     assert row["sidedness"] == "UNKNOWN" and not row["synchronized_eligible"]
 
 
-def test_okx_contract_multiplier_mandatory():
+def test_okx_contract_multiplier_mandatory() -> None:
     i = instrument("okx", "PERP_LINEAR")
     i.pop("contract_multiplier")
     with pytest.raises(n.SemanticError):
         n.trade(i, {"tradeId": "1", "px": "2", "sz": "3", "ts": TS, "side": "buy"})
 
 
-def test_binance_bool_not_string_and_coinbase_unknown_side():
+def test_binance_bool_not_string_and_coinbase_unknown_side() -> None:
     with pytest.raises(n.SemanticError):
         n.trade(instrument("binance"), {"a": 1, "p": "2", "q": "3", "T": TS, "m": "false"})
     with pytest.raises(n.SemanticError):
@@ -162,7 +162,7 @@ def test_binance_bool_not_string_and_coinbase_unknown_side():
         )
 
 
-def test_funding_hourly_eight_hour_equivalent():
+def test_funding_hourly_eight_hour_equivalent() -> None:
     r = n.funding(
         instrument("hyperliquid", "PERP_LINEAR"),
         {"funding": "0.0000125"},
@@ -173,7 +173,7 @@ def test_funding_hourly_eight_hour_equivalent():
     assert r["rate_8h_eq"] == "0.0001000"
 
 
-def test_liquidations_position_side_and_sampled_limits():
+def test_liquidations_position_side_and_sampled_limits() -> None:
     b = n.liquidation(
         instrument("binance", "PERP_LINEAR"), {"o": {"S": "SELL", "q": "5", "z": "3", "ap": "2", "T": TS}}
     )
@@ -182,7 +182,7 @@ def test_liquidations_position_side_and_sampled_limits():
     assert y["price_kind"] == "BANKRUPTCY" and b["qty_native"] == "3"
 
 
-def test_flow_exact_sum_sq_size_buckets_and_gap():
+def test_flow_exact_sum_sq_size_buckets_and_gap() -> None:
     flow = FlowAccumulator()
     i = instrument("binance")
     a = n.trade(i, {"a": 1, "p": "100000", "q": "2", "T": TS, "m": False})
@@ -195,7 +195,7 @@ def test_flow_exact_sum_sq_size_buckets_and_gap():
     assert not bar["complete"]
 
 
-def test_book_snapshot_sequence_gap_and_incomplete_depth():
+def test_book_snapshot_sequence_gap_and_incomplete_depth() -> None:
     book = OrderBook(instrument("binance"))
     book.snapshot([["99", "10"]], [["101", "10"]], sequence=10, ts=TS)
     row = book.summary(received_ts=TS)
@@ -206,7 +206,7 @@ def test_book_snapshot_sequence_gap_and_incomplete_depth():
     assert not book.integrity_ok
 
 
-def test_okx_checksum_uses_original_decimal_strings():
+def test_okx_checksum_uses_original_decimal_strings() -> None:
     import zlib
 
     book = OrderBook(instrument("okx"))
@@ -218,7 +218,7 @@ def test_okx_checksum_uses_original_decimal_strings():
         book.verify(0)
 
 
-def test_kraken_checksum_ask_then_bid():
+def test_kraken_checksum_ask_then_bid() -> None:
     import zlib
 
     book = OrderBook(instrument("kraken"))
@@ -227,12 +227,12 @@ def test_kraken_checksum_ask_then_bid():
     assert book.integrity_ok
 
 
-def test_kline_taker_fields_never_invented_and_ongoing_incomplete():
+def test_kline_taker_fields_never_invented_and_ongoing_incomplete() -> None:
     r = n.kline(instrument("coinbase"), [TS / 1000, "1", "3", "2", "2.5", "4"], now=TS + 30000)
     assert not r["complete"] and r["taker_buy_native"] is None and r["n_trades"] is None
 
 
-def test_current_okx_zero_checksum_uses_sequences_and_handles_sequence_reset():
+def test_current_okx_zero_checksum_uses_sequences_and_handles_sequence_reset() -> None:
     book = OrderBook(instrument("okx"))
     book.snapshot([["99", "2"]], [["101", "3"]], sequence=100, ts=TS, checksum=0)
     assert book.integrity_ok and "CHECKSUM_DEPRECATED" in book.integrity_method
@@ -242,7 +242,7 @@ def test_current_okx_zero_checksum_uses_sequences_and_handles_sequence_reset():
         book.update([], [], sequence=3, previous=2, ts=TS + 3, checksum=0)
 
 
-def test_kraken_checksum_tiny_decimal_is_fixed_point():
+def test_kraken_checksum_tiny_decimal_is_fixed_point() -> None:
     import zlib
 
     book = OrderBook(instrument("kraken"))
@@ -258,7 +258,7 @@ def test_kraken_checksum_tiny_decimal_is_fixed_point():
     assert book.verify(expected)
 
 
-def test_evm_precision_products_and_squared_flow_sizes_are_not_rounded_to28digits():
+def test_evm_precision_products_and_squared_flow_sizes_are_not_rounded_to28digits() -> None:
     from fractions import Fraction
 
     qty = "123456789012345678.123456789012345678"
@@ -277,12 +277,12 @@ def test_evm_precision_products_and_squared_flow_sizes_are_not_rounded_to28digit
         ("bybit", {"S": "Buy", "v": "-1", "p": "2", "T": TS}),
     ],
 )
-def test_unknown_liquidation_side_or_negative_quantity_is_not_guessed(venue, raw):
+def test_unknown_liquidation_side_or_negative_quantity_is_not_guessed(venue, raw) -> None:
     with pytest.raises(n.SemanticError):
         n.liquidation(instrument(venue, "PERP_LINEAR"), raw)
 
 
-def test_oi_canonical_precision_and_missing_exchange_timestamp_is_not_invented():
+def test_oi_canonical_precision_and_missing_exchange_timestamp_is_not_invented() -> None:
     inst = instrument("binance", "PERP_LINEAR")
     current = n.oi(inst, {"openInterest": "1", "time": TS})
     historical = n.oi(inst, {"sumOpenInterest": "1", "timestamp": TS})
@@ -292,7 +292,7 @@ def test_oi_canonical_precision_and_missing_exchange_timestamp_is_not_invented()
         n.oi(inst, {"openInterest": "1"})
 
 
-def test_native_only_flow_preserves_complete_native_evidence_and_explicit_null_reasons():
+def test_native_only_flow_preserves_complete_native_evidence_and_explicit_null_reasons() -> None:
     inst = instrument("binance", "PERP_LINEAR")
     inst.pop("quote_usd_rate")
     raw = {"a": 1, "p": "2", "q": "3", "T": TS, "m": False}
@@ -315,7 +315,7 @@ def test_native_only_flow_preserves_complete_native_evidence_and_explicit_null_r
         ("bybit", {"singleOpenInterest": "123.456", "timestamp": TS}),
     ],
 )
-def test_oi_verified_request_bucket_metadata_is_not_hardcoded(venue, raw):
+def test_oi_verified_request_bucket_metadata_is_not_hardcoded(venue, raw) -> None:
     inst = instrument(venue, "PERP_LINEAR")
     default = n.oi(inst, raw)
     hourly = n.oi(inst, raw, bucket_size_s=3600)
@@ -335,7 +335,7 @@ def test_oi_verified_request_bucket_metadata_is_not_hardcoded(venue, raw):
             n.oi(inst, raw, bucket_size_s=invalid)
 
 
-def test_prints_are_valued_with_the_latest_quote_usd_sample_at_or_before_them():
+def test_prints_are_valued_with_the_latest_quote_usd_sample_at_or_before_them() -> None:
     from datetime import UTC, datetime, timedelta
 
     from tank.market import normalize as norm

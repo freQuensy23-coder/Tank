@@ -11,7 +11,7 @@ def load(n):
     return yaml.safe_load((C / (n + ".yaml")).read_text())
 
 
-def test_exact_universe_and_coverage():
+def test_exact_universe_and_coverage() -> None:
     r = load("registry")
     assert len(r["tokens"]) == 22
     assert len(r["instruments"]) == 181
@@ -32,7 +32,7 @@ def test_exact_universe_and_coverage():
     )
 
 
-def test_sources_have_concrete_endpoints():
+def test_sources_have_concrete_endpoints() -> None:
     s = load("sources")["sources"]
     assert {x["source_id"] for x in s} == {f"S{i:02}" for i in range(1, 35)}
     for source in s:
@@ -46,7 +46,7 @@ def test_sources_have_concrete_endpoints():
     assert len(next(x for x in s if x["source_id"] == "S25")["feeds"]) == 12
 
 
-def test_wallet_artifacts_and_skills():
+def test_wallet_artifacts_and_skills() -> None:
     for row in load("exchange_addresses")["wallet_lists"]:
         assert row["status"] == "VERIFIED"
         assert len(row["addresses"]) == row["expected_evm_addresses"]
@@ -58,7 +58,7 @@ def test_wallet_artifacts_and_skills():
         json.loads(p.read_text())
 
 
-def test_every_semantic_has_authoritative_canonical_contract_without_runtime_verification():
+def test_every_semantic_has_authoritative_canonical_contract_without_runtime_verification() -> None:
     semantics = load("semantics")
     rows = semantics["metrics"]
     assert "self_test_policy" not in semantics
@@ -120,8 +120,8 @@ def test_every_semantic_has_authoritative_canonical_contract_without_runtime_ver
     assert next(r for r in oi if r["venue"] == "hyperliquid")["sidedness"] == "UNKNOWN"
 
 
-def test_nested_mutation_schemas_are_closed():
-    def visit(schema):
+def test_nested_mutation_schemas_are_closed() -> None:
+    def visit(schema) -> None:
         if schema.get("type") == "object":
             assert schema.get("additionalProperties") is False
             assert schema.get("properties")
@@ -134,7 +134,7 @@ def test_nested_mutation_schemas_are_closed():
         visit(json.loads((C / "skills" / "tank-event-analyst" / (name + ".schema.json")).read_text()))
 
 
-def test_fundamentals_provider_identity_and_metric_evidence():
+def test_fundamentals_provider_identity_and_metric_evidence() -> None:
     registry = load("registry")
     evidence = json.loads((C / "fundamentals_evidence.json").read_text())
     checks = {r["token_id"]: r for r in evidence["protocols"]}

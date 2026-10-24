@@ -29,7 +29,7 @@ async def upgrade_pg(postgres_template):
         yield repository
 
 
-async def test_enqueue_explicit_anchors_and_unknown_legacy_iso():
+async def test_enqueue_explicit_anchors_and_unknown_legacy_iso() -> None:
     repo = MemoryRepository()
     boundary = chosen_boundary(utcnow() + timedelta(days=1), precision="BUCKET(5m)")
     job = await repo.enqueue("REACTION_CAPTURE", {}, "bucket", run_after=boundary)
@@ -48,7 +48,7 @@ async def test_enqueue_explicit_anchors_and_unknown_legacy_iso():
     assert job["finished_at"] is None and job["finished_at_prec_reason"] == "PENDING"
 
 
-def test_projection_explicit_aliases_conflicts_and_publication_enum():
+def test_projection_explicit_aliases_conflicts_and_publication_enum() -> None:
     source = {
         "published_at": "2026-10-18T00:00:00Z",
         "published_prec": "BUCKET",
@@ -95,7 +95,7 @@ async def _sql_job(repo, key, *, created_at=None):
 
 @pytest.mark.integration
 @pytest.mark.postgres
-async def test_fresh_sql_lifecycle_clock_and_retry_precision(disposable_pg):
+async def test_fresh_sql_lifecycle_clock_and_retry_precision(disposable_pg) -> None:
     repo = disposable_pg
     await repo.migrate()
     job = await _sql_job(repo, "database-clock")
@@ -148,7 +148,7 @@ async def test_fresh_sql_lifecycle_clock_and_retry_precision(disposable_pg):
 
 @pytest.mark.integration
 @pytest.mark.postgres
-async def test_upgrade_nullable_metadata_preserves_immutable_history(upgrade_pg):
+async def test_upgrade_nullable_metadata_preserves_immutable_history(upgrade_pg) -> None:
     from psycopg.types.json import Jsonb
 
     repo = upgrade_pg

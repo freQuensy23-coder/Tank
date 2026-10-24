@@ -12,7 +12,9 @@ from tank.util import utcnow
 
 
 @pytest.mark.asyncio
-async def test_job_expiring_after_real_claim_records_actual_finish_precision(monkeypatch):
+async def test_job_expiring_after_real_claim_records_actual_finish_precision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     repo = MemoryRepository()
     stop = asyncio.Event()
     now = utcnow()
@@ -41,7 +43,7 @@ async def test_job_expiring_after_real_claim_records_actual_finish_precision(mon
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("precision", ["EXACT", "BUCKET(1m)", None])
-async def test_market_job_preserves_its_declared_cutoff_precision(precision):
+async def test_market_job_preserves_its_declared_cutoff_precision(precision) -> None:
     repo = MemoryRepository()
     await repo.put(
         "evt.events",

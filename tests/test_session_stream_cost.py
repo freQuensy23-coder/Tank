@@ -10,7 +10,7 @@ from tank.storage import MemoryRepository
 
 
 class CountingRepository(MemoryRepository):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.session_gets = self.session_puts = 0
 
@@ -25,7 +25,7 @@ class CountingRepository(MemoryRepository):
         return await super().put(collection, key, record, **kwargs)
 
 
-def test_material_event_classification():
+def test_material_event_classification() -> None:
     assert not material_event({"type": "agent.message", "content": [{"type": "text", "text": "hi"}]})
     assert not material_event({"type": "agent.thinking"})
     assert not material_event({"type": "agent.tool_use", "name": "bash"})
@@ -36,7 +36,7 @@ def test_material_event_classification():
 
 
 @pytest.mark.asyncio
-async def test_inert_events_skip_session_io_and_cursor_advances_with_next_material_write():
+async def test_inert_events_skip_session_io_and_cursor_advances_with_next_material_write() -> None:
     repo = CountingRepository()
     opts, _ = settings()
     await seed_session(repo)
@@ -65,7 +65,7 @@ async def test_inert_events_skip_session_io_and_cursor_advances_with_next_materi
 
 
 @pytest.mark.asyncio
-async def test_history_copy_with_execution_id_records_the_receipt_the_stream_copy_lacked():
+async def test_history_copy_with_execution_id_records_the_receipt_the_stream_copy_lacked() -> None:
     repo = CountingRepository()
     opts, _ = settings()
     await seed_session(repo)

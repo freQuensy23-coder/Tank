@@ -1,6 +1,7 @@
 """Token-scoped fatal evidence stays scoped through actual watch and decision tools."""
 
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -19,8 +20,8 @@ from tank.util import iso, utcnow
     [("A", False, ["EXIT", "HOLD"]), (None, False, ["EXIT", "EXIT"]), ("A", True, ["HOLD", "HOLD"])],
 )
 async def test_scoped_global_and_resolved_fatal_condition_to_actual_decision(
-    tmp_path, fatal_token, resolved, actions
-):
+    tmp_path: Path, fatal_token, resolved, actions
+) -> None:
     from test_decisions import inputs
 
     repo = MemoryRepository()

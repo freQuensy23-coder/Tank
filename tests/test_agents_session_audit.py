@@ -59,18 +59,18 @@ async def seed(repo, **changes):
 
 
 @pytest.mark.asyncio
-async def test_refused_tool_reason_survives_lost_reply_and_does_not_stall():
+async def test_refused_tool_reason_survives_lost_reply_and_does_not_stall() -> None:
     repo = MemoryRepository()
     await seed(repo)
     calls = []
     posts = []
 
-    async def dispatch(*args):
+    async def dispatch(*args) -> None:
         calls.append(args)
         await repo.put("evt.events", "bad", {"event_id": "bad"})
         raise ValueError("V7 freshness is inconsistent")
 
-    def lost(request):
+    def lost(request: pytest.FixtureRequest) -> None:
         posts.append(json.loads(request.content))
         raise httpx.ReadError("lost", request=request)
 
@@ -81,7 +81,7 @@ async def test_refused_tool_reason_survives_lost_reply_and_does_not_stall():
     assert await repo.get("evt.events", "bad") is None
     assert (await repo.get("ops.tool_calls", "s:refused"))["status"] == "REFUSED"
 
-    def accepted(request):
+    def accepted(request: pytest.FixtureRequest):
         posts.append(json.loads(request.content))
         return httpx.Response(200, json={})
 
@@ -95,7 +95,7 @@ async def test_refused_tool_reason_survives_lost_reply_and_does_not_stall():
 
 
 @pytest.mark.asyncio
-async def test_failed_turn_retries_original_message_and_new_message_cannot_reset_retry():
+async def test_failed_turn_retries_original_message_and_new_message_cannot_reset_retry() -> None:
     repo = MemoryRepository()
     await seed(repo, runtime_status="IDLE")
     await repo.put("evt.events", "e", {"event_id": "e", "lifecycle": "TRACKED"})
@@ -103,7 +103,7 @@ async def test_failed_turn_retries_original_message_and_new_message_cannot_reset
     await repo.put("ingest.source_items", "one", {"item_id": "one", "text": "first"})
     await repo.put("ingest.source_items", "two", {"item_id": "two", "text": "second"})
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         posts.append(json.loads(request.content))
         return httpx.Response(200, json={})
 
@@ -124,7 +124,7 @@ async def test_failed_turn_retries_original_message_and_new_message_cannot_reset
 
 
 @pytest.mark.asyncio
-async def test_replay_runs_verdict_code_and_uses_fresh_remote_session():
+async def test_replay_runs_verdict_code_and_uses_fresh_remote_session() -> None:
     repo = MemoryRepository()
     await seed(repo)
     calls = []
@@ -149,7 +149,7 @@ async def test_replay_runs_verdict_code_and_uses_fresh_remote_session():
         calls.append(tool)
         return {"action": "EXIT"}
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         if request.method == "GET":
             return httpx.Response(200, json={"data": [], "next_page": None})
         body = json.loads(request.content)
@@ -176,7 +176,7 @@ async def test_replay_runs_verdict_code_and_uses_fresh_remote_session():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("no_event", [False, True])
-async def test_follow_retains_open_idle_sse_and_keeps_rejected_material_session_open(no_event):
+async def test_follow_retains_open_idle_sse_and_keeps_rejected_material_session_open(no_event) -> None:
     repo = MemoryRepository()
     await seed(
         repo,
@@ -194,7 +194,7 @@ async def test_follow_retains_open_idle_sse_and_keeps_rejected_material_session_
     cancelled = []
     idle_seen = asyncio.Event()
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         if request.method == "POST":
             posts.append(request.url.path)
         if request.url.path.endswith("/executions"):
@@ -212,14 +212,14 @@ async def test_follow_retains_open_idle_sse_and_keeps_rejected_material_session_
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, settings(), None, http=http)
 
-        async def stream(sid):
+        async def stream(sid) -> None:
             streamed.append(sid)
             try:
                 await asyncio.Event().wait()
             finally:
                 cancelled.append(sid)
 
-        async def catchup(sid):
+        async def catchup(sid) -> None:
             await asyncio.sleep(0)
             await service.process_event(
                 sid,
@@ -250,7 +250,7 @@ async def test_follow_retains_open_idle_sse_and_keeps_rejected_material_session_
 
 
 @pytest.mark.asyncio
-async def test_usage_keeps_effort_stop_reason_and_search_count():
+async def test_usage_keeps_effort_stop_reason_and_search_count() -> None:
     repo = MemoryRepository()
     session = await seed(repo)
     async with httpx.AsyncClient() as http:
@@ -274,7 +274,7 @@ async def test_usage_keeps_effort_stop_reason_and_search_count():
 
 
 @pytest.mark.asyncio
-async def test_credential_url_never_reaches_tool_ledger_or_callback():
+async def test_credential_url_never_reaches_tool_ledger_or_callback() -> None:
     from tank.util import canonical_json
 
     repo = MemoryRepository()
@@ -287,7 +287,7 @@ async def test_credential_url_never_reaches_tool_ledger_or_callback():
         called.append(args)
         return {"never": "called"}
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         posted.append(json.loads(request.content))
         return httpx.Response(200, json={})
 
@@ -310,7 +310,7 @@ async def test_credential_url_never_reaches_tool_ledger_or_callback():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", ["telegram", "gateway", "dsn"])
-async def test_configured_tokens_and_dsn_userinfo_never_enter_session_ledger(case):
+async def test_configured_tokens_and_dsn_userinfo_never_enter_session_ledger(case) -> None:
     from tank.util import canonical_json
 
     repo = MemoryRepository()
@@ -328,10 +328,10 @@ async def test_configured_tokens_and_dsn_userinfo_never_enter_session_ledger(cas
         arguments = {"url": opts.database_url}
     posted = []
 
-    async def dispatch(*args):
+    async def dispatch(*args) -> None:
         raise AssertionError("Credential-bearing call reached callback")
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         posted.append(json.loads(request.content))
         return httpx.Response(200, json={})
 
@@ -351,7 +351,7 @@ async def test_configured_tokens_and_dsn_userinfo_never_enter_session_ledger(cas
 
 
 @pytest.mark.asyncio
-async def test_legacy_prompt_label_requires_exact_native_snapshot():
+async def test_legacy_prompt_label_requires_exact_native_snapshot() -> None:
     repo = MemoryRepository()
     session = await seed(repo)
     session.update(prompt_version="baseline-2.3", prompt_version_basis=None, prompt_label=None)
@@ -365,7 +365,7 @@ async def test_legacy_prompt_label_requires_exact_native_snapshot():
         "model": {"id": "gpt-6.1-sol"},
     }
 
-    def transport(request):
+    def transport(request: pytest.FixtureRequest):
         requests.append(request.url.path)
         return httpx.Response(200, json={"data": {"id": "s", "agent": snapshot}})
 
@@ -382,7 +382,7 @@ async def test_legacy_prompt_label_requires_exact_native_snapshot():
 
 
 @pytest.mark.asyncio
-async def test_native_queued_tool_result_executions_continue_after_transient_idle():
+async def test_native_queued_tool_result_executions_continue_after_transient_idle() -> None:
     """Native r8 rev30 idle preceded queued executions rev31..52, not session completion."""
     repo = MemoryRepository()
     await seed(repo)
@@ -406,7 +406,7 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
             await repo.put("evt.events", "e", {"event_id": "e", "lifecycle": "ANALYZING"})
         return {"accepted": name}
 
-    async def emit(event):
+    async def emit(event) -> None:
         history.append(event)
         await queue.put(("data: " + json.dumps(event) + "\n\n").encode())
 
@@ -415,7 +415,7 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
             while True:
                 yield await queue.get()
 
-    async def transport(request):
+    async def transport(request: pytest.FixtureRequest):
         if request.url.path.endswith("/events/stream"):
             return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
         if request.url.path.endswith("/events") and request.method == "GET":
@@ -436,7 +436,7 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
         service = SessionService(repo, settings(), dispatch, http=http)
         original_process = service.process_event
 
-        async def process(sid, event, seq=None):
+        async def process(sid, event, seq=None) -> None:
             await original_process(sid, event, seq)
             if event["id"] == "native-rev30":
                 first_idle.set()
@@ -467,14 +467,14 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
 
 
 @pytest.mark.asyncio
-async def test_supervisor_resumes_open_idle_session_following_after_restart():
+async def test_supervisor_resumes_open_idle_session_following_after_restart() -> None:
     repo = MemoryRepository()
     await seed(repo, runtime_status="IDLE")
     service = SessionService(repo, settings(), None, http=object())
     stop = asyncio.Event()
     followed = []
 
-    def start(sid):
+    def start(sid) -> None:
         followed.append(sid)
         stop.set()
 
@@ -485,7 +485,7 @@ async def test_supervisor_resumes_open_idle_session_following_after_restart():
 
 
 @pytest.mark.asyncio
-async def test_production_sse_pool_is_independent_unbounded_and_closed_with_control():
+async def test_production_sse_pool_is_independent_unbounded_and_closed_with_control() -> None:
     service = SessionService(MemoryRepository(), settings(), None)
     control, streaming = service.http, service.stream_http
     assert control is not streaming
@@ -500,7 +500,7 @@ async def test_production_sse_pool_is_independent_unbounded_and_closed_with_cont
 
 
 @pytest.mark.asyncio
-async def test_control_result_progresses_while_independent_sse_request_remains_open():
+async def test_control_result_progresses_while_independent_sse_request_remains_open() -> None:
     repo = MemoryRepository()
     await seed(repo)
     entered, release, acknowledged = asyncio.Event(), asyncio.Event(), asyncio.Event()
@@ -513,14 +513,14 @@ async def test_control_result_progresses_while_independent_sse_request_remains_o
             if False:
                 yield b""
 
-        async def aclose(self):
+        async def aclose(self) -> None:
             stream_closed.append(True)
 
-    async def stream_transport(request):
+    async def stream_transport(request: pytest.FixtureRequest):
         assert request.url.path.endswith("/events/stream")
         return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
 
-    async def control_transport(request):
+    async def control_transport(request: pytest.FixtureRequest):
         assert request.method == "POST" and request.url.path.endswith("/events")
         acknowledged.set()
         return httpx.Response(200, json={})
@@ -551,7 +551,7 @@ async def test_control_result_progresses_while_independent_sse_request_remains_o
 
 
 @pytest.mark.asyncio
-async def test_unbound_terminal_turn_failure_retries_once_then_marks_source_failed_after_restart():
+async def test_unbound_terminal_turn_failure_retries_once_then_marks_source_failed_after_restart() -> None:
     repo = MemoryRepository()
     await seed(repo, event_id=None, runtime_status="IDLE")
     await repo.put(
@@ -561,7 +561,7 @@ async def test_unbound_terminal_turn_failure_retries_once_then_marks_source_fail
     )
     posts = []
 
-    def transport(request):
+    def transport(request: pytest.FixtureRequest):
         posts.append(json.loads(request.content))
         return httpx.Response(200, json={})
 
@@ -587,7 +587,7 @@ async def test_unbound_terminal_turn_failure_retries_once_then_marks_source_fail
 
 
 @pytest.mark.parametrize("http_status", [404, 503])
-async def test_new_replay_session_restores_captured_external_error_and_acknowledges_once(http_status):
+async def test_new_replay_session_restores_captured_external_error_and_acknowledges_once(http_status) -> None:
     repo = MemoryRepository()
     await seed(repo, replay_source_session_id="original")
     result = {
@@ -615,10 +615,10 @@ async def test_new_replay_session_restores_captured_external_error_and_acknowled
     )
     posts = []
 
-    async def forbidden(*arguments):
+    async def forbidden(*arguments) -> None:
         raise AssertionError("Captured external errors must never issue a new fetch")
 
-    def control(request):
+    def control(request: pytest.FixtureRequest):
         posts.append(json.loads(request.content)["events"][0])
         if len(posts) == 1:
             raise httpx.ConnectError("Synthetic lost native acknowledgement", request=request)

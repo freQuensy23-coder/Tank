@@ -59,7 +59,7 @@ def packet_for(token):
 
 @pytest.mark.parametrize("symbol", ["WLD", "UNI", "AVAX", "ENA"])
 @pytest.mark.parametrize("explicit_baskets", [False, True])
-def test_identity_mask_preserves_all_relative_values_coverage_and_reasons(symbol, explicit_baskets):
+def test_identity_mask_preserves_all_relative_values_coverage_and_reasons(symbol, explicit_baskets) -> None:
     token = next(t for t in registry["tokens"] if t["symbol"] == symbol)
     packet = packet_for(token)
     start, end = parse_time(packet["anchor"]["ts"]), parse_time(packet["cutoff"])
@@ -82,7 +82,7 @@ def test_identity_mask_preserves_all_relative_values_coverage_and_reasons(symbol
     assert truth.relative_truth(mask(packet), start, end) == mask(original)
 
 
-def test_explicit_captured_basket_controls_measured_peer_returns():
+def test_explicit_captured_basket_controls_measured_peer_returns() -> None:
     token = next(t for t in registry["tokens"] if t["symbol"] == "UNI")
     packet = packet_for(token)
     start, end = parse_time(packet["anchor"]["ts"]), parse_time(packet["cutoff"])
@@ -97,7 +97,7 @@ def test_explicit_captured_basket_controls_measured_peer_returns():
 
 
 @pytest.mark.parametrize("token", registry["tokens"], ids=lambda r: r["symbol"])
-def test_authoritative_full_baskets_work_when_optional_token_sector_is_omitted(token):
+def test_authoritative_full_baskets_work_when_optional_token_sector_is_omitted(token) -> None:
     packet = packet_for(token)
     start, end = parse_time(packet["anchor"]["ts"]), parse_time(packet["cutoff"])
     expected = truth.relative_truth(packet, start, end)
@@ -112,7 +112,7 @@ def test_authoritative_full_baskets_work_when_optional_token_sector_is_omitted(t
     assert truth.relative_truth(packet, start, end) == expected
 
 
-def test_missing_sector_and_basket_metadata_is_not_guessed_from_wld_symbol():
+def test_missing_sector_and_basket_metadata_is_not_guessed_from_wld_symbol() -> None:
     token = next(t for t in registry["tokens"] if t["symbol"] == "WLD")
     packet = packet_for(token)
     for row in packet["tokens"]:

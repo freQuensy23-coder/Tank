@@ -1,4 +1,5 @@
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -11,7 +12,7 @@ from tank.util import iso, utcnow
 
 
 @pytest.fixture
-async def service(tmp_path):
+async def service(tmp_path: Path):
     repo = MemoryRepository()
     await repo.open()
     settings = Settings(data_dir=tmp_path)
@@ -28,7 +29,7 @@ async def repository_lifetime():
 
 
 @pytest.fixture
-def truth_job_enqueued(service, monkeypatch):
+def truth_job_enqueued(service, monkeypatch: pytest.MonkeyPatch):
     """Signal actual RUN_MARKET_TRUTH admission without wall-clock polling."""
     import asyncio
 
@@ -92,7 +93,7 @@ async def seed(service):
     return x
 
 
-async def test_agent_declared_quote_stage_and_time_are_preserved(service):
+async def test_agent_declared_quote_stage_and_time_are_preserved(service) -> None:
     x = await seed(service)
     result = await service.dispatch("record_event", x, {"session_id": "s"})
     event = await service.repo.get("evt.events", result["event_id"])
@@ -102,7 +103,7 @@ async def test_agent_declared_quote_stage_and_time_are_preserved(service):
     assert len(await service.repo.list("evt.state_changes")) == 1
 
 
-async def test_agent_quote_and_public_time_are_stored_without_host_semantics(service):
+async def test_agent_quote_and_public_time_are_stored_without_host_semantics(service) -> None:
     x = await seed(service)
     x["claims"][0]["quote"] = "Agent selected evidence"
     x["public_at"]["value"] = iso(utcnow() + timedelta(days=1))
@@ -113,7 +114,7 @@ async def test_agent_quote_and_public_time_are_stored_without_host_semantics(ser
     assert event["public_at"] == x["public_at"]["value"]
 
 
-async def test_unknown_fields_and_freshness(service):
+async def test_unknown_fields_and_freshness(service) -> None:
     with pytest.raises(ValueError, match="unknown fields"):
         await service.dispatch("get_item", {"item_id": "i", "extra": True}, {})
     assert [freshness(n * 3600) for n in [1, 4, 8, 24, 48, 49]] == [
@@ -126,7 +127,7 @@ async def test_unknown_fields_and_freshness(service):
     ]
 
 
-async def test_denial_requires_agent_verified_claim_and_invalidates(service):
+async def test_denial_requires_agent_verified_claim_and_invalidates(service) -> None:
     x = await seed(service)
     result = await service.dispatch("record_event", x, {})
     eid = result["event_id"]
@@ -159,7 +160,9 @@ async def test_denial_requires_agent_verified_claim_and_invalidates(service):
     assert (await service.repo.get("evt.events", eid))["lifecycle"] == "INVALIDATED"
 
 
-async def test_publication_freezes_reproducible_bundle_and_queues_only(service, monkeypatch):
+async def test_publication_freezes_reproducible_bundle_and_queues_only(
+    service, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import tank.analysis.cards as cards
     from tank.util import sha256
 
@@ -204,7 +207,7 @@ async def test_publication_freezes_reproducible_bundle_and_queues_only(service, 
     assert jobs[0]["payload"]["channel"] == "telegram:alerts"
 
 
-async def test_fetched_page_retains_original_bytes_before_parse(service):
+async def test_fetched_page_retains_original_bytes_before_parse(service) -> None:
     from pathlib import Path
 
     import httpx
@@ -214,7 +217,7 @@ async def test_fetched_page_retains_original_bytes_before_parse(service):
 
     original = b"<html><script>hidden code</script><body>Official   evidence</body></html>"
 
-    async def respond(request):
+    async def respond(request: pytest.FixtureRequest):
         return httpx.Response(200, content=original, headers={"content-type": "text/html"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
@@ -241,7 +244,7 @@ async def test_fetched_page_retains_original_bytes_before_parse(service):
     assert (await service.repo.get("ingest.source_items", item["item_id"]))["raw_sha256"] == sha256(original)
 
 
-def test_nullable_scores_skip_numeric_constraints():
+def test_nullable_scores_skip_numeric_constraints() -> None:
     validate_schema(None, {"type": ["number", "null"], "minimum": 0, "maximum": 10})
 
 
@@ -250,7 +253,7 @@ def test_nullable_scores_skip_numeric_constraints():
 )
 async def test_numeric_map_version_ten_removes_old_token(
     service, backend, postgres_template, repository_lifetime
-):
+) -> None:
     import os
 
     from tank.util import new_id
@@ -297,7 +300,7 @@ async def test_numeric_map_version_ten_removes_old_token(
             await service.repo.close()
 
 
-async def test_real_decision_condition_reuse_expiry_and_consumption(service):
+async def test_real_decision_condition_reuse_expiry_and_consumption(service) -> None:
     from tank.analysis.decisions import DecisionEngine
 
     service.engine = DecisionEngine()
@@ -409,7 +412,7 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service):
     assert second_add["action"] == "ADD"
 
 
-async def test_start_condition_is_rearmed_for_the_open_call(service):
+async def test_start_condition_is_rearmed_for_the_open_call(service) -> None:
     """W1: the upgrade that led to START is spent; once the call is open the
     same expression is armed again, so ADD stays reachable."""
     from tank.analysis.decisions import DecisionEngine
@@ -484,7 +487,7 @@ async def test_start_condition_is_rearmed_for_the_open_call(service):
     assert add_watch["expr"] == upgrade["expr"]
 
 
-async def test_agent_confirmation_certainty_and_reason_are_preserved(service):
+async def test_agent_confirmation_certainty_and_reason_are_preserved(service) -> None:
     x = await seed(service)
     x["certainty"] = "MEDIUM"
     x["checked_sources"] = ["Official newsroom searched: NOT FOUND"]
@@ -508,7 +511,7 @@ async def test_agent_confirmation_certainty_and_reason_are_preserved(service):
     assert event["certainty_reason"] == confirmation["certainty_reason"]
 
 
-async def test_numeric_ems_requires_accepted_evidence(service):
+async def test_numeric_ems_requires_accepted_evidence(service) -> None:
     x = await seed(service)
     result = await service.dispatch("record_event", x, {})
     dims = {
@@ -534,7 +537,7 @@ async def test_numeric_ems_requires_accepted_evidence(service):
         await service.set_assessment({"event_id": result["event_id"], "assessment": assessment}, {})
 
 
-async def test_milestone_exact_escalation_window(service):
+async def test_milestone_exact_escalation_window(service) -> None:
     from tank.util import parse_time
 
     x = await seed(service)
@@ -552,7 +555,7 @@ async def test_milestone_exact_escalation_window(service):
     assert parse_time(source["expires_at"]) == parse_time(due) + timedelta(hours=2)
 
 
-async def test_assessment_escalates_all_official_sources_in_consumer_table(service):
+async def test_assessment_escalates_all_official_sources_in_consumer_table(service) -> None:
     from tank.sources import SourceService
 
     x = await seed(service)
@@ -604,7 +607,7 @@ async def test_assessment_escalates_all_official_sources_in_consumer_table(servi
     assert not await sources.is_escalated("S01")
 
 
-async def test_structural_assessment_requires_agent_partial_without_parallel_publisher(service):
+async def test_structural_assessment_requires_agent_partial_without_parallel_publisher(service) -> None:
     x = await seed(service)
     x["token_ids"] = ["world:WLD"]
     x["statement"] = "World access approved"
@@ -692,7 +695,7 @@ def resolved_native_domain_fixture(session_id):
     }
 
 
-async def test_real_session_tool_refuses_cross_event_mutation(service):
+async def test_real_session_tool_refuses_cross_event_mutation(service) -> None:
     from tank.agents import SessionService
 
     await service.repo.put("evt.events", "A", {"event_id": "A", "lifecycle": "DETECTED"})
@@ -747,7 +750,7 @@ async def test_real_session_tool_refuses_cross_event_mutation(service):
     ] == original
 
 
-async def test_novel_layer_proposal_survives_real_session_transaction(service):
+async def test_novel_layer_proposal_survives_real_session_transaction(service) -> None:
     from tank.agents import SessionService
 
     x = await seed(service)
@@ -795,14 +798,14 @@ async def test_novel_layer_proposal_survives_real_session_transaction(service):
     assert not await service.repo.list("evt.beneficiary_edges")
 
 
-async def test_unbound_analyst_cannot_mutate_before_extraction(service):
+async def test_unbound_analyst_cannot_mutate_before_extraction(service) -> None:
     refused = await service.dispatch(
         "set_beneficiaries", {"event_id": "other", "edges": []}, {"role": "analyst", "session_id": "unbound"}
     )
     assert refused["reason"] == "EVENT_SCOPE"
 
 
-async def test_agent_verification_of_world_and_openai_is_persisted(service):
+async def test_agent_verification_of_world_and_openai_is_persisted(service) -> None:
     quote = "OpenAI and World approved the integration."
     await service.repo.put(
         "ingest.source_items",
@@ -851,7 +854,7 @@ async def test_agent_verification_of_world_and_openai_is_persisted(service):
     assert event["event_state"] == "APPROVED"
 
 
-async def test_future_wording_does_not_override_agent_stage(service):
+async def test_future_wording_does_not_override_agent_stage(service) -> None:
     x = await seed(service)
     item = await service.repo.get("ingest.source_items", "i")
     item["text"] = "Trading opens tomorrow at 09:00 UTC."
@@ -863,7 +866,9 @@ async def test_future_wording_does_not_override_agent_stage(service):
     assert event["state_verified"]
 
 
-async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(service, monkeypatch):
+async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(
+    service, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import tank.analysis.cards as cards
 
     monkeypatch.setattr(cards, "alert_gate", lambda *a, **kw: (True, "TEST"))
@@ -981,7 +986,9 @@ async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(serv
 
 @pytest.mark.integration
 @pytest.mark.parametrize("freshness", ["FRESH", "STALE"])
-async def test_real_expiry_to_update_delivery_never_reopens_call(service, monkeypatch, freshness):
+async def test_real_expiry_to_update_delivery_never_reopens_call(
+    service, monkeypatch: pytest.MonkeyPatch, freshness
+) -> None:
     import httpx
 
     from tank.analysis.decisions import DecisionEngine
@@ -1074,7 +1081,7 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(service, monkey
     service.settings.telegram_ops_chat = "2"
     sent = []
 
-    async def telegram(request):
+    async def telegram(request: pytest.FixtureRequest):
         sent.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent)}})
 
@@ -1131,7 +1138,9 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(service, monkey
 
 
 @pytest.mark.integration
-async def test_material_update_is_queued_once_and_delivered_after_window(service, monkeypatch):
+async def test_material_update_is_queued_once_and_delivered_after_window(
+    service, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import httpx
 
     from tank.analysis.decisions import DecisionEngine
@@ -1239,7 +1248,7 @@ async def test_material_update_is_queued_once_and_delivered_after_window(service
     service.settings.telegram_ops_chat = "2"
     sent = []
 
-    async def telegram(request):
+    async def telegram(request: pytest.FixtureRequest):
         sent.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent)}})
 
@@ -1288,7 +1297,7 @@ async def test_material_update_is_queued_once_and_delivered_after_window(service
     assert len(await service.repo.list("ana.calls", filters={"event_id": eid})) == 1
 
 
-async def test_bundle_keeps_producing_model_and_separate_session_config(service):
+async def test_bundle_keeps_producing_model_and_separate_session_config(service) -> None:
     x = await seed(service)
     x["token_ids"] = ["world:WLD"]
     x["statement"] = "World access approved"
@@ -1368,7 +1377,7 @@ async def test_bundle_keeps_producing_model_and_separate_session_config(service)
     assert {"prior-config", service.settings.config_version} <= set(bundle["config_versions"])
 
 
-async def test_tool_schema_uses_frozen_runtime_snapshot_after_disk_edit(service, tmp_path):
+async def test_tool_schema_uses_frozen_runtime_snapshot_after_disk_edit(service, tmp_path: Path) -> None:
     import shutil
 
     from tank.settings import resolve_versions
@@ -1385,7 +1394,9 @@ async def test_tool_schema_uses_frozen_runtime_snapshot_after_disk_edit(service,
         await service.dispatch("get_item", {"item_id": "i", "injected": True}, {})
 
 
-async def test_market_truth_domain_result_and_evidence_bundle_keep_full_metadata(service, truth_job_enqueued):
+async def test_market_truth_domain_result_and_evidence_bundle_keep_full_metadata(
+    service, truth_job_enqueued
+) -> None:
     import asyncio
 
     from tank.analysis.truth import compute_market_truth
@@ -1459,7 +1470,7 @@ async def test_market_truth_domain_result_and_evidence_bundle_keep_full_metadata
 )
 async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
     service, backend, postgres_template, repository_lifetime
-):
+) -> None:
     import os
 
     from tank.analysis.decisions import DecisionEngine
@@ -1474,7 +1485,7 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
         base = await repository_lifetime.enter_async_context(postgres_template.repository(url))
 
     class Guarded:
-        def __init__(self, repo):
+        def __init__(self, repo) -> None:
             self.repo = repo
             self.latest = []
             self.exact = []
@@ -1613,7 +1624,7 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
             await base.close()
 
 
-async def test_duckduckgo_results_are_durable_free_search_evidence(service):
+async def test_duckduckgo_results_are_durable_free_search_evidence(service) -> None:
     from pathlib import Path
 
     from tank.search import SearchResponse
@@ -1655,7 +1666,7 @@ async def test_duckduckgo_results_are_durable_free_search_evidence(service):
     )
 
 
-async def test_search_failure_does_not_mutate_medium_event_certainty(service):
+async def test_search_failure_does_not_mutate_medium_event_certainty(service) -> None:
     from tank.search import SearchError
 
     x = await seed(service)
@@ -1664,7 +1675,7 @@ async def test_search_failure_does_not_mutate_medium_event_certainty(service):
     event = await service.repo.get("evt.events", created["event_id"])
 
     class Search:
-        async def search(self, query, *, on_attempt):
+        async def search(self, query, *, on_attempt) -> None:
             await on_attempt(1)
             raise SearchError("BLOCKED", "DuckDuckGo blocked request", retryable=True, attempts=1)
 
@@ -1716,7 +1727,7 @@ def unknown_assessment(criterion="M2", klass="MAJOR", claim=None):
     }
 
 
-async def test_primary_approved_edge_is_credible_and_exposure_layer_reasons_checked(service):
+async def test_primary_approved_edge_is_credible_and_exposure_layer_reasons_checked(service) -> None:
     from tank.event_tools import LAYERS
 
     x = await seed(service)
@@ -1766,7 +1777,7 @@ async def test_primary_approved_edge_is_credible_and_exposure_layer_reasons_chec
         await service.dispatch("set_beneficiaries", args, {})
 
 
-async def test_material_criterion_cannot_pass_major_and_measured_headline_only_caps(service):
+async def test_material_criterion_cannot_pass_major_and_measured_headline_only_caps(service) -> None:
     x = await seed(service)
     x["token_ids"] = ["world:WLD"]
     created = await service.dispatch("record_event", x, {})
@@ -1808,7 +1819,7 @@ async def test_material_criterion_cannot_pass_major_and_measured_headline_only_c
     assert capture["capture_score"] == 3 and "C1" in capture["caps_applied"]
 
 
-async def test_other_tank_item_quote_read_through_real_session_is_admissible(service):
+async def test_other_tank_item_quote_read_through_real_session_is_admissible(service) -> None:
     from tank.agents import SessionService
 
     x = await seed(service)
@@ -1855,7 +1866,7 @@ async def test_other_tank_item_quote_read_through_real_session_is_admissible(ser
     assert result["accepted_claims"][0]["verified"]
 
 
-async def test_milestone_official_outcome_quote_clears_pending_and_preserves_history(service):
+async def test_milestone_official_outcome_quote_clears_pending_and_preserves_history(service) -> None:
     x = await seed(service)
     created = await service.dispatch("record_event", x, {})
     eid = created["event_id"]
@@ -1900,7 +1911,7 @@ async def test_milestone_official_outcome_quote_clears_pending_and_preserves_his
     assert all(row["status"] == "CONFIRMED" for row in await service.repo.list("ops.source_escalations"))
 
 
-async def test_scout_review_records_four_scores_and_merges_named_duplicate(service):
+async def test_scout_review_records_four_scores_and_merges_named_duplicate(service) -> None:
     first = await service.propose_pattern(
         {"hook": "BENEFICIARY_LAYER", "subject": "Concept A", "evidence": [{"claim_id": "claim-A"}]}, {}
     )
@@ -1927,7 +1938,7 @@ async def test_scout_review_records_four_scores_and_merges_named_duplicate(servi
 
 
 @pytest.mark.parametrize("lifecycle", ["CLOSED", "MERGED"])
-async def test_terminal_event_cannot_publish_new_card(service, lifecycle):
+async def test_terminal_event_cannot_publish_new_card(service, lifecycle) -> None:
     x = await seed(service)
     created = await service.dispatch("record_event", x, {})
     eid = created["event_id"]
@@ -1947,14 +1958,14 @@ async def test_terminal_event_cannot_publish_new_card(service, lifecycle):
     assert not result["published"] and result["reason"] == "TERMINAL_EVENT"
 
 
-async def test_credential_evidence_rejected_before_network_or_raw_persistence(service):
+async def test_credential_evidence_rejected_before_network_or_raw_persistence(service) -> None:
     import httpx
 
     sentinel = "AUDIT_FAKE_QUERY_KEY"
     service.settings.etherscan_api_key = sentinel
     calls = []
 
-    async def respond(request):
+    async def respond(request: pytest.FixtureRequest):
         calls.append(request)
         return httpx.Response(200, text="Public response")
 
@@ -1975,7 +1986,7 @@ async def test_credential_evidence_rejected_before_network_or_raw_persistence(se
         )
 
 
-async def test_snapshot_vote_end_creates_single_canonical_milestone_after_extraction(service):
+async def test_snapshot_vote_end_creates_single_canonical_milestone_after_extraction(service) -> None:
     x = await seed(service)
     due = iso(utcnow() + timedelta(days=2))
     item = await service.repo.get("ingest.source_items", "i")
@@ -2070,8 +2081,8 @@ def complete_decision_fixture(dec_id, event_id, token_id, cutoff, mta_id):
 @pytest.mark.integration
 @pytest.mark.postgres
 async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
-    service, tmp_path, postgres_template, repository_lifetime
-):
+    service, tmp_path: Path, postgres_template, repository_lifetime
+) -> None:
     import os
 
     from tank.analysis.decisions import DecisionEngine
@@ -2190,7 +2201,7 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
 
 
 @pytest.mark.parametrize("media_type", ["text/html", "application/json"])
-async def test_search_and_fetched_evidence_keep_agent_certainty(service, media_type):
+async def test_search_and_fetched_evidence_keep_agent_certainty(service, media_type) -> None:
     import httpx
 
     from tank.search import SearchResponse
@@ -2234,7 +2245,7 @@ async def test_search_and_fetched_evidence_keep_agent_certainty(service, media_t
     assert event["certainty"] == x["certainty"] and event["certainty_reason"] == x["certainty_reason"]
     assert created["accepted_claims"][0]["verified"] is x["claims"][0]["verified"]
 
-    async def page(request):
+    async def page(request: pytest.FixtureRequest):
         text = (
             canonical_json(
                 {"title": "SEC release", "href": "https://www.sec.gov/news/release", "body": quote}
@@ -2274,8 +2285,8 @@ async def test_search_and_fetched_evidence_keep_agent_certainty(service, media_t
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
 async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(
-    service, backend, monkeypatch, postgres_template, repository_lifetime
-):
+    service, backend, monkeypatch: pytest.MonkeyPatch, postgres_template, repository_lifetime
+) -> None:
     import asyncio
     import os
 
@@ -2357,7 +2368,7 @@ async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(
         await base.finish_job(job["job_id"])
         return truth
 
-    async def finish_escalation(job):
+    async def finish_escalation(job) -> None:
         current = await base.get("ops.jobs", job["job_id"])
         current.update(status="RUNNING", attempts=current["attempts"] + 1)
         await base.put("ops.jobs", job["job_id"], current)
@@ -2475,7 +2486,9 @@ async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(
 
 
 @pytest.mark.integration
-async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(service, monkeypatch):
+async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(
+    service, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Use real publication gate, frozen snapshots and delivery; isolate card layout."""
     import httpx
 
@@ -2555,7 +2568,7 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(servi
     service.settings.telegram_ops_chat = "2"
     sent = []
 
-    def telegram(request):
+    def telegram(request: pytest.FixtureRequest):
         sent.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent)}})
 
@@ -2749,7 +2762,7 @@ async def seed_economic_event(service, *, capture_score=8, negative_relation=Tru
 @pytest.mark.parametrize("capture_score,expected_grade", [(8, "B"), (4, "C")])
 async def test_produced_loser_has_supported_negative_grade_without_long_action(
     service, capture_score, expected_grade
-):
+) -> None:
     from tank.analysis.decisions import DecisionEngine
 
     service.engine = DecisionEngine()
@@ -2788,7 +2801,7 @@ async def test_produced_loser_has_supported_negative_grade_without_long_action(
     assert decision["action"] not in {"START", "ADD"}
 
 
-async def test_loser_cannot_reuse_only_positive_capture_proof(service):
+async def test_loser_cannot_reuse_only_positive_capture_proof(service) -> None:
     from tank.analysis.decisions import DecisionEngine
 
     service.engine = DecisionEngine()
@@ -2828,7 +2841,7 @@ async def test_loser_cannot_reuse_only_positive_capture_proof(service):
         )
 
 
-async def test_rejected_approval_only_exits_call_with_explicit_evidenced_dependency(service):
+async def test_rejected_approval_only_exits_call_with_explicit_evidenced_dependency(service) -> None:
     from tank.analysis.decisions import DecisionEngine
     from tank.util import new_id
 
@@ -2932,7 +2945,7 @@ async def test_rejected_approval_only_exits_call_with_explicit_evidenced_depende
     assert dependent["action"] == "EXIT"
 
 
-async def test_integration_cap_uses_actual_stage_claim_not_unrelated_counterparty_fact(service):
+async def test_integration_cap_uses_actual_stage_claim_not_unrelated_counterparty_fact(service) -> None:
     from tank.event_tools import LAYERS
 
     x = await seed(service)
@@ -2995,7 +3008,7 @@ async def test_integration_cap_uses_actual_stage_claim_not_unrelated_counterpart
     assert set(produced["evidence"]) == {claim["claim_id"] for claim in created["accepted_claims"]}
 
 
-async def test_magnitude_agent_judgment_is_preserved_with_or_without_ratio_metadata(service):
+async def test_magnitude_agent_judgment_is_preserved_with_or_without_ratio_metadata(service) -> None:
     created, _, _ = await seed_economic_event(service, negative_relation=False)
     eid = created["event_id"]
     proof = created["accepted_claims"][0]["claim_id"]
@@ -3059,7 +3072,7 @@ async def test_magnitude_agent_judgment_is_preserved_with_or_without_ratio_metad
     assert stored["dims"]["magnitude"]["value"] == 10
 
 
-async def test_proposed_timing_requires_primary_dated_decision(service):
+async def test_proposed_timing_requires_primary_dated_decision(service) -> None:
     from tank.util import parse_time
 
     created, _, _ = await seed_economic_event(service, negative_relation=False)
@@ -3103,7 +3116,7 @@ async def test_proposed_timing_requires_primary_dated_decision(service):
     )
 
 
-async def test_immediate_market_access_allows_effective_primary_change_without_prior_trade(service):
+async def test_immediate_market_access_allows_effective_primary_change_without_prior_trade(service) -> None:
     from tank.util import new_id
 
     stamp = iso()
@@ -3196,7 +3209,7 @@ async def test_immediate_market_access_allows_effective_primary_change_without_p
     assert "trade_evidence" not in frozen["impact_horizon"]["immediate_market_access"]
 
 
-async def test_primary_natural_calendar_and_usd_ratio_dispatch(service):
+async def test_primary_natural_calendar_and_usd_ratio_dispatch(service) -> None:
     created, _, _ = await seed_economic_event(service, negative_relation=False)
     eid = created["event_id"]
     for key, quote, kind in [
@@ -3246,7 +3259,7 @@ async def test_primary_natural_calendar_and_usd_ratio_dispatch(service):
     assert stored["impact_horizon"]["timing_confidence"] == "HIGH"
 
 
-async def test_event_source_time_provenance_and_milestone_offsets(service):
+async def test_event_source_time_provenance_and_milestone_offsets(service) -> None:
     x = await seed(service)
     item = await service.repo.get("ingest.source_items", "i")
     item["observed_at_prec"] = "BUCKET(5m)"
@@ -3278,7 +3291,7 @@ async def test_event_source_time_provenance_and_milestone_offsets(service):
     assert escalation["starts_at_prec"] == escalation["expires_at_prec"] == "BUCKET(1d)"
 
 
-async def test_event_merge_copies_selected_earlier_time_precision(service):
+async def test_event_merge_copies_selected_earlier_time_precision(service) -> None:
     source = {
         "event_id": "source-time",
         "known_to_us_at": "2026-10-18T00:00:00Z",
@@ -3298,7 +3311,7 @@ async def test_event_merge_copies_selected_earlier_time_precision(service):
     assert result["known_to_us_at_prec"] == "BUCKET(1d)"
 
 
-async def test_market_analysis_boundary_rejects_collection_clock_precision(service):
+async def test_market_analysis_boundary_rejects_collection_clock_precision(service) -> None:
     made, _, _ = await seed_economic_event(service, negative_relation=False)
     with pytest.raises(ValueError, match="Chosen boundaries"):
         await service.dispatch(
@@ -3314,14 +3327,14 @@ async def test_market_analysis_boundary_rejects_collection_clock_precision(servi
     assert not await service.repo.list("ops.jobs", filters={"type": "RUN_MARKET_TRUTH"})
 
 
-async def test_assessment_defers_reaction_ownership_to_scheduler_after_commit(service):
+async def test_assessment_defers_reaction_ownership_to_scheduler_after_commit(service) -> None:
     import asyncio
 
     class SchedulerObserver:
-        def __init__(self):
+        def __init__(self) -> None:
             self.events = []
 
-        async def ensure_reactions(self, event):
+        async def ensure_reactions(self, event) -> None:
             async def independent_read():
                 async with service.repo.transaction(), service.repo.lock("event:" + event["event_id"]):
                     stored = await service.repo.get("evt.events", event["event_id"])
@@ -3337,7 +3350,9 @@ async def test_assessment_defers_reaction_ownership_to_scheduler_after_commit(se
     assert not await service.repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
 
 
-async def test_full_card_blocks_only_analysis_tokens_with_decisions(service, monkeypatch):
+async def test_full_card_blocks_only_analysis_tokens_with_decisions(
+    service, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from tank.analysis import cards
 
     created, _, _ = await seed_economic_event(service, negative_relation=False)
@@ -3399,7 +3414,9 @@ async def test_full_card_blocks_only_analysis_tokens_with_decisions(service, mon
     assert set(captured["who"]) == {token, "ethereum:ETH"}
 
 
-async def test_web_raw_canonical_file_exists_even_when_parser_fails(service, monkeypatch):
+async def test_web_raw_canonical_file_exists_even_when_parser_fails(
+    service, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from pathlib import Path
 
     import httpx
@@ -3408,7 +3425,7 @@ async def test_web_raw_canonical_file_exists_even_when_parser_fails(service, mon
 
     original = b"<html><body>Saved before parser</body></html>"
 
-    def fail_parser(body):
+    def fail_parser(body) -> None:
         raise RuntimeError("Synthetic parser failure")
 
     monkeypatch.setattr(selectolax.parser, "HTMLParser", fail_parser)
@@ -3428,7 +3445,9 @@ async def test_web_raw_canonical_file_exists_even_when_parser_fails(service, mon
     assert not await service.repo.list("ingest.source_items")
 
 
-async def test_bundle_directory_sync_failure_never_creates_database_reference(service, monkeypatch):
+async def test_bundle_directory_sync_failure_never_creates_database_reference(
+    service, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import os
     import stat
 
@@ -3452,7 +3471,7 @@ async def test_bundle_directory_sync_failure_never_creates_database_reference(se
     original_sync = os.fsync
     seen = []
 
-    def fail_directory_sync(descriptor):
+    def fail_directory_sync(descriptor) -> None:
         kind = "directory" if stat.S_ISDIR(os.fstat(descriptor).st_mode) else "file"
         seen.append(kind)
         if kind == "directory":
@@ -3485,7 +3504,7 @@ async def test_bundle_directory_sync_failure_never_creates_database_reference(se
 @pytest.mark.parametrize("resolved_snapshot", [True, False])
 async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
     service, backend, resolved_snapshot, postgres_template, repository_lifetime
-):
+) -> None:
     import os
 
     import httpx
@@ -3515,7 +3534,7 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
     requested = []
     dispatched = []
 
-    def control(request):
+    def control(request: pytest.FixtureRequest):
         requested.append((request.method, request.url.path))
         if request.url.host == "www.sec.gov":
             return httpx.Response(
@@ -3629,7 +3648,7 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
 @pytest.mark.parametrize("outcome", ["continue_to_card", "native_error_failed"])
 async def test_actual_fetch_http_error_returns_durably_then_card_or_native_failed(
     service, http_status, outcome, truth_job_enqueued
-):
+) -> None:
     import asyncio
     import json
 
@@ -3665,7 +3684,7 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
     replay_posts = []
     lose_reply = True
 
-    def control(request):
+    def control(request: pytest.FixtureRequest):
         nonlocal lose_reply
         if request.url.host == "evidence.invalid":
             fetched.append(str(request.url))
@@ -3863,7 +3882,7 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
                 },
             )
 
-            async def settle_owned_missing_input_jobs():
+            async def settle_owned_missing_input_jobs() -> None:
 
                 await truth_job_enqueued.wait()
                 for kind in ("ESCALATE_TOKENS", "RUN_MARKET_TRUTH"):
@@ -3943,7 +3962,9 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
         )
 
 
-async def test_trusted_reference_clock_changes_logical_age_only(service, tmp_path, monkeypatch):
+async def test_trusted_reference_clock_changes_logical_age_only(
+    service, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import copy
     import json
 
@@ -4111,7 +4132,9 @@ async def test_trusted_reference_clock_changes_logical_age_only(service, tmp_pat
 
 
 @pytest.mark.parametrize("explicit_stage", [False, True])
-async def test_quoted_proposal_requires_explicit_stage_claim_not_fact_keyword(service, explicit_stage):
+async def test_quoted_proposal_requires_explicit_stage_claim_not_fact_keyword(
+    service, explicit_stage
+) -> None:
     quote = "The Securities and Exchange Commission is proposing new custody rules."
     x = extraction()
     x.update(statement="SEC proposes new custody rules", token_ids=[], entities=[])
@@ -4150,7 +4173,7 @@ async def test_quoted_proposal_requires_explicit_stage_claim_not_fact_keyword(se
 
 
 @pytest.mark.parametrize("paraphrase", [False, True])
-async def test_primary_event_fact_certainty_allows_neutral_paraphrase(service, paraphrase):
+async def test_primary_event_fact_certainty_allows_neutral_paraphrase(service, paraphrase) -> None:
     quote = "The SEC announced approval of the application."
     x = await seed(service)
     item = await service.repo.get("ingest.source_items", "i")
@@ -4180,7 +4203,7 @@ async def test_primary_event_fact_certainty_allows_neutral_paraphrase(service, p
     assert event["certainty_evidence_claims"] == [created["accepted_claims"][0]["claim_id"]]
 
 
-async def test_primary_selection_paraphrase_preserves_fact_certainty(service):
+async def test_primary_selection_paraphrase_preserves_fact_certainty(service) -> None:
 
     quote = (
         "The Clearing House announced the selection of Quant, a leading provider of programmable money "
@@ -4219,7 +4242,7 @@ async def test_primary_selection_paraphrase_preserves_fact_certainty(service):
 
 
 @pytest.mark.parametrize("scope", ["registered_alias", "token_entity", "unresolved_name", "unresolved_id"])
-async def test_primary_fact_scope_uses_declared_identity_not_word_overlap(service, scope):
+async def test_primary_fact_scope_uses_declared_identity_not_word_overlap(service, scope) -> None:
     x = await seed(service)
     if scope.startswith("unresolved"):
         name = "Northstar Lab"
@@ -4253,7 +4276,7 @@ async def test_primary_fact_scope_uses_declared_identity_not_word_overlap(servic
 
 
 @pytest.mark.parametrize("failure", ["no_quote", "secondary_source", "other_entity", "empty_subject"])
-async def test_event_certainty_is_not_host_semantic_scope_judgment(service, failure):
+async def test_event_certainty_is_not_host_semantic_scope_judgment(service, failure) -> None:
     x = await seed(service)
     quote = "SEC approved the application."
     item = await service.repo.get("ingest.source_items", "i")
@@ -4281,7 +4304,7 @@ async def test_event_certainty_is_not_host_semantic_scope_judgment(service, fail
     assert event["certainty"] == x["certainty"] and event["certainty_reason"] == x["certainty_reason"]
 
 
-async def test_explicit_agent_corroboration_updates_certainty(service):
+async def test_explicit_agent_corroboration_updates_certainty(service) -> None:
     x = await seed(service)
     quote = "World announced approval of a new product."
     item = await service.repo.get("ingest.source_items", "i")
@@ -4343,7 +4366,7 @@ async def test_explicit_agent_corroboration_updates_certainty(service):
         "future_date",
     ],
 )
-async def test_immediate_access_uses_agent_structured_fact_and_effective_time(service, case):
+async def test_immediate_access_uses_agent_structured_fact_and_effective_time(service, case) -> None:
     from tank.util import new_id
 
     stamp = iso()
@@ -4447,7 +4470,7 @@ async def test_immediate_access_uses_agent_structured_fact_and_effective_time(se
 
 
 @pytest.mark.parametrize("case", ["valid", "omitted", "nonexistent", "cross_event", "self"])
-async def test_observation_explicit_claim_replacement_preserves_history(service, case):
+async def test_observation_explicit_claim_replacement_preserves_history(service, case) -> None:
     import copy
 
     x = await seed(service)
@@ -4501,7 +4524,7 @@ async def test_observation_explicit_claim_replacement_preserves_history(service,
     assert await service.repo.get("evt.claims", old["claim_id"]) == original
 
 
-async def test_secondary_default_summary_does_not_duplicate_layer_notes(service):
+async def test_secondary_default_summary_does_not_duplicate_layer_notes(service) -> None:
     from tank.event_tools import LAYERS
 
     created = await service.dispatch("record_event", await seed(service), {})
@@ -4541,8 +4564,8 @@ async def live_update_database(service, backend, postgres_template):
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
 async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
-    service, monkeypatch, backend, live_update_database
-):
+    service, monkeypatch: pytest.MonkeyPatch, backend, live_update_database
+) -> None:
     """Exercise real publication, immutable storage, durable queue and transport ledger."""
     import copy
     import json
@@ -4606,7 +4629,7 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
     requests = []
     reject_next = [False]
 
-    def telegram(request):
+    def telegram(request: pytest.FixtureRequest):
         requests.append(json.loads(request.content))
         if reject_next[0]:
             reject_next[0] = False
@@ -4690,7 +4713,9 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
             await repo.close()
 
 
-async def test_old_trigger_updates_stage_but_does_not_publish_or_resurface_on_timer(service, monkeypatch):
+async def test_old_trigger_updates_stage_but_does_not_publish_or_resurface_on_timer(
+    service, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import tank.analysis.cards as cards
 
     monkeypatch.setattr(
@@ -4782,7 +4807,7 @@ async def test_old_trigger_updates_stage_but_does_not_publish_or_resurface_on_ti
 
 
 @pytest.mark.parametrize("role", ["PRIMARY", "SECONDARY", "NONE"])
-async def test_each_layer_needs_agent_reason_when_primary_does_not_supply_a_secondary(service, role):
+async def test_each_layer_needs_agent_reason_when_primary_does_not_supply_a_secondary(service, role) -> None:
     from tank.event_tools import LAYERS
 
     created = await service.dispatch("record_event", await seed(service), {})
@@ -4843,7 +4868,7 @@ async def test_each_layer_needs_agent_reason_when_primary_does_not_supply_a_seco
         assert result["no_credible_secondary_reason"] is None
 
 
-async def test_registry_ids_pass_and_only_names_outside_the_registry_stay_unresolved(service):
+async def test_registry_ids_pass_and_only_names_outside_the_registry_stay_unresolved(service) -> None:
     """W5 (03 §2.11, V3): entities and tokens are named by registry ID; a name is kept,
     UNRESOLVED, only when the registry does not resolve it, and a registered name is refused."""
     from tank.event_tools import resolve_entity, resolve_token
@@ -4879,7 +4904,9 @@ async def test_registry_ids_pass_and_only_names_outside_the_registry_stay_unreso
             await service.dispatch("record_event", {**x, **names}, {})
 
 
-async def test_least_repriced_ranks_all_credible_tokens_on_partial_refresh(service, truth_job_enqueued):
+async def test_least_repriced_ranks_all_credible_tokens_on_partial_refresh(
+    service, truth_job_enqueued
+) -> None:
     """W6 (03 §4.7 step 9): refreshing one token's truth keeps ranking every
     credible beneficiary from its latest stored truth."""
     import asyncio
@@ -4945,7 +4972,7 @@ async def test_least_repriced_ranks_all_credible_tokens_on_partial_refresh(servi
     assert mapping["least_repriced_edge"] == "edge-B"
 
 
-async def test_list_open_events_skips_events_whose_session_failed(service):
+async def test_list_open_events_skips_events_whose_session_failed(service) -> None:
     """03 §3.2 Failures: a failed session ends the event's analysis, so the agent
     never sees it as open and never merges later news into it."""
     for eid, status in [("live-event", "OPEN"), ("failed-event", "FAILED")]:
@@ -4968,7 +4995,7 @@ async def test_list_open_events_skips_events_whose_session_failed(service):
     assert [row["event_id"] for row in listed["events"]] == ["live-event"]
 
 
-async def test_token_facts_show_unlocks_before_the_cutoff_and_nothing_after(service):
+async def test_token_facts_show_unlocks_before_the_cutoff_and_nothing_after(service) -> None:
     """F-02 / 03 §3.2: get_token_facts returns supply and unlocks known at the
     cutoff, including a recent past unlock; rows observed later stay hidden."""
     now = utcnow()
@@ -5004,7 +5031,7 @@ async def test_token_facts_show_unlocks_before_the_cutoff_and_nothing_after(serv
     assert facts["analysis_cutoff"] and "supply_obs" in facts and "capture_chains" in facts
 
 
-def test_schema_refusal_names_allowed_cutoff_precisions():
+def test_schema_refusal_names_allowed_cutoff_precisions() -> None:
     """A precision outside the declared schema is refused at the schema with the
     allowed forms, not deep in the tool (an undeclared value such as "FORTNIGHT")."""
     import json
@@ -5028,7 +5055,7 @@ def test_schema_refusal_names_allowed_cutoff_precisions():
     )
 
 
-async def test_decision_for_a_token_outside_the_analysis_set_names_the_set(service):
+async def test_decision_for_a_token_outside_the_analysis_set_names_the_set(service) -> None:
     """E2E msg 15/16: a token_id outside the analysis set gets an error that names the set."""
     await service.repo.put("evt.events", "e", {"event_id": "e", "current_ems_id": "ems"})
     await service.repo.put("evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": "e", "class": "MAJOR"})
@@ -5039,7 +5066,7 @@ async def test_decision_for_a_token_outside_the_analysis_set_names_the_set(servi
         await service.dispatch("get_decision", {"event_id": "e", "token_id": "Bitcoinz"}, {})
 
 
-def test_publish_card_schema_bounds_agent_text():
+def test_publish_card_schema_bounds_agent_text() -> None:
     """E2E msg 16: agent text is bounded at the schema, before the card is built."""
     import json
     from pathlib import Path
@@ -5074,7 +5101,7 @@ def test_publish_card_schema_bounds_agent_text():
                 validate_schema(dict(payload, what=invalid), schema)
 
 
-async def test_token_facts_for_btc_fit_the_context(service):
+async def test_token_facts_for_btc_fit_the_context(service) -> None:
     """r107 P0: get_token_facts("bitcoin:BTC") returned 6.7 MB (143 raw supply
     rows with daily charts since 2011) and ended the session on the context
     window. It now returns the latest known row per kind, series shortened,
@@ -5116,7 +5143,7 @@ async def test_token_facts_for_btc_fit_the_context(service):
     assert len(fees["totalDataChart"]["last"]) == 7 and "_truncated" not in facts
 
 
-async def test_read_tool_results_are_bounded_and_say_so(service):
+async def test_read_tool_results_are_bounded_and_say_so(service) -> None:
     """Any read tool result above 40 KB is shortened with a note; list_open_events
     returns its compact view (03 §3.2: statements, stages, known_to_us_at, sessions)."""
     from tank.event_tools import TOOL_RESULT_MAX_BYTES, fit_result
@@ -5146,7 +5173,9 @@ async def test_read_tool_results_are_bounded_and_say_so(service):
     assert "claims_blob" not in event and event["sessions"] == [{"session_id": "s1", "status": "OPEN"}]
 
 
-async def test_daily_vesting_unlocks_stay_visible_around_the_cutoff(service, monkeypatch):
+async def test_daily_vesting_unlocks_stay_visible_around_the_cutoff(
+    service, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """F-04 (r108): with daily vesting (4 labels x many days) the 40 KB cap
     kept only the newest rows; the agent must see the tranches within 14 days
     of the cutoff, per label, at any schedule size."""
@@ -5182,7 +5211,7 @@ async def test_daily_vesting_unlocks_stay_visible_around_the_cutoff(service, mon
     assert {row["relative_to_cutoff"] for row in facts["unlocks"]} == {"PAST", "UPCOMING"}
 
 
-async def test_token_facts_give_the_covered_daily_volume(service):
+async def test_token_facts_give_the_covered_daily_volume(service) -> None:
     """03 §4.2 base of M (access and distribution): the token's covered daily
     volume per spot venue and in total, native and USD, with exclusions."""
     now = utcnow()
@@ -5231,7 +5260,9 @@ async def test_token_facts_give_the_covered_daily_volume(service):
     assert volume["market_cap"] is None and volume["market_cap_reason"].startswith("NOT_STORED")
 
 
-async def test_card_generated_at_is_the_version_write_and_deliver_is_runnable_then(service, monkeypatch):
+async def test_card_generated_at_is_the_version_write_and_deliver_is_runnable_then(
+    service, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """E2E #5 (r113): generated_at was stamped before the 8 s evidence bundle,
     so delivery looked late. generated_at is now when the immutable version is
     written (after the bundle is durable) and the DELIVER job runs from then."""
@@ -5274,7 +5305,7 @@ async def test_card_generated_at_is_the_version_write_and_deliver_is_runnable_th
     assert alert["delivery_not_before"] == alert["generated_at"]
 
 
-async def test_named_cutoff_precisions_are_accepted_as_buckets(service, truth_job_enqueued):
+async def test_named_cutoff_precisions_are_accepted_as_buckets(service, truth_job_enqueued) -> None:
     """Live (22:51, 23:45, 05:05): cutoff_prec "MINUTE" was refused each time;
     named units now validate and normalize to their bucket, recorded in the result."""
     import asyncio
@@ -5324,7 +5355,9 @@ async def test_named_cutoff_precisions_are_accepted_as_buckets(service, truth_jo
     assert result["cutoff_prec_normalized"] == {"from": "MINUTE", "to": "BUCKET(1m)"}
 
 
-async def test_publish_card_keeps_market_truth_once_and_bounds_evidence_and_ops_reads(service, monkeypatch):
+async def test_publish_card_keeps_market_truth_once_and_bounds_evidence_and_ops_reads(
+    service, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """E2E #6 (r114): publish_card took 22 s. The card's card_struct copied the
     1.8 MB Market Truth, the bundle's request_log repeated it, and collections
     were re-read. Now card_struct references the immutable truth row, an exact

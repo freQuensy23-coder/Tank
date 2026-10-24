@@ -9,7 +9,7 @@ from tank.util import iso, parse_time
 
 
 @pytest.mark.parametrize("history_count,expected", [(18, None), (22, "ABOVE")])
-def test_current_settlement_cannot_extend_training_history_into_a_week(history_count, expected):
+def test_current_settlement_cannot_extend_training_history_into_a_week(history_count, expected) -> None:
     start = parse_time("2026-10-10T00:00:00Z")
     end = start + timedelta(days=1)
     iid = "binance:perp:T"
@@ -46,7 +46,7 @@ def test_current_settlement_cannot_extend_training_history_into_a_week(history_c
     assert venue["funding_8h_eq"] is not None
 
 
-def test_settled_and_estimated_funding_preserve_their_own_intervals():
+def test_settled_and_estimated_funding_preserve_their_own_intervals() -> None:
     from decimal import Decimal
 
     start = parse_time("2026-10-10T00:00:00Z")

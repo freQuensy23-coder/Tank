@@ -5,7 +5,7 @@ from datetime import timedelta
 from tank.util import iso, parse_time
 
 
-async def put_flow(repo, key, row):
+async def put_flow(repo, key, row) -> None:
     row = dict(row)
     minute = row.pop("open_time", row.get("minute_start"))
     row["minute_start"] = minute
@@ -37,7 +37,7 @@ async def put_flow(repo, key, row):
     await repo.put("mkt.flow_bars_1m", key, row)
 
 
-async def put_boundary(repo, key, instrument, minute, lo, hi, trade_at, price):
+async def put_boundary(repo, key, instrument, minute, lo, hi, trade_at, price) -> None:
     point = {"trade_id": key, "price": str(price), "ts": iso(trade_at), "ts_prec": "EXACT"}
     piece = {
         "start": iso(lo),

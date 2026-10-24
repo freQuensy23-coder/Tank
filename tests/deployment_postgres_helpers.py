@@ -47,7 +47,7 @@ async def _owned_container(container_id, owner):
     return state
 
 
-async def _ready(container_id, owner, dsn):
+async def _ready(container_id, owner, dsn) -> None:
 
     async with asyncio.timeout(60):
         while True:
@@ -99,7 +99,7 @@ async def deployment_repository():
         }
         dsn = make_conninfo(user="postgres", dbname="tank", host=str(socket))
 
-        async def allocate():
+        async def allocate() -> None:
             nonlocal container_id
             created = await _docker(
                 "create",
@@ -135,7 +135,7 @@ async def deployment_repository():
                 raise RuntimeError("Docker did not return an exact owned container ID")
             container_id = created
 
-        async def cleanup():
+        async def cleanup() -> None:
             try:
                 if repo is not None:
                     await repo.close()

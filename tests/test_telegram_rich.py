@@ -24,7 +24,7 @@ def assessment():
     }
 
 
-def test_native_table_preserves_zero_unknown_and_explanations_as_literal_text():
+def test_native_table_preserves_zero_unknown_and_explanations_as_literal_text() -> None:
     data = assessment()
     markup = '<a href="https://example.test">claim & proof</a> | **bold** 🦄'
     data["dims"]["economic_directness"]["rationale"] = markup
@@ -54,7 +54,7 @@ def test_native_table_preserves_zero_unknown_and_explanations_as_literal_text():
     assert set(message) == {"blocks"}
 
 
-def test_rich_size_check_counts_the_added_rationales_and_api_limits():
+def test_rich_size_check_counts_the_added_rationales_and_api_limits() -> None:
     data = assessment()
     data["dims"]["economic_directness"]["rationale"] = "x" * 5000
     with pytest.raises(ValueError, match="CARD_LENGTH"):
@@ -66,7 +66,7 @@ def test_rich_size_check_counts_the_added_rationales_and_api_limits():
         card_rich_message("\n".join(["line", score_summary({}), *(["line"] * 501)]), {}, max_chars=100000)
 
 
-def test_rich_text_reader_handles_nested_blocks_and_formatting():
+def test_rich_text_reader_handles_nested_blocks_and_formatting() -> None:
     message = {
         "rich_message": {
             "blocks": [
@@ -104,7 +104,7 @@ def test_rich_text_reader_handles_nested_blocks_and_formatting():
 
 
 @pytest.mark.asyncio
-async def test_rich_delivery_retries_frozen_payload_and_threads_update_once():
+async def test_rich_delivery_retries_frozen_payload_and_threads_update_once() -> None:
     repo = MemoryRepository()
     what = "Uniswap now uses external trading venues for swaps in its app & API."
     frozen = card_rich_message(
@@ -128,7 +128,7 @@ async def test_rich_delivery_retries_frozen_payload_and_threads_update_once():
         )
     requests = []
 
-    def send(request):
+    def send(request: pytest.FixtureRequest):
         body = json.loads(request.content)
         requests.append((request.url.path, body))
         assert request.url.path.endswith("/sendRichMessage")
@@ -160,7 +160,7 @@ async def test_rich_delivery_retries_frozen_payload_and_threads_update_once():
     assert (await repo.get("out.alerts", "a:1"))["rich_message"] == frozen
 
 
-def test_multiline_headline_and_reason_keep_the_table_at_the_canonical_summary():
+def test_multiline_headline_and_reason_keep_the_table_at_the_canonical_summary() -> None:
     data = assessment()
     data["dims"]["magnitude"]["rationale"] = "Unknown volume.\nNo estimate."
     text = "MAJOR\nHeadline continuation\n" + score_summary(data) + "\nStage: LIVE"

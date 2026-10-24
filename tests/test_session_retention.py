@@ -30,7 +30,7 @@ def settings(keep_days=7, replay=False):
     )
 
 
-async def seed(repo, *, age_days, event=None, no_event=False):
+async def seed(repo, *, age_days, event=None, no_event=False) -> None:
     """An idle session whose last message is age_days old, for a closed event or a rejected material."""
     last = iso(utcnow() - timedelta(days=age_days))
     if event is not None:
@@ -64,7 +64,7 @@ async def seed(repo, *, age_days, event=None, no_event=False):
 async def finish(repo, config=None):
     posts = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         posts.append((request.method, request.url.path))
         return httpx.Response(200, json={})
 
@@ -81,7 +81,7 @@ async def finish(repo, config=None):
 
 
 @pytest.mark.parametrize(("event", "no_event"), [("CLOSED", False), ("INVALIDATED", False), (None, True)])
-async def test_finished_session_is_not_archived_within_the_retention(event, no_event):
+async def test_finished_session_is_not_archived_within_the_retention(event, no_event) -> None:
     repo = MemoryRepository()
     await seed(repo, age_days=0, event=event, no_event=no_event)
     posts, session = await finish(repo)
@@ -93,7 +93,7 @@ async def test_finished_session_is_not_archived_within_the_retention(event, no_e
 
 
 @pytest.mark.parametrize(("event", "no_event"), [("CLOSED", False), (None, True)])
-async def test_session_is_archived_only_after_the_retention_since_its_last_message(event, no_event):
+async def test_session_is_archived_only_after_the_retention_since_its_last_message(event, no_event) -> None:
     repo = MemoryRepository()
     await seed(repo, age_days=6.9, event=event, no_event=no_event)
     posts, session = await finish(repo)
@@ -110,7 +110,7 @@ async def test_session_is_archived_only_after_the_retention_since_its_last_messa
     )
 
 
-async def test_retention_comes_from_the_thresholds_config():
+async def test_retention_comes_from_the_thresholds_config() -> None:
     repo = MemoryRepository()
     await seed(repo, age_days=2, no_event=True)
     posts, session = await finish(repo, settings(keep_days=3))
@@ -125,7 +125,7 @@ async def test_retention_comes_from_the_thresholds_config():
     assert config["session_keep_days"] == 7
 
 
-async def test_a_reader_question_counts_as_the_last_message():
+async def test_a_reader_question_counts_as_the_last_message() -> None:
     repo = MemoryRepository()
     await seed(repo, age_days=30, no_event=True)
     asked = iso(utcnow() - timedelta(days=2))
@@ -140,7 +140,7 @@ async def test_a_reader_question_counts_as_the_last_message():
 
 
 @pytest.mark.parametrize("keeper", ["call", "watch", "job"])
-async def test_open_call_armed_watch_or_pending_job_keeps_the_session_past_the_retention(keeper):
+async def test_open_call_armed_watch_or_pending_job_keeps_the_session_past_the_retention(keeper) -> None:
     repo = MemoryRepository()
     await seed(repo, age_days=30, event="CLOSED")
     if keeper == "call":
@@ -155,7 +155,7 @@ async def test_open_call_armed_watch_or_pending_job_keeps_the_session_past_the_r
     assert posts == [] and session["status"] == "OPEN" and not session.get("archive_after")
 
 
-async def test_session_with_a_delivered_card_stays_open_for_follow_ups_past_the_retention():
+async def test_session_with_a_delivered_card_stays_open_for_follow_ups_past_the_retention() -> None:
     repo = MemoryRepository()
     await seed(repo, age_days=30, event="CLOSED")
     await repo.put("out.alerts", "a:1", {"alert_id": "a", "version": 1, "event_id": "evt_1"}, immutable=True)
@@ -169,7 +169,7 @@ async def test_session_with_a_delivered_card_stays_open_for_follow_ups_past_the_
     assert posts == [] and session["status"] == "OPEN" and session["followups_only"]
 
 
-async def test_stale_retention_is_cleared_when_the_session_is_no_longer_archivable():
+async def test_stale_retention_is_cleared_when_the_session_is_no_longer_archivable() -> None:
     repo = MemoryRepository()
     await seed(repo, age_days=0, event="CLOSED")
     _, session = await finish(repo)
@@ -179,7 +179,7 @@ async def test_stale_retention_is_cleared_when_the_session_is_no_longer_archivab
     assert "archive_after" not in session and session["status"] == "OPEN"
 
 
-async def test_replay_sessions_are_still_archived_at_turn_end():
+async def test_replay_sessions_are_still_archived_at_turn_end() -> None:
     repo = MemoryRepository()
     await seed(repo, age_days=0, no_event=True)
     posts, session = await finish(repo, settings(replay=True))
@@ -187,7 +187,7 @@ async def test_replay_sessions_are_still_archived_at_turn_end():
     assert session["status"] == "ENDED" and session["archive_reason"] == "REPLAY"
 
 
-async def test_sweep_skips_retained_sessions_until_their_retention_passes():
+async def test_sweep_skips_retained_sessions_until_their_retention_passes() -> None:
     repo = MemoryRepository()
     await seed(repo, age_days=0, no_event=True)
     _, session = await finish(repo)
@@ -200,10 +200,10 @@ async def test_sweep_skips_retained_sessions_until_their_retention_passes():
             checked.append(sid)
             return True
 
-        async def tick():
+        async def tick() -> None:
             stop.set()
 
-        async def nothing():
+        async def nothing() -> None:
             return None
 
         service.finish_if_idle = record

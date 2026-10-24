@@ -13,7 +13,7 @@ from tank.util import iso, parse_time
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("subminute", [False, True])
-async def test_raw_large_prices_preserve_tiny_return_excursions_and_direction(subminute):
+async def test_raw_large_prices_preserve_tiny_return_excursions_and_direction(subminute) -> None:
     repo = MemoryRepository()
     service = ReviewService(repo)
     start = parse_time("2026-10-01T00:00:30Z" if subminute else "2026-10-01T00:00:00Z")

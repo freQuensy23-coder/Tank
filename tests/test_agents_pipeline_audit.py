@@ -21,7 +21,7 @@ def options():
     ), config
 
 
-def test_filter_question_asks_the_03_3_1_condition_about_the_named_item():
+def test_filter_question_asks_the_03_3_1_condition_about_the_named_item() -> None:
     design = Path("03_Tank_V0_Technical_Design.md").read_text()
 
     projects = FILTER.split("one of these projects: ")[1].rstrip("?")
@@ -40,7 +40,7 @@ def test_filter_question_asks_the_03_3_1_condition_about_the_named_item():
         "EUL CRV ZRX",
     ],
 )
-def test_audit_2_12_generic_words_do_not_resolve(text):
+def test_audit_2_12_generic_words_do_not_resolve(text) -> None:
     opts, _ = options()
     assert not Pipeline(MemoryRepository(), opts, http=object()).identities({"text": text})
 
@@ -56,14 +56,14 @@ def test_audit_2_12_generic_words_do_not_resolve(text):
         ("CoW Swap", "cow", "cow:COW"),
     ],
 )
-def test_audit_2_12_canonical_aliases(text, entity, token):
+def test_audit_2_12_canonical_aliases(text, entity, token) -> None:
     opts, _ = options()
     ids = Pipeline(MemoryRepository(), opts, http=object()).identities({"title": text})
     assert {entity, token} <= ids
 
 
 @pytest.mark.asyncio
-async def test_scored_match_joins_running_event_despite_other_pending_extraction():
+async def test_scored_match_joins_running_event_despite_other_pending_extraction() -> None:
     opts, _ = options()
     repo = MemoryRepository()
     at = iso()
@@ -91,7 +91,7 @@ async def test_scored_match_joins_running_event_despite_other_pending_extraction
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("precision", ["BUCKET(1d)", None])
-async def test_filter_job_expiry_preserves_source_observation_precision(precision):
+async def test_filter_job_expiry_preserves_source_observation_precision(precision) -> None:
     opts, _ = options()
     repo = MemoryRepository()
     item = {
@@ -112,7 +112,7 @@ async def test_filter_job_expiry_preserves_source_observation_precision(precisio
 
 
 @pytest.mark.asyncio
-async def test_new_item_routes_without_reservation_state():
+async def test_new_item_routes_without_reservation_state() -> None:
     opts, _ = options()
     repo = MemoryRepository()
     await repo.put("ingest.source_items", "new", {"item_id": "new", "title": "Aave announcement"})
@@ -124,14 +124,14 @@ async def test_new_item_routes_without_reservation_state():
 @pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("same,decision", [(0.95, "ADDED"), (0.1, "NEW_SESSION")])
-async def test_pending_extraction_is_not_a_candidate_then_real_event_is_scored(same, decision):
+async def test_pending_extraction_is_not_a_candidate_then_real_event_is_scored(same, decision) -> None:
     opts, config = options()
     repo = MemoryRepository()
     for key in ("first", "pending", "next"):
         await repo.put("ingest.source_items", key, {"item_id": key, "title": "Aave product approved"})
     calls = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         body = json.loads(request.content)
         calls.append(body)
         assert body["questions"]["same_event"]["instructions"] == ROUTE
@@ -171,7 +171,7 @@ async def test_pending_extraction_is_not_a_candidate_then_real_event_is_scored(s
 
 @pytest.mark.parametrize("status", ["ENDED", "FAILED"])
 @pytest.mark.asyncio
-async def test_other_pending_session_never_blocks_unmatched_item(status):
+async def test_other_pending_session_never_blocks_unmatched_item(status) -> None:
     opts, _ = options()
     repo = MemoryRepository()
     await repo.put("ingest.source_items", "i", {"item_id": "i", "title": "Aave other event"})
@@ -180,7 +180,7 @@ async def test_other_pending_session_never_blocks_unmatched_item(status):
     assert result["route"]["decision"] == "NEW_SESSION"
 
 
-def test_identity_matching_uses_registry_aliases_and_qualifiers_without_code_overrides():
+def test_identity_matching_uses_registry_aliases_and_qualifiers_without_code_overrides() -> None:
     opts, config = options()
     config["registry"]["entities"] = [
         {
@@ -199,7 +199,7 @@ def test_identity_matching_uses_registry_aliases_and_qualifiers_without_code_ove
     assert "lighter" in pipe.identities({"text": "$LIT"})
 
 
-def test_explicit_token_identity_expands_to_its_entity():
+def test_explicit_token_identity_expands_to_its_entity() -> None:
     opts, _ = options()
     assert {"aave", "aave:AAVE"} <= Pipeline(MemoryRepository(), opts, http=object()).identities(
         {"tokens": ["aave:AAVE"]}
@@ -208,7 +208,7 @@ def test_explicit_token_identity_expands_to_its_entity():
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_official_repost_promotion_during_filter_request_preserves_latest_item():
+async def test_official_repost_promotion_during_filter_request_preserves_latest_item() -> None:
     opts, _ = options()
     repo = MemoryRepository()
     await repo.put(
@@ -225,7 +225,7 @@ async def test_official_repost_promotion_during_filter_request_preserves_latest_
         },
     )
 
-    async def handler(request):
+    async def handler(request: pytest.FixtureRequest):
 
         async with repo.lock("ingest-dedup"):
             item = await repo.get("ingest.source_items", "i")
@@ -260,7 +260,7 @@ async def test_official_repost_promotion_during_filter_request_preserves_latest_
 
 
 @pytest.mark.parametrize("field", ["author", "monitored_author", "reposted_by"])
-def test_organization_author_and_repost_resolve_canonical_entity_and_token(field):
+def test_organization_author_and_repost_resolve_canonical_entity_and_token(field) -> None:
     opts, _ = options()
     ids = Pipeline(MemoryRepository(), opts, http=object()).identities(
         {"author": "unknown_original", field: "@Aave"}
@@ -269,7 +269,7 @@ def test_organization_author_and_repost_resolve_canonical_entity_and_token(field
 
 
 @pytest.mark.asyncio
-async def test_failed_event_is_not_a_routing_candidate():
+async def test_failed_event_is_not_a_routing_candidate() -> None:
     opts, _ = options()
     repo = MemoryRepository()
     await repo.put("ingest.source_items", "i", {"item_id": "i", "text": "Aave new event"})
@@ -299,7 +299,7 @@ async def test_failed_event_is_not_a_routing_candidate():
 
 
 @pytest.mark.asyncio
-async def test_candidate_questions_overlap_and_reduce_in_stable_order():
+async def test_candidate_questions_overlap_and_reduce_in_stable_order() -> None:
     import asyncio
 
     opts, _ = options()
@@ -330,7 +330,7 @@ async def test_candidate_questions_overlap_and_reduce_in_stable_order():
 
 
 @pytest.mark.asyncio
-async def test_candidate_window_includes_equal_clock_and_lower_boundary_only():
+async def test_candidate_window_includes_equal_clock_and_lower_boundary_only() -> None:
     from datetime import timedelta
 
     from tank.util import utcnow
@@ -372,7 +372,7 @@ async def test_candidate_window_includes_equal_clock_and_lower_boundary_only():
     ],
     ids=["identical", "whitespace", "outlet-suffix", "body-kept", "empty-body"],
 )
-def test_item_view_sends_title_and_body_once_without_mutating_capture(title, body, expected):
+def test_item_view_sends_title_and_body_once_without_mutating_capture(title, body, expected) -> None:
     from copy import deepcopy
 
     item = {
@@ -392,13 +392,13 @@ def test_item_view_sends_title_and_body_once_without_mutating_capture(title, bod
     assert item == original
 
 
-def test_long_body_is_cut_at_a_sentence():
+def test_long_body_is_cut_at_a_sentence() -> None:
     body = "First sentence is here. " * 1000
     text = Pipeline.item_view({"source": "SEC", "title": "Speech", "text": body})["text"]
     assert len(text) <= 12002 and text.endswith(". …")
 
 
-def test_routing_state_names_item_and_event_with_readable_identities():
+def test_routing_state_names_item_and_event_with_readable_identities() -> None:
     opts, _ = options()
     state = Pipeline(MemoryRepository(), opts, http=object()).routing_state(
         {"source": "Reuters", "author": "Jane Doe", "title": "Uniswap fee switch passes"},
@@ -422,7 +422,7 @@ def test_routing_state_names_item_and_event_with_readable_identities():
 
 
 @pytest.mark.parametrize("text", ["Uniswap governance passes fee switch", "$UNI fee switch passes"])
-async def test_event_with_resolved_token_id_is_a_candidate_for_alias_or_ticker(text):
+async def test_event_with_resolved_token_id_is_a_candidate_for_alias_or_ticker(text) -> None:
 
     from tank.util import utcnow
 
@@ -437,7 +437,7 @@ async def test_event_with_resolved_token_id_is_a_candidate_for_alias_or_ticker(t
     assert [event["event_id"] for event in events] == ["e"]
 
 
-def test_bare_item_ticker_resolves_to_registry_token_id():
+def test_bare_item_ticker_resolves_to_registry_token_id() -> None:
     opts, _ = options()
     ids = Pipeline(MemoryRepository(), opts, http=object()).identities(
         {"title": "fee switch", "tokens": ["UNI"]}

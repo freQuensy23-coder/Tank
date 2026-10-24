@@ -74,7 +74,7 @@ async def analysis(repo, settings, *, klass=None, completed=True):
     return item, event
 
 
-async def test_robinhood_completion_without_assessment_reports_the_missing_result(settings):
+async def test_robinhood_completion_without_assessment_reports_the_missing_result(settings) -> None:
     repo = MemoryRepository()
     item, _ = await analysis(repo, settings)
     card = render(await snapshot(repo, item["item_id"]))
@@ -96,7 +96,7 @@ async def test_robinhood_completion_without_assessment_reports_the_missing_resul
 
 
 @pytest.mark.parametrize("klass", ["LOW", "MATERIAL"])
-async def test_completion_preserves_the_actual_assessment_outcome(settings, klass):
+async def test_completion_preserves_the_actual_assessment_outcome(settings, klass) -> None:
     repo = MemoryRepository()
     item, _ = await analysis(repo, settings, klass=klass)
     card = render(await snapshot(repo, item["item_id"]))
@@ -106,7 +106,7 @@ async def test_completion_preserves_the_actual_assessment_outcome(settings, klas
     assert "завершил обработку" not in card["text"]
 
 
-async def test_completed_major_analysis_names_missing_decisions(settings):
+async def test_completed_major_analysis_names_missing_decisions(settings) -> None:
     repo = MemoryRepository()
     item, event = await analysis(repo, settings, klass="MAJOR")
     await repo.put(
@@ -122,7 +122,7 @@ async def test_completed_major_analysis_names_missing_decisions(settings):
     assert "robinhood:HOOD" not in card["text"]
 
 
-async def test_running_major_analysis_shows_current_work_instead_of_completion(settings):
+async def test_running_major_analysis_shows_current_work_instead_of_completion(settings) -> None:
     repo = MemoryRepository()
     item, event = await analysis(repo, settings, klass="MAJOR", completed=False)
     await repo.put(
@@ -135,7 +135,7 @@ async def test_running_major_analysis_shows_current_work_instead_of_completion(s
     assert "данные: 0/1 токенов; решения: 0/1" in card["text"]
 
 
-async def test_no_observation_is_missing_agent_decision_not_rejection(settings):
+async def test_no_observation_is_missing_agent_decision_not_rejection(settings) -> None:
     repo = MemoryRepository()
     item = await source(
         repo, extraction_status="SKIPPED", extraction_reason="NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION"
@@ -149,7 +149,7 @@ async def test_no_observation_is_missing_agent_decision_not_rejection(settings):
     assert "Отклонено агентом" not in card["text"]
 
 
-async def test_legacy_certainty_reason_is_not_presented_as_a_rejection_explanation(settings):
+async def test_legacy_certainty_reason_is_not_presented_as_a_rejection_explanation(settings) -> None:
     repo = MemoryRepository()
     item = await source(repo, extraction_status="SKIPPED", extraction_reason="Официальный источник")
     await item_progress(repo, settings, item["item_id"], "AGENT_REJECTED", "Официальный источник")
@@ -159,7 +159,7 @@ async def test_legacy_certainty_reason_is_not_presented_as_a_rejection_explanati
     assert "Официальный источник" not in card["text"]
 
 
-async def test_jev_rejection_shows_score_and_original_threshold(settings):
+async def test_jev_rejection_shows_score_and_original_threshold(settings) -> None:
     repo = MemoryRepository()
     item = await source(
         repo, relevance={"decision": "SKIP", "p_relevant": 0.12, "cutoff": 0.7}, extraction_status="SKIPPED"
@@ -171,7 +171,7 @@ async def test_jev_rejection_shows_score_and_original_threshold(settings):
     assert "Агент: ещё не получил материал" in card["text"]
 
 
-async def test_instrument_change_is_readable_without_raw_json(settings):
+async def test_instrument_change_is_readable_without_raw_json(settings) -> None:
     repo = MemoryRepository()
     before = {"venue": "okx", "symbol": "XGS-USDT", "market_type": "SPOT", "status": "preopen"}
     after = {**before, "status": "live"}
@@ -189,7 +189,7 @@ async def test_instrument_change_is_readable_without_raw_json(settings):
     assert not any(value in card["text"] for value in ('{"', '"before"', '"after"', '"status"'))
 
 
-async def test_snapshot_markdown_is_cleaned_and_title_is_not_repeated(settings):
+async def test_snapshot_markdown_is_cleaned_and_title_is_not_repeated(settings) -> None:
     repo = MemoryRepository()
     title = "[ARFC] Onboard mWIN to Aave Horizon"
     item = await source(
@@ -207,7 +207,7 @@ async def test_snapshot_markdown_is_cleaned_and_title_is_not_repeated(settings):
     assert "Motivation and source text" not in card["text"]
 
 
-async def test_delivery_receipt_beats_later_generic_completion(settings):
+async def test_delivery_receipt_beats_later_generic_completion(settings) -> None:
     repo = MemoryRepository()
     item, event = await analysis(repo, settings, klass="MAJOR")
     await repo.put(
@@ -242,7 +242,7 @@ async def test_delivery_receipt_beats_later_generic_completion(settings):
     assert "https://t.me/c/456/42" in card["html"]
 
 
-async def test_publication_refusal_contains_exact_missing_analysis(settings):
+async def test_publication_refusal_contains_exact_missing_analysis(settings) -> None:
     repo = MemoryRepository()
     item, event = await analysis(repo, settings, klass="MAJOR")
     await item_progress(
@@ -263,8 +263,8 @@ async def test_publication_refusal_contains_exact_missing_analysis(settings):
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
 async def test_burst_is_one_message_and_later_change_edits_it_across_restart(
-    settings, monkeypatch, backend, postgres_template
-):
+    settings, monkeypatch: pytest.MonkeyPatch, backend, postgres_template
+) -> None:
     async with fixture_repo(backend, postgres_template) as repo:
         item = await source(repo)
         for index in range(20):
@@ -274,7 +274,7 @@ async def test_burst_is_one_message_and_later_change_edits_it_across_restart(
         clock = utcnow() + timedelta(minutes=1)
         monkeypatch.setattr("tank.delivery.utcnow", lambda: clock)
 
-        def respond(request):
+        def respond(request: pytest.FixtureRequest):
             requests.append((request.url.path.rsplit("/", 1)[-1], json.loads(request.content)))
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 77}})
 
@@ -301,7 +301,9 @@ async def test_burst_is_one_message_and_later_change_edits_it_across_restart(
         assert len(await repo.list("out.ops_cards")) == 1
 
 
-async def test_legacy_backlog_updates_existing_message_instead_of_replaying_stages(settings, monkeypatch):
+async def test_legacy_backlog_updates_existing_message_instead_of_replaying_stages(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo = MemoryRepository()
     item = await source(repo)
     for index, stage in enumerate(("RECEIVED", "JEV_BYPASSED", "AGENT_ACCEPTED")):
@@ -335,7 +337,7 @@ async def test_legacy_backlog_updates_existing_message_instead_of_replaying_stag
     requests = []
     monkeypatch.setattr("tank.delivery.utcnow", lambda: utcnow() + timedelta(minutes=1))
 
-    def respond(request):
+    def respond(request: pytest.FixtureRequest):
         requests.append((request.url.path, json.loads(request.content)))
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 66}})
 
@@ -347,7 +349,7 @@ async def test_legacy_backlog_updates_existing_message_instead_of_replaying_stag
     assert requests[0][1]["message_id"] == 66 and "OLD RAW MESSAGE" not in requests[0][1]["text"]
 
 
-async def test_debounce_sends_no_intermediate_network_request(settings):
+async def test_debounce_sends_no_intermediate_network_request(settings) -> None:
     repo = MemoryRepository()
     item = await source(repo)
     settings.ops_progress_delay_s = 15
@@ -361,7 +363,7 @@ async def test_debounce_sends_no_intermediate_network_request(settings):
     assert await repo.list("out.deliveries") == []
 
 
-async def test_auxiliary_agent_evidence_stays_in_audit_without_spamming_ops(settings):
+async def test_auxiliary_agent_evidence_stays_in_audit_without_spamming_ops(settings) -> None:
     repo = MemoryRepository()
     item = await source(repo, source_id="WEB", evidence_kind="FETCHED_PAGE")
     await item_progress(repo, settings, item["item_id"], "EVIDENCE_FETCHED")
@@ -369,7 +371,9 @@ async def test_auxiliary_agent_evidence_stays_in_audit_without_spamming_ops(sett
     assert await repo.list("ops.jobs") == []
 
 
-async def test_missing_legacy_message_does_not_create_a_new_spam_message(settings, monkeypatch):
+async def test_missing_legacy_message_does_not_create_a_new_spam_message(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo = MemoryRepository()
     item = await source(repo)
     await item_progress(repo, settings, item["item_id"], "RECEIVED")
@@ -383,7 +387,7 @@ async def test_missing_legacy_message_does_not_create_a_new_spam_message(setting
     requests = []
     monkeypatch.setattr("tank.delivery.utcnow", lambda: utcnow() + timedelta(minutes=1))
 
-    def respond(request):
+    def respond(request: pytest.FixtureRequest):
         requests.append(request.url.path)
         return httpx.Response(
             400, json={"ok": False, "description": "Bad Request: message to edit not found"}
@@ -398,7 +402,7 @@ async def test_missing_legacy_message_does_not_create_a_new_spam_message(setting
     assert (await repo.get("out.ops_cards", key))["delivery_status"] == "FAILED"
 
 
-async def test_unicode_markdown_and_source_html_fit_telegram_without_leaking_markup(settings):
+async def test_unicode_markdown_and_source_html_fit_telegram_without_leaking_markup(settings) -> None:
     repo = MemoryRepository()
     item = await source(repo, title="**A <b>title</b> & text**", text="😀" * 5000)
     await item_progress(repo, settings, item["item_id"], "RECEIVED")
@@ -407,7 +411,7 @@ async def test_unicode_markdown_and_source_html_fit_telegram_without_leaking_mar
     assert len(card["text"].encode("utf-16-le")) <= 4096 * 2
 
 
-async def test_latest_refused_update_is_not_presented_as_a_new_success(settings):
+async def test_latest_refused_update_is_not_presented_as_a_new_success(settings) -> None:
     repo = MemoryRepository()
     item, event = await analysis(repo, settings, klass="MAJOR")
     old = utcnow() - timedelta(minutes=10)
@@ -451,7 +455,7 @@ async def test_latest_refused_update_is_not_presented_as_a_new_success(settings)
     assert "Предыдущая карточка в Alerts" in card["text"]
 
 
-async def test_final_class_cap_is_explained_before_positive_agent_rationales(settings):
+async def test_final_class_cap_is_explained_before_positive_agent_rationales(settings) -> None:
     repo = MemoryRepository()
     item, event = await analysis(repo, settings, klass="LOW")
     await repo.put(
@@ -470,7 +474,7 @@ async def test_final_class_cap_is_explained_before_positive_agent_rationales(set
     assert "Для публикации требуется" not in card["text"]
 
 
-async def test_rate_limit_defers_other_items_without_extra_http_attempts(settings):
+async def test_rate_limit_defers_other_items_without_extra_http_attempts(settings) -> None:
     repo = MemoryRepository()
     first = await source(repo)
     second = await source(repo, item_id="second", external_id="second")
@@ -479,7 +483,7 @@ async def test_rate_limit_defers_other_items_without_extra_http_attempts(setting
     notices = await repo.list("out.ops_notices")
     requests = []
 
-    def respond(request):
+    def respond(request: pytest.FixtureRequest):
         requests.append(request)
         return httpx.Response(429, json={"ok": False, "parameters": {"retry_after": 30}})
 
@@ -493,7 +497,7 @@ async def test_rate_limit_defers_other_items_without_extra_http_attempts(setting
     assert not await repo.list("out.deliveries", filters={"notice_id": notices[1]["notice_id"]})
 
 
-async def test_edit_not_modified_is_successful_recovery_without_another_message(settings):
+async def test_edit_not_modified_is_successful_recovery_without_another_message(settings) -> None:
     repo = MemoryRepository()
     item = await source(repo)
     await item_progress(repo, settings, item["item_id"], "RECEIVED")
@@ -506,7 +510,7 @@ async def test_edit_not_modified_is_successful_recovery_without_another_message(
     )
     requests = []
 
-    def respond(request):
+    def respond(request: pytest.FixtureRequest):
         requests.append(request.url.path)
         return httpx.Response(400, json={"ok": False, "description": "Bad Request: message is not modified"})
 
@@ -519,7 +523,7 @@ async def test_edit_not_modified_is_successful_recovery_without_another_message(
 
 
 @pytest.mark.parametrize("delivered", [False, True])
-async def test_previous_alert_does_not_hide_new_incomplete_analysis(settings, delivered):
+async def test_previous_alert_does_not_hide_new_incomplete_analysis(settings, delivered) -> None:
     repo = MemoryRepository()
     item, event = await analysis(repo, settings, klass="MAJOR")
     await repo.put(
@@ -553,7 +557,7 @@ async def test_previous_alert_does_not_hide_new_incomplete_analysis(settings, de
     assert "Не выполнено: определение затронутых токенов" in card["text"]
 
 
-async def test_new_assessment_replaces_an_old_publication_refusal(settings):
+async def test_new_assessment_replaces_an_old_publication_refusal(settings) -> None:
     repo = MemoryRepository()
     item, event = await analysis(repo, settings, klass="MAJOR", completed=False)
     await item_progress(
@@ -575,7 +579,7 @@ async def test_new_assessment_replaces_an_old_publication_refusal(settings):
     assert "Значимость ниже порога" not in card["text"]
 
 
-async def test_followup_job_is_ready_without_another_initial_batch_delay(settings):
+async def test_followup_job_is_ready_without_another_initial_batch_delay(settings) -> None:
     repo = MemoryRepository()
     settings.ops_progress_delay_s = 15
     item = await source(repo)
@@ -592,7 +596,7 @@ async def test_followup_job_is_ready_without_another_initial_batch_delay(setting
 
 
 @pytest.mark.parametrize("update_kind", ["notice", "artifact"])
-async def test_later_analysis_clears_an_obsolete_missing_data_refusal(settings, update_kind):
+async def test_later_analysis_clears_an_obsolete_missing_data_refusal(settings, update_kind) -> None:
     repo = MemoryRepository()
     item, event = await analysis(repo, settings, klass="MAJOR", completed=False)
     await item_progress(
@@ -626,7 +630,7 @@ async def test_later_analysis_clears_an_obsolete_missing_data_refusal(settings, 
 
 @pytest.mark.parametrize("same_alert_id", [False, True])
 @pytest.mark.parametrize("failed", [False, True])
-async def test_latest_delivery_state_keeps_link_to_earlier_success(settings, same_alert_id, failed):
+async def test_latest_delivery_state_keeps_link_to_earlier_success(settings, same_alert_id, failed) -> None:
     repo = MemoryRepository()
     item, event = await analysis(repo, settings, klass="MAJOR")
     old = utcnow() - timedelta(minutes=10)

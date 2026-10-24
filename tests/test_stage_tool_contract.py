@@ -11,7 +11,7 @@ DIRECTORY = Path(__file__).parents[1] / "config/skills/tank-event-analyst"
 
 
 @pytest.mark.parametrize("name", ["record_event", "add_observation"])
-def test_stage_claim_contract_is_closed_synced_and_preserves_unknown(name):
+def test_stage_claim_contract_is_closed_synced_and_preserves_unknown(name) -> None:
     schema = json.loads((DIRECTORY / f"{name}.schema.json").read_text())
     tool = next(t for t in json.loads((DIRECTORY / "tools.json").read_text()) if t["name"] == name)
     assert tool["input_schema"] == {
@@ -49,7 +49,7 @@ def test_stage_claim_contract_is_closed_synced_and_preserves_unknown(name):
 
 @pytest.mark.parametrize("reason", [None, "", "   "])
 @pytest.mark.parametrize("public", [True, False])
-def test_rejection_contract_requires_a_concrete_reason(reason, public):
+def test_rejection_contract_requires_a_concrete_reason(reason, public) -> None:
     from test_event_tools import extraction
 
     from tank.event_tools import domain_schema

@@ -43,7 +43,7 @@ def packet():
     return value
 
 
-def test_pure_truth_selected_bounds_exact_and_source_precision_propagated():
+def test_pure_truth_selected_bounds_exact_and_source_precision_propagated() -> None:
     from copy import deepcopy
 
     snapshot = packet()
@@ -64,14 +64,14 @@ def test_pure_truth_selected_bounds_exact_and_source_precision_propagated():
 
 
 @pytest.mark.asyncio
-async def test_actual_service_preserves_event_public_and_anchor_precision_without_iso_inference():
+async def test_actual_service_preserves_event_public_and_anchor_precision_without_iso_inference() -> None:
     event = {"public_at": "2026-10-16T08:00:00Z", "public_at_prec": "BUCKET(1h)"}
 
     class Repo:
         async def get(self, *args):
             return event
 
-        async def put(self, *args, **kwargs):
+        async def put(self, *args, **kwargs) -> None:
             pass
 
     class Market:
@@ -94,7 +94,7 @@ async def test_actual_service_preserves_event_public_and_anchor_precision_withou
 
 
 @pytest.mark.parametrize("precision", ["BUCKET(1h)", None])
-def test_supplied_uncertain_cutoff_and_offset_window_bounds_keep_uncertainty(precision):
+def test_supplied_uncertain_cutoff_and_offset_window_bounds_keep_uncertainty(precision) -> None:
     snapshot = packet()
     snapshot["cutoff_prec"] = precision
     snapshot["cutoff_prec_reason"] = "INCOMPLETE" if precision is None else None
@@ -107,7 +107,7 @@ def test_supplied_uncertain_cutoff_and_offset_window_bounds_keep_uncertainty(pre
 
 
 @pytest.mark.integration
-def test_actual_book_canonical_exchange_timestamp_reaches_liquidity_precision():
+def test_actual_book_canonical_exchange_timestamp_reaches_liquidity_precision() -> None:
     from tank.market.books import OrderBook
 
     snapshot = packet()

@@ -34,7 +34,7 @@ def inputs():
     return raw, projected, item, proof
 
 
-def test_exact_normal_parser_body_and_unique_document_only():
+def test_exact_normal_parser_body_and_unique_document_only() -> None:
     raw, projected, item, proof = inputs()
     assert item["text"] == "The Commission proposes a custody rule for crypto assets."
     assert len(json.loads(projected)["results"]) == 1
@@ -56,7 +56,7 @@ def test_exact_normal_parser_body_and_unique_document_only():
         ("source_id", "S05"),
     ],
 )
-def test_source_content_identity_and_date_cannot_change(field, value):
+def test_source_content_identity_and_date_cannot_change(field, value) -> None:
     _, projected, item, proof = inputs()
     item[field] = value
     with pytest.raises(ValueError):
@@ -64,7 +64,7 @@ def test_source_content_identity_and_date_cannot_change(field, value):
 
 
 @pytest.mark.parametrize("variant", ["missing", "duplicate", "selector"])
-def test_projection_refuses_ambiguous_or_missing_selection(variant):
+def test_projection_refuses_ambiguous_or_missing_selection(variant) -> None:
     raw, _, _, _ = inputs()
     data = json.loads(raw)
     selector = {"document_number": "2026-12345"}
@@ -79,7 +79,7 @@ def test_projection_refuses_ambiguous_or_missing_selection(variant):
 
 
 @pytest.mark.parametrize("module_hash", [None, "wrong"])
-def test_source_parser_version_is_bound(module_hash):
+def test_source_parser_version_is_bound(module_hash) -> None:
     _, projected, item, proof = inputs()
     proof["derivation"]["module_sha256"] = module_hash
     with pytest.raises(ValueError):

@@ -44,7 +44,7 @@ def ops_reply(message_id, ref, text="Почему не опубликовали?
     )
 
 
-async def item(repo, item_id, *, decision="SEND", score=0.82, stages=()):
+async def item(repo, item_id, *, decision="SEND", score=0.82, stages=()) -> None:
     await repo.put(
         "ingest.source_items",
         item_id,
@@ -78,7 +78,7 @@ async def item(repo, item_id, *, decision="SEND", score=0.82, stages=()):
         )
 
 
-async def ops_card(repo, item_id, ref):
+async def ops_card(repo, item_id, ref) -> None:
     await repo.put(
         "out.ops_cards",
         "card_" + item_id,
@@ -91,7 +91,7 @@ async def ops_card(repo, item_id, ref):
     )
 
 
-async def analyst_session(repo, session_id, event_id, item_id, *, status="OPEN", kind="NEW_ITEM"):
+async def analyst_session(repo, session_id, event_id, item_id, *, status="OPEN", kind="NEW_ITEM") -> None:
     await repo.put(
         "ops.agent_sessions",
         session_id,
@@ -120,7 +120,9 @@ async def analyst_session(repo, session_id, event_id, item_id, *, status="OPEN",
 
 
 @pytest.mark.parametrize("kind", ["NEW_ITEM", "ITEM_ADDED"])
-async def test_ops_reply_about_analyzed_unpublished_item_continues_its_session_and_answers_in_ops(kind):
+async def test_ops_reply_about_analyzed_unpublished_item_continues_its_session_and_answers_in_ops(
+    kind,
+) -> None:
     repo = MemoryRepository()
     await seed(repo)
     await item(repo, "itm_2", stages=[("AGENT_ACCEPTED", ""), ("AGENT_COMPLETED", "")])
@@ -170,7 +172,7 @@ async def answer_in_ops(repo, question_id):
     return answers.sent
 
 
-async def test_ops_reply_about_published_item_continues_its_session_and_answers_in_ops():
+async def test_ops_reply_about_published_item_continues_its_session_and_answers_in_ops() -> None:
     repo = MemoryRepository()
     await seed(repo)
     await item(repo, "itm_1", stages=[("ALERT_SENT", "")])
@@ -200,7 +202,7 @@ async def test_ops_reply_about_published_item_continues_its_session_and_answers_
     assert sent[0]["reply_parameters"]["message_id"] == 33
 
 
-async def test_ops_reply_about_jev_filtered_item_states_only_the_reason():
+async def test_ops_reply_about_jev_filtered_item_states_only_the_reason() -> None:
     repo = MemoryRepository()
     await seed(repo)
     await item(
@@ -251,7 +253,7 @@ async def test_ops_reply_about_jev_filtered_item_states_only_the_reason():
         ),
     ],
 )
-async def test_ops_reply_about_item_that_never_reached_an_agent_states_why(stages, reason, text):
+async def test_ops_reply_about_item_that_never_reached_an_agent_states_why(stages, reason, text) -> None:
     repo = MemoryRepository()
     await seed(repo)
     await item(repo, "itm_5", stages=stages)
@@ -264,7 +266,7 @@ async def test_ops_reply_about_item_that_never_reached_an_agent_states_why(stage
 
 
 @pytest.mark.parametrize("retention", [True, False])
-async def test_ops_reply_about_archived_session_gets_only_the_reason(retention):
+async def test_ops_reply_about_archived_session_gets_only_the_reason(retention) -> None:
     repo = MemoryRepository()
     await seed(repo)
     await item(repo, "itm_4", stages=[("AGENT_REJECTED", "NO_EVENT")])
@@ -295,7 +297,7 @@ async def test_ops_reply_about_archived_session_gets_only_the_reason(retention):
     assert sent[0]["reply_parameters"]["message_id"] == 34
 
 
-async def test_ops_messages_that_are_not_replies_to_tank_are_ignored():
+async def test_ops_messages_that_are_not_replies_to_tank_are_ignored() -> None:
     repo = MemoryRepository()
     await seed(repo)
     plain = message(40, date=NOW - 1, text="Всем привет", chat=int(OPS), chat_type="supergroup")
@@ -323,7 +325,7 @@ async def test_ops_messages_that_are_not_replies_to_tank_are_ignored():
     assert not await repo.list("out.user_questions")
 
 
-async def test_ops_follow_ups_survive_restart_and_redelivery_without_double_answers():
+async def test_ops_follow_ups_survive_restart_and_redelivery_without_double_answers() -> None:
     repo = MemoryRepository()
     await seed(repo)
     await item(repo, "itm_2")
@@ -349,7 +351,7 @@ async def test_ops_follow_ups_survive_restart_and_redelivery_without_double_answ
     assert len(await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})) == 1
 
 
-async def test_alerts_follow_ups_are_unchanged_and_ops_needs_its_configured_chat():
+async def test_alerts_follow_ups_are_unchanged_and_ops_needs_its_configured_chat() -> None:
     repo = MemoryRepository()
     await seed(repo)
     await ops_card(repo, "itm_1", 55)
@@ -382,7 +384,7 @@ async def test_alerts_follow_ups_are_unchanged_and_ops_needs_its_configured_chat
 
 
 @pytest.mark.parametrize("ref", [700, 1001])
-async def test_reply_to_an_ops_answer_continues_the_same_session(ref):
+async def test_reply_to_an_ops_answer_continues_the_same_session(ref) -> None:
     repo = MemoryRepository()
     await seed(repo)
     await item(repo, "itm_2")

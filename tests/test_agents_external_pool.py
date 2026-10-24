@@ -16,12 +16,12 @@ from tank.storage import MemoryRepository
 @pytest.mark.parametrize(
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
-async def test_external_tool_burst_allows_unrelated_worker_progress(backend, tool, postgres_template):
+async def test_external_tool_burst_allows_unrelated_worker_progress(backend, tool, postgres_template) -> None:
     async with fixture_repo(backend, postgres_template) as repo:
         await exercise_external_tool_burst(repo, tool)
 
 
-async def exercise_external_tool_burst(repo, tool):
+async def exercise_external_tool_burst(repo, tool) -> None:
     opts, _ = settings()
     release, all_entered = asyncio.Event(), asyncio.Event()
     entered, posts = set(), []
@@ -43,7 +43,7 @@ async def exercise_external_tool_burst(repo, tool):
         await release.wait()
         return {"ok": True, "session_id": context["session_id"]}
 
-    def acknowledge(request):
+    def acknowledge(request: pytest.FixtureRequest):
         posts.append(json.loads(request.content)["events"][0])
         return httpx.Response(200, json={"data": [{"id": f"ack-{len(posts)}"}]})
 
@@ -82,18 +82,18 @@ async def exercise_external_tool_burst(repo, tool):
 
 
 @pytest.mark.parametrize("status", [404, 503])
-async def test_external_error_survives_lost_ack_without_refetch_or_new_ordinal(status):
+async def test_external_error_survives_lost_ack_without_refetch_or_new_ordinal(status) -> None:
     repo = MemoryRepository()
     opts, _ = settings()
     await seed_session(repo)
     dispatched, posts = [], []
 
-    async def dispatch(name, arguments, context):
+    async def dispatch(name, arguments, context) -> None:
         dispatched.append(name)
         request = httpx.Request("GET", "https://source.invalid/article")
         httpx.Response(status, request=request).raise_for_status()
 
-    def acknowledge(request):
+    def acknowledge(request: pytest.FixtureRequest):
         posts.append(json.loads(request.content)["events"][0])
         if len(posts) == 1:
             raise httpx.ConnectError("Lost native ACK", request=request)

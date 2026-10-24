@@ -12,7 +12,9 @@ from tank.settings import Settings
 pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 
-async def test_reference_clock_view_and_search_with_actual_postgres(tmp_path, monkeypatch, postgres_template):
+async def test_reference_clock_view_and_search_with_actual_postgres(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, postgres_template
+) -> None:
     dsn = os.getenv("TANK_TEST_DATABASE_URL")
     if not dsn:
         pytest.skip("Requires isolated PostgreSQL QA connection")

@@ -11,7 +11,7 @@ from tank.util import iso, utcnow
 
 
 @pytest.mark.asyncio
-async def test_close_loader_reads_only_hour_ending_candle_and_reference_flow(setup):
+async def test_close_loader_reads_only_hour_ending_candle_and_reference_flow(setup) -> None:
     repo, settings, inst = setup
     calls = []
     original = repo.iter_range
@@ -37,7 +37,7 @@ async def test_close_loader_reads_only_hour_ending_candle_and_reference_flow(set
 
 
 @pytest.mark.asyncio
-async def test_native_history_cache_refreshes_late_correction_without_rereading_history(setup):
+async def test_native_history_cache_refreshes_late_correction_without_rereading_history(setup) -> None:
     repo, settings, spot = setup
     end = utcnow() - timedelta(hours=1)
     perp = dict(spot, instrument_id="binance:perp:ABCUSD", market_type="PERP_LINEAR")
@@ -92,7 +92,7 @@ async def test_native_history_cache_refreshes_late_correction_without_rereading_
 
 
 @pytest.mark.asyncio
-async def test_composite_reads_only_dependency_metadata_and_invalidates_old_point_change(setup):
+async def test_composite_reads_only_dependency_metadata_and_invalidates_old_point_change(setup) -> None:
     repo, settings, inst = setup
     end = utcnow() - timedelta(hours=1)
     async with httpx.AsyncClient() as http:
@@ -122,7 +122,7 @@ async def test_composite_reads_only_dependency_metadata_and_invalidates_old_poin
 
 
 @pytest.mark.asyncio
-async def test_depth_baseline_cache_uses_source_head_and_refreshes_real_change(setup):
+async def test_depth_baseline_cache_uses_source_head_and_refreshes_real_change(setup) -> None:
     repo, settings, inst = setup
     origin = utcnow() - timedelta(hours=2)
     point = {
@@ -158,7 +158,7 @@ async def test_depth_baseline_cache_uses_source_head_and_refreshes_real_change(s
 
 
 @pytest.mark.asyncio
-async def test_dc_and_depth_loader_use_bounded_inputs_and_cutoff_safe_latest(setup):
+async def test_dc_and_depth_loader_use_bounded_inputs_and_cutoff_safe_latest(setup) -> None:
     repo, settings, inst = setup
     end = utcnow() - timedelta(hours=2)
     point = {
@@ -230,7 +230,7 @@ async def test_dc_and_depth_loader_use_bounded_inputs_and_cutoff_safe_latest(set
 
 
 @pytest.mark.asyncio
-async def test_native_cache_cutoff_movement_never_leaks_future_or_loses_precollected_points(setup):
+async def test_native_cache_cutoff_movement_never_leaks_future_or_loses_precollected_points(setup) -> None:
     repo, settings, spot = setup
     end = utcnow() - timedelta(days=1)
     perp = dict(spot, instrument_id="binance:perp:ABCUSD", market_type="PERP_LINEAR")
@@ -266,7 +266,7 @@ async def test_native_cache_cutoff_movement_never_leaks_future_or_loses_precolle
 
 
 @pytest.mark.asyncio
-async def test_composite_semantic_head_detects_newly_eligible_point_behind_late_correction(setup):
+async def test_composite_semantic_head_detects_newly_eligible_point_behind_late_correction(setup) -> None:
     repo, settings, inst = setup
     now = utcnow()
     end = now - timedelta(days=1)
@@ -297,7 +297,7 @@ async def test_composite_semantic_head_detects_newly_eligible_point_behind_late_
 
 
 @pytest.mark.asyncio
-async def test_compact_kline_vectors_preserve_native_precision_and_prove_append_vs_correction(setup):
+async def test_compact_kline_vectors_preserve_native_precision_and_prove_append_vs_correction(setup) -> None:
     from array import array
 
     repo, settings, inst = setup
@@ -364,7 +364,7 @@ async def test_compact_kline_vectors_preserve_native_precision_and_prove_append_
 
 
 @pytest.mark.asyncio
-async def test_projected_flow_restores_declared_aliases_without_inventing_missing_usd(setup):
+async def test_projected_flow_restores_declared_aliases_without_inventing_missing_usd(setup) -> None:
     repo, settings, inst = setup
     end = utcnow().replace(second=0, microsecond=0) - timedelta(hours=2)
     await repo.put(
@@ -396,7 +396,7 @@ async def test_projected_flow_restores_declared_aliases_without_inventing_missin
 
 
 @pytest.mark.asyncio
-async def test_rolling_kline_cursor_serves_an_earlier_checkpoint_without_rereading_history(setup):
+async def test_rolling_kline_cursor_serves_an_earlier_checkpoint_without_rereading_history(setup) -> None:
     repo, settings, inst = setup
     start = (utcnow() - timedelta(hours=3)).replace(second=0, microsecond=0)
 
@@ -506,7 +506,7 @@ async def test_rolling_kline_cursor_serves_an_earlier_checkpoint_without_rereadi
 
 
 @pytest.mark.asyncio
-async def test_rolling_kline_cursor_serves_an_older_assembly_clock_without_later_rows(setup):
+async def test_rolling_kline_cursor_serves_an_older_assembly_clock_without_later_rows(setup) -> None:
     repo, settings, inst = setup
     start = (utcnow() - timedelta(hours=3)).replace(second=0, microsecond=0)
     early = iso(utcnow() - timedelta(minutes=30))

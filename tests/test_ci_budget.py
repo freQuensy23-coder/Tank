@@ -11,12 +11,12 @@ BUDGET = runpy.run_path(str(CI_ROOT / "ci_budget.py"))
 
 
 @pytest.fixture
-def integration_checks(monkeypatch):
+def integration_checks(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.syspath_prepend(str(CI_ROOT))
     return importlib.import_module("integration_shard"), importlib.import_module("check_integration_results")
 
 
-def test_shards_preserve_every_file_and_are_stable(integration_checks):
+def test_shards_preserve_every_file_and_are_stable(integration_checks) -> None:
     shard, _ = integration_checks
     paths = [f"tests/test_integration_{index}.py" for index in range(500)]
     partitions = [{path for path in paths if shard.shard_for(path, 3) == index} for index in range(3)]
@@ -29,13 +29,13 @@ def test_shards_preserve_every_file_and_are_stable(integration_checks):
 
 
 @pytest.mark.parametrize("value", ["-1/3", "3/3", "0/0", "0", "a/3", "0/1/2"])
-def test_invalid_shard_is_rejected(integration_checks, value):
+def test_invalid_shard_is_rejected(integration_checks, value) -> None:
     shard, _ = integration_checks
     with pytest.raises(ValueError):
         shard.parse_shard(value)
 
 
-def reports(tmp_path):
+def reports(tmp_path: Path):
     expected = [
         {"classname": "tests.test_a", "name": "first", "file": "tests/test_a.py"},
         {"classname": "tests.test_b", "name": "second", "file": "tests/test_b.py"},
@@ -52,7 +52,7 @@ def reports(tmp_path):
     return manifest, paths
 
 
-def test_full_union_requires_every_case_once(integration_checks, tmp_path):
+def test_full_union_requires_every_case_once(integration_checks, tmp_path: Path) -> None:
     _, check = integration_checks
     manifest, paths = reports(tmp_path)
     assert check.verify(paths, [manifest]) == {"cases": 2, "passed": 2, "skipped": 0}
@@ -62,7 +62,7 @@ def test_full_union_requires_every_case_once(integration_checks, tmp_path):
 
 
 @pytest.mark.parametrize("outcome", ["failure", "error", "skipped"])
-def test_union_rejects_unsuccessful_tests(integration_checks, tmp_path, outcome):
+def test_union_rejects_unsuccessful_tests(integration_checks, tmp_path: Path, outcome) -> None:
     _, check = integration_checks
     manifest, paths = reports(tmp_path)
     root = ET.parse(paths[0])
@@ -72,7 +72,7 @@ def test_union_rejects_unsuccessful_tests(integration_checks, tmp_path, outcome)
         check.verify(paths, [manifest])
 
 
-def test_union_rejects_different_collections(integration_checks, tmp_path):
+def test_union_rejects_different_collections(integration_checks, tmp_path: Path) -> None:
     _, check = integration_checks
     manifest, paths = reports(tmp_path)
     other = tmp_path / "other.json"
@@ -90,19 +90,19 @@ def passed_jobs(completed="2026-10-23T12:03:20Z"):
     ]
 
 
-def test_budget_starts_at_mr_creation_including_workflow_delay():
+def test_budget_starts_at_mr_creation_including_workflow_delay() -> None:
     event = {"action": "opened", "pull_request": {"created_at": "2026-10-23T12:00:00Z"}}
     run = {"created_at": "2026-10-23T12:01:00Z"}
     assert BUDGET["origin"](event, run) == BUDGET["timestamp"]("2026-10-23T12:00:00Z")
 
 
-def test_new_commit_gets_its_own_feedback_budget():
+def test_new_commit_gets_its_own_feedback_budget() -> None:
     event = {"action": "synchronize", "pull_request": {"created_at": "2026-10-22T12:00:00Z"}}
     run = {"created_at": "2026-10-23T12:00:00Z"}
     assert BUDGET["origin"](event, run) == BUDGET["timestamp"](run["created_at"])
 
 
-def test_budget_waits_for_all_lanes_and_images():
+def test_budget_waits_for_all_lanes_and_images() -> None:
     deadline = BUDGET["timestamp"]("2026-10-23T12:04:00Z")
     jobs = passed_jobs()
     assert BUDGET["result"](jobs, deadline)
@@ -112,14 +112,14 @@ def test_budget_waits_for_all_lanes_and_images():
 
 
 @pytest.mark.parametrize("conclusion", ["failure", "skipped", "cancelled"])
-def test_budget_cannot_be_green_when_required_lane_did_not_pass(conclusion):
+def test_budget_cannot_be_green_when_required_lane_did_not_pass(conclusion) -> None:
     jobs = passed_jobs()
     jobs[0]["conclusion"] = conclusion
     with pytest.raises(ValueError, match="did not pass"):
         BUDGET["result"](jobs, BUDGET["timestamp"]("2026-10-23T12:04:00Z"))
 
 
-def test_budget_rejects_late_success():
+def test_budget_rejects_late_success() -> None:
     with pytest.raises(ValueError, match="after"):
         BUDGET["result"](
             passed_jobs("2026-10-23T12:04:01Z"),
@@ -127,7 +127,7 @@ def test_budget_rejects_late_success():
         )
 
 
-def test_queued_past_deadline_is_cancelled_without_accepting_results():
+def test_queued_past_deadline_is_cancelled_without_accepting_results() -> None:
     calls = []
 
     def api(suffix, method, deadline):
@@ -142,7 +142,7 @@ def test_queued_past_deadline_is_cancelled_without_accepting_results():
     assert calls == [("", "GET"), ("/force-cancel", "POST")]
 
 
-def test_watcher_accepts_only_complete_results_within_budget():
+def test_watcher_accepts_only_complete_results_within_budget() -> None:
     def api(suffix, method, deadline):
         if not suffix:
             return {"created_at": "2026-10-23T12:00:00Z"}

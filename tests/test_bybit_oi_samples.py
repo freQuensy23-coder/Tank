@@ -15,7 +15,7 @@ from tank.util import iso, parse_time
 
 
 @pytest.mark.parametrize("period", [300, 900, 3600])
-def test_sample_time_is_exact_without_rounding_or_request_bucket_invention(period):
+def test_sample_time_is_exact_without_rounding_or_request_bucket_invention(period) -> None:
     inst = instrument("bybit", "PERP_LINEAR")
     timestamp = TS + 1234
     raw = {"singleOpenInterest": "123.456789", "openInterest": "246.913578", "timestamp": str(timestamp)}
@@ -31,7 +31,7 @@ def test_sample_time_is_exact_without_rounding_or_request_bucket_invention(perio
     assert row["received_ts"] == iso(timestamp + 4000) and row["received_ts_prec"] == "COLLECTION_ONLY"
 
 
-def test_current_period_sample_is_eligible_but_future_sample_is_not_selected():
+def test_current_period_sample_is_eligible_but_future_sample_is_not_selected() -> None:
     inst = instrument("bybit", "PERP_LINEAR")
     start = parse_time(TS)
     end = start + timedelta(minutes=4)
@@ -55,7 +55,7 @@ def test_current_period_sample_is_eligible_but_future_sample_is_not_selected():
     assert _oi_stats([rows[0], legacy], start, end) is None and legacy == original
 
 
-def test_missing_timestamp_bothsided_only_and_unaligned_mark_remain_unavailable():
+def test_missing_timestamp_bothsided_only_and_unaligned_mark_remain_unavailable() -> None:
     inst = instrument("bybit", "PERP_LINEAR")
     with pytest.raises(SemanticError, match="source timestamp absent"):
         oi(inst, {"singleOpenInterest": "100"})
@@ -66,7 +66,7 @@ def test_missing_timestamp_bothsided_only_and_unaligned_mark_remain_unavailable(
     assert "semantic_confidence" not in row
 
 
-def test_actual_retained_f11_endpoint_values_reach_production_oi_math_without_replacing_rest():
+def test_actual_retained_f11_endpoint_values_reach_production_oi_math_without_replacing_rest() -> None:
     import hashlib
     import json
 

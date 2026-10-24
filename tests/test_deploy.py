@@ -15,7 +15,7 @@ def module(name):
     return m
 
 
-def test_postgres_image_hba_confines_every_role_to_its_compose_address():
+def test_postgres_image_hba_confines_every_role_to_its_compose_address() -> None:
     rules = (ROOT / "deploy/postgres/pg_hba.conf").read_text().splitlines()
     assert rules[:2] == ["local all postgres peer", "local all all reject"]
     assert "host tank,tank_replay tank 172.30.60.0/24 scram-sha-256" in rules
@@ -29,7 +29,7 @@ def test_postgres_image_hba_confines_every_role_to_its_compose_address():
 @pytest.mark.integration
 @pytest.mark.node
 @pytest.mark.process
-def test_sandbox_route_defaults_and_validated_isolated_override():
+def test_sandbox_route_defaults_and_validated_isolated_override() -> None:
     import shutil
 
     node = shutil.which("node")
@@ -61,7 +61,7 @@ console.log(JSON.stringify({defaults,isolated,rejected}));
 @pytest.mark.integration
 @pytest.mark.node
 @pytest.mark.process
-def test_replay_route_resolves_only_declared_private_service_for_l4_acl():
+def test_replay_route_resolves_only_declared_private_service_for_l4_acl() -> None:
     import shutil
 
     node = shutil.which("node")

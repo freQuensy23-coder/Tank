@@ -4,6 +4,7 @@ import copy
 import json
 import os
 from contextlib import AsyncExitStack
+from pathlib import Path
 
 import httpx
 import pytest
@@ -19,8 +20,8 @@ from tank.util import sha256
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
 async def test_fresh_import_rederives_policy_without_old_classifier_outputs(
-    tmp_path, backend, postgres_template
-):
+    tmp_path: Path, backend, postgres_template
+) -> None:
     async with AsyncExitStack() as resources:
         if backend == "postgres":
             url = os.getenv("TANK_TEST_DATABASE_URL")
@@ -106,7 +107,7 @@ async def test_fresh_import_rederives_policy_without_old_classifier_outputs(
 
         requests = []
 
-        def stop(request):
+        def stop(request: pytest.FixtureRequest) -> None:
             requests.append(request.method)
             raise StopBeforeNative()
 

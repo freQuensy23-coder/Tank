@@ -1,6 +1,7 @@
 """Reaction pack: BTC/ETH benchmark values (lead ruling on 03 §8.1) and coalesced late revisions (03 §8.6)."""
 
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -33,7 +34,7 @@ class KlineMarket:
         "binance:perp:BTCUSDT": {"token_id": "bitcoin:BTC"},
     }
 
-    def __init__(self, end):
+    def __init__(self, end) -> None:
         self.end = end
         self.changes = []
         self.snapshots = 0
@@ -47,7 +48,7 @@ class KlineMarket:
             yield change
 
 
-async def seed(repo, anchor, analysis_set):
+async def seed(repo, anchor, analysis_set) -> None:
     await repo.put(
         "evt.events", "e", {"event_id": "e", "public_at": iso(anchor), "known_to_us_at": iso(anchor)}
     )
@@ -58,8 +59,8 @@ async def seed(repo, anchor, analysis_set):
 
 @pytest.mark.parametrize("in_analysis_set", [False, True])
 async def test_benchmark_checkpoint_uses_base_klines_only_outside_analysis_set(
-    tmp_path, monkeypatch, in_analysis_set
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_analysis_set
+) -> None:
     end = utcnow().replace(second=0, microsecond=0)
     anchor = end - timedelta(hours=2)
     repo = MemoryRepository()
@@ -92,7 +93,7 @@ async def test_benchmark_checkpoint_uses_base_klines_only_outside_analysis_set(
     }
 
 
-async def test_late_changes_keep_one_queued_revision_per_checkpoint(tmp_path):
+async def test_late_changes_keep_one_queued_revision_per_checkpoint(tmp_path: Path) -> None:
     end = utcnow().replace(second=0, microsecond=0)
     anchor = end - timedelta(hours=2)
     repo = MemoryRepository()

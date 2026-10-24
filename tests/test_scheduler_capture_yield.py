@@ -4,13 +4,17 @@ import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
 
+import pytest
+
 import tank.scheduler as scheduler_module
 from tank.scheduler import Scheduler
 from tank.storage import MemoryRepository
 from tank.util import utcnow
 
 
-async def test_capture_waits_while_market_truth_runs_and_logs_it(monkeypatch, caplog):
+async def test_capture_waits_while_market_truth_runs_and_logs_it(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     import logging
 
     repo = MemoryRepository()
@@ -19,7 +23,7 @@ async def test_capture_waits_while_market_truth_runs_and_logs_it(monkeypatch, ca
     polls = []
     real_sleep = asyncio.sleep
 
-    async def fast_sleep(seconds):
+    async def fast_sleep(seconds) -> None:
         polls.append(seconds)
         if len(polls) == 3:
             await repo.finish_job(truth["job_id"])
@@ -34,12 +38,12 @@ async def test_capture_waits_while_market_truth_runs_and_logs_it(monkeypatch, ca
     assert "yielded 6 s to RUN_MARKET_TRUTH" in caplog.text
 
 
-async def test_capture_near_expiry_does_not_yield(monkeypatch):
+async def test_capture_near_expiry_does_not_yield(monkeypatch: pytest.MonkeyPatch) -> None:
     repo = MemoryRepository()
     await repo.enqueue("RUN_MARKET_TRUTH", {}, "mt", priority=1)
     await repo.claim_job()
 
-    async def no_sleep(seconds):
+    async def no_sleep(seconds) -> None:
         raise AssertionError("a capture near its expiry must not wait")
 
     monkeypatch.setattr(scheduler_module.asyncio, "sleep", no_sleep)

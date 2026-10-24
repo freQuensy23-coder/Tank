@@ -2,6 +2,7 @@
 
 import copy
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -17,7 +18,7 @@ from tank.util import iso, new_id, sha256
 
 
 @pytest.fixture
-async def legacy(tmp_path):
+async def legacy(tmp_path: Path):
     repo = MemoryRepository()
     settings = Settings(data_dir=tmp_path, openma_url="http://oma", _env_file=None)
     item = {
@@ -50,14 +51,14 @@ async def legacy(tmp_path):
 
 
 class NativeSession:
-    def __init__(self):
+    def __init__(self) -> None:
         self.status = "idle"
         self.requests = []
         self.tools = []
         self.fail_update = None
         self.lose_result = False
 
-    def __call__(self, request):
+    def __call__(self, request: pytest.FixtureRequest):
         body = json.loads(request.content or b"{}")
         self.requests.append((request.method, request.url.path, body))
         if request.method == "GET":
@@ -80,7 +81,7 @@ class NativeSession:
 @pytest.mark.parametrize(
     "kind", ["ITEM_ADDED", "MILESTONE", "CONDITION_FIRED", "CALL_EXPIRED", "SCOUT_REVIEW"]
 )
-async def test_legacy_callbacks_upgrade_before_delivery_and_new_turns_reject_ids(legacy, kind):
+async def test_legacy_callbacks_upgrade_before_delivery_and_new_turns_reject_ids(legacy, kind) -> None:
     repo, settings, session, item, event = legacy
     payload = {
         "kind": kind,
@@ -138,7 +139,7 @@ async def test_legacy_callbacks_upgrade_before_delivery_and_new_turns_reject_ids
     assert native.tools[0]["configs"] == [{"name": "browser", "enabled": True}]
 
 
-async def test_old_description_call_in_a_legacy_turn_is_refused_once_and_the_id_call_runs(legacy):
+async def test_old_description_call_in_a_legacy_turn_is_refused_once_and_the_id_call_runs(legacy) -> None:
     repo, settings, session, item, event = legacy
     session.update(runtime_status="REQUIRES_ACTION", active_message_id="old_message")
     session["message_log"][0]["turn_status"] = "RUNNING"
@@ -224,7 +225,7 @@ async def test_old_description_call_in_a_legacy_turn_is_refused_once_and_the_id_
     assert bound == {"token_id": "world:WLD", "event_id": event["event_id"]}
 
 
-async def test_busy_legacy_session_defers_new_callbacks_without_changing_the_active_input(legacy):
+async def test_busy_legacy_session_defers_new_callbacks_without_changing_the_active_input(legacy) -> None:
     repo, settings, session, item, event = legacy
     session.update(runtime_status="RUNNING", active_message_id="old_message")
     await repo.put("ops.agent_sessions", session["session_id"], session)
@@ -240,7 +241,9 @@ async def test_busy_legacy_session_defers_new_callbacks_without_changing_the_act
 
 
 @pytest.mark.parametrize("status", [400, 429, 503])
-async def test_failed_migration_never_marks_old_contract_current_or_delivers_a_callback(legacy, status):
+async def test_failed_migration_never_marks_old_contract_current_or_delivers_a_callback(
+    legacy, status
+) -> None:
     repo, settings, session, _, event = legacy
     native = NativeSession()
     native.fail_update = status
@@ -252,12 +255,12 @@ async def test_failed_migration_never_marks_old_contract_current_or_delivers_a_c
     assert await repo.get("ops.agent_sessions", session["session_id"]) == session
 
 
-async def test_old_remote_snapshot_is_not_recovered_as_a_new_context(legacy):
+async def test_old_remote_snapshot_is_not_recovered_as_a_new_context(legacy) -> None:
     repo, settings, _, _, _ = legacy
     item_id = "new_source"
     requests = []
 
-    def handler(request):
+    def handler(request: pytest.FixtureRequest):
         if request.method == "GET":
             return httpx.Response(
                 200,

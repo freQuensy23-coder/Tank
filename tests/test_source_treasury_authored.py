@@ -17,7 +17,7 @@ def retained():
     return payload
 
 
-def test_treasury_release_excludes_navigation_and_uses_authored_title():
+def test_treasury_release_excludes_navigation_and_uses_authored_title() -> None:
     result = parsers.article(retained(), source_id="S07")
     assert result["title"] == "Treasury International Capital Data for August 2026"
     assert "today released Treasury International Capital" in result["text"]
@@ -27,7 +27,7 @@ def test_treasury_release_excludes_navigation_and_uses_authored_title():
 
 
 @pytest.mark.parametrize("change", ["missing", "ambiguous"])
-def test_treasury_missing_authored_body_never_falls_back_to_menu(change):
+def test_treasury_missing_authored_body_never_falls_back_to_menu(change) -> None:
     tree = HTMLParser(retained())
     node = tree.css_first("main article[about]")
     if change == "missing":

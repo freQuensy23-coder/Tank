@@ -7,7 +7,7 @@ from tank.logging import CredentialFilter, configure_logging
 from tank.settings import Settings
 
 
-async def test_credential_urls_are_redacted_even_when_httpx_info_enabled():
+async def test_credential_urls_are_redacted_even_when_httpx_info_enabled() -> None:
     configure_logging(Settings(etherscan_api_key="fake-query-secret", telegram_token="fake-bot-secret"))
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)
@@ -28,7 +28,7 @@ async def test_credential_urls_are_redacted_even_when_httpx_info_enabled():
         logger.setLevel(logging.WARNING)
 
 
-def test_exception_trace_and_database_password_redacted():
+def test_exception_trace_and_database_password_redacted() -> None:
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)
     handler.addFilter(CredentialFilter(("fake-secret",)))
@@ -48,7 +48,7 @@ def test_exception_trace_and_database_password_redacted():
         logger.removeHandler(handler)
 
 
-def test_reload_preserves_old_and_new_credential_redaction():
+def test_reload_preserves_old_and_new_credential_redaction() -> None:
     configure_logging(Settings(openma_api_key="old-generation-secret"))
     configure_logging(Settings(openma_api_key="new-generation-secret"))
     stream = io.StringIO()
@@ -63,7 +63,7 @@ def test_reload_preserves_old_and_new_credential_redaction():
         logger.removeHandler(handler)
 
 
-def test_opencode_and_gateway_keys_redacted_from_logs():
+def test_opencode_and_gateway_keys_redacted_from_logs() -> None:
     configure_logging(
         Settings(opencode_api_key="fake-router-log-key", codex_gateway_key="fake-gateway-log-key")
     )

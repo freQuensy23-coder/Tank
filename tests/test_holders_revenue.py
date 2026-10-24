@@ -2,6 +2,7 @@
 
 import json
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 
@@ -62,7 +63,7 @@ def render(truths, tokens=None):
 
 
 @pytest.mark.parametrize("value", ["0", "3460000.123456789"])
-def test_actual_value_zero_and_exact_precision_freeze_then_card(value):
+def test_actual_value_zero_and_exact_precision_freeze_then_card(value) -> None:
     row = captured({"adapter": {"total24h": value}})
     result = TRUTH.compute_market_truth(
         {"token_id": "T", "cutoff": iso(END), "instruments": [], "supply": [row]}
@@ -77,7 +78,7 @@ def test_actual_value_zero_and_exact_precision_freeze_then_card(value):
     assert "IMPACT" not in text and "SECONDARIES" not in text
 
 
-def test_field_coverage_does_not_trust_available_complete_aggregate():
+def test_field_coverage_does_not_trust_available_complete_aggregate() -> None:
     row = captured(
         {"a": {"total24h": "11", "total30d": "30"}, "b": {"total30d": "90", "totalDataChart": [[1, "4"]]}}
     )
@@ -90,7 +91,7 @@ def test_field_coverage_does_not_trust_available_complete_aggregate():
     assert "101 USD" not in text
 
 
-def test_parent_children_values_are_preserved_separately_never_summed():
+def test_parent_children_values_are_preserved_separately_never_summed() -> None:
     result = metric([captured({"parent": {"total24h": "30"}, "child": {"total24h": "20"}})])
     text = render([{"token_id": "T", "supply": {"holders_revenue": result}}])
     assert "parent 30 USD/24h" in text and "child 20 USD/24h" in text
@@ -99,13 +100,13 @@ def test_parent_children_values_are_preserved_separately_never_summed():
 
 
 @pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity", "not-a-number", None])
-def test_invalid_nonfinite_and_missing_are_unavailable(value):
+def test_invalid_nonfinite_and_missing_are_unavailable(value) -> None:
     result = metric([captured({"a": {"total24h": value}})])
     assert result["protocols"][0]["periods"][0]["value"] is None
     assert not result["coverage"]["24h"]["complete"]
 
 
-def test_stale_observation_is_dated_not_relabelled_current_and_future_never_shown():
+def test_stale_observation_is_dated_not_relabelled_current_and_future_never_shown() -> None:
     from datetime import timedelta
 
     stale = captured({"a": {"total24h": "7"}})
@@ -119,7 +120,7 @@ def test_stale_observation_is_dated_not_relabelled_current_and_future_never_show
     assert not future_only["protocols"]
 
 
-def test_unavailable_protocol_and_chart_only_are_not_zero():
+def test_unavailable_protocol_and_chart_only_are_not_zero() -> None:
     row = captured({"a": {"totalDataChart": [[1, "8"]]}})
     row["protocols"]["b"] = {
         "dailyHoldersRevenue": {"available": False, "reason": "PROVIDER_METRIC_NOT_SUPPORTED"}
@@ -131,7 +132,7 @@ def test_unavailable_protocol_and_chart_only_are_not_zero():
     assert "0 USD" not in render([{"token_id": "T", "supply": {"holders_revenue": result}}])
 
 
-def test_display_set_stays_at_three_and_excludes_other_token_revenue():
+def test_display_set_stays_at_three_and_excludes_other_token_revenue() -> None:
     result = metric([captured({"a": {"total24h": "3"}})])
     truths = [
         {"token_id": token, "supply": {"holders_revenue": deepcopy(result)}} for token in ["A", "B", "C", "D"]
@@ -144,7 +145,7 @@ def test_display_set_stays_at_three_and_excludes_other_token_revenue():
 
 
 @pytest.mark.integration
-async def test_real_supply_producer_to_computed_frozen_analysis(tmp_path):
+async def test_real_supply_producer_to_computed_frozen_analysis(tmp_path: Path) -> None:
     repo = MemoryRepository()
     await repo.open()
     config = tmp_path / "config"
@@ -159,7 +160,7 @@ async def test_real_supply_producer_to_computed_frozen_analysis(tmp_path):
             kind = kwargs["params"]["dataType"]
             return {"total24h": "0" if kind == "dailyHoldersRevenue" else "9", "total30d": "17"}
 
-        async def _raw(self, *args):
+        async def _raw(self, *args) -> None:
             pass
 
     market = Market()
@@ -187,7 +188,7 @@ async def test_real_supply_producer_to_computed_frozen_analysis(tmp_path):
     assert frozen["supply"]["holders_revenue"]["source_observation_sha256"]
 
 
-def test_chart_only_observation_uses_provider_timestamp_not_invented_24h():
+def test_chart_only_observation_uses_provider_timestamp_not_invented_24h() -> None:
     row = captured(
         {
             "a": {
@@ -212,12 +213,12 @@ def test_chart_only_observation_uses_provider_timestamp_not_invented_24h():
     "stamp,value",
     [(True, "8"), ("NaN", "8"), ("Infinity", "8"), ("invalid", "8"), (1, True), (1, "Infinity")],
 )
-def test_invalid_chart_timestamp_or_value_cannot_be_a_figure(stamp, value):
+def test_invalid_chart_timestamp_or_value_cannot_be_a_figure(stamp, value) -> None:
     result = metric([captured({"a": {"totalDataChart": [[stamp, value]]}})])
     assert result["protocols"][0]["latest_chart_point"] is None
 
 
-def test_future_capture_receipt_cannot_supply_observed_revenue():
+def test_future_capture_receipt_cannot_supply_observed_revenue() -> None:
     from datetime import timedelta
 
     old = captured({"a": {"total24h": "9"}})
@@ -231,7 +232,7 @@ def test_future_capture_receipt_cannot_supply_observed_revenue():
     assert "999999" not in render([{"token_id": "T", "supply": {"holders_revenue": result}}])
 
 
-def test_provider_revenue_with_unknown_capture_never_authorizes_token_capture_claim():
+def test_provider_revenue_with_unknown_capture_never_authorizes_token_capture_claim() -> None:
     truth = {
         "token_id": "T",
         "supply": {"holders_revenue": metric([captured({"adapter": {"total24h": "123.456"}})])},
@@ -263,7 +264,7 @@ def test_provider_revenue_with_unknown_capture_never_authorizes_token_capture_cl
     assert "DIRECT" not in line and "INDIRECT" not in line
 
 
-def test_compact_display_prefers_24h_preserving_30d_details_and_default_limit():
+def test_compact_display_prefers_24h_preserving_30d_details_and_default_limit() -> None:
     observed = metric([captured({"adapter": {"total24h": "123.456", "total30d": "8765.432"}})])
     truths = [
         {"token_id": token, "supply": {"holders_revenue": deepcopy(observed)}} for token in ["A", "B", "C"]
@@ -379,7 +380,7 @@ def ordinary_full_card_inputs():
     return event, assessment, beneficiary, decision, truth
 
 
-def test_full_ordinary_three_decision_tokens_with_observed_revenue_fit_default_limit():
+def test_full_ordinary_three_decision_tokens_with_observed_revenue_fit_default_limit() -> None:
     event, assessment, beneficiary, decision, truth = ordinary_full_card_inputs()
     edges, decisions, truths = [], [], []
     for token in ["A", "B", "C"]:
@@ -428,7 +429,7 @@ def test_full_ordinary_three_decision_tokens_with_observed_revenue_fit_default_l
         ("http error https://provider.invalid/secret?key=hidden", "incomplete provider data"),
     ],
 )
-def test_missing_holder_revenue_renders_bound_safe_reason(reason, label):
+def test_missing_holder_revenue_renders_bound_safe_reason(reason, label) -> None:
     frozen = {"status": "UNAVAILABLE", "protocols": [], "reason": reason}
     text = CARDS._holders_revenue_text({"supply": {"holders_revenue": frozen}})
     assert text == "holders revenue: n/a (" + label + ")"
@@ -444,7 +445,7 @@ def test_missing_holder_revenue_renders_bound_safe_reason(reason, label):
         ("raw provider exception secret", "incomplete provider data"),
     ],
 )
-def test_missing_protocol_figure_renders_safe_n_a_reason(reason, label):
+def test_missing_protocol_figure_renders_safe_n_a_reason(reason, label) -> None:
     row = captured({"adapter": {}})
     row["protocols"]["adapter"]["dailyHoldersRevenue"].update(available=False, reason=reason)
     frozen = metric([row])
@@ -454,7 +455,7 @@ def test_missing_protocol_figure_renders_safe_n_a_reason(reason, label):
     assert frozen["protocols"][0]["reason"] == reason
 
 
-def test_scalar_clock_is_observation_not_provider_period_end():
+def test_scalar_clock_is_observation_not_provider_period_end() -> None:
     observed = metric([captured({"adapter": {"total24h": "8"}})])
     text = CARDS._holders_revenue_text({"supply": {"holders_revenue": observed}})
     assert "8 USD/24h" in text and "observed 2026-10-19 12:00Z" in text
