@@ -967,8 +967,8 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
         if route.endswith("/sessions/phase-session"):
             if request.method == "POST":
                 metadata = json.loads(request.content)["metadata"]
-                assert metadata["tank_replay_cutoff"] == view.capture["manifest"]["cutoff"]
-                assert metadata["tank_replay_evidence_sha256"] == view.capture["manifest_sha256"]
+                assert metadata["tank_replay_cutoff"] == view.capture.manifest.cutoff
+                assert metadata["tank_replay_evidence_sha256"] == view.capture.manifest_sha256
                 return httpx.Response(200, json={})
             return httpx.Response(
                 200,
@@ -1004,7 +1004,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                     if f.is_file()
                 )
                 if item == "lead":
-                    assert view.capture["manifest"]["cutoff"] == "2026-10-16T12:01:00Z"
+                    assert view.capture.manifest.cutoff == "2026-10-16T12:01:00Z"
                     assert await repo.get("ingest.source_items", "confirmation") is None
                     with pytest.raises(ValueError, match="Missing"):
                         await tools.get_item({"item_id": "confirmation"}, {})
@@ -1324,7 +1324,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
     assert [x["phase_id"] for x in checkpoints] == ["initial", "confirmation"]
     assert {x["session_id"] for x in checkpoints} == {"phase-session"}
     assert all(x["execution_barrier"]["complete"] for x in checkpoints)
-    assert [x["at"] for x in checkpoints] == [entry["cutoff"] for entry in view.receipts]
+    assert [x["at"] for x in checkpoints] == [entry.cutoff for entry in view.receipts]
     assert checkpoints[0]["evidence_manifest_sha256"] != checkpoints[1]["evidence_manifest_sha256"]
     assert view.destination.stat().st_ino
     assert not list(view.destination.glob("*phase-*.json"))

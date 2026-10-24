@@ -283,9 +283,8 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
 
 
 async def test_runtime_waits_for_capture_release_before_numerical_assessment() -> None:
-    from tank.runtime_contracts import MarketTruthJob
-
     from tank.analysis.truth_contracts import MarketTruthAssessmentRef
+    from tank.runtime_contracts import MarketTruthJob
 
     repo = MemoryRepository()
     await repo.put("evt.events", "e", {"event_id": "e", "public_at": iso(), "known_to_us_at": iso()})

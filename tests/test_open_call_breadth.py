@@ -7,6 +7,7 @@ import pytest
 
 from tank.analysis.decisions import DecisionEngine
 from tank.scheduler import Scheduler
+from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.util import iso, parse_time
 
@@ -54,7 +55,13 @@ async def test_concentrated_sell_only_fires_weaker_watch_downgrade(open_call, ex
             }
         }
 
-    scheduler = Scheduler(repo, SimpleNamespace(), None, SimpleNamespace(assess=assess))
+    scheduler = Scheduler(
+        repo,
+        SimpleNamespace(),
+        None,
+        SimpleNamespace(assess=assess),
+        thresholds=Settings(_env_file=None).thresholds(),
+    )
     for hour in (11, 12):
         await scheduler.eval_conditions({"cutoff": iso(start.replace(hour=hour, minute=1))})
     persisted = await repo.get("ana.watch_conditions", condition["cond_id"])
@@ -132,7 +139,13 @@ async def fire_generated(condition, event, truth_rows):
     async def assess(*args):
         return truth_rows
 
-    scheduler = Scheduler(repo, SimpleNamespace(), None, SimpleNamespace(assess=assess))
+    scheduler = Scheduler(
+        repo,
+        SimpleNamespace(),
+        None,
+        SimpleNamespace(assess=assess),
+        thresholds=Settings(_env_file=None).thresholds(),
+    )
     for hour in (11, 12):
         await scheduler.eval_conditions({"cutoff": iso(start.replace(hour=hour, minute=1))})
     return await repo.get("ana.watch_conditions", condition["cond_id"])
