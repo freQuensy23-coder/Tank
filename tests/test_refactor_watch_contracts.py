@@ -43,3 +43,34 @@ def test_zero_watch_threshold_is_a_value_and_recursive_conjunction_is_typed():
 def test_invalid_predicates_are_rejected_before_persistence(changes):
     with pytest.raises((ValidationError, ValueError)):
         leaf(**changes)
+
+
+def test_monitoring_policy_is_deterministic_and_identity_free() -> None:
+    from decimal import Decimal
+
+    from tank.analysis.watch_contracts import WatchPolicyInputs, WatchReferencePrices
+    from tank.analysis.watch_policy import build_watch_conditions
+
+    context = WatchPolicyInputs(
+        action="DONT_CHASE",
+        move="LIQUIDITY_VACUUM",
+        band="EARLY",
+        prices=WatchReferencePrices(
+            anchor_price=Decimal("10"),
+            entry_price=Decimal("11"),
+            invalidation_price=None,
+        ),
+        has_open_call=False,
+        wait_data=False,
+    )
+    first = build_watch_conditions(context)
+    assert first == build_watch_conditions(context)
+    price_rule = next(
+        rule
+        for rule in first
+        if isinstance(rule.expr, WatchLeaf) and rule.expr.metric == "price.close_vs_level"
+    )
+    assert isinstance(price_rule.expr, WatchLeaf)
+    assert price_rule.expr.value == "10"
+    assert price_rule.role == "INVALIDATION"
+    assert all("cond_id" not in rule.model_dump(mode="json") for rule in first)

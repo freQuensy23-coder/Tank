@@ -204,11 +204,14 @@ class MilestoneSnapshot(DomainModel):
     missed_at_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
 
 
-class WatchProposal(DomainModel):
-    cond_id: str = Field(min_length=1)
+class WatchRule(DomainModel):
     role: Literal["UPGRADE", "DOWNGRADE", "INVALIDATION"]
     human_text: str
     expr: WatchExpression
+
+
+class WatchProposal(WatchRule):
+    cond_id: str = Field(min_length=1)
     status: Literal["ARMED"] = "ARMED"
     milestone_id: str | None = None
 
@@ -229,3 +232,24 @@ class WatchReferencePrices(DomainModel):
         if not price.is_finite() or price <= 0:
             raise ValueError("reference prices must be finite and positive")
         return price
+
+
+class WatchPolicyInputs(DomainModel):
+    action: Literal["START", "WATCH_TO_START", "ADD", "HOLD", "WAIT", "DONT_CHASE", "EXIT", "REDUCE"]
+    move: Literal[
+        "SPOT_LED_ACCUMULATION",
+        "ORGANIC_MIXED",
+        "DISTRIBUTION",
+        "SELL_SIDE_ABSORPTION",
+        "PASSIVE_SPOT_ABSORPTION",
+        "REAL_MARKET_FRAGMENTATION",
+        "PRICE_MARKUP_FAKE_OI",
+        "SHORT_SQUEEZE",
+        "PERP_LED_CHASE",
+        "LIQUIDITY_VACUUM",
+        "UNKNOWN",
+    ]
+    band: Literal["NEGATIVE", "UNPRICED", "EARLY", "SUBSTANTIAL", "HEAVY", "UNKNOWN"]
+    prices: WatchReferencePrices
+    has_open_call: bool
+    wait_data: bool

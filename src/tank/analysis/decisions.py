@@ -2,8 +2,8 @@
 
 from decimal import Decimal
 
-from tank.analysis.watch_contracts import WatchProposal, WatchReferencePrices
-from tank.analysis.watch_policy import _condition, _expr, build_watch_conditions
+from tank.analysis.watch_contracts import WatchPolicyInputs, WatchProposal, WatchReferencePrices, WatchRule
+from tank.analysis.watch_policy import build_watch_conditions, watch_leaf, watch_rule
 from tank.time_precision import propagate_timestamp
 from tank.util import new_id
 
@@ -20,6 +20,12 @@ def _contradictions(event, assessment):
         for c in event.get("contradictions", []) + assessment.get("contradictions", [])
         if not c.get("resolved_at")
     ]
+
+
+def _proposal(rule: WatchRule) -> WatchProposal:
+    return WatchProposal(
+        cond_id=new_id("CND"), role=rule.role, human_text=rule.human_text, expr=rule.expr, status="ARMED"
+    )
 
 
 class DecisionEngine:
@@ -268,9 +274,19 @@ class DecisionEngine:
                 "invalidation_price": open_call.get("invalidation_price") if open_call is not None else None,
             }
         )
-        watches = build_watch_conditions(
-            action, move, band, references, bool(open_call), wait_data=rule == "A1"
-        )
+        watches = [
+            _proposal(watch)
+            for watch in build_watch_conditions(
+                WatchPolicyInputs(
+                    action=action,
+                    move=move,
+                    band=band,
+                    prices=references,
+                    has_open_call=bool(open_call),
+                    wait_data=rule == "A1",
+                )
+            )
+        ]
         milestone = event.get("next_milestone")
         if milestone:
             milestone_id = (
@@ -279,16 +295,17 @@ class DecisionEngine:
                 else milestone
             )
             watches.extend(
-                [
-                    _condition(
+                _proposal(watch)
+                for watch in [
+                    watch_rule(
                         "UPGRADE",
                         "Milestone verified; re-score the event.",
-                        _expr("milestone.outcome", "==", "VERIFIED"),
+                        watch_leaf("milestone.outcome", "==", "VERIFIED"),
                     ),
-                    _condition(
+                    watch_rule(
                         "DOWNGRADE",
                         "Milestone failed or missed its window; re-score, fatal when thesis-dependent.",
-                        _expr("milestone.outcome", "in", ["FAILED", "MISSED"]),
+                        watch_leaf("milestone.outcome", "in", ["FAILED", "MISSED"]),
                     ),
                 ]
             )
