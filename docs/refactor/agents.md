@@ -137,3 +137,12 @@ Focused session completion/retry/workflow validation: 62 tests pass, including
 tool_contracts.py passes strict mypy; sessions.py passes current configured mypy.
 SessionService as a whole still needs its remaining domain-record and port
 migration; current mypy passing is not a claim that all methods are annotated.
+
+
+Gateway tests now also pass strict mypy in their entirety. The fixture factory
+uses a precise protocol for synchronous/asynchronous HTTP mock handlers and a
+typed async context manager, and real Settings rather than an arbitrary
+namespace. All helper functions, test parameters, stream iterators and cleanup
+methods have exact annotations. Synthetic JSON auth/protocol fixtures remain
+wire maps with runtime narrowing where nested structures are inspected.
+All 49 gateway integration cases still pass, zero skips, 1.87 seconds.

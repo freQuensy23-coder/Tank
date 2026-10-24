@@ -4,22 +4,52 @@ import asyncio
 import base64
 import json
 import os
-from contextlib import asynccontextmanager
-from types import SimpleNamespace
+from collections.abc import AsyncIterator, Callable, Coroutine
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from pathlib import Path
+from typing import Protocol
 
 import httpx
 import pytest
+from pydantic import JsonValue
 
 from tank.codex_gateway import CLIENT_ID, RESPONSES_URL, TOKEN_URL, CodexGateway, GatewayError
+from tank.settings import Settings
+
+type RequestHandler = (
+    Callable[[httpx.Request], httpx.Response]
+    | Callable[[httpx.Request], Coroutine[None, None, httpx.Response]]
+)
+type GatewaySession = tuple[CodexGateway, httpx.AsyncClient, Path]
 
 
-def jwt(exp=4102444800, **extra):
+class GatewayFactory(Protocol):
+    def __call__(
+        self, handler: RequestHandler, document: dict[str, JsonValue] | None = None
+    ) -> AbstractAsyncContextManager[GatewaySession]: ...
+
+
+def document_tokens(document: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    tokens = document["tokens"]
+    if not isinstance(tokens, dict):
+        raise TypeError("Synthetic auth tokens must be an object")
+    return tokens
+
+
+def access_token(document: dict[str, JsonValue]) -> str:
+    token = document_tokens(document)["access_token"]
+    if not isinstance(token, str):
+        raise TypeError("Synthetic access token must be text")
+    return token
+
+
+def jwt(exp: JsonValue = 4102444800, **extra: JsonValue) -> str:
     claims = {"exp": exp, **extra}
     payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
     return f"FAKE.{payload}.FAKE_SIGNATURE"
 
 
-def auth_document(access=None, refresh="FAKE-refresh"):
+def auth_document(access: str | None = None, refresh: str | None = "FAKE-refresh") -> dict[str, JsonValue]:
     return {
         "auth_mode": "chatgpt",
         "OPENAI_API_KEY": None,
@@ -36,12 +66,15 @@ def auth_document(access=None, refresh="FAKE-refresh"):
 
 
 @pytest.fixture
-def gateway_factory(tmp_path):
+def gateway_factory(tmp_path: Path) -> GatewayFactory:
     @asynccontextmanager
-    async def factory(handler, document=None):
+    async def factory(
+        handler: RequestHandler, document: dict[str, JsonValue] | None = None
+    ) -> AsyncIterator[GatewaySession]:
         path = tmp_path / "FAKE-auth.json"
         path.write_text(json.dumps(document or auth_document()))
-        settings = SimpleNamespace(
+        settings = Settings(
+            _env_file=None,
             codex_gateway_key="FAKE-internal",
             codex_auth_path=path,
             codex_gateway_host="127.0.0.1",
@@ -62,13 +95,13 @@ def gateway_factory(tmp_path):
     return factory
 
 
-def body(**extra):
+def body(**extra: JsonValue) -> dict[str, JsonValue]:
     return {"model": "gpt-6.1-sol", "input": [{"role": "user", "content": "test"}], "stream": True, **extra}
 
 
 @pytest.mark.integration
-async def test_internal_key_required_before_auth_or_provider(gateway_factory):
-    def forbidden(request):
+async def test_internal_key_required_before_auth_or_provider(gateway_factory: GatewayFactory) -> None:
+    def forbidden(request: httpx.Request) -> httpx.Response:
         pytest.fail("unauthorized request reached provider")
 
     async with gateway_factory(forbidden) as (_, client, path):
@@ -82,10 +115,10 @@ async def test_internal_key_required_before_auth_or_provider(gateway_factory):
 
 
 @pytest.mark.integration
-async def test_signing_translation_and_header_isolation(gateway_factory):
+async def test_signing_translation_and_header_isolation(gateway_factory: GatewayFactory) -> None:
     seen = []
 
-    def provider(request):
+    def provider(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         assert str(request.url) == RESPONSES_URL
         assert request.headers["authorization"] == "Bearer " + jwt()
@@ -109,7 +142,9 @@ async def test_signing_translation_and_header_isolation(gateway_factory):
 
     async with gateway_factory(provider) as (_, client, _):
         payload = body(instructions="existing", max_output_tokens=100, temperature=0.2, store=True)
-        payload["input"][:0] = [
+        contents = payload["input"]
+        assert isinstance(contents, list)
+        contents[:0] = [
             {"role": "system", "content": "system"},
             {"role": "developer", "content": [{"type": "input_text", "text": "developer"}]},
         ]
@@ -124,10 +159,12 @@ async def test_signing_translation_and_header_isolation(gateway_factory):
 
 @pytest.mark.integration
 @pytest.mark.parametrize("status", [400, 403, 429, 500, 503])
-async def test_provider_errors_and_reset_headers_preserved(gateway_factory, status):
+async def test_provider_errors_and_reset_headers_preserved(
+    gateway_factory: GatewayFactory, status: int
+) -> None:
     error = {"error": {"code": "usage_limit_reached", "message": "Try later", "resets_at": 1800000000}}
 
-    def provider(request):
+    def provider(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             status,
             json=error,
@@ -150,11 +187,13 @@ async def test_provider_errors_and_reset_headers_preserved(gateway_factory, stat
 
 
 @pytest.mark.integration
-async def test_expired_refresh_singleflight_atomic_preservation_and_no_cookie(gateway_factory):
+async def test_expired_refresh_singleflight_atomic_preservation_and_no_cookie(
+    gateway_factory: GatewayFactory,
+) -> None:
     calls = []
     new = jwt(exp=4102444801)
 
-    async def provider(request):
+    async def provider(request: httpx.Request) -> httpx.Response:
         calls.append(request)
         if str(request.url) == TOKEN_URL:
             payload = json.loads(request.content)
@@ -189,10 +228,10 @@ async def test_expired_refresh_singleflight_atomic_preservation_and_no_cookie(ga
 
 
 @pytest.mark.integration
-async def test_401_refresh_once_then_forward_provider_auth_failure(gateway_factory):
+async def test_401_refresh_once_then_forward_provider_auth_failure(gateway_factory: GatewayFactory) -> None:
     calls = []
 
-    def provider(request):
+    def provider(request: httpx.Request) -> httpx.Response:
         calls.append(str(request.url))
         if str(request.url) == TOKEN_URL:
             assert json.loads(request.content)["refresh_reason"] == "unauthorized_recovery"
@@ -207,17 +246,17 @@ async def test_401_refresh_once_then_forward_provider_auth_failure(gateway_facto
 
 
 @pytest.mark.integration
-async def test_external_auth_replacement_during_refresh_wins(gateway_factory):
-    path_holder = []
+async def test_external_auth_replacement_during_refresh_wins(gateway_factory: GatewayFactory) -> None:
+    path_holder: list[Path] = []
     replacement = auth_document(jwt(exp=4102444802), refresh="FAKE-external-refresh")
 
-    async def provider(request):
+    async def provider(request: httpx.Request) -> httpx.Response:
         if str(request.url) == TOKEN_URL:
             path_holder[0].write_text(json.dumps(replacement))
             return httpx.Response(
                 200, json={"access_token": jwt(exp=4102444801), "refresh_token": "FAKE-discard"}
             )
-        assert request.headers["authorization"] == "Bearer " + replacement["tokens"]["access_token"]
+        assert request.headers["authorization"] == "Bearer " + access_token(replacement)
         return httpx.Response(200, json={"id": "resp_FAKE"})
 
     async with gateway_factory(provider, auth_document(jwt(exp=1))) as (_, client, path):
@@ -227,10 +266,10 @@ async def test_external_auth_replacement_during_refresh_wins(gateway_factory):
 
 
 @pytest.mark.integration
-async def test_reload_new_auth_without_refresh(gateway_factory):
-    wanted = []
+async def test_reload_new_auth_without_refresh(gateway_factory: GatewayFactory) -> None:
+    wanted: list[str] = []
 
-    def provider(request):
+    def provider(request: httpx.Request) -> httpx.Response:
         assert str(request.url) == RESPONSES_URL
         assert request.headers["authorization"] == "Bearer " + wanted[0]
         return httpx.Response(200, json={"id": "resp_FAKE"})
@@ -253,10 +292,12 @@ async def test_reload_new_auth_without_refresh(gateway_factory):
         httpx.Response(200, json={"refresh_token": "FAKE-new"}),
     ],
 )
-async def test_refresh_failures_static_safe_and_auth_unmodified(gateway_factory, response):
+async def test_refresh_failures_static_safe_and_auth_unmodified(
+    gateway_factory: GatewayFactory, response: httpx.Response
+) -> None:
     calls = []
 
-    async def provider(request):
+    async def provider(request: httpx.Request) -> httpx.Response:
         calls.append(request)
         await asyncio.sleep(0.02)
         return response
@@ -271,20 +312,22 @@ async def test_refresh_failures_static_safe_and_auth_unmodified(gateway_factory,
 
 
 @pytest.mark.parametrize("access,refresh", [("malformed", "FAKE-refresh"), (jwt(exp=1), None)])
-async def test_preflight_rejects_invalid_or_unrefreshable_auth_offline(tmp_path, access, refresh):
+async def test_preflight_rejects_invalid_or_unrefreshable_auth_offline(
+    tmp_path: Path, access: str | None, refresh: str | None
+) -> None:
     path = tmp_path / "FAKE-auth.json"
     path.write_text(json.dumps(auth_document(access, refresh)))
-    gateway = CodexGateway(SimpleNamespace(codex_gateway_key="FAKE-internal", codex_auth_path=path))
+    gateway = CodexGateway(Settings(_env_file=None, codex_gateway_key="FAKE-internal", codex_auth_path=path))
     with pytest.raises(GatewayError):
         await gateway.preflight()
     assert gateway._client is None and gateway._runner is None
 
 
 @pytest.mark.integration
-async def test_no_refresh_token_valid_access_but_401_requires_login(gateway_factory):
+async def test_no_refresh_token_valid_access_but_401_requires_login(gateway_factory: GatewayFactory) -> None:
     calls = []
 
-    def provider(request):
+    def provider(request: httpx.Request) -> httpx.Response:
         calls.append(request)
         return httpx.Response(401)
 
@@ -295,15 +338,17 @@ async def test_no_refresh_token_valid_access_but_401_requires_login(gateway_fact
 
 
 @pytest.mark.integration
-async def test_atomic_write_failure_keeps_old_auth(gateway_factory, monkeypatch):
+async def test_atomic_write_failure_keeps_old_auth(
+    gateway_factory: GatewayFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
     document = auth_document(jwt(exp=1))
 
-    def provider(request):
+    def provider(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"access_token": jwt(exp=4102444801), "refresh_token": "FAKE-new"})
 
     async with gateway_factory(provider, document) as (_, client, path):
 
-        def failure(*args):
+        def failure(*args: Path) -> None:
             raise OSError("FAKE-refresh secret must not reach error")
 
         monkeypatch.setattr(os, "replace", failure)
@@ -316,10 +361,12 @@ async def test_atomic_write_failure_keeps_old_auth(gateway_factory, monkeypatch)
 
 @pytest.mark.integration
 @pytest.mark.parametrize("location", ["https://evil.invalid/steal", "https://auth.openai.com/oauth/token"])
-async def test_provider_redirect_never_followed_or_exposed(gateway_factory, location):
+async def test_provider_redirect_never_followed_or_exposed(
+    gateway_factory: GatewayFactory, location: str
+) -> None:
     calls = []
 
-    def provider(request):
+    def provider(request: httpx.Request) -> httpx.Response:
         calls.append(request)
         return httpx.Response(307, headers={"location": location, "set-cookie": "FAKE-secret"})
 
@@ -330,25 +377,25 @@ async def test_provider_redirect_never_followed_or_exposed(gateway_factory, loca
 
 
 class Chunks(httpx.AsyncByteStream):
-    def __init__(self, chunks, failure=False):
+    def __init__(self, chunks: list[bytes], failure: bool = False) -> None:
         self.chunks, self.failure, self.closed = chunks, failure, False
 
-    async def __aiter__(self):
+    async def __aiter__(self) -> AsyncIterator[bytes]:
         for chunk in self.chunks:
             yield chunk
         if self.failure:
             raise httpx.ReadError("FAKE-refresh upstream exception")
 
-    async def aclose(self):
+    async def aclose(self) -> None:
         self.closed = True
 
 
 @pytest.mark.integration
-async def test_sse_failure_and_usage_reset_preserved(gateway_factory):
+async def test_sse_failure_and_usage_reset_preserved(gateway_factory: GatewayFactory) -> None:
     frame = b'event: response.failed\ndata: {"type":"response.failed","response":{"error":{"code":"usage_limit_reached","resets_at":1800000000}}}\n\n'
     stream = Chunks([frame[:39], frame[39:]])
 
-    def provider(request):
+    def provider(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=stream)
 
     async with gateway_factory(provider) as (_, client, _):
@@ -358,10 +405,12 @@ async def test_sse_failure_and_usage_reset_preserved(gateway_factory):
 
 
 @pytest.mark.integration
-async def test_sse_redacts_secrets_split_at_every_byte_and_rotated_tokens(gateway_factory):
+async def test_sse_redacts_secrets_split_at_every_byte_and_rotated_tokens(
+    gateway_factory: GatewayFactory,
+) -> None:
     new = jwt(exp=4102444801)
 
-    def provider(request):
+    def provider(request: httpx.Request) -> httpx.Response:
         if str(request.url) == TOKEN_URL:
             return httpx.Response(200, json={"access_token": new, "refresh_token": "FAKE-rotated-secret"})
         frame = (
@@ -380,10 +429,10 @@ async def test_sse_redacts_secrets_split_at_every_byte_and_rotated_tokens(gatewa
 
 
 @pytest.mark.integration
-async def test_stream_interruption_visible_and_closed(gateway_factory):
+async def test_stream_interruption_visible_and_closed(gateway_factory: GatewayFactory) -> None:
     stream = Chunks([b'event: response.created\ndata: {"type":"response.created"}\n\n'], failure=True)
 
-    def provider(request):
+    def provider(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=stream)
 
     async with gateway_factory(provider) as (_, client, _):
@@ -393,21 +442,23 @@ async def test_stream_interruption_visible_and_closed(gateway_factory):
 
 
 @pytest.mark.integration
-async def test_stream_is_incremental_and_downstream_disconnect_closes_upstream(gateway_factory):
+async def test_stream_is_incremental_and_downstream_disconnect_closes_upstream(
+    gateway_factory: GatewayFactory,
+) -> None:
     released = asyncio.Event()
     closed = asyncio.Event()
     frame = b'event: response.created\ndata: {"type":"response.created"}\n\n'
 
     class Blocking(httpx.AsyncByteStream):
-        async def __aiter__(self):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
             yield frame
             await released.wait()
             yield frame
 
-        async def aclose(self):
+        async def aclose(self) -> None:
             closed.set()
 
-    def provider(request):
+    def provider(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=Blocking())
 
     async with gateway_factory(provider) as (_, client, _):
@@ -418,7 +469,7 @@ async def test_stream_is_incremental_and_downstream_disconnect_closes_upstream(g
 
 
 @pytest.mark.integration
-async def test_nonstream_collects_terminal_response(gateway_factory):
+async def test_nonstream_collects_terminal_response(gateway_factory: GatewayFactory) -> None:
     result = {
         "id": "resp_FAKE",
         "output": [{"type": "message", "content": "שלום"}],
@@ -430,7 +481,7 @@ async def test_nonstream_collects_terminal_response(gateway_factory):
         + "\n\n"
     ).encode()
 
-    def provider(request):
+    def provider(request: httpx.Request) -> httpx.Response:
         assert json.loads(request.content)["stream"] is True
         return httpx.Response(
             200, headers={"content-type": "text/event-stream"}, stream=Chunks([bytes([c]) for c in frame])
@@ -453,8 +504,10 @@ async def test_nonstream_collects_terminal_response(gateway_factory):
         body(input=[{"role": "developer", "content": 12}]),
     ],
 )
-async def test_invalid_request_never_reaches_provider(gateway_factory, payload):
-    def provider(request):
+async def test_invalid_request_never_reaches_provider(
+    gateway_factory: GatewayFactory, payload: JsonValue
+) -> None:
+    def provider(request: httpx.Request) -> httpx.Response:
         pytest.fail("invalid request reached provider")
 
     async with gateway_factory(provider) as (_, client, _):
@@ -462,11 +515,11 @@ async def test_invalid_request_never_reaches_provider(gateway_factory, payload):
 
 
 @pytest.mark.integration
-async def test_concurrent_401_refreshes_once(gateway_factory):
+async def test_concurrent_401_refreshes_once(gateway_factory: GatewayFactory) -> None:
     calls = []
     new = jwt(exp=4102444801)
 
-    async def provider(request):
+    async def provider(request: httpx.Request) -> httpx.Response:
         calls.append(request)
         if str(request.url) == TOKEN_URL:
             await asyncio.sleep(0.02)
@@ -482,10 +535,10 @@ async def test_concurrent_401_refreshes_once(gateway_factory):
 
 
 @pytest.mark.integration
-async def test_refresh_redirect_refused_no_provider_call(gateway_factory):
+async def test_refresh_redirect_refused_no_provider_call(gateway_factory: GatewayFactory) -> None:
     seen = []
 
-    def provider(request):
+    def provider(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         return httpx.Response(302, headers={"location": "https://evil.invalid/steal"})
 
@@ -499,10 +552,12 @@ async def test_refresh_redirect_refused_no_provider_call(gateway_factory):
 @pytest.mark.parametrize(
     "expired", [jwt(exp=1), jwt(exp="not-a-number"), jwt(exp=True), jwt(exp=float("inf"))]
 )
-async def test_invalid_refresh_expiry_never_replaces_auth(gateway_factory, expired):
+async def test_invalid_refresh_expiry_never_replaces_auth(
+    gateway_factory: GatewayFactory, expired: str
+) -> None:
     document = auth_document(jwt(exp=1))
 
-    def provider(request):
+    def provider(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"access_token": expired, "refresh_token": "FAKE-new"})
 
     async with gateway_factory(provider, document) as (_, client, path):
@@ -511,14 +566,15 @@ async def test_invalid_refresh_expiry_never_replaces_auth(gateway_factory, expir
 
 
 @pytest.mark.integration
-async def test_account_from_id_token_when_explicit_account_absent(gateway_factory):
+async def test_account_from_id_token_when_explicit_account_absent(gateway_factory: GatewayFactory) -> None:
     document = auth_document()
-    document["tokens"].pop("account_id")
-    document["tokens"]["id_token"] = jwt(
-        **{"https://api.openai.com/auth": {"chatgpt_account_id": "FAKE-derived"}}
-    )
+    document_tokens(document).pop("account_id")
+    identity_claims: dict[str, JsonValue] = {
+        "https://api.openai.com/auth": {"chatgpt_account_id": "FAKE-derived"}
+    }
+    document_tokens(document)["id_token"] = jwt(**identity_claims)
 
-    def provider(request):
+    def provider(request: httpx.Request) -> httpx.Response:
         assert request.headers["chatgpt-account-id"] == "FAKE-derived"
         return httpx.Response(200, json={"id": "resp_FAKE"})
 
@@ -527,8 +583,10 @@ async def test_account_from_id_token_when_explicit_account_absent(gateway_factor
 
 
 @pytest.mark.integration
-async def test_unknown_provider_exception_never_logs_credential(gateway_factory, caplog):
-    def provider(request):
+async def test_unknown_provider_exception_never_logs_credential(
+    gateway_factory: GatewayFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    def provider(request: httpx.Request) -> httpx.Response:
         raise RuntimeError("FAKE-refresh FAKE-internal FAKE-secret-exception")
 
     async with gateway_factory(provider) as (_, client, _):
@@ -539,8 +597,8 @@ async def test_unknown_provider_exception_never_logs_credential(gateway_factory,
 
 
 @pytest.mark.integration
-async def test_nonstream_truncated_response_is_failure(gateway_factory):
-    def provider(request):
+async def test_nonstream_truncated_response_is_failure(gateway_factory: GatewayFactory) -> None:
+    def provider(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             headers={"content-type": "text/event-stream"},
@@ -554,15 +612,16 @@ async def test_nonstream_truncated_response_is_failure(gateway_factory):
 
 
 @pytest.mark.integration
-async def test_run_start_close_without_provider_traffic(tmp_path):
+async def test_run_start_close_without_provider_traffic(tmp_path: Path) -> None:
     path = tmp_path / "FAKE-auth.json"
     path.write_text(json.dumps(auth_document()))
 
-    def provider(request):
+    def provider(request: httpx.Request) -> httpx.Response:
         pytest.fail("lifecycle must not invoke upstream")
 
     gateway = CodexGateway(
-        SimpleNamespace(
+        Settings(
+            _env_file=None,
             codex_gateway_key="FAKE-key",
             codex_auth_path=path,
             codex_gateway_host="127.0.0.1",
@@ -581,11 +640,13 @@ async def test_run_start_close_without_provider_traffic(tmp_path):
 
 
 @pytest.mark.integration
-async def test_external_unrelated_token_metadata_edit_preserved_during_refresh(gateway_factory):
-    paths = []
+async def test_external_unrelated_token_metadata_edit_preserved_during_refresh(
+    gateway_factory: GatewayFactory,
+) -> None:
+    paths: list[Path] = []
     new = jwt(exp=4102444801)
 
-    def provider(request):
+    def provider(request: httpx.Request) -> httpx.Response:
         if str(request.url) == TOKEN_URL:
             updated = json.loads(paths[0].read_text())
             updated["tokens"]["extra"] = "operator-edited-during-refresh"
@@ -605,8 +666,8 @@ async def test_external_unrelated_token_metadata_edit_preserved_during_refresh(g
 
 
 @pytest.mark.integration
-async def test_connection_nominated_headers_not_forwarded(gateway_factory):
-    def provider(request):
+async def test_connection_nominated_headers_not_forwarded(gateway_factory: GatewayFactory) -> None:
+    def provider(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             429,
             json={"error": {"code": "usage_limit_reached"}},
@@ -626,22 +687,23 @@ async def test_connection_nominated_headers_not_forwarded(gateway_factory):
 
 
 @pytest.mark.integration
-async def test_gateway_shutdown_transport_error_is_static(tmp_path):
+async def test_gateway_shutdown_transport_error_is_static(tmp_path: Path) -> None:
     path = tmp_path / "FAKE-auth.json"
     path.write_text(json.dumps(auth_document()))
 
     class BadClose(httpx.MockTransport):
-        async def aclose(self):
+        async def aclose(self) -> None:
             raise RuntimeError("FAKE-refresh transport close failure")
 
     gateway = CodexGateway(
-        SimpleNamespace(
+        Settings(
+            _env_file=None,
             codex_gateway_key="FAKE-key",
             codex_auth_path=path,
             codex_gateway_host="127.0.0.1",
             codex_gateway_port=0,
         ),
-        upstream_transport=BadClose(lambda request: None),
+        upstream_transport=BadClose(lambda request: httpx.Response(500)),
     )
     await gateway.start()
     with pytest.raises(GatewayError, match="^codex_gateway_close_failed$") as caught:
@@ -653,7 +715,9 @@ async def test_gateway_shutdown_transport_error_is_static(tmp_path):
 
 @pytest.mark.integration
 @pytest.mark.parametrize("content_type", [None, "application/json", "text/plain; charset=utf-8"])
-async def test_nonstream_recognizes_sse_body_despite_content_type(gateway_factory, content_type):
+async def test_nonstream_recognizes_sse_body_despite_content_type(
+    gateway_factory: GatewayFactory, content_type: str | None
+) -> None:
     result = {"id": "resp_FAKE", "status": "completed", "output": []}
     frame = (
         "event: response.completed\ndata: "
@@ -661,7 +725,7 @@ async def test_nonstream_recognizes_sse_body_despite_content_type(gateway_factor
         + "\n\n"
     ).encode()
 
-    def provider(request):
+    def provider(request: httpx.Request) -> httpx.Response:
         headers = {"content-type": content_type} if content_type else {}
         return httpx.Response(200, headers=headers, stream=Chunks([bytes([part]) for part in frame]))
 
@@ -672,10 +736,10 @@ async def test_nonstream_recognizes_sse_body_despite_content_type(gateway_factor
 
 
 @pytest.mark.integration
-async def test_nonstream_preserves_actual_json_success_response(gateway_factory):
+async def test_nonstream_preserves_actual_json_success_response(gateway_factory: GatewayFactory) -> None:
     result = {"id": "resp_FAKE", "status": "completed", "output": [], "text": "שלום"}
 
-    def provider(request):
+    def provider(request: httpx.Request) -> httpx.Response:
         raw = json.dumps(result, ensure_ascii=False).encode()
         return httpx.Response(
             200, headers={"content-type": "application/json"}, stream=Chunks([bytes([part]) for part in raw])
