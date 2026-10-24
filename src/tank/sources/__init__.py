@@ -19,7 +19,12 @@ import httpx
 
 import tank.sources.parsers as parsers
 from tank.contracts.source_items import SourceText
-from tank.contracts.sources import HttpFetchPlan, SourceConfiguration, SourceDefinition
+from tank.contracts.sources import (
+    HttpFetchPlan,
+    SourceAccountRegistryView,
+    SourceConfiguration,
+    SourceDefinition,
+)
 from tank.ops_progress import item_progress
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.sources.rate_limits import shared_request_budgets
@@ -41,6 +46,10 @@ def tls_context():
 class SourceService:
     def __init__(self, repo, settings, *, http=None):
         cfg = SourceConfiguration.model_validate(settings.load_config("sources"))
+        registry = settings.load_config("registry")
+        account_registry = SourceAccountRegistryView.model_validate(
+            {name: registry[name] for name in ("x_accounts",) if name in registry}
+        )
         self.repo = repo
         self.settings = settings
         self.http = (
@@ -70,7 +79,7 @@ class SourceService:
                             per_min, self.source_host_limits.get(host, per_min)
                         )
         self.accounts = {
-            a["handle"].lower().lstrip("@"): a for a in settings.load_config("registry").get("x_accounts", [])
+            account.handle.lower().lstrip("@"): account for account in account_registry.x_accounts
         }
         self.locks = {}
         try:
@@ -262,12 +271,10 @@ class SourceService:
             observed_at = item.get("observed_at") or iso()
             raw_ref, raw_hash = item["raw_ref"], item["raw_sha256"]
             account = self.accounts.get(
-                (item.get("monitored_author") or item.get("reposted_by") or item.get("author", ""))
-                .lower()
-                .lstrip("@"),
-                {},
+                (item.get("monitored_author") or item.get("author", "")).lower().lstrip("@")
             )
-            role = account.get("role")
+            role = account.role if account is not None else None
+            original_account = self.accounts.get(item.get("author", "").lower().lstrip("@"))
             from tank.sources.organization import resolve_author_organization
 
             author_organization = resolve_author_organization(source, item, self.accounts)
@@ -295,9 +302,7 @@ class SourceService:
                 ]
                 if sid == "S29"
                 else [],
-                original_author_role=self.accounts.get(item.get("author", "").lower().lstrip("@"), {}).get(
-                    "role"
-                ),
+                original_author_role=original_account.role if original_account is not None else None,
                 author_organization=author_organization,
                 deferrable=priority == 2,
                 external_id=external,
@@ -468,7 +473,7 @@ class SourceService:
                         "handle": handle,
                         "exists": response.status_code == 200,
                         "identity_status": "REQUIRES_OWNER_EVIDENCE",
-                        "role": account.get("role"),
+                        "role": account.role,
                     }
                 )
             except httpx.HTTPError as exc:

@@ -1,17 +1,33 @@
 """Configured publisher authority of a source item."""
 
+from collections.abc import Mapping
 from urllib.parse import urlparse
 
-from tank.contracts.sources import SourceDefinition, SourceFeed
+from pydantic import Field, JsonValue
+
+from tank.contracts import DomainModel
+from tank.contracts.source_items import IssuingAgency
+from tank.contracts.sources import SourceAccount, SourceDefinition, SourceFeed
 
 
-def _retained_publisher_organization(source: SourceDefinition, item, feeds: list[SourceFeed]) -> str | None:
+class PublisherContext(DomainModel):
+    url: str
+    feed: str
+    author_organization: str | None = Field(default=None, min_length=1)
+    monitored_author: str | None = None
+    author: str | None = None
+    agencies: list[IssuingAgency] | None = None
+
+
+def _retained_publisher_organization(
+    source: SourceDefinition, item: PublisherContext, feeds: list[SourceFeed]
+) -> str | None:
     """Issuing agency or repository publisher; never a contributor's employer."""
     if len(feeds) != 1:
         return None
     feed = feeds[0]
     endpoint = urlparse(feed.url)
-    page = urlparse(str(item.get("url") or ""))
+    page = urlparse(item.url)
     if source.source_id == "S03":
         if (
             feed.kind != "json"
@@ -22,15 +38,13 @@ def _retained_publisher_organization(source: SourceDefinition, item, feeds: list
             or page.netloc not in {"www.federalregister.gov", "federalregister.gov"}
         ):
             return None
-        agencies = item.get("agencies")
-        if not isinstance(agencies, list) or not agencies:
+        agencies = item.agencies
+        if agencies is None or not agencies:
             return None
         names: list[str] = []
         for agency in agencies:
-            if not isinstance(agency, dict):
-                return None
-            name = agency.get("name") or agency.get("raw_name")
-            if not isinstance(name, str) or not name.strip():
+            name = agency.name if agency.name is not None and agency.name.strip() else agency.raw_name
+            if name is None or not name.strip():
                 return None
             if name.strip().casefold() not in {value.casefold() for value in names}:
                 names.append(name.strip())
@@ -59,24 +73,45 @@ def _retained_publisher_organization(source: SourceDefinition, item, feeds: list
     return None
 
 
-def resolve_author_organization(source: SourceDefinition, item, accounts=None) -> str | None:
+def resolve_author_organization(
+    source: SourceDefinition,
+    item: Mapping[str, JsonValue],
+    accounts: Mapping[str, SourceAccount],
+) -> str | None:
+    """Validate the captured-record projection before resolving declared publisher authority."""
+    context = PublisherContext.model_validate(
+        {
+            name: item[name]
+            for name in ("url", "feed", "author_organization", "monitored_author", "author", "agencies")
+            if name in item
+        }
+    )
+    return publisher_organization(source, context, accounts)
+
+
+def publisher_organization(
+    source: SourceDefinition,
+    item: PublisherContext,
+    accounts: Mapping[str, SourceAccount],
+) -> str | None:
     """The ingestion precedence; never infer authority from a display name."""
-    if item.get("author_organization"):
-        return item["author_organization"]
-    feeds = [f for f in source.feeds if f.url == item.get("feed")]
+    if item.author_organization is not None:
+        return item.author_organization
+    feeds = [feed for feed in source.feeds if feed.url == item.feed]
     if len(feeds) > 1:
         raise ValueError("Ambiguous configured publisher feed")
-    configured = (feeds[0].author_organization if feeds else None) or source.author_organization
-    if configured:
+    configured = feeds[0].author_organization if feeds else None
+    if configured is None:
+        configured = source.author_organization
+    if configured is not None:
         return configured
     publisher = _retained_publisher_organization(source, item, feeds)
-    if publisher:
+    if publisher is not None:
         return publisher
     if source.source_id == "S29":
-        account = (
-            (item.get("monitored_author") or item.get("reposted_by") or item.get("author", ""))
-            .lower()
-            .lstrip("@")
-        )
-        return (accounts or {}).get(account, {}).get("entity_id")
+        author = item.monitored_author if item.monitored_author is not None else item.author
+        if author is None:
+            return None
+        account = accounts.get(author.lower().lstrip("@"))
+        return account.entity_id if account is not None else None
     return None

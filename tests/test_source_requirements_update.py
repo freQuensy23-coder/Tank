@@ -21,7 +21,13 @@ def config(tmp_path: Path, sources):
         user_agent="Tank source regression",
         config_version="test",
         code_version="test",
-        load_config=lambda name: source_configuration({"sources": sources}) if name == "sources" else {},
+        load_config=lambda name: (
+            source_configuration({"sources": sources})
+            if name == "sources"
+            else {"x_accounts": []}
+            if name == "registry"
+            else {}
+        ),
         ops_progress_enabled=False,
         replay=False,
     )
@@ -85,6 +91,8 @@ async def test_duplicate_preserves_capture_and_counts_one_observation(tmp_path: 
         return dict(item, item_id=item_id, raw_ref=ref, raw_sha256=digest)
 
     incoming = {
+        "url": "https://synthetic.invalid/original-publication",
+        "feed": "S30",
         "external_id": "one",
         "title": "Original title",
         "text": "Original text",

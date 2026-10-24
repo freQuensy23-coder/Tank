@@ -385,3 +385,20 @@ def test_route_and_message_context_cannot_use_empty_or_whitespace_identities(ide
         SourceRoutingMessage(kind="ITEM_ADDED", item_id="item-1", event_id=identity)
     with pytest.raises(ValidationError):
         SourceRoutingMessage(kind="NEW_ITEM", item_id="item-1", session_id=identity)
+
+
+def test_publisher_authority_requires_declared_capture_feed() -> None:
+    from source_support import source_definition
+
+    from tank.sources.organization import resolve_author_organization
+
+    source = source_definition(
+        {
+            "source_id": "S01",
+            "name": "Declared publisher",
+            "author_organization": "Configured issuer",
+            "feeds": [],
+        }
+    )
+    with pytest.raises(ValidationError, match="feed"):
+        resolve_author_organization(source, {"url": "https://example.org/release"}, {})
