@@ -9,12 +9,27 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from importlib.metadata import version
-from typing import Any
+from typing import TypedDict
 
 import httpx
 from ddgs.ddgs import DDGS
 from ddgs.engines.duckduckgo import Duckduckgo
 from ddgs.exceptions import DDGSException, RatelimitException, TimeoutException
+
+from tank.contracts import DomainModel
+
+
+class SearchResult(TypedDict):
+    title: str
+    href: str
+    body: str
+
+
+class SearchHit(DomainModel):
+    title: str
+    href: str
+    body: str
+
 
 DDGS_VERSION = "9.16.0"
 SEARCH_URL = "https://html.duckduckgo.com/html/"
@@ -24,11 +39,11 @@ RETRY_DELAYS = (5, 15, 45)
 class SearchError(Exception):
     """A search failure that must never be mistaken for corroborating evidence."""
 
-    def __init__(self, code: str, message: str, *, retryable: bool = False, attempts: int = 0):
+    def __init__(self, code: str, message: str, *, retryable: bool = False, attempts: int = 0) -> None:
         super().__init__(message)
         self.code, self.retryable, self.attempts = code, retryable, attempts
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(self) -> dict[str, str | int | bool]:
         return {
             "provider": "duckduckgo",
             "error": self.code,
@@ -42,7 +57,7 @@ class SearchError(Exception):
 
 @dataclass(frozen=True)
 class SearchResponse:
-    results: list[dict[str, Any]]
+    results: list[SearchResult]
     attempts: int
 
 
@@ -58,7 +73,7 @@ class SearchLimiter:
         *,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-    ):
+    ) -> None:
         self.clock, self.sleep = clock, sleep
         self._lock = asyncio.Lock()
         self._last_started: float | None = None
@@ -67,7 +82,7 @@ class SearchLimiter:
 
         self._last_started = self.clock()
 
-    async def run(self, attempt: Callable[[], list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    async def run(self, attempt: Callable[[], list[SearchResult]]) -> list[SearchResult]:
         async with self._lock:
             if self._last_started is not None:
                 while (remaining := 2 - (self.clock() - self._last_started)) > 0:
@@ -94,18 +109,25 @@ _PROCESS_LIMITER = SearchLimiter()
 class _DuckDuckGoHTTP:
     """Only this exact DDG endpoint; no redirects, ambient proxies or hidden retries."""
 
-    def __init__(self, client: httpx.Client, mark_started: Callable[[], None]):
+    def __init__(self, client: httpx.Client, mark_started: Callable[[], None]) -> None:
         self.client, self.mark_started = client, mark_started
         self.requests = 0
         self.error: SearchError | None = None
 
-    def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+    def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        data: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
         try:
             if method != "POST" or url != SEARCH_URL or self.requests:
                 raise SearchError("POLICY", "Unexpected DuckDuckGo request; search stopped")
             self.requests += 1
             self.mark_started()
-            response = self.client.request(method, url, **kwargs)
+            response = self.client.request(method, url, data=data, headers=headers)
             if response.status_code == 429:
                 raise SearchError("RATE_LIMIT", "DuckDuckGo rate limited the search", retryable=True)
             if response.status_code in {202, 401, 403, 418, 503} or 300 <= response.status_code < 400:
@@ -138,14 +160,14 @@ class _DuckDuckGoHTTP:
 
 
 class _DuckDuckGoEngine(Duckduckgo):
-    def __init__(self, transport: _DuckDuckGoHTTP):
+    def __init__(self, transport: _DuckDuckGoHTTP) -> None:
 
         self.http_client = transport
         self.results = []
 
 
 class _DuckDuckGoOnly(DDGS):
-    def __init__(self, engine: _DuckDuckGoEngine):
+    def __init__(self, engine: _DuckDuckGoEngine) -> None:
 
         self._timeout = 20
         self.engine = engine
@@ -157,7 +179,7 @@ class _DuckDuckGoOnly(DDGS):
         return [self.engine]
 
 
-def _search_sync(query: str, user_agent: str, mark_started: Callable[[], None]) -> list[dict[str, Any]]:
+def _search_sync(query: str, user_agent: str, mark_started: Callable[[], None]) -> list[SearchResult]:
     if version("ddgs") != DDGS_VERSION:
         raise SearchError("VERSION", "DuckDuckGo adapter requires ddgs 9.16.0")
     with httpx.Client(
@@ -172,7 +194,8 @@ def _search_sync(query: str, user_agent: str, mark_started: Callable[[], None]) 
             results = search.text(query, backend="duckduckgo", max_results=10)
             if transport.error is not None:
                 raise transport.error
-            return results
+            hits = [SearchHit.model_validate(result) for result in results]
+            return [SearchResult(title=hit.title, href=hit.href, body=hit.body) for hit in hits]
         except DDGSException as exc:
             if transport.error is not None:
                 raise transport.error from exc
@@ -198,12 +221,12 @@ class DuckDuckGoSearchService:
         user_agent: str,
         limiter: SearchLimiter | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-        attempt: Callable[[str, str, Callable[[], None]], list[dict[str, Any]]] | None = None,
-    ):
+        attempt: Callable[[str, str, Callable[[], None]], list[SearchResult]] | None = None,
+    ) -> None:
         if not user_agent.strip():
             raise ValueError("DuckDuckGo search requires a declared User-Agent")
-        self.user_agent, self.limiter = user_agent, limiter or _PROCESS_LIMITER
-        self.sleep, self._attempt = sleep, attempt or _search_sync
+        self.user_agent, self.limiter = user_agent, _PROCESS_LIMITER if limiter is None else limiter
+        self.sleep, self._attempt = sleep, _search_sync if attempt is None else attempt
 
     async def search(
         self, query: str, *, on_attempt: Callable[[int], Awaitable[None]] | None = None
@@ -214,7 +237,7 @@ class DuckDuckGoSearchService:
             error = None
             launched = False
 
-            def run_attempt():
+            def run_attempt() -> list[SearchResult]:
                 nonlocal launched
                 launched = True
                 return self._attempt(query, self.user_agent, self.limiter.mark_started)

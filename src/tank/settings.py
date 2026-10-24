@@ -9,11 +9,13 @@ import tempfile
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlsplit
 
 import yaml
-from pydantic import AliasChoices, Field, PrivateAttr
+from pydantic import AliasChoices, BaseModel, Field, JsonValue, PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from tank.contracts.json import decode_json
 
 _PROCESS_CODE_VERSION: str | None = None
 _CONFIG_SUFFIXES = {".yaml", ".yml", ".json", ".md"}
@@ -143,6 +145,29 @@ class Settings(BaseSettings):
                 f"postgresql://oma:{quote(self.oma_db_password, safe='')}@postgres:5432/oma"
             )
 
+    def configured_secrets(self) -> frozenset[str]:
+        """Return configured credentials without reading any credential files."""
+        secrets = {
+            value
+            for value in (
+                self.openma_api_key,
+                self.opencode_api_key,
+                self.telegram_token,
+                self.etherscan_api_key,
+                self.codex_gateway_key,
+                self.apify_api_token,
+                self.tank_db_password,
+                self.oma_db_password,
+            )
+            if value is not None and value != ""
+        }
+        for url in (self.database_url, self.openma_database_url, self.clickhouse_url):
+            if url is not None:
+                password = urlsplit(url).password
+                if password is not None and password != "":
+                    secrets.update((password, unquote(password)))
+        return frozenset(secrets)
+
     @classmethod
     def settings_customise_sources(
         cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings
@@ -192,8 +217,13 @@ class Settings(BaseSettings):
     def read_config_text(self, relative: str) -> str:
         return self.read_config_bytes(relative).decode("utf-8")
 
-    def read_config_json(self, relative: str) -> Any:
-        return json.loads(self.read_config_bytes(relative))
+    def read_config_json(self, relative: str) -> JsonValue:
+        return decode_json(self.read_config_bytes(relative))
+
+    def load_config_as[T: BaseModel](self, name: str, schema: type[T]) -> T:
+        relative = name if name.endswith((".yaml", ".yml")) else name + ".yaml"
+        payload = yaml.load(self.read_config_bytes(relative), Loader=_YAML_LOADER)
+        return schema.model_validate(payload, strict=True)
 
     def load_config(self, name: str) -> dict[str, Any]:
         relative = name if name.endswith((".yaml", ".yml")) else name + ".yaml"

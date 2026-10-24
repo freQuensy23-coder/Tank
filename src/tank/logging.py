@@ -3,7 +3,6 @@
 import logging
 import re
 import traceback
-from urllib.parse import unquote, urlsplit
 
 from tank.settings import Settings
 
@@ -43,27 +42,8 @@ class CredentialFilter(logging.Filter):
 
 def configure_logging(settings: Settings | None = None) -> None:
     """Install filters before clients are constructed, without logging settings."""
-    values = []
     if settings is not None:
-        for name in (
-            "openma_api_key",
-            "opencode_api_key",
-            "telegram_token",
-            "etherscan_api_key",
-            "codex_gateway_key",
-            "apify_api_token",
-        ):
-            value = getattr(settings, name)
-            if value:
-                values.append(str(value))
-        for name in ("database_url", "openma_database_url"):
-            value = getattr(settings, name)
-            if value:
-                password = urlsplit(str(value)).password
-                if password:
-                    values.extend((password, unquote(password)))
-
-    _KNOWN_SECRETS.update(values)
+        _KNOWN_SECRETS.update(settings.configured_secrets())
     safe_filter = CredentialFilter(tuple(_KNOWN_SECRETS))
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     for handler in logging.getLogger().handlers:
