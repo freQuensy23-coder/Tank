@@ -1,6 +1,7 @@
 """Explicit unavailable scores for tests that do not exercise score assessment."""
 
 from pydantic import JsonValue, RootModel
+
 from tank.contracts.score import ScoreDimension, ScoreDimensions
 
 
