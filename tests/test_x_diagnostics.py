@@ -407,3 +407,81 @@ async def test_job_runner_preserves_independent_document_retry_budgets(monkeypat
     assert [row["filename"] for row in ledger] == sent
     failures = await repo.list("out.deliveries", filters={"method": "sendDocument", "terminal": True})
     assert len(failures) == int(exhaust_first)
+
+
+async def test_job_runner_defers_large_successful_document_batches_without_spending_attempts(monkeypatch):
+    import asyncio
+    from datetime import timedelta
+
+    import tank.delivery
+    import tank.runtime
+    import tank.storage
+    from tank.runtime import Runtime
+    from tank.util import parse_time, utcnow
+
+    now = utcnow()
+    elapsed = 0
+    for module in (tank.delivery, tank.runtime, tank.storage):
+        monkeypatch.setattr(module, "utcnow", lambda: now)
+    monkeypatch.setattr(tank.delivery, "time", SimpleNamespace(monotonic=lambda: elapsed))
+    repo = MemoryRepository()
+    notice_id = await report_entry_errors(
+        repo,
+        telegram_settings(),
+        {"source_id": "S29", "name": "X"},
+        {"url": URL},
+        [
+            {
+                "account": f"account{index}",
+                "reason": "PUBLIC_PROFILE_HTTP_503",
+                "diagnostics": diagnostics(),
+            }
+            for index in range(86)
+        ],
+        "2026-10-24T12:00:00Z",
+    )
+    notice = await repo.get("out.ops_notices", notice_id)
+    [job] = await repo.list("ops.jobs", filters={"type": "DELIVER"})
+    expected = [row["filename"] for row in notice["document_manifest"]]
+    sent = []
+    messages = 0
+    batches = []
+
+    def send(request):
+        nonlocal elapsed, messages
+        if request.url.path.endswith("sendMessage"):
+            messages += 1
+        else:
+            sent.append(multipart(request)["document"][0])
+            elapsed += 3
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": messages + len(sent)}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+        runtime = object.__new__(Runtime)
+        runtime.repo = repo
+        runtime.settings = telegram_settings()
+        for _ in range(50):
+            current = await repo.get("ops.jobs", job["job_id"])
+            if current["status"] in {"DONE", "FAILED"}:
+                break
+            now = max(now, parse_time(current["run_after"])) + timedelta(microseconds=1)
+            stop = asyncio.Event()
+            runtime.delivery = DeliveryService(repo, runtime.settings, http=http)
+
+            async def deliver(payload):
+                try:
+                    await runtime.delivery.deliver(payload)
+                finally:
+                    stop.set()
+
+            runtime.handlers = {"DELIVER": deliver}
+            started = elapsed
+            await runtime.worker(stop)
+            batches.append(elapsed - started)
+    current = await repo.get("ops.jobs", job["job_id"])
+    assert current["status"] == "DONE" and current["attempts"] == 1
+    assert len(expected) == 344 and sent == expected and messages == 1
+    assert len(batches) > 5 and all(0 < duration <= 30 for duration in batches)
+    receipts = await repo.list("out.deliveries", filters={"method": "sendDocument", "status": "SENT"})
+    assert len(receipts) == 344 and all(row["attempt"] == 1 for row in receipts)
+    assert not await repo.list("out.deliveries", filters={"status": "FAILED"})

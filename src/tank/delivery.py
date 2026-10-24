@@ -3,6 +3,7 @@
 import asyncio
 import html
 import json
+import time
 from contextlib import AsyncExitStack
 from datetime import timedelta
 
@@ -164,6 +165,7 @@ class DeliveryService:
             raise error
 
     async def _deliver_documents(self, payload, notice):
+        deadline = time.monotonic() + 30
         chat = str(self.settings.telegram_ops_chat or "")
         ledger = await self._all(
             "out.deliveries", filters={"notice_id": notice["notice_id"], "channel": "telegram:ops"}
@@ -190,6 +192,8 @@ class DeliveryService:
                 terminal_failure = DeliveryError("Ops document delivery exhausted five attempts")
                 terminal_failure.terminal = True
                 continue
+            if time.monotonic() >= deadline:
+                return DeliveryDeferred(offset_schedule(collection_clock(), timedelta(seconds=1)))
             transition = {
                 "notice_id": notice["notice_id"],
                 "channel": "telegram:ops",
