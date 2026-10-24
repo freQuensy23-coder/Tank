@@ -23,7 +23,7 @@ from contextvars import ContextVar
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Literal, Protocol, Self
+from typing import Literal, Protocol, Self, overload
 
 from psycopg import AsyncConnection, sql
 from psycopg.abc import PQGen
@@ -132,6 +132,7 @@ class Repository(Protocol):
         start: TimeInput | None = None,
         instrument_ids: Collection[str] | None = None,
     ) -> Records: ...
+    @overload
     async def market_dependency_head(
         self,
         collection: str,
@@ -143,8 +144,24 @@ class Repository(Protocol):
         instrument_ids: Collection[str] | None = None,
         assembled_at: TimeInput | None = None,
         order: str = "availability",
-        orders: Collection[str] | None = None,
-    ) -> Record | HeadMap | None: ...
+        orders: None = None,
+    ) -> Record | None: ...
+
+    @overload
+    async def market_dependency_head(
+        self,
+        collection: str,
+        semantic_field: str,
+        cutoff: TimeInput,
+        *,
+        start: TimeInput | None = None,
+        filters: Record | None = None,
+        instrument_ids: Collection[str] | None = None,
+        assembled_at: TimeInput | None = None,
+        order: str = "availability",
+        orders: Collection[str],
+    ) -> HeadMap: ...
+
     def iter_market_projection(
         self,
         collection: str,
@@ -584,6 +601,36 @@ class RepositoryQueries(ABC):
             start=start,
             instrument_ids=instrument_ids,
         )
+
+    @overload
+    async def market_dependency_head(
+        self,
+        collection: str,
+        semantic_field: str,
+        cutoff: TimeInput,
+        *,
+        start: TimeInput | None = None,
+        filters: Record | None = None,
+        instrument_ids: Collection[str] | None = None,
+        assembled_at: TimeInput | None = None,
+        order: str = "availability",
+        orders: None = None,
+    ) -> Record | None: ...
+
+    @overload
+    async def market_dependency_head(
+        self,
+        collection: str,
+        semantic_field: str,
+        cutoff: TimeInput,
+        *,
+        start: TimeInput | None = None,
+        filters: Record | None = None,
+        instrument_ids: Collection[str] | None = None,
+        assembled_at: TimeInput | None = None,
+        order: str = "availability",
+        orders: Collection[str],
+    ) -> HeadMap: ...
 
     async def market_dependency_head(
         self,
