@@ -6,7 +6,7 @@ import json
 import os
 import re
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
@@ -108,7 +108,9 @@ class ReleasedMarket:
     async def capture_readiness(self, *args, **kwargs):
         return {"status": "PARTIAL"}
 
-    async def repair_windows(self, *args, **kwargs):
+    async def repair_windows(
+        self, token_id: str, start: datetime, end: datetime, *, budget_s: float
+    ) -> dict[str, dict[str, int]]:
         return {}
 
     async def wait_capture(self, *args, **kwargs) -> None:
