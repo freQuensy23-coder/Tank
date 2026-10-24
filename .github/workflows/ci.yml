@@ -103,6 +103,15 @@ jobs:
           enable-cache: true
       - run: uv sync --python 3.13.13 --frozen --extra dev
       - run: uv run --frozen --extra dev mypy
+      - name: Check completed foundation source family strictly
+        env:
+          MYPYPATH: src:tests
+        run: >-
+          uv run --frozen --extra dev mypy --strict --follow-imports=silent --explicit-package-bases
+          src/tank/storage.py src/tank/retention.py src/tank/search.py src/tank/market_storage.py
+          src/tank/market_codec.py src/tank/clickhouse_market.py src/tank/models.py src/tank/market_schema.py
+          src/tank/settings.py src/tank/util.py src/tank/time_precision.py src/tank/logging.py
+          src/tank/backup.py src/tank/contracts
       - name: Check completed quality module families strictly
         env:
           MYPYPATH: src:tests
