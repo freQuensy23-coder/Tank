@@ -28,6 +28,6 @@ def build_capture_lifecycle(
         store,
         config_version=policy.config_version,
         code_version=policy.code_version,
-        secrets=settings.configured_secrets,
+        secrets=lambda: tuple(settings.configured_secrets()),
     )
     return CaptureLifecycle(repository, policy, clock, known_tokens)
