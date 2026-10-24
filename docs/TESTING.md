@@ -115,9 +115,9 @@ Run this lane with no external network and the normal available CPU and memory. 
 
 Ruff owns Python formatting and imports:
 
-    uv run --frozen --extra dev python scripts/ci/no_comments.py src tests scripts deploy capture
-    uv run --frozen --extra dev ruff check src tests scripts deploy
-    uv run --frozen --extra dev ruff format --check src tests scripts deploy
+    uv run --frozen --extra dev python scripts/ci/no_comments.py src tests scripts deploy capture actors
+    uv run --frozen --extra dev ruff check src tests scripts deploy actors
+    uv run --frozen --extra dev ruff format --check src tests scripts deploy actors
     uv run --frozen --extra dev mypy
     (cd capture && golangci-lint run ./...)
 
