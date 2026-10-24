@@ -293,6 +293,18 @@ def test_build_poll_failure_is_not_treated_as_success(apify_stand, release, tmp_
 
 
 @pytest.mark.integration
+def test_build_deadline_cannot_activate_incomplete_build(apify_stand, release, tmp_path):
+    apify_stand.poll_status = "RUNNING"
+    instance = publisher(apify_stand, release, tmp_path)
+    times = iter([0, 601])
+    instance.clock = lambda: next(times)
+    with pytest.raises(deploy.DeployError, match="deadline"):
+        instance.prepare()
+    assert apify_stand.direct == deploy.BASELINE_BUILD
+    assert instance.read("pending.json") is None
+
+
+@pytest.mark.integration
 def test_worker_rollback_failure_retains_recovery_transaction(apify_stand, release, tmp_path):
     instance = publisher(apify_stand, release, tmp_path)
     instance.prepare()

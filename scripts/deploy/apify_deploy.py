@@ -180,6 +180,7 @@ class Publisher:
         self.release = release
         self.state = state
         self.sha = sha
+        self.clock = time.monotonic
         self.actor = "/actors/" + ACTOR_ID
         state.mkdir(mode=0o700, exist_ok=True)
         private_path(state, directory=True)
@@ -317,8 +318,8 @@ class Publisher:
                     isinstance(build_id, str) and re.fullmatch(r"[A-Za-z0-9]{17}", build_id),
                     "build ID missing",
                 )
-                deadline = time.monotonic() + 600
-                while build.get("status") in {"READY", "RUNNING"} and time.monotonic() < deadline:
+                deadline = self.clock() + 600
+                while build.get("status") in {"READY", "RUNNING"} and self.clock() < deadline:
                     build = self.api.request("GET", "/actor-builds/" + build_id + "?waitForFinish=60")
                 require(build.get("status") == "SUCCEEDED", "worker build failed or exceeded deadline")
                 candidate = self.provenance(build_id, manifest["source_digest"])
@@ -436,6 +437,7 @@ class Publisher:
             transaction.get("rolled_back") and self.current() == transaction["previous"],
             "worker rollback incomplete",
         )
+        require(self.read("active.json") == transaction["previous_active"], "worker rollback marker mismatch")
         deployed = self.state.parent / "deployed"
         previous_release = deployed.read_text().strip() if deployed.exists() else ""
         require(previous_release == transaction["previous_release_sha"], "Tank rollback marker mismatch")
