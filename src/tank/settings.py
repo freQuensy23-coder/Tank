@@ -17,8 +17,9 @@ from pydantic import AliasChoices, BaseModel, Field, JsonValue, PrivateAttr
 from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
-from tank.contracts.configuration import Thresholds
+from tank.contracts.configuration import DeliveryConfiguration, Thresholds
 from tank.contracts.json import JsonDocument, decode_json
+from tank.contracts.sources import SourceConfiguration
 from tank.util import JsonInput
 
 _PROCESS_CODE_VERSION: str | None = None
@@ -275,17 +276,15 @@ def threshold(settings: Any, name: str, fixture_default: Any) -> Any:
 
 
 def configured_values(settings: Settings) -> dict[str, str]:
-    """User-Agent and Telegram chats from the configuration (TDD §13, HLD §3)."""
-    values = {}
+    """Read declared contact/chat values from validated versioned configuration."""
+    values: dict[str, str] = {}
     if settings.has_config("delivery.yaml"):
-        delivery = settings.load_config("delivery")
-        for field, key in (("telegram_alerts_chat", "alerts_chat_id"), ("telegram_ops_chat", "ops_chat_id")):
-            if delivery.get(key) is not None:
-                values[field] = str(delivery[key])
+        delivery = settings.load_config_as("delivery", DeliveryConfiguration)
+        values["telegram_alerts_chat"] = delivery.alerts_chat_id
+        values["telegram_ops_chat"] = delivery.ops_chat_id
     if settings.has_config("sources.yaml"):
-        contact = settings.load_config("sources").get("contact_email")
-        if contact:
-            values["user_agent"] = f"TankV0/1.0 ({contact})"
+        sources = settings.load_config_as("sources", SourceConfiguration)
+        values["user_agent"] = f"TankV0/1.0 ({sources.contact_email})"
     return values
 
 

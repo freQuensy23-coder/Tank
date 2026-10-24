@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tank.contracts.configuration import DeliveryConfiguration
+from tank.contracts.sources import SourceConfiguration
 from tank.settings import Settings, resolve_versions
 
 
@@ -102,8 +104,16 @@ def test_config_snapshots_refuse_auth_files_inside_config(tmp_path: Path) -> Non
 def test_deployment_values_come_from_frozen_config_with_explicit_override(tmp_path: Path) -> None:
     config = tmp_path / "config"
     config.mkdir()
-    (config / "delivery.yaml").write_text("alerts_chat_id: '-1000000000001'\nops_chat_id: '-1000000000002'\n")
-    (config / "sources.yaml").write_text("contact_email: test@example.invalid\n")
+    delivery = DeliveryConfiguration(
+        alerts_chat_id="-1000000000001",
+        ops_chat_id="-1000000000002",
+        parse_mode="HTML",
+        max_attempts=5,
+        secrets="TELEGRAM_BOT_TOKEN",
+    )
+    sources = SourceConfiguration(version="fixture", contact_email="test@example.invalid", sources=[])
+    (config / "delivery.yaml").write_text(yaml.safe_dump(delivery.model_dump(mode="json")))
+    (config / "sources.yaml").write_text(yaml.safe_dump(sources.model_dump(mode="json")))
     settings = Settings(
         config_dir=config,
         data_dir=tmp_path / "data",
@@ -173,8 +183,23 @@ def test_user_agent_and_chats_from_configuration(tmp_path: Path) -> None:
 
     config = tmp_path / "config"
     config.mkdir()
-    (config / "delivery.yaml").write_text("alerts_chat_id: '-1001'\nops_chat_id: '-1002'\n")
-    (config / "sources.yaml").write_text("contact_email: ops@example.org\nsources:\n- source_id: S29\n")
+    delivery = DeliveryConfiguration(
+        alerts_chat_id="-1001",
+        ops_chat_id="-1002",
+        parse_mode="HTML",
+        max_attempts=5,
+        secrets="TELEGRAM_BOT_TOKEN",
+    )
+    baseline = Settings(config_dir=Path("config"), _env_file=None).load_config_as(
+        "sources", SourceConfiguration
+    )
+    sources = SourceConfiguration(
+        version="fixture",
+        contact_email="ops@example.org",
+        sources=[source for source in baseline.sources if source.source_id == "S29"],
+    )
+    (config / "delivery.yaml").write_text(yaml.safe_dump(delivery.model_dump(mode="json")))
+    (config / "sources.yaml").write_text(yaml.safe_dump(sources.model_dump(mode="json")))
     frozen = resolve_versions(
         Settings(_env_file=None, config_dir=config, data_dir=tmp_path / "data", apify_api_token="FAKE-apify")
     )
