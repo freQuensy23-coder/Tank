@@ -8,7 +8,8 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from tank.deployment.apify_api import ApifyAPI, ApifyAPIError, ApifyEndpoint
-from tank.deployment.artifacts import ArtifactError, FilesystemArtifacts
+from tank.deployment.artifact_contracts import PackageRequest, PublisherArtifactRuntime
+from tank.deployment.artifacts import ArtifactError, FilesystemArtifacts, package_release
 from tank.deployment.commands import PUBLISHER_ACTIONS, PublisherCommand, execute_command
 from tank.deployment.contracts import PublisherPolicy
 from tank.deployment.credentials import PublisherCredentialError, host_token
@@ -18,6 +19,7 @@ from tank.deployment.package_runtime import verify_package_runtime
 from tank.deployment.publisher import Publisher, PublisherStateError
 from tank.deployment.runtime import PublisherRuntimeError, verify_runtime
 from tank.deployment.runtime_contracts import RuntimeInvocation
+from tank.deployment.source_runtime import verify_source_archive
 
 
 class Arguments(argparse.Namespace):
@@ -30,6 +32,9 @@ class Arguments(argparse.Namespace):
     credential_file: Path
     tank_marker: Path
     build_timeout_s: float
+    repository: Path
+    destination: Path
+    image_repository: str
 
 
 def parse_arguments() -> Arguments:
@@ -46,6 +51,10 @@ def parse_arguments() -> Arguments:
     parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_subparsers(dest="action", required=True)
     actions.add_parser("runtime-info", parents=[common])
+    package = actions.add_parser("package", parents=[common])
+    package.add_argument("--repository", required=True, type=Path)
+    package.add_argument("--destination", required=True, type=Path)
+    package.add_argument("--image-repository", required=True)
     for action in PUBLISHER_ACTIONS:
         actions.add_parser(action, parents=[worker])
     return parser.parse_args(namespace=Arguments())
@@ -58,6 +67,24 @@ def run(arguments: Arguments) -> None:
     )
     if arguments.action == "runtime-info":
         print(verify_runtime(invocation, arguments.runtime_root).model_dump_json())
+        return
+    if arguments.action == "package":
+        expected_program = arguments.runtime_root / "src/tank/deployment/cli.py"
+        if Path(__file__).resolve() != expected_program.resolve():
+            raise PublisherRuntimeError("Publisher packaging must execute the declared source archive")
+        evidence = verify_source_archive(arguments.repository, arguments.runtime_root, invocation)
+        release = package_release(
+            PackageRequest(
+                repository=arguments.repository,
+                destination=arguments.destination,
+                publisher=PublisherArtifactRuntime(
+                    contract="tank-publisher-runtime-v1",
+                    image_repository=arguments.image_repository,
+                    runtime=evidence.runtime,
+                ),
+            )
+        )
+        print(release.model_dump_json())
         return
     command = PublisherCommand.model_validate(
         {"action": arguments.action, "release_sha": arguments.selected_release_sha}
