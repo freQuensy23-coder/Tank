@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from native_input_fixtures import acknowledge_native_input
 from source_support import fixture_versions
 
 from tank.agents import SessionService
@@ -306,7 +307,7 @@ def openma(posts, history):
         if request.method == "POST":
             body = json.loads(request.content)
             posts.append((request.url.path, body))
-            return httpx.Response(200, json={"data": [{"id": "in_q"}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, "in_q"))
         if request.url.path.endswith("/events"):
             ordered = history[::-1] if request.url.params.get("order") == "desc" else history
             return httpx.Response(200, json={"data": ordered, "next_page": None})
@@ -573,7 +574,7 @@ async def test_first_question_is_answered_while_a_second_is_still_running() -> N
             return httpx.Response(200, json={"id": "ses_1", "status": "idle"})
         if request.method == "POST":
             posts.append(json.loads(request.content))
-            return httpx.Response(200, json={"data": [{"id": next(ids)}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, next(ids)))
         if not request.url.path.endswith("/events"):
             return httpx.Response(200, json={"id": "ses_1", "status": "idle"})
         ordered = history[::-1] if request.url.params.get("order") == "desc" else history
