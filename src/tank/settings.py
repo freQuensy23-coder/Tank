@@ -280,6 +280,8 @@ class Settings(BaseSettings):
 
     def load_config_as[T: BaseModel](self, name: str, schema: type[T]) -> T:
         relative = name if name.endswith((".yaml", ".yml")) else name + ".yaml"
+        if self._config_snapshot is not None:
+            return schema.model_validate(self.load_config(relative), strict=True)
         payload = yaml.load(self.read_config_bytes(relative), Loader=_YAML_LOADER)
         return schema.model_validate(payload, strict=True)
 

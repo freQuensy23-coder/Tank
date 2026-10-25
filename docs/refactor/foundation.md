@@ -240,3 +240,10 @@ Five initial contract cases pass (0.07 s), covering missing-cutoff/calculation r
 
 
 Unavailable history is structurally distinct from measured diagnostics. `UnavailableHistoryDiagnostics` carries the actual INCOMPLETE/INSUFFICIENT_HISTORY/NOT_ESTIMABLE reason, requested window, zero valid samples, and required nullable known resolution. The null resolution means no historical times establish a cadence; it is never replaced with zero or a fabricated sampling interval. It has no measured endpoint/bounds fields. `RelativeHistory` accepts this explicit variant and still requires population/count agreement. This covers real early exits before historical indexing or when beta cannot be estimated; observed diagnostics retain their full endpoint/exactness invariants.
+
+
+### Captured typed-config parsing cost and isolation
+
+`Settings.load_config_as` now reuses the captured generation's existing parsed configuration cache, then strictly validates the requested model on every call. `load_config` returns a deep copy; no mutable model instance or nested configuration collection is shared with callers. Uncaptured settings continue reading live bytes on each access. New generations receive distinct parsed caches; malformed edits refuse capture and cannot replace an earlier generation.
+
+Actual captured accessor profiling (five reads each, pinned server environment) measured repeated registry reads falling from 0.114 s to 0.00244 s, semantics from 0.0321 s to 0.000392 s, dependencies from 0.0101 s to 0.000143 s. First reads still parse/validate actual input. Exact before/after JSON evidence remains `.verification/foundation-captured-config-accessor-profile*.json`; these are observations, not flaky time-limit assertions. Tests count actual YAML parsing, verify independent nested model data, live uncaptured rereads, generation isolation, malformed-candidate refusal, and canonical actual typed registry output equality against the uncaptured validation path. All 28 Settings cases pass in 1.02 s, with strict source/test mypy and Ruff clean. No runtime/test timeout or resource limit was changed.
