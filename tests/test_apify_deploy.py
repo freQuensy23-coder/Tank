@@ -9,7 +9,7 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -206,6 +206,14 @@ class ApifyStand:
                 self.versions[deploy.VERSION] = body
             return 200, {"data": self.versions[deploy.VERSION]}
         if route == actor + "/builds" and method == "POST":
+            tag = parse_qs(urlsplit(path).query).get("tag", [""])[0]
+            if len(tag) > 30:
+                return 400, {
+                    "error": {
+                        "type": "invalid-input",
+                        "message": f"tag must be at most 30 characters long Received {tag!r}",
+                    }
+                }
             build_id = BUILD if BUILD not in self.builds else OTHER_BUILD
             snapshot = json.loads(json.dumps(self.versions[deploy.VERSION]))
             if self.snapshot_tamper:
@@ -835,3 +843,12 @@ def test_legacy_build_drift_blocks_bootstrap_and_rollback(apify_stand, release, 
     with pytest.raises(deploy.DeployError):
         separate.prepare()
     assert separate.read("pending.json") is None
+
+
+def test_apify_error_names_reason_without_token(apify_stand):
+    # The fake rejects tags over Apify's 30-character limit, so every publishing test above also checks the tag length.
+    api = deploy.Api("synthetic-token", apify_stand.base)
+    with pytest.raises(deploy.DeployError) as error:
+        api.request("POST", f"/actors/{deploy.ACTOR_ID}/builds?version={deploy.VERSION}&tag={'x' * 31}")
+    assert "HTTP 400: invalid-input tag must be at most 30 characters long" in str(error.value)
+    assert "synthetic-token" not in str(error.value)

@@ -164,6 +164,15 @@ class Api:
         self.base = base
         self.opener = urllib.request.build_opener(NoRedirect, urllib.request.ProxyHandler({}))
 
+    def reason(self, error):
+        """Apify's own error type and message, with the token removed and the length bounded."""
+        try:
+            detail = json.loads(error.read().decode("utf-8", "replace")).get("error") or {}
+        except (OSError, ValueError, AttributeError):
+            return ""
+        text = " ".join(str(detail.get(key) or "") for key in ("type", "message")).strip()
+        return ": " + text.replace(self.token, "[token]")[:300] if text else ""
+
     def request(self, method, path, body=None):
         request = urllib.request.Request(
             self.base + path,
@@ -175,7 +184,7 @@ class Api:
             with self.opener.open(request, timeout=75) as response:
                 value = json.load(response)
         except urllib.error.HTTPError as error:
-            raise DeployError(f"Apify {method} failed with HTTP {error.code}") from None
+            raise DeployError(f"Apify {method} failed with HTTP {error.code}{self.reason(error)}") from None
         except (OSError, ValueError):
             raise DeployError(f"Apify {method} transport or JSON failure") from None
         require(
@@ -405,7 +414,7 @@ class Publisher:
                     "uploaded version verification failed",
                 )
                 build = self.api.request(
-                    "POST", self.actor + f"/builds?version={VERSION}&tag=tank-{self.sha}"
+                    "POST", self.actor + f"/builds?version={VERSION}&tag=tank-{self.sha[:12]}"
                 )
                 build_id = build.get("id")
                 require(
