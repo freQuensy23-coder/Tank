@@ -208,16 +208,7 @@ func (s *Service) Run(ctx context.Context) error {
 		return err
 	}
 	s.syncHot(ctx, hot)
-	s.spawn(func(ctx context.Context) {
-		if !s.waitLeading(ctx) {
-			return
-		}
-
-		s.flush(ctx)
-
-		s.sweep(ctx)
-		s.startStartupRepairs(ctx, hot, maxTime(started, s.clock.Now()))
-	})
+	s.spawn(func(ctx context.Context) { s.startupAfterLeading(ctx, started) })
 	s.loop(ctx, time.Second, s.tick)
 	s.loop(ctx, streamStateEvery, func(context.Context) { s.publishStreams() })
 	s.loop(ctx, rawFlushEvery, func(context.Context) { s.flushRaw() })

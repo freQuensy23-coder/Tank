@@ -153,6 +153,25 @@ func (s *Service) startupRepairs(ctx context.Context, hot []hotstate.Record, sta
 	return errors.Join(refusals...)
 }
 
+func (s *Service) startupAfterLeading(ctx context.Context, started time.Time) {
+	if !s.waitLeading(ctx) {
+		return
+	}
+	bound := maxTime(started, s.clock.Now())
+	hot, err := s.store.HotTokens(ctx)
+	if err != nil {
+		s.log.Warn("authoritative startup membership unavailable", "error", err)
+		if ctx.Err() == nil {
+			s.queueStartupRepairRetry(bound)
+		}
+		return
+	}
+	s.syncHot(ctx, hot)
+	s.flush(ctx)
+	s.sweepAt(ctx, bound)
+	s.startStartupRepairs(ctx, hot, bound)
+}
+
 func (s *Service) startStartupRepairs(ctx context.Context, hot []hotstate.Record, bound time.Time) {
 	if err := s.startupRepairs(ctx, hot, bound); err != nil {
 		s.log.Warn("startup repair pass unavailable", "error", err)
@@ -195,6 +214,9 @@ func (s *Service) retryStartupRepairs(ctx context.Context, hot []hotstate.Record
 				retry.running = false
 			}
 		}()
+		s.syncHot(ctx, hot)
+		s.flush(ctx)
+		s.sweepAt(ctx, retry.bound)
 		if err := s.startupRepairs(ctx, hot, retry.bound); err != nil {
 			if ctx.Err() == nil {
 				s.log.Warn("startup repair pass remains unavailable", "error", err)

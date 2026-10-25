@@ -758,6 +758,9 @@ const repairParallel = 8
 const sweepEvery, sweepSpan, sweepLag = 2 * time.Minute, time.Hour, 2 * time.Minute
 
 func (s *Service) sweep(ctx context.Context) {
+	s.sweepAt(ctx, s.clock.Now())
+}
+func (s *Service) sweepAt(ctx context.Context, observed time.Time) {
 	if !s.leading() {
 		return
 	}
@@ -768,7 +771,7 @@ func (s *Service) sweep(ctx context.Context) {
 	}
 	s.mu.Unlock()
 	sort.Strings(tokens)
-	hi := pytime.MinuteFloor(s.clock.Now().Add(-sweepLag))
+	hi := pytime.MinuteFloor(observed.Add(-sweepLag))
 	var wg sync.WaitGroup
 	for _, token := range tokens {
 		wg.Add(1)

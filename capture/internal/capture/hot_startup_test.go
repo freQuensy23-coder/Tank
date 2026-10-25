@@ -44,6 +44,8 @@ func TestStartupAnchorFailureRefusesEffectsAndRetriesOnceWithOriginalBound(t *te
 	r := newRESTRig(t, "coinbase")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	r.s.ctx = ctx
+	r.s.dial = pendingStartupDial
 	bound := r.base.Add(3 * time.Minute)
 	missing := r.base.Add(time.Minute)
 	rows := map[string]map[string]any{}
@@ -88,6 +90,8 @@ func TestStartupAnchorFailureRefusesEffectsAndRetriesOnceWithOriginalBound(t *te
 		t.Fatal("Concurrent refreshes duplicated the active startup lookup")
 	}
 	close(store.release)
+	waitStartupCleared(t, r.s, ctx)
+	cancel()
 	r.s.wg.Wait()
 	if store.calls.Load() != 2 || r.v.calls == 0 || r.bar(missing) == nil || r.bar(missing)["complete"] != true {
 		t.Fatalf("Recovered startup pass did not repair the observed missing minute: lookups=%d reads=%d row=%v", store.calls.Load(), r.v.calls, r.bar(missing))
@@ -212,5 +216,29 @@ func TestStartupLogPreservesRecordedClockUncertainty(t *testing.T) {
 		!*clock.ReasonPresent || clock.Reason == nil || *clock.Reason != "LEGACY_PRECISION_UNREPORTED" ||
 		source.Origin.BackfillPresent == nil || *source.Origin.BackfillPresent {
 		t.Fatalf("Startup diagnostics inferred verification or discarded uncertainty: %s", log.Bytes())
+	}
+}
+
+func pendingStartupDial(ctx context.Context, _ string) (Conn, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func waitStartupCleared(t *testing.T, s *Service, ctx context.Context) {
+	t.Helper()
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for {
+		s.mu.Lock()
+		done := s.startupRetry == nil
+		s.mu.Unlock()
+		if done {
+			return
+		}
+		select {
+		case <-tick.C:
+		case <-ctx.Done():
+			t.Fatal("Bounded startup retry did not complete")
+		}
 	}
 }
