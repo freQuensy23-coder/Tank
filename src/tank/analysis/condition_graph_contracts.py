@@ -1713,20 +1713,23 @@ class ConditionObservedPredicate(DomainModel):
     value: bool
 
 
+type ConditionPredicateUnavailableReason = Literal[
+    "INCOMPLETE",
+    "INSUFFICIENT_HISTORY",
+    "NOT_ESTIMABLE",
+    "NOT_SUPPORTED",
+    "ZERO_TOTAL_VOLUME",
+    "ZERO_BASELINE",
+    "ZERO_NOTIONAL",
+    "ZERO_NET_FLOW",
+    "NO_EVENT_ANCHOR",
+    "NO_VENUES",
+]
+
+
 class ConditionUnavailablePredicate(DomainModel):
     status: Literal["UNAVAILABLE"]
-    reason: Literal[
-        "INCOMPLETE",
-        "INSUFFICIENT_HISTORY",
-        "NOT_ESTIMABLE",
-        "NOT_SUPPORTED",
-        "ZERO_TOTAL_VOLUME",
-        "ZERO_BASELINE",
-        "ZERO_NOTIONAL",
-        "ZERO_NET_FLOW",
-        "NO_EVENT_ANCHOR",
-        "NO_VENUES",
-    ]
+    reason: ConditionPredicateUnavailableReason
 
 
 type ConditionPredicate = ConditionObservedPredicate | ConditionUnavailablePredicate
@@ -2645,10 +2648,79 @@ class ConditionImpactTiers(DomainModel):
     T3: ConditionImpactTier
 
 
+class ConditionDepthSampleCohort(DomainModel):
+    observation_count: int = Field(gt=0)
+    fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ObservedConditionDepthMean(DomainModel):
+    status: Literal["OBSERVED"]
+    value: Decimal = Field(ge=0)
+    cohort: ConditionDepthSampleCohort
+
+
+class UnavailableConditionDepthMean(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    value: None
+    reason: Literal["INCOMPLETE"]
+
+
+type ConditionDepthMean = ObservedConditionDepthMean | UnavailableConditionDepthMean
+
+
+class ConditionPreBookSideDepth(DomainModel):
+    usd: ConditionDepthMean
+    native: ConditionDepthMean
+
+    @model_validator(mode="after")
+    def actual_mean_sample_sets(self) -> Self:
+        if (
+            isinstance(self.usd, ObservedConditionDepthMean)
+            and isinstance(self.native, ObservedConditionDepthMean)
+            and self.usd.cohort.fingerprint == self.native.cohort.fingerprint
+        ):
+            if self.usd.cohort.observation_count != self.native.cohort.observation_count:
+                raise ValueError(
+                    "Matching depth sample identities must preserve their actual observation count"
+                )
+            if (self.usd.value == 0) != (self.native.value == 0):
+                raise ValueError("Matching USD/native mean cohorts must preserve the same zero-quantity fact")
+        return self
+
+
 class ComputedConditionPreDepthSides(DomainModel):
     status: Literal["COMPUTED"]
-    bid: ConditionBookSideDepth
-    ask: ConditionBookSideDepth
+    bid: ConditionPreBookSideDepth
+    ask: ConditionPreBookSideDepth
+    paired_total_usd: ConditionDepthMean
+
+    @model_validator(mode="after")
+    def actual_paired_sample_set(self) -> Self:
+        bid, ask, paired = self.bid.usd, self.ask.usd, self.paired_total_usd
+        if isinstance(paired, ObservedConditionDepthMean):
+            if not isinstance(bid, ObservedConditionDepthMean) or not isinstance(
+                ask, ObservedConditionDepthMean
+            ):
+                raise ValueError("A paired depth mean requires actual known side samples")
+            if paired.cohort.observation_count > min(
+                bid.cohort.observation_count, ask.cohort.observation_count
+            ):
+                raise ValueError("Paired depth samples cannot exceed either actual side cohort")
+        if (
+            isinstance(bid, ObservedConditionDepthMean)
+            and isinstance(ask, ObservedConditionDepthMean)
+            and bid.cohort.fingerprint == ask.cohort.fingerprint
+            and (
+                bid.cohort != ask.cohort
+                or not isinstance(paired, ObservedConditionDepthMean)
+                or paired.cohort != bid.cohort
+                or paired.value != _sum_native(bid.value, ask.value)
+            )
+        ):
+            raise ValueError(
+                "A paired depth mean must preserve its actual shared observation cohort and amounts"
+            )
+        return self
 
 
 class UnavailableConditionPreDepthSides(DomainModel):
@@ -2701,7 +2773,7 @@ class ObservedConditionDepthDrop(DomainModel):
 class UnavailableConditionDepthDrop(DomainModel):
     status: Literal["UNAVAILABLE"]
     value: None
-    reason: Literal["ZERO_BASELINE", "INCOMPLETE", "NOT_ESTIMABLE"]
+    reason: Literal["ZERO_BASELINE", "INCOMPLETE", "NOT_ESTIMABLE", "NO_EVENT_ANCHOR", "ZERO_NET_FLOW"]
 
 
 class ObservedConditionDepthCohort(DomainModel):
@@ -3216,3 +3288,317 @@ class ConditionReplenishmentScan(DomainModel):
             median_flow_start_to_recovery_s=median(recoveries) if recoveries else None,
             median_recovery_reason=None if recoveries else "NO_OBSERVED_RECOVERY",
         )
+
+
+class ConditionLiquidityDepthTotals(DomainModel):
+    bid: ConditionUSDDepthAmount
+    ask: ConditionUSDDepthAmount
+    combined: ConditionUSDDepthAmount
+
+
+class ConditionPreDepthWindow(DomainModel):
+    origin: ConditionDeclaredEventAnchor | ConditionAnalysisWindowStart
+    start: datetime
+    cutoff: datetime
+
+    @field_validator("start", "cutoff")
+    @classmethod
+    def aware_boundary(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_preceding_hour(self) -> Self:
+        if (self.cutoff - self.start).total_seconds() != 3600:
+            raise ValueError("A pre-depth baseline requires the actual preceding hour")
+        origin = self.origin
+        if isinstance(origin, ConditionAnalysisWindowStart):
+            anchor = origin.at
+        else:
+            if origin.at.value is None:
+                raise ValueError("A declared pre-depth anchor requires its actual captured clock")
+            anchor = parse_iso_time(origin.at.value)
+        if self.cutoff != anchor:
+            raise ValueError("The pre-depth baseline must preserve its actual anchor or analysis boundary")
+        return self
+
+
+class ComputedConditionPreDepth(DomainModel):
+    status: Literal["COMPUTED"]
+    window: ConditionPreDepthWindow
+    totals: ConditionLiquidityDepthTotals
+    bid_cohort: ObservedConditionDepthCohort | UnavailableConditionDepthCohort
+    ask_cohort: ObservedConditionDepthCohort | UnavailableConditionDepthCohort
+
+
+class UnavailableConditionPreDepth(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["NO_EVENT_ANCHOR"]
+
+
+class ObservedConditionLiquidityState(DomainModel):
+    status: Literal["OBSERVED"]
+    value: Literal["VACUUM", "THIN", "NORMAL"]
+
+
+class UnavailableConditionLiquidityState(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    value: None
+    reason: ConditionPredicateUnavailableReason
+
+
+class ConditionLiquidityValues(DomainModel):
+    interval: ConditionInterval
+    measurement_band_percent: float = Field(gt=0)
+    per_venue: tuple[ConditionLiquidityVenue, ...]
+    current_depth: ConditionLiquidityDepthTotals
+    previous_depth: ComputedConditionPreDepth | UnavailableConditionPreDepth
+    elasticity: ConditionElasticityInputs
+    replenishment: ConditionReplenishmentScan
+
+    @model_validator(mode="after")
+    def actual_book_and_policy_scope(self) -> Self:
+        if self.measurement_band_percent not in (0.5, 1.0, 2.0):
+            raise ValueError("Liquidity depth requires an actually supported measurement band")
+        venues = tuple(venue.venue for venue in self.per_venue)
+        if len(venues) != len(set(venues)):
+            raise ValueError("A liquidity window cannot duplicate its selected book venue")
+        for venue in self.per_venue:
+            if (
+                venue.observed_at.value is None
+                or parse_iso_time(venue.observed_at.value) > self.interval.cutoff
+            ):
+                raise ValueError("A liquidity window cannot borrow a future or unclocked book")
+            valuation_at = venue.quote_valuation.as_of
+            if valuation_at is not None and valuation_at > self.interval.cutoff:
+                raise ValueError("A liquidity window cannot borrow future quote conversion evidence")
+            for coverage, amounts in ((venue.bid_range, venue.bid), (venue.ask_range, venue.ask)):
+                if coverage.percent is None or coverage.percent < self.measurement_band_percent:
+                    reason = "INCOMPLETE" if coverage.percent is None else "DEPTH_BAND_NOT_COVERED"
+                    if (
+                        amounts.usd.value is not None
+                        or amounts.native.value is not None
+                        or amounts.usd.reason != reason
+                        or amounts.native.reason != reason
+                    ):
+                        raise ValueError("Depth band values require their actual declared side coverage")
+        bid_values = tuple(venue.bid.usd.value for venue in self.per_venue)
+        ask_values = tuple(venue.ask.usd.value for venue in self.per_venue)
+        paired_values = tuple(
+            None
+            if venue.bid.usd.value is None or venue.ask.usd.value is None
+            else _sum_native(venue.bid.usd.value, venue.ask.usd.value)
+            for venue in self.per_venue
+        )
+        _condition_depth_total_matches(self.current_depth.bid, _condition_sum_known_depth(bid_values))
+        _condition_depth_total_matches(self.current_depth.ask, _condition_sum_known_depth(ask_values))
+        _condition_depth_total_matches(self.current_depth.combined, _condition_sum_known_depth(paired_values))
+        _condition_lower_bound_matches(
+            self.elasticity.current.bid.usd,
+            tuple((venue.venue, venue.bid.usd.value) for venue in self.per_venue),
+        )
+        _condition_lower_bound_matches(
+            self.elasticity.current.ask.usd,
+            tuple((venue.venue, venue.ask.usd.value) for venue in self.per_venue),
+        )
+        _condition_lower_bound_matches(
+            self.elasticity.current.bid.native,
+            tuple((venue.venue, venue.bid.native.value) for venue in self.per_venue),
+        )
+        _condition_lower_bound_matches(
+            self.elasticity.current.ask.native,
+            tuple((venue.venue, venue.ask.native.value) for venue in self.per_venue),
+        )
+        if self.elasticity.measurement_band_percent != self.measurement_band_percent:
+            raise ValueError("Elasticity must preserve the actual liquidity measurement band")
+        if self.replenishment.scope.interval != self.interval:
+            raise ValueError("Replenishment scan must preserve the actual liquidity analysis interval")
+        if any(burst.venue not in venues for burst in self.replenishment.bursts):
+            raise ValueError(
+                "A replenishment scan cannot borrow a book venue outside its actual liquidity scope"
+            )
+        if self.per_venue:
+            first = self.per_venue[0].impact_tiers
+            for venue in self.per_venue:
+                for expected, actual in (
+                    (first.T1, venue.impact_tiers.T1),
+                    (first.T2, venue.impact_tiers.T2),
+                    (first.T3, venue.impact_tiers.T3),
+                ):
+                    if (
+                        expected.notional_usd != actual.notional_usd
+                        or expected.notional_reason != actual.notional_reason
+                    ):
+                        raise ValueError(
+                            "Liquidity venue executions must preserve their shared actual impact test sizes"
+                        )
+        if isinstance(self.previous_depth, UnavailableConditionPreDepth):
+            if not isinstance(self.elasticity.previous, UnavailableConditionPreDepthBounds) or any(
+                not isinstance(venue.pre_depth, UnavailableConditionPreDepthSides) for venue in self.per_venue
+            ):
+                raise ValueError("Missing pre-depth anchor cannot retain invented baseline observations")
+        else:
+            previous = self.elasticity.previous
+            if not isinstance(previous, ConditionBookDepthBounds):
+                raise ValueError("A computed pre-depth window requires its actual comparison bounds")
+            pre_bid: list[tuple[str, Decimal | None]] = []
+            pre_ask: list[tuple[str, Decimal | None]] = []
+            pre_bid_native: list[tuple[str, Decimal | None]] = []
+            pre_ask_native: list[tuple[str, Decimal | None]] = []
+            pre_paired: list[Decimal | None] = []
+            for venue in self.per_venue:
+                if not isinstance(venue.pre_depth, ComputedConditionPreDepthSides):
+                    raise ValueError(
+                        "A computed pre-depth baseline must preserve actual venue request selection"
+                    )
+                pre_bid.append((venue.venue, venue.pre_depth.bid.usd.value))
+                pre_ask.append((venue.venue, venue.pre_depth.ask.usd.value))
+                pre_bid_native.append((venue.venue, venue.pre_depth.bid.native.value))
+                pre_ask_native.append((venue.venue, venue.pre_depth.ask.native.value))
+                pre_paired.append(venue.pre_depth.paired_total_usd.value)
+            _condition_depth_total_matches(
+                self.previous_depth.totals.bid,
+                _condition_sum_known_depth(tuple(value for _, value in pre_bid)),
+            )
+            _condition_depth_total_matches(
+                self.previous_depth.totals.ask,
+                _condition_sum_known_depth(tuple(value for _, value in pre_ask)),
+            )
+            _condition_depth_total_matches(
+                self.previous_depth.totals.combined, _condition_sum_known_depth(tuple(pre_paired))
+            )
+            _condition_lower_bound_matches(previous.bid.usd, tuple(pre_bid))
+            _condition_lower_bound_matches(previous.ask.usd, tuple(pre_ask))
+            _condition_lower_bound_matches(previous.bid.native, tuple(pre_bid_native))
+            _condition_lower_bound_matches(previous.ask.native, tuple(pre_ask_native))
+            _condition_depth_cohort_matches(
+                self.previous_depth.bid_cohort,
+                tuple((venue.venue, venue.bid.usd.value) for venue in self.per_venue),
+                tuple(pre_bid),
+            )
+            _condition_depth_cohort_matches(
+                self.previous_depth.ask_cohort,
+                tuple((venue.venue, venue.ask.usd.value) for venue in self.per_venue),
+                tuple(pre_ask),
+            )
+        return self
+
+    def _depth_majority_lost(self) -> ConditionPredicate:
+        flow = self.elasticity.flow.comparison_flow()
+        if isinstance(flow, UnavailableConditionLiquidityFlow):
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        side = flow.hit_side()
+        if side is None:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="ZERO_NET_FLOW")
+        if isinstance(self.previous_depth, UnavailableConditionPreDepth):
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="NO_EVENT_ANCHOR")
+        cohort = self.previous_depth.ask_cohort if side == "ask" else self.previous_depth.bid_cohort
+        if isinstance(cohort, UnavailableConditionDepthCohort):
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        return cohort.majority_lost()
+
+    def _vacuum(self) -> ConditionPredicate:
+        return condition_predicates_all(
+            (
+                self.elasticity.price_beyond_normal,
+                self._depth_majority_lost(),
+                self.elasticity.excess_response(),
+            )
+        )
+
+    def vacuum(self) -> ConditionPredicate:
+        return type(self).model_validate(self)._vacuum()
+
+    def depth_majority_lost(self) -> ConditionPredicate:
+        return type(self).model_validate(self)._depth_majority_lost()
+
+    def depth_drop(self) -> ObservedConditionDepthDrop | UnavailableConditionDepthDrop:
+        validated = type(self).model_validate(self)
+        flow = validated.elasticity.flow.comparison_flow()
+        if isinstance(flow, UnavailableConditionLiquidityFlow):
+            return UnavailableConditionDepthDrop(status="UNAVAILABLE", value=None, reason="INCOMPLETE")
+        side = flow.hit_side()
+        if side is None:
+            return UnavailableConditionDepthDrop(status="UNAVAILABLE", value=None, reason="ZERO_NET_FLOW")
+        if isinstance(validated.previous_depth, UnavailableConditionPreDepth):
+            return UnavailableConditionDepthDrop(status="UNAVAILABLE", value=None, reason="NO_EVENT_ANCHOR")
+        cohort = validated.previous_depth.ask_cohort if side == "ask" else validated.previous_depth.bid_cohort
+        if isinstance(cohort, UnavailableConditionDepthCohort):
+            return UnavailableConditionDepthDrop(status="UNAVAILABLE", value=None, reason="INCOMPLETE")
+        return cohort.drop()
+
+    def _thinness(self) -> ConditionPredicate:
+        if not self.per_venue:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="NO_VENUES")
+        test = self.per_venue[0].impact_tiers.T2.notional_usd
+        return condition_predicates_any(
+            (self.elasticity.current.bid.usd.thinness(test), self.elasticity.current.ask.usd.thinness(test))
+        )
+
+    def thinness(self) -> ConditionPredicate:
+        return type(self).model_validate(self)._thinness()
+
+    def state(self) -> ObservedConditionLiquidityState | UnavailableConditionLiquidityState:
+        validated = type(self).model_validate(self)
+        vacuum = validated._vacuum()
+        if isinstance(vacuum, ConditionUnavailablePredicate):
+            return UnavailableConditionLiquidityState(status="UNAVAILABLE", value=None, reason=vacuum.reason)
+        if vacuum.value:
+            return ObservedConditionLiquidityState(status="OBSERVED", value="VACUUM")
+        thin = validated._thinness()
+        if isinstance(thin, ConditionUnavailablePredicate):
+            return UnavailableConditionLiquidityState(status="UNAVAILABLE", value=None, reason=thin.reason)
+        return ObservedConditionLiquidityState(status="OBSERVED", value="THIN" if thin.value else "NORMAL")
+
+
+class BasicConditionLiquidity(ConditionLiquidityValues):
+    kind: Literal["BASIC"]
+
+
+def _condition_sum_known_depth(values: tuple[Decimal | None, ...]) -> Decimal | None:
+    if not values:
+        return None
+    total = Decimal(0)
+    for value in values:
+        if value is None:
+            return None
+        total = _sum_native(total, value)
+    return total
+
+
+def _condition_depth_total_matches(actual: ConditionUSDDepthAmount, expected: Decimal | None) -> None:
+    if actual.value != expected or expected is None and actual.reason != "INCOMPLETE":
+        raise ValueError("Depth totals must preserve every actual required venue amount")
+
+
+def _condition_lower_bound_matches(
+    bound: ConditionDepthLowerBound, amounts: tuple[tuple[str, Decimal | None], ...]
+) -> None:
+    considered = {venue for venue, _ in amounts}
+    covered = {venue for venue, amount in amounts if amount is not None}
+    value = _condition_sum_known_depth(tuple(amount for _, amount in amounts if amount is not None))
+    if (
+        set(bound.considered_venues) != considered
+        or set(bound.covered_venues) != covered
+        or bound.value != value
+    ):
+        raise ValueError("Depth lower bounds must preserve actual considered/covered books and amounts")
+
+
+def _condition_depth_cohort_matches(
+    cohort: ObservedConditionDepthCohort | UnavailableConditionDepthCohort,
+    current: tuple[tuple[str, Decimal | None], ...],
+    previous: tuple[tuple[str, Decimal | None], ...],
+) -> None:
+    now = {venue: amount for venue, amount in current if amount is not None}
+    before = {venue: amount for venue, amount in previous if amount is not None}
+    venues = set(now) & set(before)
+    if not venues:
+        if not isinstance(cohort, UnavailableConditionDepthCohort) or cohort.reason != "NO_COMMON_VENUES":
+            raise ValueError("An absent common depth cohort cannot become observed amounts")
+    elif (
+        not isinstance(cohort, ObservedConditionDepthCohort)
+        or set(cohort.venues) != venues
+        or cohort.current_usd != _condition_sum_known_depth(tuple(now[venue] for venue in venues))
+        or cohort.previous_usd != _condition_sum_known_depth(tuple(before[venue] for venue in venues))
+    ):
+        raise ValueError("Depth-drop cohorts must preserve actual common venue amounts")

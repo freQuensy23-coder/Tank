@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from tank.analysis.condition_graph_contracts import (
     AvailableConditionFunding,
+    BasicConditionLiquidity,
     BasicConditionSpot,
     ConditionBookDepthBounds,
     ConditionCadenceScope,
@@ -1982,3 +1983,193 @@ def test_replenishment_scan_accounts_for_actual_candidates_and_prevents_duplicat
         bursts=(),
     ).summary()
     assert known_no_burst.status == "COMPUTED" and known_no_burst.observed_bursts == 0
+
+
+def single_venue_liquidity() -> BasicConditionLiquidity:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionBookSideBounds,
+        ConditionBookSideDepth,
+        ConditionCoveredBookRange,
+        ConditionDepthLowerBound,
+        ConditionImpactTier,
+        ConditionImpactTiers,
+        ConditionLiquidityDepthTotals,
+        ConditionLiquidityNetFlow,
+        ConditionLiquidityVenue,
+        ConditionNativeDepthAmount,
+        ConditionRelativeReturn,
+        ConditionReplenishmentScan,
+        ConditionUnavailablePredicate,
+        ConditionUSDDepthAmount,
+        UnavailableConditionPreDepth,
+        UnavailableConditionPreDepthBounds,
+        UnavailableConditionPreDepthSides,
+    )
+    from tank.market.trade_contracts import QuoteUsdValuation
+
+    scope = replenishment_scope()
+    side = ConditionBookSideDepth(
+        usd=ConditionUSDDepthAmount(value=Decimal(100), reason=None),
+        native=ConditionNativeDepthAmount(value=Decimal(100), reason=None),
+    )
+    ranges = ConditionCoveredBookRange(percent=1.0, reason=None)
+    tiers = ConditionImpactTiers(
+        T1=ConditionImpactTier(
+            notional_usd=Decimal(1), notional_reason=None, execution=None, execution_reason="INCOMPLETE"
+        ),
+        T2=ConditionImpactTier(
+            notional_usd=Decimal(10), notional_reason=None, execution=None, execution_reason="INCOMPLETE"
+        ),
+        T3=ConditionImpactTier(
+            notional_usd=Decimal(20), notional_reason=None, execution=None, execution_reason="INCOMPLETE"
+        ),
+    )
+    venue = ConditionLiquidityVenue(
+        venue="a",
+        instrument_id="spot:i",
+        observed_at=Timestamp(
+            value="2026-10-17T12:00:00Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+        ),
+        integrity_ok=True,
+        bid_range=ranges,
+        ask_range=ranges,
+        spread_bps=1.0,
+        spread_reason=None,
+        bid=side,
+        ask=side,
+        pre_depth=UnavailableConditionPreDepthSides(status="UNAVAILABLE", reason="NO_EVENT_ANCHOR"),
+        impact_tiers=tiers,
+        quote_asset="USD",
+        quote_valuation=QuoteUsdValuation(
+            rate=Decimal(1), as_of=None, basis="USD_UNIT", unavailable_reason=None
+        ),
+    )
+    bounds = ConditionBookSideBounds(
+        usd=ConditionDepthLowerBound(
+            unit="USD", value=Decimal(100), reason=None, considered_venues=("a",), covered_venues=("a",)
+        ),
+        native=ConditionDepthLowerBound(
+            unit="NATIVE", value=Decimal(100), reason=None, considered_venues=("a",), covered_venues=("a",)
+        ),
+    )
+    return BasicConditionLiquidity(
+        kind="BASIC",
+        interval=scope.interval,
+        measurement_band_percent=1.0,
+        per_venue=(venue,),
+        current_depth=ConditionLiquidityDepthTotals(
+            bid=side.usd, ask=side.usd, combined=ConditionUSDDepthAmount(value=Decimal(200), reason=None)
+        ),
+        previous_depth=UnavailableConditionPreDepth(status="UNAVAILABLE", reason="NO_EVENT_ANCHOR"),
+        elasticity=ConditionElasticityInputs(
+            flow=ConditionLiquidityNetFlow(
+                native=Decimal(10), native_reason=None, usd=Decimal(10), usd_reason=None
+            ),
+            raw_return=ConditionRelativeReturn(value=0.001, reason=None),
+            price_beyond_normal=ConditionUnavailablePredicate(
+                status="UNAVAILABLE", reason="INSUFFICIENT_HISTORY"
+            ),
+            measurement_band_percent=1.0,
+            current=ConditionBookDepthBounds(bid=bounds, ask=bounds),
+            previous=UnavailableConditionPreDepthBounds(status="UNAVAILABLE", reason="NO_EVENT_ANCHOR"),
+            average_hit_side_depth_usd=ConditionUSDDepthAmount(value=Decimal(100), reason=None),
+        ),
+        replenishment=ConditionReplenishmentScan(
+            scope=scope,
+            considered_candidate_count=1,
+            observed_non_burst_count=1,
+            unqualified_candidate_counts={},
+            bursts=(),
+        ),
+    )
+
+
+def test_liquidity_state_does_not_turn_unknown_vacuum_into_normal_depth() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionObservedPredicate
+
+    graph = single_venue_liquidity()
+    thin = graph.thinness()
+    assert thin.status == "OBSERVED" and thin.value is False
+    unknown = graph.state()
+    assert unknown.status == "UNAVAILABLE" and unknown.value is None
+    disproven_vacuum = graph.model_copy(
+        update={
+            "elasticity": graph.elasticity.model_copy(
+                update={"price_beyond_normal": ConditionObservedPredicate(status="OBSERVED", value=False)}
+            )
+        }
+    )
+    normal = disproven_vacuum.state()
+    assert normal.status == "OBSERVED" and normal.value == "NORMAL"
+
+
+def test_liquidity_graph_binds_actual_depth_coverage_totals_and_book_cutoff() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionCoveredBookRange, ConditionUSDDepthAmount
+
+    graph = single_venue_liquidity()
+    venue = graph.per_venue[0]
+    uncovered = venue.model_copy(update={"bid_range": ConditionCoveredBookRange(percent=0.5, reason=None)})
+    with pytest.raises(ValidationError, match="actual declared side coverage"):
+        BasicConditionLiquidity.model_validate(graph.model_copy(update={"per_venue": (uncovered,)}))
+    inconsistent_total = graph.current_depth.model_copy(
+        update={"combined": ConditionUSDDepthAmount(value=Decimal(199), reason=None)}
+    )
+    with pytest.raises(ValidationError, match="every actual required venue amount"):
+        BasicConditionLiquidity.model_validate(graph.model_copy(update={"current_depth": inconsistent_total}))
+    future = venue.model_copy(
+        update={
+            "observed_at": Timestamp(
+                value="2026-10-17T12:00:01Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+            )
+        }
+    )
+    with pytest.raises(ValidationError, match="future or unclocked book"):
+        BasicConditionLiquidity.model_validate(graph.model_copy(update={"per_venue": (future,)}))
+
+
+def test_zero_liquidity_test_order_cannot_establish_normal_or_not_thin() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionImpactTier, ConditionObservedPredicate
+
+    graph = single_venue_liquidity()
+    venue = graph.per_venue[0]
+    zero = ConditionImpactTier(
+        notional_usd=Decimal(0), notional_reason=None, execution=None, execution_reason="ZERO_NOTIONAL"
+    )
+    updated = BasicConditionLiquidity.model_validate(
+        graph.model_copy(
+            update={
+                "per_venue": (
+                    venue.model_copy(
+                        update={"impact_tiers": venue.impact_tiers.model_copy(update={"T2": zero})}
+                    ),
+                ),
+                "elasticity": graph.elasticity.model_copy(
+                    update={"price_beyond_normal": ConditionObservedPredicate(status="OBSERVED", value=False)}
+                ),
+            }
+        )
+    )
+    thin = updated.thinness()
+    state = updated.state()
+    assert thin.status == "UNAVAILABLE" and thin.reason == "ZERO_NOTIONAL"
+    assert state.status == "UNAVAILABLE" and state.reason == "ZERO_NOTIONAL"
+
+
+def test_pre_depth_means_preserve_different_qualified_observation_cohorts() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionDepthSampleCohort,
+        ConditionPreBookSideDepth,
+        ObservedConditionDepthMean,
+    )
+    from tank.util import sha256
+
+    one = ConditionDepthSampleCohort(observation_count=1, fingerprint=sha256(("book:1",)))
+    two = ConditionDepthSampleCohort(observation_count=2, fingerprint=sha256(("book:1", "book:2")))
+    usd = ObservedConditionDepthMean(status="OBSERVED", value=Decimal(0), cohort=one)
+    native = ObservedConditionDepthMean(status="OBSERVED", value=Decimal(3), cohort=two)
+    partial = ConditionPreBookSideDepth(usd=usd, native=native)
+    assert partial.usd.value == 0 and partial.native.value == 3
+    with pytest.raises(ValidationError, match="same zero-quantity fact"):
+        ConditionPreBookSideDepth.model_validate(
+            partial.model_copy(update={"native": native.model_copy(update={"cohort": one})})
+        )
