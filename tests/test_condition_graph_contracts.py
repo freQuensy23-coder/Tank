@@ -3,13 +3,15 @@ from decimal import Decimal
 from typing import Literal
 
 import pytest
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 
 from tank.analysis.condition_graph_contracts import (
     AvailableConditionFunding,
     BasicConditionLiquidity,
     BasicConditionSpot,
+    CapturedConditionChainLiquidity,
     CapturedConditionHoldersRevenue,
+    CapturedConditionUnlocks,
     CapturedConditionWalletFlows,
     ComparableConditionExchangeInventory,
     ConditionBookDepthBounds,
@@ -20,6 +22,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionElasticityInputs,
     ConditionFieldObservation,
     ConditionFlowAggregate,
+    ConditionFlowCaptureWitness,
     ConditionFlowWindowQualification,
     ConditionFundingConfirmationGraph,
     ConditionFundingObservation,
@@ -33,6 +36,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionReplenishmentBurst,
     ConditionReplenishmentScope,
     ConditionSplitExecution,
+    ConditionSupplyGraph,
     ConditionTopVenueSignHistory,
     DeclaredConditionCadence,
     NonForwardConditionInterval,
@@ -1012,6 +1016,7 @@ def test_derivative_window_refuses_invented_funding_dispersion_and_absent_sync_v
         basis_reason="INCOMPLETE",
     )
     graph = BasicConditionDerivatives(
+        token_id="T",
         kind="BASIC",
         interval=ConditionInterval(window="W1H", start=AT - timedelta(hours=1), cutoff=AT),
         per_venue=(venue,),
@@ -1179,6 +1184,7 @@ def test_enriched_empty_derivative_venues_cannot_create_a_negative_basis_predica
     interval = ConditionInterval(window="W1H", start=AT - timedelta(hours=1), cutoff=AT)
     support = unknown_derivative_support()
     graph = EnrichedConditionDerivatives(
+        token_id="T",
         kind="ENRICHED",
         funding_dispersion_normal_range=DecimalRange(bounds=None, reason="INSUFFICIENT_HISTORY"),
         funding_dispersion_beyond_normal=ConditionUnavailablePredicate(
@@ -1473,6 +1479,7 @@ def relative_graph_without_event() -> ConditionRelativeGraph:
     )
     anchor_at = AT - timedelta(hours=4)
     return ConditionRelativeGraph(
+        token_id="T",
         reference_instrument_id="spot:i",
         reference_reason=None,
         reference_coverage={
@@ -2792,28 +2799,54 @@ def test_funding_confirmation_missing_secondary_or_history_stays_unavailable() -
     assert isinstance(unknown.independent_beyond_normal(), ConditionUnavailablePredicate)
 
 
-def complete_perp_flow_window(instrument: str, venue: str) -> ConditionFlowWindowQualification:
+def capture_witness(
+    instrument: str, venue: str, market_type: Literal["SPOT", "PERP"], start: datetime, end: datetime
+) -> ConditionFlowCaptureWitness:
+    from tank.analysis.condition_graph_codec import bind_flow_capture_evidence, flow_capture_projection_sha256
+    from tank.analysis.condition_graph_contracts import ConditionFlowCaptureProjection, FlowCaptureEvidenceRef
+    from tank.util import iso, sha256
+
+    projection = ConditionFlowCaptureProjection(
+        token_id="T",
+        instrument_id=instrument,
+        venue=venue,
+        market_type=market_type,
+        start=start,
+        end=end,
+        complete=True,
+    )
+    source: dict[str, JsonValue] = {
+        "token_id": "T",
+        "instrument_id": instrument,
+        "venue": venue,
+        "market_type": market_type,
+        "start": iso(start),
+        "end": iso(end),
+        "complete": True,
+    }
+    reference = FlowCaptureEvidenceRef(
+        projection_sha256=flow_capture_projection_sha256(projection),
+        source_evidence_sha256=sha256(
+            {"schema": "fixture-capture-source.v1", "original": source, "effective": source, "parent": None}
+        ),
+    )
+    return bind_flow_capture_evidence(projection, reference)
+
+
+def complete_flow_window(
+    instrument: str, venue: str, market_type: Literal["SPOT", "PERP"]
+) -> ConditionFlowWindowQualification:
     from tank.analysis.condition_graph_contracts import ConditionFlowCapturePiece
 
     pieces: list[ConditionFlowCapturePiece] = []
-    prototype = legacy_boundary_calculation()
     for minute in range(15):
         start = AT - timedelta(minutes=15 - minute)
-        aggregate = ConditionFlowAggregate.model_validate(
-            prototype.model_copy(
-                update={
-                    "instrument_id": instrument,
-                    "venue": venue,
-                    "market_type": "PERP",
-                    "start": start,
-                    "end": start + timedelta(minutes=1),
-                }
-            )
-        )
         pieces.append(
             ConditionFlowCapturePiece(
                 basis="FULL_MINUTE",
-                aggregate=aggregate,
+                aggregate=capture_witness(
+                    instrument, venue, market_type, start, start + timedelta(minutes=1)
+                ),
                 visibility=ConditionReceiptVisibility(
                     received_at=Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY"),
                     assembled_at=Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY"),
@@ -2825,7 +2858,7 @@ def complete_perp_flow_window(instrument: str, venue: str) -> ConditionFlowWindo
         token_id="T",
         instrument_id=instrument,
         venue=venue,
-        market_type="PERP",
+        market_type=market_type,
         interval=ConditionInterval(window="W15M", start=AT - timedelta(minutes=15), cutoff=AT),
         pieces=tuple(pieces),
     )
@@ -2837,7 +2870,7 @@ def test_fragmentation_flow_capture_requires_actual_minute_grid_and_visible_evid
         ConditionUnavailablePredicate,
     )
 
-    window = complete_perp_flow_window("a:perp:T", "a")
+    window = complete_flow_window("a:perp:T", "a", "PERP")
     known = window.complete()
     assert isinstance(known, ConditionObservedPredicate) and known.value is True
     partial = type(window).model_validate(window.model_copy(update={"pieces": window.pieces[:-1]}))
@@ -2887,18 +2920,24 @@ def test_fragmentation_funding_validation_requires_actual_scoped_flow_windows() 
         price_pairs=(),
         price_confirmations=(),
         funding=funding_confirmation_graph(),
-        flow_capture=(complete_perp_flow_window("a:perp:T", "a"), complete_perp_flow_window("b:perp:T", "b")),
+        spot_capture=(),
+        perp_capture=(
+            complete_flow_window("a:perp:T", "a", "PERP"),
+            complete_flow_window("b:perp:T", "b", "PERP"),
+        ),
     )
     assert isinstance(graph.persistent_gap(), ConditionUnavailablePredicate)
     assert isinstance(graph.price_path_validated(), ConditionUnavailablePredicate)
     validated = graph.validated()
     assert isinstance(validated, ConditionObservedPredicate) and validated.value is True
-    no_capture = type(graph).model_validate(graph.model_copy(update={"flow_capture": ()}))
+    no_capture = type(graph).model_validate(graph.model_copy(update={"perp_capture": ()}))
     assert isinstance(no_capture.funding_path_validated(), ConditionUnavailablePredicate)
     assert isinstance(no_capture.validated(), ConditionUnavailablePredicate)
     with pytest.raises(ValidationError, match="unrelated fragmentation"):
         type(graph).model_validate(
-            graph.model_copy(update={"flow_capture": (complete_perp_flow_window("other:perp:T", "other"),)})
+            graph.model_copy(
+                update={"perp_capture": (complete_flow_window("other:perp:T", "other", "PERP"),)}
+            )
         )
 
 
@@ -2909,7 +2948,7 @@ def test_unaligned_fragmentation_window_requires_both_actual_boundary_chains() -
         ConditionUnavailablePredicate,
     )
 
-    prototype = complete_perp_flow_window("a:perp:T", "a")
+    prototype = complete_flow_window("a:perp:T", "a", "PERP")
     assembled = Timestamp(value="2026-10-17T12:00:10Z", precision="COLLECTION_ONLY")
     visibility = ConditionReceiptVisibility(
         received_at=Timestamp(value="2026-10-17T12:00:06Z", precision="COLLECTION_ONLY"),
@@ -2919,25 +2958,21 @@ def test_unaligned_fragmentation_window_requires_both_actual_boundary_chains() -
         type(piece).model_validate(piece.model_copy(update={"visibility": visibility}))
         for piece in prototype.pieces[1:]
     )
-    template = prototype.pieces[0].aggregate
     left = ConditionFlowCapturePiece(
         basis="BOUNDARY",
         visibility=visibility,
-        aggregate=ConditionFlowAggregate.model_validate(
-            template.model_copy(
-                update={
-                    "start": AT - timedelta(minutes=15) + timedelta(seconds=5),
-                    "end": AT - timedelta(minutes=14),
-                }
-            )
+        aggregate=capture_witness(
+            "a:perp:T",
+            "a",
+            "PERP",
+            AT - timedelta(minutes=15) + timedelta(seconds=5),
+            AT - timedelta(minutes=14),
         ),
     )
     right = ConditionFlowCapturePiece(
         basis="BOUNDARY",
         visibility=visibility,
-        aggregate=ConditionFlowAggregate.model_validate(
-            template.model_copy(update={"start": AT, "end": AT + timedelta(seconds=5)})
-        ),
+        aggregate=capture_witness("a:perp:T", "a", "PERP", AT, AT + timedelta(seconds=5)),
     )
     interval = ConditionInterval(
         window="W15M",
@@ -3153,7 +3188,8 @@ def test_enriched_liquidity_binds_selected_book_orders_and_actual_family_scope()
         price_pairs=(),
         price_confirmations=(),
         funding=funding,
-        flow_capture=(),
+        spot_capture=(),
+        perp_capture=(),
         top_sign_history=ConditionTopVenueSignHistory(
             token_id="T", interval=basic.interval, selected_venues=(), windows=()
         ),
@@ -3663,7 +3699,7 @@ def test_boundary_proofs_cannot_cross_actual_token_venue_or_market_scope() -> No
 
 
 def test_flow_capture_proof_cannot_borrow_another_actual_token_venue_or_market() -> None:
-    window = complete_perp_flow_window("a:perp:T", "a")
+    window = complete_flow_window("a:perp:T", "a", "PERP")
     for field, value in (("token_id", "OTHER"), ("venue", "OTHER"), ("market_type", "SPOT")):
         piece = window.pieces[0].model_copy(
             update={"aggregate": window.pieces[0].aggregate.model_copy(update={field: value})}
@@ -3803,3 +3839,302 @@ def test_unrepresentable_display_ratios_preserve_known_native_values_and_other_s
         type(breadth).model_validate(
             breadth.model_copy(update={"null_reasons": {"buy": "ZERO_TOTAL_VOLUME"}})
         )
+
+
+def unlock_schedule() -> CapturedConditionUnlocks:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionScheduledUnlock,
+        UnavailableConditionCirculatingShare,
+    )
+    from tank.util import iso
+
+    visibility = wallet_flows().query_visibility
+    unlock = ConditionScheduledUnlock(
+        token_id="T",
+        scheduled_at=Timestamp(
+            value=iso(AT + timedelta(days=14)), precision=None, precision_reason="NOT_CAPTURED"
+        ),
+        quantity_native=Decimal(100),
+        quantity_reason=None,
+        label=None,
+        circulating_share=UnavailableConditionCirculatingShare(
+            status="UNAVAILABLE", value=None, reason="NOT_CAPTURED"
+        ),
+        recipient_class=None,
+        transferable=True,
+        transferability_reason=None,
+        source_observation_sha256="d" * 64,
+        schedule_index=0,
+    )
+    return CapturedConditionUnlocks(
+        status="CAPTURED_SCHEDULE",
+        token_id="T",
+        cutoff=AT,
+        observed_at=Timestamp(value="2026-10-17T11:59:00Z", precision=None, precision_reason="NOT_CAPTURED"),
+        visibility=visibility,
+        upcoming=(unlock,),
+    )
+
+
+def test_unlock_window_preserves_actual_optional_metadata_and_inclusive_fourteen_day_endpoint() -> None:
+    from tank.util import iso
+
+    schedule = unlock_schedule()
+    assert schedule.upcoming[0].transferable is True
+    assert schedule.upcoming[0].label is None
+    assert schedule.upcoming[0].scheduled_at.precision is None
+    assert schedule.upcoming[0].circulating_share.value is None
+    with pytest.raises(ValidationError, match="fourteen-day"):
+        type(schedule).model_validate(
+            schedule.model_copy(
+                update={
+                    "upcoming": (
+                        schedule.upcoming[0].model_copy(
+                            update={
+                                "scheduled_at": Timestamp(
+                                    value=iso(AT + timedelta(days=14, seconds=1)),
+                                    precision=None,
+                                    precision_reason="NOT_CAPTURED",
+                                ),
+                            }
+                        ),
+                    )
+                }
+            )
+        )
+    unknown = type(schedule.upcoming[0]).model_validate(
+        schedule.upcoming[0].model_copy(
+            update={
+                "quantity_native": None,
+                "quantity_reason": "QUANTITY_NOT_CAPTURED",
+                "transferable": None,
+                "transferability_reason": "TRANSFERABILITY_NOT_CAPTURED",
+            }
+        )
+    )
+    assert unknown.quantity_native is None and unknown.transferable is None
+
+
+def test_inventory_capture_errors_preserve_actual_alternative_failure_shapes() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionInventoryCoverage,
+        ConditionInventoryDecimalsError,
+        ConditionInventoryWalletCaptureError,
+        ConditionUnsupportedInventoryChain,
+    )
+
+    coverage = ConditionInventoryCoverage(
+        complete_balances=0,
+        observed_balances=0,
+        comparable_balances=0,
+        coverage_errors=(
+            ConditionUnsupportedInventoryChain(
+                kind="CHAIN_NOT_SUPPORTED", chain="unsupported-chain", reason="CHAIN_NOT_SUPPORTED"
+            ),
+            ConditionInventoryDecimalsError(
+                kind="DECIMALS_CAPTURE_FAILED",
+                chain="chain",
+                chain_id=1,
+                contract="contract",
+                operation="decimals",
+                reason="",
+            ),
+            ConditionInventoryWalletCaptureError(
+                kind="WALLET_CAPTURE_FAILED", wallet="wallet", chain_id=1, reason="provider refusal"
+            ),
+        ),
+        unsupported_venues=(),
+    )
+    assert len(coverage.coverage_errors) == 3
+    assert isinstance(coverage.coverage_errors[0], ConditionUnsupportedInventoryChain)
+    assert isinstance(coverage.coverage_errors[1], ConditionInventoryDecimalsError)
+    assert coverage.coverage_errors[1].reason == ""
+
+
+def chain_liquidity() -> CapturedConditionChainLiquidity:
+    from tank.analysis.condition_graph_contracts import (
+        SelectedConditionStablecoinPoint,
+        UnavailableConditionStablecoinPoint,
+    )
+
+    return CapturedConditionChainLiquidity(
+        status="CAPTURED_CHAIN_CONTEXT",
+        token_id="T",
+        chain="chain",
+        cutoff=AT,
+        observed_at=Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY"),
+        visibility=wallet_flows().query_visibility,
+        current=SelectedConditionStablecoinPoint(
+            status="SELECTED_SOURCE_POINT",
+            observed_at=Timestamp(
+                value="2026-10-17T00:00:00Z", precision=None, precision_reason="NOT_CAPTURED"
+            ),
+            value_usd=Decimal(0),
+            value_reason=None,
+            series_index=2,
+        ),
+        day_ago=SelectedConditionStablecoinPoint(
+            status="SELECTED_SOURCE_POINT",
+            observed_at=Timestamp(
+                value="2026-10-16T00:00:00Z", precision=None, precision_reason="NOT_CAPTURED"
+            ),
+            value_usd=Decimal(10),
+            value_reason=None,
+            series_index=1,
+        ),
+        week_ago=UnavailableConditionStablecoinPoint(status="UNAVAILABLE", reason="NO_ASOF_POINT"),
+        source_observation_sha256="e" * 64,
+    )
+
+
+def test_chain_supply_change_preserves_actual_usd_zero_and_missing_historical_point() -> None:
+    graph = chain_liquidity()
+    assert graph.change_24h().value == Decimal(-10)
+    assert graph.change_24h().unit == "USD"
+    assert graph.change_7d().value is None
+    assert graph.change_7d().reason == "INCOMPLETE"
+    from tank.analysis.condition_graph_contracts import SelectedConditionStablecoinPoint
+
+    assert isinstance(graph.current, SelectedConditionStablecoinPoint)
+    assert graph.current.observed_at.precision is None
+
+
+def test_chain_supply_selection_cannot_borrow_a_point_after_the_requested_target() -> None:
+    graph = chain_liquidity()
+    with pytest.raises(ValidationError, match="as-of target"):
+        type(graph).model_validate(graph.model_copy(update={"day_ago": graph.current}))
+
+
+def test_documented_non_supply_wallet_labels_are_not_promoted_to_exchange_supply() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionObservedPredicate
+
+    flow = wallet_flows().flows[0]
+    for label in ("CEX_CUSTODY_MIGRATION", "FRESH_ACCUMULATION", "OTC_SETTLEMENT"):
+        actual = type(flow).model_validate(flow.model_copy(update={"classification": label}))
+        result = actual.positive_supply_witness()
+        assert isinstance(result, ConditionObservedPredicate) and result.value is False
+
+
+def empty_supply_graph() -> ConditionSupplyGraph:
+    from tank.analysis.condition_graph_contracts import (
+        ConfiguredConditionSettlementChain,
+        UnavailableConditionExchangeInventory,
+        UnavailableConditionHoldersRevenue,
+        UnavailableConditionLending,
+        UnavailableConditionUnlocks,
+        UnavailableConditionWalletFlows,
+    )
+    from tank.contracts.provenance import ResolvedVersionIdentity
+
+    return ConditionSupplyGraph(
+        token_id="T",
+        interval=ConditionInterval(window="W15M", start=AT - timedelta(minutes=15), cutoff=AT),
+        assembled_at=Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY"),
+        settlement_chain=ConfiguredConditionSettlementChain(
+            token_id="T",
+            chain=None,
+            origin="CURRENT_CONFIGURED_SETTLEMENT_CHAIN",
+            versions=ResolvedVersionIdentity(
+                config_version="fixture-config-v1", code_version="fixture-code-v1"
+            ),
+        ),
+        exchange_inventory=UnavailableConditionExchangeInventory(
+            status="UNAVAILABLE", reason="NO_CAPTURED_OBSERVATION"
+        ),
+        wallet_flows=UnavailableConditionWalletFlows(status="UNAVAILABLE", reason="NO_CAPTURED_OBSERVATION"),
+        unlocks=UnavailableConditionUnlocks(status="UNAVAILABLE", reason="NO_CAPTURED_OBSERVATION"),
+        lending=UnavailableConditionLending(status="UNAVAILABLE", reason="NO_CAPTURED_OBSERVATION"),
+        chain_contexts=(),
+        holders_revenue=UnavailableConditionHoldersRevenue(
+            status="UNAVAILABLE", reason="NO_CAPTURED_FUNDAMENTALS"
+        ),
+    )
+
+
+def test_supply_presence_distinguishes_no_inputs_from_no_positive_observation_and_a_witness() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionNoPositiveSupplyEvidence,
+        ConditionPositiveSupplyEvidence,
+        UnavailableConditionSupplyEvidence,
+    )
+
+    graph = empty_supply_graph()
+    assert isinstance(graph.evidence(), UnavailableConditionSupplyEvidence)
+    potential = type(graph).model_validate(graph.model_copy(update={"unlocks": unlock_schedule()}))
+    assert isinstance(potential.unlocks, CapturedConditionUnlocks)
+    assert potential.unlocks.upcoming[0].transferable is True
+    observed = potential.evidence()
+    assert isinstance(observed, ConditionNoPositiveSupplyEvidence) and observed.available_inputs == (
+        "UNLOCKS",
+    )
+    inventory = inventory_comparison(Decimal(110), Decimal(100))
+    inventory = type(inventory).model_validate(
+        inventory.model_copy(
+            update={"normal_range": FloatRange(bounds=FloatBounds(lower=-0.01, upper=0.05), reason=None)}
+        )
+    )
+    increased = type(graph).model_validate(graph.model_copy(update={"exchange_inventory": inventory}))
+    evidence = increased.evidence()
+    assert isinstance(evidence, ConditionPositiveSupplyEvidence)
+    assert evidence.inventory is not None and evidence.inventory.native_change == 10
+    assert evidence.wallet_flows == ()
+
+
+def test_supply_primary_chain_uses_captured_configuration_instead_of_first_context() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        CapturedConditionChainLiquidity,
+        UnavailableConditionChainLiquidity,
+        UnavailableConditionSupplyEvidence,
+    )
+
+    graph = empty_supply_graph()
+    policy = graph.settlement_chain.model_copy(update={"chain": "other-chain"})
+    mismatched = type(graph).model_validate(
+        graph.model_copy(update={"settlement_chain": policy, "chain_contexts": (chain_liquidity(),)})
+    )
+    primary = mismatched.primary_chain_context()
+    assert isinstance(primary, UnavailableConditionChainLiquidity) and primary.chain == "other-chain"
+    assert isinstance(mismatched.evidence(), UnavailableConditionSupplyEvidence)
+    matched = type(graph).model_validate(
+        mismatched.model_copy(update={"settlement_chain": policy.model_copy(update={"chain": "chain"})})
+    )
+    assert isinstance(matched.primary_chain_context(), CapturedConditionChainLiquidity)
+
+
+def test_unrepresentable_inventory_and_lending_changes_are_not_fabricated_zero() -> None:
+    inventory = inventory_comparison(Decimal("1" + "0" * 1000), Decimal("9" * 1000))
+    assert inventory.native_change().value == 1
+    assert inventory.fractional_change().reason == "NOT_ESTIMABLE"
+    pool = lending_pool()
+    tiny = type(pool).model_validate(
+        pool.model_copy(update={"total_supply_usd": Decimal("1e1000"), "total_borrow_usd": Decimal(1)})
+    )
+    assert tiny.utilization().value == Decimal("1e-1000")
+    assert tiny.change().reason == "NOT_ESTIMABLE"
+
+
+def test_venue_capture_requires_each_instrument_not_the_union_of_their_minutes() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionObservedPredicate,
+        ConditionUnavailablePredicate,
+        ConditionVenueFlowWindowQualification,
+    )
+
+    first = complete_flow_window("first-instrument", "a", "SPOT")
+    second = complete_flow_window("second-instrument", "a", "SPOT")
+    partial_first = type(first).model_validate(first.model_copy(update={"pieces": first.pieces[:7]}))
+    partial_second = type(second).model_validate(second.model_copy(update={"pieces": second.pieces[7:]}))
+    actual = ConditionVenueFlowWindowQualification(
+        token_id="T",
+        venue="a",
+        market_type="SPOT",
+        interval=first.interval,
+        required_instrument_ids=(first.instrument_id, second.instrument_id),
+        captures=(partial_first, partial_second),
+    )
+    assert isinstance(actual.complete(), ConditionUnavailablePredicate)
+    complete = type(actual).model_validate(actual.model_copy(update={"captures": (first, second)}))
+    result = complete.complete()
+    assert isinstance(result, ConditionObservedPredicate) and result.value is True
+    missing = type(actual).model_validate(actual.model_copy(update={"captures": (first,)}))
+    assert isinstance(missing.complete(), ConditionUnavailablePredicate)

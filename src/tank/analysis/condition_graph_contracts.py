@@ -21,6 +21,14 @@ from tank.analysis.statistics_contracts import (
     UnavailableBeta,
 )
 from tank.contracts import DomainModel
+from tank.contracts.market_classification import (
+    DirectMarketMoveClass,
+    KnownMarketDivergenceState,
+    KnownMarketMoveClass,
+    MarketClassificationFlag,
+    MarketDivergenceState,
+    MarketMoveClass,
+)
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.registry import FundamentalsEvidence, LendingPool
 from tank.contracts.scalars import TrueFlag, require_integer, require_number
@@ -122,7 +130,7 @@ class ObservedConditionRatio(DomainModel):
 class UnavailableConditionRatio(DomainModel):
     status: Literal["UNAVAILABLE"]
     value: None
-    reason: Literal["INCOMPLETE", "ZERO_BASELINE"]
+    reason: Literal["INCOMPLETE", "ZERO_BASELINE", "NOT_ESTIMABLE"]
 
 
 type ConditionRatio = ObservedConditionRatio | UnavailableConditionRatio
@@ -141,7 +149,10 @@ class ConditionDepthValues(DomainModel):
             return UnavailableConditionRatio(status="UNAVAILABLE", value=None, reason="ZERO_BASELINE")
         with localcontext() as context:
             context.prec = max(128, context.prec)
-            ratio = float(values.aggregate_depth_p1_usd / values.pre_event_depth_p1_usd)
+            native_ratio = values.aggregate_depth_p1_usd / values.pre_event_depth_p1_usd
+            ratio = float(native_ratio)
+        if not isfinite(ratio) or native_ratio != 0 and ratio == 0:
+            return UnavailableConditionRatio(status="UNAVAILABLE", value=None, reason="NOT_ESTIMABLE")
         return ObservedConditionRatio(status="OBSERVED", value=ratio)
 
 
@@ -597,7 +608,7 @@ class FlowAggregateEvidenceRef(DomainModel):
     source_evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
-class ConditionFlowAggregateProjection(DomainModel):
+class ConditionFlowCaptureProjection(DomainModel):
     token_id: str = Field(min_length=1, pattern=r"\S")
     venue: str = Field(min_length=1, pattern=r"\S")
     market_type: Literal["SPOT", "PERP"]
@@ -605,6 +616,20 @@ class ConditionFlowAggregateProjection(DomainModel):
     start: datetime
     end: datetime
     complete: TrueFlag
+
+    @field_validator("start", "end")
+    @classmethod
+    def aware_bounds(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_capture_interval(self) -> Self:
+        if self.start >= self.end:
+            raise ValueError("A capture witness requires its actual positive interval")
+        return self
+
+
+class ConditionFlowAggregateProjection(ConditionFlowCaptureProjection):
     buy_qty: Decimal = Field(ge=0)
     sell_qty: Decimal = Field(ge=0)
     sum_sq_qty: Decimal = Field(ge=0)
@@ -615,15 +640,8 @@ class ConditionFlowAggregateProjection(DomainModel):
     low_reason: Literal["INCOMPLETE", "EMPTY_INTERVAL"] | None
     counts: ConditionTradeCounts
 
-    @field_validator("start", "end")
-    @classmethod
-    def aware_bounds(cls, value: datetime) -> datetime:
-        return parse_iso_time(value)
-
     @model_validator(mode="after")
     def actual_calculation_facets(self) -> Self:
-        if self.start >= self.end:
-            raise ValueError("A selected aggregate requires its actual positive interval")
         missing_usd = self.buy_notional is None or self.sell_notional is None
         if missing_usd != (self.notional_reason == "INCOMPLETE"):
             raise ValueError("Flow notional absence requires its actual incomplete declaration")
@@ -640,6 +658,15 @@ class ConditionFlowAggregateProjection(DomainModel):
         if (volume == 0) != (self.sum_sq_qty == 0):
             raise ValueError("Flow squared quantity cannot invent or erase observed native flow")
         return self
+
+
+class FlowCaptureEvidenceRef(DomainModel):
+    projection_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ConditionFlowCaptureWitness(ConditionFlowCaptureProjection):
+    evidence: FlowCaptureEvidenceRef
 
 
 class ConditionFlowAggregate(ConditionFlowAggregateProjection):
@@ -1674,6 +1701,7 @@ class UnrequestedConditionFundingDispersion(DomainModel):
 
 
 class ConditionDerivativeWindow[Venue: ConditionDerivativeVenue](DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
     interval: ConditionInterval
     per_venue: tuple[Venue, ...]
     synchronized: (
@@ -2477,6 +2505,7 @@ class UnrequestedConditionOutcomeRanges(DomainModel):
 
 
 class ConditionRelativeGraph(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
     reference_instrument_id: str | None = Field(min_length=1, pattern=r"\S")
     reference_coverage: dict[
         Annotated[str, Field(min_length=1, pattern=r"\S")], ConditionPriceReferenceCoverage
@@ -4368,7 +4397,7 @@ class ConditionFundingConfirmationGraph(DomainModel):
 
 class ConditionFlowCapturePiece(DomainModel):
     basis: Literal["FULL_MINUTE", "BOUNDARY"]
-    aggregate: ConditionFlowAggregate
+    aggregate: ConditionFlowCaptureWitness
     visibility: ConditionReceiptVisibility
 
 
@@ -4465,6 +4494,46 @@ class ConditionFlowWindowQualification(DomainModel):
         return ConditionObservedPredicate(status="OBSERVED", value=True)
 
 
+class ConditionVenueFlowWindowQualification(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    venue: str = Field(min_length=1, pattern=r"\S")
+    market_type: Literal["SPOT"]
+    interval: ConditionInterval
+    required_instrument_ids: tuple[str, ...] = Field(min_length=1)
+    captures: tuple[ConditionFlowWindowQualification, ...]
+
+    @model_validator(mode="after")
+    def actual_required_instrument_scope(self) -> Self:
+        required = set(self.required_instrument_ids)
+        if len(required) != len(self.required_instrument_ids) or any(
+            not identity.strip() for identity in required
+        ):
+            raise ValueError("Venue capture requires distinct actual monitored instrument identities")
+        captured: set[str] = set()
+        for capture in self.captures:
+            if capture.instrument_id not in required or capture.instrument_id in captured:
+                raise ValueError(
+                    "Venue capture cannot duplicate or borrow an instrument outside its required scope"
+                )
+            captured.add(capture.instrument_id)
+            if (capture.token_id, capture.venue, capture.market_type, capture.interval) != (
+                self.token_id,
+                self.venue,
+                self.market_type,
+                self.interval,
+            ):
+                raise ValueError("Venue capture must preserve its actual token/venue/market/window")
+        return self
+
+    def complete(self) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        if {capture.instrument_id for capture in validated.captures} != set(
+            validated.required_instrument_ids
+        ):
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        return condition_predicates_all(tuple(capture.complete() for capture in validated.captures))
+
+
 class ConditionFragmentationPriceConfirmation(DomainModel):
     left_instrument_id: str = Field(min_length=1, pattern=r"\S")
     right_instrument_id: str = Field(min_length=1, pattern=r"\S")
@@ -4549,7 +4618,8 @@ class ConditionFragmentationGraph(DomainModel):
     top_sign_history: ConditionTopVenueSignHistory
     price_confirmations: tuple[ConditionFragmentationPriceConfirmation, ...]
     funding: ConditionFundingConfirmationGraph
-    flow_capture: tuple[ConditionFlowWindowQualification, ...]
+    spot_capture: tuple[ConditionVenueFlowWindowQualification, ...]
+    perp_capture: tuple[ConditionFlowWindowQualification, ...]
 
     @model_validator(mode="after")
     def actual_fragmentation_scopes(self) -> Self:
@@ -4631,35 +4701,65 @@ class ConditionFragmentationGraph(DomainModel):
             or self.funding.assembled_at != self.assembled_at
         ):
             raise ValueError("Funding fragmentation must preserve actual token and cutoff")
-        captures: set[str] = set()
-        known_venues: dict[str, tuple[str, Literal["SPOT", "PERP"]]] = {}
-        for pair in self.price_pairs:
-            known_venues[pair.left_instrument_id] = (pair.left_venue, "SPOT")
-            known_venues[pair.right_instrument_id] = (pair.right_venue, "SPOT")
-        for rate in self.funding.primary:
-            prior = known_venues.get(rate.instrument_id)
-            if prior is not None and prior != (rate.venue, "PERP"):
-                raise ValueError("A fragmentation instrument cannot change venue between source families")
-            known_venues[rate.instrument_id] = (rate.venue, "PERP")
-        for capture in self.flow_capture:
-            if capture.assembled_at != self.assembled_at:
-                raise ValueError("Flow qualification cannot borrow another snapshot assembly clock")
-            if (
-                capture.instrument_id in captures
-                or capture.token_id != self.token_id
-                or capture.interval != self.interval
+        spot_ids = {
+            identity
+            for pair in self.price_pairs
+            for identity in (pair.left_instrument_id, pair.right_instrument_id)
+        }
+        spot_ids.update(
+            identity for capture in self.spot_capture for identity in capture.required_instrument_ids
+        )
+        if any(rate.instrument_id in spot_ids for rate in self.funding.primary):
+            raise ValueError("A fragmentation instrument cannot change between spot and perp markets")
+        venues: set[str] = set()
+        for capture in self.spot_capture:
+            if capture.venue in venues or (capture.token_id, capture.interval) != (
+                self.token_id,
+                self.interval,
             ):
-                raise ValueError("Flow capture qualification requires a distinct actual token/window scope")
-            captures.add(capture.instrument_id)
-            if known_venues.get(capture.instrument_id) != (capture.venue, capture.market_type):
+                raise ValueError("Spot capture requires distinct actual token/venue/window scope")
+            venues.add(capture.venue)
+            for proof in capture.captures:
+                if proof.assembled_at != self.assembled_at:
+                    raise ValueError("Spot capture cannot borrow another snapshot assembly clock")
+            for pair in self.price_pairs:
+                for venue, instrument in (
+                    (pair.left_venue, pair.left_instrument_id),
+                    (pair.right_venue, pair.right_instrument_id),
+                ):
+                    if capture.venue == venue and instrument not in capture.required_instrument_ids:
+                        raise ValueError(
+                            "Price confirmation requires its actual book instrument in monitored spot scope"
+                        )
+        captures: set[str] = set()
+        known_perp = {rate.instrument_id: rate.venue for rate in self.funding.primary}
+        for perp in self.perp_capture:
+            if perp.assembled_at != self.assembled_at:
+                raise ValueError("Flow qualification cannot borrow another snapshot assembly clock")
+            if perp.instrument_id in captures or (
+                perp.token_id,
+                perp.market_type,
+                perp.interval,
+            ) != (self.token_id, "PERP", self.interval):
+                raise ValueError(
+                    "Perp capture qualification requires distinct actual token/market/window scope"
+                )
+            captures.add(perp.instrument_id)
+            if known_perp.get(perp.instrument_id) != perp.venue:
                 raise ValueError("Flow capture cannot qualify an unrelated fragmentation instrument")
         return self
 
-    def _capture(self, instrument: str) -> ConditionPredicate:
-        for capture in self.flow_capture:
+    def _perp_complete(self, instrument: str) -> ConditionPredicate:
+        for capture in self.perp_capture:
             if capture.assembled_at != self.assembled_at:
                 raise ValueError("Flow qualification cannot borrow another snapshot assembly clock")
             if capture.instrument_id == instrument:
+                return capture.complete()
+        return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+
+    def _spot_complete(self, venue: str) -> ConditionPredicate:
+        for capture in self.spot_capture:
+            if capture.venue == venue:
                 return capture.complete()
         return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
 
@@ -4695,8 +4795,8 @@ class ConditionFragmentationGraph(DomainModel):
                     (
                         pair.persistent_gap(),
                         secondary,
-                        validated._capture(pair.left_instrument_id),
-                        validated._capture(pair.right_instrument_id),
+                        validated._spot_complete(pair.left_venue),
+                        validated._spot_complete(pair.right_venue),
                     )
                 )
             )
@@ -4706,7 +4806,7 @@ class ConditionFragmentationGraph(DomainModel):
 
     def funding_path_validated(self) -> ConditionPredicate:
         validated = type(self).model_validate(self)
-        captures = tuple(validated._capture(row.instrument_id) for row in validated.funding.primary)
+        captures = tuple(validated._perp_complete(row.instrument_id) for row in validated.funding.primary)
         capture = (
             condition_predicates_all(captures)
             if captures
@@ -5127,10 +5227,33 @@ class ConditionInventoryBalanceChange(DomainModel):
         return _sum_native(validated.current_qty_native, validated.previous_qty_native.copy_negate())
 
 
-class ConditionInventoryCaptureError(DomainModel):
+class ConditionInventoryWalletCaptureError(DomainModel):
+    kind: Literal["WALLET_CAPTURE_FAILED"]
     wallet: str = Field(min_length=1, pattern=r"\S")
     chain_id: int = Field(gt=0)
-    reason: str = Field(min_length=1, pattern=r"\S")
+    reason: str
+
+
+class ConditionUnsupportedInventoryChain(DomainModel):
+    kind: Literal["CHAIN_NOT_SUPPORTED"]
+    chain: str = Field(min_length=1, pattern=r"\S")
+    reason: Literal["CHAIN_NOT_SUPPORTED"]
+
+
+class ConditionInventoryDecimalsError(DomainModel):
+    kind: Literal["DECIMALS_CAPTURE_FAILED"]
+    chain: str = Field(min_length=1, pattern=r"\S")
+    chain_id: int = Field(gt=0)
+    contract: str = Field(min_length=1, pattern=r"\S")
+    operation: Literal["decimals"]
+    reason: str
+
+
+type ConditionInventoryCaptureError = (
+    ConditionInventoryWalletCaptureError
+    | ConditionUnsupportedInventoryChain
+    | ConditionInventoryDecimalsError
+)
 
 
 class ConditionInventoryCoverage(DomainModel):
@@ -5254,7 +5377,7 @@ class ComparableConditionExchangeInventory(DomainModel):
         with localcontext() as context:
             context.prec = max(128, 2 * span + 16)
             value = float(change / previous)
-        if not isfinite(value):
+        if not isfinite(value) or value == 0 and change != 0:
             return ConditionInventoryFractionalChange(value=None, reason="NOT_ESTIMABLE")
         return ConditionInventoryFractionalChange(value=value, reason=None)
 
@@ -5273,7 +5396,13 @@ class ConditionWalletFlow(DomainModel):
     visibility: ConditionReceiptVisibility
     classification: (
         Literal[
-            "UNLOCK_DISTRIBUTION", "TREASURY_INTERNAL", "MM_INVENTORY", "CEX_CUSTODY_MIGRATION", "AMBIGUOUS"
+            "UNLOCK_DISTRIBUTION",
+            "TREASURY_INTERNAL",
+            "MM_INVENTORY",
+            "CEX_CUSTODY_MIGRATION",
+            "FRESH_ACCUMULATION",
+            "OTC_SETTLEMENT",
+            "AMBIGUOUS",
         ]
         | None
     )
@@ -5305,7 +5434,7 @@ class ConditionWalletFlow(DomainModel):
         if (
             validated.reaches_exchange is False
             or validated.quantity_native == 0
-            or validated.classification == "CEX_CUSTODY_MIGRATION"
+            or validated.classification in ("CEX_CUSTODY_MIGRATION", "FRESH_ACCUMULATION", "OTC_SETTLEMENT")
         ):
             return ConditionObservedPredicate(status="OBSERVED", value=False)
         if (
@@ -5521,7 +5650,7 @@ class ConditionLendingPoolCalculation(DomainModel):
         if not isfinite(current_float) or not isfinite(previous_float):
             return ConditionLendingUtilizationChange(value=None, reason="NOT_ESTIMABLE")
         value = current_float - previous_float
-        if not isfinite(value):
+        if not isfinite(value) or value == 0 and current.value != previous:
             return ConditionLendingUtilizationChange(value=None, reason="NOT_ESTIMABLE")
         return ConditionLendingUtilizationChange(value=value, reason=None)
 
@@ -5577,3 +5706,1216 @@ class UnavailableConditionLending(DomainModel):
 
 
 type ConditionLending = CapturedConditionLending | UnavailableConditionLending
+
+
+class KnownConditionCirculatingShare(DomainModel):
+    status: Literal["OBSERVED"]
+    value: Decimal = Field(ge=0, le=1)
+    unit: Literal["FRACTION"]
+
+
+class UnscaledConditionCirculatingShare(DomainModel):
+    status: Literal["UNSCALED_CAPTURED_VALUE"]
+    value: Decimal = Field(ge=0)
+    unit: Literal["UNSPECIFIED"]
+    reason: Literal["UNIT_NOT_CAPTURED"]
+
+
+class UnavailableConditionCirculatingShare(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    value: None
+    reason: Literal["NOT_CAPTURED"]
+
+
+type ConditionCirculatingShare = (
+    KnownConditionCirculatingShare | UnscaledConditionCirculatingShare | UnavailableConditionCirculatingShare
+)
+
+
+class ConditionScheduledUnlock(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    scheduled_at: Timestamp
+    quantity_native: Decimal | None = Field(ge=0)
+    quantity_reason: Literal["QUANTITY_NOT_CAPTURED"] | None
+    label: str | None
+    circulating_share: ConditionCirculatingShare
+    recipient_class: str | None
+    transferable: bool | None
+    transferability_reason: Literal["TRANSFERABILITY_NOT_CAPTURED"] | None
+    source_observation_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    schedule_index: int | None = Field(ge=0)
+
+    @model_validator(mode="after")
+    def actual_potential_supply(self) -> Self:
+        if self.scheduled_at.value is None:
+            raise ValueError("A scheduled unlock requires its actual published time declaration")
+        if (self.quantity_native is None) != (self.quantity_reason is not None):
+            raise ValueError("Missing scheduled quantity requires its actual provider gap")
+        if (self.transferable is None) != (self.transferability_reason is not None):
+            raise ValueError("Missing transferability must remain explicitly uncaptured")
+        return self
+
+
+class CapturedConditionUnlocks(DomainModel):
+    status: Literal["CAPTURED_SCHEDULE"]
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    cutoff: datetime
+    observed_at: Timestamp
+    visibility: ConditionReceiptVisibility
+    upcoming: tuple[ConditionScheduledUnlock, ...]
+
+    @field_validator("cutoff")
+    @classmethod
+    def aware_cutoff(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_schedule_window(self) -> Self:
+        observed = self.observed_at.value
+        if observed is None or parse_iso_time(observed) > self.cutoff:
+            raise ValueError("An unlock schedule requires its actual nonfuture capture observation")
+        end = self.cutoff + timedelta(days=14)
+        entries: set[tuple[str, int | None]] = set()
+        for unlock in self.upcoming:
+            stamp = unlock.scheduled_at.value
+            if (
+                unlock.token_id != self.token_id
+                or stamp is None
+                or not self.cutoff <= parse_iso_time(stamp) <= end
+            ):
+                raise ValueError(
+                    "Upcoming unlocks must preserve actual token and inclusive fourteen-day scope"
+                )
+            key = (unlock.source_observation_sha256, unlock.schedule_index)
+            if key in entries:
+                raise ValueError("An unlock schedule cannot duplicate the same captured source entry")
+            entries.add(key)
+        return self
+
+
+class UnavailableConditionUnlocks(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: str = Field(min_length=1, pattern=r"\S")
+
+
+type ConditionUnlocks = CapturedConditionUnlocks | UnavailableConditionUnlocks
+
+
+class SelectedConditionStablecoinPoint(DomainModel):
+    status: Literal["SELECTED_SOURCE_POINT"]
+    observed_at: Timestamp
+    value_usd: Decimal | None = Field(ge=0)
+    value_reason: Literal["VALUE_NOT_CAPTURED", "NONFINITE_SOURCE_VALUE"] | None
+    series_index: int | None = Field(ge=0)
+
+    @model_validator(mode="after")
+    def actual_selected_point(self) -> Self:
+        if self.observed_at.value is None:
+            raise ValueError("A selected chain-liquidity point requires its actual source clock")
+        if (self.value_usd is None) != (self.value_reason is not None):
+            raise ValueError("Missing chain-liquidity quantity requires its actual capture/value gap")
+        return self
+
+
+class UnavailableConditionStablecoinPoint(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["NO_ASOF_POINT"]
+
+
+type ConditionStablecoinPoint = SelectedConditionStablecoinPoint | UnavailableConditionStablecoinPoint
+
+
+class ConditionStablecoinSupplyChange(DomainModel):
+    value: Decimal | None
+    unit: Literal["USD"]
+    reason: Literal["INCOMPLETE"] | None
+
+    @model_validator(mode="after")
+    def actual_change(self) -> Self:
+        if (self.value is None) != (self.reason is not None):
+            raise ValueError("Missing chain supply comparison requires an actual missing endpoint/value")
+        return self
+
+
+class CapturedConditionChainLiquidity(DomainModel):
+    status: Literal["CAPTURED_CHAIN_CONTEXT"]
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    chain: str = Field(min_length=1, pattern=r"\S")
+    cutoff: datetime
+    observed_at: Timestamp
+    visibility: ConditionReceiptVisibility
+    current: ConditionStablecoinPoint
+    day_ago: ConditionStablecoinPoint
+    week_ago: ConditionStablecoinPoint
+    source_observation_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("cutoff")
+    @classmethod
+    def aware_cutoff(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_chain_asof_points(self) -> Self:
+        stamp = self.observed_at.value
+        if stamp is None or parse_iso_time(stamp) > self.cutoff:
+            raise ValueError("Captured chain context requires its actual nonfuture source observation")
+        for point, target in (
+            (self.current, self.cutoff),
+            (self.day_ago, self.cutoff - timedelta(days=1)),
+            (self.week_ago, self.cutoff - timedelta(days=7)),
+        ):
+            if isinstance(point, SelectedConditionStablecoinPoint):
+                observed = point.observed_at.value
+                if observed is None or parse_iso_time(observed) > target:
+                    raise ValueError("A selected chain supply point cannot lie after its actual as-of target")
+        return self
+
+    def change_24h(self) -> ConditionStablecoinSupplyChange:
+        validated = type(self).model_validate(self)
+        return validated._change(validated.day_ago)
+
+    def change_7d(self) -> ConditionStablecoinSupplyChange:
+        validated = type(self).model_validate(self)
+        return validated._change(validated.week_ago)
+
+    def _change(self, prior: ConditionStablecoinPoint) -> ConditionStablecoinSupplyChange:
+        if not isinstance(self.current, SelectedConditionStablecoinPoint) or not isinstance(
+            prior, SelectedConditionStablecoinPoint
+        ):
+            return ConditionStablecoinSupplyChange(value=None, unit="USD", reason="INCOMPLETE")
+        current, previous = self.current.value_usd, prior.value_usd
+        if current is None or previous is None:
+            return ConditionStablecoinSupplyChange(value=None, unit="USD", reason="INCOMPLETE")
+        return ConditionStablecoinSupplyChange(
+            value=_sum_native(current, previous.copy_negate()), unit="USD", reason=None
+        )
+
+
+class UnavailableConditionChainLiquidity(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    chain: str | None = Field(min_length=1, pattern=r"\S")
+    reason: str = Field(min_length=1, pattern=r"\S")
+
+
+type ConditionChainLiquidity = CapturedConditionChainLiquidity | UnavailableConditionChainLiquidity
+
+
+class ConfiguredConditionSettlementChain(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    chain: str | None = Field(min_length=1, pattern=r"\S")
+    origin: Literal["CURRENT_CONFIGURED_SETTLEMENT_CHAIN"]
+    versions: ResolvedVersionIdentity
+
+
+type ConditionSupplyInput = Literal[
+    "EXCHANGE_INVENTORY", "WALLET_FLOWS", "UNLOCKS", "LENDING", "CHAIN_LIQUIDITY"
+]
+
+
+class ConditionInventorySupplyWitness(DomainModel):
+    native_change: Decimal = Field(gt=0)
+    fractional_change: float = Field(gt=0)
+    normal_range: FloatBounds
+    current_observed_at: Timestamp
+    previous_observed_at: Timestamp
+
+    @model_validator(mode="after")
+    def actual_positive_comparison(self) -> Self:
+        if (
+            self.fractional_change <= self.normal_range.upper
+            or self.current_observed_at.value is None
+            or self.previous_observed_at.value is None
+        ):
+            raise ValueError(
+                "Inventory supply evidence requires an actual positive rise beyond its normal range"
+            )
+        return self
+
+
+class ConditionPositiveSupplyEvidence(DomainModel):
+    status: Literal["OBSERVED_POSITIVE"]
+    available_inputs: tuple[ConditionSupplyInput, ...] = Field(min_length=1)
+    inventory: ConditionInventorySupplyWitness | None
+    wallet_flows: tuple[ConditionWalletFlowEvidenceRef, ...]
+
+    @model_validator(mode="after")
+    def actual_positive_witness(self) -> Self:
+        if self.inventory is None and not self.wallet_flows:
+            raise ValueError("Positive supply evidence requires an actual inventory or transfer witness")
+        if len(set(self.available_inputs)) != len(self.available_inputs):
+            raise ValueError("Available supply input families must be distinct")
+        if (
+            self.inventory is not None
+            and "EXCHANGE_INVENTORY" not in self.available_inputs
+            or self.wallet_flows
+            and "WALLET_FLOWS" not in self.available_inputs
+        ):
+            raise ValueError("Supply witnesses must retain their actual available input family")
+        return self
+
+
+class ConditionNoPositiveSupplyEvidence(DomainModel):
+    status: Literal["NO_POSITIVE_OBSERVATION"]
+    available_inputs: tuple[ConditionSupplyInput, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def actual_available_subset(self) -> Self:
+        if len(set(self.available_inputs)) != len(self.available_inputs):
+            raise ValueError("Available supply input families must be distinct")
+        return self
+
+
+class UnavailableConditionSupplyEvidence(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["NO_AVAILABLE_INPUTS"]
+
+
+type ConditionSupplyEvidence = (
+    ConditionPositiveSupplyEvidence | ConditionNoPositiveSupplyEvidence | UnavailableConditionSupplyEvidence
+)
+
+
+class ConditionSupplyGraph(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    interval: ConditionInterval
+    assembled_at: Timestamp
+    settlement_chain: ConfiguredConditionSettlementChain
+    exchange_inventory: ConditionExchangeInventory
+    wallet_flows: ConditionWalletFlows
+    unlocks: ConditionUnlocks
+    lending: ConditionLending
+    chain_contexts: tuple[ConditionChainLiquidity, ...]
+    holders_revenue: ConditionHoldersRevenue
+
+    @model_validator(mode="after")
+    def actual_supply_scope(self) -> Self:
+        if self.settlement_chain.token_id != self.token_id:
+            raise ValueError("Settlement-chain policy cannot qualify another token")
+        inventory = self.exchange_inventory
+        if isinstance(inventory, ComparableConditionExchangeInventory) and (
+            inventory.token_id,
+            inventory.cutoff,
+            inventory.current_visibility.assembled_at,
+        ) != (self.token_id, self.interval.cutoff, self.assembled_at):
+            raise ValueError("Inventory must preserve actual supply token/cutoff/assembly scope")
+        flows = self.wallet_flows
+        if isinstance(flows, CapturedConditionWalletFlows) and (
+            flows.token_id,
+            flows.interval,
+            flows.assembled_at,
+        ) != (self.token_id, self.interval, self.assembled_at):
+            raise ValueError("Wallet flows must preserve actual supply token/window/assembly scope")
+        unlocks = self.unlocks
+        if isinstance(unlocks, CapturedConditionUnlocks) and (
+            unlocks.token_id,
+            unlocks.cutoff,
+            unlocks.visibility.assembled_at,
+        ) != (self.token_id, self.interval.cutoff, self.assembled_at):
+            raise ValueError("Unlocks must preserve actual supply token/cutoff/assembly scope")
+        lending = self.lending
+        if isinstance(lending, CapturedConditionLending) and (
+            lending.token_id,
+            lending.cutoff,
+            lending.current_visibility.assembled_at,
+        ) != (self.token_id, self.interval.cutoff, self.assembled_at):
+            raise ValueError("Lending must preserve actual supply token/cutoff/assembly scope")
+        seen: set[str | None] = set()
+        for context in self.chain_contexts:
+            if context.chain in seen:
+                raise ValueError("Supply chain contexts must preserve distinct actual chain scopes")
+            seen.add(context.chain)
+            if isinstance(context, CapturedConditionChainLiquidity) and (
+                context.token_id,
+                context.cutoff,
+                context.visibility.assembled_at,
+            ) != (self.token_id, self.interval.cutoff, self.assembled_at):
+                raise ValueError("Chain context must preserve actual supply token/cutoff/assembly scope")
+        holders = self.holders_revenue
+        if isinstance(holders, CapturedConditionHoldersRevenue) and (
+            holders.token_id,
+            holders.cutoff,
+            holders.visibility.assembled_at,
+        ) != (self.token_id, self.interval.cutoff, self.assembled_at):
+            raise ValueError("Holders revenue must preserve actual supply token/cutoff/assembly scope")
+        return self
+
+    @staticmethod
+    def _visible(visibility: ConditionReceiptVisibility) -> bool:
+        result = visibility.eligible()
+        return isinstance(result, ConditionObservedPredicate) and result.value
+
+    def primary_chain_context(self) -> ConditionChainLiquidity:
+        validated = type(self).model_validate(self)
+        chain = validated.settlement_chain.chain
+        if chain is None:
+            return UnavailableConditionChainLiquidity(
+                status="UNAVAILABLE", chain=None, reason="SETTLEMENT_CHAIN_UNCONFIGURED"
+            )
+        for context in validated.chain_contexts:
+            if context.chain == chain:
+                return context
+        return UnavailableConditionChainLiquidity(
+            status="UNAVAILABLE", chain=chain, reason="NO_CAPTURED_CHAIN_CONTEXT"
+        )
+
+    def _inventory_witness(self) -> ConditionInventorySupplyWitness | None:
+        inventory = self.exchange_inventory
+        if not isinstance(inventory, ComparableConditionExchangeInventory):
+            return None
+        stamp = inventory.current_observed_at.value
+        if (
+            stamp is None
+            or parse_iso_time(stamp) < self.interval.start
+            or not self._visible(inventory.current_visibility)
+            or not self._visible(inventory.previous_visibility)
+        ):
+            return None
+        change = inventory.native_change().value
+        fractional = inventory.fractional_change().value
+        bounds = inventory.normal_range.bounds
+        if (
+            change is None
+            or change <= 0
+            or fractional is None
+            or fractional <= 0
+            or bounds is None
+            or fractional <= bounds.upper
+        ):
+            return None
+        return ConditionInventorySupplyWitness(
+            native_change=change,
+            fractional_change=fractional,
+            normal_range=bounds,
+            current_observed_at=inventory.current_observed_at,
+            previous_observed_at=inventory.previous_observed_at,
+        )
+
+    def evidence(self) -> ConditionSupplyEvidence:
+        validated = type(self).model_validate(self)
+        available: list[ConditionSupplyInput] = []
+        inventory = validated.exchange_inventory
+        if isinstance(inventory, ComparableConditionExchangeInventory) and validated._visible(
+            inventory.current_visibility
+        ):
+            available.append("EXCHANGE_INVENTORY")
+        flows = validated.wallet_flows
+        flow_evidence: tuple[ConditionWalletFlowEvidenceRef, ...] = ()
+        if isinstance(flows, CapturedConditionWalletFlows):
+            observed = flows.observed_evidence()
+            if not isinstance(observed, UnavailableConditionSupplyObservation):
+                available.append("WALLET_FLOWS")
+            if isinstance(observed, ConditionPositiveSupplyObservation):
+                flow_evidence = observed.evidence
+        if isinstance(validated.unlocks, CapturedConditionUnlocks) and validated._visible(
+            validated.unlocks.visibility
+        ):
+            available.append("UNLOCKS")
+        if isinstance(validated.lending, CapturedConditionLending) and validated._visible(
+            validated.lending.current_visibility
+        ):
+            available.append("LENDING")
+        primary_context = validated.primary_chain_context()
+        if isinstance(primary_context, CapturedConditionChainLiquidity) and validated._visible(
+            primary_context.visibility
+        ):
+            available.append("CHAIN_LIQUIDITY")
+        inventory_witness = validated._inventory_witness()
+        if inventory_witness is not None or flow_evidence:
+            return ConditionPositiveSupplyEvidence(
+                status="OBSERVED_POSITIVE",
+                available_inputs=tuple(available),
+                inventory=inventory_witness,
+                wallet_flows=flow_evidence,
+            )
+        if available:
+            return ConditionNoPositiveSupplyEvidence(
+                status="NO_POSITIVE_OBSERVATION", available_inputs=tuple(available)
+            )
+        return UnavailableConditionSupplyEvidence(status="UNAVAILABLE", reason="NO_AVAILABLE_INPUTS")
+
+
+class ConditionDivergenceCandidateBase(DomainModel):
+    eligibility: ConditionPredicate
+    refutation: ConditionPredicate
+    support: int | None = Field(ge=0)
+    support_reason: Literal["NOT_ELIGIBLE"] | None
+
+    def _eligible(self) -> bool:
+        return (
+            isinstance(self.eligibility, ConditionObservedPredicate)
+            and self.eligibility.value
+            and not (isinstance(self.refutation, ConditionObservedPredicate) and self.refutation.value)
+        )
+
+    @model_validator(mode="after")
+    def actual_support_evaluation(self) -> Self:
+        if (self.support is not None) != self._eligible() or (self.support is None) != (
+            self.support_reason is not None
+        ):
+            raise ValueError("Candidate support is computed only for an eligible unrefuted candidate")
+        return self
+
+    def eligible(self) -> bool:
+        return type(self).model_validate(self)._eligible()
+
+    def testable(self) -> bool:
+        validated = type(self).model_validate(self)
+        return isinstance(validated.eligibility, ConditionObservedPredicate)
+
+
+class ConditionDirectionalDivergenceCandidate(ConditionDivergenceCandidateBase):
+    state: Literal["PERP_LED_MARKUP", "LIQUIDITY_VACUUM", "FRAGMENTATION"]
+
+    @model_validator(mode="after")
+    def actual_support_slots(self) -> Self:
+        maximum = {"PERP_LED_MARKUP": 4, "LIQUIDITY_VACUUM": 2, "FRAGMENTATION": 2}[self.state]
+        if self.support is not None and self.support > maximum:
+            raise ValueError("Candidate support cannot exceed its actual written supporting conditions")
+        return self
+
+
+class ConditionAbsorptionDivergenceCandidate(ConditionDivergenceCandidateBase):
+    state: Literal["ABSORPTION_CANDIDATE", "ABSORPTION_CONFIRMED"]
+    confirmation: ConditionPredicate
+
+    @model_validator(mode="after")
+    def actual_repeated_confirmation(self) -> Self:
+        confirmed = (
+            self._eligible()
+            and isinstance(self.confirmation, ConditionObservedPredicate)
+            and self.confirmation.value
+        )
+        if (
+            (self.state == "ABSORPTION_CONFIRMED") != confirmed
+            or self.support is not None
+            and self.support > 3
+        ):
+            raise ValueError(
+                "Confirmed absorption requires the actual repeated/resilient and OI confirmation result"
+            )
+        return self
+
+
+type ConditionDivergenceCandidate = (
+    ConditionDirectionalDivergenceCandidate | ConditionAbsorptionDivergenceCandidate
+)
+
+
+class ConditionDivergenceEvaluation(DomainModel):
+    trigger: ConditionPredicate
+    candidates: tuple[ConditionDivergenceCandidate, ...]
+
+    @model_validator(mode="after")
+    def actual_triggered_tests(self) -> Self:
+        triggered = isinstance(self.trigger, ConditionObservedPredicate) and self.trigger.value
+        if not triggered and self.candidates:
+            raise ValueError(
+                "A nontriggered or unavailable divergence cannot invent evaluated candidate tests"
+            )
+        if triggered:
+            families = tuple(
+                "ABSORPTION"
+                if isinstance(candidate, ConditionAbsorptionDivergenceCandidate)
+                else candidate.state
+                for candidate in self.candidates
+            )
+            if len(families) != 4 or set(families) != {
+                "PERP_LED_MARKUP",
+                "ABSORPTION",
+                "LIQUIDITY_VACUUM",
+                "FRAGMENTATION",
+            }:
+                raise ValueError("A triggered divergence must preserve all four actual candidate tests")
+        return self
+
+    def selected(self) -> ConditionDivergenceCandidate | None:
+        validated = type(self).model_validate(self)
+        ranked: list[tuple[int, int, ConditionDivergenceCandidate]] = []
+        priority: dict[KnownMarketDivergenceState, int] = {
+            "LIQUIDITY_VACUUM": 4,
+            "PERP_LED_MARKUP": 3,
+            "ABSORPTION_CONFIRMED": 2,
+            "ABSORPTION_CANDIDATE": 1,
+            "FRAGMENTATION": 0,
+        }
+        for candidate in validated.candidates:
+            if candidate.eligible():
+                support = candidate.support
+                if support is None:
+                    raise ValueError("An eligible divergence requires actual computed support")
+                ranked.append((support, priority[candidate.state], candidate))
+        return max(ranked, key=lambda row: (row[0], row[1]))[2] if ranked else None
+
+    def state(self) -> MarketDivergenceState:
+        validated = type(self).model_validate(self)
+        if isinstance(validated.trigger, ConditionUnavailablePredicate):
+            return "UNKNOWN"
+        if not validated.trigger.value:
+            return "NONE"
+        chosen = validated.selected()
+        return chosen.state if chosen is not None else "UNKNOWN"
+
+    def unresolved(self) -> tuple[KnownMarketDivergenceState, ...]:
+        validated = type(self).model_validate(self)
+        chosen = validated.selected()
+        return tuple(
+            candidate.state
+            for candidate in validated.candidates
+            if candidate.eligible() and candidate != chosen
+        )
+
+
+class ConditionProposedMove(DomainModel):
+    status: Literal["PROPOSED"]
+    move_class: KnownMarketMoveClass
+    support: int = Field(ge=0)
+
+
+class UnavailableConditionProposedMove(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    move_class: Literal["UNKNOWN"]
+    support: None
+    reason: Literal[
+        "NO_ELIGIBLE_CLASS",
+        "NO_ELIGIBLE_DIVERGENCE",
+        "TRIGGER_INPUTS_UNAVAILABLE",
+        "UNVALIDATED_FRAGMENTATION",
+    ]
+
+
+type ConditionMoveProposal = ConditionProposedMove | UnavailableConditionProposedMove
+
+
+class ConditionMoveCandidates(DomainModel):
+    eligible_before_divergence: dict[DirectMarketMoveClass, Annotated[int, Field(ge=0)]]
+    divergence: ConditionDivergenceEvaluation
+    flags: tuple[MarketClassificationFlag, ...]
+
+    @model_validator(mode="after")
+    def actual_support_counts(self) -> Self:
+        maximum: dict[DirectMarketMoveClass, int] = {
+            "SPOT_LED_ACCUMULATION": 5,
+            "ORGANIC_MIXED": 2,
+            "DISTRIBUTION": 3,
+            "SELL_SIDE_ABSORPTION": 3,
+            "REAL_MARKET_FRAGMENTATION": 2,
+            "PRICE_MARKUP_FAKE_OI": 0,
+            "SHORT_SQUEEZE": 2,
+            "PERP_LED_CHASE": 4,
+            "LIQUIDITY_VACUUM": 2,
+        }
+        if any(support > maximum[name] for name, support in self.eligible_before_divergence.items()) or len(
+            set(self.flags)
+        ) != len(self.flags):
+            raise ValueError("Move support and flags must preserve actual distinct written tests")
+        return self
+
+    def direct_order(self) -> tuple[DirectMarketMoveClass, ...]:
+        validated = type(self).model_validate(self)
+        risk: tuple[DirectMarketMoveClass, ...] = (
+            "LIQUIDITY_VACUUM",
+            "SHORT_SQUEEZE",
+            "PERP_LED_CHASE",
+            "DISTRIBUTION",
+            "SELL_SIDE_ABSORPTION",
+            "ORGANIC_MIXED",
+            "SPOT_LED_ACCUMULATION",
+            "REAL_MARKET_FRAGMENTATION",
+            "PRICE_MARKUP_FAKE_OI",
+        )
+        return tuple(
+            sorted(
+                validated.eligible_before_divergence,
+                key=lambda name: (-validated.eligible_before_divergence[name], risk.index(name)),
+            )
+        )
+
+    def proposal(self, *, fragmentation: ConditionPredicate) -> ConditionMoveProposal:
+        validated = type(self).model_validate(self)
+        trigger = validated.divergence.trigger
+        if isinstance(trigger, ConditionUnavailablePredicate):
+            return UnavailableConditionProposedMove(
+                status="UNAVAILABLE", move_class="UNKNOWN", support=None, reason="TRIGGER_INPUTS_UNAVAILABLE"
+            )
+        if trigger.value:
+            chosen = validated.divergence.selected()
+            if chosen is None:
+                return UnavailableConditionProposedMove(
+                    status="UNAVAILABLE", move_class="UNKNOWN", support=None, reason="NO_ELIGIBLE_DIVERGENCE"
+                )
+            if chosen.state == "FRAGMENTATION" and not (
+                isinstance(fragmentation, ConditionObservedPredicate) and fragmentation.value
+            ):
+                return UnavailableConditionProposedMove(
+                    status="UNAVAILABLE",
+                    move_class="UNKNOWN",
+                    support=None,
+                    reason="UNVALIDATED_FRAGMENTATION",
+                )
+            mapped: dict[KnownMarketDivergenceState, KnownMarketMoveClass] = {
+                "PERP_LED_MARKUP": "PERP_LED_CHASE",
+                "LIQUIDITY_VACUUM": "LIQUIDITY_VACUUM",
+                "ABSORPTION_CONFIRMED": "PASSIVE_SPOT_ABSORPTION",
+                "ABSORPTION_CANDIDATE": "PASSIVE_SPOT_ABSORPTION",
+                "FRAGMENTATION": "REAL_MARKET_FRAGMENTATION",
+            }
+            support = chosen.support
+            if support is None:
+                raise ValueError("A selected candidate requires actual support")
+            return ConditionProposedMove(status="PROPOSED", move_class=mapped[chosen.state], support=support)
+        ordered = validated.direct_order()
+        if not ordered:
+            return UnavailableConditionProposedMove(
+                status="UNAVAILABLE", move_class="UNKNOWN", support=None, reason="NO_ELIGIBLE_CLASS"
+            )
+        chosen_class = ordered[0]
+        if chosen_class == "REAL_MARKET_FRAGMENTATION" and not (
+            isinstance(fragmentation, ConditionObservedPredicate) and fragmentation.value
+        ):
+            return UnavailableConditionProposedMove(
+                status="UNAVAILABLE", move_class="UNKNOWN", support=None, reason="UNVALIDATED_FRAGMENTATION"
+            )
+        return ConditionProposedMove(
+            status="PROPOSED",
+            move_class=chosen_class,
+            support=validated.eligible_before_divergence[chosen_class],
+        )
+
+
+class NonForwardConditionMarketState(DomainModel):
+    kind: Literal["NON_FORWARD"]
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    interval: NonForwardConditionInterval
+    move_class: Literal["UNKNOWN"]
+    divergence_state: Literal["UNKNOWN"]
+    confidence: Literal["LOW"]
+    reason: Literal["NON_FORWARD_ANALYSIS_WINDOW"]
+
+
+class FullConditionMarketState(DomainModel):
+    kind: Literal["FULL_STATE"]
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    cutoff: datetime
+    spot: dict[ConditionWindow, EnrichedConditionSpot]
+    primary_window: ConditionWindow
+    derivatives: EnrichedConditionDerivatives
+    liquidity: EnrichedConditionLiquidity
+    supply: ConditionSupplyGraph
+    relative: ConditionRelativeGraph
+    data_confidence: FullConditionConfidence
+    candidates: ConditionMoveCandidates
+
+    @field_validator("cutoff")
+    @classmethod
+    def aware_cutoff(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_primary_state_scope(self) -> Self:
+        names = {"W15M", "W1H", "W4H", "W24H", "EVENT"}
+        if set(self.spot) != names:
+            raise ValueError("Full market state requires the actual five spot windows")
+        for name, spot in self.spot.items():
+            if (spot.token_id, spot.interval.window, spot.interval.cutoff) != (
+                self.token_id,
+                name,
+                self.cutoff,
+            ):
+                raise ValueError("Full state spot windows must preserve actual token/window/cutoff")
+            if (spot.enrichment_role == "PRIMARY") != (name == self.primary_window):
+                raise ValueError("Full state primary enrichment must preserve its actual selected window")
+        primary = self.spot[self.primary_window].interval
+        if (
+            self.derivatives.interval != primary
+            or self.liquidity.interval != primary
+            or self.supply.interval != primary
+        ):
+            raise ValueError("Full state families must use the actual primary interval")
+        if any(
+            token != self.token_id
+            for token in (
+                self.derivatives.token_id,
+                self.liquidity.token_id,
+                self.supply.token_id,
+                self.relative.token_id,
+            )
+        ):
+            raise ValueError("Full state cannot borrow another token's financial context")
+        if any(observation.token_id != self.token_id for observation in self.data_confidence.freshness):
+            raise ValueError("Full confidence cannot borrow another subject's observed freshness")
+        if any(window.interval.cutoff != self.cutoff for window in self.relative.windows.values()):
+            raise ValueError("Full relative context cannot borrow another cutoff")
+        return self
+
+    def move_class(self) -> MarketMoveClass:
+        validated = type(self).model_validate(self)
+        if validated.data_confidence.classification == "LOW":
+            return "UNKNOWN"
+        return validated.candidates.proposal(
+            fragmentation=validated.liquidity.fragmentation.validated()
+        ).move_class
+
+    def divergence_state(self) -> MarketDivergenceState:
+        validated = type(self).model_validate(self)
+        state = validated.candidates.divergence.state()
+        if state == "NONE":
+            return "NONE"
+        if validated.data_confidence.classification == "LOW":
+            return "UNKNOWN"
+        return state
+
+    def selected_support(self) -> int | None:
+        validated = type(self).model_validate(self)
+        if validated.data_confidence.classification == "LOW":
+            return None
+        return validated.candidates.proposal(
+            fragmentation=validated.liquidity.fragmentation.validated()
+        ).support
+
+    def alternatives(self) -> tuple[KnownMarketMoveClass, ...]:
+        validated = type(self).model_validate(self)
+        trigger = validated.candidates.divergence.trigger
+        if isinstance(trigger, ConditionUnavailablePredicate):
+            return ()
+        proposal = validated.candidates.proposal(fragmentation=validated.liquidity.fragmentation.validated())
+        if trigger.value:
+            if validated.data_confidence.classification == "LOW" and isinstance(
+                proposal, ConditionProposedMove
+            ):
+                return (proposal.move_class,)
+            return ()
+        ordered = validated.candidates.direct_order()
+        return ordered if validated.data_confidence.classification == "LOW" else ordered[1:]
+
+    def class_confidence(self) -> ConditionConfidenceLevel:
+        validated = type(self).model_validate(self)
+        if validated.move_class() == "UNKNOWN":
+            return "LOW"
+        return (
+            "MEDIUM" if validated.alternatives() or validated.candidates.divergence.unresolved() else "HIGH"
+        )
+
+    def absorption_confirmed(self) -> bool:
+        validated = type(self).model_validate(self)
+        return validated.divergence_state() == "ABSORPTION_CONFIRMED"
+
+
+type ConditionMarketState = FullConditionMarketState | NonForwardConditionMarketState
+
+
+type ConditionCacheDomain = Literal["spot", "oi", "funding", "close", "dc", "depth", "state", "relative"]
+
+
+class ConditionTopCacheKey(DomainModel):
+    domain: ConditionCacheDomain
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    window: ConditionWindow
+    requested_duration_s: float = Field(gt=0)
+    cutoff: datetime
+    dependency_identity: str = Field(min_length=1, pattern=r"\S")
+    config_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_direction_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("cutoff")
+    @classmethod
+    def actual_cutoff(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+
+class ConditionStateNodeKey(DomainModel):
+    node: Literal["spot", "relative", "derivatives", "supply"]
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    start: datetime
+    cutoff: datetime
+    dependency_identity: str = Field(min_length=1, pattern=r"\S")
+    config_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_direction_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("start", "cutoff")
+    @classmethod
+    def actual_clock(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def forward_node_interval(self) -> Self:
+        if self.start >= self.cutoff:
+            raise ValueError("A computed state cache node requires its actual forward interval")
+        return self
+
+
+type ConditionTopNodeValue = (
+    BasicConditionSpot
+    | BasicConditionDerivatives
+    | ObservedConditionClose
+    | UnavailableConditionClose
+    | SelectiveConditionConfidence
+    | ConditionDepthNode
+    | FullConditionMarketState
+    | NonForwardConditionMarketState
+    | ConditionRelativeGraph
+)
+
+type ConditionStateNodeValue = (
+    ConditionSpotWindowGraph | ConditionRelativeGraph | BasicConditionDerivatives | ConditionSupplyGraph
+)
+
+
+class MissingConditionProofObservation(DomainModel):
+    status: Literal["MISSING"]
+    collection: ConditionCollection
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    metric_key: str | None = Field(min_length=1, pattern=r"\S")
+    observation_kind: str | None = Field(min_length=1, pattern=r"\S")
+    chain: str | None = Field(min_length=1, pattern=r"\S")
+    observed_at: Timestamp
+    cadence: ConditionCadence
+    reason: Literal["OBSERVATION_NOT_CAPTURED", "OBSERVATION_CLOCK_NOT_CAPTURED"]
+
+    @model_validator(mode="after")
+    def actual_missing_clock_and_scope(self) -> Self:
+        if self.observed_at.value is not None:
+            raise ValueError("A missing proof observation cannot claim a reported clock")
+        _bind_cadence_scope(
+            self.cadence.scope,
+            collection=self.collection,
+            token_id=self.token_id,
+            instrument_id=self.instrument_id,
+            metric_key=self.metric_key,
+            observation_kind=self.observation_kind,
+            chain=self.chain,
+        )
+        return self
+
+
+type ConditionProofObservation = (
+    ConditionFieldObservation | ConditionDepthObservation | MissingConditionProofObservation
+)
+
+
+class AssessedConditionProofFreshness(DomainModel):
+    kind: Literal["ASSESSED"]
+    observations: tuple[ConditionProofObservation, ...] = Field(min_length=1)
+
+    def passes(self) -> bool:
+        value = type(self).model_validate(self)
+        return all(
+            not isinstance(observation, MissingConditionProofObservation) and observation.fresh
+            for observation in value.observations
+        )
+
+
+class UnavailableConditionProofFreshness(DomainModel):
+    kind: Literal["UNAVAILABLE"]
+    reason: Literal["NO_REQUIRED_OBSERVATIONS"]
+
+
+class UnappliedConditionProofFreshness(DomainModel):
+    kind: Literal["NOT_APPLIED"]
+    reason: Literal["NO_ADDITIONAL_FRESHNESS_GATE"]
+
+
+type ConditionProofFreshness = (
+    AssessedConditionProofFreshness | UnavailableConditionProofFreshness | UnappliedConditionProofFreshness
+)
+
+
+class ConditionOpenInterestCoverage(DomainModel):
+    venues: tuple[Annotated[str, Field(min_length=1, pattern=r"\S")], ...]
+
+    @model_validator(mode="after")
+    def distinct_actual_cohort(self) -> Self:
+        if len(self.venues) != len(set(self.venues)):
+            raise ValueError("OI proof coverage must preserve distinct actual synchronized venues")
+        return self
+
+
+def condition_metric_domain(metric: ConditionMetric) -> ConditionCacheDomain:
+    match metric:
+        case "spot.cohort.direction" | "spot.cohort.cwb_buy" | "spot.cohort.cwb_sell" | "spot.classification":
+            return "spot"
+        case "deriv.native_oi_chg_pct" | "deriv.native_oi_vs_normal" | "deriv.oi_class":
+            return "oi"
+        case "deriv.funding_vs_normal":
+            return "funding"
+        case "price.close_vs_level":
+            return "close"
+        case "price.repricing_band" | "price.vs_anchor_pct":
+            return "relative"
+        case "dc.class":
+            return "dc"
+        case "liq.depth_p1_vs_pre" | "liq.spread_ratio":
+            return "depth"
+        case "mt.move_class" | "mt.divergence_state":
+            return "state"
+
+
+class ConditionEvaluationProof(DomainModel):
+    requirement: ConditionRequirement
+    cache_key: ConditionTopCacheKey
+    reused: bool
+    available: bool
+    reason: Literal["INCOMPLETE"] | None
+    freshness: ConditionProofFreshness
+    coverage: ConditionSpotCoverage | ConditionOpenInterestCoverage | None
+
+    @model_validator(mode="after")
+    def actual_requirement_and_freshness(self) -> Self:
+        domain = condition_metric_domain(self.requirement.metric)
+        if self.cache_key.domain != domain or self.cache_key.window != self.requirement.window:
+            raise ValueError("A proof must preserve the actual requirement's cache domain/window")
+        gate = domain in {"oi", "funding", "depth"}
+        if gate == isinstance(self.freshness, UnappliedConditionProofFreshness):
+            raise ValueError("Additional freshness gates must preserve their actual metric applicability")
+        if (domain == "spot") != isinstance(self.coverage, ConditionSpotCoverage):
+            raise ValueError("Spot proof coverage must preserve its actual coverage projection")
+        if (domain == "oi") != isinstance(self.coverage, ConditionOpenInterestCoverage):
+            raise ValueError("OI proof coverage must preserve its actual synchronized cohort")
+        if domain not in {"spot", "oi"} and self.coverage is not None:
+            raise ValueError("This metric defines no separate coverage projection")
+        passed = isinstance(self.freshness, UnappliedConditionProofFreshness) or (
+            isinstance(self.freshness, AssessedConditionProofFreshness) and self.freshness.passes()
+        )
+        if gate and not passed and self.available:
+            raise ValueError("A required unproven freshness gate cannot expose an available metric")
+        if (self.reason is None) != (self.available and passed):
+            raise ValueError("Proof success requires actual availability and its applicable freshness gate")
+        if isinstance(self.freshness, AssessedConditionProofFreshness):
+            expected_collection = {"oi": "oi", "funding": "funding", "depth": "books"}[domain]
+            for observation in self.freshness.observations:
+                collection = (
+                    "books" if isinstance(observation, ConditionDepthObservation) else observation.collection
+                )
+                if collection != expected_collection or observation.token_id != self.cache_key.token_id:
+                    raise ValueError("Proof observations must preserve actual collection and subject scope")
+                stamp = observation.observed_at.value
+                if isinstance(observation, MissingConditionProofObservation):
+                    continue
+                if stamp is None:
+                    raise ValueError("An observed proof requires its actual reported clock")
+                age = (self.cache_key.cutoff - parse_iso_time(stamp)).total_seconds()
+                cadence = observation.cadence
+                fresh = isinstance(cadence, DeclaredConditionCadence) and 0 <= age <= cadence.seconds
+                if observation.fresh != fresh:
+                    raise ValueError("Proof freshness must preserve its actual cutoff and cadence")
+                if isinstance(observation, ConditionFieldObservation) and observation.age_s != age:
+                    raise ValueError("Proof age cannot be borrowed from another cutoff")
+        return self
+
+
+class ConditionUnavailableRequirement(DomainModel):
+    requirement: ConditionRequirement
+    reason: Literal["NOT_SUPPORTED", "INCOMPLETE"]
+
+
+class UnrequestedConditionFacet(DomainModel):
+    status: Literal["NOT_REQUESTED"]
+
+
+class UnsupportedConditionFacet(DomainModel):
+    status: Literal["NOT_SUPPORTED"]
+    requirements: tuple[ConditionRequirement, ...] = Field(min_length=1)
+
+
+type UncomputedConditionFacet = UnrequestedConditionFacet | UnsupportedConditionFacet
+
+
+class SelectiveConditionValues(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    cutoff: Timestamp
+    requested: tuple[ConditionRequirement, ...]
+    spot: dict[ConditionWindow, BasicConditionSpot]
+    derivatives: dict[ConditionWindow, BasicConditionDerivatives]
+    close: ConditionClose | UncomputedConditionFacet
+    confidence: SelectiveConditionConfidence | UncomputedConditionFacet
+    depth: ConditionDepthNode | UncomputedConditionFacet
+    state: ConditionMarketState | UncomputedConditionFacet
+    relative: ConditionRelativeGraph | UncomputedConditionFacet
+    proofs: tuple[ConditionEvaluationProof, ...]
+    unavailable_metrics: tuple[ConditionUnavailableRequirement, ...]
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    transient: TrueFlag
+
+    @model_validator(mode="after")
+    def actual_requested_graph(self) -> Self:
+        if self.cutoff.value is None:
+            raise ValueError("A selected condition graph requires its actual cutoff")
+        end = parse_iso_time(self.cutoff.value)
+        requested = set(self.requested)
+        if len(requested) != len(self.requested):
+            raise ValueError("Requested condition facts must be distinct")
+        proof_requirements = {proof.requirement for proof in self.proofs}
+        if len(proof_requirements) != len(self.proofs) or not proof_requirements <= requested:
+            raise ValueError("Condition proofs must preserve distinct actual requested facts")
+        unavailable = {value.requirement: value.reason for value in self.unavailable_metrics}
+        if len(unavailable) != len(self.unavailable_metrics) or not set(unavailable) <= requested:
+            raise ValueError("Unavailable facts must preserve distinct actual requested requirements")
+        if requested != proof_requirements | set(unavailable):
+            raise ValueError("Every requested fact requires its actual proof or unsupported result")
+        if any(
+            reason != "NOT_SUPPORTED"
+            for requirement, reason in unavailable.items()
+            if requirement not in proof_requirements
+        ):
+            raise ValueError("An incomplete selected fact requires its actual evaluated proof")
+        expected_spot = {
+            proof.requirement.window for proof in self.proofs if proof.cache_key.domain == "spot"
+        }
+        expected_derivatives = {
+            proof.requirement.window for proof in self.proofs if proof.cache_key.domain in {"oi", "funding"}
+        }
+        if set(self.spot) != expected_spot or set(self.derivatives) != expected_derivatives:
+            raise ValueError(
+                "Selected window indexes must preserve every actually evaluated requested window"
+            )
+        for proof in self.proofs:
+            if (
+                proof.cache_key.domain == "spot"
+                and proof.coverage != self.spot[proof.requirement.window].coverage
+            ):
+                raise ValueError("Spot proof coverage cannot differ from its actual selected window")
+            if proof.cache_key.domain == "oi":
+                synchronized = self.derivatives[proof.requirement.window].synchronized
+                expected_venues = (
+                    synchronized.venues if isinstance(synchronized, ConditionSynchronizedOpenInterest) else ()
+                )
+                if (
+                    not isinstance(proof.coverage, ConditionOpenInterestCoverage)
+                    or proof.coverage.venues != expected_venues
+                ):
+                    raise ValueError("OI proof coverage cannot differ from its actual selected cohort")
+            if proof.available != self._metric_available(proof.requirement):
+                raise ValueError("Proof availability must preserve its actual selected financial facts")
+            if proof.cache_key.token_id != self.token_id or proof.cache_key.cutoff != end:
+                raise ValueError("A selected result cannot borrow another subject or cutoff proof")
+            if (proof.available and proof.reason is None) != (proof.requirement not in unavailable):
+                raise ValueError("Unavailable facts must preserve their actual proof result")
+        for window, spot in self.spot.items():
+            if spot.token_id != self.token_id or not any(
+                value.window == window and condition_metric_domain(value.metric) == "spot"
+                for value in self.requested
+            ):
+                raise ValueError("Selected spot windows must preserve actual subject/request scope")
+        for window, derivatives in self.derivatives.items():
+            if (
+                derivatives.token_id != self.token_id
+                or derivatives.interval.cutoff != end
+                or derivatives.interval.window != window
+            ):
+                raise ValueError("Selected derivative windows must preserve actual subject/window/cutoff")
+            if not any(
+                value.window == window and condition_metric_domain(value.metric) in {"oi", "funding"}
+                for value in self.requested
+            ):
+                raise ValueError("Derivative calculations cannot be presented as directly requested facts")
+            domains = {proof.cache_key.domain for proof in self.proofs if proof.requirement.window == window}
+            if "oi" in domains and (
+                isinstance(derivatives.synchronized, UnrequestedConditionSynchronizedOpenInterest)
+                or any(
+                    isinstance(venue.open_interest, UnrequestedConditionOpenInterest)
+                    for venue in derivatives.per_venue
+                )
+            ):
+                raise ValueError("An evaluated OI request cannot be labeled not requested")
+            if "funding" in domains and any(
+                isinstance(venue.funding, UnrequestedConditionFunding) for venue in derivatives.per_venue
+            ):
+                raise ValueError("An evaluated funding request cannot be labeled not requested")
+        if (
+            isinstance(self.close, ObservedConditionClose)
+            and self.close.observed_at.value is not None
+            and parse_iso_time(self.close.observed_at.value) > end
+        ):
+            raise ValueError("A selected close cannot borrow a future observed price")
+        facets = (
+            ("close", self.close),
+            ("dc", self.confidence),
+            ("depth", self.depth),
+            ("state", self.state),
+            ("relative", self.relative),
+        )
+        for domain, facet in facets:
+            selected = {value for value in requested if condition_metric_domain(value.metric) == domain}
+            if isinstance(facet, UnrequestedConditionFacet):
+                if selected:
+                    raise ValueError("A selected fact cannot be labeled not requested")
+            elif isinstance(facet, UnsupportedConditionFacet):
+                if set(facet.requirements) != selected or any(
+                    unavailable.get(value) != "NOT_SUPPORTED" for value in selected
+                ):
+                    raise ValueError(
+                        "Unsupported facets must preserve their exact selected unsupported facts"
+                    )
+            elif not selected:
+                raise ValueError("Unrequested calculations cannot be presented as selected facets")
+        if isinstance(self.relative, ConditionRelativeGraph) and (
+            self.relative.token_id != self.token_id
+            or any(value.interval.cutoff != end for value in self.relative.windows.values())
+        ):
+            raise ValueError("Selected relative facts must preserve subject/cutoff scope")
+        if isinstance(self.depth, ConditionDepthNode) and (
+            self.depth.cutoff != end
+            or any(observation.token_id != self.token_id for observation in self.depth.observations)
+        ):
+            raise ValueError("Selected depth facts must preserve actual subject/cutoff scope")
+        if isinstance(self.confidence, SelectiveConditionConfidence) and (
+            self.confidence.analysis_window.cutoff != end
+            or any(observation.token_id != self.token_id for observation in self.confidence.freshness)
+        ):
+            raise ValueError("Selected confidence must preserve the actual cutoff")
+        if isinstance(self.state, FullConditionMarketState) and (
+            self.state.token_id != self.token_id or self.state.cutoff != end
+        ):
+            raise ValueError("Selected full state must preserve actual subject/cutoff scope")
+        if isinstance(self.state, NonForwardConditionMarketState) and (
+            self.state.token_id != self.token_id or self.state.interval.cutoff != end
+        ):
+            raise ValueError("Selected nonforward state must preserve actual subject/cutoff scope")
+        return self
+
+    def _metric_available(self, requirement: ConditionRequirement) -> bool:
+        metric, window = requirement.metric, requirement.window
+        domain = condition_metric_domain(metric)
+        if domain == "spot":
+            return self.spot[window].direction is not None
+        if domain in {"oi", "funding"}:
+            derivatives = self.derivatives[window]
+            if domain == "funding":
+                return bool(derivatives.per_venue) and all(
+                    isinstance(venue.funding, AvailableConditionFunding)
+                    and venue.funding.funding_vs_normal is not None
+                    for venue in derivatives.per_venue
+                )
+            synchronized = derivatives.synchronized
+            if not isinstance(synchronized, ConditionSynchronizedOpenInterest):
+                return False
+            values = synchronized.values
+            match metric:
+                case "deriv.native_oi_chg_pct":
+                    return True
+                case "deriv.native_oi_vs_normal":
+                    return values.native_oi_vs_normal is not None
+                case "deriv.oi_class":
+                    return values.oi_class is not None
+            raise ValueError("OI availability requires an actual OI condition metric")
+        if domain == "close":
+            return isinstance(self.close, ObservedConditionClose)
+        if domain == "dc":
+            return isinstance(self.confidence, SelectiveConditionConfidence)
+        if domain == "depth":
+            if not isinstance(self.depth, ConditionDepthNode):
+                return False
+            return (
+                self.depth.spread_ratio is not None
+                if metric == "liq.spread_ratio"
+                else isinstance(self.depth.comparison(), ObservedConditionRatio)
+            )
+        if domain == "state":
+            return isinstance(self.state, (FullConditionMarketState, NonForwardConditionMarketState))
+        if not isinstance(self.relative, ConditionRelativeGraph):
+            return False
+        return (
+            isinstance(self.relative.repricing.band(), ObservedConditionRepricingBand)
+            if metric == "price.repricing_band"
+            else self.relative.windows["EVENT"].raw.value is not None
+        )

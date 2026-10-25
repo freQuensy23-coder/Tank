@@ -7,12 +7,18 @@ from typing import Protocol
 from pydantic import JsonValue
 
 from tank.analysis.condition_graph_contracts import (
+    BasicConditionSpot,
+    ConditionClose,
     ConditionFlowAggregate,
     ConditionFlowAggregateProjection,
+    ConditionFlowCaptureProjection,
+    ConditionFlowCaptureWitness,
     FlowAggregateEvidenceRef,
+    FlowCaptureEvidenceRef,
+    KnownConditionTradeCount,
 )
 from tank.contracts.json import JsonDocument
-from tank.util import sha256
+from tank.util import iso, sha256
 
 
 def _checked_projection(value: ConditionFlowAggregateProjection) -> ConditionFlowAggregateProjection:
@@ -108,3 +114,120 @@ def flow_aggregate_evidence_wire(
     if not isinstance(checked, dict):
         raise ValueError("Flow aggregate proof serialization requires an object")
     return deepcopy(checked)
+
+
+def _checked_capture_projection(value: ConditionFlowCaptureProjection) -> ConditionFlowCaptureProjection:
+    if type(value) not in (
+        ConditionFlowCaptureProjection,
+        ConditionFlowCaptureWitness,
+        ConditionFlowAggregateProjection,
+        ConditionFlowAggregate,
+    ):
+        raise TypeError("A declared flow capture projection is required")
+    validated = type(value).model_validate(value)
+    if isinstance(validated, ConditionFlowAggregate):
+        validate_flow_aggregate_evidence(validated)
+    return ConditionFlowCaptureProjection(
+        token_id=validated.token_id,
+        venue=validated.venue,
+        market_type=validated.market_type,
+        instrument_id=validated.instrument_id,
+        start=validated.start,
+        end=validated.end,
+        complete=validated.complete,
+    )
+
+
+def flow_capture_projection_sha256(value: ConditionFlowCaptureProjection) -> str:
+    projection = _checked_capture_projection(value)
+    serialized = JsonDocument.model_validate(projection.model_dump(mode="json"), strict=True).root
+    envelope: dict[str, JsonValue] = {"schema": "tank.condition.flow-capture.v1", "projection": serialized}
+    return sha256(envelope)
+
+
+def validate_flow_capture_evidence(value: ConditionFlowCaptureWitness) -> None:
+    if type(value) is not ConditionFlowCaptureWitness:
+        raise TypeError("A bound flow capture witness is required")
+    validated = ConditionFlowCaptureWitness.model_validate(value)
+    if validated.evidence.projection_sha256 != flow_capture_projection_sha256(validated):
+        raise ValueError("Flow capture evidence does not match its declared projection")
+
+
+def bind_flow_capture_evidence(
+    value: ConditionFlowCaptureProjection, reference: FlowCaptureEvidenceRef
+) -> ConditionFlowCaptureWitness:
+    projection = _checked_capture_projection(value)
+    if isinstance(value, ConditionFlowCaptureWitness):
+        validate_flow_capture_evidence(value)
+    checked_reference = FlowCaptureEvidenceRef.model_validate(reference)
+    if checked_reference.projection_sha256 != flow_capture_projection_sha256(projection):
+        raise ValueError("Flow capture evidence does not match its declared projection")
+    return ConditionFlowCaptureWitness(
+        token_id=projection.token_id,
+        venue=projection.venue,
+        market_type=projection.market_type,
+        instrument_id=projection.instrument_id,
+        start=projection.start,
+        end=projection.end,
+        complete=projection.complete,
+        evidence=checked_reference,
+    )
+
+
+def encode_basic_condition_spot(
+    value: BasicConditionSpot, evidence: ConditionFlowEvidenceLookup
+) -> dict[str, JsonValue]:
+    validated = BasicConditionSpot.model_validate(value)
+    result = JsonDocument.validate_value(
+        validated.model_dump(mode="json", exclude={"kind", "token_id"}, warnings="error")
+    )
+    if not isinstance(result, dict):
+        raise TypeError("A basic spot result must serialize as an object")
+    venues: list[JsonValue] = []
+    for venue in validated.venues:
+        serialized_venue = JsonDocument.validate_value(
+            venue.model_dump(mode="json", exclude={"boundary_segments"}, warnings="error")
+        )
+        if not isinstance(serialized_venue, dict):
+            raise TypeError("A spot venue must serialize as an object")
+        boundaries: list[JsonValue] = []
+        for boundary in venue.boundary_segments:
+            count = boundary.trade_count()
+            serialized_boundary: dict[str, JsonValue] = {
+                "start": iso(boundary.start),
+                "cutoff": iso(boundary.cutoff),
+                "trade_count": count.value,
+                "aggregates": [
+                    flow_aggregate_evidence_wire(aggregate, evidence) for aggregate in boundary.aggregates
+                ],
+            }
+            if not isinstance(count, KnownConditionTradeCount):
+                serialized_boundary["trade_count_reason"] = count.reason
+            boundaries.append(serialized_boundary)
+        serialized_venue["boundary_segments"] = boundaries
+        venues.append(serialized_venue)
+    result["venues"] = venues
+    composite = JsonDocument.validate_value(
+        validated.composite_max.model_dump(mode="json", exclude={"status"}, warnings="error")
+    )
+    result["composite_max"] = composite
+    result["composite_cohort"] = None
+    result["cohort_consistent"] = {}
+    result["size_profile"] = None
+    return result
+
+
+def encode_condition_reference_close(value: ConditionClose) -> dict[str, JsonValue]:
+    validated = type(value).model_validate(value)
+    result: dict[str, JsonValue] = {
+        "ref_venue": validated.reference_instrument_id,
+        "close_1h_price": str(validated.price) if validated.price is not None else None,
+    }
+    clock_fields: dict[str, JsonValue] = {
+        name: value for name, value in validated.observed_at.fields("close_1h_observed_at").items()
+    }
+    clock = JsonDocument.validate_value(clock_fields)
+    if not isinstance(clock, dict):
+        raise TypeError("Reference close timestamp fields must serialize as an object")
+    result.update(clock)
+    return result
