@@ -233,3 +233,67 @@ func TestPhysicalProjectionRejectsWrongTimestampAndBudgetWireTypes(t *testing.T)
 		}
 	}
 }
+
+func TestLiveFailureReasonAndResultVariantsFormClosedContract(t *testing.T) {
+	variants := []Result{
+		nil,
+		RepairResult{Instruments: map[string]RepairCoverage{}},
+		FetchFailure{Error: "observed transport error"},
+		RejectedURL{URL: "https://refused.invalid/path"},
+		RejectedMethod{Method: "DELETE"},
+	}
+	reasons := []struct {
+		reason  Reason
+		variant int
+	}{
+		{DeadlineInvalid, 0}, {BudgetInvalid, 0}, {TokenInvalid, 0}, {Unsupported, 0}, {FetchUnavailable, 0},
+		{RepairFailed, 1}, {FetchRequestInvalid, 2}, {FetchFailed, 2}, {ResponseTooLarge, 2}, {HostBanned, 2}, {BudgetExhausted, 2},
+		{FetchHostNotAllowed, 3}, {FetchMethodNotAllowed, 4},
+	}
+	for _, reason := range reasons {
+		for index, result := range variants {
+			_, err := Failure(reason.reason, result).JSONResult()
+			if (err == nil) != (index == reason.variant) {
+				t.Errorf("Reason %s variant %d accepted=%v, expected variant %d", reason.reason, index, err == nil, reason.variant)
+			}
+		}
+	}
+	for _, reason := range []Reason{"", "UNKNOWN", "REPAIR_FAIL", DeadlinePassed} {
+		for _, result := range variants {
+			if _, err := Failure(reason, result).JSONResult(); err == nil {
+				t.Fatalf("Undeclared live failure reason accepted: %q", reason)
+			}
+		}
+	}
+	for _, candidate := range []Outcome{
+		Failure(FetchFailed, FetchFailure{}), Failure(FetchHostNotAllowed, RejectedURL{}), Failure(FetchMethodNotAllowed, RejectedMethod{}),
+	} {
+		if _, err := candidate.JSONResult(); err == nil {
+			t.Fatal("Empty refusal evidence accepted")
+		}
+	}
+	historical := physicalFixture()
+	historical.Reason = text("UNKNOWN_RETAINED_PEER_REASON")
+	raw, err := json.Marshal(historical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preserved, err := DecodeRecord(raw)
+	if err != nil || preserved.Reason == nil || *preserved.Reason != "UNKNOWN_RETAINED_PEER_REASON" {
+		t.Fatalf("Live reason validation tightened raw historical evidence: %+v %v", preserved, err)
+	}
+}
+
+func TestTextBodyCannotReplaceInvalidUTF8AfterDigestValidation(t *testing.T) {
+	body := string([]byte{0xff, 0x00, 0x61})
+	digest := sha256.Sum256([]byte(body))
+	result := FetchResult{StatusCode: 200, ContentType: "application/octet-stream", SHA256: hex.EncodeToString(digest[:]), FetchedAt: "2026-10-25T00:00:00Z", Bytes: int64(len(body)), Body: &body}
+	if _, err := Completed(result).JSONResult(); err == nil {
+		t.Fatal("Invalid UTF-8 passed as text and could be rewritten after its digest check")
+	}
+	result.Body = nil
+	result.BodyB64 = text("/wBh")
+	if _, err := Completed(result).JSONResult(); err != nil {
+		t.Fatalf("Actual binary bytes lost their valid explicit base64 representation: %v", err)
+	}
+}

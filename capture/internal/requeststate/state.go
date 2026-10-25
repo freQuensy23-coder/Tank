@@ -9,6 +9,7 @@ import (
 	"errors"
 	"math"
 	"time"
+	"unicode/utf8"
 
 	"github.com/freQuensy23-coder/Tank/capture/internal/pydec"
 )
@@ -171,8 +172,8 @@ func (o Outcome) validate() error {
 			return errors.New("expired capture request requires deadline evidence and no result")
 		}
 	case Failed:
-		if o.reason == nil || *o.reason == "" {
-			return errors.New("failed or expired capture request requires a reason")
+		if err := o.validateFailure(); err != nil {
+			return err
 		}
 	default:
 		return errors.New("capture request requires a terminal status")
@@ -187,6 +188,9 @@ func (o Outcome) validate() error {
 		}
 		var body []byte
 		if result.Body != nil {
+			if !utf8.ValidString(*result.Body) {
+				return errors.New("capture fetch text body requires valid UTF-8")
+			}
 			body = []byte(*result.Body)
 		}
 		digest, err := hex.DecodeString(result.SHA256)
@@ -230,6 +234,40 @@ func (o Outcome) validate() error {
 	}
 	return nil
 }
+func (o Outcome) validateFailure() error {
+	if o.reason == nil {
+		return errors.New("failed capture request requires a declared reason")
+	}
+	switch *o.reason {
+	case DeadlineInvalid, BudgetInvalid, TokenInvalid, Unsupported, FetchUnavailable:
+		if o.result != nil {
+			return errors.New("capture request refusal requires no result")
+		}
+	case RepairFailed:
+		if _, ok := o.result.(RepairResult); !ok {
+			return errors.New("failed repair requires observed repair evidence")
+		}
+	case FetchRequestInvalid, FetchFailed, ResponseTooLarge, HostBanned, BudgetExhausted:
+		result, ok := o.result.(FetchFailure)
+		if !ok || result.Error == "" {
+			return errors.New("failed fetch requires explicit error evidence")
+		}
+	case FetchHostNotAllowed:
+		result, ok := o.result.(RejectedURL)
+		if !ok || result.URL == "" {
+			return errors.New("host refusal requires the rejected URL")
+		}
+	case FetchMethodNotAllowed:
+		result, ok := o.result.(RejectedMethod)
+		if !ok || result.Method == "" {
+			return errors.New("method refusal requires the rejected method")
+		}
+	default:
+		return errors.New("unsupported live capture request failure reason")
+	}
+	return nil
+}
+
 func (o Outcome) JSONResult() (json.RawMessage, error) {
 	if err := o.validate(); err != nil {
 		return nil, err

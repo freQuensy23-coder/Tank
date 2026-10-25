@@ -1,7 +1,10 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"testing"
@@ -149,5 +152,48 @@ func TestRequestLifecycleReplacesRoundedFingerprintWithoutRewritingEvidence(t *t
 	again, err := s.ClaimRequest(ctx, "exact-test", now.Add(2*time.Second))
 	if err != nil || again != nil {
 		t.Fatalf("Terminal poison request retried: %+v %v", again, err)
+	}
+}
+
+func TestInvalidLiveCompletionCannotChangePhysicalRequest(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	id := "refused-completion-" + suffix()
+	cleanup(t, s, "request_id", id, requests)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	_, err := s.Pool.Exec(ctx, "INSERT INTO "+liveTable(requests)+
+		" (storage_key,request_id,kind,status,budget_s,request,result,reason,semantic_fingerprint) VALUES($1,$1,'HTTP_FETCH','RUNNING','NaN'::numeric,$2::jsonb,$3::jsonb,'UNKNOWN_RETAINED_REASON','retained-fingerprint')",
+		id, `{"exact":0.123456789012345678901}`, `{"prior":0.987654321098765432109}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	physical := func() []byte {
+		t.Helper()
+		row, err := decodePhysicalRequest(s.Pool.QueryRow(ctx, "SELECT "+requestProjection+" FROM "+liveTable(requests)+" request_row WHERE request_id=$1", id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	original := physical()
+	body := string([]byte{0xff, 0x00, 0x61})
+	digest := sha256.Sum256([]byte(body))
+	invalidText := requeststate.FetchResult{StatusCode: 200, ContentType: "text/plain", SHA256: hex.EncodeToString(digest[:]), FetchedAt: "2026-10-25T00:00:00Z", Bytes: int64(len(body)), Body: &body}
+	for _, outcome := range []requeststate.Outcome{
+		requeststate.Failure(requeststate.Reason("UNKNOWN_LIVE_REASON"), nil),
+		requeststate.Failure(requeststate.FetchHostNotAllowed, requeststate.FetchFailure{Error: "wrong evidence variant"}),
+		requeststate.Failure(requeststate.BudgetInvalid, requeststate.RejectedURL{URL: "https://wrong.invalid"}),
+		requeststate.Completed(invalidText),
+	} {
+		if err := s.FinishRequest(ctx, requeststate.Completion{ID: id, Outcome: outcome, FinishedAt: now}); err == nil {
+			t.Fatal("Invalid live completion reached durable lifecycle mutation")
+		}
+		if !bytes.Equal(original, physical()) {
+			t.Fatal("Refused live completion changed raw historical fields or fingerprint")
+		}
 	}
 }
