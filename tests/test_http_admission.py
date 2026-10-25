@@ -172,8 +172,8 @@ async def test_postgres_group_rolls_back_tentative_spend_in_other_window(
                     )
                 ).fetchall()
             assert rows == [
-                ("a-long|86400.0|3.0", 1),
-                ("z-short|60.0|1.0", 1),
+                ('["a-long", 86400]', 1),
+                ('["z-short", 60]', 1),
             ]
         finally:
             await ledger.shutdown()
@@ -338,3 +338,26 @@ def test_budget_composition_preserves_explicit_memory_and_unopened_postgres_reso
     )
     assert isinstance(physical, RequestLedger)
     assert physical.connection is None
+
+
+@pytest.mark.asyncio
+async def test_capacity_reload_preserves_memory_spend_and_group_atomicity() -> None:
+    clock = FixtureBudgetClock()
+    backend = MemoryBudgetBackend(clock)
+    original = BudgetConstraint(key="shared-provider", capacity=2, window_s=60, weight=1)
+    reduced = original.model_copy(update={"capacity": 1.0})
+    other = BudgetConstraint(key="unspent", capacity=3, window_s=60, weight=1)
+    assert await backend.wait_many([original], ready=lambda: True) == 0
+    assert await backend.wait_many([original], ready=lambda: True) == 0
+    assert await backend.wait_many([reduced, other], ready=lambda: True) == 60
+    assert len(backend.windows[original.bucket()]) == 2
+    assert not backend.windows[other.bucket()]
+    assert len(backend.locks) == 2
+    with pytest.raises(ValueError, match="repeat"):
+        normalized_constraints([original, reduced])
+    expanded = original.model_copy(update={"capacity": 3.0})
+    assert await backend.wait_many([expanded], ready=lambda: True) == 0
+    assert len(backend.windows[original.bucket()]) == 3
+    await clock.sleep(60)
+    assert await backend.wait_many([reduced], ready=lambda: True) == 0
+    assert len(backend.windows[original.bucket()]) == 1

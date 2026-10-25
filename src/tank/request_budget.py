@@ -41,7 +41,6 @@ class SystemBudgetClock:
 class BudgetBucket(DomainModel):
     key: str = Field(min_length=1)
     window_s: float = Field(gt=0, allow_inf_nan=False)
-    capacity: float = Field(gt=0, allow_inf_nan=False)
 
 
 class BudgetAdmission(DomainModel):
@@ -50,6 +49,7 @@ class BudgetAdmission(DomainModel):
 
 
 class BudgetConstraint(BudgetBucket):
+    capacity: float = Field(gt=0, allow_inf_nan=False)
     weight: float = Field(gt=0, allow_inf_nan=False)
     host: str | None = Field(default=None, min_length=1)
 
@@ -60,7 +60,7 @@ class BudgetConstraint(BudgetBucket):
         return self
 
     def bucket(self) -> BudgetBucket:
-        return BudgetBucket(key=self.key, window_s=self.window_s, capacity=self.capacity)
+        return BudgetBucket(key=self.key, window_s=self.window_s)
 
 
 class _BudgetBlocked(Exception):
@@ -70,7 +70,7 @@ class _BudgetBlocked(Exception):
 
 
 def ledger_key(bucket: BudgetBucket) -> str:
-    return f"{bucket.key}|{bucket.window_s!r}|{bucket.capacity!r}"
+    return f"{bucket.key}|{bucket.window_s!r}"
 
 
 def normalized_constraints(values: Sequence[BudgetConstraint]) -> tuple[BudgetConstraint, ...]:
@@ -147,12 +147,11 @@ class RequestLedger:
                     async with connection.transaction():
                         delay = 0.0
                         for constraint in constraints:
-                            name = ledger_key(constraint)
                             row = await (
                                 await connection.execute(
-                                    "SELECT ops.request_budget_acquire(%s,%s::numeric,%s::float8,%s::numeric,%s,%s)",
+                                    "SELECT ops.request_budget_acquire_scope(%s,%s::numeric,%s::float8,%s::numeric,%s,%s)",
                                     (
-                                        name,
+                                        constraint.key,
                                         constraint.capacity,
                                         constraint.window_s,
                                         constraint.weight,
@@ -234,7 +233,7 @@ class MemoryBudgetBackend:
                 history = self.windows.setdefault(bucket, deque())
                 while history and now - history[0].at >= bucket.window_s:
                     history.popleft()
-                if sum(row.weight for row in history) + constraint.weight > bucket.capacity:
+                if sum(row.weight for row in history) + constraint.weight > constraint.capacity:
                     delay = max(delay, max(0.001, bucket.window_s - (now - history[0].at)))
             if delay <= 0:
                 for constraint, bucket in zip(values, buckets, strict=True):

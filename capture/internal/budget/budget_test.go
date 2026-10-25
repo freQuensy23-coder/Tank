@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -127,18 +128,44 @@ func TestConstraintsMatchPython(t *testing.T) {
 		}
 		for i, b := range p.Buckets {
 			g := got[i]
-			if g.Key != b.Key || g.Capacity != b.Capacity || g.WindowS != b.WindowS || g.Weight != b.Weight || g.Name() != b.Name {
+			if g.Key != b.Key || g.Capacity != b.Capacity || g.WindowS != b.WindowS || g.Weight != b.Weight || g.Name() != retainedScopeWindow(t, b.Name) {
 				t.Errorf("%s %s bucket %d: %+v (%s), want %+v", p.Host, p.Path, i, g, g.Name(), b)
 			}
 		}
 	}
 }
 
-func TestBucketNameIsPythonRepr(t *testing.T) {
+func retainedScopeWindow(t *testing.T, oldName string) string {
+	t.Helper()
+	position := strings.LastIndex(oldName, "|")
+	if position < 1 || position == len(oldName)-1 {
+		t.Fatalf("retained capacity identity is malformed:%q", oldName)
+	}
+	return oldName[:position]
+}
+
+func TestCapacityIdentityTransitionPreservesRetainedFloatSpelling(t *testing.T) {
+	expected := map[string]string{
+		"kraken|1.0|1.0":           "kraken|1.0",
+		"binance.spot|60.0|3000.0": "binance.spot|60.0",
+		"okx:/x:IP|2.0|10.0":       "okx:/x:IP|2.0",
+		"hyperliquid|60.0|600.0":   "hyperliquid|60.0",
+		"x|0.5|2.5":                "x|0.5",
+		"x|300.0|250.0":            "x|300.0",
+		"x|1e+16|1e-05":            "x|1e+16",
+	}
 	for _, n := range loadVectors(t).Names {
-		if got := BucketName(n.Key, n.WindowS, n.Capacity); got != n.Name {
-			t.Errorf("BucketName(%q, %v, %v) = %q, want %q", n.Key, n.WindowS, n.Capacity, got, n.Name)
+		want, exists := expected[n.Name]
+		if !exists {
+			t.Fatalf("unclassified retained identity transition:%q", n.Name)
 		}
+		if got := BucketName(n.Key, n.WindowS); got != want {
+			t.Errorf("scope/window identity=%q want=%q (retained %q)", got, want, n.Name)
+		}
+		delete(expected, n.Name)
+	}
+	if len(expected) != 0 {
+		t.Fatalf("retained identity inventory changed:%v", expected)
 	}
 }
 
@@ -180,7 +207,7 @@ func TestMemoryLedgerRollingWindow(t *testing.T) {
 	if wait, _ := l.Acquire(ctx, "b", 3, 1, 1, "test", ""); wait != 0 {
 		t.Fatalf("after the window: wait %v", wait)
 	}
-	if used := l.Used("b", 1); used != 3 {
+	if used := l.Used("b|1.0", 1); used != 3 {
 		t.Fatalf("used %v, want 3", used)
 	}
 	if _, err := l.Acquire(ctx, "b", 3, 1, 4, "test", ""); !errors.Is(err, ErrInvalidBudget) {
@@ -244,16 +271,16 @@ func TestGateAdmitWaitsForTheLedger(t *testing.T) {
 	if err := g.Admit(ctx, "GET", "fapi.binance.com", "/fapi/v1/unknown", nil, nil, 0); err == nil {
 		t.Fatal("an unconfigured Binance endpoint must fail closed")
 	}
-	if used := l.Used("binance.usdm.funding|300.0|250.0", 300); used != 0 {
+	if used := l.Used("binance.usdm.funding|300.0", 300); used != 0 {
 		t.Fatal(used)
 	}
 	if err := g.Admit(ctx, "GET", "fapi.binance.com", "/fapi/v1/fundingInfo", nil, nil, 0); err != nil {
 		t.Fatal(err)
 	}
-	if used := l.Used("binance.usdm.funding|300.0|250.0", 300); used != 1 {
+	if used := l.Used("binance.usdm.funding|300.0", 300); used != 1 {
 		t.Fatalf("funding bucket %v", used)
 	}
-	if used := l.Used("binance.usdm|60.0|1200.0", 60); used != 0 {
+	if used := l.Used("binance.usdm|60.0", 60); used != 0 {
 		t.Fatalf("a weight-0 endpoint charged the weight bucket: %v", used)
 	}
 }

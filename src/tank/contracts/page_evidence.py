@@ -19,6 +19,7 @@ class FetchPageRequest(DomainModel):
 class LivePageProvenance(DomainModel):
     mode: Literal["LIVE_RESPONSE"]
     received_at: Timestamp
+    content_type_header: str | None
 
     @model_validator(mode="after")
     def actual_receipt(self) -> Self:
@@ -32,6 +33,7 @@ class RecordedBodyProvenance(DomainModel):
     input_sha256: PageDigest
     record_id: str = Field(min_length=1)
     captured_body_sha256: PageDigest
+    content_type_header: str | None
 
 
 type PageReadProvenance = LivePageProvenance | RecordedBodyProvenance
@@ -47,6 +49,8 @@ class PageRead(DomainModel):
     def actual_bytes(self) -> Self:
         if self.body_sha256 != sha256(self.body):
             raise ValueError("Page digest differs from its actual read bytes")
+        if self.provenance.content_type_header != self.media_type:
+            raise ValueError("Page media type differs from its captured Content-Type header")
         if (
             isinstance(self.provenance, RecordedBodyProvenance)
             and self.provenance.captured_body_sha256 != self.body_sha256
