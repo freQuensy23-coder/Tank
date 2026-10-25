@@ -327,3 +327,72 @@ actual affected integrations passed in 30.29s with zero skips
 (`/tmp/analysis-scheduling-integration.xml`). Ruff and formatting pass. Default
 mypy reports only the four preexisting Truth cache declarations and the pending
 runtime-composition constructor companion; no generic annotation substitute added.
+
+### Statistical baseline caches and declared reference freshness
+
+The statistical baseline slice now consumes the inward models in
+`analysis.statistics_contracts`: `hourly_values` uses `HourlyReturns`, `beta` returns
+`EstimatedBeta | UnavailableBeta`, OI/funding history uses the concrete range models,
+`relative_truth.hist` stores `RelativeHistory`, BTC context uses
+`BitcoinContextHistory`, native-volume prefix accumulation stores `NativeVolumeIndex`
+and `condition_depth` stores `DepthBaseline`. `MarketTruthService` now declares
+`_condition_baselines: BaselineCaches`, `_assessment_baselines: dict[str, BaselineCaches]`
+and `_assessment_locks: dict[str, asyncio.Lock]`; those maps are actual token-keyed
+collections, not domain payloads. `BaselineCaches.with_capacity(128)` preserves the
+single global FIFO budget across families and original non-refreshing update order.
+The old untyped local StatisticalPopulation and mutable exposed arrays are removed.
+
+Explicit absence sites: `_BASELINE_CACHE` defaults to None only outside an active
+calculation context; full assessments install a fresh or explicitly caller-owned
+cache and restore the inherited context on success/failure. Cache `get` misses mean
+recompute, never a fabricated measurement. `FloatRange/DecimalRange.bounds=None`
+retains the actual empty/degenerate-history reason. `UnavailableBeta.value=None`
+means insufficient pairs or non-estimable variance/arithmetic; measured zero beta
+remains numerical evidence. `UnavailableHistoryDiagnostics.resolution_s=None`
+represents absent actual cadence, with zero observed samples and no invented bounds.
+`NativeVolumeIndex.last/last_open_us=None` means no observed endpoint/prefix cursor;
+segment continuity breaks on unavailable/incomplete/nonfinite/negative quantity.
+An observed zero volume remains valid. `condition_depth` caches actual Decimal USD
+means and never inserts a zero for unavailable book depth.
+
+`analysis.price_reference.ReferencePriceSeries` is a statistical reference-price
+collection keyed by aware observed times, with a separate actual per-observation
+cadence collection. `at` returns named observed/unavailable variants. Its None cases
+are precisely no prior observation, cadence not captured, or measured age exceeding
+that cadence; no prior-gap inference and no 60-second floor. `return_between`
+requires ordered bounds and two fresh endpoints, preserves measured zero return,
+and reports non-estimable arithmetic explicitly. Its published freshness projection
+omits the internal numerical price so it cannot imply an unverified USD unit.
+`relative_truth` consumes required variant attributes for BTC/ETH/peer returns and
+propagates unavailable adjusted returns while retaining the actual raw return.
+
+Cadence resolution sites in `relative_truth.cadence_for`: an explicit series cadence,
+actual scoped collection metric override, matching declared metric semantics,
+collection cadence, or actual bar interval may establish freshness. Missing declared
+cadence stays None. Malformed declarations refuse. Mixed compact statistical series
+can carry the actual `intervals_s` vector; vector/time counts must match. The authored
+compact fixture preserves each source row's interval instead of calling all mixed
+hour/minute observations one-minute bars. `MarketService` sector statistical price
+projection now explicitly records interval_s=60 because its existing query selects
+only interval_s=60 rows. This describes the observed query, not a default cadence.
+`compute_condition_values` selected-node projection copies only present fields;
+it no longer invents [] for absent capture_metadata/anchor/config-like facts.
+
+Behavior evidence: 237 Truth/review/holders units pass in11.89s; seven additional
+freshness/domain/downstream cases pass in2.39s; all16 collected actual Truth,
+condition PostgreSQL, review, capture-refresh and benchmark-coalescing integrations
+pass in19.22s with zero skips (`/tmp/analysis-baseline-freshness-integration.xml`).
+New price-reference source/tests pass independent strict mypy; Ruff/format pass.
+Context tests retain the independent concurrent opposite-direction calculation,
+outer-context restoration and failure-isolation oracles using real typed cache values.
+The sparse benchmark regression retains actual estimable history/raw1.1% move, then
+refuses adjustment from the actual stale minute endpoint despite a large source gap.
+
+Remaining work is explicit: `_condition_cache` still stores entire condition graph
+nodes (spot/relative/derivatives/supply and composite outputs), and requires the full
+named graph/output schema migration. It is not typed as JSON/Any/object to conceal
+that work. Default mypy currently reports that one declaration plus the separate
+pending runtime scheduling constructor companion. Whole Truth snapshots/results,
+calculation input maps, configurable-policy fallbacks and sibling reference-clock
+precision defaults remain on the broad owned migration inventory. This tranche
+completes the statistical baseline/declared-freshness layer, not the full Truth module.
