@@ -33,7 +33,7 @@ async def test_scoped_global_and_resolved_fatal_condition_to_actual_decision(
         repo,
         settings,
         None,
-        DecisionEngine(settings),
+        DecisionEngine(),
         versions=fixture_versions(),
         scheduler=RecordingReactionScheduling(),
         pages=LivePageAccess(fixture_http_admission()),

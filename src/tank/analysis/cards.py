@@ -13,17 +13,18 @@ from tank.analysis.card_contracts import (
     CardDataConfidence,
     CardDecision,
     CardExclusion,
+    CardHoldersRevenue,
     CardInputs,
     CardLengthDiagnostics,
     CardLengthSection,
     CardMapping,
     CardMarket,
-    CardRevenue,
     CardSpotVenue,
     CardSubject,
     ChartRevenueProtocol,
     InactiveCardDecision,
     PeriodRevenueProtocol,
+    UnavailableCardRevenue,
 )
 from tank.analysis.decisions import POSITIVE_ACTIONS
 from tank.telegram_rich import score_summary
@@ -163,7 +164,16 @@ def _exclusion_reason(excluded: CardExclusion) -> str:
     )
 
 
-def _holders_revenue_text(revenue: CardRevenue) -> str:
+def holders_revenue_text(revenue: CardHoldersRevenue) -> str:
+    if isinstance(revenue, UnavailableCardRevenue) and not revenue.protocols:
+        labels = {
+            "NO_CAPTURED_FUNDAMENTALS": "not captured",
+            "ONLY_FUTURE_FUNDAMENTALS": "not available by cutoff",
+            "PROVIDER_METRIC_UNSUPPORTED": "provider metric unsupported",
+            "NO_VERIFIED_PROVIDER_MATCH": "no verified provider match",
+            "INCOMPLETE_PROVIDER_DATA": "incomplete provider data",
+        }
+        return "holders revenue: n/a (" + labels[revenue.reason] + ")"
     parts: list[str] = []
     scalar = False
     for protocol in revenue.protocols:
@@ -193,7 +203,7 @@ def _holders_revenue_text(revenue: CardRevenue) -> str:
             value = "n/a (" + explanation + ")"
         parts.append(protocol.protocol + " " + value)
     notes: list[str] = []
-    if scalar:
+    if scalar and not isinstance(revenue, UnavailableCardRevenue):
         stamp = revenue.observed_at
         if stamp.value is None:
             raise ValueError("Rendered fundamentals require their actual observation clock")
@@ -204,9 +214,9 @@ def _holders_revenue_text(revenue: CardRevenue) -> str:
         else:
             observed = _clock(stamp, publication=False)
         notes.append("observed " + observed)
-    if revenue.stale:
+    if not isinstance(revenue, UnavailableCardRevenue) and revenue.stale:
         notes.append("stale")
-    if not revenue.complete_24h:
+    if not isinstance(revenue, UnavailableCardRevenue) and not revenue.complete_24h:
         notes.append("partial 24h coverage")
     return (
         "DefiLlama reports holders revenue: "
@@ -552,7 +562,7 @@ def compose_card(inputs: CardInputs) -> str:
         )
         truth = inputs.market_by_token.get(beneficiary.token_id)
         if truth is not None and truth.holders_revenue is not None:
-            text += " · " + _holders_revenue_text(truth.holders_revenue)
+            text += " · " + holders_revenue_text(truth.holders_revenue)
         capture.append(text)
     capture_text = "; ".join(capture) if capture else "UNKNOWN — n/a (token mechanism unavailable)"
     if len(narrative.why) == 3:

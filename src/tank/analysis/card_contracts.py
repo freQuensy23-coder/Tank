@@ -529,6 +529,23 @@ class CardRevenue(DomainModel):
         return self
 
 
+type CardRevenueAbsence = Literal[
+    "NO_CAPTURED_FUNDAMENTALS",
+    "ONLY_FUTURE_FUNDAMENTALS",
+    "PROVIDER_METRIC_UNSUPPORTED",
+    "NO_VERIFIED_PROVIDER_MATCH",
+    "INCOMPLETE_PROVIDER_DATA",
+]
+
+
+class UnavailableCardRevenue(DomainModel):
+    reason: CardRevenueAbsence
+    protocols: tuple[UnavailableRevenueProtocol, ...]
+
+
+type CardHoldersRevenue = CardRevenue | UnavailableCardRevenue
+
+
 class CardMarket(DomainModel):
     token_id: str = Field(min_length=1)
     move: MoveClass
@@ -539,7 +556,7 @@ class CardMarket(DomainModel):
     relative: CardRelative
     derivatives: CardDerivatives
     spot: CardSpot
-    holders_revenue: CardRevenue | None
+    holders_revenue: CardHoldersRevenue | None
 
 
 class PendingCardAnalysis(DomainModel):
