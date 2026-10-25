@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Never
 
 import pytest
+from agent_source_fixtures import declared_versions_fixture
 from pydantic import JsonValue
 from pydantic_settings import SettingsConfigDict
 
@@ -72,7 +73,9 @@ def write_documents(root: Path, captured: dict[str, dict[str, JsonValue]]) -> No
 async def test_canonical_registry_bootstrap_and_idempotence() -> None:
     repo = PagedRepository()
     settings = FixtureSettings(config_version="test-config", code_version="test-code")
-    counts = await sync_registry(repo, settings)
+    counts = await sync_registry(
+        repo, settings, versions=declared_versions_fixture("test-config", "test-code")
+    )
     registry = settings.registry()
     expected = {
         "reg.sources": len(records(settings.load_config("sources"), "sources")),
@@ -129,7 +132,10 @@ async def test_canonical_registry_bootstrap_and_idempotence() -> None:
         "U.S. Department of the Treasury",
         "Office of Foreign Assets Control",
     ]
-    assert await sync_registry(repo, settings) == counts
+    assert (
+        await sync_registry(repo, settings, versions=declared_versions_fixture("test-config", "test-code"))
+        == counts
+    )
     for table, count in expected.items():
         assert len([row async for row in repo.iter_all(table)]) == count
     wallets = [row async for row in repo.iter_all("reg.exchange_addresses")]
@@ -142,7 +148,7 @@ async def test_sync_removes_configured_tail_and_preserves_discovery(tmp_path: Pa
     write_documents(tmp_path, captured)
     settings = FixtureSettings(config_dir=tmp_path)
     repo = PagedRepository()
-    await sync_registry(repo, settings)
+    await sync_registry(repo, settings, versions=declared_versions_fixture())
     await repo.put("reg.sources", "discovered", {"source_id": "discovered"})
     existing = await repo.get("reg.sources", "S01")
     assert existing is not None
@@ -151,7 +157,7 @@ async def test_sync_removes_configured_tail_and_preserves_discovery(tmp_path: Pa
     sources[0]["name"] = "updated"
     captured["sources"]["sources"] = [sources[0]]
     write_documents(tmp_path, captured)
-    await sync_registry(repo, settings)
+    await sync_registry(repo, settings, versions=declared_versions_fixture())
     assert await repo.get("reg.sources", "S34") is None
     source = await repo.get("reg.sources", "S01")
     assert source is not None and source["name"] == "updated"
@@ -167,7 +173,7 @@ async def test_duplicate_source_ids_fail_before_any_mutation(tmp_path: Path) -> 
     write_documents(tmp_path, captured)
     repo = PagedRepository()
     with pytest.raises(ValueError, match="[Dd]uplicate"):
-        await sync_registry(repo, FixtureSettings(config_dir=tmp_path))
+        await sync_registry(repo, FixtureSettings(config_dir=tmp_path), versions=declared_versions_fixture())
     assert [row async for row in repo.iter_all("reg.sources")] == []
 
 
@@ -199,7 +205,7 @@ async def test_static_config_clocks_preserve_declared_precision_and_unknown_lega
     write_documents(tmp_path, values)
     repo = PagedRepository()
     settings = FixtureSettings(config_dir=tmp_path)
-    await sync_registry(repo, settings)
+    await sync_registry(repo, settings, versions=declared_versions_fixture())
     stored = await repo.get("reg.entities", "bitcoin")
     assert stored is not None and stored["identity_reviewed_at"] == "2026-10-18"
     assert stored["identity_reviewed_at_prec"] == "BUCKET(86400s)"
@@ -221,7 +227,7 @@ async def test_conflicting_static_clock_precision_refused_before_registry_mutati
     write_documents(tmp_path, captured)
     repo = PagedRepository()
     with pytest.raises(ValueError, match="Conflicting timestamp precision"):
-        await sync_registry(repo, FixtureSettings(config_dir=tmp_path))
+        await sync_registry(repo, FixtureSettings(config_dir=tmp_path), versions=declared_versions_fixture())
     assert [row async for row in repo.iter_all("reg.sources")] == []
 
 
@@ -241,7 +247,7 @@ async def test_alias_projection_never_promotes_display_names_or_drops_qualifiers
     captured["registry"]["entities"] = [entity]
     write_documents(tmp_path, captured)
     repo = PagedRepository()
-    await sync_registry(repo, FixtureSettings(config_dir=tmp_path))
+    await sync_registry(repo, FixtureSettings(config_dir=tmp_path), versions=declared_versions_fixture())
     aliases = {row["alias"]: row async for row in repo.iter_all("reg.entity_aliases")}
     assert set(aliases) == {"Explicit alias", "Qualified name"}
     assert aliases["Qualified name"]["requires_any"] == ["TOKEN"]
@@ -280,7 +286,7 @@ async def test_invalid_routing_alias_policy_refused_before_registry_mutation(
     repo = PagedRepository()
     await repo.put("reg.sources", "existing", {"source_id": "existing"})
     with pytest.raises(ValueError, match="aliases"):
-        await sync_registry(repo, FixtureSettings(config_dir=tmp_path))
+        await sync_registry(repo, FixtureSettings(config_dir=tmp_path), versions=declared_versions_fixture())
     assert [row async for row in repo.iter_all("reg.sources")] == [{"source_id": "existing"}]
     assert [row async for row in repo.iter_all("reg.entities")] == []
 
@@ -290,7 +296,7 @@ async def test_corrupt_managed_identity_rolls_back_all_preceding_registry_writes
     corrupt: dict[str, JsonValue] = {"token_id": "historical", "registry_managed_by": "tank.bootstrap"}
     await repo.put("reg.tokens", "historical", corrupt)
     with pytest.raises(KeyError, match="registry_storage_key"):
-        await sync_registry(repo, FixtureSettings())
+        await sync_registry(repo, FixtureSettings(), versions=declared_versions_fixture())
     assert [row async for row in repo.iter_all("reg.sources")] == []
     assert await repo.get("reg.tokens", "historical") == corrupt
 
@@ -314,7 +320,7 @@ async def test_removing_configured_qualifier_clears_owned_state_without_erasing_
     write_documents(tmp_path, captured)
     repo = PagedRepository()
     settings = FixtureSettings(config_dir=tmp_path)
-    await sync_registry(repo, settings)
+    await sync_registry(repo, settings, versions=declared_versions_fixture())
     aliases = [row async for row in repo.iter_all("reg.entity_aliases")]
     assert len(aliases) == 1 and aliases[0]["requires_any"] == ["TOKEN"]
     key = aliases[0]["registry_storage_key"]
@@ -323,7 +329,7 @@ async def test_removing_configured_qualifier_clears_owned_state_without_erasing_
     entity["aliases"] = ["Registered"]
     del entity["qualified_aliases"]
     write_documents(tmp_path, captured)
-    await sync_registry(repo, settings)
+    await sync_registry(repo, settings, versions=declared_versions_fixture())
     updated = await repo.get("reg.entity_aliases", key)
     assert updated is not None and "requires_any" not in updated
     assert canonical_json(updated["discovery_owned"]) == canonical_json({"flag": True, "serial": 1})
@@ -350,7 +356,7 @@ async def test_metric_family_replacement_removes_all_old_family_fields_and_prese
     write_documents(tmp_path, captured)
     repo = PagedRepository()
     settings = FixtureSettings(config_dir=tmp_path)
-    await sync_registry(repo, settings)
+    await sync_registry(repo, settings, versions=declared_versions_fixture())
     original = await repo.get("reg.metric_semantics", key)
     assert original is not None and "current_doc_ref" in original
     await repo.put("reg.metric_semantics", key, {**original, "discovery_owned": {"flag": True, "serial": 1}})
@@ -358,7 +364,7 @@ async def test_metric_family_replacement_removes_all_old_family_fields_and_prese
     replacement["metric_key"] = key
     captured["semantics"]["metrics"] = [replacement]
     write_documents(tmp_path, captured)
-    await sync_registry(repo, settings)
+    await sync_registry(repo, settings, versions=declared_versions_fixture())
     updated = await repo.get("reg.metric_semantics", key)
     assert updated is not None and updated["metric_family"] == "funding"
     assert "current_doc_ref" not in updated and "endpoint_change_evidence" not in updated

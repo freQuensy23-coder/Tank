@@ -5,7 +5,11 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from agent_source_fixtures import source_record_fixture
+from agent_source_fixtures import (
+    declared_versions_fixture,
+    native_tool_arguments_fixture,
+    source_record_fixture,
+)
 
 from tank.agents import ConfigurationError, Pipeline, SessionService
 from tank.agents.context import CONTEXT_VERSION
@@ -20,10 +24,14 @@ def settings(**overrides):
     config = {
         "thresholds": {"filter_cutoff": 0.7, "routing_cutoff": 0.8},
         "registry": {
-            "entities": [{"entity_id": "aave", "name": "Aave", "aliases": ["Aave", "Aave Labs"]}],
+            "entities": [
+                {"entity_id": "aave", "name": "Aave", "names": ["Aave"], "aliases": ["Aave", "Aave Labs"]}
+            ],
             "tokens": [],
             "x_accounts": [],
+            "instruments": [],
         },
+        "sources": {"sources": []},
         "openma": {
             "agent_id": "agt_1",
             "scout_agent_id": "agt_s",
@@ -45,6 +53,7 @@ def settings(**overrides):
     }
     from tank.settings import Settings
 
+    values["read_config_json"] = Settings(_env_file=None).read_config_json
     values["thresholds"] = lambda: (
         Settings(_env_file=None)
         .thresholds()
@@ -62,9 +71,13 @@ def settings(**overrides):
 
 
 async def seed_session(repo, **changes):
+    from tank.openma_sync import agent_tools
+    from tank.util import sha256
+
     row = {
         "session_id": "ses_1",
         "model_context_version": CONTEXT_VERSION,
+        "tools_sha256": sha256(agent_tools(settings()[0], "tank-event-analyst")),
         "event_id": "evt_1",
         "item_id": "itm_1",
         "status": "OPEN",
@@ -110,7 +123,9 @@ async def test_filter_requires_calibration_and_logs_typed_usage() -> None:
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        pipe = Pipeline(repo, opts, http=http, progress=DisabledSourceProgress())
+        pipe = Pipeline(
+            repo, opts, http=http, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
+        )
         config["thresholds"]["filter_cutoff"] = None
         with pytest.raises(ConfigurationError):
             await pipe.filter_item_wire({"item_id": "i"})
@@ -177,7 +192,9 @@ async def test_routing_whole_word_alias_three_day_and_best_score() -> None:
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        pipe = Pipeline(repo, opts, http=http, progress=DisabledSourceProgress())
+        pipe = Pipeline(
+            repo, opts, http=http, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
+        )
         assert (
             pipe.identities(
                 parse_feed_source_item(source_record_fixture({"item_id": "fixture", "text": "notAave Labsx"}))
@@ -220,9 +237,14 @@ async def test_tool_result_lost_reply_restart_reuses_completed_result() -> None:
         posts.append(req)
         raise httpx.ReadError("lost response", request=req)
 
-    event = {"id": "call_1", "type": "agent.custom_tool_use", "name": "record_event", "input": {"x": 1}}
+    event = {
+        "id": "call_1",
+        "type": "agent.custom_tool_use",
+        "name": "record_event",
+        "input": native_tool_arguments_fixture("record_event"),
+    }
     async with httpx.AsyncClient(transport=httpx.MockTransport(broken)) as http:
-        service = SessionService(repo, opts, dispatch, http=http)
+        service = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
         with pytest.raises(httpx.ReadError):
             await service.process_event("ses_1", event, 7)
     assert count == 1
@@ -234,7 +256,7 @@ async def test_tool_result_lost_reply_restart_reuses_completed_result() -> None:
         return httpx.Response(200, json={"data": []})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(works)) as http:
-        restarted = SessionService(repo, opts, dispatch, http=http)
+        restarted = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
         await restarted.process_event("ses_1", event, 7)
         await restarted.process_event("ses_1", event, 7)
     assert count == 1 and len(posts) == 2
@@ -267,9 +289,15 @@ async def test_failed_dispatch_rolls_back_and_replays() -> None:
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
     ) as http:
-        service = SessionService(repo, opts, bad, http=http)
+        service = SessionService(repo, opts, bad, http=http, versions=declared_versions_fixture())
         await service.process_event(
-            "ses_1", {"id": "c", "type": "agent.custom_tool_use", "name": "record_event", "input": {}}
+            "ses_1",
+            {
+                "id": "c",
+                "type": "agent.custom_tool_use",
+                "name": "record_event",
+                "input": native_tool_arguments_fixture("record_event"),
+            },
         )
     assert await repo.get("evt.events", "oops") is None
     assert (await repo.get("ops.agent_sessions", "ses_1"))["processed_events"] == ["c"]
@@ -304,7 +332,7 @@ async def test_sse_resume_and_paginated_recovery_dedup_usage() -> None:
         return httpx.Response(200, json={"data": [], "next_page": "next"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, opts, None, http=http)
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
         await service.stream("ses_1")
         await service.catch_up("ses_1")
     usage = await repo.list("ops.llm_usage")
@@ -342,7 +370,7 @@ async def test_message_running_session_posted_and_retry_failure() -> None:
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, opts, None, http=http)
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
         service.start_stream = lambda sid: None
         payload = {"kind": "ITEM_ADDED", "event_id": "evt_1", "item_id": "itm_2"}
         await service.send_message(payload)
@@ -400,10 +428,10 @@ async def test_canonical_event_routing_and_added_message() -> None:
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        routed = await Pipeline(repo, opts, http=http, progress=DisabledSourceProgress()).route_item_wire(
-            {"item_id": "i"}
-        )
-        service = SessionService(repo, opts, None, http=http)
+        routed = await Pipeline(
+            repo, opts, http=http, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
+        ).route_item_wire({"item_id": "i"})
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
         service.start_stream = lambda sid: None
         await service.send_message(routed["routing_message"])
     assert routed["route"]["decision"] == "ADDED"
@@ -425,7 +453,7 @@ async def test_new_scout_session_wire_protocol_and_isolation() -> None:
         return httpx.Response(200, json={"id": "ses_scout"} if req.url.path == "/v1/sessions" else {})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, opts, None, http=http)
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
         service.start_stream = lambda sid: None
         session = await service.scout_review({"proposal_id": "p"})
         await service.scout_review({"proposal_id": "p"})
@@ -460,7 +488,7 @@ async def test_stream_processing_preserves_concurrent_added_message() -> None:
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
     ) as http:
-        service = SessionService(repo, opts, None, http=http)
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
         service.start_stream = lambda sid: None
         original_usage = service.usage
 
@@ -488,7 +516,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
 
     repo = MemoryRepository()
     opts = Settings(data_dir=tmp_path)
-    tools = EventToolService(repo, opts, None, DecisionEngine(opts))
+    tools = EventToolService(repo, opts, None, DecisionEngine(opts), versions=declared_versions_fixture())
     now = clock_iso()
     await repo.put(
         "evt.events",
@@ -589,7 +617,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
     ) as http:
-        service = SessionService(repo, opts, tools.dispatch, http=http)
+        service = SessionService(repo, opts, tools.dispatch, http=http, versions=declared_versions_fixture())
 
         monkeypatch.setattr(
             cards, "compose_card", lambda *a, **k: "Original product card" + "\n" + score_summary(a[1])
@@ -726,7 +754,7 @@ async def test_unpublished_invalidated_event_can_end_when_idle_without_marker() 
     await repo.put("evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": "evt_1", "class": "LOW"})
     session = await seed_session(repo, runtime_status="RUNNING")
     async with httpx.AsyncClient() as http:
-        service = SessionService(repo, opts, None, http=http)
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
         assert not await service.can_archive(session, event)
         await service.process_event(
             "ses_1", {"id": "idle", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}}
@@ -763,7 +791,9 @@ async def test_concurrent_items_without_event_candidates_open_distinct_idempoten
         return httpx.Response(200, json={"data": []})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        pipe = Pipeline(repo, opts, http=http, progress=DisabledSourceProgress())
+        pipe = Pipeline(
+            repo, opts, http=http, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
+        )
         first, second = await asyncio.gather(
             pipe.route_item_wire({"item_id": "first"}), pipe.route_item_wire({"item_id": "second"})
         )
@@ -774,7 +804,7 @@ async def test_concurrent_items_without_event_candidates_open_distinct_idempoten
             for item in (first, second)
             for field in ("route", "routing_message")
         )
-        service = SessionService(repo, opts, None, http=http)
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
         service.start_stream = lambda sid: None
         one = await service.send_message(first["routing_message"])
         two = await service.send_message(second["routing_message"])
@@ -806,12 +836,20 @@ async def test_live_slow_and_recovered_tool_context_keep_session_provenance() ->
         return httpx.Response(200, json={"data": []})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-        live = SessionService(repo, opts, dispatch, http=http)
+        live = SessionService(
+            repo, opts, dispatch, http=http, versions=declared_versions_fixture("new_config", "new_code")
+        )
         await live.process_event(
             "ses_1", {"id": "live", "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
         )
         await live.process_event(
-            "ses_1", {"id": "slow", "type": "agent.custom_tool_use", "name": "get_market_truth", "input": {}}
+            "ses_1",
+            {
+                "id": "slow",
+                "type": "agent.custom_tool_use",
+                "name": "get_market_truth",
+                "input": native_tool_arguments_fixture("get_market_truth"),
+            },
         )
         await repo.put(
             "ops.tool_calls",
@@ -825,7 +863,9 @@ async def test_live_slow_and_recovered_tool_context_keep_session_provenance() ->
                 "status": "PENDING",
             },
         )
-        recovered = SessionService(repo, opts, dispatch, http=http)
+        recovered = SessionService(
+            repo, opts, dispatch, http=http, versions=declared_versions_fixture("new_config", "new_code")
+        )
         await recovered.process_event(
             "ses_1", {"id": "recover", "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
         )
@@ -869,10 +909,10 @@ async def test_market_truth_wire_omits_internal_metadata_full_result_survives_re
         "id": "mt_call",
         "type": "agent.custom_tool_use",
         "name": "get_market_truth",
-        "input": {},
+        "input": native_tool_arguments_fixture("get_market_truth"),
     }
     async with httpx.AsyncClient(transport=httpx.MockTransport(lost)) as http:
-        first = SessionService(repo, opts, dispatch, http=http)
+        first = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
         with pytest.raises(httpx.ReadError):
             await first.process_event("ses_1", event, 7)
     stored = await repo.get("ops.tool_calls", "ses_1:mt_call")
@@ -883,7 +923,7 @@ async def test_market_truth_wire_omits_internal_metadata_full_result_survives_re
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(accepted)) as http:
-        recovered = SessionService(repo, opts, dispatch, http=http)
+        recovered = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
         await recovered.process_event("ses_1", event, 7)
     assert dispatched == 1 and requests[0] == requests[1]
     wire = json.loads(requests[1]["events"][0]["content"][0]["text"])
@@ -987,12 +1027,12 @@ async def test_routing_and_resume_find_late_history_with_one_row_pages() -> None
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        result = await Pipeline(repo, opts, http=http, progress=DisabledSourceProgress()).route_item_wire(
-            {"item_id": "incoming"}
-        )
+        result = await Pipeline(
+            repo, opts, http=http, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
+        ).route_item_wire({"item_id": "incoming"})
         assert result["route_event_id"] == "zz_event"
         assert len(seen) == 1
-        service = SessionService(repo, opts, None, http=http)
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
         assert (await service.resolve({"event_id": "zz_event"}))["session_id"] == "zz_session"
         stop = asyncio.Event()
         resumed = []
@@ -1036,7 +1076,7 @@ async def test_session_acceptance_and_tools_keep_clock_and_source_precision_sepa
         return {"ok": True}
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-        service = SessionService(repo, opts, dispatch, http=http)
+        service = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
         service.start_stream = lambda sid: None
         session = await service.send_message({"kind": "NEW_ITEM", "item_id": "item"})
         await service.process_event(
@@ -1084,7 +1124,7 @@ async def test_usage_propagates_provider_processed_precision_without_inference(p
     if precision:
         event["processed_at_prec"] = precision
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200))) as http:
-        service = SessionService(repo, opts, None, http=http)
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
         await service.usage(session, event)
     row = await repo.get("ops.llm_usage", "ses_1:usage")
     assert row["at"] == event["processed_at"]
@@ -1119,15 +1159,20 @@ async def test_tool_execution_error_is_durable_returned_and_never_redispatched_a
             raise httpx.ConnectError("Lost tool response acknowledgement", request=request)
         return httpx.Response(200, json={})
 
-    event = {"id": "failure", "type": "agent.custom_tool_use", "name": tool_name, "input": {}}
+    event = {
+        "id": "failure",
+        "type": "agent.custom_tool_use",
+        "name": tool_name,
+        "input": native_tool_arguments_fixture(tool_name),
+    }
     async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
-        first = SessionService(repo, opts, dispatch, http=http)
+        first = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
         with pytest.raises(httpx.ConnectError):
             await first.process_event("ses_1", event)
         failed = await repo.get("ops.tool_calls", "ses_1:failure")
         assert failed["status"] == "ERROR" and not failed.get("returned_at")
         assert "failure" not in (await repo.get("ops.agent_sessions", "ses_1")).get("processed_events", [])
-        resumed = SessionService(repo, opts, dispatch, http=http)
+        resumed = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
         await resumed.process_event("ses_1", event)
         await resumed.process_event("ses_1", event)
     stored = await repo.get("ops.tool_calls", "ses_1:failure")
@@ -1162,7 +1207,7 @@ async def test_new_session_prompt_version_binds_actual_resolved_agent_not_static
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
-        service = SessionService(repo, opts, None, http=http)
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
         service.start_stream = lambda sid: None
         for item_id in ("one", "two"):
             await repo.put(

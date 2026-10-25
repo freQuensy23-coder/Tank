@@ -20,6 +20,7 @@ from typing import Self
 from pydantic import JsonValue
 
 from tank.contracts import DomainModel
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.source_items import SourceRelevance
 from tank.market_schema import MARKET_COLUMNS
 from tank.time_precision import Timestamp, interval_bounds, propagate_timestamp
@@ -666,6 +667,7 @@ async def run_captured_tools(inputs, repo):
     from tank.event_tools import EventToolService
     from tank.settings import Settings
 
+    versions = ResolvedVersionIdentity(config_version=inputs.config_version, code_version=inputs.code_version)
     calls = inputs.config.get("replay_tool_calls")
     if not calls:
         raise ReplayError("insufficient_fixture: missing captured analyst tool calls")
@@ -747,24 +749,20 @@ async def run_captured_tools(inputs, repo):
 
     with ExitStack() as stack:
         stack.callback(evidence_directory.cleanup)
-        original_iso = util.iso
-
-        def replay_iso(value=None):
-            return original_iso(clock.now() if value is None else value)
-
         for module in (event_tools, decisions, cards, storage, truth, util):
             if hasattr(module, "new_id"):
                 stack.enter_context(patch.object(module, "new_id", stable_id))
             if hasattr(module, "utcnow"):
                 stack.enter_context(patch.object(module, "utcnow", clock.now))
-            if hasattr(module, "iso"):
-                stack.enter_context(patch.object(module, "iso", replay_iso))
         async with httpx.AsyncClient(transport=httpx.MockTransport(captured_http)) as http:
             service = EventToolService(
                 repo,
                 settings,
-                truth.MarketTruthService(repo, settings, ReplayMarketReader(inputs, evidence)),
+                truth.MarketTruthService(
+                    repo, settings, ReplayMarketReader(inputs, evidence), versions=versions
+                ),
                 DecisionEngine(settings),
+                versions=versions,
                 http=http,
             )
             seeded = set()
@@ -1272,7 +1270,8 @@ async def run_operational_replay(bundle_path, repo, settings, *, http=None):
         input_sha256=hashlib.sha256(Path(bundle_path).read_bytes()).hexdigest(),
     )
     evidence = evidence_view.advance(first_timestamp)
-    truth = MarketTruthService(repo, settings, ReplayMarketReader(inputs, evidence))
+    versions = ResolvedVersionIdentity(config_version=inputs.config_version, code_version=inputs.code_version)
+    truth = MarketTruthService(repo, settings, ReplayMarketReader(inputs, evidence), versions=versions)
     from tank.fixture_reference import TrustedFixtureClock
 
     tools = EventToolService(
@@ -1280,6 +1279,7 @@ async def run_operational_replay(bundle_path, repo, settings, *, http=None):
         settings,
         truth,
         DecisionEngine(settings),
+        versions=versions,
         reference_clock=TrustedFixtureClock(inputs) if inputs.fixture_reference else None,
     )
     client = http or httpx.AsyncClient(timeout=httpx.Timeout(30, read=None))
@@ -1709,7 +1709,10 @@ async def replay_agent_session(
             )
             return CapturedToolResult.from_record(capture["record"])
 
-    service = CapturedExternalSessionService(repo, settings, event_tools.dispatch, http=http)
+    versions = ResolvedVersionIdentity(config_version=inputs.config_version, code_version=inputs.code_version)
+    service = CapturedExternalSessionService(
+        repo, settings, event_tools.dispatch, http=http, versions=versions
+    )
     delivery_receipts = []
     active_delivery_receipt = None
 
@@ -1822,7 +1825,7 @@ async def replay_agent_session(
         )
         return {"captured_delivery": True}
 
-    scheduler = Scheduler(repo, settings, event_tools.truth.market, event_tools.truth)
+    scheduler = Scheduler(repo, settings, event_tools.truth.market, event_tools.truth, versions=versions)
     timer_receipts = []
     selected_timer_timestamp = None
 
@@ -1996,11 +1999,6 @@ async def replay_agent_session(
                 await repo.put("ops.jobs", job["job_id"], dict(job, result=result, status="DONE"))
             await asyncio.sleep(0.01)
 
-    original_iso = util.iso
-
-    def replay_iso(value=None):
-        return original_iso(clock.now() if value is None else value)
-
     with ExitStack() as stack:
         for module in (
             util,
@@ -2014,8 +2012,6 @@ async def replay_agent_session(
         ):
             if hasattr(module, "utcnow"):
                 stack.enter_context(patch.object(module, "utcnow", clock.now))
-            if hasattr(module, "iso"):
-                stack.enter_context(patch.object(module, "iso", replay_iso))
         stack.enter_context(
             patch.object(delivery_module, "collection_clock", lambda value=None, **kwargs: clock.timestamp())
         )

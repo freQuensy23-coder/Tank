@@ -6,7 +6,7 @@
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "_entity_record",
-          "line": 266
+          "line": 265
         }
       ],
       "kind": "display-only absence",
@@ -21,12 +21,12 @@
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "validate_registry",
-          "line": 273
+          "line": 272
         },
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "_key",
-          "line": 216
+          "line": 213
         }
       ],
       "kind": "natural identity and immutable model construction",
@@ -41,7 +41,7 @@
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "_routing_aliases",
-          "line": 220
+          "line": 217
         }
       ],
       "kind": "optional qualification",
@@ -61,7 +61,7 @@
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "_config_timestamp_metadata",
-          "line": 202
+          "line": 199
         }
       ],
       "kind": "JSON serialization boundary",
@@ -93,7 +93,7 @@
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "RegistrySyncResult.to_wire",
-          "line": 179
+          "line": 176
         }
       ],
       "kind": "report serialization",
@@ -574,6 +574,117 @@
       "reason": "Only Pydantic schema metadata is reflected; the complete valid family union prevents old variant fields masquerading as opaque discovery extensions. No domain object is treated as a mapping.",
       "validation": [
         "test_metric_family_replacement_removes_all_old_family_fields_and_preserves_discovery"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.__init__",
+          "line": 123
+        }
+      ],
+      "kind": "native adapter resource and cache initialization",
+      "reason": "HTTP/stream client None selects explicitly owned transport; injected clients are borrowed. Empty task/lock/poll/cursor/seen-event dictionaries are in-memory keyed bookkeeping collections, not fabricated persisted session facts. Telegram None is the pre-binding/unavailable reader capability; its full required-port migration remains open.",
+      "validation": [
+        "test_invalid_provenance_fails_before_allocating_owned_http_client",
+        "tests/test_agents_execution_barrier.py",
+        "tests/test_agents_rest_timeout.py"
+      ]
+    },
+    {
+      "ledger_key": "context-labels",
+      "sites": [
+        {
+          "path": "src/tank/agents/context_registry.py",
+          "symbol": "TokenLabel.display_name",
+          "line": 21
+        },
+        {
+          "path": "src/tank/agents/context_registry.py",
+          "symbol": "EntityLabel",
+          "line": 29
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.source_label",
+          "line": 420
+        }
+      ],
+      "kind": "required nullable display facts and unresolved registry lookups",
+      "reason": "Nullable declared name/project metadata chooses display precedence only, never registry membership. Unknown source labels remain absent; explicit unresolved entity/token/instrument rendering is preserved.",
+      "validation": [
+        "test_label_projection_preserves_explicit_name_and_identity",
+        "tests/test_model_context.py"
+      ]
+    },
+    {
+      "ledger_key": "context-index",
+      "sites": [
+        {
+          "path": "src/tank/agents/context_registry.py",
+          "symbol": "label_rows",
+          "line": 60
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.__init__",
+          "line": 380
+        }
+      ],
+      "kind": "JSON configuration adapter and keyed indexes",
+      "reason": "Only the configuration boundary projects serialized rows; core identity indexes hold validated closed models. Empty label indexes legitimately mean an explicitly empty namespace, and registry_pattern None means no substitution terms.",
+      "validation": [
+        "test_missing_required_registry_namespace_fails",
+        "test_duplicate_identity_cannot_silently_replace_registered_label"
+      ]
+    },
+    {
+      "ledger_key": "context-binding",
+      "sites": [
+        {
+          "path": "src/tank/agents/context_binding.py",
+          "symbol": "ContextBinding.from_session",
+          "line": 32
+        },
+        {
+          "path": "src/tank/agents/context_binding.py",
+          "symbol": "ContextBinding.observation_source",
+          "line": 73
+        }
+      ],
+      "kind": "persisted input-owner projection and genuine pre-input/legacy absence",
+      "reason": "Session creation precedes first message_log admission; explicit origin-only legacy rows remain readable. Required nullable scope fields represent real absent bindings. Missing active payload cannot borrow observation origin. from_session is the wire adapter, not a model mapping facade.",
+      "validation": [
+        "test_callback_without_source_cannot_borrow_session_origin",
+        "test_unaccepted_session_without_input_journal_has_no_active_owner",
+        "test_legacy_source_without_journal_retains_its_explicit_origin"
+      ]
+    },
+    {
+      "ledger_key": "calendar-review",
+      "sites": [
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "calendar_review_metadata",
+          "line": 40
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "CalendarReviewMetadata",
+          "line": 15
+        },
+        {
+          "path": "src/tank/bootstrap.py",
+          "symbol": "_config_timestamp_metadata",
+          "line": 200
+        }
+      ],
+      "kind": "calendar type discrimination and optional declared precision facets",
+      "reason": "None from calendar_review_metadata means the value is not a date-only label and requires ordinary aware timestamp validation. Optional facet dictionary reads preserve genuinely undeclared metadata; unknown precision has explicit INCOMPLETE reason. No occurrence or timezone is synthesized.",
+      "validation": [
+        "test_calendar_review_label_loader_preserves_date_without_inventing_midnight",
+        "test_calendar_review_loader_rejects_invalid_occurrence_or_metadata"
       ]
     }
   ]

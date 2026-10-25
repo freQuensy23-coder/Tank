@@ -7,6 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 import yaml
+from source_support import fixture_versions
 
 from tank.market.normalize import kline
 from tank.market.service import MarketService
@@ -31,12 +32,24 @@ async def test_full_registry_baskets_and_optional_sector_peer_prices_reach_norma
     stamp = cutoff - timedelta(minutes=1)
     row = kline(
         peer,
-        [iso(stamp), "1", "1", "1", "1", "2", iso(cutoff - timedelta(milliseconds=1)), "2", 1, "1", "1"],
+        [
+            int(stamp.timestamp() * 1000),
+            "1",
+            "1",
+            "1",
+            "1",
+            "2",
+            int(cutoff.timestamp() * 1000) - 1,
+            "2",
+            1,
+            "1",
+            "1",
+        ],
         now=iso(cutoff),
     )
     await repo.put_market_batch("mkt.klines_1m", [row], keys=["sector-peer"])
     async with httpx.AsyncClient() as http:
-        service = MarketService(repo, settings, http=http)
+        service = MarketService(repo, settings, http=http, versions=fixture_versions())
 
         snap = await service.snapshot("0x:ZRX", cutoff)
         assert snap["sector_baskets"] == registry["sector_baskets"]

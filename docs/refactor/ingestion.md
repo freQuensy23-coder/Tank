@@ -111,7 +111,7 @@ SourceService now requires validated SourceApiLimitsConfiguration and shared Thr
 
 ## Active typed ingestion application workflow
 
-SourceIngestion now owns live source capture deduplication, cross-feed observation, attribution/policy, validated persistence, progress and job selection. It takes required IngestionStore, IngestionVersions, RawCaptureStore and SourceProgressSink ports; HTTP polling and presentation formatting are outside the application workflow. SourceService.ingest/captured remain explicit flat checkpoint/storage adapters, immediately decode CaptureEvidence/DiscoveredItem and serialize the validated result. All capture identity/feed/raw digest/first-seen/discovery versions and publisher URL/publication declaration are required; no local clock or source ID replaces an absent captured fact. Pending/unknown publication stays its declared unknown precision instead of being fabricated as an occurrence. Optional DiscoveryBase.author preserves a genuinely declared contributor; SocialDiscovery still requires its own post author. The required lifecycle author uses the configured publisher display label only when no contributor is declared; authority remains separately resolved and never inferred from that label.
+SourceIngestion now owns live source capture deduplication, cross-feed observation, attribution/policy, validated persistence, progress and job selection. It takes required IngestionStore, ResolvedVersionIdentity, RawCaptureStore and SourceProgressSink ports; HTTP polling and presentation formatting are outside the application workflow. SourceService.ingest/captured remain explicit flat checkpoint/storage adapters, immediately decode CaptureEvidence/DiscoveredItem and serialize the validated result. All capture identity/feed/raw digest/first-seen/discovery versions and publisher URL/publication declaration are required; no local clock or source ID replaces an absent captured fact. Pending/unknown publication stays its declared unknown precision instead of being fabricated as an occurrence. Optional DiscoveryBase.author preserves a genuinely declared contributor; SocialDiscovery still requires its own post author. The required lifecycle author uses the configured publisher display label only when no contributor is declared; authority remains separately resolved and never inferred from that label.
 
 SOURCE_ITEMS typed Repository reads every existing dedup candidate through the concrete source/WEB union. Immutable observe transitions count each proven feed once, retain first capture identity/bytes/hash/clock and preserve processing ownership. WEB observations now have paired nullable count/feeds: both absent means only the original captured web origin is proven; a new observed feed records that proven origin plus the actual new sighting. Partial pairs/inconsistent counts fail, and duplicate sightings produce no new count. RawItemStorage.discard restricts cleanup to the exact source/item/date raw path derived from the incoming capture; a foreign path fails before deletion. EmptyContentIdentity.media preserves the existing empty-media fingerprint used by current X producers, whose full actor bytes remain raw evidence; no active acquisition producer supplies a decoded media list, and unknown capture fields fail validation.
 
@@ -229,3 +229,77 @@ The independent omission review exposed that optional documented quantities in t
 | SourceDuckDuckGoBudget | Explicit client, duckduckgo backend, spacing/retry policy, zero cost and false boolean key requirement | No paid/backend/key fallback; integers do not coerce to the boolean access policy |
 
 Eight actual SourceService startup omission/over-allocation regressions cover missing SEC/Binance/Hyperliquid documentation and each missing Etherscan daily coordinate, including removal of both daily fields. They fail before HTTP/source/job writes. Actual complete api_limits canonical JSON remains unchanged, while explicit Coinbase/Kraken uncaptured-documentation behavior is tested independently. Readiness now validates this full API budget schema as well. Half-capacity comparisons multiply the assigned value instead of dividing a potentially large documented integer.
+
+
+## Required captured version facet at provenance producers
+
+SourceService and Scheduler now require the canonical ResolvedVersionIdentity constructor facet, validated before service startup, instead of reading raw Settings version defaults. Production CLI source/backup commands pass settings.require_versions after run_db's existing resolve_versions capture. SourceIngestion uses the shared identity directly (the duplicate local IngestionVersions model is removed); filing-cache keys, polling discovery headers, probe results and reaction/scout writes use the same explicit facet. HTTP/scoped readiness and raw path/config intake remain separate and do not require a fictitious captured build. Owned synthetic fixtures declare their known test identity through source_support.fixture_versions rather than promoting raw Settings strings; the fixture is an explicit test declaration, not a runtime fallback. Scheduler's optional thresholds argument still means load/validate the required actual Settings.thresholds configuration when not injected; it never supplies fixture threshold values. The unused SourceService.locks map is removed; real acquisition/state/processing locks remain in SourcePoller. Actual source persistence proves current/discovery versions come from an explicit facet even when raw Settings.require_versions refuses an uncaptured identity. A scout write with a custom fixture root proves the explicit facet can be used without adding unrelated runtime configuration files.
+
+
+## Explicit existing public-host client protection
+
+The two existing Go public-host limits are now explicit configuration data, with exact provider/host pairs: binance.www→www.binance.com at60requests/60seconds, and binance.vision→data.binance.vision at10requests/1second. SourceClientProtectionBudget requires CLIENT_PROTECTION, NOT_CAPTURED provider documentation, an explicit null documented_requests, IP scope, assigned count/period and operator-policy basis. These are existing internal protections, not invented provider quotas or aliases for weighted API capacity. Unknown hosts, API provider tags, a supplied documented count or API_KEY scope fail this variant. In particular60/minute remains a rolling60second window and is not collapsed to1/second. Negative omission tests cover every required policy coordinate; the actual full API configuration still roundtrips canonical JSON unchanged. Go admission consumption remains quality-owned and separately qualified.
+
+
+Calibration CLI now consumes the typed CalibrationReport and serializes the existing six-field terminal summary explicitly, retaining complete best_measured_routing metrics (the former decisions exclusion did not correspond to any actual metric field). No indexing facade is added. Owned Market/Event/Pipeline/Session constructor consumers now pass declared synthetic version facets; the production CLI MarketService passes settings.require_versions. EndpointVerification's clock guard now tests non-null declarations rather than model_fields_set: a model roundtrip that materializes null optional facets does not turn a calendar-only audit label into an assumed timestamp. An explicitly declared day bucket is validated through the named UTC-calendar transport adapter without altering the original serialized label; EXACT on a date-only label fails. The generic aware timestamp parser stays strict.
+
+
+Scheduler.ensure_event_reactions is the structural implementation of the required ID-based reaction scheduling port. It validates a nonblank requested identity, loads the actual event, rejects missing/mismatched durable identity, then delegates the existing reaction workflow. Event tools no longer need a permanent generic event-dictionary scheduling port. Real repository tests prove invalid target identities cannot enqueue jobs; the reaction calculation/pack policy is unchanged and remains covered by its existing integration cases.
+
+
+USD-M's two existing internal subwindows are explicit required client_protection_limits on SourceBinanceUsdmBudget, separate from its required documented aggregate weight budget: binance.usdm.funding shares250requests/300seconds across exactly fundingRate/fundingInfo; binance.usdm.statistics allows500requests/300seconds for exactly openInterestHist. Each declares CLIENT_PROTECTION/NOT_CAPTURED/null provider documentation/IP/operator basis. No doubled provider documentation or new quota values are inferred. Spot and USD-M now have distinct concrete provider variants so the required USD-M operation windows cannot disappear through an optional list. Missing groups, unknown paths, changed scope and invented numeric documentation fail. Go's verified zero aggregate weight for these operations remains request-planner behavior; the internal count windows still apply.
+
+
+### Configured HTTP admission and atomic quota groups
+
+The shared rolling-window engine now lives inward in `tank.request_budget`.
+`sources.rate_limits` only reexports its exact singleton while peer imports migrate;
+there is no second ledger or domain implementation. `HttpAdmission.admit` accepts
+the actual built `httpx.Request` immediately before Python I/O. A caller that
+queues Go transport never calls this port. Hostnames do not decide transport.
+
+`ConfiguredHttpAdmission._etherscan` admits only HTTPS GET api.etherscan.io/v2/api
+with one nonempty decoded UTF-8 apikey. The exact logical key is SHA-256 hashed,
+without trimming/case changes, into the shared API_KEY scope across chain IDs.
+Its required configured RPS and daily constraints reserve atomically.
+Public explorer hosts return an explicit unconfigured outcome; unsupported API
+routes, duplicate/missing/invalid keys, or missing provider policy return fixed
+refusal codes without credential/query output. `_sec` shares the configured
+sec.gov IP scope across subdomains. Unknown routes have an explicit unconfigured
+outcome, never a fabricated quota.
+
+`BudgetConstraint.host=None` means a primitive quota lacks a provider-block
+association; it does not suppress its quota. `SharedRequestBudgets.acquire`
+retains capacity=None only for existing explicitly unconfigured primitive callers;
+the configured adapter always supplies validated positive capacities. Priority=0
+is the ordinary fairness class; negative priorities receive existing urgent
+precedence. Budget maps are associative indexes by validated complete quota
+identity; deques are rolling weighted admission histories. `RequestLedger.connection`
+is absent before opening/after closing, and a missing SQL row is an explicit
+validation error. The serialized key preserves the existing cross-language
+float window/capacity suffix and never partitions by owner/version.
+
+`RequestLedger.wait_many` sorts the same serialized bucket identities as Go,
+holds all reservations in one PostgreSQL transaction, and rolls back tentative
+spends when any window returns a delay. Memory admission locks the complete
+group in that order and appends every spend at one monotonic instant only when
+all windows are ready. Waiting happens outside locks/transactions.
+
+Evidence: 87 source/admission units pass in 2.01s; the actual PostgreSQL grouped
+rollback test passes in 1.64s with zero skips. It proves the available long window
+is not charged when a later short-window constraint blocks. Memory tests prove
+the same boundary and retry behavior; actual built-client query tests prove
+cross-chain scope and exact key hashing. Strict mypy passes the new engine,
+adapter, contract and test module; Ruff checks/format pass. Consumer injection
+into market/event workflows remains the corresponding owner's next activation;
+this checkpoint alone does not claim all external attempts use the port.
+
+
+The follow-up session fixture now declares the actual repository registry/source
+configuration and reads the real analyst tool schemas. Its mock transport handles
+the actual toolset-update operation separately from user-event submission; the
+failure injection targets the intended event submission. Existing answer/session,
+retry-barrier, attachment and prompt-provenance assertions remain intact.
+Combined Ops/Telegram follow-up cohort: 94 units passed in 2.58s, zero skips.
+This fixes required fixture inputs rather than restoring missing-config defaults.
+Full typing of these large preexisting test modules remains open.

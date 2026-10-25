@@ -2,12 +2,14 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Literal
 from urllib.parse import quote
 
 from pydantic import JsonValue
 from pydantic_settings import SettingsConfigDict
 
 from tank.contracts.configuration import Thresholds
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.source_items import FeedSourceItem, parse_feed_source_item
 from tank.settings import Settings
 from tank.sources.policy import initial_relevance, is_filtered_source
@@ -131,3 +133,39 @@ def pipeline_settings_fixture(
 ) -> PipelineFixtureSettings:
     """Declare complete synthetic test settings without changing runtime configuration policy."""
     return PipelineFixtureSettings(configurations, opencode_api_key, replay, config_version, code_version)
+
+
+def declared_versions_fixture(
+    config_version: str = "test", code_version: str = "test"
+) -> ResolvedVersionIdentity:
+    """Declare the synthetic producer identity instead of reading runtime marker defaults."""
+    return ResolvedVersionIdentity(config_version=config_version, code_version=code_version)
+
+
+def native_tool_arguments_fixture(
+    tool: Literal["record_event", "fetch_page", "get_market_truth"],
+) -> dict[str, JsonValue]:
+    """Declare valid external tool inputs for tests of transport and transaction behavior."""
+    if tool == "fetch_page":
+        return {"url": "https://example.test/evidence"}
+    if tool == "get_market_truth":
+        return {"token_ids": []}
+    return {
+        "is_event": True,
+        "statement": "Synthetic fixture event",
+        "certainty": "LOW",
+        "certainty_reason": "Synthetic transport fixture",
+        "entities": [],
+        "token_ids": [],
+        "event_time": {"value": None, "precision": "UNKNOWN", "quote": None},
+        "public_at": {
+            "value": "2026-10-18T00:00:00Z",
+            "precision": "EXACT",
+            "basis": "Synthetic fixture clock",
+            "quote": None,
+        },
+        "freshness": "NORMAL",
+        "claims": [],
+        "next_milestone": None,
+        "checked_sources": [],
+    }

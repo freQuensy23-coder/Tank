@@ -27,8 +27,8 @@ async def probe_feeds(service):
             "status": "UNAVAILABLE",
             "method": feed.method,
             "item_count": None,
-            "config_version": service.settings.config_version,
-            "code_version": service.settings.code_version,
+            "config_version": service.versions.config_version,
+            "code_version": service.versions.code_version,
         }
         if sid == "S29":
             result["reason"] = "X runs through a paid Apify actor run; excluded from the HTTP smoke"

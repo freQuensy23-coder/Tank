@@ -38,15 +38,19 @@ def trade_instrument(
 
 def test_market_timestamp_precision_tracks_source_and_collection_clocks() -> None:
     row = n.liquidation(
-        instrument("binance", "PERP_LINEAR"), {"S": "SELL", "z": "1", "ap": "2", "T": TS}, received_ts=TS + 12
+        instrument("binance", "PERP_LINEAR"),
+        {"S": "SELL", "z": "1", "ap": "2", "T": TS},
+        received_ts=parse_epoch(TS + 12, unit="ms"),
     )
     assert row["ts_prec"] == "EXACT"
     assert row["received_ts_prec"] == "COLLECTION_ONLY"
     book = OrderBook(instrument("coinbase"))
-    book.snapshot([["1", "2"]], [["2", "2"]], ts=TS, sequence=0, ts_prec="COLLECTION_ONLY")
-    assert book.summary(received_ts=TS + 12)["exchange_ts_prec"] == "COLLECTION_ONLY"
-    book.update([], [], sequence=1, ts=TS + 15)
-    summary = book.summary(received_ts=TS + 20)
+    book.snapshot(
+        [["1", "2"]], [["2", "2"]], ts=parse_epoch(TS, unit="ms"), sequence=0, ts_prec="COLLECTION_ONLY"
+    )
+    assert book.summary(received_ts=parse_epoch(TS + 12, unit="ms"))["exchange_ts_prec"] == "COLLECTION_ONLY"
+    book.update([], [], sequence=1, ts=parse_epoch(TS + 15, unit="ms"))
+    summary = book.summary(received_ts=parse_epoch(TS + 20, unit="ms"))
     assert summary["exchange_ts_prec"] == "EXACT"
     assert summary["received_ts_prec"] == "COLLECTION_ONLY"
     current = n.funding(
@@ -54,24 +58,28 @@ def test_market_timestamp_precision_tracks_source_and_collection_clocks() -> Non
         {"fundingRate": "0.001"},
         kind="CURRENT_ESTIMATE",
         interval_h=8,
-        received_ts=TS,
+        received_ts=parse_epoch(TS, unit="ms"),
     )
     settled = n.funding(
         instrument("bybit", "PERP_LINEAR"),
         {"fundingRate": "0.001", "fundingRateTimestamp": TS},
         kind="SETTLED",
         interval_h=8,
-        received_ts=TS + 12,
+        received_ts=parse_epoch(TS + 12, unit="ms"),
     )
     assert current["as_of_prec"] == "COLLECTION_ONLY"
     assert settled["as_of_prec"] == settled["settlement_time_prec"] == settled["funding_time_prec"] == "EXACT"
     assert current["received_ts_prec"] == settled["received_ts_prec"] == "COLLECTION_ONLY"
     candle = n.kline(
-        instrument("binance"), [TS, "1", "1", "1", "1", "2", TS + 59999, "2", 2, "1", "1"], now=TS + 60000
+        instrument("binance"),
+        [TS, "1", "1", "1", "1", "2", TS + 59999, "2", 2, "1", "1"],
+        now=parse_epoch(TS + 60000, unit="ms"),
     )
     assert candle["open_time_prec"] == "BUCKET(60s)" and candle["received_ts_prec"] == "COLLECTION_ONLY"
     bucket = n.oi(
-        instrument("bybit", "PERP_LINEAR"), {"singleOpenInterest": "1", "timestamp": TS}, received_ts=TS + 12
+        instrument("bybit", "PERP_LINEAR"),
+        {"singleOpenInterest": "1", "timestamp": TS},
+        received_ts=parse_epoch(TS + 12, unit="ms"),
     )
     assert bucket["ts_prec"] == "EXACT" and bucket["ts_bucket_size_s"] is None
     flow = FlowAccumulator(now=lambda: RECEIPT)
@@ -182,7 +190,7 @@ def test_bybit_oi_no_division_fallback_and_immediate_registry_eligibility() -> N
     with pytest.raises(n.SemanticError, match="cannot substitute"):
         n.oi(i, {"openInterest": "200", "timestamp": TS})
     raw = {"openInterest": "200", "singleOpenInterest": "100", "timestamp": TS}
-    row = n.oi(i, raw, mark="2", mark_ts=TS)
+    row = n.oi(i, raw, mark="2", mark_ts=parse_epoch(TS, unit="ms"))
     assert row["oi_native"] == "100" and row["oi_usd"] == "200.00200"
     assert "semantic_confidence" not in row
     assert row["ts_prec"] == "EXACT" and row["ts_bucket_size_s"] is None
@@ -193,7 +201,7 @@ def test_bybit_oi_no_division_fallback_and_immediate_registry_eligibility() -> N
 def test_hyperliquid_sidedness_never_eligible() -> None:
     i = instrument("hyperliquid", "PERP_LINEAR")
     i["semantic_verified_keys"] = ["hyperliquid.perp.ctx"]
-    row = n.oi(i, {"openInterest": "10"}, received_ts=TS)
+    row = n.oi(i, {"openInterest": "10"}, received_ts=parse_epoch(TS, unit="ms"))
     assert row["sidedness"] == "UNKNOWN" and not row["synchronized_eligible"]
 
 
@@ -233,7 +241,7 @@ def test_funding_hourly_eight_hour_equivalent() -> None:
         {"funding": "0.0000125"},
         kind="CURRENT_ESTIMATE",
         interval_h=1,
-        received_ts=TS,
+        received_ts=parse_epoch(TS, unit="ms"),
     )
     assert r["rate_8h_eq"] == "0.0001000"
 
@@ -274,12 +282,12 @@ def test_flow_exact_sum_sq_size_buckets_and_gap() -> None:
 
 def test_book_snapshot_sequence_gap_and_incomplete_depth() -> None:
     book = OrderBook(instrument("binance"))
-    book.snapshot([["99", "10"]], [["101", "10"]], sequence=10, ts=TS)
-    row = book.summary(received_ts=TS)
+    book.snapshot([["99", "10"]], [["101", "10"]], sequence=10, ts=parse_epoch(TS, unit="ms"))
+    row = book.summary(received_ts=parse_epoch(TS, unit="ms"))
     assert row["depth"]["bid"]["p2"] is None
     assert row["spread_bps"] == "200.00"
     with pytest.raises(n.SemanticError, match="sequence"):
-        book.update([["99", "11"]], [], sequence=13, first=12, ts=TS)
+        book.update([["99", "11"]], [], sequence=13, first=12, ts=parse_epoch(TS, unit="ms"))
     assert not book.integrity_ok
 
 
@@ -289,7 +297,9 @@ def test_okx_checksum_uses_original_decimal_strings() -> None:
     book = OrderBook(instrument("okx"))
     value = zlib.crc32(b"99.00:2.0:101.00:3.0")
     value = value if value < 2**31 else value - 2**32
-    book.snapshot([["99.00", "2.0"]], [["101.00", "3.0"]], sequence=1, ts=TS, checksum=value)
+    book.snapshot(
+        [["99.00", "2.0"]], [["101.00", "3.0"]], sequence=1, ts=parse_epoch(TS, unit="ms"), checksum=value
+    )
     assert book.integrity_ok
     with pytest.raises(n.SemanticError, match="checksum"):
         book.verify(0)
@@ -300,23 +310,31 @@ def test_kraken_checksum_ask_then_bid() -> None:
 
     book = OrderBook(instrument("kraken"))
     crc = zlib.crc32(b"1010030990020")
-    book.snapshot([["99.00", "2.0"]], [["101.00", "3.0"]], sequence=1, ts=TS, checksum=crc)
+    book.snapshot(
+        [["99.00", "2.0"]], [["101.00", "3.0"]], sequence=1, ts=parse_epoch(TS, unit="ms"), checksum=crc
+    )
     assert book.integrity_ok
 
 
 def test_kline_taker_fields_never_invented_and_ongoing_incomplete() -> None:
-    r = n.kline(instrument("coinbase"), [TS / 1000, "1", "3", "2", "2.5", "4"], now=TS + 30000)
+    r = n.kline(
+        instrument("coinbase"), [TS / 1000, "1", "3", "2", "2.5", "4"], now=parse_epoch(TS + 30000, unit="ms")
+    )
     assert not r["complete"] and r["taker_buy_native"] is None and r["n_trades"] is None
 
 
 def test_current_okx_zero_checksum_uses_sequences_and_handles_sequence_reset() -> None:
     book = OrderBook(instrument("okx"))
-    book.snapshot([["99", "2"]], [["101", "3"]], sequence=100, ts=TS, checksum=0)
+    book.snapshot([["99", "2"]], [["101", "3"]], sequence=100, ts=parse_epoch(TS, unit="ms"), checksum=0)
     assert book.integrity_ok and "CHECKSUM_DEPRECATED" in book.integrity_method
-    assert book.update([["99", "4"]], [], sequence=101, previous=100, ts=TS + 1, checksum=0)
-    assert book.update([["99", "5"]], [], sequence=1, previous=101, ts=TS + 2, checksum=0)
+    assert book.update(
+        [["99", "4"]], [], sequence=101, previous=100, ts=parse_epoch(TS + 1, unit="ms"), checksum=0
+    )
+    assert book.update(
+        [["99", "5"]], [], sequence=1, previous=101, ts=parse_epoch(TS + 2, unit="ms"), checksum=0
+    )
     with pytest.raises(n.SemanticError, match="sequence"):
-        book.update([], [], sequence=3, previous=2, ts=TS + 3, checksum=0)
+        book.update([], [], sequence=3, previous=2, ts=parse_epoch(TS + 3, unit="ms"), checksum=0)
 
 
 def test_kraken_checksum_tiny_decimal_is_fixed_point() -> None:
@@ -329,7 +347,7 @@ def test_kraken_checksum_tiny_decimal_is_fixed_point() -> None:
         [{"price": Decimal("0.0000001"), "qty": Decimal("0.0100")}],
         [{"price": Decimal("0.0000002"), "qty": Decimal("0.0010")}],
         sequence=1,
-        ts=TS,
+        ts=parse_epoch(TS, unit="ms"),
     )
     expected = zlib.crc32(b"2101100")
     assert book.verify(expected)
@@ -523,3 +541,23 @@ def test_trade_identity_cannot_reinterpret_unsupported_market_as_spot() -> None:
             received_ts=RECEIPT,
             source="WS",
         )
+
+
+def test_book_without_provider_clock_preserves_unknown_exchange_time() -> None:
+    book = OrderBook(instrument("binance"))
+    book.snapshot([["99", "2"]], [["101", "3"]], sequence=1)
+    receipt = parse_epoch(TS + 20, unit="ms")
+    row = book.summary(received_ts=receipt)
+    assert row["exchange_ts"] is None
+    assert row["exchange_ts_prec"] is None
+    assert row["exchange_ts_prec_reason"] is not None
+    assert row["received_ts"] == iso(receipt)
+    assert row["received_ts_prec"] == "COLLECTION_ONLY"
+    book.update([], [], sequence=2, previous=1)
+    assert book.summary(received_ts=receipt)["exchange_ts"] is None
+
+
+def test_book_rejects_naive_provider_timestamp() -> None:
+    book = OrderBook(instrument("binance"))
+    with pytest.raises((TypeError, ValueError)):
+        book.snapshot([["99", "2"]], [["101", "3"]], sequence=1, ts="2026-06-17T00:00:00")

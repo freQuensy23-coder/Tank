@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from agent_source_fixtures import declared_versions_fixture
 
 from tank.agents.context import CONTEXT_VERSION
 
@@ -85,11 +86,11 @@ async def test_patched_actual_tool_uses_host_bound_item(tmp_path: Path) -> None:
     }
     await repo.put("ops.agent_sessions", "s", session)
     opts = Settings(_env_file=None)
-    tools = EventToolService(repo, opts, None, None)
+    tools = EventToolService(repo, opts, None, None, versions=declared_versions_fixture())
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json={}))
     ) as http:
-        service = SessionService(repo, opts, tools.dispatch, http=http)
+        service = SessionService(repo, opts, tools.dispatch, http=http, versions=declared_versions_fixture())
         await service.tool(session, {**result["realTool"], "input": {}})
     ledger = await repo.get("ops.tool_calls", "s:call_1")
     assert ledger["status"] == "DONE" and ledger["returned_at"]

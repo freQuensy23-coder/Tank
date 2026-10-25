@@ -109,7 +109,7 @@ class SideCoverage(DomainModel):
 class BookSummary(DomainModel):
     instrument_id: str
     token_id: str
-    exchange_ts: str
+    exchange_ts: str | None
     exchange_ts_prec: str | None
     exchange_ts_prec_reason: str | None
     received_ts: str

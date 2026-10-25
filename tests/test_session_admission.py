@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from agent_source_fixtures import declared_versions_fixture
 
 from tank.agents import SessionService
 from tank.runtime import Runtime
@@ -187,7 +188,7 @@ async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasse
         expiries = {name: (await repo.get("ops.jobs", job))["expires_at"] for name, job in jobs.items()}
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(openma)) as http:
-            sessions = SessionService(repo, settings(), None, http=http)
+            sessions = SessionService(repo, settings(), None, http=http, versions=declared_versions_fixture())
             sessions.start_stream = lambda sid: None
             runtime = object.__new__(Runtime)
             runtime.repo, runtime.sessions, runtime.active_jobs = repo, sessions, set()

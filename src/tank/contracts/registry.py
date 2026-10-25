@@ -1,13 +1,92 @@
 """Closed captured configuration contracts for registry bootstrap and domain projections."""
 
+import re
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, JsonValue, field_validator, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.sources import SourceAccount, SourceAccountRegistryView
-from tank.time_precision import propagate_timestamp
+from tank.time_precision import BucketSize, propagate_timestamp, reconcile_precision
+
+
+class CalendarReviewMetadata(DomainModel):
+    precision: str | None
+    precision_reason: str | None
+    bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None
+
+    @model_validator(mode="after")
+    def declared_precision(self) -> Self:
+        if self.precision is None:
+            if self.precision_reason is None or not self.precision_reason.strip():
+                raise ValueError("Unknown calendar review precision requires a reason")
+        elif reconcile_precision([self.precision], field="calendar_review") != self.precision:
+            raise ValueError("Calendar review precision requires canonical metadata")
+        if self.bucket_anchor is not None and (
+            self.precision is None or not self.precision.startswith("BUCKET(")
+        ):
+            raise ValueError("Calendar review bucket anchor requires bucket precision")
+        return self
+
+    def fields(self, field: str) -> dict[str, str | None]:
+        result = {field + "_prec": self.precision, field + "_prec_reason": self.precision_reason}
+        if self.bucket_anchor is not None:
+            result[field + "_bucket_anchor"] = self.bucket_anchor
+        return result
+
+
+def calendar_review_metadata(record: dict[str, JsonValue], field: str) -> CalendarReviewMetadata | None:
+    """Validate a calendar review label without converting it to a timezone-bearing occurrence."""
+    raw = record[field]
+    if not isinstance(raw, str) or re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw) is None:
+        return None
+    try:
+        date.fromisoformat(raw)
+    except ValueError:
+        raise ValueError("Invalid calendar review date") from None
+    declarations: list[str] = []
+    reasons: list[str] = []
+    for name in (field + "_prec", field + "_precision"):
+        declaration = record.get(name)
+        if declaration is not None:
+            if not isinstance(declaration, str):
+                raise ValueError("Calendar review precision requires text")
+            declarations.append(declaration)
+        reason = record.get(name + "_reason")
+        if reason is not None:
+            if not isinstance(reason, str) or not reason.strip():
+                raise ValueError("Calendar review precision reason requires nonempty text")
+            reasons.append(reason)
+    reason = record.get(field + "_reason")
+    if reason is not None:
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("Calendar review precision reason requires nonempty text")
+        reasons.append(reason)
+    size = record.get(field + "_bucket_size_s")
+    bucket_size: BucketSize | None = None
+    if size is not None:
+        if isinstance(size, bool) or not isinstance(size, (str, int, float)):
+            raise ValueError("Calendar review bucket size requires seconds")
+        bucket_size = (size, "s")
+    precision = reconcile_precision(declarations, field=field, bucket_size=bucket_size)
+    anchor = record.get(field + "_bucket_anchor")
+    if anchor is not None and (precision is None or not precision.startswith("BUCKET(")):
+        raise ValueError("Calendar review bucket anchor requires bucket precision")
+    return CalendarReviewMetadata.model_validate(
+        {
+            "precision": precision,
+            "precision_reason": None if precision is not None else reasons[0] if reasons else "INCOMPLETE",
+            "bucket_anchor": anchor,
+        }
+    )
+
+
+def validate_review_clock(record: dict[str, JsonValue], field: str) -> None:
+    if calendar_review_metadata(record, field) is None:
+        propagate_timestamp(record, field)
+
 
 type RegistryVenue = Literal["binance", "coinbase", "okx", "bybit", "kraken", "hyperliquid"]
 type RegistryMarketType = Literal["SPOT", "PERP_LINEAR"]
@@ -54,7 +133,7 @@ class FundamentalsEvidence(DomainModel):
 
     @model_validator(mode="after")
     def declared_clock(self) -> Self:
-        propagate_timestamp(
+        validate_review_clock(
             {
                 "verified_at": self.verified_at,
                 "verified_at_prec": self.verified_at_prec,
@@ -126,7 +205,7 @@ class RegistryInstrument(DomainModel):
 
     @model_validator(mode="after")
     def declared_clock(self) -> Self:
-        propagate_timestamp(
+        validate_review_clock(
             {
                 "resolved_at": self.resolved_at,
                 "resolved_at_prec": self.resolved_at_prec,
@@ -193,7 +272,7 @@ class RegistryEntity(DomainModel):
 
     @model_validator(mode="after")
     def declared_clock(self) -> Self:
-        propagate_timestamp(
+        validate_review_clock(
             {
                 "identity_reviewed_at": self.identity_reviewed_at,
                 "identity_reviewed_at_prec": self.identity_reviewed_at_prec,

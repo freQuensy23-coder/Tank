@@ -6,6 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from agent_source_fixtures import declared_versions_fixture
 
 from tank.agents.context import CONTEXT_VERSION, ID_FIELDS, ModelContext, identifier_field
 from tank.agents.sessions import SessionService
@@ -152,7 +153,7 @@ async def test_initial_message_is_text_and_the_incoming_item_stays_implicit(cont
 
 async def test_real_record_and_followup_tools_take_ids_and_reply_without_them(context) -> None:
     repo, settings, session, item = context
-    tools = EventToolService(repo, settings, None, None)
+    tools = EventToolService(repo, settings, None, None, versions=declared_versions_fixture())
     requests = []
 
     def receive(request: pytest.FixtureRequest):
@@ -160,7 +161,9 @@ async def test_real_record_and_followup_tools_take_ids_and_reply_without_them(co
         return httpx.Response(200, json={"data": []})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
-        service = SessionService(repo, settings, tools.dispatch, http=http)
+        service = SessionService(
+            repo, settings, tools.dispatch, http=http, versions=declared_versions_fixture()
+        )
         await service.tool(session, {"id": "call_record", "name": "record_event", "input": recorded(item)})
     ledger = await repo.get("ops.tool_calls", "session_private:call_record")
     assert ledger["status"] == "DONE", ledger.get("result")
@@ -395,9 +398,11 @@ async def test_merge_into_by_event_id_works_when_the_session_never_displayed_the
         posts.append(json.loads(request.content))
         return httpx.Response(200, json={"data": []})
 
-    tools = EventToolService(repo, settings, None, None)
+    tools = EventToolService(repo, settings, None, None, versions=declared_versions_fixture())
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
-        service = SessionService(repo, settings, tools.dispatch, http=http)
+        service = SessionService(
+            repo, settings, tools.dispatch, http=http, versions=declared_versions_fixture()
+        )
         await service.tool(
             session, {"id": "merge", "name": "merge_into", "input": {"event_id": target["event_id"]}}
         )
@@ -608,9 +613,11 @@ async def test_real_domain_refusal_uses_display_names_and_keeps_raw_audit(contex
         posts.append(json.loads(request.content))
         return httpx.Response(200, json={"data": []})
 
-    tools = EventToolService(repo, settings, None, None)
+    tools = EventToolService(repo, settings, None, None, versions=declared_versions_fixture())
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
-        service = SessionService(repo, settings, tools.dispatch, http=http)
+        service = SessionService(
+            repo, settings, tools.dispatch, http=http, versions=declared_versions_fixture()
+        )
         await service.tool(
             session, {"id": "decision_error", "name": "get_decision", "input": {"token_id": "uniswap:UNI"}}
         )
@@ -660,7 +667,7 @@ async def test_identical_watches_on_different_tokens_are_disarmed_by_cond_id(con
     from tank.analysis.watch_contracts import WatchCondition
     from tank.time_precision import collection_clock, offset_schedule
 
-    service = EventToolService(repo, settings, None, None)
+    service = EventToolService(repo, settings, None, None, versions=declared_versions_fixture())
     created = collection_clock()
     expires = offset_schedule(created, timedelta(days=7))
     provenance = service.provenance({"session_id": session["session_id"], "role": "analyst"})
@@ -704,9 +711,9 @@ async def test_identical_watches_on_different_tokens_are_disarmed_by_cond_id(con
     )
     restored = await boundary.arguments("set_watch_condition", args)
     assert restored == {**args, "event_id": event["event_id"]}
-    result = await EventToolService(repo, settings, None, None).dispatch(
-        "set_watch_condition", restored, {"session_id": session["session_id"], "role": "analyst"}
-    )
+    result = await EventToolService(
+        repo, settings, None, None, versions=declared_versions_fixture()
+    ).dispatch("set_watch_condition", restored, {"session_id": session["session_id"], "role": "analyst"})
     assert result["accepted"]
     for row in watches:
         expected = "CANCELLED" if row["token_id"] == token else "ARMED"
@@ -859,14 +866,16 @@ async def test_milestone_callback_confirms_from_the_fetched_official_document_by
         return httpx.Response(200, json={"data": []})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
-        domain = EventToolService(repo, settings, None, None, http=http)
+        domain = EventToolService(repo, settings, None, None, http=http, versions=declared_versions_fixture())
         due = clock_iso()
         await domain.dispatch(
             "schedule_milestone",
             {"event_id": session["event_id"], "source_id": "S01", "milestone": "Approval", "due_at": due},
             {},
         )
-        sessions = SessionService(repo, settings, domain.dispatch, http=http)
+        sessions = SessionService(
+            repo, settings, domain.dispatch, http=http, versions=declared_versions_fixture()
+        )
         await sessions.tool(session, {"id": "fetch-proof", "name": "fetch_page", "input": {"url": url}})
         fetched_call = await repo.get("ops.tool_calls", session["session_id"] + ":fetch-proof")
         assert fetched_call["status"] == "DONE", fetched_call.get("result")

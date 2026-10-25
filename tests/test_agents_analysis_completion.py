@@ -6,11 +6,13 @@ from pathlib import Path
 
 import httpx
 import pytest
-from agent_source_fixtures import source_record_fixture
+from agent_source_fixtures import declared_versions_fixture, source_record_fixture
 from test_agents_execution_barrier import config, idle
 from test_session_binding_concurrency import fixture_repo, seed
 
+from tank.agents.context import CONTEXT_VERSION
 from tank.agents.sessions import SessionService
+from tank.openma_sync import agent_tools
 from tank.util import sha256
 
 
@@ -58,7 +60,9 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
         from tank.event_tools import EventToolService
         from tank.settings import Settings
 
-        domain = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+        domain = EventToolService(
+            repo, Settings(data_dir=tmp_path), None, None, versions=declared_versions_fixture()
+        )
         event_id = None
         if bound:
             original = await repo.get("ingest.source_items", "item")
@@ -69,7 +73,9 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
                     dict(original, item_id="origin", external_id="origin", extraction_status="PENDING")
                 ),
             )
-            domain = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+            domain = EventToolService(
+                repo, Settings(data_dir=tmp_path), None, None, versions=declared_versions_fixture()
+            )
             result = await domain.dispatch(
                 "record_event",
                 {
@@ -100,6 +106,8 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
             "s",
             {
                 "session_id": "s",
+                "model_context_version": CONTEXT_VERSION,
+                "tools_sha256": sha256(agent_tools(config(), "tank-event-analyst")),
                 "event_id": event_id,
                 "status": "OPEN",
                 "runtime_status": "RUNNING",
@@ -173,7 +181,9 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
             raise AssertionError(request.url)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            service = SessionService(repo, config(), domain.dispatch, http=client)
+            service = SessionService(
+                repo, config(), domain.dispatch, http=client, versions=declared_versions_fixture()
+            )
             sequence = 0
 
             async def emit(tool, arguments):
@@ -280,7 +290,9 @@ async def test_ignored_item_keeps_event_and_call_for_next_native_update(
 
     async with fixture_repo(backend, postgres_template) as repo:
         _session, extraction = await seed(repo)
-        domain = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+        domain = EventToolService(
+            repo, Settings(data_dir=tmp_path), None, None, versions=declared_versions_fixture()
+        )
         origin = await domain.dispatch("record_event", extraction, {"session_id": "s"})
         eid = origin["event_id"]
         original = await repo.get("ingest.source_items", "i")
@@ -344,7 +356,9 @@ async def test_ignored_item_keeps_event_and_call_for_next_native_update(
             raise AssertionError(request.url)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-            service = SessionService(repo, config(), domain.dispatch, http=http)
+            service = SessionService(
+                repo, config(), domain.dispatch, http=http, versions=declared_versions_fixture()
+            )
 
             service.start_stream = lambda sid: None
             await service.process_event("s", idle("ignored-end", "input"))

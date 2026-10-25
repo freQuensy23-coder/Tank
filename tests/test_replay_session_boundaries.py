@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from source_support import fixture_versions
 
 from tank.agents.sessions import SessionService
 from tank.analysis.decisions import DecisionEngine
@@ -69,8 +70,11 @@ async def test_explicit_replay_session_boundaries(
     tools = EventToolService(
         repo,
         settings,
-        MarketTruthService(repo, settings, ReplayMarketReader(load_inputs(path, settings))),
+        MarketTruthService(
+            repo, settings, ReplayMarketReader(load_inputs(path, settings)), versions=fixture_versions()
+        ),
         DecisionEngine(settings),
+        versions=fixture_versions(),
     )
     sent, archived = [], []
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 from agent_source_fixtures import source_record_fixture
+from source_support import fixture_versions
 
 from tank.agents import SessionService
 from tank.analysis.decisions import DecisionEngine
@@ -236,8 +237,12 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
 
     output = tmp_path / "failed.json"
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-        truth = MarketTruthService(repo, settings, ReplayMarketReader(load_inputs(packet, settings)))
-        tools = EventToolService(repo, settings, truth, DecisionEngine(settings), http=http)
+        truth = MarketTruthService(
+            repo, settings, ReplayMarketReader(load_inputs(packet, settings)), versions=fixture_versions()
+        )
+        tools = EventToolService(
+            repo, settings, truth, DecisionEngine(settings), http=http, versions=fixture_versions()
+        )
         task = asyncio.create_task(
             replay_agent_session(
                 packet,
@@ -319,7 +324,7 @@ async def test_replay_abort_preserves_completed_state_and_refuses_other_ownershi
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda req: pytest.fail("No network required"))
     ) as http:
-        service = SessionService(repo, cfg, None, http=http)
+        service = SessionService(repo, cfg, None, http=http, versions=fixture_versions())
         refusal = await service.finalize_replay_abort("foreign", "current", {"reason": "fixture unavailable"})
         assert refusal["finalized"] is False
         await service.finalize_replay_abort(
@@ -375,7 +380,7 @@ async def test_native_terminal_failure_clears_runtime_but_preserves_done_message
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda req: pytest.fail("Terminal failure does not retry"))
     ) as http:
-        service = SessionService(repo, Settings(_env_file=None), None, http=http)
+        service = SessionService(repo, Settings(_env_file=None), None, http=http, versions=fixture_versions())
         failure = {
             "id": "failure-final",
             "type": "session.error",
@@ -434,7 +439,7 @@ async def test_native_termination_clears_runtime_without_manufacturing_completio
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda req: pytest.fail("No network required"))
     ) as http:
-        service = SessionService(repo, Settings(_env_file=None), None, http=http)
+        service = SessionService(repo, Settings(_env_file=None), None, http=http, versions=fixture_versions())
         event = {
             "id": "actual-terminal",
             "type": "session.status_terminated",

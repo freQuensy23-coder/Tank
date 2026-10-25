@@ -1,0 +1,460 @@
+{
+  "scope": "Exact eight active Tank retained/replay/skill-alias programs; semantic callers only, not a substitute for quality's compiler/source inventory",
+  "upstream_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+  "upstream_archive_sha256": "a1bca52a11dd2e621b9a451e204abe5055b70fc45a8db017fd00587ebce618e9",
+  "provenance_artifact": "/srv/tank-refactor-evidence/quality-openma-path-provenance.json",
+  "records": [
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts",
+      "sha256": "6f2c6f3ead3410e95577363ea73a45848c55d9235d242141963b55a3923244ed",
+      "origin": "TANK_ADDED",
+      "upstream_sha256": null,
+      "role": "Pinned BoxLite provider bridge: scope-fenced allocation/restore and guest-file transfer operations; production retention must never attach an unrelated sandbox.",
+      "production_callers": [
+        {
+          "path": "vendor/openma/packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts",
+          "lines": [
+            3
+          ],
+          "origin": "TANK_ADDED",
+          "sha256": "9eb10bb1dd1c188f6de145bf42704a81ed4638017b7ad42a4cee0bc2a7bd1258",
+          "relationship": "runtime_import_or_value_reference"
+        },
+        {
+          "path": "vendor/openma/packages/control-plane-node/src/lib/tank-retained/replay-attachment.ts",
+          "lines": [
+            1
+          ],
+          "origin": "TANK_ADDED",
+          "sha256": "24515c58fdb3bcad8e49e0a8bd199f8ff3e2b55d574b2ea0cbdfd7ab6cc76b1d",
+          "relationship": "type_only_import"
+        }
+      ],
+      "test_callers": [
+        {
+          "path": "tests/openma/file-io/file-io.test.mjs",
+          "lines": [
+            10
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "4c96c38c16470ef9ef1b4fc627666b69b664b817093ba95c6dbdbb1c9f6805ba"
+        },
+        {
+          "path": "tests/openma/file-io/provider-regression.test.mjs",
+          "lines": [
+            10
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "d3eb421c987825933b930788519ef3dc6238e2125299b71d24deeee9e803f7e7"
+        },
+        {
+          "path": "tests/openma/lifecycle/boxlite-provider.test.mjs",
+          "lines": [
+            10
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "9937375e470b2117b72c68177ac5deefebec3d5e20f1faf15982dfaeeeb2bf5f"
+        },
+        {
+          "path": "tests/openma/lifecycle/pinned-provider.integration.mjs",
+          "lines": [
+            11
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "cf2e625855ae11eb9972e0dc5bbecf0fdaf937e3601a59a0f3284b9600d9e06c"
+        },
+        {
+          "path": "tests/openma/lifecycle/replay-attachment.test.mts",
+          "lines": [
+            5
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "3fecad88236a41fc8f51761465c250064b6912a68ae2229f04c6e940eb8d645a"
+        }
+      ],
+      "embedded_languages": [],
+      "change_authorization": "READ_ONLY_CLASSIFICATION; no vendor source edits assigned",
+      "preservation": "Actual upstream LICENSE/NOTICE/source remain untouched. TANK_SOURCE comment-deviation hashes are historical evidence, not rewritten.",
+      "qualification_callers": [
+        {
+          "path": "deploy/openma_lifecycle/native-qualification.mjs",
+          "lines": [
+            79
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "95094e2fcdc433daff3ae0230cfbb5cc830369b5af2085a1b219c0b6bc4675ee",
+          "relationship": "runtime_import_or_value_reference"
+        }
+      ],
+      "indirect_tank_boundary": "SessionService.request drives the OpenMA managed session/event/execution/file routes; OpenMA sync publishes managed tools/skill manifests. These REST consumers do not directly import the vendor module."
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/tank-retained/guest-file-io.ts",
+      "sha256": "f3c30e333e3e0b013264334c8f0d829aa1a09d7be131a4701a8d98c3bf67b477",
+      "origin": "TANK_ADDED",
+      "upstream_sha256": null,
+      "role": "Host-side guest-file transport adapter: bounded framed read/write, acknowledgements, byte counts and checksum validation over the VM execution port.",
+      "production_callers": [
+        {
+          "path": "vendor/openma/packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts",
+          "lines": [
+            1
+          ],
+          "origin": "TANK_ADDED",
+          "sha256": "6f2c6f3ead3410e95577363ea73a45848c55d9235d242141963b55a3923244ed",
+          "relationship": "runtime_import_or_value_reference"
+        }
+      ],
+      "test_callers": [
+        {
+          "path": "tests/openma/file-io/file-io.test.mjs",
+          "lines": [
+            11,
+            63
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "4c96c38c16470ef9ef1b4fc627666b69b664b817093ba95c6dbdbb1c9f6805ba"
+        }
+      ],
+      "embedded_languages": [],
+      "change_authorization": "READ_ONLY_CLASSIFICATION; no vendor source edits assigned",
+      "preservation": "Actual upstream LICENSE/NOTICE/source remain untouched. TANK_SOURCE comment-deviation hashes are historical evidence, not rewritten.",
+      "qualification_callers": [],
+      "indirect_tank_boundary": "SessionService.request drives the OpenMA managed session/event/execution/file routes; OpenMA sync publishes managed tools/skill manifests. These REST consumers do not directly import the vendor module."
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/tank-retained/guest-file-worker.ts",
+      "sha256": "5381ce39bd0bdc62db18df95aa04e0a5411972b12482d07fc9cf7f3f1605cc28",
+      "origin": "TANK_ADDED",
+      "upstream_sha256": null,
+      "role": "Active embedded Python program emitted as the GUEST_FILE_WORKER string and executed in the guest with -c; validates regular-file operations and streams bounded data/ack frames.",
+      "production_callers": [
+        {
+          "path": "vendor/openma/packages/control-plane-node/src/lib/tank-retained/guest-file-io.ts",
+          "lines": [
+            5,
+            43,
+            75
+          ],
+          "origin": "TANK_ADDED",
+          "sha256": "f3c30e333e3e0b013264334c8f0d829aa1a09d7be131a4701a8d98c3bf67b477",
+          "relationship": "runtime_import_or_value_reference"
+        }
+      ],
+      "test_callers": [
+        {
+          "path": "tests/openma/file-io/file-io.test.mjs",
+          "lines": [
+            88,
+            89
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "4c96c38c16470ef9ef1b4fc627666b69b664b817093ba95c6dbdbb1c9f6805ba"
+        },
+        {
+          "path": "tests/openma/lifecycle/pinned-provider.integration.mjs",
+          "lines": [
+            12,
+            37
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "cf2e625855ae11eb9972e0dc5bbecf0fdaf937e3601a59a0f3284b9600d9e06c"
+        }
+      ],
+      "embedded_languages": [
+        "python"
+      ],
+      "change_authorization": "READ_ONLY_CLASSIFICATION; no vendor source edits assigned",
+      "preservation": "Actual upstream LICENSE/NOTICE/source remain untouched. TANK_SOURCE comment-deviation hashes are historical evidence, not rewritten.",
+      "qualification_callers": [],
+      "indirect_tank_boundary": "SessionService.request drives the OpenMA managed session/event/execution/file routes; OpenMA sync publishes managed tools/skill manifests. These REST consumers do not directly import the vendor module.",
+      "embedded_execution": "guest-file-io.ts passes the exported Python program through the BoxLite runGuestPython('-c',...) adapter; ordinary Python comments inside the string are active first-party source, not an upstream license exemption."
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts",
+      "sha256": "9eb10bb1dd1c188f6de145bf42704a81ed4638017b7ad42a4cee0bc2a7bd1258",
+      "origin": "TANK_ADDED",
+      "upstream_sha256": null,
+      "role": "Node composition adapter for retained-session lifecycle, scoped fingerprint/fences and orphan handling; live route attachment binds this controller to a workspace/environment/session.",
+      "production_callers": [
+        {
+          "path": "vendor/openma/packages/control-plane-node/src/modules/node-managed.ts",
+          "lines": [
+            77,
+            355
+          ],
+          "origin": "MODIFIED_UPSTREAM",
+          "sha256": "a1585724024d32c24e52ed53f7f46238802702dacfd5ca2e8006407855638848",
+          "relationship": "runtime_import_or_value_reference"
+        }
+      ],
+      "test_callers": [
+        {
+          "path": "tests/openma/lifecycle/node-lifecycle.test.mjs",
+          "lines": [
+            5,
+            23
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "059e1973769e31061b71ab236d25c5e4bbfd264c72307c3076948d241876a544"
+        },
+        {
+          "path": "tests/openma/lifecycle/pinned-provider.integration.mjs",
+          "lines": [
+            10,
+            87,
+            152,
+            185
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "cf2e625855ae11eb9972e0dc5bbecf0fdaf937e3601a59a0f3284b9600d9e06c"
+        }
+      ],
+      "embedded_languages": [],
+      "change_authorization": "READ_ONLY_CLASSIFICATION; no vendor source edits assigned",
+      "preservation": "Actual upstream LICENSE/NOTICE/source remain untouched. TANK_SOURCE comment-deviation hashes are historical evidence, not rewritten.",
+      "qualification_callers": [
+        {
+          "path": "deploy/openma_lifecycle/native-qualification.mjs",
+          "lines": [
+            78,
+            96
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "95094e2fcdc433daff3ae0230cfbb5cc830369b5af2085a1b219c0b6bc4675ee",
+          "relationship": "runtime_import_or_value_reference"
+        }
+      ],
+      "indirect_tank_boundary": "SessionService.request drives the OpenMA managed session/event/execution/file routes; OpenMA sync publishes managed tools/skill manifests. These REST consumers do not directly import the vendor module."
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/tank-retained/replay-attachment.ts",
+      "sha256": "24515c58fdb3bcad8e49e0a8bd199f8ff3e2b55d574b2ea0cbdfd7ab6cc76b1d",
+      "origin": "TANK_ADDED",
+      "upstream_sha256": null,
+      "role": "Replay attachment guard linking an allocation's declared replay scope to sealed evidence verification before attachment.",
+      "production_callers": [
+        {
+          "path": "vendor/openma/packages/control-plane-node/src/modules/node-managed.ts",
+          "lines": [
+            76
+          ],
+          "origin": "MODIFIED_UPSTREAM",
+          "sha256": "a1585724024d32c24e52ed53f7f46238802702dacfd5ca2e8006407855638848",
+          "relationship": "runtime_import_or_value_reference"
+        }
+      ],
+      "test_callers": [
+        {
+          "path": "tests/openma/lifecycle/node-lifecycle.test.mjs",
+          "lines": [
+            124
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "059e1973769e31061b71ab236d25c5e4bbfd264c72307c3076948d241876a544"
+        },
+        {
+          "path": "tests/openma/lifecycle/pinned-provider.integration.mjs",
+          "lines": [
+            8
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "cf2e625855ae11eb9972e0dc5bbecf0fdaf937e3601a59a0f3284b9600d9e06c"
+        },
+        {
+          "path": "tests/openma/lifecycle/replay-attachment.test.mts",
+          "lines": [
+            4,
+            11,
+            12
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "3fecad88236a41fc8f51761465c250064b6912a68ae2229f04c6e940eb8d645a"
+        }
+      ],
+      "embedded_languages": [],
+      "change_authorization": "READ_ONLY_CLASSIFICATION; no vendor source edits assigned",
+      "preservation": "Actual upstream LICENSE/NOTICE/source remain untouched. TANK_SOURCE comment-deviation hashes are historical evidence, not rewritten.",
+      "qualification_callers": [],
+      "indirect_tank_boundary": "SessionService.request drives the OpenMA managed session/event/execution/file routes; OpenMA sync publishes managed tools/skill manifests. These REST consumers do not directly import the vendor module."
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/tank-retained/retained-session.ts",
+      "sha256": "c2e634ba013e02fa5797825915bd1af08a772c3ddaca18a51c8b1153765114a0",
+      "origin": "TANK_ADDED",
+      "upstream_sha256": null,
+      "role": "Retained-session domain lifecycle and provider/fence ports: safe adoption, renewal, stop/restore and cleanup ownership for durable sessions.",
+      "production_callers": [
+        {
+          "path": "vendor/openma/packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts",
+          "lines": [
+            3
+          ],
+          "origin": "TANK_ADDED",
+          "sha256": "6f2c6f3ead3410e95577363ea73a45848c55d9235d242141963b55a3923244ed",
+          "relationship": "type_only_import"
+        },
+        {
+          "path": "vendor/openma/packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts",
+          "lines": [
+            2,
+            19,
+            75,
+            76
+          ],
+          "origin": "TANK_ADDED",
+          "sha256": "9eb10bb1dd1c188f6de145bf42704a81ed4638017b7ad42a4cee0bc2a7bd1258",
+          "relationship": "runtime_import_or_value_reference"
+        }
+      ],
+      "test_callers": [
+        {
+          "path": "tests/openma/lifecycle/fakes.mts",
+          "lines": [
+            5,
+            6,
+            12,
+            13,
+            160
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "ac57fcf7d11fc13f2db6cb1fd8a6ad080eb79f3017025702cecdefa840c285a7"
+        },
+        {
+          "path": "tests/openma/lifecycle/pinned-provider.integration.mjs",
+          "lines": [
+            13,
+            84,
+            111,
+            165
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "cf2e625855ae11eb9972e0dc5bbecf0fdaf937e3601a59a0f3284b9600d9e06c"
+        },
+        {
+          "path": "tests/openma/lifecycle/retained-session.test.mts",
+          "lines": [
+            4
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "36e70ee256c1ef13f2fbcd6fcb237c8bca8a252cd4b1fc8efb476fef8a40d5a7"
+        }
+      ],
+      "embedded_languages": [],
+      "change_authorization": "READ_ONLY_CLASSIFICATION; no vendor source edits assigned",
+      "preservation": "Actual upstream LICENSE/NOTICE/source remain untouched. TANK_SOURCE comment-deviation hashes are historical evidence, not rewritten.",
+      "qualification_callers": [],
+      "indirect_tank_boundary": "SessionService.request drives the OpenMA managed session/event/execution/file routes; OpenMA sync publishes managed tools/skill manifests. These REST consumers do not directly import the vendor module."
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/node-managed-skill-aliases.py",
+      "sha256": "e77a62f3905da8cc0575fffc603b41be34a37b2f3f9d7a1f85da22855b9d36b1",
+      "origin": "TANK_ADDED",
+      "upstream_sha256": null,
+      "role": "Guest-side stable skill alias claim/install/update worker loaded by node-managed-stable-skills.ts; preserves immutable claims and validated alias ownership.",
+      "production_callers": [
+        {
+          "path": "vendor/openma/packages/control-plane-node/src/lib/node-managed-stable-skills.ts",
+          "lines": [
+            65
+          ],
+          "origin": "TANK_ADDED",
+          "sha256": "a9f6ba3bf37517ee21046fbe152fb75d309a71d2c5708caf3972743ca5dddb23",
+          "relationship": "runtime_import_or_value_reference"
+        }
+      ],
+      "test_callers": [
+        {
+          "path": "tests/test_skill_alias_claims.py",
+          "lines": [
+            11
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "3bce8ffa7ea39bffa58c0c3946db3aae2c10851d0d4f8c82948d3bb43f7fd230"
+        }
+      ],
+      "embedded_languages": [],
+      "change_authorization": "READ_ONLY_CLASSIFICATION; no vendor source edits assigned",
+      "preservation": "Actual upstream LICENSE/NOTICE/source remain untouched. TANK_SOURCE comment-deviation hashes are historical evidence, not rewritten.",
+      "qualification_callers": [],
+      "indirect_tank_boundary": "SessionService.request drives the OpenMA managed session/event/execution/file routes; OpenMA sync publishes managed tools/skill manifests. These REST consumers do not directly import the vendor module."
+    },
+    {
+      "path": "vendor/openma/packages/sandbox-adapter-litebox/src/tank-replay-evidence.ts",
+      "sha256": "eed62fb4c9d1530c51d15229a8d2768f31e1d23a6933b0e7fdd9a5694b16280c",
+      "origin": "TANK_ADDED",
+      "upstream_sha256": null,
+      "role": "Read-only replay evidence verifier: validates manifest identity, listed regular-file bytes/hash and run/cutoff binding before exposing the evidence mount.",
+      "production_callers": [
+        {
+          "path": "vendor/openma/packages/control-plane-node/src/modules/node-managed.ts",
+          "lines": [
+            75,
+            376
+          ],
+          "origin": "MODIFIED_UPSTREAM",
+          "sha256": "a1585724024d32c24e52ed53f7f46238802702dacfd5ca2e8006407855638848",
+          "relationship": "runtime_import_or_value_reference"
+        },
+        {
+          "path": "vendor/openma/packages/sandbox-adapter-litebox/src/index.ts",
+          "lines": [
+            2
+          ],
+          "origin": "MODIFIED_UPSTREAM",
+          "sha256": "d6098f2f309f75ebfcf65d88eee6f6f9c708c2af9a2dc6c1e7fe42e93b4ea8dd",
+          "relationship": "runtime_import_or_value_reference"
+        },
+        {
+          "path": "vendor/openma/packages/sandbox-adapter-litebox/src/litebox.ts",
+          "lines": [
+            26,
+            441
+          ],
+          "origin": "MODIFIED_UPSTREAM",
+          "sha256": "9b620c4b19ee021da5667c1b2f3d4321201f64864daea407cb54ebd04c9358f2",
+          "relationship": "runtime_import_or_value_reference"
+        }
+      ],
+      "test_callers": [
+        {
+          "path": "tests/openma/lifecycle/pinned-provider.integration.mjs",
+          "lines": [
+            17,
+            182
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "cf2e625855ae11eb9972e0dc5bbecf0fdaf937e3601a59a0f3284b9600d9e06c"
+        },
+        {
+          "path": "tests/openma/replay/replay-evidence.test.mjs",
+          "lines": [
+            9,
+            72,
+            80,
+            85,
+            89,
+            96,
+            101,
+            107,
+            113,
+            123,
+            130,
+            138,
+            145,
+            156,
+            163,
+            172
+          ],
+          "origin": "TANK_FIRST_PARTY_OUTSIDE_VENDOR",
+          "sha256": "be30c8a02f01eb12bc104e14b22fdf0645bb59bafad21392d50346642be660e3"
+        }
+      ],
+      "embedded_languages": [],
+      "change_authorization": "READ_ONLY_CLASSIFICATION; no vendor source edits assigned",
+      "preservation": "Actual upstream LICENSE/NOTICE/source remain untouched. TANK_SOURCE comment-deviation hashes are historical evidence, not rewritten.",
+      "qualification_callers": [],
+      "indirect_tank_boundary": "SessionService.request drives the OpenMA managed session/event/execution/file routes; OpenMA sync publishes managed tools/skill manifests. These REST consumers do not directly import the vendor module."
+    }
+  ]
+}

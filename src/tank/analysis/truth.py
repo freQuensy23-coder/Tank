@@ -37,9 +37,10 @@ from tank.analysis.positioning import (
     oi_class as oi_class,
 )
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.market.capture import event_anchor
 from tank.time_precision import Timestamp, chosen_boundary, offset_schedule, propagate_timestamp
-from tank.util import iso, jsonable, new_id, parse_time, utcnow
+from tank.util import iso, jsonable, new_id, parse_epoch, parse_time, utcnow
 
 WINDOWS = {"W15M": 900, "W1H": 3600, "W4H": 14400, "W24H": 86400}
 RISK_ORDER = [
@@ -3017,7 +3018,7 @@ def supply_truth(snapshot, start, end):
                         if isinstance(stamp, bool) or isinstance(raw_value, bool):
                             continue
                         value = decimal(raw_value)
-                        point_time = parse_time(stamp)
+                        point_time = parse_epoch(stamp, unit="s")
                         if point_time <= end and value is not None and value.is_finite():
                             chart_points.append(
                                 (
@@ -5634,8 +5635,9 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
 
 
 class MarketTruthService:
-    def __init__(self, repo, settings, market):
+    def __init__(self, repo, settings, market, *, versions: ResolvedVersionIdentity):
         self.repo, self.settings, self.market = repo, settings, market
+        self.versions = versions
         self._condition_cache = {}
         self._condition_baselines = {}
 
@@ -5669,7 +5671,7 @@ class MarketTruthService:
             else {}
         )
         config = dict(
-            config, config_version=self.settings.config_version, code_version=self.settings.code_version
+            config, config_version=self.versions.config_version, code_version=self.versions.code_version
         )
         return await asyncio.to_thread(
             compute_condition_values,
@@ -5713,7 +5715,7 @@ class MarketTruthService:
             else {}
         )
         knobs = dict(
-            knobs, config_version=self.settings.config_version, code_version=self.settings.code_version
+            knobs, config_version=self.versions.config_version, code_version=self.versions.code_version
         )
         lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
         async with lock:

@@ -2,16 +2,15 @@
 
 from collections.abc import Mapping
 from datetime import datetime, timedelta
-from decimal import Decimal
 from typing import Literal, Self
 
 from pydantic import JsonValue, TypeAdapter, model_validator
 
 from tank.contracts import DomainModel
 from tank.time_precision import Timestamp, propagate_timestamp
-from tank.util import parse_time
+from tank.util import parse_iso_time
 
-type TimeInput = datetime | str | int | float | Decimal
+type TimeInput = datetime | str
 
 _JSON = TypeAdapter(dict[str, JsonValue])
 
@@ -91,7 +90,7 @@ def capture_boundary_points(
     anchor: Mapping[str, JsonValue] | EventAnchor | TimeInput | None = None,
 ) -> set[datetime]:
     """Exact cutoff/window splits plus the anchor and its mirrored pre-anchor bound."""
-    end = parse_time(cutoff)
+    end = parse_iso_time(cutoff)
     points = {end}
     for minutes in (15, 60, 240, 1440):
         points.update((end - timedelta(minutes=minutes), end - timedelta(minutes=2 * minutes)))
@@ -103,8 +102,8 @@ def capture_boundary_points(
             value = anchor["ts"]
         else:
             value = anchor
-        if not isinstance(value, (datetime, str, int, float, Decimal)) or isinstance(value, bool):
+        if not isinstance(value, (datetime, str)):
             raise ValueError("Capture anchor requires a timestamp value")
-        at = parse_time(value)
+        at = parse_iso_time(value)
         points.update((at, at - (end - at)))
     return points
