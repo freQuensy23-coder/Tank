@@ -30,6 +30,7 @@ from tank.analysis.decision_contracts import (
     DecisionRecord,
     DecisionRelative,
     DecisionSpot,
+    DecisionStatusWriter,
     DecisionTracking,
     DecisionTriggers,
     EndedDecisionTracking,
@@ -370,6 +371,11 @@ class _DecisionWireCore(DecisionCore, GenerationProvenance, ResolvedVersionIdent
     tracking_ended: bool | None = None
     previous_decision_id: str | None = None
     expired_call_ids: list[str] | None = None
+    tracking_recorded_at: str | None = None
+    tracking_recorded_at_prec: str | None = None
+    tracking_recorded_at_prec_reason: str | None = None
+    tracking_recorded_at_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
+    tracking_writer: DecisionStatusWriter | None = None
 
     @field_validator("entry_ref_price", "invalidation_price", mode="before")
     @classmethod
@@ -406,7 +412,8 @@ def _wire_payload(
     | WatchProposal
     | WatchCondition
     | _DecisionDraftWire
-    | _DecisionRecordWire,
+    | _DecisionRecordWire
+    | DecisionStatusWriter,
 ) -> dict[str, JsonValue]:
     value = decode_json(model.model_dump_json(exclude_unset=True, warnings="error"))
     return _object(value, "serialized decision record")
@@ -461,14 +468,34 @@ def _metadata(wire: _DecisionWireCore) -> DecisionMetadata:
             )
         if wire.previous_decision_id == wire.dec_id:
             raise ValueError("Ended tracking cannot reference itself as predecessor")
+        if wire.tracking_recorded_at is None or wire.tracking_writer is None:
+            raise ValueError("Ended decision tracking requires its actual status clock and writer provenance")
         tracking = EndedDecisionTracking(
             kind="ENDED",
             previous_decision_id=wire.previous_decision_id,
             expired_call_ids=tuple(wire.expired_call_ids),
+            status_recorded_at=Timestamp(
+                wire.tracking_recorded_at,
+                wire.tracking_recorded_at_prec,
+                wire.tracking_recorded_at_prec_reason,
+                wire.tracking_recorded_at_bucket_anchor,
+            ),
+            writer=wire.tracking_writer,
         )
     else:
         if wire.previous_decision_id is not None or wire.expired_call_ids is not None:
             raise ValueError("Active tracking cannot declare expired-call lineage")
+        if any(
+            value is not None
+            for value in (
+                wire.tracking_recorded_at,
+                wire.tracking_recorded_at_prec,
+                wire.tracking_recorded_at_prec_reason,
+                wire.tracking_recorded_at_bucket_anchor,
+                wire.tracking_writer,
+            )
+        ):
+            raise ValueError("Active tracking cannot declare ended-status clock or writer provenance")
         tracking = ActiveDecisionTracking(kind="ACTIVE")
     if wire.removed_from_analysis is True:
         if wire.management_only is not True or wire.actionable is not False:
@@ -545,6 +572,8 @@ def _base_payload(calculation: DecisionCore, metadata: DecisionMetadata) -> dict
         payload["entry_ref_price"] = str(metadata.prices.entry_ref_price)
         payload["invalidation_price"] = str(metadata.prices.invalidation_price)
     if isinstance(metadata.tracking, EndedDecisionTracking):
+        payload.update(metadata.tracking.status_recorded_at.fields("tracking_recorded_at"))
+        payload["tracking_writer"] = _wire_payload(metadata.tracking.writer)
         payload.update(
             tracking_ended=True,
             actionable=False,

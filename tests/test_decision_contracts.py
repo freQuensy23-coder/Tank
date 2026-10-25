@@ -26,8 +26,10 @@ from tank.analysis.decision_contracts import (
     DecisionOi,
     DecisionPositioning,
     DecisionPrices,
+    DecisionRecord,
     DecisionRelative,
     DecisionSpot,
+    DecisionStatusWriter,
     DecisionTriggers,
     EndedDecisionTracking,
     UnavailableDecisionLiquidity,
@@ -370,7 +372,13 @@ def test_ended_frozen_tracking_requires_actual_lineage_and_has_no_active_watches
     metadata = draft.metadata.model_copy(
         update={
             "tracking": EndedDecisionTracking(
-                kind="ENDED", previous_decision_id="DEC-earlier", expired_call_ids=("CALL-expired",)
+                kind="ENDED",
+                previous_decision_id="DEC-earlier",
+                expired_call_ids=("CALL-expired",),
+                status_recorded_at=collection_clock("2026-10-25T01:00:00Z"),
+                writer=DecisionStatusWriter(
+                    versions=draft.metadata.identity.versions, generation=draft.metadata.identity.generation
+                ),
             )
         }
     )
@@ -419,3 +427,107 @@ def test_actual_unanchored_event_liquidity_is_explicitly_unavailable_not_a_fille
     market["liquidity"] = {"reason": "INCOMPLETE"}
     with pytest.raises(ValueError, match="required"):
         decision_inputs_from_records(event, assessment, beneficiary, market, open_call=None, conditions=())
+
+
+def frozen_decision_fixture() -> DecisionRecord:
+    draft = materialized_fixture()
+    conditions = reconciled_fixture(draft)
+    return finalize_decision(
+        draft,
+        conditions=conditions,
+        conditions_shown=tuple(condition.cond_id for condition in conditions[:2]),
+        outlook_id="OUT-frozen",
+    )
+
+
+def status_writer_fixture(frozen: DecisionRecord) -> DecisionStatusWriter:
+    versions = ResolvedVersionIdentity(config_version="status-config", code_version="status-build")
+    generation = frozen.metadata.identity.generation.model_copy(
+        update={"config_version": versions.config_version, "code_version": versions.code_version}
+    )
+    return DecisionStatusWriter(versions=versions, generation=generation)
+
+
+def test_expired_status_preserves_frozen_financial_clock_and_generation() -> None:
+    from tank.analysis.decisions import end_decision_tracking
+
+    frozen = frozen_decision_fixture()
+    writer = status_writer_fixture(frozen)
+    recorded = collection_clock("2026-10-26T12:00:00Z")
+    ended = end_decision_tracking(
+        frozen,
+        decision_id="DEC-status",
+        expired_call_ids=("CALL-expired",),
+        status_recorded_at=recorded,
+        writer=writer,
+    )
+    assert ended.calculation == frozen.calculation
+    assert ended.metadata.identity.cutoff == frozen.metadata.identity.cutoff
+    assert ended.metadata.calculated_at == frozen.metadata.calculated_at
+    assert ended.metadata.identity.generation == frozen.metadata.identity.generation
+    assert ended.metadata.identity.versions == frozen.metadata.identity.versions
+    assert ended.metadata.identity.market_truth_id == frozen.metadata.identity.market_truth_id
+    assert ended.metadata.identity.assessment_id == frozen.metadata.identity.assessment_id
+    assert ended.metadata.identity.decision_id == "DEC-status"
+    assert not ended.conditions and not ended.conditions_shown
+    assert frozen.conditions and ended.outlook_id == frozen.outlook_id
+    tracking = ended.metadata.tracking
+    assert isinstance(tracking, EndedDecisionTracking)
+    assert tracking.previous_decision_id == frozen.metadata.identity.decision_id
+    assert tracking.status_recorded_at == recorded and tracking.writer == writer
+    wire = encode_decision(ended)
+    assert wire["cutoff"] == "2026-10-25T00:00:00Z"
+    assert wire["cutoff_prec"] is None and wire["cutoff_prec_reason"] == "LEGACY_PRECISION_UNAVAILABLE"
+    assert wire["calculated_at"] == "2026-10-25T00:01:00Z"
+    assert wire["config_version"] == "declared-fixture"
+    assert wire["tracking_recorded_at"] == "2026-10-26T12:00:00Z"
+    status = wire["tracking_writer"]
+    assert isinstance(status, dict)
+    identity = status["versions"]
+    assert isinstance(identity, dict) and identity["config_version"] == "status-config"
+    assert encode_decision(decode_decision(wire)) == wire
+
+
+def test_ended_status_without_its_real_recording_evidence_is_not_padded() -> None:
+    from tank.analysis.decisions import end_decision_tracking
+
+    frozen = frozen_decision_fixture()
+    ended = end_decision_tracking(
+        frozen,
+        decision_id="DEC-status",
+        expired_call_ids=("CALL-expired",),
+        status_recorded_at=collection_clock("2026-10-26T12:00:00Z"),
+        writer=status_writer_fixture(frozen),
+    )
+    wire = encode_decision(ended)
+    del wire["tracking_writer"]
+    with pytest.raises(ValueError, match="actual status clock and writer provenance"):
+        decode_decision(wire)
+    active = encode_decision(frozen)
+    active["tracking_recorded_at"] = "2026-10-26T12:00:00Z"
+    with pytest.raises(ValueError, match="Active tracking cannot declare ended-status"):
+        decode_decision(active)
+
+
+def test_status_recording_cannot_reuse_market_time_or_mismatched_writer_identity() -> None:
+    from tank.analysis.decisions import end_decision_tracking
+
+    frozen = frozen_decision_fixture()
+    writer = status_writer_fixture(frozen)
+    with pytest.raises(ValidationError, match="actual local status-recording clock"):
+        end_decision_tracking(
+            frozen,
+            decision_id="DEC-status",
+            expired_call_ids=("CALL-expired",),
+            status_recorded_at=frozen.metadata.identity.cutoff,
+            writer=writer,
+        )
+    mismatched = writer.model_copy(update={"generation": frozen.metadata.identity.generation})
+    with pytest.raises(ValidationError, match="resolved writer identity"):
+        end_decision_tracking(
+            frozen,
+            decision_id="DEC-status",
+            expired_call_ids=("CALL-expired",),
+            status_recorded_at=collection_clock("2026-10-26T12:00:00Z"),
+            writer=mismatched,
+        )
