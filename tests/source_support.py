@@ -126,6 +126,7 @@ def fixture_http_admission(
     *,
     policy: SourceApiLimitsConfiguration | None = None,
     budgets: RequestBudgets | None = None,
+    versions: ResolvedVersionIdentity | None = None,
 ) -> ConfiguredHttpAdmission:
     """Use the real configured resolver, never a fabricated admission/provider result."""
     actual = (
@@ -134,5 +135,7 @@ def fixture_http_admission(
         else policy
     )
     return ConfiguredHttpAdmission(
-        actual, fixture_versions(), fixture_request_budgets() if budgets is None else budgets
+        actual,
+        fixture_versions() if versions is None else versions,
+        fixture_request_budgets() if budgets is None else budgets,
     )

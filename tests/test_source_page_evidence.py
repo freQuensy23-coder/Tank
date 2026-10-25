@@ -9,6 +9,7 @@ from pydantic_settings import SettingsConfigDict
 from scheduler_support import operational_reaction_services
 from source_support import fixture_versions
 
+from tank.analysis.page_access import LivePageAccess
 from tank.contracts.page_evidence import LivePageProvenance, RecordedBodyProvenance
 from tank.contracts.source_items import SourceItemDocument, WebEvidenceItem, parse_source_item
 from tank.event_tools import EventToolService
@@ -44,6 +45,7 @@ async def historical_web_record(tmp_path: Path) -> dict[str, JsonValue]:
             None,
             versions=versions,
             scheduler=services.scheduler,
+            pages=LivePageAccess(services.admission),
         )
         writer: WebCaptureWireWriter = tools
         raw_record = await writer.save_web(
