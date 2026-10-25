@@ -43,6 +43,7 @@ class VenueResponse:
                         "symbol": "BTCUSDT",
                         "baseCoin": "BTC",
                         "quoteCoin": "USDT",
+                        "settleCoin": "USDT",
                         "contractType": "LinearPerpetual",
                         "status": self.status,
                     }

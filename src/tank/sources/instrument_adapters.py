@@ -7,11 +7,17 @@ from pydantic import AfterValidator, Field, JsonValue, field_validator, model_va
 from tank.contracts import DomainModel
 from tank.contracts.json import JsonDocument, decode_unique_json
 from tank.contracts.source_checkpoints import (
+    BinanceContractObservation,
+    BinanceContractType,
+    BybitContractObservation,
+    BybitContractType,
     CoinbaseInstrument,
     CoinbaseRestrictionFlags,
     InstrumentRecord,
     InstrumentSnapshot,
     VenueInstrument,
+    binance_contract_kind,
+    bybit_contract_kind,
 )
 from tank.contracts.sources import FeedParsingSpec
 
@@ -29,7 +35,7 @@ class BybitSpotResult(DomainModel):
         return value
 
 
-class BybitPerpetualResult(DomainModel):
+class BybitLinearCatalogResult(DomainModel):
     category: Literal["linear"]
     list: list[JsonValue]
     nextPageCursor: str
@@ -40,9 +46,9 @@ class BybitSpotEnvelope(DomainModel):
     result: BybitSpotResult
 
 
-class BybitPerpetualEnvelope(DomainModel):
+class BybitLinearCatalogEnvelope(DomainModel):
     retCode: int
-    result: BybitPerpetualResult
+    result: BybitLinearCatalogResult
 
 
 class OkxEnvelope(DomainModel):
@@ -106,8 +112,9 @@ class BinanceSpotProjection(DomainModel):
     status: WireText
 
 
-class BinancePerpetualProjection(BinanceSpotProjection):
-    contractType: WireIdentity
+class BinanceDerivativeProjection(BinanceSpotProjection):
+    contractType: BinanceContractType
+    marginAsset: WireIdentity
 
 
 class BybitSpotProjection(DomainModel):
@@ -117,8 +124,9 @@ class BybitSpotProjection(DomainModel):
     status: WireText
 
 
-class BybitPerpetualProjection(BybitSpotProjection):
-    contractType: WireIdentity
+class BybitDerivativeProjection(BybitSpotProjection):
+    contractType: BybitContractType
+    settleCoin: WireIdentity
 
 
 class KrakenProjection(DomainModel):
@@ -132,7 +140,7 @@ class OkxSpotProjection(DomainModel):
     state: WireText
     baseCcy: WireIdentity
     quoteCcy: WireIdentity
-    ctType: str | None = None
+    ctType: Literal[""] | None = None
 
     @model_validator(mode="after")
     def declared_contract_fact(self) -> Self:
@@ -144,7 +152,7 @@ class OkxSpotProjection(DomainModel):
 class OkxPerpetualProjection(DomainModel):
     instId: WireIdentity
     state: WireText
-    ctType: WireIdentity
+    ctType: Literal["linear", "inverse"]
     baseCcy: str | None = None
     quoteCcy: str | None = None
 
@@ -154,6 +162,9 @@ class OkxPerpetualProjection(DomainModel):
             "quoteCcy" in self.model_fields_set and self.quoteCcy is None
         ):
             raise ValueError("Declared OKX currency metadata cannot be null")
+        for value in (self.baseCcy, self.quoteCcy):
+            if value is not None and value != "":
+                protocol_identity(value)
         return self
 
 
@@ -194,6 +205,8 @@ class HyperliquidProjection(DomainModel):
             raise ValueError("Declared Hyperliquid delisting flag cannot be null")
         if "quote" in self.model_fields_set and self.quote is None:
             raise ValueError("Declared Hyperliquid quote metadata cannot be null")
+        if self.quote is not None and self.quote != "":
+            protocol_identity(self.quote)
         return self
 
 
@@ -203,38 +216,68 @@ def normalise(
     if venue == "binance":
         names = ("symbol", "baseAsset", "quoteAsset", "status")
         contract: str | None = None
+        binance_observation: BinanceContractObservation | None = None
         row: BinanceSpotProjection
         if market_type == "PERP_LINEAR":
-            perpetual = BinancePerpetualProjection.model_validate(project(raw, (*names, "contractType")))
-            row, contract = perpetual, perpetual.contractType
+            derivative = BinanceDerivativeProjection.model_validate(
+                project(raw, (*names, "contractType", "marginAsset"))
+            )
+            row, contract = derivative, derivative.contractType
+            binance_observation = BinanceContractObservation(
+                provider="binance",
+                kind=binance_contract_kind(derivative.contractType),
+                contract_type=derivative.contractType,
+                margin_asset=derivative.marginAsset,
+            )
         else:
             row = BinanceSpotProjection.model_validate(project(raw, names))
-        return VenueInstrument(
+        observed_binance = VenueInstrument(
             venue=venue,
-            market_type=market_type,
+            acquisition_market_type=market_type,
             symbol=row.symbol,
             base=row.baseAsset,
             quote=row.quoteAsset,
             status=row.status,
             contract_type=contract,
         )
+        return (
+            observed_binance
+            if binance_observation is None
+            else observed_binance.with_reported_contract(binance_observation)
+        )
     if venue == "bybit":
         names = ("symbol", "baseCoin", "quoteCoin", "status")
         bybit_contract: str | None = None
+        bybit_observation: BybitContractObservation | None = None
         bybit: BybitSpotProjection
         if market_type == "PERP_LINEAR":
-            bybit_perpetual = BybitPerpetualProjection.model_validate(project(raw, (*names, "contractType")))
-            bybit, bybit_contract = bybit_perpetual, bybit_perpetual.contractType
+            derivative_bybit = BybitDerivativeProjection.model_validate(
+                project(raw, (*names, "contractType", "settleCoin"))
+            )
+            bybit, bybit_contract = derivative_bybit, derivative_bybit.contractType
+            kind, mode = bybit_contract_kind(derivative_bybit.contractType)
+            bybit_observation = BybitContractObservation(
+                provider="bybit",
+                kind=kind,
+                settlement_mode=mode,
+                contract_type=derivative_bybit.contractType,
+                settle_coin=derivative_bybit.settleCoin,
+            )
         else:
             bybit = BybitSpotProjection.model_validate(project(raw, names))
-        return VenueInstrument(
+        observed_bybit = VenueInstrument(
             venue=venue,
-            market_type=market_type,
+            acquisition_market_type=market_type,
             symbol=bybit.symbol,
             base=bybit.baseCoin,
             quote=bybit.quoteCoin,
             status=bybit.status,
             contract_type=bybit_contract,
+        )
+        return (
+            observed_bybit
+            if bybit_observation is None
+            else observed_bybit.with_reported_contract(bybit_observation)
         )
     if venue == "kraken":
         kraken = KrakenProjection.model_validate(project(raw, ("base", "quote", "status")))
@@ -242,7 +285,7 @@ def normalise(
             raise ValueError("Kraken instrument requires its actual result key")
         return VenueInstrument(
             venue=venue,
-            market_type=market_type,
+            acquisition_market_type=market_type,
             symbol=protocol_identity(native_symbol),
             base=kraken.base,
             quote=kraken.quote,
@@ -261,7 +304,7 @@ def normalise(
             )
         return VenueInstrument(
             venue=venue,
-            market_type=market_type,
+            acquisition_market_type=market_type,
             symbol=okx.instId,
             base=okx.baseCcy,
             quote=okx.quoteCcy,
@@ -297,7 +340,7 @@ def normalise(
             )
         return CoinbaseInstrument(
             venue=venue,
-            market_type=market_type,
+            acquisition_market_type=market_type,
             symbol=coinbase.id,
             base=coinbase.base_currency,
             quote=coinbase.quote_currency,
@@ -308,7 +351,7 @@ def normalise(
     hyperliquid = HyperliquidProjection.model_validate(project(raw, ("name", "isDelisted", "quote")))
     return VenueInstrument(
         venue=venue,
-        market_type=market_type,
+        acquisition_market_type=market_type,
         symbol=hyperliquid.name,
         base=hyperliquid.name,
         quote=hyperliquid.quote,
@@ -340,7 +383,7 @@ def parse_instrument_page(payload: bytes | JsonValue, feed: FeedParsingSpec) -> 
         envelope = (
             BybitSpotEnvelope.model_validate(outer)
             if market_type == "SPOT"
-            else BybitPerpetualEnvelope.model_validate(outer)
+            else BybitLinearCatalogEnvelope.model_validate(outer)
         )
         if envelope.retCode != 0:
             raise ValueError("Bybit instrument API refused the request")

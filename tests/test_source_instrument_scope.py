@@ -54,6 +54,7 @@ class Catalog:
                 "baseCoin": symbol.removesuffix("USDT"),
                 "quoteCoin": "USDT",
                 "status": status,
+                "settleCoin": "USDT",
                 "contractType": "LinearPerpetual",
             }
             for symbol, status in self.statuses.items()
@@ -367,6 +368,7 @@ async def test_pagination_preserves_the_declared_query_scope_including_blank_val
                             "symbol": symbol,
                             "baseCoin": symbol.removesuffix("USDT"),
                             "quoteCoin": "USDT",
+                            "settleCoin": "USDT",
                             "contractType": "LinearPerpetual",
                             "status": "Trading",
                         }

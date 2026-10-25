@@ -12,6 +12,7 @@ from tank.contracts.source_checkpoints import (
     CoinbaseRestrictionFlags,
     InstrumentRecord,
     InstrumentSnapshot,
+    VenueInstrument,
 )
 from tank.contracts.source_items import (
     DiscoveryObservation,
@@ -61,11 +62,11 @@ class InstrumentChange(DomainModel):
 def instrument_wire(record: InstrumentRecord | None) -> dict[str, JsonValue] | None:
     if record is None:
         return None
-    return record.model_dump(mode="json", exclude_unset=True)
+    return record.model_dump(mode="json", exclude_unset=True, by_alias=True)
 
 
 def evidence(record: InstrumentRecord | None) -> dict[str, JsonValue] | None:
-    wire = instrument_wire(record)
+    wire = None if record is None else record.model_dump(mode="json", exclude_unset=True, by_alias=False)
     if wire is not None and isinstance(record, CoinbaseInstrument) and record.status_flags is None:
         wire["status_flags"] = None
     return wire
@@ -76,7 +77,7 @@ def differs(current: InstrumentRecord | None, previous: InstrumentRecord | None)
         return current != previous
     if (
         current.venue != previous.venue
-        or current.market_type != previous.market_type
+        or current.acquisition_market_type != previous.acquisition_market_type
         or current.symbol != previous.symbol
         or current.status != previous.status
     ):
@@ -89,6 +90,14 @@ def differs(current: InstrumentRecord | None, previous: InstrumentRecord | None)
     if any(
         before not in (None, "") and after not in (None, "") and before != after
         for before, after in optional_metadata
+    ):
+        return True
+    if (
+        isinstance(current, VenueInstrument)
+        and isinstance(previous, VenueInstrument)
+        and current.reported_contract is not None
+        and previous.reported_contract is not None
+        and current.reported_contract != previous.reported_contract
     ):
         return True
     if isinstance(current, CoinbaseInstrument) and isinstance(previous, CoinbaseInstrument):
@@ -111,7 +120,7 @@ def instrument_changes(
     completed_at = SourceObservedClock(observed_at=completed_at).observed_at
     for observed in (snapshot,) if previous is None else (snapshot, previous):
         if any(
-            record.venue != feed.venue or record.market_type != feed.market_type
+            record.venue != feed.venue or record.acquisition_market_type != feed.market_type
             for record in observed.root.values()
         ):
             raise ValueError("Instrument snapshot conflicts with the actual feed owner")
@@ -154,7 +163,8 @@ def instrument_changes(
                 if len(action) == 2
                 else f"instruments {action[0]} {action[1]} → {action[2]}"
             )
-            title = f"{feed.venue} {feed.market_type}: {len(group)} {what}"
+            venue_name = "OKX" if feed.venue == "okx" else feed.venue.capitalize()
+            title = f"{venue_name} instrument catalog: {len(group)} {what}"
             text = json.dumps(
                 {
                     "changes": [

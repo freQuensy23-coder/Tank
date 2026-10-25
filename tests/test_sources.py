@@ -460,6 +460,7 @@ async def test_instrument_baseline_diff_and_bybit_cursor(tmp_path: Path, collect
                     "symbol": "DEFUSDT",
                     "baseCoin": "DEF",
                     "quoteCoin": "USDT",
+                    "settleCoin": "USDT",
                     "contractType": "LinearPerpetual",
                     "status": "Trading",
                 }
@@ -471,6 +472,7 @@ async def test_instrument_baseline_diff_and_bybit_cursor(tmp_path: Path, collect
                     "symbol": "ABCUSDT",
                     "baseCoin": "ABC",
                     "quoteCoin": "USDT",
+                    "settleCoin": "USDT",
                     "contractType": "LinearPerpetual",
                     "status": "Trading" if phase[0] == 0 else "Settling",
                 }
@@ -1549,6 +1551,7 @@ async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path: Pat
                             "symbol": "ABCUSDT",
                             "baseCoin": "ABC",
                             "quoteCoin": "USDT",
+                            "settleCoin": "USDT",
                             "contractType": "LinearPerpetual",
                             "status": phase[0],
                         }
@@ -2286,6 +2289,7 @@ async def test_paginated_instrument_change_uses_actual_page_time_and_raw_evidenc
                     "symbol": symbol,
                     "baseCoin": "DEF" if cursor else "ABC",
                     "quoteCoin": "USDT",
+                    "settleCoin": "USDT",
                     "contractType": "LinearPerpetual",
                     "status": "Settling" if cursor and phase[0] == 1 else "Trading",
                 }
@@ -3074,11 +3078,11 @@ def test_one_poll_of_a_venue_list_groups_symbols_that_made_the_same_move() -> No
     )
     by_title = {row.discovery.title: row for row in rows}
     assert sorted(by_title) == [
+        "Kraken instrument catalog: 2 NEW instruments ADDED",
+        "Kraken instrument catalog: 3 instruments STATE_UPDATE online → cancel_only",
         "OTHUSD instrument change",
-        "kraken SPOT: 2 NEW instruments ADDED",
-        "kraken SPOT: 3 instruments STATE_UPDATE online → cancel_only",
     ]
-    delisting = by_title["kraken SPOT: 3 instruments STATE_UPDATE online → cancel_only"]
+    delisting = by_title["Kraken instrument catalog: 3 instruments STATE_UPDATE online → cancel_only"]
     assert delisting.discovery.change == "STATE_UPDATE"
     assert delisting.observation.observed_at == "2026-10-23T14:00:00Z" and delisting.payload == b"page"
     assert [c["symbol"] for c in json.loads(delisting.discovery.text)["changes"]] == [
@@ -3086,7 +3090,7 @@ def test_one_poll_of_a_venue_list_groups_symbols_that_made_the_same_move() -> No
         "ABCUSD",
         "DEFUSD",
     ]
-    assert by_title["kraken SPOT: 2 NEW instruments ADDED"].discovery.change == "ADDED"
+    assert by_title["Kraken instrument catalog: 2 NEW instruments ADDED"].discovery.change == "ADDED"
     assert json.loads(by_title["OTHUSD instrument change"].discovery.text)["before"] is None
 
 

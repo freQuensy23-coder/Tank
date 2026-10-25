@@ -57,8 +57,87 @@ class CoinbaseRestrictionFlags(DomainModel):
         )
 
 
+type ReportedContractKind = Literal["PERPETUAL", "DATED_FUTURE"]
+type BinanceContractType = Literal[
+    "PERPETUAL",
+    "CURRENT_MONTH",
+    "NEXT_MONTH",
+    "CURRENT_QUARTER",
+    "NEXT_QUARTER",
+    "PERPETUAL_DELIVERING",
+]
+type BybitContractType = Literal[
+    "InversePerpetual",
+    "LinearPerpetual",
+    "LinearFutures",
+    "InverseFutures",
+]
+
+
+def binance_contract_kind(code: BinanceContractType) -> ReportedContractKind:
+    match code:
+        case "PERPETUAL" | "PERPETUAL_DELIVERING":
+            return "PERPETUAL"
+        case "CURRENT_MONTH" | "NEXT_MONTH" | "CURRENT_QUARTER" | "NEXT_QUARTER":
+            return "DATED_FUTURE"
+    raise ValueError("Unsupported Binance reported contract type")
+
+
+def bybit_contract_kind(
+    code: BybitContractType,
+) -> tuple[ReportedContractKind, Literal["LINEAR", "INVERSE"]]:
+    match code:
+        case "LinearPerpetual":
+            return "PERPETUAL", "LINEAR"
+        case "InversePerpetual":
+            return "PERPETUAL", "INVERSE"
+        case "LinearFutures":
+            return "DATED_FUTURE", "LINEAR"
+        case "InverseFutures":
+            return "DATED_FUTURE", "INVERSE"
+    raise ValueError("Unsupported Bybit reported contract type")
+
+
+class BinanceContractObservation(DomainModel):
+    provider: Literal["binance"]
+    kind: ReportedContractKind
+    contract_type: BinanceContractType
+    margin_asset: str = Field(min_length=1, pattern=r"^\S+$")
+
+    @model_validator(mode="after")
+    def actual_contract_family(self) -> Self:
+        if self.kind != binance_contract_kind(self.contract_type):
+            raise ValueError("Binance reported contract type conflicts with its observed family")
+        return self
+
+
+class BybitContractObservation(DomainModel):
+    provider: Literal["bybit"]
+    kind: ReportedContractKind
+    contract_type: BybitContractType
+    settlement_mode: Literal["LINEAR", "INVERSE"]
+    settle_coin: str = Field(min_length=1, pattern=r"^\S+$")
+
+    @model_validator(mode="after")
+    def actual_contract_family(self) -> Self:
+        kind, mode = bybit_contract_kind(self.contract_type)
+        if self.kind != kind or self.settlement_mode != mode:
+            raise ValueError("Bybit reported contract type conflicts with its observed family/mode")
+        return self
+
+
+type ReportedDerivativeContract = Annotated[
+    BinanceContractObservation | BybitContractObservation,
+    Field(discriminator="provider"),
+]
+
+
 class InstrumentObservation(DomainModel):
-    market_type: Literal["SPOT", "PERP_LINEAR"]
+    model_config = ConfigDict(validate_by_name=True, serialize_by_alias=True)
+
+    acquisition_market_type: Literal["SPOT", "PERP_LINEAR"] = Field(
+        validation_alias="market_type", serialization_alias="market_type"
+    )
     symbol: str = Field(min_length=1)
     base: str | None
     quote: str | None
@@ -73,6 +152,20 @@ class CoinbaseInstrument(InstrumentObservation):
 
 class VenueInstrument(InstrumentObservation):
     venue: Literal["binance", "kraken", "okx", "bybit", "hyperliquid"]
+    reported_contract: ReportedDerivativeContract | None = None
+
+    def with_reported_contract(self, observation: ReportedDerivativeContract) -> Self:
+        return type(self).model_validate(self.model_copy(update={"reported_contract": observation}))
+
+    @model_validator(mode="after")
+    def reported_contract_owner(self) -> Self:
+        if self.reported_contract is not None and (
+            self.venue != self.reported_contract.provider
+            or self.contract_type != self.reported_contract.contract_type
+            or self.acquisition_market_type != "PERP_LINEAR"
+        ):
+            raise ValueError("Reported contract observation conflicts with its capture owner/code")
+        return self
 
 
 type InstrumentRecord = CoinbaseInstrument | VenueInstrument
@@ -91,7 +184,8 @@ class InstrumentSnapshot(RootModel[dict[str, InstrumentRecord]]):
 
     def storage_record(self) -> dict[str, JsonValue]:
         return {
-            symbol: record.model_dump(mode="json", exclude_unset=True) for symbol, record in self.root.items()
+            symbol: record.model_dump(mode="json", exclude_unset=True, by_alias=True)
+            for symbol, record in self.root.items()
         }
 
 
@@ -219,6 +313,14 @@ class InstrumentSnapshotUpdate(DomainModel):
     def actual_snapshot_digest(self) -> Self:
         if sha256(self.snapshot.storage_record()) != self.sha256:
             raise ValueError("Prepared instrument snapshot digest does not match its observations")
+        if any(
+            isinstance(record, VenueInstrument)
+            and record.venue in {"binance", "bybit"}
+            and record.acquisition_market_type == "PERP_LINEAR"
+            and record.reported_contract is None
+            for record in self.snapshot.root.values()
+        ):
+            raise ValueError("New derivative capture requires reported contract observations")
         return self
 
     def storage_record(self) -> dict[str, JsonValue]:

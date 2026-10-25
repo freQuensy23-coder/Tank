@@ -134,7 +134,11 @@ async def test_missing_protocol_fact_cannot_remove_catalog_or_advance_snapshot(
                             "baseCoin": "BTC",
                             "quoteCoin": "USDT",
                             "status": "Trading",
-                            **({"contractType": "LinearPerpetual"} if market_type == "PERP_LINEAR" else {}),
+                            **(
+                                {"contractType": "LinearPerpetual", "settleCoin": "USDT"}
+                                if market_type == "PERP_LINEAR"
+                                else {}
+                            ),
                         }
                     ],
                 }

@@ -1,24 +1,26 @@
 """Live catalog projections require actual facts; retained unknowns never become false changes."""
 
+import os
 from copy import deepcopy
 from pathlib import Path
 from typing import Literal
 
 import httpx
 import pytest
+from postgres_helpers import PostgresTemplate
 from pydantic import JsonValue, ValidationError
 from pydantic_settings import SettingsConfigDict
 from source_support import fixture_request_budgets, fixture_versions, source_definition, source_feed
 
 from tank.contracts import DomainModel
-from tank.contracts.json import encode_json
+from tank.contracts.json import decode_unique_json, encode_json
 from tank.contracts.source_checkpoints import CoinbaseInstrument, InstrumentSnapshot
 from tank.contracts.sources import FeedParsingSpec
 from tank.settings import Settings
 from tank.sources import SourceService
 from tank.sources.instrument_adapters import MarketType, Venue, parse_instrument_page
 from tank.sources.instruments import InstrumentPage, instrument_changes
-from tank.storage import MemoryRepository
+from tank.storage import MemoryRepository, Repository
 
 CLOCK = "2026-10-25T12:00:00Z"
 
@@ -59,6 +61,9 @@ def cases() -> list[RowCase]:
             if market_type == "PERP_LINEAR":
                 row["contractType"] = "PERPETUAL" if venue == "binance" else "LinearPerpetual"
                 required.append("contractType")
+                settlement_field = "marginAsset" if venue == "binance" else "settleCoin"
+                row[settlement_field] = "USDT"
+                required.append(settlement_field)
             result.append(
                 RowCase(
                     venue=venue,
@@ -591,3 +596,342 @@ def test_native_kraken_key_is_an_actual_identity_not_a_string_coercion() -> None
     case = next(case for case in cases() if case.venue == "kraken")
     with pytest.raises(ValueError, match="identity cannot contain"):
         parse_instrument_page({"error": [], "result": {" XAAAZUSD ": case.row}}, case.feed())
+
+
+@pytest.mark.parametrize(
+    ("code", "kind"),
+    [
+        ("PERPETUAL", "PERPETUAL"),
+        ("PERPETUAL_DELIVERING", "PERPETUAL"),
+        ("CURRENT_MONTH", "DATED_FUTURE"),
+        ("NEXT_MONTH", "DATED_FUTURE"),
+        ("CURRENT_QUARTER", "DATED_FUTURE"),
+        ("NEXT_QUARTER", "DATED_FUTURE"),
+    ],
+)
+def test_binance_observed_contract_family_is_not_the_requested_acquisition_lane(
+    code: str,
+    kind: str,
+) -> None:
+    from tank.contracts.source_checkpoints import BinanceContractObservation, VenueInstrument
+
+    case = next(case for case in cases() if case.venue == "binance" and case.market_type == "PERP_LINEAR")
+    row = {**case.row, "contractType": code, "marginAsset": "USDC"}
+    observed = next(iter(parse_instrument_page(payload(case, row), case.feed()).snapshot.root.values()))
+    assert isinstance(observed, VenueInstrument)
+    assert observed.acquisition_market_type == "PERP_LINEAR"
+    assert isinstance(observed.reported_contract, BinanceContractObservation)
+    assert observed.reported_contract.kind == kind
+    assert observed.reported_contract.contract_type == code
+    assert observed.reported_contract.margin_asset == "USDC"
+
+
+@pytest.mark.parametrize(
+    ("code", "kind", "mode", "settle"),
+    [
+        ("LinearPerpetual", "PERPETUAL", "LINEAR", "USDT"),
+        ("InversePerpetual", "PERPETUAL", "INVERSE", "AAA"),
+        ("LinearFutures", "DATED_FUTURE", "LINEAR", "USDC"),
+        ("InverseFutures", "DATED_FUTURE", "INVERSE", "AAA"),
+    ],
+)
+def test_bybit_reported_contract_and_settlement_survive_a_linear_query(
+    code: str,
+    kind: str,
+    mode: str,
+    settle: str,
+) -> None:
+    from tank.contracts.source_checkpoints import BybitContractObservation, VenueInstrument
+
+    case = next(case for case in cases() if case.venue == "bybit" and case.market_type == "PERP_LINEAR")
+    observed = next(
+        iter(
+            parse_instrument_page(
+                payload(case, {**case.row, "contractType": code, "settleCoin": settle}),
+                case.feed(),
+            ).snapshot.root.values()
+        )
+    )
+    assert isinstance(observed, VenueInstrument)
+    assert observed.acquisition_market_type == "PERP_LINEAR"
+    assert isinstance(observed.reported_contract, BybitContractObservation)
+    assert observed.reported_contract.kind == kind and observed.reported_contract.settlement_mode == mode
+    assert observed.reported_contract.settle_coin == settle
+
+
+def test_legacy_acquisition_alias_preserves_snapshot_digest_and_external_identity() -> None:
+    from tank.contracts.source_checkpoints import (
+        InstrumentAcquisitionScope,
+        ScopedInstrumentBaseline,
+        VenueInstrument,
+    )
+    from tank.util import sha256
+
+    legacy: dict[str, JsonValue] = {
+        "venue": "bybit",
+        "market_type": "PERP_LINEAR",
+        "symbol": "AAAUSDT",
+        "base": "AAA",
+        "quote": "USDT",
+        "status": "Settling",
+        "contract_type": "LinearPerpetual",
+    }
+    named = VenueInstrument(
+        venue="bybit",
+        acquisition_market_type="PERP_LINEAR",
+        symbol="AAAUSDT",
+        base="AAA",
+        quote="USDT",
+        status="Settling",
+        contract_type="LinearPerpetual",
+    )
+    snapshot = InstrumentSnapshot(root={"AAAUSDT": named})
+    legacy_snapshot: dict[str, JsonValue] = {"AAAUSDT": legacy}
+    assert snapshot.storage_record() == legacy_snapshot
+    assert named.reported_contract is None
+    case = next(case for case in cases() if case.venue == "bybit" and case.market_type == "PERP_LINEAR")
+    configured = source_feed(
+        {
+            "kind": "instruments",
+            "url": case.feed().url,
+            "venue": "bybit",
+            "market_type": "PERP_LINEAR",
+        }
+    )
+    stored = ScopedInstrumentBaseline.model_validate(
+        {
+            "source_id": "S14",
+            "acquisition_scope": InstrumentAcquisitionScope.from_feed(configured),
+            "instruments": legacy_snapshot,
+            "sha256": sha256(legacy_snapshot),
+            **fixture_versions().model_dump(mode="json"),
+        }
+    )
+    assert stored.instruments.storage_record() == legacy_snapshot
+    previous = InstrumentSnapshot.model_validate({"AAAUSDT": {**legacy, "status": "Trading"}})
+    rows, _ = instrument_changes(
+        snapshot,
+        previous,
+        configured,
+        [InstrumentPage(payload=encode_json(payload(case, case.row)), observed_at=CLOCK)],
+        {"AAAUSDT": 0},
+        CLOCK,
+    )
+    assert rows[0].discovery.external_id == "bybit|PERP_LINEAR|AAAUSDT|" + sha256(legacy)
+    evidence = decode_unique_json(rows[0].discovery.text)
+    assert isinstance(evidence, dict)
+    after = evidence["after"]
+    assert isinstance(after, dict)
+    assert "acquisition_market_type" in after and "market_type" not in after
+
+
+async def assert_mixed_bybit_contract_restart(repo: Repository, tmp_path: Path) -> None:
+    from tank.contracts.source_checkpoints import (
+        BybitContractObservation,
+        ScopedInstrumentBaseline,
+        VenueInstrument,
+    )
+
+    case = next(case for case in cases() if case.venue == "bybit" and case.market_type == "PERP_LINEAR")
+    variants: tuple[tuple[str, str, str], ...] = (
+        ("AAAUSDT", "LinearPerpetual", "USDT"),
+        ("AAAUSDT_FUT", "LinearFutures", "USDT"),
+        ("AAAUSD", "InversePerpetual", "AAA"),
+        ("AAAUSD_FUT", "InverseFutures", "AAA"),
+    )
+    phase: Literal["BASELINE", "INVALID", "CHANGE"] = "BASELINE"
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["category"] == "linear" and request.url.params["baseCoin"] == "AAA"
+        rows: list[JsonValue] = []
+        for symbol, code, settlement in variants:
+            row = {**case.row, "symbol": symbol, "contractType": code, "settleCoin": settlement}
+            if phase == "INVALID" and symbol == "AAAUSD_FUT":
+                row["contractType"] = "UNREPORTED_NEW_CONTRACT"
+            if phase == "CHANGE" and symbol in {"AAAUSDT_FUT", "AAAUSD_FUT"}:
+                row["status"] = "Delivering"
+            rows.append(row)
+        return httpx.Response(
+            200,
+            json={
+                "retCode": 0,
+                "result": {"category": "linear", "list": rows, "nextPageCursor": ""},
+            },
+        )
+
+    settings = SyntheticSettings(data_dir=tmp_path, ops_progress_enabled=False, apify_api_token=None)
+    budgets = fixture_request_budgets()
+    configured = source_definition(
+        {
+            "source_id": "S14",
+            "feeds": [
+                {
+                    "kind": "instruments",
+                    "url": case.feed().url + "?category=linear&baseCoin=AAA",
+                    "venue": "bybit",
+                    "market_type": "PERP_LINEAR",
+                }
+            ],
+        }
+    )
+    try:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+            service = SourceService(repo, settings, http=http, versions=fixture_versions(), budgets=budgets)
+            service.sources["S14"] = configured
+            assert (await service.poll_once("S14")).items == 0
+            baseline = await repo.get("ops.source_checkpoints", "S14:0:instruments")
+            assert baseline is not None
+            observed = ScopedInstrumentBaseline.from_document(baseline)
+            assert set(observed.instruments.root) == {symbol for symbol, _, _ in variants}
+            inverse = observed.instruments.root["AAAUSD_FUT"]
+            assert isinstance(inverse, VenueInstrument) and isinstance(
+                inverse.reported_contract, BybitContractObservation
+            )
+            assert (
+                inverse.reported_contract.kind == "DATED_FUTURE"
+                and inverse.reported_contract.settlement_mode == "INVERSE"
+            )
+            await service.close()
+            restarted = SourceService(repo, settings, http=http, versions=fixture_versions(), budgets=budgets)
+            restarted.sources["S14"] = configured
+            try:
+                assert (await restarted.poll_once("S14")).items == 0
+                phase = "INVALID"
+                invalid = await restarted.poll_once("S14")
+                assert invalid.status == "DEGRADED" and invalid.items == 0
+                assert await repo.get("ops.source_checkpoints", "S14:0:instruments") == baseline
+                assert not await repo.list("ingest.source_items")
+                phase = "CHANGE"
+                assert (await restarted.poll_once("S14")).items == 1
+                [changed] = await repo.list("ingest.source_items")
+                assert changed["change"] == "STATE_UPDATE"
+                title = changed["title"]
+                assert isinstance(title, str)
+                assert "Bybit instrument catalog" in title and "PERP" not in title
+                assert (await restarted.poll_once("S14")).items == 0
+            finally:
+                await restarted.close()
+    finally:
+        await budgets.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_mixed_bybit_contracts_restart_without_filtering_or_false_removal(tmp_path: Path) -> None:
+    await assert_mixed_bybit_contract_restart(MemoryRepository(), tmp_path)
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_postgres_mixed_bybit_contracts_preserve_scope_and_actual_kind(
+    tmp_path: Path,
+    postgres_template: PostgresTemplate,
+) -> None:
+    async with postgres_template.repository(os.environ["TANK_SOURCE_TEST_DATABASE_URL"]) as repo:
+        await assert_mixed_bybit_contract_restart(repo, tmp_path)
+
+
+def test_reported_contract_cannot_be_relabelled_or_promoted_from_unknown_history() -> None:
+    from tank.contracts.source_checkpoints import (
+        BybitContractObservation,
+        InstrumentAcquisitionScope,
+        InstrumentSnapshotUpdate,
+    )
+    from tank.util import sha256
+
+    with pytest.raises(ValidationError, match="observed family/mode"):
+        BybitContractObservation(
+            provider="bybit",
+            kind="PERPETUAL",
+            contract_type="LinearFutures",
+            settlement_mode="LINEAR",
+            settle_coin="USDT",
+        )
+    legacy = InstrumentSnapshot.model_validate(
+        {
+            "AAAUSDT": {
+                "venue": "bybit",
+                "market_type": "PERP_LINEAR",
+                "symbol": "AAAUSDT",
+                "base": "AAA",
+                "quote": "USDT",
+                "status": "Trading",
+                "contract_type": "LinearPerpetual",
+            }
+        }
+    )
+    case = next(case for case in cases() if case.venue == "bybit" and case.market_type == "PERP_LINEAR")
+    configured = source_feed(
+        {
+            "kind": "instruments",
+            "url": case.feed().url,
+            "venue": "bybit",
+            "market_type": "PERP_LINEAR",
+        }
+    )
+    with pytest.raises(ValidationError, match="requires reported contract observations"):
+        InstrumentSnapshotUpdate(
+            source_id="S14",
+            checkpoint_key="S14:0:instruments",
+            snapshot=legacy,
+            acquisition_scope=InstrumentAcquisitionScope.from_feed(configured),
+            archives=[],
+            sha256=sha256(legacy.storage_record()),
+            versions=fixture_versions(),
+        )
+
+
+def test_known_reported_settlement_change_remains_a_material_catalog_transition() -> None:
+    case = next(case for case in cases() if case.venue == "bybit" and case.market_type == "PERP_LINEAR")
+    before = parse_instrument_page(payload(case, case.row), case.feed()).snapshot
+    changed = {**case.row, "settleCoin": "USDC"}
+    after = parse_instrument_page(payload(case, changed), case.feed()).snapshot
+    configured = source_feed(
+        {
+            "kind": "instruments",
+            "url": case.feed().url,
+            "venue": "bybit",
+            "market_type": "PERP_LINEAR",
+        }
+    )
+    changes, _ = instrument_changes(
+        after,
+        before,
+        configured,
+        [
+            InstrumentPage(
+                payload=encode_json(payload(case, changed)),
+                observed_at=CLOCK,
+            )
+        ],
+        {"AAAUSDT": 0},
+        CLOCK,
+    )
+    assert len(changes) == 1 and changes[0].discovery.change == "STATE_UPDATE"
+    assert '"settle_coin": "USDC"' in changes[0].discovery.text
+
+
+@pytest.mark.parametrize(
+    ("venue", "market_type", "field"),
+    [
+        ("hyperliquid", "PERP_LINEAR", "quote"),
+        ("okx", "PERP_LINEAR", "baseCcy"),
+        ("okx", "PERP_LINEAR", "quoteCcy"),
+    ],
+)
+def test_present_optional_currency_identity_is_not_whitespace(
+    venue: Venue,
+    market_type: MarketType,
+    field: str,
+) -> None:
+    case = next(case for case in cases() if case.venue == venue and case.market_type == market_type)
+    with pytest.raises(ValidationError, match="identity cannot contain"):
+        parse_instrument_page(payload(case, {**case.row, field: " AAA "}), case.feed())
+
+
+def test_okx_spot_cannot_claim_a_derivative_contract_mode() -> None:
+    case = next(case for case in cases() if case.venue == "okx" and case.market_type == "SPOT")
+    with pytest.raises(ValidationError):
+        parse_instrument_page(payload(case, {**case.row, "ctType": "linear"}), case.feed())
+    parsed = parse_instrument_page(payload(case, {**case.row, "ctType": ""}), case.feed())
+    assert next(iter(parsed.snapshot.root.values())).contract_type == ""
