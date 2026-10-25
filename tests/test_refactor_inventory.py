@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -148,3 +149,46 @@ def test_vendor_diff_keeps_authored_lines_separate_from_preserved_signatures() -
     assert removed == 1
     ranges, removed = changed_ranges(modified, "def upstream(value):\n")
     assert not ranges and removed == 2
+
+
+@pytest.mark.parametrize("invalid", ["duplicate", "counts", "baseline"])
+def test_vendor_ownership_rejects_inconsistent_native_manifest(
+    tmp_path: Path, invalid: Literal["duplicate", "counts", "baseline"]
+) -> None:
+    from scripts.ci.openma_inventory import (
+        ARCHIVE_SHA256,
+        UPSTREAM_COMMIT,
+        OwnershipAssignment,
+        OwnershipCounts,
+        OwnershipManifest,
+        load_ownership,
+    )
+
+    assignment = OwnershipAssignment(
+        path="vendor/openma/fixture.ts",
+        owner="quality",
+        classification="TANK_ADDED",
+        reviewed_input_sha256="0" * 64,
+        scope="Synthetic ownership boundary fixture",
+        status="assigned",
+    )
+    assignments = [assignment, assignment] if invalid == "duplicate" else [assignment]
+    counts = OwnershipCounts(quality=0 if invalid == "counts" else len(assignments), agents=0, foundation=0)
+    manifest = OwnershipManifest(
+        source_coverage_sha256="0" * 64,
+        coverage_checkout_commit="0" * 40,
+        upstream_commit="0" * 40 if invalid == "baseline" else UPSTREAM_COMMIT,
+        archive_sha256=ARCHIVE_SHA256,
+        priority="Synthetic data; no executable instructions",
+        assignments=assignments,
+        counts=counts,
+    )
+    path = tmp_path / "ownership.json"
+    path.write_text(manifest.model_dump_json())
+    reasons = {
+        "duplicate": "duplicate program assignments",
+        "counts": "counts do not describe",
+        "baseline": "different upstream baseline",
+    }
+    with pytest.raises(ValueError, match=reasons[invalid]):
+        load_ownership(path)
