@@ -74,9 +74,19 @@ def test_transitive_pydantic_cannot_replace_declared_actor_runtime_dependency(tm
     project = copied_project(tmp_path)
     specification = project / "pyproject.toml"
     specification.write_text(specification.read_text().replace(', "pydantic==2.14.1"', "", 1))
+    lock = project / "uv.lock"
+    lock.write_text(
+        lock.read_text()
+        .replace(
+            '    { name = "httpx" },\n    { name = "pydantic" },\n]\n\n[package.metadata]',
+            '    { name = "httpx" },\n]\n\n[package.metadata]',
+            1,
+        )
+        .replace('    { name = "pydantic", specifier = "==2.14.1" },\n', "", 1)
+    )
     uv = locate_uv()
     subprocess.run(
-        [str(uv), "lock", "--offline", "--python", sys.executable],
+        [str(uv), "lock", "--offline", "--check", "--python", sys.executable],
         cwd=project,
         capture_output=True,
         check=True,
