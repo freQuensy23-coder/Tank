@@ -806,3 +806,10 @@ The three-control immediate-market-access test now resolves/captures its actual 
 
 Fourteen focused units pass4.60s with zero skips (p90 .730s,max1.650s); both actual PostgreSQL prompt cases pass5.13s. Broader merged-native consumer qualification is still required. Original d7 and36 immutable diagnostics remain preserved in .verification.
 
+
+### Complete authored native replay/reference wire cohort
+
+The merged native contract also applies to authored replay provider/config fixtures beyond the ten unit cases. Their requested prompt labels and reasoning effort are now explicitly synthetic fixture declarations. No real retained config, body, code pin or unavailable captured identity was filled from current configuration. Session-list pagination is explicit; request-derived creation records and identical direct GET resources retain actual metadata bindings. Sent-event replies echo the actual parsed event through the canonical acknowledgment body. The foreign live-session discovery control still advertises a complete foreign resource and must not be reused for replay.
+
+Phased reference fixtures update their same native resource's metadata only from the actual posted phase binding, preserving cutoff/evidence-digest assertions. The previously omitted pure DecisionEngine constructor caller is now parameterless. Missing lookup, future-canary exclusion, immutable checkpoint and failure-after-first-checkpoint controls remain. All21 replay/policy integrations pass23.12s; the durable HTTP error/replay four-case group passes; all8 actual phased/reference cases pass38.70s. Whole merged cohort proof remains the next gate.
+

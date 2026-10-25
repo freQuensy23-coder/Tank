@@ -3901,6 +3901,9 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
     import asyncio
     import json
 
+    from native_input_fixtures import acknowledge_native_input
+    from native_session_fixtures import created_native_session
+
     from tank.agents import SessionService
     from tank.analysis.decisions import DecisionEngine
     from tank.analysis.truth import compute_market_truth
@@ -3930,18 +3933,32 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
     native_posts = []
     replay_posts = []
     lose_reply = True
+    native_records = {}
 
-    def control(request: httpx.Request):
+    def control(request: httpx.Request) -> httpx.Response:
         nonlocal lose_reply
         if request.url.host == "evidence.invalid":
             fetched.append(str(request.url))
             return httpx.Response(http_status, text="Synthetic unavailable source")
         if request.url.path.endswith("/sessions"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "next_page": None})
             body = json.loads(request.content)
-            target = replay_sid if body.get("metadata", {}).get("tank_replay_run_id") else sid
-            return httpx.Response(201, json=resolved_native_domain_fixture(target))
+            target = replay_sid if body["metadata"].get("tank_replay_run_id") is not None else sid
+            native_records[target] = created_native_session(
+                request,
+                target,
+                agent_snapshot={
+                    "version": 1,
+                    "system": "Actual resolved synthetic domain integration instructions",
+                    "skills": [],
+                    "tools": [],
+                    "model": {"id": "gpt-6.1-sol"},
+                },
+            )
+            return httpx.Response(201, json=native_records[target])
+        if request.method == "GET" and request.url.path.rsplit("/", 1)[-1] in {sid, replay_sid}:
+            return httpx.Response(200, json=native_records[request.url.path.rsplit("/", 1)[-1]])
         if request.method == "POST" and request.url.path.endswith("/events"):
             payload = json.loads(request.content)
             (native_posts if "/sessions/" + sid + "/" in request.url.path else replay_posts).append(payload)
@@ -3953,6 +3970,12 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
             ):
                 lose_reply = False
                 raise httpx.ConnectError("Synthetic lost acknowledgement", request=request)
+            return httpx.Response(
+                200,
+                json=acknowledge_native_input(
+                    request, "native-ack-" + str(len(native_posts) + len(replay_posts))
+                ),
+            )
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:

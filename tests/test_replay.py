@@ -4,6 +4,8 @@ from pathlib import Path
 import httpx
 import pytest
 from model_fixture import audited_result, model_arguments
+from native_input_fixtures import acknowledge_native_input
+from native_session_fixtures import created_native_session, native_session_record
 from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_http_admission, fixture_versions
 
@@ -310,6 +312,8 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
         "registry": {"tokens": [{"token_id": "T", "symbol": "T"}], "entities": [], "instruments": []},
         "sources": {"sources": [{"source_id": "S01", "name": "Synthetic replay source"}]},
         "openma": {
+            "prompt_version": "synthetic-replay-prompt",
+            "reasoning_effort": "medium",
             "agent_id": "captured-analyst",
             "environment_id": "original-live-env",
             "replay_environment_id": "tank-replay-fixture-env",
@@ -503,7 +507,16 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
     accepted_inputs = []
     decision_ack_bodies = []
 
-    async def transport(request: httpx.Request):
+    native_records = {}
+    native_snapshot = {
+        "version": 1,
+        "system": "Fixture analyst prompt",
+        "skills": [],
+        "tools": [],
+        "model": {"id": "fixture-model"},
+    }
+
+    async def transport(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/executions"):
             assert request.method == "GET"
             ids = request.url.params.get_list("ids[]")
@@ -519,24 +532,22 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
             )
         path = request.url.path
         if request.method == "GET" and path.rsplit("/", 1)[-1] in {"fresh-session", "fresh-replay-session"}:
-            return httpx.Response(
-                200,
-                json={
-                    "agent": {
-                        "id": "captured-analyst",
-                        "version": 1,
-                        "system": "Fixture analyst prompt",
-                        "skills": [],
-                        "tools": [],
-                        "model": {"id": "fixture-model"},
-                    }
-                },
-            )
+            return httpx.Response(200, json=native_records[path.rsplit("/", 1)[-1]])
         if path.endswith("/sessions"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": [{"id": old_sid, "metadata": {}}]})
+                foreign = native_session_record(
+                    old_sid,
+                    agent_id="captured-analyst",
+                    environment_id="original-live-env",
+                    metadata={},
+                    model_id="fixture-model",
+                )
+                return httpx.Response(200, json={"data": [foreign], "next_page": None})
             requests.append(json.loads(request.content))
-            return httpx.Response(201, json={"id": "fresh-replay-session"})
+            native_records["fresh-replay-session"] = created_native_session(
+                request, "fresh-replay-session", agent_snapshot=native_snapshot
+            )
+            return httpx.Response(201, json=native_records["fresh-replay-session"])
         if path.endswith("/events/stream"):
             return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=Stream())
         if path.endswith("/events"):
@@ -653,7 +664,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                             },
                         )
                     )
-            return httpx.Response(200, json={"data": [{"id": accepted_id}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, accepted_id))
         raise AssertionError("Unexpected control-plane request")
 
     class CapturedMarket:
@@ -1200,7 +1211,13 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
         "thresholds": Settings(_env_file=None).load_config("thresholds"),
         "semantics": {},
         "dependency_map": {},
-        "openma": {"agent_id": "analyst", "environment_id": "live", "replay_environment_id": "replay"},
+        "openma": {
+            "prompt_version": "synthetic-replay-prompt",
+            "reasoning_effort": "medium",
+            "agent_id": "analyst",
+            "environment_id": "live",
+            "replay_environment_id": "replay",
+        },
     }
 
     class Config(Settings):
@@ -1336,7 +1353,16 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
     actor_item = None
     fresh_event_id = None
 
-    async def transport(request: httpx.Request):
+    native_records = {}
+    native_snapshot = {
+        "version": 1,
+        "system": "Synthetic projection actor",
+        "skills": [],
+        "tools": [],
+        "model": {"id": "fixture-model"},
+    }
+
+    async def transport(request: httpx.Request) -> httpx.Response:
         nonlocal actor_stage, actor_item, fresh_event_id
         if request.url.path.endswith("/executions"):
             assert request.method == "GET"
@@ -1352,24 +1378,15 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
                 },
             )
         if request.method == "GET" and request.url.path.endswith("/sessions/new-session"):
-            return httpx.Response(
-                200,
-                json={
-                    "agent": {
-                        "id": "analyst",
-                        "version": 1,
-                        "system": "Synthetic projection actor",
-                        "skills": [],
-                        "tools": [],
-                        "model": {"id": "fixture-model"},
-                    }
-                },
-            )
+            return httpx.Response(200, json=native_records["new-session"])
         if request.url.path.endswith("/sessions"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "next_page": None})
             assert json.loads(request.content)["environment_id"] == "replay"
-            return httpx.Response(201, json={"id": "new-session"})
+            native_records["new-session"] = created_native_session(
+                request, "new-session", agent_snapshot=native_snapshot
+            )
+            return httpx.Response(201, json=native_records["new-session"])
         if request.url.path.endswith("/events/stream"):
             return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
         if request.url.path.endswith("/archive"):
@@ -1491,7 +1508,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
                             "stop_reason": {"type": "end_turn"},
                         }
                     )
-            return httpx.Response(200, json={"data": [{"id": accepted_id}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, accepted_id))
         raise AssertionError("Unexpected request")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
@@ -1826,7 +1843,13 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
         "thresholds": {**Settings(_env_file=None).load_config("thresholds"), "call_expiry_days": 7},
         "semantics": {},
         "dependency_map": {},
-        "openma": {"agent_id": "analyst", "environment_id": "live", "replay_environment_id": "replay"},
+        "openma": {
+            "prompt_version": "synthetic-replay-prompt",
+            "reasoning_effort": "medium",
+            "agent_id": "analyst",
+            "environment_id": "live",
+            "replay_environment_id": "replay",
+        },
     }
 
     class Config(Settings):
@@ -2016,7 +2039,16 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
     accepted_inputs = []
     actor_stage = None
 
-    async def control(request: httpx.Request):
+    native_records = {}
+    native_snapshot = {
+        "version": 1,
+        "system": "Fixture analyst prompt",
+        "skills": [],
+        "tools": [],
+        "model": {"id": "fixture-model"},
+    }
+
+    async def control(request: httpx.Request) -> httpx.Response:
         nonlocal actor_stage
         if request.url.path.endswith("/executions"):
             assert request.method == "GET"
@@ -2036,25 +2068,14 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
         )
         path = request.url.path
         if request.method == "GET" and path.rsplit("/", 1)[-1] in {"fresh-session", "fresh-replay-session"}:
-            return httpx.Response(
-                200,
-                json={
-                    "agent": {
-                        "id": "captured-analyst",
-                        "version": 1,
-                        "system": "Fixture analyst prompt",
-                        "skills": [],
-                        "tools": [],
-                        "model": {"id": "fixture-model"},
-                    }
-                },
-            )
+            return httpx.Response(200, json=native_records[path.rsplit("/", 1)[-1]])
         if path.endswith("/sessions"):
-            return (
-                httpx.Response(200, json={"data": []})
-                if request.method == "GET"
-                else httpx.Response(201, json={"id": "fresh-session"})
+            if request.method == "GET":
+                return httpx.Response(200, json={"data": [], "next_page": None})
+            native_records["fresh-session"] = created_native_session(
+                request, "fresh-session", agent_snapshot=native_snapshot
             )
+            return httpx.Response(201, json=native_records["fresh-session"])
         if path.endswith("/events/stream"):
             return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
         if path.endswith("/archive"):
@@ -2133,7 +2154,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
                             "stop_reason": {"type": "end_turn"},
                         }
                     )
-            return httpx.Response(200, json={"data": [{"id": accepted_id}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, accepted_id))
         raise AssertionError("Unexpected control-plane request")
 
     repo = MemoryRepository()
@@ -2264,7 +2285,13 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
         "thresholds": Settings(_env_file=None).load_config("thresholds"),
         "semantics": {},
         "dependency_map": {},
-        "openma": {"agent_id": "analyst", "environment_id": "live", "replay_environment_id": "replay"},
+        "openma": {
+            "prompt_version": "synthetic-replay-prompt",
+            "reasoning_effort": "medium",
+            "agent_id": "analyst",
+            "environment_id": "live",
+            "replay_environment_id": "replay",
+        },
     }
 
     class Config(Settings):
@@ -2405,7 +2432,16 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
     settled_inputs = set()
     actor_stage = None
 
-    async def control(request: httpx.Request):
+    native_records = {}
+    native_snapshot = {
+        "version": 1,
+        "system": "Fixture analyst prompt",
+        "skills": [],
+        "tools": [],
+        "model": {"id": "fixture-model"},
+    }
+
+    async def control(request: httpx.Request) -> httpx.Response:
         nonlocal actor_stage
         if request.url.path.endswith("/executions"):
             assert request.method == "GET"
@@ -2426,25 +2462,14 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
             )
         path = request.url.path
         if request.method == "GET" and path.rsplit("/", 1)[-1] in {"fresh-session", "fresh-replay-session"}:
-            return httpx.Response(
-                200,
-                json={
-                    "agent": {
-                        "id": "captured-analyst",
-                        "version": 1,
-                        "system": "Fixture analyst prompt",
-                        "skills": [],
-                        "tools": [],
-                        "model": {"id": "fixture-model"},
-                    }
-                },
-            )
+            return httpx.Response(200, json=native_records[path.rsplit("/", 1)[-1]])
         if path.endswith("/sessions"):
-            return (
-                httpx.Response(200, json={"data": []})
-                if request.method == "GET"
-                else httpx.Response(201, json={"id": "fresh-session"})
+            if request.method == "GET":
+                return httpx.Response(200, json={"data": [], "next_page": None})
+            native_records["fresh-session"] = created_native_session(
+                request, "fresh-session", agent_snapshot=native_snapshot
             )
+            return httpx.Response(201, json=native_records["fresh-session"])
         if path.endswith("/events/stream"):
             return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
         if path.endswith("/archive"):
@@ -2547,7 +2572,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
                             "stop_reason": {"type": "end_turn"},
                         }
                     )
-            return httpx.Response(200, json={"data": [{"id": accepted_id}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, accepted_id))
         raise AssertionError("Unexpected request")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
@@ -2874,6 +2899,8 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
         for name in ("registry", "sources", "thresholds", "semantics", "dependency_map")
     }
     cfg["openma"] = {
+        "prompt_version": "synthetic-replay-prompt",
+        "reasoning_effort": "medium",
         "agent_id": "fixture-agent",
         "environment_id": "analysis",
         "replay_environment_id": "replay",
@@ -2965,7 +2992,16 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
             }
         )
 
-    async def transport(request: httpx.Request):
+    native_records = {}
+    native_snapshot = {
+        "version": 1,
+        "system": "Synthetic publication producer",
+        "skills": [],
+        "tools": [],
+        "model": {"id": "fixture-model"},
+    }
+
+    async def transport(request: httpx.Request) -> httpx.Response:
         nonlocal stage, event_id, publication, partial_card, partial_intent
         endpoint = request.url.path
         if endpoint.endswith("/executions"):
@@ -2985,25 +3021,14 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
                 },
             )
         if endpoint.endswith("/sessions"):
-            return (
-                httpx.Response(200, json={"data": []})
-                if request.method == "GET"
-                else httpx.Response(201, json={"id": "reference-session"})
+            if request.method == "GET":
+                return httpx.Response(200, json={"data": [], "next_page": None})
+            native_records["reference-session"] = created_native_session(
+                request, "reference-session", agent_snapshot=native_snapshot
             )
+            return httpx.Response(201, json=native_records["reference-session"])
         if request.method == "GET" and endpoint.endswith("/reference-session"):
-            return httpx.Response(
-                200,
-                json={
-                    "agent": {
-                        "id": "fixture-agent",
-                        "version": 1,
-                        "system": "Synthetic publication producer",
-                        "skills": [],
-                        "tools": [],
-                        "model": {"id": "fixture-model"},
-                    }
-                },
-            )
+            return httpx.Response(200, json=native_records["reference-session"])
         if endpoint.endswith("/events/stream"):
             return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
         if endpoint.endswith("/archive"):
@@ -3126,7 +3151,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
                             "stop_reason": {"type": "end_turn"},
                         }
                     )
-            return httpx.Response(200, json={"data": [{"id": identity}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, identity))
         raise AssertionError("Unexpected native control-plane request")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
