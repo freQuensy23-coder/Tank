@@ -6,7 +6,6 @@ Updated 2026-10-20, from the human user in the original Tank conversation.
 - Original-agent followers must stop overlapping edits until ownership is coordinated. Do not overwrite, revert, reformat, or replace the lead agent's changes with an older copy. Preserve existing evidence; supply read-only analysis and handoff information.
 - The lead agent may continue the user's work. These coordination instructions do not require the lead to obtain approval from the original agent.
 - Do not stop, clean up, or redeploy another agent's or an unidentified process/container.
-- The objective is to implement the system and run it in production on openclaw-dp. Development, builds, tests, and runtime belong on that server, in /srv/tank.
 - Do not access the user's personal Chrome. X authorization was supplied as /Users/a.mametyev/.config/tank/x-session.json; preserve the original and keep secrets out of output.
 
 Read-only original-agent handoff: `/srv/tank/data/qa/original-agent-handoff-20261020T162237Z/snapshot.json`. It records current evidence and unfinished work; it does not override the lead agent.
@@ -30,3 +29,17 @@ The rules, workstreams and file ownership of the lead session are in /srv/tank-w
 
 - SSH access to the production server is not for deploys. Never deploy over SSH: no manual `docker compose` up/pull/restart, image changes or checkout updates in /srv/tank.
 - Every production deploy runs through the GitHub Actions `deploy` workflow (`.github/workflows/deploy.yml`), dispatched from the remote `main` branch.
+
+## Code Review Rules
+
+### Code style
+
+- Check changed code against the CI and active source policy above, including the ordinary-comment prohibition and its exceptions, modern Python syntax, absolute imports, preserved public Go error strings, and protection of upstream/vendor source and retained evidence. Use the configured Ruff, formatting, mypy and Go CI results for mechanical checks; flag policy violations that those checks miss. Do not demand style-only rewrites of untouched code or protected third-party and evidence trees.
+
+### One MR, one feature
+
+- Each MR (GitHub pull request) must deliver one cohesive feature, fix or maintenance objective. Flag unrelated features, fixes, refactors or cleanup bundled into the same MR and ask for separate MRs. Supporting code, tests, migrations, configuration and specification updates belong together when they are necessary for that single objective; a cross-file change alone is not a violation.
+
+### Product, technical specifications and implementation
+
+- Check that the changed behavior, product specification (`01_Tank_V0_PRD.md`), architecture (`02_Tank_V0_HLD.md`), technical specification (`03_Tank_V0_Technical_Design.md`) and affected code, configuration, schemas and tests agree. Follow relevant callers and consumers beyond the diff to identify broken contracts. Flag implementation that contradicts the specifications, specification changes without the required implementation, and behavioral changes whose specifications were not updated. Cite the relevant specification section and affected implementation in each finding. The safe path is to preserve the existing specified behavior or update the affected specifications and implementation together for the MR's single objective; do not report unrelated pre-existing drift as introduced by the MR.
