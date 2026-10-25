@@ -85,7 +85,8 @@ def test_concurrent_actual_assessments_isolate_inherited_cache_and_restore_conte
     for row in second["flow_bars"]:
         row["buy_qty"], row["sell_qty"] = row["sell_qty"], row["buy_qty"]
         row["buy_notional"], row["sell_notional"] = row["sell_notional"], row["buy_notional"]
-    outer_cache = {"caller": "untouched"}
+    outer_cache = module.baseline_caches()
+    outer_cache.depth.put("caller", module.DepthBaseline(mean_usd=Decimal(17)))
     outer_parameters = {"history_min_days": 999}
     outer_inputs = {"caller": "untouched"}
     outer_cache_token = module._BASELINE_CACHE.set(outer_cache)
@@ -99,15 +100,20 @@ def test_concurrent_actual_assessments_isolate_inherited_cache_and_restore_conte
     def inspect(snapshot, *, config):
         cache = module._BASELINE_CACHE.get()
         assert cache is not outer_cache
-        assert cache == {}
+        assert cache.depth.get("assessment-event") is None
         assert module._BASELINE_DEPENDENCY.get() is None
         assert module._ASSESSMENT_INPUTS.get() == {}
         assert module._ASSESSMENT_INPUTS.get() is not outer_inputs
         assert module.parameter("history_min_days", 7) == config["history_min_days"]
-        cache["assessment-event"] = snapshot["event_id"]
+        cache.depth.put(
+            "assessment-event",
+            module.DepthBaseline(mean_usd=Decimal(1 if snapshot["event_id"] == "FIRST" else 2)),
+        )
         observed[snapshot["event_id"]] = cache
         barrier.wait(timeout=20)
-        assert cache["assessment-event"] == snapshot["event_id"]
+        assert cache.depth.get("assessment-event").mean_usd == Decimal(
+            1 if snapshot["event_id"] == "FIRST" else 2
+        )
         assert module.parameter("history_min_days", 7) == config["history_min_days"]
         return original(snapshot, config=config)
 
@@ -138,7 +144,7 @@ def test_concurrent_actual_assessments_isolate_inherited_cache_and_restore_conte
             assert actual["spot"]["EVENT"]["direction"] == direction
             assert Decimal(actual["spot"]["EVENT"]["composite_max"]["cvd"]) == cvd
             assert actual["relative"]["repricing_sign"] == sign
-        assert outer_cache == {"caller": "untouched"}
+        assert outer_cache.depth.get("caller") == module.DepthBaseline(mean_usd=Decimal(17))
         for context in contexts:
             assert context.get(module._BASELINE_CACHE) is outer_cache
             assert context.get(module._PARAMETERS) is outer_parameters
@@ -155,7 +161,8 @@ def test_concurrent_actual_assessments_isolate_inherited_cache_and_restore_conte
 
 
 def test_failed_assessment_restores_all_inherited_context(monkeypatch: pytest.MonkeyPatch) -> None:
-    cache = {"existing": "caller"}
+    cache = module.baseline_caches()
+    cache.depth.put("existing", module.DepthBaseline(mean_usd=Decimal(23)))
     parameters = {"normal_range_quantiles": [0.1, 0.9]}
     inputs = {"caller": "untouched"}
     tokens = [
@@ -166,10 +173,12 @@ def test_failed_assessment_restores_all_inherited_context(monkeypatch: pytest.Mo
     ]
 
     def fail(*args, **kwargs) -> None:
-        assert module._BASELINE_CACHE.get() == {}
+        assert module._BASELINE_CACHE.get().depth.get("failed-assessment") is None
         assert module._BASELINE_CACHE.get() is not cache
         assert module._ASSESSMENT_INPUTS.get() == {}
-        module._BASELINE_CACHE.get()["failed-assessment"] = True
+        module._BASELINE_CACHE.get().depth.put(
+            "failed-assessment", module.DepthBaseline(mean_usd=Decimal(31))
+        )
         raise RuntimeError("Synthetic assessment failure")
 
     monkeypatch.setattr(module, "_compute_market_truth", fail)
@@ -177,7 +186,8 @@ def test_failed_assessment_restores_all_inherited_context(monkeypatch: pytest.Mo
         with pytest.raises(RuntimeError, match="Synthetic assessment failure"):
             module.compute_market_truth({}, config={"history_min_days": 7})
         assert module._BASELINE_CACHE.get() is cache
-        assert cache == {"existing": "caller"}
+        assert cache.depth.get("existing") == module.DepthBaseline(mean_usd=Decimal(23))
+        assert cache.depth.get("failed-assessment") is None
         assert module._PARAMETERS.get() is parameters
         assert module._BASELINE_DEPENDENCY.get() == "existing"
         assert module._ASSESSMENT_INPUTS.get() is inputs

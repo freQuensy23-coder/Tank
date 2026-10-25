@@ -327,3 +327,118 @@ actual affected integrations passed in 30.29s with zero skips
 (`/tmp/analysis-scheduling-integration.xml`). Ruff and formatting pass. Default
 mypy reports only the four preexisting Truth cache declarations and the pending
 runtime-composition constructor companion; no generic annotation substitute added.
+
+### Statistical baseline caches and declared reference freshness
+
+The statistical baseline slice now consumes the inward models in
+`analysis.statistics_contracts`: `hourly_values` uses `HourlyReturns`, `beta` returns
+`EstimatedBeta | UnavailableBeta`, OI/funding history uses the concrete range models,
+`relative_truth.hist` stores `RelativeHistory`, BTC context uses
+`BitcoinContextHistory`, native-volume prefix accumulation stores `NativeVolumeIndex`
+and `condition_depth` stores `DepthBaseline`. `MarketTruthService` now declares
+`_condition_baselines: BaselineCaches`, `_assessment_baselines: dict[str, BaselineCaches]`
+and `_assessment_locks: dict[str, asyncio.Lock]`; those maps are actual token-keyed
+collections, not domain payloads. `BaselineCaches.with_capacity(128)` preserves the
+single global FIFO budget across families and original non-refreshing update order.
+The old untyped local StatisticalPopulation and mutable exposed arrays are removed.
+
+Explicit absence sites: `_BASELINE_CACHE` defaults to None only outside an active
+calculation context; full assessments install a fresh or explicitly caller-owned
+cache and restore the inherited context on success/failure. Cache `get` misses mean
+recompute, never a fabricated measurement. `FloatRange/DecimalRange.bounds=None`
+retains the actual empty/degenerate-history reason. `UnavailableBeta.value=None`
+means insufficient pairs or non-estimable variance/arithmetic; measured zero beta
+remains numerical evidence. `UnavailableHistoryDiagnostics.resolution_s=None`
+represents absent actual cadence, with zero observed samples and no invented bounds.
+`NativeVolumeIndex.last/last_open_us=None` means no observed endpoint/prefix cursor;
+segment continuity breaks on unavailable/incomplete/nonfinite/negative quantity.
+An observed zero volume remains valid. `condition_depth` caches actual Decimal USD
+means and never inserts a zero for unavailable book depth.
+
+`analysis.price_reference.ReferencePriceSeries` is a statistical reference-price
+collection keyed by aware observed times, with a separate actual per-observation
+cadence collection. `at` returns named observed/unavailable variants. Its None cases
+are precisely no prior observation, cadence not captured, or measured age exceeding
+that cadence; no prior-gap inference and no 60-second floor. `return_between`
+requires ordered bounds and two fresh endpoints, preserves measured zero return,
+and reports non-estimable arithmetic explicitly. Its published freshness projection
+omits the internal numerical price so it cannot imply an unverified USD unit.
+`relative_truth` consumes required variant attributes for BTC/ETH/peer returns and
+propagates unavailable adjusted returns while retaining the actual raw return.
+
+Cadence resolution sites in `relative_truth.cadence_for`: an explicit series cadence,
+actual scoped collection metric override, matching declared metric semantics,
+collection cadence, or actual bar interval may establish freshness. Missing declared
+cadence stays None. Malformed declarations refuse. Mixed compact statistical series
+can carry the actual `intervals_s` vector; vector/time counts must match. The authored
+compact fixture preserves each source row's interval instead of calling all mixed
+hour/minute observations one-minute bars. `MarketService` sector statistical price
+projection now explicitly records interval_s=60 because its existing query selects
+only interval_s=60 rows. This describes the observed query, not a default cadence.
+`compute_condition_values` selected-node projection copies only present fields;
+it no longer invents [] for absent capture_metadata/anchor/config-like facts.
+
+Behavior evidence: 237 Truth/review/holders units pass in11.89s; seven additional
+freshness/domain/downstream cases pass in2.39s; all16 collected actual Truth,
+condition PostgreSQL, review, capture-refresh and benchmark-coalescing integrations
+pass in19.22s with zero skips (`/tmp/analysis-baseline-freshness-integration.xml`).
+New price-reference source/tests pass independent strict mypy; Ruff/format pass.
+Context tests retain the independent concurrent opposite-direction calculation,
+outer-context restoration and failure-isolation oracles using real typed cache values.
+The sparse benchmark regression retains actual estimable history/raw1.1% move, then
+refuses adjustment from the actual stale minute endpoint despite a large source gap.
+
+Remaining work is explicit: `_condition_cache` still stores entire condition graph
+nodes (spot/relative/derivatives/supply and composite outputs), and requires the full
+named graph/output schema migration. It is not typed as JSON/Any/object to conceal
+that work. Default mypy currently reports that one declaration plus the separate
+pending runtime scheduling constructor companion. Whole Truth snapshots/results,
+calculation input maps, configurable-policy fallbacks and sibling reference-clock
+precision defaults remain on the broad owned migration inventory. This tranche
+completes the statistical baseline/declared-freshness layer, not the full Truth module.
+
+### Exact Decimal interpolation repair
+
+Independent review identified that the statistical typing change constructed the
+Decimal percentile weight directly from a binary float. For financial populations,
+`percentile` now uses `Decimal(str(position - index))`, preserving the established
+decimal-text convention, and calls `exact_context(low, high, fraction)` before
+subtraction/multiplication/addition. It does not mix float observations into Decimal
+populations. This companion is based directly on b123f2f and has no held HTTP ancestry.
+
+Four independently specified exact-equality cases cover USD1.05, a negative funding
+rate, very large native OI and adjacent subunit values under an outer precision of6.
+There are no approximate assertions. Together with beta, condition calculations,
+START fixtures and formula vectors,59 unit cases pass in7.68s; the new regression
+module passes strict mypy and Ruff/format. HTTP work remains preserved separately
+at immutable stash55c26d818e567184ecf101c9b5a1ca2e8ebd6733.
+
+### Clean scheduling policy fixtures and stale-sector negative oracle
+
+The generic authored test_replay packet now explicitly captures the complete known
+fixture Thresholds. The one reference operational-composition unit authors the same
+policy before hashing its packet. The real scheduler still refuses a packet whose
+required reaction policy is absent; no packaged-policy fallback is restored and no
+frozen input bytes change. The earlier339unit result preceded the final strict
+captured-policy precondition; this broader fixture check closes that verification gap.
+
+The comparator fixture's invalid_peer_close branch intentionally corrupts the two
+latest PEER1 close values and marks its15-minute bar incomplete. An independent
+raw-row calculation now proves its latest valid completed close is15minutes stale,
+against the actual declared60-second cadence. The preferred historical series can
+no longer contribute a fabricated fresh sector return. The test preserves the full
+dense-vs-compact equality oracle and actual available raw return, asserts unavailable
+sector adjustment/reason for that negative branch, and retains the positive sector
+adjustment assertions on all valid-peer cases. This is not a restored gap-derived
+freshness allowance or an alternative venue fabricated for the fixture.
+
+All132 unit cases in test_replay/test_fixture_reference/test_market_snapshot_comparators
+pass in3.24s with zero skips. Ruff/format pass. This companion descends clean26862f39;
+held HTTP caller work remains isolated at immutable e68ab1f1dbe749b934182165618791eb811d85b2.
+
+The separate replay_ingest_policy operational fixture now explicitly captures its
+complete known Thresholds as well. Both actual memory/PostgreSQL cases pass in1.94s
+with zero skips, retaining all original classifier-output reset, policy rederivation
+and imported-source assertions. This is an authored fixture change; no production
+fallback or frozen data is altered. This follow-up remains a clean fd077 descendant
+without held HTTP ancestry.

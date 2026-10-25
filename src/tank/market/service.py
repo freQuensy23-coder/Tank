@@ -2889,6 +2889,7 @@ class MarketService:
                     "venue": inst["venue"],
                     "market_type": inst["market_type"],
                     "time_basis": "CLOSE_TIME",
+                    "interval_s": 60,
                     "coverage_count": counts[inst["instrument_id"]],
                     "times_us": times,
                     "values": [points[stamp] for stamp in times],
