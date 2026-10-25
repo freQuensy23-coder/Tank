@@ -1,6 +1,6 @@
 # Architectural findings for MR 39
 
-This index describes integrated code through `0ef320f7e37fb51f5dcf3142735cbd22a1abfcd4`. The five global audit requirements remain open. Implementation ownership, exact retained-value explanations and component evidence are in the [plan](PLAN.md) and the five owner reports: [foundation](foundation.md), [analysis](analysis.md), [agents](agents.md), [ingestion](ingestion.md), [quality](quality.md).
+This index describes integrated code through `c4642173b620366a7f7f5501a336d6aa4f5a5372`. The five global audit requirements remain open. Implementation ownership, exact retained-value explanations and component evidence are in the [plan](PLAN.md) and the five owner reports: [foundation](foundation.md), [analysis](analysis.md), [agents](agents.md), [ingestion](ingestion.md), [quality](quality.md).
 
 ## Verification scope
 
@@ -51,6 +51,6 @@ Each retained site still needs the concrete justification in its owner's report;
 
 ## Held work and completion gates
 
-Typed decision/card policy and its actual producers are being qualified together. Required verdict/WHY/WHAT content must be authored; missing narrative cannot be repaired by renderer substitutes. Genuine PARTIAL applicability must be modeled without fabricated beneficiary maps. Condition graph schemas and producer/cache activation also remain incomplete. Neither held cohort is claimed as integrated above.
+Typed decision/card policy and its actual producers are being qualified together. Required verdict/WHY/WHAT content must be authored; missing narrative cannot be repaired by renderer substitutes. Genuine PARTIAL applicability must be modeled without fabricated beneficiary maps. Condition graph schemas and producer/cache activation also remain incomplete. The additive cadence scope correction is integrated: observations now bind their actual token, instrument, metric, supply kind and chain to any corresponding declared scope. Independent complete positive-then-mutated negative probes reject all four originally reproduced contradictions; the 58 condition/timestamp cases pass with zero skips. Evidence: `/srv/tank-refactor-evidence/condition-cadence-scope-review-c464.json` and `parent-condition-c464.xml`. Neither held cohort is claimed as integrated above.
 
 The exhaustive fallback, typing, model, test-quality and responsibility audits remain open across source, tests, scripts and Tank-authored vendor portions. Live market-write parity, source quarantine/coverage and instrument snapshot durability, session admission and broader application models need their own actual behavior proofs. A green configured mypy run or absence of import cycles cannot substitute for this audit. Final completion requires all five requirements independently verified and CI/Codex review passing on the final non-draft MR head.
