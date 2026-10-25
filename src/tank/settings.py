@@ -18,6 +18,7 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 
 from tank.contracts.configuration import DeliveryConfiguration, Thresholds
 from tank.contracts.json import JsonDocument, decode_json
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.registry import (
     DependencyConfiguration,
     ExchangeAddressesConfiguration,
@@ -168,6 +169,7 @@ class Settings(BaseSettings):
     _config_snapshot: Mapping[str, bytes] | None = PrivateAttr(default=None)
 
     _parsed_config: dict[str, dict[str, JsonValue]] | None = PrivateAttr(default=None)
+    _version_identity: ResolvedVersionIdentity | None = PrivateAttr(default=None)
 
     def model_post_init(self, context: JsonValue) -> None:
         if self.tank_db_password and "database_url" not in self.model_fields_set:
@@ -178,6 +180,17 @@ class Settings(BaseSettings):
             self.openma_database_url = (
                 f"postgresql://oma:{quote(self.oma_db_password, safe='')}@postgres:5432/oma"
             )
+
+    def require_versions(self) -> ResolvedVersionIdentity:
+        """Require the identity attached by capture, without inferring provenance from raw defaults."""
+        if self._version_identity is None or self._config_snapshot is None:
+            raise ValueError("Version provenance requires resolve_versions and its captured configuration")
+        if (
+            self.config_version != self._version_identity.config_version
+            or self.code_version != self._version_identity.code_version
+        ):
+            raise ValueError("Version provenance no longer matches the captured identity")
+        return self._version_identity
 
     def configured_secrets(self) -> frozenset[str]:
         """Return configured credentials without reading any credential files."""
@@ -325,6 +338,9 @@ def resolve_versions(settings: Settings) -> Settings:
     resolved = settings.model_copy(update={"config_version": version, "code_version": _PROCESS_CODE_VERSION})
     resolved._config_snapshot = MappingProxyType(captured)
     resolved._parsed_config = {}
+    resolved._version_identity = ResolvedVersionIdentity(
+        config_version=version, code_version=_PROCESS_CODE_VERSION
+    )
 
     deployment_values = {
         field: value

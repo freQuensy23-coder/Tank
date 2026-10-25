@@ -14,7 +14,7 @@ from tank.contracts.source_items import parse_feed_source_item
 from tank.ops_progress import DisabledSourceProgress
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.util import iso
+from tank.util import clock_iso, iso
 
 
 def options():
@@ -94,7 +94,7 @@ def test_audit_2_12_canonical_aliases(text, entity, token) -> None:
 async def test_scored_match_joins_running_event_despite_other_pending_extraction() -> None:
     opts, _ = options()
     repo = MemoryRepository()
-    at = iso()
+    at = clock_iso()
     await repo.put(
         "ingest.source_items",
         "item",
@@ -215,7 +215,7 @@ async def test_pending_extraction_is_not_a_candidate_then_real_event_is_scored(s
         await repo.put(
             "ops.agent_sessions",
             "ses",
-            {"status": "OPEN", "session_id": "ses", "event_id": "evt", "last_item_at": iso()},
+            {"status": "OPEN", "session_id": "ses", "event_id": "evt", "last_item_at": clock_iso()},
         )
         await repo.put(
             "evt.events",
@@ -378,7 +378,7 @@ async def test_failed_event_is_not_a_routing_candidate() -> None:
     await repo.put(
         "ops.agent_sessions",
         "s",
-        {"session_id": "s", "event_id": "failed", "last_item_at": iso(), "status": "FAILED"},
+        {"session_id": "s", "event_id": "failed", "last_item_at": clock_iso(), "status": "FAILED"},
     )
 
     routed = await Pipeline(repo, opts, progress=DisabledSourceProgress()).route_item_wire({"item_id": "i"})

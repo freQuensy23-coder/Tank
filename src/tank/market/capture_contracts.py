@@ -106,7 +106,7 @@ class Pre24Reference(DomainModel):
     trade_id: str | int | None
     ts: str | None
     ts_prec: str | None
-    reason: str | None
+    reason: Literal["INCOMPLETE"] | None
 
 
 class InstrumentCaptureCoverage(DomainModel):
@@ -211,7 +211,9 @@ type BackfillRun = Annotated[
 
 
 class BackfillEnvelope(RootModel[BackfillRun]):
-    model_config = ConfigDict(strict=True, frozen=True, validate_default=True)
+    model_config = ConfigDict(
+        strict=True, frozen=True, validate_default=True, allow_inf_nan=False, revalidate_instances="always"
+    )
 
 
 class InstrumentRepairCounts(DomainModel):
@@ -322,7 +324,7 @@ class RepairFailed(RepairRecord):
     status: Literal["FAILED"]
     reason: str
     budget_s: str | None
-    result: None
+    result: RepairResult | None
 
 
 class RepairExpired(RepairRecord):
@@ -340,7 +342,9 @@ type RepairRequest = Annotated[
 
 
 class RepairEnvelope(RootModel[RepairRequest]):
-    model_config = ConfigDict(strict=True, frozen=True, validate_default=True)
+    model_config = ConfigDict(
+        strict=True, frozen=True, validate_default=True, allow_inf_nan=False, revalidate_instances="always"
+    )
 
 
 class CaptureReadiness(DomainModel):
@@ -398,6 +402,7 @@ class RepairUnavailable(DomainModel):
     status: Literal["FAILED", "EXPIRED", "INCOMPLETE"]
     request_id: str
     reason: str
+    result: RepairResult | None
 
 
 class RepairNotRun(DomainModel):
@@ -432,6 +437,22 @@ class CaptureCadences(DomainModel):
     kline_s: float = Field(gt=0)
     book_s: float = Field(gt=0)
     supply_by_kind: dict[SupplyKind, PositiveInt]
+
+    @model_validator(mode="after")
+    def complete_supply_policy(self) -> Self:
+        required: frozenset[SupplyKind] = frozenset(
+            {
+                "EXCHANGE_INVENTORY",
+                "WALLET_FLOWS",
+                "UNLOCKS",
+                "LENDING",
+                "CHAIN_LIQUIDITY",
+                "FUNDAMENTALS",
+            }
+        )
+        if self.supply_by_kind.keys() != required:
+            raise ValueError("Capture cadence policy must declare every supply kind")
+        return self
 
 
 class CaptureTierTransition(DomainModel):

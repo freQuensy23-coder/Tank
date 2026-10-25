@@ -1,5 +1,6 @@
 """Actual captured configuration decoding preserves registered fields without synthesized metadata."""
 
+from decimal import Decimal
 from typing import Literal
 
 import pytest
@@ -15,6 +16,7 @@ from tank.contracts.registry import (
     SemanticsConfiguration,
 )
 from tank.settings import Settings
+from tank.util import canonical_json
 
 
 class RegistryFixtureSettings(Settings):
@@ -36,7 +38,24 @@ def test_actual_configuration_loader_roundtrips_all_declared_fields(
     settings = RegistryFixtureSettings()
     original = settings.load_config(name)
     captured = settings.load_config_as(name, schema)
-    assert decode_json(captured.model_dump_json(exclude_unset=True)) == original
+    serialized = decode_json(captured.model_dump_json(exclude_unset=True))
+    assert canonical_json(serialized) == canonical_json(original)
+    if isinstance(captured, RegistryConfiguration):
+        assert all(type(instrument.active) is bool for instrument in captured.instruments)
+        assert all(
+            instrument.contract_multiplier is None or isinstance(instrument.contract_multiplier, Decimal)
+            for instrument in captured.instruments
+        )
+        assert isinstance(serialized, dict)
+        instruments = serialized["instruments"]
+        assert isinstance(instruments, list)
+        for instrument in instruments:
+            assert isinstance(instrument, dict)
+            assert type(instrument["active"]) is bool
+            multiplier = instrument["contract_multiplier"]
+            assert multiplier is None or isinstance(multiplier, str)
+    if isinstance(captured, SemanticsConfiguration):
+        assert all(type(metric.critical) is bool for metric in captured.metrics)
 
 
 @pytest.mark.parametrize("defect", ["missing_identity", "boolean_multiplier", "unregistered_field"])

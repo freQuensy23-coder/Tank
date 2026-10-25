@@ -1,6 +1,6 @@
 # Global refactor plan
 
-Base: `1216b4b48cbedd2d58324583c08f0524d272993a`, remote main observed 2026-10-24.
+Initial base: `1216b4b48cbedd2d58324583c08f0524d272993a`. Main through `86260b1d200a66deb7cf702aadcc06f154d64375` is integrated and was re-fetched unchanged during the 2026-10-25 verification.
 
 The user requested a complete refactor across five requirements, with five GPT-6.1 Sol implementation agents and an orchestrating parent. All product edits and verification happen in isolated server worktrees. Production is unchanged.
 
@@ -35,3 +35,9 @@ Strict Pydantic domain contracts reject unknown fields, coercion and invalid val
 ## Status
 
 In progress. Initial models and adapter changes are incremental work, not completion. Baseline/final audits and test evidence are retained separately. No production deployment is part of this task.
+
+## Coordinated ownership additions
+
+Foundation owns market/flow.py and the new market/trade_contracts.py; analysis retains normalize.py and its adapter/callers. The active flow cohort must be integrated together. Quality owns the explicitly identified first-party vendor/openma/tank-deploy/openma_entrypoint.mjs boundary; additional Tank-authored vendor paths require provenance classification and exact ownership before edits. Actual upstream code, comments and licenses remain preserved.
+
+Canonical v2 branches share the verified checkpoint ancestry and integrate through merges. Dependencies use exact canonical commits. Git stash is repository-wide across worktrees: use immutable recorded hashes, never moving stash indexes. The parent owns this plan, integration evidence and MR coordination; product changes remain with the five implementation agents.

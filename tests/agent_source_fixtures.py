@@ -11,7 +11,7 @@ from tank.contracts.configuration import Thresholds
 from tank.contracts.source_items import FeedSourceItem, parse_feed_source_item
 from tank.settings import Settings
 from tank.sources.policy import initial_relevance, is_filtered_source
-from tank.util import iso
+from tank.util import clock_iso
 
 
 def source_item_fixture(
@@ -30,7 +30,7 @@ def source_item_fixture(
         raise ValueError("Synthetic source author_role must be text or null")
     if subtype is not None and not isinstance(subtype, str):
         raise ValueError("Synthetic source subtype must be text or null")
-    at = iso()
+    at = clock_iso()
     record: dict[str, JsonValue] = {
         "item_id": item_id,
         "source_id": source_id,

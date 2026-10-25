@@ -1,6 +1,20 @@
 """Generation provenance shared by analysis and agent orchestration."""
 
+from pydantic import Field, field_validator
+
 from tank.contracts import DomainModel
+
+
+class ResolvedVersionIdentity(DomainModel):
+    config_version: str = Field(min_length=1)
+    code_version: str = Field(min_length=1)
+
+    @field_validator("config_version", "code_version")
+    @classmethod
+    def declared_identity(cls, value: str) -> str:
+        if not value.strip() or value.casefold() in {"unversioned", "unknown"}:
+            raise ValueError("Resolved provenance requires a declared version identity")
+        return value
 
 
 class ResolvedSkillVersion(DomainModel):
