@@ -1,0 +1,48 @@
+{
+  "title": "X direct fetch — application-owned state",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "handles": {
+      "title": "Accounts",
+      "type": "array",
+      "editor": "stringList",
+      "items": {
+        "type": "string"
+      },
+      "description": "Accounts to read. No X credentials are used."
+    },
+    "mode": {
+      "title": "Mode",
+      "type": "string",
+      "enum": [
+        "fetch"
+      ],
+      "default": "fetch",
+      "description": "One collection, one JSON response."
+    },
+    "concurrency": {
+      "title": "Concurrent HTTP reads",
+      "type": "integer",
+      "default": 6,
+      "minimum": 1,
+      "maximum": 8,
+      "description": "Maximum simultaneous public-profile HTTP reads. Default: 6."
+    },
+    "cursors": {
+      "title": "Previous latest post ID by account",
+      "type": "object",
+      "editor": "json",
+      "description": "Optional application-owned cursors; ID values must be strings."
+    },
+    "requestId": {
+      "title": "Application request ID",
+      "type": "string",
+      "editor": "textfield",
+      "description": "Optional correlation ID, at most 128 characters."
+    }
+  },
+  "required": [
+    "handles"
+  ]
+}

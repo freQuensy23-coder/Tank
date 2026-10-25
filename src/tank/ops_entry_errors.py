@@ -14,14 +14,21 @@ from tank.ops_cards import plain
 from tank.ops_progress import enabled
 from tank.settings import Settings
 from tank.sources.errors import (
+    AccountDiagnosticIdentity,
     AccountEntryError,
+    DiagnosticAttemptIdentity,
+    DiagnosticEvidenceIdentity,
+    DiagnosticResponseIdentity,
     EntryErrorMarker,
     EntryErrorNotice,
     EntryIdentity,
+    NoDiagnosticResponseIdentity,
     SourceEntryError,
     SourceErrorIdentity,
+    XDiagnostics,
     parse_entry_error,
 )
+from tank.sources.x_diagnostics import documents, sanitize
 from tank.time_precision import Timestamp, collection_clock, offset_schedule
 from tank.util import TimeInput, clock_iso, parse_time, sha256
 
@@ -59,6 +66,47 @@ class EntryNoticeRepository(Protocol):
 
 
 def identity(error: SourceEntryError) -> SourceErrorIdentity:
+    if isinstance(error, AccountEntryError) and error.diagnostics is not None:
+        diagnostics = error.diagnostics
+        attempts: list[DiagnosticAttemptIdentity] = []
+        for attempt in diagnostics.attempts:
+            response = attempt.response
+            attempts.append(
+                DiagnosticAttemptIdentity(
+                    attempt=attempt.attempt,
+                    error=attempt.error,
+                    status=attempt.status,
+                    response=NoDiagnosticResponseIdentity()
+                    if response is None
+                    else DiagnosticResponseIdentity(
+                        status=response.status,
+                        bodyEncoding=response.bodyEncoding,
+                        bodyBytes=response.bodyBytes,
+                        bodySha256=response.bodySha256,
+                        bodyTruncated=response.bodyTruncated,
+                        omittedWireBytes=response.omittedWireBytes,
+                        wireBytes=response.wireBytes,
+                        captureLimitBytes=response.captureLimitBytes,
+                        serializedBodyLimitBytes=response.serializedBodyLimitBytes,
+                        readError=response.readError,
+                        decodeError=response.decodeError,
+                        redacted=response.redacted,
+                    ),
+                    headers={}
+                    if response is None
+                    else {
+                        name: value
+                        for name, value in response.headers.items()
+                        if name not in {"date", "x-request-id", "x-transaction-id", "cf-ray"}
+                    },
+                )
+            )
+        return AccountDiagnosticIdentity(
+            account=error.account.lower() if error.account is not None else "",
+            evidence=DiagnosticEvidenceIdentity(
+                request=diagnostics.request, outcome=diagnostics.outcome, attempts=attempts
+            ),
+        )
     return error.identity()
 
 
@@ -113,6 +161,19 @@ def entry_block(number: int, error: SourceEntryError, payload_shown: bool) -> st
         lines.append("sha256 записи: " + error_identity.entry_sha256)
     if error.payload_sha256 is not None and not payload_shown:
         lines.append("sha256 ответа: " + error.payload_sha256)
+    if isinstance(error, AccountEntryError) and error.diagnostics is not None:
+        diagnostics = error.diagnostics
+        url = diagnostics.request.url
+        outcome = diagnostics.outcome
+        attempts = diagnostics.attemptCount
+        lines.extend(
+            [
+                "HTTP fetch failure: GET " + plain(url, 300),
+                "Тело запроса GET: отсутствует (не тело HTTP-ответа)",
+                f"Попыток: {attempts}; исход: {plain(outcome, 120)}",
+                "Тела HTTP-ответов и заголовки: приложенные документы; усечённые ответы обозначены bodyTruncated.",
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -122,7 +183,9 @@ def render(notice: EntryErrorNotice) -> str:
     shared_payload = errors[0].payload_sha256 if errors else None
     shared = shared_payload is not None and all(error.payload_sha256 == shared_payload for error in errors)
     head = [
-        "TANK OPS · Записи источника не разобраны",
+        "TANK OPS · Ошибка HTTP-сбора X"
+        if any(isinstance(error, AccountEntryError) and error.diagnostics is not None for error in errors)
+        else "TANK OPS · Записи источника не разобраны",
         "Источник: " + plain(source, 200),
         "Лента: " + notice.feed_url,
         "Обнаружено: " + seen_label(notice.seen_at),
@@ -131,6 +194,8 @@ def render(notice: EntryErrorNotice) -> str:
     if shared and shared_payload is not None:
         head.append("sha256 ответа: " + shared_payload)
     text = "\n".join(head)
+    if any(isinstance(error, AccountEntryError) and error.diagnostics is not None for error in errors):
+        text += "\nHTTP response bodies / headers: документы к этому сообщению. GET request body: empty."
     for index, error in enumerate(errors):
         block = entry_block(index + 1, error, shared)
         rest = len(errors) - index - 1
@@ -157,7 +222,28 @@ async def report_entry_errors(
     source_id, feed_url = source.source_id, feed.url
     pending: dict[str, SourceEntryError] = {}
     for error in errors:
-        parsed = parse_entry_error(error)
+        if isinstance(error, Mapping):
+            wire = dict(error)
+            if "diagnostics" in wire and wire["diagnostics"] is not None:
+                diagnostics = wire["diagnostics"]
+                if not isinstance(diagnostics, dict):
+                    raise ValueError("X diagnostics require a recorded object")
+                wire["diagnostics"] = XDiagnostics.model_validate(
+                    sanitize(diagnostics, settings.apify_api_token)
+                ).model_dump(mode="json")
+            parsed = parse_entry_error(wire)
+        else:
+            parsed = parse_entry_error(error)
+            if isinstance(parsed, AccountEntryError) and parsed.diagnostics is not None:
+                parsed = AccountEntryError.model_validate(
+                    parsed.model_copy(
+                        update={
+                            "diagnostics": XDiagnostics.model_validate(
+                                sanitize(parsed.diagnostics.model_dump(mode="json"), settings.apify_api_token)
+                            )
+                        }
+                    )
+                )
         pending.setdefault(error_key(source_id, feed_url, parsed), parsed)
     async with repo.lock(f"ops-entry-errors:{source_id}:{sha256(feed_url)}"), repo.transaction():
         fresh: dict[str, SourceEntryError] = {}
@@ -198,6 +284,23 @@ async def report_entry_errors(
             text="",
         )
         notice = notice.model_copy(update={"text": render(notice)})
+        if attachments := documents(
+            [error.model_dump(mode="json", exclude_unset=True) for error in notice.entry_errors]
+        ):
+            notice = EntryErrorNotice.model_validate(
+                notice.model_copy(
+                    update={
+                        "document_manifest": [
+                            {
+                                "filename": row["filename"],
+                                "sha256": row["sha256"],
+                                "bytes": len(row["content"]),
+                            }
+                            for row in attachments
+                        ]
+                    }
+                )
+            )
         await repo.put("out.ops_notices", notice_id, notice.storage_record(), immutable=True)
         await repo.enqueue(
             "DELIVER",

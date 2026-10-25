@@ -1,12 +1,15 @@
 """Concrete malformed-source-entry evidence and stable identity contracts."""
 
+import base64
+import binascii
 import re
 from collections.abc import Mapping
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field, JsonValue
+from pydantic import Field, JsonValue, field_validator, model_validator
 
 from tank.contracts import DomainModel
+from tank.util import parse_iso_time, sha256
 
 
 class EntryIdentity(DomainModel):
@@ -30,6 +33,115 @@ class DigestIdentity(DomainModel):
 
 class ProposalIdentity(DomainModel):
     proposal_id: str
+
+
+class XDiagnosticRequest(DomainModel):
+    method: Literal["GET"]
+    url: str = Field(min_length=1)
+    body: None
+
+
+class XDiagnosticResponse(DomainModel):
+    status: int = Field(ge=100, le=599)
+    headers: dict[str, str]
+    body: str
+    bodyEncoding: Literal["utf-8", "base64"]
+    bodyBytes: int = Field(ge=0)
+    bodySha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    bodyTruncated: bool
+    omittedWireBytes: int | None = Field(default=None, ge=0)
+    wireBytes: int | None = Field(default=None, ge=0)
+    captureLimitBytes: int | None = Field(default=None, ge=0)
+    serializedBodyLimitBytes: int | None = Field(default=None, ge=0)
+    readError: str | None = None
+    decodeError: str | None = None
+    redacted: bool
+
+    @model_validator(mode="after")
+    def actual_body_evidence(self) -> Self:
+        try:
+            raw = (
+                base64.b64decode(self.body, validate=True)
+                if self.bodyEncoding == "base64"
+                else self.body.encode()
+            )
+        except (ValueError, binascii.Error) as exc:
+            raise ValueError("X diagnostic body encoding is invalid") from exc
+        if self.bodyBytes != len(raw) or self.bodySha256 != sha256(raw):
+            raise ValueError("X diagnostic body metrics conflict with its actual recorded bytes")
+        return self
+
+
+class XDiagnosticAttempt(DomainModel):
+    attempt: int = Field(ge=1)
+    at: str
+    status: int | None = Field(default=None, ge=100, le=599)
+    retryable: bool
+    error: str
+    response: XDiagnosticResponse | None = None
+
+    @field_validator("at")
+    @classmethod
+    def declared_clock(cls, value: str) -> str:
+        parse_iso_time(value)
+        return value
+
+
+class XDiagnostics(DomainModel):
+    request: XDiagnosticRequest
+    outcome: str = Field(min_length=1)
+    attemptCount: int = Field(ge=0, le=3)
+    attempts: list[XDiagnosticAttempt] = Field(max_length=3)
+
+    @model_validator(mode="after")
+    def actual_attempt_count(self) -> Self:
+        if self.attemptCount != len(self.attempts):
+            raise ValueError("X diagnostic count conflicts with its recorded attempts")
+        return self
+
+
+class DiagnosticResponseIdentity(DomainModel):
+    status: int
+    bodyEncoding: Literal["utf-8", "base64"]
+    bodyBytes: int = Field(ge=0)
+    bodySha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    bodyTruncated: bool
+    omittedWireBytes: int | None
+    wireBytes: int | None
+    captureLimitBytes: int | None
+    serializedBodyLimitBytes: int | None
+    readError: str | None
+    decodeError: str | None
+    redacted: bool
+
+
+class NoDiagnosticResponseIdentity(DomainModel):
+    pass
+
+
+class DiagnosticAttemptIdentity(DomainModel):
+    attempt: int
+    error: str
+    status: int | None
+    response: DiagnosticResponseIdentity | NoDiagnosticResponseIdentity
+    headers: dict[str, str]
+
+
+class DiagnosticEvidenceIdentity(DomainModel):
+    request: XDiagnosticRequest
+    outcome: str
+    attempts: list[DiagnosticAttemptIdentity]
+
+
+class AccountDiagnosticIdentity(DomainModel):
+    account: str
+    evidence: DiagnosticEvidenceIdentity
+
+
+class DiagnosticDocumentReference(DomainModel):
+    filename: str = Field(min_length=1)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    bytes: int = Field(ge=0)
 
 
 class AccountIdentity(DomainModel):
@@ -56,6 +168,7 @@ class ProposalEntryError(ErrorEvidence):
 
 class AccountEntryError(ErrorEvidence):
     account: str | None
+    diagnostics: XDiagnostics | None = None
 
     def identity(self) -> AccountIdentity:
         return AccountIdentity(account=self.account.lower() if self.account is not None else "")
@@ -67,7 +180,9 @@ class DocumentEntryError(ErrorEvidence):
 
 
 type SourceEntryError = DigestEntryError | ProposalEntryError | AccountEntryError | DocumentEntryError
-type SourceErrorIdentity = DigestIdentity | ProposalIdentity | AccountIdentity | ExceptionIdentity
+type SourceErrorIdentity = (
+    DigestIdentity | ProposalIdentity | AccountIdentity | AccountDiagnosticIdentity | ExceptionIdentity
+)
 
 
 def parse_entry_error(value: SourceEntryError | Mapping[str, JsonValue]) -> SourceEntryError:
@@ -112,6 +227,7 @@ class EntryErrorNotice(DomainModel):
     seen_at: str
     entry_error_keys: list[str]
     entry_errors: list[SourceEntryError]
+    document_manifest: list[DiagnosticDocumentReference] | None = None
     created_at: str
     created_at_prec: Literal["COLLECTION_ONLY"] = "COLLECTION_ONLY"
     created_at_prec_reason: None = None
@@ -123,4 +239,6 @@ class EntryErrorNotice(DomainModel):
         record["entry_errors"] = [
             error.model_dump(mode="json", exclude_unset=True) for error in self.entry_errors
         ]
+        if self.document_manifest is None:
+            record.pop("document_manifest")
         return record

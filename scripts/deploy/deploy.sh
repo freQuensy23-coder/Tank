@@ -7,6 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 SHA=${1:?usage: deploy.sh <git sha>}
+[[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid release SHA"; exit 1; }
 LIMIT=${LIMIT:-480}
 exec 9>.deploy.lock
 flock -n 9 || { echo "another deploy is running"; exit 1; }
@@ -25,20 +26,20 @@ healthy() {
 roll() {
   local v=$1 svc old_cap new_cap pid ready handoff wait
   echo "pull $v $(date -u +%T)"
-  compose "$v" pull -q
+  compose "$v" pull -q || return 1
   for svc in postgres clickhouse openma; do
     if [ "$(content "tank-$svc-1")" = "$(content "ghcr.io/frequensy23-coder/tank/tank-$svc:$v")" ]; then
       echo "$svc unchanged"
-      compose "$v" up -d --no-deps --no-recreate "$svc"
+      compose "$v" up -d --no-deps --no-recreate "$svc" || return 1
     else
       echo "$svc recreate $(date -u +%T)"
-      compose "$v" up -d --no-deps "$svc"
+      compose "$v" up -d --no-deps "$svc" || return 1
     fi
     healthy "tank-$svc-1" || { echo "$svc not healthy"; return 1; }
   done
   old_cap=$(docker ps -q --filter label=com.docker.compose.project=tank --filter label=com.docker.compose.service=tank-capture)
   echo "tank-capture standby next to ${old_cap:-none} $(date -u +%T)"
-  compose "$v" up -d --no-deps --no-recreate --scale tank-capture=$(( $(echo "$old_cap" | grep -c .) + 1 )) tank-capture
+  compose "$v" up -d --no-deps --no-recreate --scale tank-capture=$(( $(echo "$old_cap" | grep -c .) + 1 )) tank-capture || return 1
   new_cap=$(docker ps -q --filter label=com.docker.compose.project=tank --filter label=com.docker.compose.service=tank-capture | grep -v -x -F "${old_cap:-none}" | head -1)
   pid=$(docker inspect -f '{{.State.Pid}}' "$new_cap")
   ready=no
@@ -53,14 +54,13 @@ roll() {
       wait=$(( handoff - $(date +%s) ))
       [ "$wait" -gt 0 ] && sleep "$wait"
     fi
-    docker stop -t 30 $old_cap >/dev/null && docker rm $old_cap >/dev/null
+    docker stop -t 30 $old_cap >/dev/null && docker rm $old_cap >/dev/null || return 1
     echo "old tank-capture stopped $(date -u +%T)"
   fi
   healthy "$new_cap" || { echo "tank-capture not healthy"; return 1; }
   echo "tank recreate $(date -u +%T)"
-  compose "$v" up -d --no-deps tank
+  compose "$v" up -d --no-deps tank || return 1
   healthy tank-tank-1 || { echo "tank not running"; return 1; }
-  echo "$v" > deployed
 }
 
 verify() {
@@ -89,13 +89,51 @@ verify() {
 }
 
 previous=$(cat deployed 2>/dev/null || true)
+[[ -z "$previous" || "$previous" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid previous release SHA"; exit 1; }
+release="releases/$SHA"
+worker() { python3 "$release/apify_deploy.py" "$1" "${2:-$SHA}" "$release"; }
+tank_started=no
+[ ! -f apify-state/pending.json ] || tank_started=yes
+recover() {
+  local status=$? recovery_sha=$SHA
+  trap - EXIT INT TERM
+  if [ "$status" -ne 0 ]; then
+    if [ -f apify-state/pending.json ]; then
+      recovery_sha=$(worker recovery_release) || { echo "cannot resolve interrupted worker release"; exit 1; }
+      previous=$(worker previous_release "$recovery_sha") || { echo "cannot resolve rollback release"; exit 1; }
+    fi
+    worker rollback "$recovery_sha" || { echo "worker rollback failed; Tank rollback refused"; exit 1; }
+    if [ "$tank_started" = yes ] && [ -n "$previous" ]; then
+      echo "rollback to $previous $(date -u +%T)"
+      if roll "$previous"; then
+        printf '%s\n' "$previous" > deployed.next && mv deployed.next deployed
+        echo "rolled back to $previous"
+      else
+        echo "Tank rollback failed"
+        exit 1
+      fi
+    fi
+    worker rollback_finish "$recovery_sha" || { echo "rollback markers not verified"; exit 1; }
+  fi
+  exit "$status"
+}
+trap recover EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+worker prepare
+worker activate
 start=$(date +%s)
 since=$(date -u +%FT%TZ)
 echo "deploy $SHA at $since; previous ${previous:-none}"
 out=""
+tank_started=yes
 if roll "$SHA"; then
   while [ $(( $(date +%s) - start )) -lt "$LIMIT" ]; do
     if out=$(verify "$since" 2>&1); then
+      worker commit
+      printf '%s\n' "$SHA" > deployed.next
+      mv deployed.next deployed
+      worker finish
       echo "VERIFIED $SHA after $(( $(date +%s) - start ))s"
       docker image ls --format '{{.Repository}}:{{.Tag}}' | grep '^ghcr.io/frequensy23-coder/tank/' \
         | grep -v -E ":(${SHA}|${previous:-none})\$" | xargs -r docker rmi >/dev/null 2>&1 || true
@@ -107,7 +145,4 @@ if roll "$SHA"; then
 else
   echo "roll of $SHA failed"
 fi
-[ -n "$previous" ] || exit 1
-echo "rollback to $previous $(date -u +%T)"
-roll "$previous" && echo "rolled back to $previous after $(( $(date +%s) - start ))s"
 exit 1

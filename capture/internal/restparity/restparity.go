@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"io"
 	"net/http"
 	"os"
@@ -165,10 +166,10 @@ func (noStore) LatestRecords(context.Context, string, []string, string, []string
 }
 func (noStore) HotTokens(context.Context) ([]map[string]any, error)              { return nil, nil }
 func (noStore) BackfillRuns(context.Context, []string) ([]map[string]any, error) { return nil, nil }
-func (noStore) ClaimRequest(context.Context, string, time.Time) (map[string]any, error) {
+func (noStore) ClaimRequest(context.Context, string, time.Time) (*requeststate.Claimed, error) {
 	return nil, nil
 }
-func (noStore) FinishRequest(context.Context, map[string]any) error { return nil }
+func (noStore) FinishRequest(context.Context, requeststate.Completion) error { return nil }
 
 func Run(p *Payload, policies budget.Policies) (*parity.Output, error) {
 	meta := map[string]any{"instruments": p.Instruments, "recorded_at": p.RecordedAt}

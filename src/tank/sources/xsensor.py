@@ -7,14 +7,16 @@ from typing import Annotated, Literal, Self
 from urllib.parse import urlsplit
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.http_policy import HttpAdmission, HttpRefused
 from tank.contracts.source_items import DiscoveryEnvelope, DiscoveryObservation, SocialDiscovery
 from tank.contracts.sources import HttpFetchPlan
 from tank.logging import redact_text
+from tank.sources.errors import XDiagnostics
 from tank.sources.http_client import RequestStarted, SourceHttpTransport
+from tank.sources.x_diagnostics import sanitize
 from tank.util import iso
 
 RUN_TIMEOUT_S = 130
@@ -109,6 +111,7 @@ class ApifyOkAccount(ApifyModel):
 class ApifyFailedAccount(ApifyModel):
     handle: str
     status: Literal["failed"]
+    diagnostics: dict[str, JsonValue] | None = None
     error: str = Field(min_length=1)
     history_gap: bool = Field(default=False, alias="historyGap")
 
@@ -164,6 +167,7 @@ class ApifyRun(ApifyModel):
 class AccountFailure(DomainModel):
     account: str | None
     reason: str = Field(min_length=1)
+    diagnostics: XDiagnostics | None = None
 
 
 class Scan(DomainModel):
@@ -183,13 +187,30 @@ def cursor_state(cursors: Mapping[str, str]) -> dict[str, str]:
     return result
 
 
-def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: bytes) -> Scan:
+def scan(
+    run: ApifyRun,
+    accounts: list[str],
+    cursors: Mapping[str, str],
+    raw: bytes,
+    *,
+    token: str | None = None,
+) -> Scan:
     """Advance an existing boundary only after the requested account reports a complete range.
 
     A first observed head establishes the explicit monitoring baseline; no prior
     cursor exists whose historical range could be acknowledged by that read.
     """
-    if run.health == "failed":
+    requested = {account_key(account) for account in accounts}
+    if len(requested) != len(accounts):
+        raise ValueError("X scan requested duplicate account identities")
+    previous = cursor_state(cursors)
+    diagnostic_failure = any(
+        isinstance(account, ApifyFailedAccount)
+        and account.diagnostics is not None
+        and account_key(account.handle) in requested
+        for account in run.accounts
+    )
+    if run.health == "failed" and not diagnostic_failure:
         reason = (
             run.error
             if run.error is not None and run.error.strip()
@@ -198,10 +219,6 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
             )
         )
         raise RuntimeError(f"Apify X run failed: {reason}")
-    requested = {account_key(account) for account in accounts}
-    if len(requested) != len(accounts):
-        raise ValueError("X scan requested duplicate account identities")
-    previous = cursor_state(cursors)
     rows = [
         post.row(raw)
         for post in run.posts
@@ -211,7 +228,13 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
     ]
     reported = {account_key(account.handle): account for account in run.accounts}
     failures = [
-        AccountFailure(account=account.handle, reason=account.error)
+        AccountFailure(
+            account=account.handle,
+            reason=account.error,
+            diagnostics=None
+            if account.diagnostics is None
+            else XDiagnostics.model_validate(sanitize(account.diagnostics, token)),
+        )
         for account in run.accounts
         if isinstance(account, ApifyFailedAccount) and account_key(account.handle) in requested
     ]
@@ -222,7 +245,7 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
         if account is None:
             failures.append(AccountFailure(account=handle, reason="MISSING_FROM_RUN"))
             continue
-        if isinstance(account, ApifyFailedAccount):
+        if isinstance(account, ApifyFailedAccount) or run.health == "failed":
             continue
         next_cursor = run.next_cursors.get(key)
         if next_cursor is None:
@@ -249,6 +272,11 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
                 reason=run.error if run.error is not None and run.error.strip() else "RUN_DEGRADED",
             )
         )
+    failed_handles = {account_key(failure.account) for failure in failures if failure.account is not None}
+    if run.health == "failed":
+        rows = []
+    else:
+        rows = [row for row in rows if account_key(row.discovery.author) not in failed_handles]
     return Scan(rows=rows, cursors=updated, failures=failures, gaps=gaps)
 
 
@@ -307,19 +335,34 @@ class XSensor:
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise RuntimeError(f"Apify X run request failed: {redact_text(str(exc), secrets)}") from None
-        if len(self.token) >= 8 and self.token.encode() in response.content:
-            raise ValueError("Apify X response contains credential material")
+        contains_token = len(self.token) >= 8 and self.token.encode() in response.content
         run = ApifyRun.model_validate_json(response.content)
+        requested = {account_key(account) for account in accounts}
+        has_diagnostics = any(
+            isinstance(account, ApifyFailedAccount)
+            and account.diagnostics is not None
+            and account_key(account.handle) in requested
+            for account in run.accounts
+        )
+        if contains_token and not has_diagnostics:
+            raise ValueError("Apify X response contains credential material")
         try:
-            result = scan(run, accounts, previous, response.content)
+            result = scan(run, accounts, previous, response.content, token=self.token)
         except RuntimeError as exc:
             raise RuntimeError(redact_text(str(exc), secrets)) from None
+        failures = [
+            AccountFailure(
+                account=failure.account,
+                reason=redact_text(failure.reason, secrets),
+                diagnostics=failure.diagnostics,
+            )
+            for failure in result.failures
+        ]
+        if contains_token:
+            failures.append(AccountFailure(account=None, reason="CREDENTIAL_MATERIAL_IN_ACTOR_RESPONSE"))
         return Scan(
-            rows=result.rows,
-            cursors=result.cursors,
-            failures=[
-                AccountFailure(account=failure.account, reason=redact_text(failure.reason, secrets))
-                for failure in result.failures
-            ],
+            rows=[] if contains_token else result.rows,
+            cursors=previous if contains_token else result.cursors,
+            failures=failures,
             gaps=result.gaps,
         )

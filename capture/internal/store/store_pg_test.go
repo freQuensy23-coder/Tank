@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"os"
 	"testing"
 	"time"
@@ -190,7 +191,7 @@ func TestClaimAndFinishRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claimed == nil || claimed["request_id"] != id+"2" || claimed["status"] != "RUNNING" || claimed["writer"] != "tank-capture/test" || claimed["started_at_prec"] != "COLLECTION_ONLY" {
+	if claimed == nil || claimed.ID != id+"2" || claimed.Writer != "tank-capture/test" || !claimed.StartedAt.Equal(now) {
 		t.Fatalf("claimed %v", claimed)
 	}
 	expired, _ := s.Get(ctx, "mkt.capture_requests", "key-"+id+"1")
@@ -201,12 +202,12 @@ func TestClaimAndFinishRequests(t *testing.T) {
 	if stored["status"] != "RUNNING" {
 		t.Fatalf("stored %v", stored)
 	}
-	claimed["status"], claimed["result"] = "COMPLETE", map[string]any{"x": map[string]any{"incomplete_before": 3, "incomplete_after": 0}}
-	if err := s.FinishRequest(ctx, with(claimed, "finished_at", now.Format(time.RFC3339Nano), "finished_at_prec", "COLLECTION_ONLY")); err != nil {
+	result := requeststate.RepairResult{Instruments: map[string]requeststate.RepairCoverage{"x": {IncompleteBefore: 3, IncompleteAfter: 0}}}
+	if err := s.FinishRequest(ctx, requeststate.Completion{ID: claimed.ID, Outcome: requeststate.Completed(result), FinishedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	done, _ := s.Get(ctx, "mkt.capture_requests", "key-"+id+"2")
-	if done == nil || done["status"] != "COMPLETE" || pyjson.Canonical(done["result"]) != `{"x":{"incomplete_after":0,"incomplete_before":3}}` {
+	if done == nil || done["status"] != "COMPLETE" || pyjson.Canonical(done["result"]) != `{"instruments":{"x":{"incomplete_after":0,"incomplete_before":3}}}` {
 		t.Fatalf("finished (under its own storage key) %v", done)
 	}
 }
