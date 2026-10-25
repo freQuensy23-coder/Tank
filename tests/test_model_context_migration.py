@@ -8,9 +8,11 @@ import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture, source_record_fixture
 from scheduling_support import RecordingReactionScheduling
+from source_support import fixture_http_admission
 
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
 from tank.agents.sessions import SessionService
+from tank.analysis.page_access import LivePageAccess
 from tank.delivery import DeliveryDeferred
 from tank.event_tools import EventToolService
 from tank.openma_sync import agent_tools
@@ -114,6 +116,7 @@ async def test_legacy_callbacks_upgrade_before_delivery_and_new_turns_reject_ids
                 None,
                 versions=declared_versions_fixture(),
                 scheduler=RecordingReactionScheduling(),
+                pages=LivePageAccess(fixture_http_admission()),
             ).dispatch,
             http=http,
             versions=declared_versions_fixture(),
@@ -171,6 +174,7 @@ async def test_old_description_call_in_a_legacy_turn_is_refused_once_and_the_id_
         None,
         versions=declared_versions_fixture(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
 
     async def dispatch(*args):

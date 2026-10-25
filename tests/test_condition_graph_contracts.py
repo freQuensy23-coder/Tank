@@ -1,11 +1,15 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Literal
 
 import pytest
 from pydantic import ValidationError
 
 from tank.analysis.condition_graph_contracts import (
+    ConditionCadenceScope,
+    ConditionCollection,
     ConditionDepthValues,
+    ConditionFieldObservation,
     ConditionInterval,
     DeclaredConditionCadence,
     NonForwardConditionInterval,
@@ -191,6 +195,9 @@ def test_book_freshness_uses_actual_declared_allowance_and_cutoff() -> None:
     from tank.analysis.condition_graph_contracts import ConditionDepthNode, ConditionDepthObservation
 
     observation = ConditionDepthObservation(
+        token_id="T",
+        instrument_id="venue:spot:T",
+        metric_key=None,
         venue="venue",
         observed_at=Timestamp(
             value="2026-10-17T11:59:55Z", precision=None, precision_reason="BOOK_PRECISION_NOT_CAPTURED"
@@ -225,6 +232,7 @@ def test_unknown_cadence_cannot_authorize_a_fresh_field() -> None:
     )
     observation = ConditionFieldObservation(
         collection="books",
+        token_id="T",
         instrument_id="venue:spot:T",
         metric_key=None,
         observation_kind=None,
@@ -279,3 +287,150 @@ def test_selective_confidence_never_invents_derivative_classification_readiness(
         freshness=(),
     )
     assert full.derivatives_classification_ready
+
+
+def scoped_field_observation(kind: Literal["INSTRUMENT", "METRIC", "SUPPLY"]) -> ConditionFieldObservation:
+    from tank.analysis.condition_graph_contracts import (
+        DeclaredMetadataCadenceOrigin,
+        InstrumentCadenceScope,
+        MetricCadenceScope,
+        SupplyCadenceScope,
+        UncapturedCadenceIdentity,
+    )
+
+    scope: ConditionCadenceScope
+    if kind == "SUPPLY":
+        collection: ConditionCollection = "supply"
+        instrument = None
+        metric = "token.unlocks"
+        observation_kind = "UNLOCKS"
+        chain = "ethereum"
+        scope = SupplyCadenceScope(
+            kind="SUPPLY", collection="supply", token_id="T", observation_kind="UNLOCKS", chain="ethereum"
+        )
+    else:
+        collection = "books"
+        instrument = "venue:spot:T"
+        metric = "venue.spot.depth"
+        observation_kind = None
+        chain = None
+        scope = (
+            InstrumentCadenceScope(
+                kind="INSTRUMENT", collection="books", token_id="T", instrument_id=instrument
+            )
+            if kind == "INSTRUMENT"
+            else MetricCadenceScope(
+                kind="METRIC", collection="books", token_id="T", metric_key=metric, instrument_id=instrument
+            )
+        )
+    cadence = DeclaredConditionCadence(
+        status="DECLARED",
+        seconds=10.0,
+        scope=scope,
+        origin=DeclaredMetadataCadenceOrigin(
+            kind="DECLARED_METADATA",
+            selector="capture_metadata.collections." + collection + ".cadence_s",
+            declaration_identity=UncapturedCadenceIdentity(
+                status="UNRECORDED", reason="DECLARATION_IDENTITY_NOT_CAPTURED"
+            ),
+        ),
+    )
+    return ConditionFieldObservation(
+        collection=collection,
+        token_id="T",
+        instrument_id=instrument,
+        metric_key=metric,
+        observation_kind=observation_kind,
+        chain=chain,
+        observed_at=Timestamp(value="2026-10-17T11:59:55Z", precision="EXACT"),
+        cadence=cadence,
+        age_s=5.0,
+        fresh=True,
+        reason=None,
+        stream=None,
+    )
+
+
+@pytest.mark.parametrize(
+    "kind,field,replacement,reason",
+    [
+        ("INSTRUMENT", "instrument_id", "other:spot:T", "another instrument"),
+        ("METRIC", "metric_key", "venue.spot.price", "another metric"),
+        ("METRIC", "instrument_id", "other:spot:T", "another instrument"),
+        ("SUPPLY", "observation_kind", "LENDING", "another supply kind"),
+        ("SUPPLY", "chain", "solana", "another supply chain"),
+        ("INSTRUMENT", "token_id", "OTHER", "another token"),
+        ("INSTRUMENT", "instrument_id", None, "another instrument"),
+        ("METRIC", "metric_key", None, "another metric"),
+        ("SUPPLY", "observation_kind", None, "another supply kind"),
+        ("SUPPLY", "chain", None, "another supply chain"),
+    ],
+)
+def test_declared_cadence_cannot_qualify_another_observation_subject(
+    kind: Literal["INSTRUMENT", "METRIC", "SUPPLY"], field: str, replacement: str | None, reason: str
+) -> None:
+    matching = scoped_field_observation(kind)
+    assert matching.fresh
+    contradictory = matching.model_copy(update={field: replacement})
+    with pytest.raises(ValidationError, match=reason):
+        ConditionFieldObservation.model_validate(contradictory)
+
+
+def test_broader_collection_and_global_metric_cadences_remain_applicable() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        CollectionCadenceScope,
+        MetricCadenceScope,
+        SupplyCadenceScope,
+    )
+
+    instrument = scoped_field_observation("INSTRUMENT")
+    global_scope = CollectionCadenceScope(kind="COLLECTION", collection="books", token_id=None)
+    cadence = instrument.cadence.model_copy(update={"scope": global_scope})
+    broad = ConditionFieldObservation.model_validate(
+        instrument.model_copy(
+            update={
+                "cadence": cadence,
+                "instrument_id": "other:spot:OTHER",
+                "token_id": "OTHER",
+                "metric_key": None,
+            }
+        )
+    )
+    assert broad.fresh
+    metric = scoped_field_observation("METRIC")
+    scope = MetricCadenceScope(
+        kind="METRIC", collection="books", token_id="T", metric_key="venue.spot.depth", instrument_id=None
+    )
+    cadence = metric.cadence.model_copy(update={"scope": scope})
+    global_metric = ConditionFieldObservation.model_validate(
+        metric.model_copy(update={"cadence": cadence, "instrument_id": "other:spot:T"})
+    )
+    assert global_metric.fresh
+    supply = scoped_field_observation("SUPPLY")
+    all_chains = SupplyCadenceScope(
+        kind="SUPPLY", collection="supply", token_id="T", observation_kind="UNLOCKS", chain=None
+    )
+    cadence = supply.cadence.model_copy(update={"scope": all_chains})
+    global_kind = ConditionFieldObservation.model_validate(
+        supply.model_copy(update={"cadence": cadence, "chain": "solana"})
+    )
+    assert global_kind.fresh
+
+
+def test_depth_observation_binds_actual_identity_instead_of_copying_cadence_scope() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionDepthObservation
+
+    observation = ConditionDepthObservation(
+        token_id="T",
+        instrument_id="venue:spot:T",
+        metric_key=None,
+        venue="venue",
+        observed_at=Timestamp(value="2026-10-17T11:59:55Z", precision="EXACT"),
+        cadence=declared_book_cadence(),
+        fresh=True,
+    )
+    assert observation.fresh
+    with pytest.raises(ValidationError, match="another instrument"):
+        ConditionDepthObservation.model_validate(
+            observation.model_copy(update={"instrument_id": "other:spot:T"})
+        )

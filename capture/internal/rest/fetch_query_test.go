@@ -30,7 +30,7 @@ func TestFetchChargesActualURLQueryAndOverride(t *testing.T) {
 			if _, err := client.Fetch(context.Background(), "GET", Binance+"/api/v3/depth?limit=5000", test.params, nil, nil, 0); err != nil {
 				t.Fatal(err)
 			}
-			if used := ledger.Used(budget.BucketName("binance.spot", 60, 3000), 60); used != test.weight {
+			if used := ledger.Used(budget.BucketName("binance.spot", 60), 60); used != test.weight {
 				t.Fatalf("actual outgoing query charged %v, expected %v", used, test.weight)
 			}
 		})
@@ -45,7 +45,7 @@ func TestAmbiguousFetchQueryCannotSpendOrSend(t *testing.T) {
 	if _, err := client.Fetch(context.Background(), "GET", Binance+"/api/v3/depth?limit=100&limit=5000", nil, nil, nil, 0); err == nil {
 		t.Fatal("ambiguous request accepted")
 	}
-	if len(exchange.requests) != 0 || ledger.Used(budget.BucketName("binance.spot", 60, 3000), 60) != 0 {
+	if len(exchange.requests) != 0 || ledger.Used(budget.BucketName("binance.spot", 60), 60) != 0 {
 		t.Fatal("ambiguous query crossed admission boundary")
 	}
 }
@@ -76,7 +76,7 @@ func TestFetchOverrideResolvesRepeatedBudgetFieldBeforeAdmission(t *testing.T) {
 	if _, err := client.Fetch(context.Background(), "GET", Binance+"/api/v3/depth?limit=100&limit=5000", map[string]string{"limit": "100"}, nil, nil, 0); err != nil {
 		t.Fatal(err)
 	}
-	if used := ledger.Used(budget.BucketName("binance.spot", 60, 3000), 60); used != 5 {
+	if used := ledger.Used(budget.BucketName("binance.spot", 60), 60); used != 5 {
 		t.Fatalf("resolved override charged %v", used)
 	}
 	if transport.rawURL != Binance+"/api/v3/depth?limit=100" {

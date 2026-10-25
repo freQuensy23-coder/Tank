@@ -74,9 +74,9 @@ def parse_entry_error(value: SourceEntryError | Mapping[str, JsonValue]) -> Sour
     """Identify a concrete wire variant without losing missing-account semantics."""
     if isinstance(value, (DigestEntryError, ProposalEntryError, AccountEntryError, DocumentEntryError)):
         return value
-    if value.get("entry_sha256"):
+    if "entry_sha256" in value:
         return DigestEntryError.model_validate(value)
-    if value.get("proposal_id"):
+    if "proposal_id" in value:
         return ProposalEntryError.model_validate(value)
     if "account" in value:
         return AccountEntryError.model_validate(value)

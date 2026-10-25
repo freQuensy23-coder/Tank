@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 import yaml
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_versions
 
 from tank.market.service import MarketService
 from tank.market.supply import SupplyCapture
@@ -57,6 +57,7 @@ def lending_market(tmp_path: Path, transport, *, catalog=True, repo=None, tokens
         settings,
         http=httpx.AsyncClient(transport=httpx.MockTransport(transport)),
         versions=fixture_versions(),
+        admission=fixture_http_admission(),
     )
 
 
@@ -281,7 +282,9 @@ async def test_contract_failure_preserves_other_chains_and_uses_registry_chain_i
 
     repo = MemoryRepository()
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
-        market = MarketService(repo, settings, http=http, versions=fixture_versions())
+        market = MarketService(
+            repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+        )
         result = await SupplyCapture(market).inventory(token)
         await market.close()
     assert result["available"] is True
@@ -321,7 +324,9 @@ async def test_failed_transfer_reads_do_not_become_observed_zero_flows(tmp_path:
 
     repo = MemoryRepository()
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
-        market = MarketService(repo, settings, http=http, versions=fixture_versions())
+        market = MarketService(
+            repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+        )
         inventory = await SupplyCapture(market).inventory(token)
         await market.close()
     flow = (await repo.list("mkt.supply_obs", filters={"kind": "WALLET_FLOWS"}))[0]
@@ -374,7 +379,13 @@ async def test_restart_resumes_supply_cadences_from_stored_observations(tmp_path
     assert calls == ["https://yields.llama.fi/lendBorrow"]
     stored = {r["kind"] for r in await first.repo.list("mkt.supply_obs", limit=100)}
     assert {"UNLOCKS", "EXCHANGE_INVENTORY", "LENDING", "CHAIN_LIQUIDITY", "FUNDAMENTALS"} <= stored
-    restarted = MarketService(first.repo, first.settings, http=first.http, versions=fixture_versions())
+    restarted = MarketService(
+        first.repo,
+        first.settings,
+        http=first.http,
+        versions=fixture_versions(),
+        admission=fixture_http_admission(),
+    )
     capture = SupplyCapture(restarted)
     await capture.poll(set())
     assert calls == ["https://yields.llama.fi/lendBorrow"]

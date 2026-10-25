@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 from scheduling_support import RecordingReactionScheduling
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_versions
 
+from tank.analysis.page_access import LivePageAccess
 from tank.event_tools import LAYERS, EventToolService
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -25,6 +26,7 @@ async def owner_service(tmp_path: Path):
         None,
         versions=fixture_versions(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
 
 

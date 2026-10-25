@@ -10,9 +10,11 @@ import pytest
 from agent_source_fixtures import declared_versions_fixture
 from pydantic import JsonValue
 from scheduling_support import RecordingReactionScheduling
+from source_support import fixture_http_admission
 
 from tank.agents.context import CONTEXT_VERSION, ID_FIELDS, ModelContext, identifier_field
 from tank.agents.sessions import SessionService
+from tank.analysis.page_access import LivePageAccess
 from tank.event_tools import EventToolService, validate_schema
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -163,6 +165,7 @@ async def test_real_record_and_followup_tools_take_ids_and_reply_without_them(co
         None,
         versions=declared_versions_fixture(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
     requests = []
 
@@ -415,6 +418,7 @@ async def test_merge_into_by_event_id_works_when_the_session_never_displayed_the
         None,
         versions=declared_versions_fixture(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
         service = SessionService(
@@ -637,6 +641,7 @@ async def test_real_domain_refusal_uses_display_names_and_keeps_raw_audit(contex
         None,
         versions=declared_versions_fixture(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
         service = SessionService(
@@ -698,6 +703,7 @@ async def test_identical_watches_on_different_tokens_are_disarmed_by_cond_id(con
         None,
         versions=declared_versions_fixture(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
     created = collection_clock()
     expires = offset_schedule(created, timedelta(days=7))
@@ -749,6 +755,7 @@ async def test_identical_watches_on_different_tokens_are_disarmed_by_cond_id(con
         None,
         versions=declared_versions_fixture(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     ).dispatch("set_watch_condition", restored, {"session_id": session["session_id"], "role": "analyst"})
     assert result["accepted"]
     for row in watches:
@@ -916,6 +923,7 @@ async def test_milestone_callback_confirms_from_the_fetched_official_document_by
             http=http,
             versions=declared_versions_fixture(),
             scheduler=RecordingReactionScheduling(),
+            pages=LivePageAccess(fixture_http_admission()),
         )
         due = clock_iso()
         await domain.dispatch(

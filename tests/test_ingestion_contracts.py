@@ -7,8 +7,9 @@ import httpx
 import pytest
 from pydantic import JsonValue, ValidationError
 from scheduler_support import operational_reaction_services
-from source_support import fixture_versions
+from source_support import fixture_request_budgets, fixture_versions
 
+from tank.analysis.page_access import LivePageAccess
 from tank.sources.capture_fetch import (
     CaptureRepository,
     CaptureState,
@@ -284,8 +285,10 @@ async def test_real_source_record_roundtrips_and_validates_processing_transition
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda request: httpx.Response(200, content=RSS))
     ) as http:
-        source = SourceService(repo, configuration, http=http, versions=fixture_versions())
-        assert (await source.poll_once("S30"))["items"] == 1
+        source = SourceService(
+            repo, configuration, http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
+        )
+        assert (await source.poll_once("S30")).items == 1
     [record] = await repo.list("ingest.source_items")
     item = parse_feed_source_item(record)
     assert item.storage_record() == record
@@ -361,7 +364,7 @@ async def test_real_web_evidence_record_roundtrips_without_feed_source_assumptio
     reaction_settings = Settings(data_dir=tmp_path, ops_progress_enabled=False)
     reaction_versions = fixture_versions()
     async with operational_reaction_services(
-        repo, reaction_settings, versions=reaction_versions
+        repo, reaction_settings, versions=reaction_versions, budgets=fixture_request_budgets()
     ) as reaction_services:
         service = EventToolService(
             repo,
@@ -370,6 +373,7 @@ async def test_real_web_evidence_record_roundtrips_without_feed_source_assumptio
             None,
             versions=reaction_versions,
             scheduler=reaction_services.scheduler,
+            pages=LivePageAccess(reaction_services.admission),
         )
         record = await service.save_web(
             "https://example.org/evidence",
@@ -434,7 +438,9 @@ async def test_missing_provider_limits_prevents_source_service_start(tmp_path: P
     settings = MissingProviderLimits(data_dir=tmp_path, ops_progress_enabled=False)
     async with httpx.AsyncClient() as http:
         with pytest.raises(ValidationError, match="limits"):
-            SourceService(repo, settings, http=http, versions=fixture_versions())
+            SourceService(
+                repo, settings, http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
+            )
     assert await repo.list("ops.jobs") == []
     assert await repo.list("ingest.source_items") == []
 
@@ -452,8 +458,9 @@ async def test_feed_duplicate_of_web_evidence_counts_feeds_without_replacing_ori
     settings = Settings(data_dir=tmp_path, ops_progress_enabled=False)
     reaction_settings = settings
     reaction_versions = fixture_versions()
+    budgets = fixture_request_budgets()
     async with operational_reaction_services(
-        repo, reaction_settings, versions=reaction_versions
+        repo, reaction_settings, versions=reaction_versions, budgets=budgets
     ) as reaction_services:
         tools = EventToolService(
             repo,
@@ -462,6 +469,7 @@ async def test_feed_duplicate_of_web_evidence_counts_feeds_without_replacing_ori
             None,
             versions=reaction_versions,
             scheduler=reaction_services.scheduler,
+            pages=LivePageAccess(reaction_services.admission),
         )
         original = await tools.save_web(
             "https://example.org/original",
@@ -474,7 +482,7 @@ async def test_feed_duplicate_of_web_evidence_counts_feeds_without_replacing_ori
         original_raw = Path(original["raw_ref"])
         original_bytes = original_raw.read_bytes()
         async with httpx.AsyncClient() as http:
-            service = SourceService(repo, settings, http=http, versions=fixture_versions())
+            service = SourceService(repo, settings, http=http, versions=fixture_versions(), budgets=budgets)
             for external_id in ("feed-first", "feed-repeat"):
                 incoming = captured(
                     service,
@@ -517,6 +525,7 @@ async def test_duplicate_ingestion_cannot_delete_foreign_raw_evidence(tmp_path: 
             Settings(data_dir=tmp_path, ops_progress_enabled=False),
             http=http,
             versions=fixture_versions(),
+            budgets=fixture_request_budgets(),
         )
         first = captured(service, "S30", {"external_id": "first", "title": "Title", "text": "Same facts"})
         await service.ingest(service.sources["S30"], first)
@@ -552,6 +561,7 @@ async def test_ingestion_cannot_invent_a_missing_capture_clock(tmp_path: Path) -
             Settings(data_dir=tmp_path, ops_progress_enabled=False),
             http=http,
             versions=fixture_versions(),
+            budgets=fixture_request_budgets(),
         )
         incoming = captured(service, "S30", {"external_id": "entry", "title": "Title", "text": "Facts"})
         del incoming["observed_at"]
@@ -619,6 +629,7 @@ async def test_ingestion_requires_an_aware_capture_clock(tmp_path: Path, clock: 
             Settings(data_dir=tmp_path, ops_progress_enabled=False),
             http=http,
             versions=fixture_versions(),
+            budgets=fixture_request_budgets(),
         )
         incoming = captured(service, "S30", {"external_id": "clock-test", "title": "Title", "text": "Facts"})
         incoming["observed_at"] = clock
@@ -701,7 +712,11 @@ async def test_source_service_rejects_missing_or_excessive_known_provider_budget
     async with httpx.AsyncClient() as http:
         with pytest.raises(ValidationError, match="tank_max_requests_per_s|half the documented"):
             SourceService(
-                repo, InvalidProviderBudget(data_dir=tmp_path), http=http, versions=fixture_versions()
+                repo,
+                InvalidProviderBudget(data_dir=tmp_path),
+                http=http,
+                versions=fixture_versions(),
+                budgets=fixture_request_budgets(),
             )
     assert await repo.list("ops.jobs") == []
     assert await repo.list("ingest.source_items") == []
@@ -745,7 +760,11 @@ async def test_required_documented_provider_capacity_cannot_be_omitted(
     async with httpx.AsyncClient() as http:
         with pytest.raises(ValidationError):
             SourceService(
-                repo, MissingDocumentedCapacity(data_dir=tmp_path), http=http, versions=fixture_versions()
+                repo,
+                MissingDocumentedCapacity(data_dir=tmp_path),
+                http=http,
+                versions=fixture_versions(),
+                budgets=fixture_request_budgets(),
             )
     assert await repo.list("ops.jobs") == []
     assert await repo.list("ingest.source_items") == []
@@ -796,7 +815,9 @@ async def test_source_ingestion_persists_explicit_version_facet_not_raw_settings
     )
     repo = MemoryRepository()
     async with httpx.AsyncClient() as http:
-        source = SourceService(repo, settings, versions=versions, http=http)
+        source = SourceService(
+            repo, settings, versions=versions, http=http, budgets=fixture_request_budgets()
+        )
         wire = captured(source, "S30", {"external_id": "versioned", "title": "Title", "text": "Facts"})
         record = await source.ingest(source.sources["S30"], wire)
     item = SourceItemDocument.model_validate(record).root
@@ -972,3 +993,53 @@ def test_filing_registry_projection_keeps_genuine_optional_secondary_name() -> N
     assert labels.tokens[0].name == "Example Protocol"
     assert labels.entities[0].names == ["Example Protocol"]
     assert labels.entities[0].name is None
+
+
+def test_source_escalation_requires_declared_state_and_window() -> None:
+    from tank.contracts.sources import SourceEscalationControlView
+
+    wire: dict[str, JsonValue] = {
+        "source_id": "S15",
+        "status": "ACTIVE",
+        "starts_at": "2026-10-25T00:00:00Z",
+        "expires_at": "2026-10-25T00:15:00Z",
+    }
+    for field in ("status", "starts_at", "expires_at"):
+        incomplete = dict(wire)
+        del incomplete[field]
+        with pytest.raises(ValidationError):
+            SourceEscalationControlView.from_document(incomplete)
+    with pytest.raises(ValidationError):
+        SourceEscalationControlView.from_document({**wire, "expires_at": wire["starts_at"]})
+    for terminal in ("CONFIRMED", "CANCELLED"):
+        with pytest.raises(ValidationError):
+            SourceEscalationControlView.from_document({**wire, "status": terminal})
+
+
+def test_source_escalation_confirmation_closes_exact_half_open_window() -> None:
+    from tank.contracts.sources import SourceEscalationControlView
+    from tank.util import parse_iso_time
+
+    wire: dict[str, JsonValue] = {
+        "source_id": "S15",
+        "status": "ACTIVE",
+        "starts_at": "2026-10-25T00:00:00Z",
+        "expires_at": "2026-10-25T00:15:00Z",
+    }
+    control = SourceEscalationControlView.from_document(wire)
+    assert control.active_at(parse_iso_time("2026-10-25T00:00:00Z"))
+    assert not control.active_at(parse_iso_time("2026-10-25T00:15:00Z"))
+    confirmed = SourceEscalationControlView.from_document(
+        {
+            **wire,
+            "confirmed_at": "2026-10-25T00:01:00Z",
+        }
+    )
+    assert not confirmed.active_at(parse_iso_time("2026-10-25T00:02:00Z"))
+
+
+def test_source_poll_summary_cannot_hide_failed_reads_as_healthy() -> None:
+    from tank.contracts.sources import PolledSource
+
+    with pytest.raises(ValidationError, match="cannot claim healthy"):
+        PolledSource(source_id="S30", items=0, errors=["HTTP 503"], status="HEALTHY")

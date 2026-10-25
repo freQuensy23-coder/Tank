@@ -1,0 +1,136 @@
+{
+  "archived_code_executed": false,
+  "entries": [
+    {
+      "origin_claim": "NO_MATCHING_FIXED_PATH_GIT_BLOB_LOCATED",
+      "origins": [
+        {
+          "compressed_sha256": "d15bc237717224e0bc351bf0e137cee6f4e8401f04eff817bb2429f72ac65f40",
+          "field_path": "$.records[0].as_of_evidence.projection_provenance.projection_module_sha256",
+          "fixture_id": "F-18",
+          "packet_path": "data/replay/acceptance-s03-api-r40-candidate-v3/F-18/inputs/input.r40.json.zst"
+        },
+        {
+          "compressed_sha256": "5d24e92ec552aff86b8c46e402b3bc00a4b6118cd88f42f2c8c9976455d93b46",
+          "field_path": "$.records[0].as_of_evidence.projection_provenance.projection_module_sha256",
+          "fixture_id": "F-19",
+          "packet_path": "data/replay/acceptance-s03-api-r40-candidate-v3/F-19/inputs/input.r40.json.zst"
+        },
+        {
+          "compressed_sha256": "a71a4b31ea852381125da9db14f1b16eb524ccf47cfd558b04ddb3d6a6f67436",
+          "field_path": "$.records[0].as_of_evidence.projection_provenance.projection_module_sha256",
+          "fixture_id": "F-20",
+          "packet_path": "data/replay/acceptance-s03-api-r40-candidate-v3/F-20/inputs/input.r40.json.zst"
+        }
+      ],
+      "projection_module_sha256": "0eea545dc0961b4a25ad620b4d4aae1d6482b965fe1656a09652eb4d3054a700",
+      "source_path": "src/tank/fixture_reference.py",
+      "status": "UNRESOLVED"
+    },
+    {
+      "origin_claim": "NO_MATCHING_FIXED_PATH_GIT_BLOB_LOCATED",
+      "origins": [
+        {
+          "compressed_sha256": "766db2ab8fbde45fc3d1784569110eefb9cdba5e6186313011ae2a734f77afa8",
+          "field_path": "$.records[0].as_of_evidence.projection_provenance.projection_module_sha256",
+          "fixture_id": "F-06",
+          "packet_path": "data/replay/acceptance-F06-reference-flow-r39-candidate/inputs/input.r39.json.zst"
+        }
+      ],
+      "projection_module_sha256": "8b4a843350a2699dc71cae0ff646c35bed9e64cd272f8b34c1a4936993e45e12",
+      "source_path": "src/tank/fixture_reference.py",
+      "status": "UNRESOLVED"
+    },
+    {
+      "origin_claim": "NO_MATCHING_FIXED_PATH_GIT_BLOB_LOCATED",
+      "origins": [
+        {
+          "compressed_sha256": "7c98cb8fcfdbe21e136da767e6b8d838d649e1089d5777b5babc9c9e2df6eeee",
+          "field_path": "$.records[0].as_of_evidence.projection_provenance.projection_module_sha256",
+          "fixture_id": "F-10",
+          "packet_path": "data/replay/acceptance-F03-F10-context-r45-v2/F-10/inputs/input.json.zst"
+        },
+        {
+          "compressed_sha256": "7c98cb8fcfdbe21e136da767e6b8d838d649e1089d5777b5babc9c9e2df6eeee",
+          "field_path": "$.records[1].as_of_evidence.projection_provenance.projection_module_sha256",
+          "fixture_id": "F-10",
+          "packet_path": "data/replay/acceptance-F03-F10-context-r45-v2/F-10/inputs/input.json.zst"
+        },
+        {
+          "compressed_sha256": "7c85f8ecebd12cbc99a7a66ed92426ef7d4c42779ded8bf84b668f5cd32bb61c",
+          "field_path": "$.records[0].as_of_evidence.projection_provenance.projection_module_sha256",
+          "fixture_id": "F-03",
+          "packet_path": "data/replay/acceptance-F03-code-r47/F-03/inputs/input.json.zst"
+        }
+      ],
+      "projection_module_sha256": "a4f8e02803e1010098e453581539e63b537e4720ad79f495fd6a1c1c64c64f16",
+      "source_path": "src/tank/fixture_reference.py",
+      "status": "UNRESOLVED"
+    },
+    {
+      "archive_path": "docs/verification/captured-projection-modules/fixture_reference.dc5ab5082e4806900c06efbbce3ebeefbe0f1866360caf9fd5c81cd6ead71559.source",
+      "git_blob_sha1": "28e892845781d3084b8cc732896f3471c2662a2d",
+      "git_commit": "e5a1cef32497c9096f8465c160f87e8010736dde",
+      "origin_claim": "BYTES_PRESENT_AT_GIT_PATH_NOT_DEPLOYMENT",
+      "origins": [
+        {
+          "compressed_sha256": "b19f1ef62573804e51290388110d773ec87ba8831a3b74e775a28ccda35b4205",
+          "field_path": "$.records[0].as_of_evidence.projection_provenance.projection_module_sha256",
+          "fixture_id": "F-05",
+          "packet_path": "data/replay/acceptance-r91/F-05/inputs/input.json.zst"
+        },
+        {
+          "compressed_sha256": "c0d216a3093be645a9f77f9dd222cf1cfc627b47d83c56e3b54a867c2a6dd715",
+          "field_path": "$.records[0].as_of_evidence.projection_provenance.projection_module_sha256",
+          "fixture_id": "F-07",
+          "packet_path": "data/replay/acceptance-r91/F-07/inputs/input.json.zst"
+        }
+      ],
+      "projection_module_sha256": "dc5ab5082e4806900c06efbbce3ebeefbe0f1866360caf9fd5c81cd6ead71559",
+      "source_bytes": 61464,
+      "source_path": "src/tank/fixture_reference.py",
+      "status": "VERIFIED_GIT_BYTES"
+    },
+    {
+      "origin_claim": "NO_MATCHING_FIXED_PATH_GIT_BLOB_LOCATED",
+      "origins": [
+        {
+          "compressed_sha256": "79c6a0a358f9f38817cb44d466b66e7ad6d254083d9b682c4c32d5f6af962432",
+          "field_path": "$.records[0].as_of_evidence.projection_provenance.projection_module_sha256",
+          "fixture_id": "F-04",
+          "packet_path": "data/replay/acceptance-r38-code-prepared/F-04/inputs/input.json.zst"
+        },
+        {
+          "compressed_sha256": "8327ecf79622982034995e8927216ee28e1020a7e991fe8e94ef56db3fd5d8d9",
+          "field_path": "$.records[0].as_of_evidence.projection_provenance.projection_module_sha256",
+          "fixture_id": "F-08",
+          "packet_path": "data/replay/acceptance-r38-code-prepared/F-08/inputs/input.json.zst"
+        },
+        {
+          "compressed_sha256": "f7822e2bbef92b19f455d9e0992d4e49231ce430fd09b5c3eefd4043e6a4952e",
+          "field_path": "$.records[0].as_of_evidence.projection_provenance.projection_module_sha256",
+          "fixture_id": "F-21",
+          "packet_path": "data/replay/acceptance-r38-code-prepared/F-21/inputs/input.json.zst"
+        },
+        {
+          "compressed_sha256": "6e513a236d8cba49e6f8dbbb033dfaa1efd493f1f31f0958276b29b545bd2933",
+          "field_path": "$.records[0].as_of_evidence.projection_provenance.projection_module_sha256",
+          "fixture_id": "F-22",
+          "packet_path": "data/replay/acceptance-r38-code-prepared/F-22/inputs/input.json.zst"
+        },
+        {
+          "compressed_sha256": "537bb65d8808fcc33757ba662be15a8a85f201f91b738145859e825bc80d93f3",
+          "field_path": "$.records[0].as_of_evidence.projection_provenance.projection_module_sha256",
+          "fixture_id": "F-23",
+          "packet_path": "data/replay/acceptance-r38-code-prepared/F-23/inputs/input.json.zst"
+        }
+      ],
+      "projection_module_sha256": "e13f661668b96e20b2abc0162e64eb0418196647938efd992adba25ad0a34597",
+      "source_path": "src/tank/fixture_reference.py",
+      "status": "UNRESOLVED"
+    }
+  ],
+  "excluded_fixture": "F-02_MANIFEST_MISMATCH",
+  "fixed_source_path": "src/tank/fixture_reference.py",
+  "verified_input_packets": 25
+}

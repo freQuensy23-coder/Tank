@@ -14,9 +14,11 @@ import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture
 from scheduling_support import RecordingReactionScheduling
+from source_support import fixture_http_admission
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
+from tank.analysis.page_access import LivePageAccess
 from tank.event_tools import EventToolService
 from tank.runtime_contracts import ScoutReviewJob
 from tank.settings import Settings
@@ -207,6 +209,7 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
         None,
         versions=declared_versions_fixture(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
     openma = FakeOpenMA()
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma)) as http:

@@ -6,7 +6,7 @@
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "_entity_record",
-          "line": 265
+          "line": 270
         }
       ],
       "kind": "display-only absence",
@@ -21,12 +21,12 @@
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "validate_registry",
-          "line": 272
+          "line": 277
         },
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "_key",
-          "line": 213
+          "line": 218
         }
       ],
       "kind": "natural identity and immutable model construction",
@@ -41,7 +41,7 @@
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "_routing_aliases",
-          "line": 217
+          "line": 222
         }
       ],
       "kind": "optional qualification",
@@ -56,12 +56,12 @@
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "_document",
-          "line": 410
+          "line": 415
         },
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "_config_timestamp_metadata",
-          "line": 199
+          "line": 200
         }
       ],
       "kind": "JSON serialization boundary",
@@ -76,7 +76,7 @@
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "_sync_rows",
-          "line": 455
+          "line": 460
         }
       ],
       "kind": "persistence absence and unowned extension merge",
@@ -93,7 +93,7 @@
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "RegistrySyncResult.to_wire",
-          "line": 176
+          "line": 177
         }
       ],
       "kind": "report serialization",
@@ -162,17 +162,17 @@
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "TokenContract.chain_id",
-          "line": 30
+          "line": 109
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "TokenContract.decimals",
-          "line": 31
+          "line": 110
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "TokenContract.chain_id_evidence",
-          "line": 32
+          "line": 111
         }
       ],
       "kind": "explicit valid absence",
@@ -187,47 +187,47 @@
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "FundamentalsEvidence.summary_id",
-          "line": 43
+          "line": 122
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "FundamentalsEvidence.reason",
-          "line": 46
+          "line": 125
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "FundamentalsEvidence.verified_at_prec",
-          "line": 47
+          "line": 126
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "FundamentalsEvidence.verified_at_precision",
-          "line": 48
+          "line": 127
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "FundamentalsEvidence.verified_at_prec_reason",
-          "line": 49
+          "line": 128
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "FundamentalsEvidence.verified_at_precision_reason",
-          "line": 50
+          "line": 129
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "FundamentalsEvidence.verified_at_reason",
-          "line": 51
+          "line": 130
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "FundamentalsEvidence.verified_at_bucket_size_s",
-          "line": 52
+          "line": 131
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "FundamentalsEvidence.verified_at_bucket_anchor",
-          "line": 53
+          "line": 132
         }
       ],
       "kind": "explicit valid absence",
@@ -242,52 +242,52 @@
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryToken.unlock_slug",
-          "line": 83
+          "line": 162
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryToken.supply_unavailable_reason",
-          "line": 84
+          "line": 163
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryToken.defillama_protocol_slug",
-          "line": 88
+          "line": 167
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryToken.fee_protocol_slug",
-          "line": 89
+          "line": 168
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryToken.native_chain_id",
-          "line": 95
+          "line": 174
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryToken.defillama_chain_name",
-          "line": 96
+          "line": 175
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryToken.chain_identity_evidence",
-          "line": 97
+          "line": 176
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryToken.fundamentals_inference_limits",
-          "line": 98
+          "line": 177
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryToken.supplementary_chain_fee_slug",
-          "line": 99
+          "line": 178
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryToken.supplementary_chain_fee_warning",
-          "line": 100
+          "line": 179
         }
       ],
       "kind": "explicit valid absence",
@@ -302,62 +302,62 @@
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryInstrument.contract_multiplier",
-          "line": 111
+          "line": 190
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryInstrument.tick_size",
-          "line": 112
+          "line": 191
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryInstrument.lot_size",
-          "line": 113
+          "line": 192
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryInstrument.funding_interval_h",
-          "line": 114
+          "line": 193
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryInstrument.resolved_at",
-          "line": 116
+          "line": 195
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryInstrument.resolved_at_prec",
-          "line": 119
+          "line": 198
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryInstrument.resolved_at_precision",
-          "line": 120
+          "line": 199
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryInstrument.resolved_at_prec_reason",
-          "line": 121
+          "line": 200
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryInstrument.resolved_at_precision_reason",
-          "line": 122
+          "line": 201
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryInstrument.resolved_at_reason",
-          "line": 123
+          "line": 202
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryInstrument.resolved_at_bucket_size_s",
-          "line": 124
+          "line": 203
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryInstrument.resolved_at_bucket_anchor",
-          "line": 125
+          "line": 204
         }
       ],
       "kind": "explicit valid absence",
@@ -372,77 +372,77 @@
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryEntity.name",
-          "line": 177
+          "line": 256
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryEntity.chains",
-          "line": 178
+          "line": 257
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryEntity.qualified_aliases",
-          "line": 179
+          "line": 258
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryEntity.authority_evidence",
-          "line": 180
+          "line": 259
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryEntity.identity_basis",
-          "line": 181
+          "line": 260
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryEntity.identity_evidence",
-          "line": 182
+          "line": 261
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryEntity.identity_reviewed_at",
-          "line": 183
+          "line": 262
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryEntity.source_mapping_basis",
-          "line": 184
+          "line": 263
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryEntity.identity_reviewed_at_prec",
-          "line": 186
+          "line": 265
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryEntity.identity_reviewed_at_precision",
-          "line": 187
+          "line": 266
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryEntity.identity_reviewed_at_prec_reason",
-          "line": 188
+          "line": 267
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryEntity.identity_reviewed_at_precision_reason",
-          "line": 189
+          "line": 268
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryEntity.identity_reviewed_at_reason",
-          "line": 190
+          "line": 269
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryEntity.identity_reviewed_at_bucket_size_s",
-          "line": 191
+          "line": 270
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryEntity.identity_reviewed_at_bucket_anchor",
-          "line": 192
+          "line": 271
         }
       ],
       "kind": "explicit valid absence",
@@ -457,7 +457,7 @@
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistrySectorBasket.basket_id",
-          "line": 222
+          "line": 301
         }
       ],
       "kind": "explicit valid absence",
@@ -472,12 +472,12 @@
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryDependency.token_id",
-          "line": 265
+          "line": 344
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryDependency.edge_id",
-          "line": 271
+          "line": 350
         }
       ],
       "kind": "explicit valid absence",
@@ -492,12 +492,12 @@
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "DepthSemantics.current_doc_ref",
-          "line": 316
+          "line": 395
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "DepthSemantics.endpoint_change_evidence",
-          "line": 317
+          "line": 396
         }
       ],
       "kind": "explicit valid absence",
@@ -512,27 +512,27 @@
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "OpenInterestSemantics.publish_lag_basis",
-          "line": 339
+          "line": 418
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "OpenInterestSemantics.publish_lag_s",
-          "line": 340
+          "line": 419
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "OpenInterestSemantics.source_interval_s",
-          "line": 341
+          "line": 420
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "OpenInterestSemantics.timestamp_semantics_detail",
-          "line": 342
+          "line": 421
         },
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "OpenInterestSemantics.timestamp_semantics_reason",
-          "line": 343
+          "line": 422
         }
       ],
       "kind": "explicit valid absence",
@@ -547,7 +547,7 @@
         {
           "path": "src/tank/contracts/registry.py",
           "symbol": "RegistryWalletList.chain",
-          "line": 380
+          "line": 459
         }
       ],
       "kind": "explicit valid absence",
@@ -562,12 +562,12 @@
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "_schema_fields",
-          "line": 419
+          "line": 424
         },
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "_owned_fields",
-          "line": 423
+          "line": 428
         }
       ],
       "kind": "closed table-family field ownership",
@@ -581,7 +581,7 @@
         {
           "path": "src/tank/agents/sessions.py",
           "symbol": "SessionService.__init__",
-          "line": 123
+          "line": 125
         }
       ],
       "kind": "native adapter resource and cache initialization",
@@ -608,7 +608,7 @@
         {
           "path": "src/tank/agents/context.py",
           "symbol": "ModelContext.source_label",
-          "line": 420
+          "line": 483
         }
       ],
       "kind": "required nullable display facts and unresolved registry lookups",
@@ -629,7 +629,7 @@
         {
           "path": "src/tank/agents/context.py",
           "symbol": "ModelContext.__init__",
-          "line": 380
+          "line": 434
         }
       ],
       "kind": "JSON configuration adapter and keyed indexes",
@@ -650,7 +650,7 @@
         {
           "path": "src/tank/agents/context_binding.py",
           "symbol": "ContextBinding.observation_source",
-          "line": 73
+          "line": 75
         }
       ],
       "kind": "persisted input-owner projection and genuine pre-input/legacy absence",
@@ -695,17 +695,17 @@
         {
           "path": "src/tank/openma_sync.py",
           "symbol": "_data",
-          "line": 153
+          "line": 158
         },
         {
           "path": "src/tank/openma_sync.py",
           "symbol": "OpenMAApi.publish_skill",
-          "line": 402
+          "line": 426
         },
         {
           "path": "src/tank/openma_sync.py",
           "symbol": "agent_tools",
-          "line": 203
+          "line": 208
         }
       ],
       "kind": "SDK serialization boundary",
@@ -722,27 +722,27 @@
         {
           "path": "src/tank/contracts/openma.py",
           "symbol": "ManagedAgentObservation",
-          "line": 238
+          "line": 255
         },
         {
           "path": "src/tank/contracts/openma.py",
           "symbol": "BuiltinToolObservation",
-          "line": 216
+          "line": 233
         },
         {
           "path": "src/tank/contracts/openma.py",
           "symbol": "CustomToolObservation",
-          "line": 223
+          "line": 240
         },
         {
           "path": "src/tank/contracts/openma.py",
           "symbol": "EnvironmentNetworkObservation",
-          "line": 251
+          "line": 271
         },
         {
           "path": "src/tank/contracts/openma.py",
           "symbol": "EnvironmentPackagesObservation",
-          "line": 258
+          "line": 278
         }
       ],
       "kind": "required nullable genuine provider observations",
@@ -760,24 +760,25 @@
         {
           "path": "src/tank/contracts/openma.py",
           "symbol": "RegisteredSkill",
-          "line": 112
+          "line": 129
         },
         {
           "path": "src/tank/openma_sync.py",
           "symbol": "registered_skills",
-          "line": 433
+          "line": 474
         },
         {
           "path": "src/tank/openma_sync.py",
           "symbol": "OpenMASynchronizer.run",
-          "line": 520
+          "line": 579
         }
       ],
       "kind": "observed unregistered resources and digest absence",
-      "reason": "No model card/skill registration is a genuine create case. A positional provider skill has required identity/version but nullable unknown Tank digest until successful managed publication. Namespace get/next(None) reflects resource existence, not a required-value substitute.",
+      "reason": "Only explicit validated Tank metadata authorizes existing role resources. Digest None represents unknown content for a declared binding, never ownership. Metadata-free nonempty references refuse; genuinely empty registrations can create resources. Unrelated anthropic/custom references retain actual kind/identity/version.",
       "validation": [
-        "test_first_start_versions_every_skill_and_agent_then_nothing_changes",
-        "test_a_skill_missing_from_its_agent_is_created"
+        "test_metadata_free_skill_references_cannot_authorize_role_updates",
+        "test_explicit_skill_bindings_ignore_provider_order_and_preserve_unrelated_references",
+        "test_unrelated_anthropic_reference_keeps_its_kind_identity_and_version"
       ]
     },
     {
@@ -786,22 +787,22 @@
         {
           "path": "src/tank/contracts/openma.py",
           "symbol": "OpenMAConfiguration.model_prices",
-          "line": 34
+          "line": 35
         },
         {
           "path": "src/tank/contracts/openma.py",
           "symbol": "OpenMASyncPlan",
-          "line": 299
+          "line": 340
         },
         {
           "path": "src/tank/contracts/openma.py",
           "symbol": "OpenMASyncReport",
-          "line": 283
+          "line": 324
         },
         {
           "path": "src/tank/openma_sync.py",
           "symbol": "_tools_key",
-          "line": 469
+          "line": 522
         }
       ],
       "kind": "typed keyed namespaces and local indexes",
@@ -817,22 +818,22 @@
         {
           "path": "src/tank/contracts/openma.py",
           "symbol": "ManagedAgentMetadata",
-          "line": 152
+          "line": 169
         },
         {
           "path": "src/tank/openma_sync.py",
           "symbol": "_provider_metadata",
-          "line": 245
+          "line": 250
         },
         {
           "path": "src/tank/openma_sync.py",
           "symbol": "_registered_metadata",
-          "line": 257
+          "line": 262
         },
         {
           "path": "src/tank/openma_sync.py",
           "symbol": "OpenMAApi.publish_agent",
-          "line": 416
+          "line": 440
         }
       ],
       "kind": "explicit provider string namespace preservation",
@@ -848,17 +849,17 @@
         {
           "path": "src/tank/openma_sync.py",
           "symbol": "SyncConfiguration",
-          "line": 98
+          "line": 103
         },
         {
           "path": "src/tank/openma_sync.py",
           "symbol": "keep_in_sync",
-          "line": 572
+          "line": 649
         },
         {
           "path": "src/tank/contracts/openma.py",
           "symbol": "OpenMACredentials",
-          "line": 201
+          "line": 218
         }
       ],
       "kind": "configuration acquisition absence and SDK transport factory",
@@ -875,7 +876,7 @@
         {
           "path": "tests/test_openma_sync.py",
           "symbol": "FakeOpenMA",
-          "line": 68
+          "line": 69
         }
       ],
       "kind": "external protocol simulator",
@@ -904,6 +905,49 @@
       "validation": [
         "test_persistence_guard_refuses_an_unrecorded_pointer_before_store_write",
         "test_send_writer_revalidates_owner_after_reloading_under_lock"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/runtime.py",
+          "symbol": "Runtime.__init__",
+          "line": 78
+        },
+        {
+          "path": "src/tank/runtime.py",
+          "symbol": "Runtime.close",
+          "line": 478
+        }
+      ],
+      "kind": "owned runtime resource lifetime absence",
+      "reason": "budget_binding is None before Runtime.run binds the required backend or after close clears and releases its exact owned lease. Scope/backend dependencies remain required; an unbound scope refuses admission.",
+      "validation": [
+        "test_production_composition_binds_the_real_scheduler_and_owns_shutdown",
+        "test_gateway_starts_in_same_runtime_before_sources_and_closes_after_drain",
+        "test_production_budget_backend_uses_explicit_repository_kind_without_connecting"
+      ]
+    },
+    {
+      "ledger_key": "openma-confirmation",
+      "sites": [
+        {
+          "path": "src/tank/contracts/openma.py",
+          "symbol": "ManagedAgentObservation.model_effort",
+          "line": 260
+        },
+        {
+          "path": "src/tank/openma_sync.py",
+          "symbol": "OpenMAApi.publish_agent",
+          "line": 440
+        }
+      ],
+      "kind": "genuine unconfigured observed effort and exact immutable write confirmation",
+      "reason": "Observed effort None is not configured intent; it forces reconciliation and can never confirm an update. A successful write requires exact-version read-back. Unsupported/missing confirmation is permanent, preventing repeated publications. JSON wrappers are parsed only at the adapter.",
+      "validation": [
+        "test_changed_effort_publishes_confirmed_version_and_unchanged_effort_is_current",
+        "test_unconfirmed_readback_stops_without_repeated_publish",
+        "test_readback_is_bound_to_published_version_not_concurrently_changed_latest"
       ]
     },
     {

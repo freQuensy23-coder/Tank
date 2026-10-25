@@ -1,5 +1,6 @@
 """tank serve sets the GIL switch interval before the service starts."""
 
+import asyncio
 import json
 import sys
 from collections.abc import Awaitable, Callable
@@ -88,3 +89,107 @@ def test_readiness_validates_structural_configuration_not_only_yaml(
     result = by_name[configuration_name + "_syntax"]
     assert not result.ok and result.reason == "ValidationError"
     assert marker not in json.dumps([check.model_dump(mode="json") for check in checks])
+
+
+class UncapturedSettings(Settings):
+    model_config = SettingsConfigDict(env_file=None)
+
+
+@pytest.mark.asyncio
+async def test_sync_preflight_failure_stops_and_drains_runtime_before_propagating() -> None:
+    stop, started, drained = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def runtime() -> None:
+        started.set()
+        await stop.wait()
+        await asyncio.sleep(0)
+        drained.set()
+
+    async def synchronize() -> None:
+        await started.wait()
+        UncapturedSettings().require_versions()
+
+    with pytest.raises(ValueError, match="captured"):
+        await cli.run_with_synchronization(runtime(), synchronize(), stop)
+    assert stop.is_set() and drained.is_set()
+
+
+@pytest.mark.asyncio
+async def test_successful_one_shot_sync_keeps_runtime_alive_until_signal_stop() -> None:
+    stop, started, synchronized, drained = (
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+    )
+
+    async def runtime() -> None:
+        started.set()
+        await stop.wait()
+        drained.set()
+
+    async def synchronize() -> None:
+        await started.wait()
+        synchronized.set()
+
+    running = asyncio.create_task(cli.run_with_synchronization(runtime(), synchronize(), stop))
+    try:
+        await asyncio.wait_for(synchronized.wait(), timeout=1)
+        assert not running.done()
+        stop.set()
+        await asyncio.wait_for(running, timeout=1)
+        assert drained.is_set()
+    finally:
+        stop.set()
+        await running
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancellation_awaits_sync_cleanup_and_runtime_drain() -> None:
+    stop, started, sync_started, drained, sync_closed = (
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+    )
+
+    async def runtime() -> None:
+        started.set()
+        await stop.wait()
+        await asyncio.sleep(0)
+        drained.set()
+
+    async def synchronize() -> None:
+        await started.wait()
+        sync_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await asyncio.sleep(0)
+            sync_closed.set()
+
+    running = asyncio.create_task(cli.run_with_synchronization(runtime(), synchronize(), stop))
+    await asyncio.wait_for(sync_started.wait(), timeout=1)
+    running.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    assert stop.is_set() and drained.is_set() and sync_closed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_sync_failure_does_not_hide_runtime_drain_failure() -> None:
+    stop, started = asyncio.Event(), asyncio.Event()
+
+    async def runtime() -> None:
+        started.set()
+        await stop.wait()
+        raise RuntimeError("owned runtime drain failed")
+
+    async def synchronize() -> None:
+        await started.wait()
+        UncapturedSettings().require_versions()
+
+    with pytest.raises(ExceptionGroup) as failed:
+        await cli.run_with_synchronization(runtime(), synchronize(), stop)
+    assert {type(error) for error in failed.value.exceptions} == {ValueError, RuntimeError}

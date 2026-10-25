@@ -8,7 +8,7 @@ import httpx
 import pytest
 import zstandard
 from selectolax.parser import HTMLParser
-from source_support import fixture_versions, source_configuration
+from source_support import fixture_request_budgets, fixture_versions, source_configuration
 
 from tank.settings import Settings
 from tank.sources import SourceService, parsers
@@ -127,10 +127,12 @@ async def test_normal_dtcc_poll_uses_actual_retained_release_bodies(tmp_path: Pa
     )
     repo = MemoryRepository()
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-        service = SourceService(repo, settings, http=http, versions=fixture_versions())
+        service = SourceService(
+            repo, settings, http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
+        )
         try:
             outcome = await service.poll_once("S08")
-            assert outcome["status"] == "HEALTHY" and outcome["items"] == 2, outcome
+            assert outcome.status == "HEALTHY" and outcome.items == 2, outcome
             rows = await repo.list("ingest.source_items")
             for _, original, payload in fixtures:
                 row = next(x for x in rows if x["external_id"] == original["external_id"])

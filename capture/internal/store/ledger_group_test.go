@@ -13,7 +13,11 @@ func TestBudgetGroupRollbackPreservesOtherWindowCapacity(t *testing.T) {
 	key := "group-" + suffix()
 	short := budget.Bucket{Key: key + "-a", Capacity: 1, WindowS: 1, Weight: 1}
 	daily := budget.Bucket{Key: key + "-z", Capacity: 1, WindowS: 86400, Weight: 1}
-	names := []string{short.Name(), daily.Name()}
+	var shortName, dailyName string
+	if err := s.Pool.QueryRow(ctx, "SELECT ops.request_budget_scope_key($1::text,$2::float8),ops.request_budget_scope_key($3::text,$4::float8)", short.Key, short.WindowS, daily.Key, daily.WindowS).Scan(&shortName, &dailyName); err != nil {
+		t.Fatal(err)
+	}
+	names := []string{shortName, dailyName}
 	t.Cleanup(func() {
 		if _, err := s.Pool.Exec(ctx, "DELETE FROM ops.request_budget_ledger WHERE bucket=ANY($1::text[])", names); err != nil {
 			t.Error(err)
@@ -27,7 +31,7 @@ func TestBudgetGroupRollbackPreservesOtherWindowCapacity(t *testing.T) {
 		t.Fatalf("blocked group: wait=%v err=%v", wait, err)
 	}
 	var used float64
-	if err := s.Pool.QueryRow(ctx, "SELECT COALESCE(sum(weight),0)::float8 FROM ops.request_budget_ledger WHERE bucket=$1", short.Name()).Scan(&used); err != nil {
+	if err := s.Pool.QueryRow(ctx, "SELECT COALESCE(sum(weight),0)::float8 FROM ops.request_budget_ledger WHERE bucket=$1", shortName).Scan(&used); err != nil {
 		t.Fatal(err)
 	}
 	if used != 0 {

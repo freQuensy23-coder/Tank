@@ -10,7 +10,7 @@ import pydantic
 import pytest
 import zstandard
 from pydantic import JsonValue
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_request_budgets, fixture_versions
 from test_sources import settings
 
 from tank.contracts.json import decode_json
@@ -111,7 +111,11 @@ async def test_first_run_is_a_baseline_then_only_posts_above_the_cursor_are_new(
             ),
         ),
     )
-    sensor = XSensor(httpx.AsyncClient(transport=httpx.MockTransport(actor)), "FAKE-token")
+    sensor = XSensor(
+        httpx.AsyncClient(transport=httpx.MockTransport(actor)),
+        "FAKE-token",
+        admission=fixture_http_admission(),
+    )
 
     first = await sensor.posts(URL, ["ethereum", "AyaMiyagotchi"], {})
     assert first.rows == [] and first.cursors == {"ethereum": "100", "ayamiyagotchi": "90"}
@@ -138,7 +142,11 @@ async def test_a_failed_or_unreadable_run_raises() -> None:
         (400, {"error": {"type": "run-failed", "message": "Actor run did not succeed"}}),
         (201, {"health": "healthy", "posts": [], "accounts": []}),
     )
-    sensor = XSensor(httpx.AsyncClient(transport=httpx.MockTransport(actor)), "FAKE-token")
+    sensor = XSensor(
+        httpx.AsyncClient(transport=httpx.MockTransport(actor)),
+        "FAKE-token",
+        admission=fixture_http_admission(),
+    )
     with pytest.raises(RuntimeError, match="PUBLIC_SOURCE_UNAVAILABLE"):
         await sensor.posts(URL, ["ethereum"], {"ethereum": "1"})
     with pytest.raises(RuntimeError, match="Apify X run request failed: Client error '400 Bad Request'"):
@@ -148,14 +156,18 @@ async def test_a_failed_or_unreadable_run_raises() -> None:
     degraded = Actor(
         (201, run([], [account("ethereum")], {"ethereum": "1"}, health="degraded", error="COVERAGE"))
     )
-    scan = await XSensor(httpx.AsyncClient(transport=httpx.MockTransport(degraded)), "FAKE-token").posts(
-        URL, ["ethereum"], {"ethereum": "1"}
-    )
+    scan = await XSensor(
+        httpx.AsyncClient(transport=httpx.MockTransport(degraded)),
+        "FAKE-token",
+        admission=fixture_http_admission(),
+    ).posts(URL, ["ethereum"], {"ethereum": "1"})
     assert scan.failures == [AccountFailure(account=None, reason="COVERAGE")]
     partial = Actor((201, run([post("5", "kept")], [account("kept")], {})))
-    scan = await XSensor(httpx.AsyncClient(transport=httpx.MockTransport(partial)), "FAKE-token").posts(
-        URL, ["kept", "dropped"], {}
-    )
+    scan = await XSensor(
+        httpx.AsyncClient(transport=httpx.MockTransport(partial)),
+        "FAKE-token",
+        admission=fixture_http_admission(),
+    ).posts(URL, ["kept", "dropped"], {})
     assert scan.failures == [
         AccountFailure(account="kept", reason="NO_CURSOR"),
         AccountFailure(account="dropped", reason="MISSING_FROM_RUN"),
@@ -166,13 +178,17 @@ async def test_a_failed_or_unreadable_run_raises() -> None:
         raise httpx.LocalProtocolError("Illegal header value " + repr(("Bearer " + token).encode()))
 
     with pytest.raises(RuntimeError) as leaked:
-        await XSensor(httpx.AsyncClient(transport=httpx.MockTransport(illegal_header)), token).posts(
-            URL, ["a"], {}
-        )
+        await XSensor(
+            httpx.AsyncClient(transport=httpx.MockTransport(illegal_header)),
+            token,
+            admission=fixture_http_admission(),
+        ).posts(URL, ["a"], {})
     assert "FAKE" not in str(leaked.value) and "secret" not in str(leaked.value)
     assert leaked.value.__cause__ is None
     with pytest.raises(ValueError, match="APIFY_API_TOKEN"):
-        await XSensor(httpx.AsyncClient(), None).posts(URL, ["ethereum"], {})
+        await XSensor(httpx.AsyncClient(), None, admission=fixture_http_admission()).posts(
+            URL, ["ethereum"], {}
+        )
 
 
 @pytest.mark.asyncio
@@ -219,6 +235,7 @@ async def test_s29_poll_stores_new_posts_and_moves_cursors_only_after_them(tmp_p
         config,
         http=httpx.AsyncClient(transport=httpx.MockTransport(actor)),
         versions=fixture_versions(),
+        budgets=fixture_request_budgets(),
     )
     svc.accounts = {
         "official_org": SourceAccount(
@@ -245,12 +262,12 @@ async def test_s29_poll_stores_new_posts_and_moves_cursors_only_after_them(tmp_p
         return row
 
     result = await svc.poll_once("S29")
-    assert result["status"] == "HEALTHY" and result["items"] == 0 and not await items()
+    assert result.status == "HEALTHY" and result.items == 0 and not await items()
     assert (await checkpoint())["account_cursors"] == {"official_org": "100", "other_account": "99"}
     assert actor.body(0) == {"handles": ["Official_Org", "other_account"]}
 
     result = await svc.poll_once("S29")
-    assert result["status"] == "HEALTHY" and result["items"] == 2 and sorted(await items()) == ["102", "105"]
+    assert result.status == "HEALTHY" and result.items == 2 and sorted(await items()) == ["102", "105"]
     stored = await items()
     official, other = stored["105"], stored["102"]
     assert official.author_role == "ORGANIZATION" and official.monitored_accounts == ["Official_Org"]
@@ -269,7 +286,7 @@ async def test_s29_poll_stores_new_posts_and_moves_cursors_only_after_them(tmp_p
     state = await checkpoint()
     error = state["acquisition_error"]
     assert isinstance(error, str)
-    assert result["status"] == "DEGRADED" and "PUBLIC_SOURCE_UNAVAILABLE" in error
+    assert result.status == "DEGRADED" and "PUBLIC_SOURCE_UNAVAILABLE" in error
     assert state["account_cursors"] == {"official_org": "105", "other_account": "102"}
 
 
@@ -349,7 +366,9 @@ async def test_credential_echo_is_rejected_before_it_can_become_raw_source_evide
     actor = Actor((201, run([], [failed("ethereum")], {}, health="failed", error="Provider echoed " + token)))
     async with httpx.AsyncClient(transport=httpx.MockTransport(actor)) as http:
         with pytest.raises(ValueError, match="credential material") as failure:
-            await XSensor(http, token).posts(URL, ["ethereum"], {"ethereum": "100"})
+            await XSensor(http, token, admission=fixture_http_admission()).posts(
+                URL, ["ethereum"], {"ethereum": "100"}
+            )
     assert token not in str(failure.value)
 
 
@@ -372,7 +391,9 @@ async def test_configured_founder_role_survives_real_source_capture_and_domain_d
     )
     repo = MemoryRepository()
     async with httpx.AsyncClient(transport=httpx.MockTransport(actor)) as http:
-        service = SourceService(repo, configuration, http=http, versions=fixture_versions())
+        service = SourceService(
+            repo, configuration, http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
+        )
         declared_account = SourceAccount.model_validate(configured)
         assert declared_account.official_authorities is not None
         assert {authority.entity_id for authority in declared_account.official_authorities} == {
@@ -380,8 +401,8 @@ async def test_configured_founder_role_survives_real_source_capture_and_domain_d
             "openai",
         }
         service.accounts = {"sama": declared_account}
-        assert (await service.poll_once("S29"))["items"] == 0
-        assert (await service.poll_once("S29"))["items"] == 1
+        assert (await service.poll_once("S29")).items == 0
+        assert (await service.poll_once("S29")).items == 1
     [record] = await repo.list("ingest.source_items")
     item = SourceItemDocument.model_validate(record).root
     assert isinstance(item, SocialSourceItem)
@@ -389,3 +410,167 @@ async def test_configured_founder_role_survives_real_source_capture_and_domain_d
     assert item.original_author_role == "FOUNDER_C_LEVEL"
     assert item.relevance.decision is None
     assert item.author_organization == configured["entity_id"]
+
+
+@pytest.mark.asyncio
+async def test_actor_never_starts_with_an_unbound_budget_scope() -> None:
+    from tank.http_admission import ConfiguredHttpAdmission
+    from tank.request_budget import RequestBudgetScope
+
+    admitted = fixture_http_admission()
+    admission = ConfiguredHttpAdmission(admitted.policy, admitted.versions, RequestBudgetScope())
+    calls: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(500)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        sensor = XSensor(http, "FAKE-token", admission=admission)
+        with pytest.raises(RuntimeError, match="has not been bound"):
+            await sensor.posts(URL, ["ethereum"], {})
+    assert not calls
+
+
+@pytest.mark.asyncio
+async def test_actor_redirect_cannot_send_authenticated_run_to_another_host() -> None:
+    calls: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.host)
+        return httpx.Response(307, headers={"Location": "https://other.invalid/run"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        sensor = XSensor(http, "FAKE-token", admission=fixture_http_admission())
+        with pytest.raises(ValueError, match="declared HTTPS Apify"):
+            await sensor.posts(URL, ["ethereum"], {})
+    assert calls == ["api.apify.com"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [200, 404, 503])
+async def test_public_account_probe_waits_on_observed_block_and_keeps_authority_unverified(
+    tmp_path: Path,
+    status: int,
+) -> None:
+    from datetime import timedelta
+
+    from source_support import FixtureBudgetClock
+
+    from tank.contracts.sources import AccountProbeResponse
+    from tank.request_budget import MemoryBudgetBackend
+
+    clock = FixtureBudgetClock()
+    engine = fixture_request_budgets(clock=clock)
+    assert isinstance(engine.backend, MemoryBudgetBackend)
+    calls: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(status, json={"author_name": "Synthetic public profile"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        service = SourceService(
+            MemoryRepository(),
+            settings(tmp_path, []),
+            http=http,
+            versions=fixture_versions(),
+            budgets=engine,
+        )
+        service.accounts = {
+            "ethereum": SourceAccount(handle="ethereum", role="ORGANIZATION", entity_id=None, token_id=None)
+        }
+        await service.http_admission.block(
+            http.build_request("GET", "https://publish.twitter.com/oembed"),
+            clock.now() + timedelta(seconds=9),
+            "observed Retry-After",
+        )
+        [result] = await service._account_checks()
+    assert isinstance(result, AccountProbeResponse)
+    assert result.exists is None and result.identity_status == "REQUIRES_OWNER_EVIDENCE"
+    assert result.http_status == status
+    assert calls[0].url.params["url"] == "https://x.com/ethereum"
+    assert clock.monotonic() == 9
+    assert not engine.backend.windows
+
+
+def test_failed_actor_run_needs_nonblank_run_or_account_evidence() -> None:
+    from tank.sources.xsensor import ApifyRun, scan
+
+    with pytest.raises(pydantic.ValidationError, match="requires its error evidence"):
+        ApifyRun.model_validate(run([], [], {}, health="failed", error=" "))
+    report = ApifyRun.model_validate(run([], [failed("ethereum")], {}, health="failed", error=" "))
+    with pytest.raises(RuntimeError, match="PUBLIC_PROFILE_HTTP_404"):
+        scan(report, ["ethereum"], {"ethereum": "100"}, b"retained failure evidence")
+
+
+@pytest.mark.asyncio
+async def test_actor_start_clock_hook_runs_after_actual_admission_wait() -> None:
+    from datetime import timedelta
+
+    from source_support import FixtureBudgetClock
+
+    clock = FixtureBudgetClock()
+    budgets = fixture_request_budgets(clock=clock)
+    admission = fixture_http_admission(budgets=budgets)
+    started: list[float] = []
+    actor = Actor((200, run([], [{**account("ethereum"), "posts": 0}], {"ethereum": "100"})))
+
+    async def on_start() -> None:
+        started.append(clock.monotonic())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(actor)) as http:
+        await admission.block(
+            http.build_request("POST", URL), clock.now() + timedelta(seconds=9), "observed Retry-After"
+        )
+        sensor = XSensor(http, "FAKE-token", admission=admission)
+        await sensor.posts(URL, ["ethereum"], {}, on_start=on_start)
+    assert started == [9]
+    assert len(actor.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_gapped_account_retains_boundary_until_actual_followup_range_is_complete() -> None:
+    actor = Actor(
+        (
+            201,
+            run(
+                [post("110", text="Latest visible post")],
+                [account("ethereum", gap=True)],
+                {"ethereum": "110"},
+                health="degraded",
+            ),
+        ),
+        (
+            201,
+            run(
+                [post("110", text="Latest visible post"), post("105", text="Previously missing post")],
+                [account("ethereum")],
+                {"ethereum": "110"},
+            ),
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(actor)) as http:
+        sensor = XSensor(http, "FAKE-token", admission=fixture_http_admission())
+        partial = await sensor.posts(URL, ["ethereum"], {"ethereum": "100"})
+        assert [row.discovery.external_id for row in partial.rows] == ["110"]
+        assert partial.cursors == {"ethereum": "100"} and partial.gaps == ["ethereum"]
+        recovered = await sensor.posts(URL, ["ethereum"], partial.cursors)
+    assert actor.body(0)["cursors"] == actor.body(1)["cursors"] == {"ethereum": "100"}
+    assert [row.discovery.external_id for row in recovered.rows] == ["110", "105"]
+    assert recovered.cursors == {"ethereum": "110"} and recovered.gaps == []
+    assert partial.rows[0].payload == actor.sent[0]
+    assert recovered.rows[1].payload == actor.sent[1]
+
+
+@pytest.mark.asyncio
+async def test_first_gapped_scan_preserves_explicit_baseline_policy_and_gap_report() -> None:
+    actor = Actor(
+        (201, run([post("110")], [account("ethereum", gap=True)], {"ethereum": "110"}, health="degraded"))
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(actor)) as http:
+        sensor = XSensor(http, "FAKE-token", admission=fixture_http_admission())
+        result = await sensor.posts(URL, ["ethereum"], {})
+    assert result.rows == [] and result.cursors == {"ethereum": "110"}
+    assert result.gaps == ["ethereum"] and not result.failures
+    assert "cursors" not in actor.body(0)

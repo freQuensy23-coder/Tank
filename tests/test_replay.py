@@ -5,9 +5,17 @@ import httpx
 import pytest
 from model_fixture import audited_result, model_arguments
 from scheduling_support import RecordingReactionScheduling
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_versions
 
-from tank.replay import ReplayClock, ReplayError, evaluate_frozen, load_inputs, replay_bundle
+from tank.analysis.page_access import LivePageAccess
+from tank.replay import (
+    ReplayClock,
+    ReplayError,
+    evaluate_frozen,
+    load_inputs,
+    recorded_page_access,
+    replay_bundle,
+)
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -683,6 +691,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
             http=http,
             versions=fixture_versions(),
             scheduler=reaction_scheduler,
+            pages=recorded_page_access(load_inputs(packet, config)),
         )
         report = await replay_agent_session(
             packet,
@@ -792,6 +801,70 @@ async def test_transcript_web_reads_use_only_captured_results(
     packet.write_text(json.dumps(data))
     with pytest.raises(ReplayError, match="captured pre-cutoff"):
         await replay_bundle(packet, MemoryRepository(), settings())
+
+
+@pytest.mark.parametrize("matching_arguments", [True, False])
+async def test_recorded_fetch_result_never_spends_live_quota_or_builds_http(
+    packet: Path, matching_arguments: bool
+) -> None:
+    from unittest.mock import AsyncMock, patch
+
+    from tank.contracts.json import decode_json
+    from tank.event_tools import EventToolService
+    from tank.http_admission import ConfiguredHttpAdmission
+    from tank.request_budget import RequestBudgetScope, SystemBudgetClock
+    from tank.util import canonical_json
+
+    data = decode_json(packet.read_bytes())
+    assert isinstance(data, dict)
+    config = data["config"]
+    assert isinstance(config, dict)
+    arguments = {"url": "https://api.etherscan.io/v2/api?chainid=1"}
+    result = {"item_id": "captured-page", "text": "The captured publication states approval."}
+    config["replay_tool_calls"] = [
+        {
+            "call_id": "captured-fetch",
+            "tool": "fetch_page",
+            "arguments": arguments,
+            "available_at": data["cutoff"],
+        }
+    ]
+    data["tool_results"] = [
+        {
+            "call_id": "captured-fetch",
+            "tool": "fetch_page",
+            "arguments": arguments if matching_arguments else {"url": "https://example.org/different"},
+            "available_at": data["cutoff"],
+            "result": result,
+        }
+    ]
+    packet.write_text(canonical_json(data))
+    admission = AsyncMock(side_effect=AssertionError("Live admission is forbidden"))
+    acquire = AsyncMock(side_effect=AssertionError("Live quota acquisition is forbidden"))
+    feedback = AsyncMock(side_effect=AssertionError("Live feedback is forbidden"))
+    wait = AsyncMock(side_effect=AssertionError("Provider wait is forbidden"))
+    raw_fetch = AsyncMock(side_effect=AssertionError("Captured tool result must bypass raw page fetching"))
+    repo = MemoryRepository()
+    with (
+        patch.object(ConfiguredHttpAdmission, "admit", admission),
+        patch.object(RequestBudgetScope, "acquire_many", acquire),
+        patch.object(ConfiguredHttpAdmission, "block", feedback),
+        patch.object(SystemBudgetClock, "sleep", wait),
+        patch.object(EventToolService, "fetch_page", raw_fetch),
+        patch("httpx.AsyncClient", side_effect=AssertionError("Live HTTP client is forbidden")) as clients,
+    ):
+        if matching_arguments:
+            report = await replay_bundle(packet, repo, settings())
+            assert report["output"]["tool_calls"] == [
+                {"call_id": "captured-fetch", "tool": "fetch_page", "result": result}
+            ]
+        else:
+            with pytest.raises(ReplayError, match="exact captured pre-cutoff external tool arguments"):
+                await replay_bundle(packet, repo, settings())
+    for trap in (admission, acquire, feedback, wait, raw_fetch):
+        trap.assert_not_awaited()
+    clients.assert_not_called()
+    assert await repo.list("ingest.source_items") == []
 
 
 def test_late_market_capture_requires_assembly_and_preserves_real_receipt(packet) -> None:
@@ -1433,6 +1506,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
             DecisionEngine(config),
             versions=fixture_versions(),
             scheduler=reaction_scheduler,
+            pages=recorded_page_access(load_inputs(packet, config)),
         )
         report = await replay_agent_session(
             packet,
@@ -2068,6 +2142,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
             DecisionEngine(config),
             versions=fixture_versions(),
             scheduler=reaction_scheduler,
+            pages=recorded_page_access(load_inputs(packet, config)),
         )
         report = await replay_agent_session(
             packet,
@@ -2446,6 +2521,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
             DecisionEngine(config),
             versions=fixture_versions(),
             scheduler=reaction_scheduler,
+            pages=recorded_page_access(load_inputs(packet, config)),
         )
 
         async def fixture_grade(arguments, context):
@@ -2951,6 +3027,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
             reference_clock=TrustedFixtureClock(inputs) if inputs.fixture_reference else None,
             versions=fixture_versions(),
             scheduler=reaction_scheduler,
+            pages=recorded_page_access(load_inputs(path, config)),
         )
         if profile == "ordinary_missing_sent":
             with pytest.raises(ReplayError, match="one captured SENT delivery receipt required"):
@@ -3032,6 +3109,7 @@ async def test_captured_tools_decision_refreshes_fired_market_watch_offline(
         DecisionEngine(),
         versions=fixture_versions(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
     initial = await tools.dispatch("get_decision", {"event_id": "e", "token_id": "T"}, {})
     watch = next(row for row in initial["conditions"] if row["role"] == "UPGRADE")

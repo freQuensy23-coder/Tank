@@ -14,7 +14,7 @@ func TestDocumentedUSDMDefaultDepthConsumesTenWeight(t *testing.T) {
 	if _, err := client.Fetch(context.Background(), "GET", BinanceUSDM+"/fapi/v1/depth?symbol=BTCUSDT", nil, nil, nil, 0); err != nil {
 		t.Fatal(err)
 	}
-	if used := ledger.Used(budget.BucketName("binance.usdm", 60, 1200), 60); used != 10 {
+	if used := ledger.Used(budget.BucketName("binance.usdm", 60), 60); used != 10 {
 		t.Fatalf("documented default500 undercharged: %v", used)
 	}
 	if len(exchange.requests) != 1 {
@@ -35,7 +35,7 @@ func TestConfiguredPreviouslyMissingOperationsHaveActualAdmissionEffects(t *test
 			if _, err := client.Fetch(context.Background(), test.method, test.rawURL, nil, nil, json.RawMessage(test.body), 0); err != nil {
 				t.Fatal(err)
 			}
-			if used := ledger.Used(budget.BucketName(test.bucket, test.window, test.capacity), test.window); used != test.weight {
+			if used := ledger.Used(budget.BucketName(test.bucket, test.window), test.window); used != test.weight {
 				t.Fatalf("configured operation debit=%v", used)
 			}
 			if len(exchange.requests) != 1 {
@@ -70,7 +70,7 @@ func TestInvalidScopeRangeAndMethodCannotSpendOrSend(t *testing.T) {
 			if len(exchange.requests) != 0 {
 				t.Fatal("unproven request reached HTTP")
 			}
-			for _, name := range []string{budget.BucketName("hyperliquid", 60, 600), budget.BucketName("binance.spot", 60, 3000), budget.BucketName("binance.usdm", 60, 1200)} {
+			for _, name := range []string{budget.BucketName("hyperliquid", 60), budget.BucketName("binance.spot", 60), budget.BucketName("binance.usdm", 60)} {
 				if ledger.Used(name, 60) != 0 {
 					t.Fatal("rejected request consumed quota")
 				}
@@ -84,7 +84,7 @@ func TestProviderGETAndCaseInsensitiveHostUseActualEffectiveQuery(t *testing.T) 
 	if _, err := client.Do(context.Background(), "GET", "https://API.BINANCE.COM/api/v3/depth?limit=5000", nil, nil, 0); err != nil {
 		t.Fatal(err)
 	}
-	if used := ledger.Used(budget.BucketName("binance.spot", 60, 3000), 60); used != 250 {
+	if used := ledger.Used(budget.BucketName("binance.spot", 60), 60); used != 250 {
 		t.Fatalf("provider GET URL query undercharged:%v", used)
 	}
 	if len(exchange.requests) != 1 {
@@ -98,7 +98,7 @@ func TestConfiguredUnboundedResponseWeightRefusesBeforeQuotaAndHTTP(t *testing.T
 	if !errors.Is(err, budget.ErrUnboundedResponseWeight) || result != nil {
 		t.Fatalf("unbounded configured operation misclassified:result=%+v err=%v", result, err)
 	}
-	if len(exchange.requests) != 0 || ledger.Used(budget.BucketName("hyperliquid", 60, 600), 60) != 0 {
+	if len(exchange.requests) != 0 || ledger.Used(budget.BucketName("hyperliquid", 60), 60) != 0 {
 		t.Fatal("unbounded operation spent quota or reached HTTP")
 	}
 }

@@ -397,6 +397,46 @@ calculation input maps, configurable-policy fallbacks and sibling reference-cloc
 precision defaults remain on the broad owned migration inventory. This tranche
 completes the statistical baseline/declared-freshness layer, not the full Truth module.
 
+### Additive admitted-HTTP/page boundary (held activation)
+
+`http_transport.send_admitted` takes actual built requests, a required admission
+port and a required per-request guard. It admits every actual attempt/redirect,
+checks the admitted host matches the transport destination, runs a declared
+first-request accounting hook only after admission, and explicitly disables
+HTTPX's implicit redirects. Intermediate responses close. UNCONFIGURED retains
+its explicit generic-site meaning; it does not fabricate a provider quota.
+`retry_after_deadline` accepts only actual nonnegative finite Retry-After seconds
+or a valid aware HTTP date; missing/invalid instructions remain unavailable and
+no sixty-second value/clamp is synthesized.
+
+`contracts.page_evidence.PageRead` validates binary bytes against their actual
+computed digest and the two-megabyte bound. An original recorded-body claim must
+match its recorded digest. Live receipt and verified original-body provenance are distinct named records.
+Unknown source Content-Type remains None. No reconstruction variant is introduced
+without an actual consumer. Infrastructure
+handles are precise protocol/dataclass composition objects in analysis.page_access,
+not Pydantic arbitrary types. `LivePageAccess` requires admission; `RecordedPageAccess`
+requires its recorded reader. The live reader owns only a client it constructs and
+closes all response streams, preserving a borrowed client's lifetime.
+
+Six independent boundary cases pass in1.35s; all five new source/test modules pass
+independent strict mypy and Ruff/format. Tests prove actual client query credentials
+reach configured admission, configured waits occur, unconfigured redirects invent
+no waits, refused destinations never reach transport, accounting hook ordering,
+binary digest fidelity, unknown media and client lifetime. These are additive
+contracts; Market/Event activation and actual verified offline reader proof remain
+held for the companion cohort. The verified replay inventory already substitutes
+complete captured external tool results; raw response reconstruction is not assumed.
+
+
+Actual caller inventory correction: run_captured_tools already intercepts external
+web_search/fetch_page through exact captured call identity, arguments and availability;
+native replay uses CapturedToolResult. Its old captured_http callback reconstructing
+JSON response bytes is unused by those reads and is removed during activation.
+RecordedResultsOnlyPageReader binds the verified packet/result catalog and refuses
+raw-page requests because this input format retains complete tool results rather
+than original response bytes. This refusal occurs before admission/client creation.
+No speculative reconstruction model/reader is retained.
 ### Exact Decimal interpolation repair
 
 Independent review identified that the statistical typing change constructed the
@@ -413,6 +453,51 @@ START fixtures and formula vectors,59 unit cases pass in7.68s; the new regressio
 module passes strict mypy and Ruff/format. HTTP work remains preserved separately
 at immutable stash55c26d818e567184ecf101c9b5a1ca2e8ebd6733.
 
+### Required Python HTTP/page activation API (held for caller cohort)
+
+MarketService now requires admission: HttpAdmission. Every actual built request,
+redirect and retry passes that port through send_admitted, and provider feedback
+calls the same injected port.block with the actual request and actual Retry-After
+deadline. The old shared-global backend inspection and undocumented generic0.08s/
+Etherscan0.35s local pacing are removed. The existing priority/in-flight gate remains
+an operational concurrency bound. Go-owned exchange URLs still refuse Python I/O,
+including redirects; Go transport is never inferred merely from a host label.
+A missing/invalid Retry-After refuses the retry instead of inventing60s; an actual
+120s instruction is retained without a60s clamp. Generic418 does not invent an
+exchange ban classification; its actual instruction can block the host and its
+status remains an error.
+
+EventToolService now requires pages: LivePageAccess | RecordedPageAccess. A live
+composition requires actual admission; a recorded composition requires its explicit
+reader. Recorded fetch refusal happens before any Go enqueue or Python client
+creation. FetchPageRequest validates URL and the actual published optional20s
+budget default with positive/max20 constraints; explicit invalid zero is not replaced
+by20. The retired untyped borrowed-client facade is removed. Actual outgoing client
+query credentials participate in admission but never replace the safe persisted
+incoming evidence URL. Live errors expose host/status/type, not credential URLs.
+The live page receipt requires a real COLLECTION_ONLY instant. Unknown Content-Type
+remains None at the read boundary; application/octet-stream is only the explicit
+storage format for absent header metadata. Go capture remains its existing separate
+queue/result provenance path and does not claim a Python live-page receipt.
+
+New Python page rows retain typed page_read_provenance; source model historical
+omission remains omitted. Recorded original-body provenance must match both actual
+read bytes and stored raw_sha256. Search results and the separate Go path legitimately
+lack this Python-page provenance. No missing source header or occurrence clock is
+reconstructed. Complete external captured tool results remain the existing offline
+replay input: recorded_page_access binds verified input/result-catalog identity and
+refuses unavailable original page bytes. The unused diagnostic JSON-response callback
+and its HTTP client are removed; native replay verifies the supplied results-only
+reader matches its actual input before proceeding.
+
+Twelve admitted-transport/page/actual-caller cases pass in1.62s, including actual
+Market120s feedback wait, missing-instruction refusal, actual EventTool Etherscan
+client credential admission and safe stored URL, recorded raw-byte refusal with
+live admission/block/wait/client traps, actual binary digest/lifetime and credential-
+safe HTTP error behavior. Five new helper/domain/test modules remain independently
+strict-clean. Existing constructor consumers and actual retained-reader proof are
+still being migrated/qualified; parent must hold this activation until companions.
+The clean b123/1459 scheduling/statistical boundary remains independently mergeable.
 ### Clean scheduling policy fixtures and stale-sector negative oracle
 
 The generic authored test_replay packet now explicitly captures the complete known
@@ -443,6 +528,111 @@ and imported-source assertions. This is an authored fixture change; no productio
 fallback or frozen data is altered. This follow-up remains a clean fd077 descendant
 without held HTTP ancestry.
 
+Page provenance now requires the actual content_type_header value or explicit None
+on both live and original recorded-body variants. PageRead validates this matches
+its read media_type. Thus an absent source header remains visible even when the
+existing raw-byte storage format uses application/octet-stream. Live receipts refuse
+missing/unknown instants. Live HTTP status/transport exceptions retain their HTTPX
+categories/types with bounded credential-free messages, preserving SessionService's
+SOURCE_HTTP/SOURCE_TRANSPORT protocol instead of relabeling them tool execution errors.
+Twelve page/admission boundary cases pass in1.73s; three tightened source/test modules
+pass strict mypy. Backend quota-history identity changes remain a separate held team
+prerequisite; these results do not claim the current backend is final.
+
+### Owned required-admission consumer checkpoint
+
+Owned MarketService fixtures now inject the real configured admission resolver and
+explicit memory budget backend; owned EventTool fixtures declare live page access
+or, for operational replay, recorded_page_access of the actual validated packet.
+SourceService fixture construction supplies its explicit budget port. None of these
+helpers returns a fabricated ADMITTED result. The replay cases retain their actual
+shared Scheduler and verified input-bound recorded capability.
+
+The former generic0.08s timing assertions are replaced with actual configured
+Etherscan admission oracles: overdue starts do not create a future burst, cancelling
+a wait reserves no future request, and freeing a saturated in-flight slot does not
+restart the provider window. The generic-site case independently verifies overlap
+with zero invented quota wait. Negative-priority budget admission now uses an explicit
+real memory backend. The former FakeLedger/Instant/optional-global-ledger fixture is
+removed: actual injected memory host blocks observe starts at0,120,720 seconds for
+real418/429 feedback, preserving120s/600s without clamps. PostgreSQL cross-process
+and host-isolation checks use explicit RequestLedger-backed engines and shutdown;
+the binding regression now proves unbound/closed refusal rather than implicit memory.
+
+The owned broad selection passes769 units in34.93s, p90 .85s and max3.35s, zero skips
+(/tmp/analysis-http-owned-unit-2.xml). Twenty targeted rate/deadline/source-field/real-
+scheduling cases pass in2.74s, and twelve explicit external ownership/rate cases pass
+in4.36s. The final HTTPX-category/header refinements have their additional focused
+proof. These are held-cohort results; the shared budget identity correction and
+combined actual integration/retained-artifact qualification remain required.
+
+Actual retained-input validation was attempted with all live admission/scope/block/
+provider-sleep/client-creation traps. It correctly stopped before exposing captures
+when fixture_reference required a referenced immutable raw source body absent from
+the25 staged input-only artifacts. No hash/derivation check was bypassed and no
+production data was read. The scratch verifier is retained at
+ data/qa/verify-retained-http-effects.py; no success artifact is claimed. Verified raw
+bodies and an explicit historical-path reader are needed for that full loader proof.
+
+The requested exact raw-body inventory is analysis-retained-raw-inputs.json:38 named
+source-body path/hash pairs at80 originating sites across all25 hash-reverified
+acceptance inputs. It records only source raw/detail/discovery/original-projection
+body references and their recorded decompressed-payload SHA256, with checked-in
+fixture ID, originating packet path/compressed SHA and exact field site. No raw body,
+private map, sealed outcome or credential was read. F02 remains excluded for its
+manifest mismatch. The generation scratch script is data/qa/inventory-retained-http-raw.py.
+An explicit resolver must accept only these verified staged originals; no global
+/data alias or production path access is proposed.
+
+### Exact retained-body and captured-code resource boundaries
+
+fixture_reference_sources owns a precise RetainedSourceReader port. The stateless
+filesystem reader preserves ordinary saved-capture behavior. VerifiedRetainedSources
+accepts the owned required-reference inventory plus the parent's staging manifest;
+it validates the inventory binding and exact reference set, then checks root
+containment, transport bytes/hash and decompressed payload bytes/hash on every read.
+Unlisted paths refuse before filesystem access; no historical /data alias is created.
+Zstd/gzip magic denotes actual retained wire formats; bare bytes remain bare bytes.
+Zstd streaming also preserves frames whose header omits decoded-size metadata.
+Source_candidate is audit metadata only and is never opened by this reader.
+
+load_inputs passes its explicit raw_sources and projection_code through normal
+fixture_reference validation. The original body, time, derivation and host-mask checks
+remain. CurrentProjectionCode retains the normal exact-current-file check; the
+explicit ArchivedProjectionCodes path only accepts an allowlisted recorded SHA with
+actual fixed-path Git evidence. It rechecks archive length/SHA256/Git object identity,
+commit→src/tank/fixture_reference.py→blob binding and actual Git blob bytes. It never
+executes/imports archived code. Unknown digests refuse. Infrastructure resource handles
+remain outside Pydantic; manifests and all structured origin records use strict models.
+
+analysis-captured-projection-code.json inventories5 recorded module hashes at14sites.
+One has exact archived bytes at Git e5a1cef / blob28e8928, independently verified by the
+parent; four remain unresolved. The immutable .source archive under docs/verification
+is evidence, not a restored implementation. Neither its Git origin nor a recorded
+module hash claims that code was deployed. Parent independently showed that main's
+fixture_reference bytes match none of the five hashes, so these are pre-existing
+availability limits rather than a refactor hash regression.
+
+Actual retained proof (analysis-recorded-http-evidence.json) rechecks25 frozen input
+hashes, all38 staged raw bodies and the known code artifact. Eight packets pass all
+normal loader checks and five actual captured results are selected through the
+production reader; all admission/acquisition/block/provider-sleep traps remain zero,
+and no live client is created. Eleven packets authentically refuse unavailable
+captured code, and six require the deliberately unsupplied host-only identity map.
+No validation check is skipped, no private map/sealed outcome is opened, no frozen
+bytes change and F02 remains excluded. This is an eligible-reader/no-live-effect
+proof, not a claim of full agent acceptance for the refused fixtures.
+
+Eight independent resource cases pass in1.48s, proving unknown-path/hash refusal,
+post-construction transport tampering, payload tampering despite matching transport
+metadata, root escape, owner-inventory binding, actual Git provenance and non-execution.
+Together with replay/reference behavior,134 units pass in1.90s. Four resource source/
+test targets pass strict mypy; default source mypy again reports only the independently
+reserved whole condition cache. Required preserved cutoff literals now explicitly
+reject absent/nontext values; day/exact/minute parser locals remain distinct types,
+and publication interval checks require both genuine bounds. Declared UTC and every
+frozen literal remain unchanged. The remaining legacy fixture_reference domain-map
+migration is still open; these resource ports do not claim to complete that module.
 ### Clean authored PARTIAL narrative fixture
 
 The native replay publication fixture now supplies two actual factual WHY bullets
@@ -453,3 +643,43 @@ unmeasured economic effect. The first-reference QUEUED/unsent intent and ordinar
 missing-SENT refusal oracles remain unchanged. Both actual integration profiles pass
 in2.89s with zero skips. This companion is clean3e26558b + exact485 schema ancestry;
 held HTTP and decision/card renderer activation are excluded.
+
+### Final paired HTTP qualification repairs
+
+The first full owned selection at e773ee78 executed779 units and83 actual integrations.
+Its remaining failures were nine authored publication fixtures with empty/undersized
+WHY under the new public schema and two assertions for retired capacity-bearing SQL
+bucket text. Seven named positive/publication-purpose fixtures now author their actual
+World-approval/product-announcement facts plus the publication's absence of quantified
+price/liquidity effects. Vague test headlines are replaced with the actual product
+announcement where that was the seed. The overlength-WHY test retains a valid second
+bullet so it reaches the intended221-character refusal. Lifecycle, model provenance,
+metadata fidelity, durability, generation-clock and bounded-read oracles are unchanged.
+SQL ledger assertions now decode the actual two-field stable key/window identity;
+capacity is deliberately not part of that identity. Cross-process waits, host isolation,
+actual persisted owner rows and unbound/closed refusal remain independently asserted.
+All115 targeted units pass in12.07s and all3 actual ledger/ownership cases pass in7.12s,
+zero skips. A fresh complete owned selection is run on the resulting immutable head;
+previous logs/XML remain preserved separately. No production-policy waiver is involved.
+
+### Qualified complete owned HTTP cohort
+
+The complete owned cohort at immutable c17512bfd10f1bf3d96954288ac332eee85e9697
+passes all779 units in30.72s (p90 .845s, max3.04s) and every one of83 collected
+actual integrations in83.50s, zero skips. This includes PostgreSQL cross-process
+budget sharing/stable identity/host isolation, memory behavior, real20-second fetch
+deadlines, replay/reference, publication, reaction and source evidence consumers.
+All27 required caller files are present; this is not the earlier API-only a783 head.
+The actual shared-budget operational helper is explicitly owned/drained. Paired
+canonical Go/backend/SQL/E2E and clean native narrative companions are included.
+CI-target Ruff/format (src tests scripts deploy,392 files) and all9 new strict
+HTTP/page/retained-resource source/test targets pass. Default mypy has only the
+separately assigned whole condition graph cache error; it remains visible.
+
+analysis-http-qualification.json records exact targets, counts and evidence paths.
+The known historical artifact limits remain explicit:8normal loader admissions,
+5actual captured result selections,11unavailable captured-code refusals and6host-only
+identity-map refusals, all zero live effects. These are not acceptance waivers.
+No held decision755/renderer activation, production deployment or global completion
+is claimed. Whole Truth/Market/event-tools typing and the other owned module/fallback
+inventory remain active work after this coherent application boundary.

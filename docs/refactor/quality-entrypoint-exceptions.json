@@ -1,0 +1,367 @@
+{
+  "source_sha256": "163f2a37d7a57f2da65bbdcf573896f9766eccba24df6349a393ae4e8bf61112",
+  "qualifier_commit": "54a7fbea603b6d9d9f3fab8b31b726fa3155780c",
+  "compiler": "TypeScript5.9.3 strict/erasableSyntaxOnly; Node24.22.0 actual cached runtime image",
+  "scope": "Site-level review notes only; no type/lint/inventory suppression or global completion claim.",
+  "sites": [
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 45,
+      "symbol": "SECRET_KEYS",
+      "candidate": "object",
+      "classification": "NAMED_TYPED_RECORD",
+      "observations": 1,
+      "reason": "Readonly enum-indexed catalog of the eight existing environment credential names, not arbitrary application data.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 100,
+      "symbol": "provenanceCoordinates",
+      "candidate": "fallback",
+      "classification": "BOOLEAN_VALIDATION",
+      "observations": 1,
+      "reason": "Boolean rejection of missing/non-string version evidence; no alternate version value is selected.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 109,
+      "symbol": "provenanceCoordinates",
+      "candidate": "fallback",
+      "classification": "BOOLEAN_VALIDATION",
+      "observations": 1,
+      "reason": "Boolean rejection of missing/non-string version evidence; no alternate version value is selected.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 116,
+      "symbol": "provenanceCoordinates",
+      "candidate": "object",
+      "classification": "NAMED_TYPED_RECORD",
+      "observations": 1,
+      "reason": "NativeCoordinates contains a validated architecture and literal supported version.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 129,
+      "symbol": "verifyPlatform",
+      "candidate": "fallback",
+      "classification": "BOOLEAN_VALIDATION",
+      "observations": 2,
+      "reason": "Boolean rejection of short/invalid ELF or wrong machine; no architecture is inferred from absent evidence.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 139,
+      "symbol": "verifyNativePlatform",
+      "candidate": "object",
+      "classification": "NAMED_TYPED_RECORD",
+      "observations": 1,
+      "reason": "NativeSystem captures actual host platform and architecture for the public diagnostic default.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 139,
+      "symbol": "verifyNativePlatform",
+      "candidate": "optional",
+      "classification": "NATIVE_PROCESS_DEFAULT",
+      "observations": 1,
+      "reason": "The omitted diagnostic system argument reads the actual current native platform/architecture.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 150,
+      "symbol": "receipt",
+      "candidate": "fallback",
+      "classification": "BOOLEAN_VALIDATION",
+      "observations": 6,
+      "reason": "Boolean rejection of an invalid architecture-specific schema/status/check/hash; all conditions are required.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 157,
+      "symbol": "receipt",
+      "candidate": "fallback",
+      "classification": "BOOLEAN_VALIDATION",
+      "observations": 4,
+      "reason": "Boolean rejection of an invalid architecture-specific schema/status/check/hash; all conditions are required.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 161,
+      "symbol": "receipt",
+      "candidate": "fallback",
+      "classification": "BOOLEAN_VALIDATION",
+      "observations": 3,
+      "reason": "Boolean rejection of an invalid architecture-specific schema/status/check/hash; all conditions are required.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 163,
+      "symbol": "receipt",
+      "candidate": "object",
+      "classification": "NAMED_TYPED_RECORD",
+      "observations": 1,
+      "reason": "NativeReceipt contains the validated target architecture and both qualified digests.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 170,
+      "symbol": "verifyNativeQualification",
+      "candidate": "object",
+      "classification": "NAMED_TYPED_RECORD",
+      "observations": 1,
+      "reason": "NativeSystem captures actual host platform and architecture for the public diagnostic default.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 170,
+      "symbol": "verifyNativeQualification",
+      "candidate": "optional",
+      "classification": "NATIVE_PROCESS_DEFAULT",
+      "observations": 1,
+      "reason": "The omitted diagnostic system argument reads the actual current native platform/architecture.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 177,
+      "symbol": "verifyNativeQualification",
+      "candidate": "fallback",
+      "classification": "BOOLEAN_VALIDATION",
+      "observations": 1,
+      "reason": "Reject either mismatched content digest; the qualified receipt binds both complete byte sequences.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 186,
+      "symbol": "readSecret",
+      "candidate": "fallback",
+      "classification": "BOOLEAN_VALIDATION",
+      "observations": 1,
+      "reason": "Reject absent/empty native environment credentials; the raw value is never substituted.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 194,
+      "symbol": "sandboxDatabaseRoute",
+      "candidate": "fallback",
+      "classification": "BOOLEAN_VALIDATION",
+      "observations": 1,
+      "reason": "Reject non-string or invalid SQL identifier; explicit empty values do not select a default.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 201,
+      "symbol": "replayDatabaseRoute",
+      "candidate": "optional",
+      "classification": "NATIVE_PROCESS_DEFAULT",
+      "observations": 1,
+      "reason": "The public production helper uses real node:dns lookup unless an explicit test resolver is supplied.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 202,
+      "symbol": "replayDatabaseRoute.{ address }",
+      "candidate": "object",
+      "classification": "NAMED_TYPED_RECORD",
+      "observations": 1,
+      "reason": "Literal family4 DNS options bind the actual postgres lookup request.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 204,
+      "symbol": "replayDatabaseRoute",
+      "candidate": "fallback",
+      "classification": "BOOLEAN_VALIDATION",
+      "observations": 3,
+      "reason": "Boolean IPv4/private-prefix allowlist checks against the actual resolved address.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 207,
+      "symbol": "replayDatabaseRoute",
+      "candidate": "object",
+      "classification": "NAMED_TYPED_RECORD",
+      "observations": 1,
+      "reason": "ReplayDatabaseRoute contains the validated private address and its credential-encoded route.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 211,
+      "symbol": "productionDependencies",
+      "candidate": "object",
+      "classification": "NAMED_TYPED_RECORD",
+      "observations": 1,
+      "reason": "Named EntrypointDependencies and NativeSystem objects bind actual Node platform/process operations.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 213,
+      "symbol": "productionDependencies",
+      "candidate": "object",
+      "classification": "NAMED_TYPED_RECORD",
+      "observations": 1,
+      "reason": "Named EntrypointDependencies and NativeSystem objects bind actual Node platform/process operations.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 218,
+      "symbol": "productionDependencies.launch",
+      "candidate": "object",
+      "classification": "NAMED_TYPED_RECORD",
+      "observations": 1,
+      "reason": "Named ChildPort wraps the actual ChildProcess kill/exit/error APIs.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 230,
+      "symbol": "main",
+      "candidate": "optional",
+      "classification": "NATIVE_PROCESS_DEFAULT",
+      "observations": 1,
+      "reason": "The public main() API constructs actual filesystem/DNS/process ports; test ports require an explicit object.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 253,
+      "symbol": "main.child",
+      "candidate": "object",
+      "classification": "NAMED_TYPED_RECORD",
+      "observations": 1,
+      "reason": "Typed native spawn options carry inherited stdio and the sanitized native environment.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 269,
+      "symbol": "runEntrypoint",
+      "candidate": "optional",
+      "classification": "NATIVE_PROCESS_DEFAULT",
+      "observations": 1,
+      "reason": "The CLI uses actual native ports; tests may explicitly observe startup/exit effects through named ports.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "line": 270,
+      "symbol": "runEntrypoint",
+      "candidate": "fallback",
+      "classification": "BOOLEAN_VALIDATION",
+      "observations": 1,
+      "reason": "The actual argv URL must identify this launcher before startup effects; this is an import guard.",
+      "evidence": [
+        "deploy/openma-entrypoint.test.mts",
+        "/srv/tank-refactor-evidence/entrypoint-54a7fbea-image-attempt2/result.json"
+      ]
+    }
+  ],
+  "foreign_boundaries": {
+    "RawObject/object/isRawObject": "Temporary unknown-valued native JSON objects are checked before selected published fields become named domain coordinates/receipts.",
+    "jsonDocument": "JSON.parse returns unknown at the file-byte boundary; malformed text becomes a fixed startup error without echoing raw content.",
+    "verifyNativePlatform/verifyNativeQualification": "Public unknown artifact inputs are validated by explicit architecture/version/receipt decoders and full content digests.",
+    "EntrypointDependencies.environment/SECRET_KEYS/readSecret": "Native process environment is a string-indexed OS table; credential keys are an explicit finite catalog and values are never guessed.",
+    "SandboxDatabaseVariables/main nativeRoot": "Only absence selects the existing documented database/role/runtime-directory defaults; explicit empty values fail.",
+    "ChildPort.onError/runEntrypoint catch": "Opaque native errors terminate with fixed public messages, not their potentially credential-bearing content."
+  }
+}

@@ -9,19 +9,18 @@ import asyncio
 import time
 from datetime import timedelta
 from pathlib import Path
-from types import SimpleNamespace
 
 import httpx
 import pytest
 import yaml
-from pydantic import JsonValue
-from source_support import fixture_versions
+from pydantic import JsonValue, TypeAdapter
+from source_support import FixtureBudgetClock, fixture_http_admission, fixture_versions
 
 from tank.market.normalize import timestamp_fields
 from tank.market.service import CAPTURE_REQUEST_GRACE_S, EXCHANGE_REST_OWNER, MarketService
+from tank.request_budget import BudgetConstraint, RequestBudgetScope, RequestLedger, SharedRequestBudgets
 from tank.settings import Settings
-from tank.sources.rate_limits import RequestLedger, SharedRequestBudgets
-from tank.storage import MemoryRepository
+from tank.storage import MemoryRepository, PostgresRepository
 from tank.time_precision import Timestamp, collection_clock
 from tank.util import iso, parse_time, sha256, utcnow
 
@@ -99,7 +98,7 @@ async def finish(repo, collection, key, **fields) -> None:
 
 async def test_external_escalation_writes_the_obligation_and_starts_nothing(settings) -> None:
     repo = MemoryRepository()
-    service = MarketService(repo, settings, versions=fixture_versions())
+    service = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     service._stop = asyncio.Event()
     await repo.put(
         "evt.events",
@@ -120,11 +119,11 @@ async def test_external_escalation_writes_the_obligation_and_starts_nothing(sett
     ).status == "PENDING"
 
     await update(repo, "mkt.backfill_runs", run["backfill_id"], status="RUNNING")
-    restarted = MarketService(repo, settings, versions=fixture_versions())
+    restarted = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     await restarted._schedule_hot_backfills()
     assert (await repo.get("mkt.backfill_runs", run["backfill_id"]))["status"] == "RUNNING"
     await finish(repo, "mkt.backfill_runs", run["backfill_id"], status="FAILED", reason="venue down")
-    again = MarketService(repo, settings, versions=fixture_versions())
+    again = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     await again._schedule_hot_backfills()
     assert (await repo.get("mkt.backfill_runs", run["backfill_id"]))["status"] == "PENDING"
     for market in (service, restarted, again):
@@ -183,7 +182,7 @@ async def repair_round_trip(repo, service) -> None:
 
 async def test_external_repair_windows_is_a_capture_request(settings) -> None:
     repo = MemoryRepository()
-    service = MarketService(repo, settings, versions=fixture_versions())
+    service = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     await repair_round_trip(repo, service)
     await service.close()
 
@@ -265,7 +264,7 @@ async def check_stream_state(repo, service) -> None:
 
 async def test_external_stream_state_comes_from_capture_streams(settings) -> None:
     repo = MemoryRepository()
-    service = MarketService(repo, settings, versions=fixture_versions())
+    service = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     await check_stream_state(repo, service)
     await service.close()
 
@@ -278,7 +277,13 @@ async def test_external_capture_never_calls_exchange_rest(settings) -> None:
         return httpx.Response(200, json={"ok": True})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
-        service = MarketService(MemoryRepository(), settings, http=http, versions=fixture_versions())
+        service = MarketService(
+            MemoryRepository(),
+            settings,
+            http=http,
+            versions=fixture_versions(),
+            admission=fixture_http_admission(),
+        )
         for method, url, extra in (
             ("GET", "https://api.binance.com/api/v3/klines", {"params": {"symbol": "ABCUSDT", "limit": 3}}),
             ("GET", "https://www.okx.com/api/v5/market/candles", {"params": {"instId": "ABC-USDT"}}),
@@ -298,7 +303,7 @@ async def test_external_run_keeps_tiers_and_obligations_and_captures_nothing(
     settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = MemoryRepository()
-    service = MarketService(repo, settings, versions=fixture_versions())
+    service = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     since = "2026-10-21T10:00:00Z"
     await repo.put("evt.events", "EVT-1", {**capture_event(), "public_at": since})
     await put(
@@ -344,9 +349,9 @@ async def ledger_rows(repo):
 @pytest.mark.integration
 @pytest.mark.postgres
 async def test_request_ledger_is_one_budget_for_every_process(migrated) -> None:
-    first, second = SharedRequestBudgets(), SharedRequestBudgets()
-    first.ledger = RequestLedger(migrated.database_url, "first")
-    second.ledger = RequestLedger(migrated.database_url, "second")
+    first_ledger = RequestLedger(migrated.database_url, "first")
+    second_ledger = RequestLedger(migrated.database_url, "second")
+    first, second = SharedRequestBudgets(first_ledger), SharedRequestBudgets(second_ledger)
     try:
         started = time.monotonic()
         await first.acquire("kraken", 1, 1, host="api.kraken.com")
@@ -355,10 +360,13 @@ async def test_request_ledger_is_one_budget_for_every_process(migrated) -> None:
         await first.acquire("binance.spot", 3000, 60, weight=2, host="api.binance.com")
         await second.acquire("binance.spot", 3000, 60, weight=4, host="api.binance.com")
 
-        assert [(row["bucket"], row["owner"]) for row in await ledger_rows(migrated)] == [
-            ("kraken|1.0|1.0", "second"),
-            ("binance.spot|60.0|3000.0", "first"),
-            ("binance.spot|60.0|3000.0", "second"),
+        assert [
+            (TypeAdapter(tuple[str, float]).validate_json(row["bucket"]), row["owner"])
+            for row in await ledger_rows(migrated)
+        ] == [
+            (("kraken", 1.0), "second"),
+            (("binance.spot", 60.0), "first"),
+            (("binance.spot", 60.0), "second"),
         ]
         await first.block("api.binance.com", utcnow() + timedelta(seconds=1), "HTTP 429")
         started = time.monotonic()
@@ -368,15 +376,18 @@ async def test_request_ledger_is_one_budget_for_every_process(migrated) -> None:
         await second.acquire("binance.usdm", 1200, 60, weight=1, host="fapi.binance.com")
         assert time.monotonic() - started < 0.5
     finally:
-        await first.release(first.ledger)
-        await second.release(second.ledger)
-    assert first.ledger is None and second.ledger is None
+        await first.shutdown()
+        await second.shutdown()
+    assert first_ledger.closed and second_ledger.closed
+    assert first_ledger.connection is None and second_ledger.connection is None
 
 
 @pytest.mark.integration
 @pytest.mark.postgres
 async def test_external_contract_on_postgres(migrated, tmp_path: Path) -> None:
-    service = MarketService(migrated, make_settings(tmp_path), versions=fixture_versions())
+    service = MarketService(
+        migrated, make_settings(tmp_path), versions=fixture_versions(), admission=fixture_http_admission()
+    )
     await repair_round_trip(migrated, service)
     await check_stream_state(migrated, service)
     await migrated.put(
@@ -395,79 +406,63 @@ async def test_external_contract_on_postgres(migrated, tmp_path: Path) -> None:
 
 @pytest.mark.integration
 @pytest.mark.postgres
-async def test_ledger_is_configured_for_every_postgres_process(migrated) -> None:
-    budgets = SharedRequestBudgets()
-    assert budgets.configure(MemoryRepository(), SimpleNamespace()) is None and budgets.ledger is None
-    ledger = budgets.configure(migrated, SimpleNamespace())
-    assert budgets.ledger is ledger
-    await budgets.acquire("coinbase", 5, 1, host="api.exchange.coinbase.com")
-    await budgets.release(ledger)
-    assert budgets.ledger is None
+async def test_ledger_is_explicitly_bound_for_every_postgres_process(migrated: PostgresRepository) -> None:
+    scope = RequestBudgetScope()
+    constraints = [
+        BudgetConstraint(
+            key="coinbase", capacity=5.0, window_s=1.0, weight=1.0, host="api.exchange.coinbase.com"
+        )
+    ]
+    with pytest.raises(RuntimeError, match="not been bound"):
+        await scope.acquire_many(constraints)
+    ledger = RequestLedger(migrated.database_url, "explicit-process")
+    binding = scope.bind(ledger)
+    await scope.acquire_many(constraints)
+    assert [
+        (TypeAdapter(tuple[str, float]).validate_json(row["bucket"]), row["owner"])
+        for row in await ledger_rows(migrated)
+    ] == [(("coinbase", 1.0), "explicit-process")]
+    await scope.release(binding)
+    with pytest.raises(RuntimeError, match="not been bound"):
+        await scope.acquire_many(constraints)
     with pytest.raises(RuntimeError, match="closed"):
-        await ledger.wait_s("coinbase|1.0|5.0", 5.0, 1.0, 1.0, None)
+        await ledger.wait_many(constraints)
 
 
-class Instant:
-    """asyncio for the service module, without the waits of its request gate."""
-
-    def __init__(self) -> None:
-        self.elapsed = 0.0
-
-    def __getattr__(self, name):
-        return getattr(asyncio, name)
-
-    def monotonic(self):
-        return time.monotonic() + self.elapsed
-
-    async def sleep(self, seconds) -> None:
-        self.elapsed += seconds
-
-
-class FakeLedger:
-    def __init__(self) -> None:
-        self.blocks = []
-
-    async def wait_s(self, bucket, capacity, window_s, weight, host):
-        return 0.0
-
-    async def block(self, host, until, reason) -> None:
-        self.blocks.append((host, until, reason))
-
-
-async def test_shared_ledger_closes_hosts_on_429_and_418(
+async def test_same_injected_backend_enforces_429_and_418_without_clamping(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from tank.sources.rate_limits import shared_request_budgets
+    from source_support import fixture_request_budgets
 
-    ledger = FakeLedger()
-    monkeypatch.setattr(shared_request_budgets, "ledger", ledger)
-    replies = []
+    clock = FixtureBudgetClock()
+    admission = fixture_http_admission(budgets=fixture_request_budgets(clock=clock))
+    replies: list[httpx.Response] = []
+    starts: list[float] = []
 
-    def respond(request: pytest.FixtureRequest):
+    def respond(request: httpx.Request) -> httpx.Response:
+        starts.append(clock.elapsed)
         return replies.pop(0)
 
+    monkeypatch.setattr("tank.market.service.utcnow", clock.now)
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
         service = MarketService(
-            MemoryRepository(), make_settings(tmp_path), http=http, versions=fixture_versions()
+            MemoryRepository(),
+            make_settings(tmp_path),
+            http=http,
+            versions=fixture_versions(),
+            admission=admission,
         )
         url, params = "https://api.llama.fi/summary/fees/abc", {"dataType": "dailyFees"}
         replies[:] = [httpx.Response(418, headers={"Retry-After": "120"})]
         with pytest.raises(RuntimeError, match="418"):
             await service._request_once("GET", url, params=params)
         assert not replies
-        (host, until, reason) = ledger.blocks.pop()
-        assert host == "api.llama.fi" and reason == "HTTP 418"
-        assert 110 < (until - utcnow()).total_seconds() <= 120
-        service._last_request.clear()
+        assert clock.elapsed == 0.0
         replies[:] = [
             httpx.Response(429, headers={"Retry-After": "600"}),
             httpx.Response(200, json=[]),
         ]
-        clock = Instant()
-        monkeypatch.setattr("tank.market.service.asyncio", clock)
-        monkeypatch.setattr("tank.market.service.time", SimpleNamespace(monotonic=clock.monotonic))
         assert await service._request_once("GET", url, params=params) == []
-        assert [(host, reason) for host, _, reason in ledger.blocks] == [("api.llama.fi", "HTTP 429")]
-
-        assert 50 < (ledger.blocks[0][1] - utcnow()).total_seconds() <= 60
+        assert starts == [0.0, 120.0, 720.0]
+        assert clock.elapsed == 720.0 and not replies
         await service.close()

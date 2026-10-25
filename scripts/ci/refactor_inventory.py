@@ -90,6 +90,7 @@ class EmbeddedPython(BaseModel):
     line: int
     symbol: str
     language: Literal["python"]
+    encoding: Literal["raw-template", "decoded-literal"]
     source: str
 
 
@@ -304,6 +305,10 @@ def inventory(root: Path, embedded: tuple[EmbeddedPython, ...] = ()) -> Inventor
     for snippet in embedded:
         scan = Scan(snippet.path, line_offset=snippet.line - 1, scope=(snippet.symbol,))
         scan.visit(ast.parse(snippet.source, filename=snippet.path + ":" + snippet.symbol))
+        if snippet.encoding == "decoded-literal":
+            for finding in scan.findings:
+                finding.symbol += ":decoded-python-line:" + str(finding.line - snippet.line + 1)
+                finding.line = snippet.line
         findings.extend(scan.findings)
     areas: defaultdict[str, Counter[str]] = defaultdict(Counter)
     modules: defaultdict[str, Counter[str]] = defaultdict(Counter)
@@ -316,8 +321,8 @@ def inventory(root: Path, embedded: tuple[EmbeddedPython, ...] = ()) -> Inventor
     return Inventory(
         files=count - len(references),
         coverage=[
-            "active Python files",
-            "active Go files",
+            "active Python files in src/tests/scripts/deploy/capture; vendor provenance is a separate openma_inventory report",
+            "active Go files in src/tests/scripts/deploy/capture; unchanged upstream programs are not first-party completion evidence",
             "explicit embedded Python snippets from JavaScript report",
         ],
         embedded_python=len(embedded),
