@@ -3,14 +3,14 @@
 import html
 import json
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from urllib.parse import urlsplit
 
 from tank.analysis.decisions import POSITIVE_ACTIONS
 from tank.telegram_rich import CARD_TEXT_LIMIT, score_summary
 from tank.time_precision import bucket_duration, interval_bounds, propagate_timestamp
-from tank.util import parse_time, utcnow
+from tank.util import parse_epoch, parse_time, utcnow
 
 
 def _new_fatal(event, assessment, previous):
@@ -281,8 +281,10 @@ def _holders_revenue_text(truth):
             "holders revenue: n/a (" + missing_reason(observed.get("reason"), captured=bool(observed)) + ")"
         )
 
-    def clock(value):
-        return parse_time(value).strftime("%Y-%m-%d %H:%MZ") if value else "n/a (time unavailable)"
+    def clock(value: str | datetime | None) -> str:
+        return (
+            parse_time(value).strftime("%Y-%m-%d %H:%MZ") if value is not None else "n/a (time unavailable)"
+        )
 
     parts = []
     scalar = False
@@ -298,7 +300,7 @@ def _holders_revenue_text(truth):
                 + " "
                 + protocol["unit"]
                 + " chart point "
-                + clock(point["provider_timestamp"])
+                + clock(parse_epoch(point["provider_timestamp"], unit="s"))
                 + " (period unknown)"
             )
         else:

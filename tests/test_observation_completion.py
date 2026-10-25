@@ -8,7 +8,7 @@ from test_session_binding_concurrency import fixture_repo
 
 from tank.event_tools import EventToolService
 from tank.settings import Settings
-from tank.util import iso, new_id, sha256
+from tank.util import clock_iso, new_id, sha256
 
 
 @pytest.mark.parametrize(
@@ -20,7 +20,7 @@ async def test_observation_and_source_completion_are_atomic(
 ) -> None:
     async with fixture_repo(backend, postgres_template) as repo:
         service = EventToolService(repo, Settings(data_dir=tmp_path), None, None, versions=fixture_versions())
-        first, second, stamp = new_id("item"), new_id("item"), iso()
+        first, second, stamp = new_id("item"), new_id("item"), clock_iso()
         quote = "Product announced"
         for item_id in (first, second):
             await repo.put(

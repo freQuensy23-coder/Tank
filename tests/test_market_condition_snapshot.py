@@ -8,7 +8,7 @@ import pytest
 from source_support import fixture_versions
 
 from tank.market.service import MarketService
-from tank.util import iso, utcnow
+from tank.util import clock_iso, iso, utcnow
 
 
 @pytest.mark.asyncio
@@ -51,7 +51,7 @@ async def test_native_history_cache_refreshes_late_correction_without_rereading_
             "metric_key": "binance.usdm.openInterest",
             "ts": iso(end - timedelta(days=2)),
             "oi_native": "100",
-            "recorded_at": iso(),
+            "recorded_at": clock_iso(),
             "ts_prec": "EXACT",
         },
     )
@@ -81,7 +81,7 @@ async def test_native_history_cache_refreshes_late_correction_without_rereading_
                 "metric_key": "binance.usdm.openInterest",
                 "ts": iso(end - timedelta(days=2)),
                 "oi_native": "200",
-                "recorded_at": iso(),
+                "recorded_at": clock_iso(),
                 "ts_prec": "EXACT",
             },
         )
@@ -113,7 +113,7 @@ async def test_composite_reads_only_dependency_metadata_and_invalidates_old_poin
                 "token_id": inst["token_id"],
                 "ts": iso(end - timedelta(days=2)),
                 "ts_prec": "EXACT",
-                "recorded_at": iso(),
+                "recorded_at": clock_iso(),
                 "last": "12",
             },
         )
@@ -131,7 +131,7 @@ async def test_depth_baseline_cache_uses_source_head_and_refreshes_real_change(s
         "token_id": inst["token_id"],
         "exchange_ts": iso(origin - timedelta(minutes=30)),
         "exchange_ts_prec": "EXACT",
-        "recorded_at": iso(),
+        "recorded_at": clock_iso(),
         "integrity_ok": True,
         "mid": "12",
     }
@@ -148,11 +148,11 @@ async def test_depth_baseline_cache_uses_source_head_and_refreshes_real_change(s
 
         repo.iter_market_projection = projection
         service._range = AsyncMock(side_effect=AssertionError("Do not load old book levels"))
-        first = await service._condition_book_baseline(inst["instrument_id"], origin, iso())
-        second = await service._condition_book_baseline(inst["instrument_id"], origin, iso())
+        first = await service._condition_book_baseline(inst["instrument_id"], origin, clock_iso())
+        second = await service._condition_book_baseline(inst["instrument_id"], origin, clock_iso())
         assert first == second and len(reads) == 1
-        await repo.put("mkt.book_summaries", "pre-book", dict(point, mid="13", recorded_at=iso()))
-        third = await service._condition_book_baseline(inst["instrument_id"], origin, iso())
+        await repo.put("mkt.book_summaries", "pre-book", dict(point, mid="13", recorded_at=clock_iso()))
+        third = await service._condition_book_baseline(inst["instrument_id"], origin, clock_iso())
         assert len(reads) == 2 and third[0]["mid"] == "13"
 
         assert all("bids" not in fields and "asks" not in fields for _, fields in reads)
@@ -167,7 +167,7 @@ async def test_dc_and_depth_loader_use_bounded_inputs_and_cutoff_safe_latest(set
         "token_id": inst["token_id"],
         "exchange_ts": iso(end - timedelta(seconds=5)),
         "exchange_ts_prec": "EXACT",
-        "recorded_at": iso(),
+        "recorded_at": clock_iso(),
         "integrity_ok": True,
         "mid": "12",
     }
@@ -185,7 +185,7 @@ async def test_dc_and_depth_loader_use_bounded_inputs_and_cutoff_safe_latest(set
             "available": True,
             "ts": iso(end - timedelta(days=3)),
             "ts_prec": "EXACT",
-            "recorded_at": iso(),
+            "recorded_at": clock_iso(),
         },
     )
     await repo.put(
@@ -198,7 +198,7 @@ async def test_dc_and_depth_loader_use_bounded_inputs_and_cutoff_safe_latest(set
             "available": False,
             "ts": iso(end),
             "ts_prec": "EXACT",
-            "recorded_at": iso(),
+            "recorded_at": clock_iso(),
         },
     )
     reads = []
@@ -248,7 +248,7 @@ async def test_native_cache_cutoff_movement_never_leaks_future_or_loses_precolle
                 "metric_key": "binance.usdm.openInterest",
                 "ts": iso(stamp),
                 "ts_prec": "EXACT",
-                "recorded_at": iso(),
+                "recorded_at": clock_iso(),
                 "oi_native": value,
             },
         )
@@ -314,7 +314,7 @@ async def test_compact_kline_vectors_preserve_native_precision_and_prove_append_
             "complete": complete,
             "c": "12.125",
             "volume_native": qty,
-            "recorded_at": iso(),
+            "recorded_at": clock_iso(),
         }
 
     quantity = "12345678901234567890.12345678901234567890"
@@ -334,28 +334,28 @@ async def test_compact_kline_vectors_preserve_native_precision_and_prove_append_
         service = MarketService(repo, settings, http=http, versions=fixture_versions())
         cutoff = start + timedelta(minutes=2)
         first = await service._condition_kline_series(
-            inst, start, cutoff, iso(), kind="volume", coverage_count=1
+            inst, start, cutoff, clock_iso(), kind="volume", coverage_count=1
         )
         repeated = await service._condition_kline_series(
-            inst, start, cutoff, iso(), kind="volume", coverage_count=1
+            inst, start, cutoff, clock_iso(), kind="volume", coverage_count=1
         )
         assert len(projections) == 1 and first["dependency_fingerprint"] == repeated["dependency_fingerprint"]
         assert isinstance(first["times_us"], array) and first["time_basis"] == "OPEN_TIME"
         assert first["values"] == [quantity, "2"] and list(first["complete"]) == [1, 0]
         await repo.put_market_batch("mkt.klines_1m", [row(2, "3")], keys=["append"])
         appended = await service._condition_kline_series(
-            inst, start, cutoff + timedelta(minutes=1), iso(), kind="volume", coverage_count=2
+            inst, start, cutoff + timedelta(minutes=1), clock_iso(), kind="volume", coverage_count=2
         )
         assert appended["append_only"] is True
         assert appended["previous_dependency_fingerprint"] == first["dependency_fingerprint"]
         assert first["values"] == [quantity, "2"]
         await repo.put_market_batch("mkt.klines_1m", [row(0, "4")], keys=["first"])
         corrected = await service._condition_kline_series(
-            inst, start, cutoff + timedelta(minutes=1), iso(), kind="volume", coverage_count=2
+            inst, start, cutoff + timedelta(minutes=1), clock_iso(), kind="volume", coverage_count=2
         )
         assert corrected["append_only"] is False and corrected["values"][0] == "4"
         price = await service._condition_kline_series(
-            inst, start, cutoff + timedelta(minutes=1), iso(), kind="price", coverage_count=2
+            inst, start, cutoff + timedelta(minutes=1), clock_iso(), kind="price", coverage_count=2
         )
         assert price["time_basis"] == "CLOSE_TIME" and len(price["values"]) == 2
         assert price["times_us"][0] - first["times_us"][0] == 60_000_000
@@ -378,7 +378,7 @@ async def test_projected_flow_restores_declared_aliases_without_inventing_missin
             "buy_notional": "123.4567890123456789",
             "sell_notional": None,
             "h": "12",
-            "recorded_at": iso(),
+            "recorded_at": clock_iso(),
         },
     )
     async with httpx.AsyncClient() as http:
@@ -388,7 +388,7 @@ async def test_projected_flow_restores_declared_aliases_without_inventing_missin
             "minute_start",
             end - timedelta(hours=1),
             end,
-            iso(),
+            clock_iso(),
             fields=["instrument_id", "buy_usd", "sell_usd", "h"],
             filters={"instrument_id": inst["instrument_id"]},
         )
@@ -411,7 +411,7 @@ async def test_rolling_kline_cursor_serves_an_earlier_checkpoint_without_rereadi
             "complete": complete,
             "c": close,
             "volume_native": close,
-            "recorded_at": iso(),
+            "recorded_at": clock_iso(),
         }
 
     await repo.put_market_batch(
@@ -429,7 +429,7 @@ async def test_rolling_kline_cursor_serves_an_earlier_checkpoint_without_rereadi
         async with httpx.AsyncClient() as http:
             alone = MarketService(repo, settings, http=http, versions=fixture_versions())
             return await alone._condition_kline_series(
-                inst, window_start, cutoff, iso(), kind=kind, coverage_count=1, fixed_window=True
+                inst, window_start, cutoff, clock_iso(), kind=kind, coverage_count=1, fixed_window=True
             )
 
     def same(a, b):
@@ -448,7 +448,7 @@ async def test_rolling_kline_cursor_serves_an_earlier_checkpoint_without_rereadi
                 inst,
                 start + timedelta(minutes=5),
                 start + timedelta(minutes=25),
-                iso(),
+                clock_iso(),
                 kind=kind,
                 coverage_count=1,
                 fixed_window=True,
@@ -459,7 +459,7 @@ async def test_rolling_kline_cursor_serves_an_earlier_checkpoint_without_rereadi
                 inst,
                 start + timedelta(minutes=2),
                 start + timedelta(minutes=15),
-                iso(),
+                clock_iso(),
                 kind=kind,
                 coverage_count=1,
                 fixed_window=True,
@@ -477,7 +477,7 @@ async def test_rolling_kline_cursor_serves_an_earlier_checkpoint_without_rereadi
                 inst,
                 start + timedelta(minutes=2),
                 start + timedelta(minutes=15),
-                iso(),
+                clock_iso(),
                 kind=kind,
                 coverage_count=1,
                 fixed_window=True,
@@ -487,7 +487,7 @@ async def test_rolling_kline_cursor_serves_an_earlier_checkpoint_without_rereadi
                 inst,
                 start + timedelta(minutes=2),
                 start + timedelta(minutes=28),
-                iso(),
+                clock_iso(),
                 kind=kind,
                 coverage_count=1,
                 fixed_window=True,
@@ -552,7 +552,7 @@ async def test_rolling_kline_cursor_serves_an_older_assembly_clock_without_later
         service = MarketService(repo, settings, http=http, versions=fixture_versions())
         repo.iter_market_projection = projection
         older = iso(utcnow() - timedelta(minutes=10))
-        await series(service, iso())
+        await series(service, clock_iso())
         behind = await series(service, older)
         assert len(reads) == 1
         repo.iter_market_projection = original
@@ -564,8 +564,8 @@ async def test_rolling_kline_cursor_serves_an_older_assembly_clock_without_later
             )
         repo.iter_market_projection = projection
 
-        await repo.put_market_batch("mkt.klines_1m", [row(5, "99", iso())], keys=["k5"])
-        await series(service, iso(), cutoff=16)
+        await repo.put_market_batch("mkt.klines_1m", [row(5, "99", clock_iso())], keys=["k5"])
+        await series(service, clock_iso(), cutoff=16)
         reads.clear()
         rebuilt = await series(service, older)
         assert not reads
