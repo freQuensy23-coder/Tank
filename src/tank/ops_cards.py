@@ -51,8 +51,8 @@ LABELS = {
 EPOCH = datetime.min.replace(tzinfo=UTC)
 
 
-def plain(value, limit=400):
-    text = html.unescape(str(value or ""))
+def plain(value: str | int | float | bool | None, limit: int = 400) -> str:
+    text = html.unescape("" if value is None else str(value))
     text = re.sub(r"</?[A-Za-z][^>]*>", " ", text)
     text = re.sub(r"!\[[^]]*\]\([^)]*\)", "", text)
     text = re.sub(r"\[([^]]+)\]\([^)]*\)", r"\1", text)
