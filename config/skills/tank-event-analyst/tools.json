@@ -8,7 +8,7 @@
       "properties": {
         "item_id": {
           "type": "string",
-          "description": "ID of a stored source document: ITM-\u2026 for a collected item, web-\u2026 for a page read with fetch_page or a web_search result; find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abSource document by URL\u00bb."
+          "description": "ID of a stored source document: ITM-… for a collected item, web-… for a page read with fetch_page or a web_search result; find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Source document by URL»."
         }
       }
     }
@@ -33,7 +33,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Registered source keys (reg.sources), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. S29 or S32."
+          "description": "Registered source keys (reg.sources), shown after « · » next to the name in Tank's messages and results, e.g. S29 or S32."
         }
       },
       "required": [
@@ -50,11 +50,11 @@
       "properties": {
         "token_id": {
           "type": "string",
-          "description": "Registry token key (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC in \u00abBitcoin (BTC) \u00b7 bitcoin:BTC\u00bb."
+          "description": "Registry token key (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC in «Bitcoin (BTC) · bitcoin:BTC»."
         },
         "entity_id": {
           "type": "string",
-          "description": "Registry entity key (reg.entities), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. uniswap in \u00abUniswap \u00b7 uniswap\u00bb."
+          "description": "Registry entity key (reg.entities), shown after « · » next to the name in Tank's messages and results, e.g. uniswap in «Uniswap · uniswap»."
         }
       }
     }
@@ -68,7 +68,7 @@
       "properties": {
         "event_id": {
           "type": "string",
-          "description": "Event ID (EVT-\u2026); find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abEvents by statement, time or token\u00bb."
+          "description": "Event ID (EVT-…); find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Events by statement, time or token»."
         }
       }
     }
@@ -82,11 +82,11 @@
       "properties": {
         "token_id": {
           "type": "string",
-          "description": "Registry token key (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC in \u00abBitcoin (BTC) \u00b7 bitcoin:BTC\u00bb."
+          "description": "Registry token key (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC in «Bitcoin (BTC) · bitcoin:BTC»."
         },
         "entity_id": {
           "type": "string",
-          "description": "Registry entity key (reg.entities), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. uniswap in \u00abUniswap \u00b7 uniswap\u00bb."
+          "description": "Registry entity key (reg.entities), shown after « · » next to the name in Tank's messages and results, e.g. uniswap in «Uniswap · uniswap»."
         }
       }
     }
@@ -100,7 +100,7 @@
       "properties": {
         "token_id": {
           "type": "string",
-          "description": "Registry token key (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC in \u00abBitcoin (BTC) \u00b7 bitcoin:BTC\u00bb."
+          "description": "Registry token key (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC in «Bitcoin (BTC) · bitcoin:BTC»."
         }
       },
       "required": [
@@ -194,7 +194,7 @@
             "properties": {
               "entity_id": {
                 "type": "string",
-                "description": "Registry entity key (reg.entities), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. uniswap in \u00abUniswap \u00b7 uniswap\u00bb."
+                "description": "Registry entity key (reg.entities), shown after « · » next to the name in Tank's messages and results, e.g. uniswap in «Uniswap · uniswap»."
               },
               "name": {
                 "type": "string",
@@ -231,7 +231,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Registry token keys (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC or uniswap:UNI."
+          "description": "Registry token keys (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC or uniswap:UNI."
         },
         "token_names": {
           "type": "array",
@@ -421,14 +421,14 @@
                     "items": {
                       "type": "string"
                     },
-                    "description": "Registry token keys (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC or uniswap:UNI."
+                    "description": "Registry token keys (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC or uniswap:UNI."
                   },
                   "claim_ids": {
                     "type": "array",
                     "items": {
                       "type": "string"
                     },
-                    "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                    "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                   }
                 },
                 "description": "Explicit thesis dependency of a REJECTED approval: the accepted causal RELATION claims of the current event it rests on (claim_ids) and, for TOKEN scope, the registry tokens it concerns (token_ids). Tank validates the IDs and their scope; it does not infer dependencies from text."
@@ -453,7 +453,7 @@
                   "properties": {
                     "item_id": {
                       "type": "string",
-                      "description": "ID of a stored source document: ITM-\u2026 for a collected item, web-\u2026 for a page read with fetch_page or a web_search result; find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abSource document by URL\u00bb."
+                      "description": "ID of a stored source document: ITM-… for a collected item, web-… for a page read with fetch_page or a web_search result; find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Source document by URL»."
                     },
                     "quote": {
                       "type": "string"
@@ -488,7 +488,7 @@
             },
             "source_id": {
               "type": "string",
-              "description": "Registered source key (reg.sources), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. S14 in \u00abVenue instrument lists \u00b7 S14\u00bb."
+              "description": "Registered source key (reg.sources), shown after « · » next to the name in Tank's messages and results, e.g. S14 in «Venue instrument lists · S14»."
             }
           },
           "required": [
@@ -553,7 +553,7 @@
       "properties": {
         "item_id": {
           "type": "string",
-          "description": "Only for a callback without an incoming source: the stored document that establishes this observation, ITM-\u2026 for a collected item or web-\u2026 for a page read with fetch_page; find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abSource document by URL\u00bb. Omit when an incoming source is supplied."
+          "description": "Only for a callback without an incoming source: the stored document that establishes this observation, ITM-… for a collected item or web-… for a page read with fetch_page; find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Source document by URL». Omit when an incoming source is supplied."
         },
         "link": {
           "enum": [
@@ -672,14 +672,14 @@
                     "items": {
                       "type": "string"
                     },
-                    "description": "Registry token keys (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC or uniswap:UNI."
+                    "description": "Registry token keys (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC or uniswap:UNI."
                   },
                   "claim_ids": {
                     "type": "array",
                     "items": {
                       "type": "string"
                     },
-                    "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                    "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                   }
                 },
                 "description": "Explicit thesis dependency of a REJECTED approval: the accepted causal RELATION claims of the current event it rests on (claim_ids) and, for TOKEN scope, the registry tokens it concerns (token_ids). Tank validates the IDs and their scope; it does not infer dependencies from text."
@@ -700,7 +700,7 @@
                 "items": {
                   "type": "string"
                 },
-                "description": "Claim IDs (CLM-\u2026) of prior claims of the current event that this claim replaces on the current card; the old claims remain historical evidence. Omit unrelated claims and remaining uncertainties; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                "description": "Claim IDs (CLM-…) of prior claims of the current event that this claim replaces on the current card; the old claims remain historical evidence. Omit unrelated claims and remaining uncertainties; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
               },
               "evidence": {
                 "type": "array",
@@ -711,7 +711,7 @@
                   "properties": {
                     "item_id": {
                       "type": "string",
-                      "description": "ID of a stored source document: ITM-\u2026 for a collected item, web-\u2026 for a page read with fetch_page or a web_search result; find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abSource document by URL\u00bb."
+                      "description": "ID of a stored source document: ITM-… for a collected item, web-… for a page read with fetch_page or a web_search result; find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Source document by URL»."
                     },
                     "quote": {
                       "type": "string"
@@ -821,7 +821,7 @@
       "properties": {
         "event_id": {
           "type": "string",
-          "description": "Event ID (EVT-\u2026); find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abEvents by statement, time or token\u00bb."
+          "description": "Event ID (EVT-…); find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Events by statement, time or token»."
         }
       },
       "required": [
@@ -870,7 +870,7 @@
                       "items": {
                         "type": "string"
                       },
-                      "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                     },
                     "proposed_by": {
                       "enum": [
@@ -917,7 +917,7 @@
                       "items": {
                         "type": "string"
                       },
-                      "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                     },
                     "proposed_by": {
                       "enum": [
@@ -964,7 +964,7 @@
                       "items": {
                         "type": "string"
                       },
-                      "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                     },
                     "proposed_by": {
                       "enum": [
@@ -1011,7 +1011,7 @@
                       "items": {
                         "type": "string"
                       },
-                      "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                     },
                     "proposed_by": {
                       "enum": [
@@ -1058,7 +1058,7 @@
                       "items": {
                         "type": "string"
                       },
-                      "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                     },
                     "proposed_by": {
                       "enum": [
@@ -1105,7 +1105,7 @@
                       "items": {
                         "type": "string"
                       },
-                      "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                     },
                     "proposed_by": {
                       "enum": [
@@ -1152,7 +1152,7 @@
                       "items": {
                         "type": "string"
                       },
-                      "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                      "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                     },
                     "proposed_by": {
                       "enum": [
@@ -1208,7 +1208,7 @@
                     "items": {
                       "type": "string"
                     },
-                    "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                    "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                   }
                 },
                 "required": [
@@ -1250,7 +1250,7 @@
                 "string",
                 "null"
               ],
-              "description": "Claim ID (CLM-\u2026) of the recorded claim that establishes the selected criterion, or null when no claim does; a claim about another subject does not establish a structural criterion. Find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+              "description": "Claim ID (CLM-…) of the recorded claim that establishes the selected criterion, or null when no claim does; a claim about another subject does not establish a structural criterion. Find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
             },
             "class_reasons": {
               "type": "array",
@@ -1306,7 +1306,7 @@
                     "properties": {
                       "claim_id": {
                         "type": "string",
-                        "description": "Claim ID (CLM-\u2026) of an accepted claim of the current event; find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                        "description": "Claim ID (CLM-…) of an accepted claim of the current event; find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                       },
                       "due_at": {
                         "type": "string",
@@ -1331,11 +1331,11 @@
                   "properties": {
                     "claim_id": {
                       "type": "string",
-                      "description": "Claim ID (CLM-\u2026) of an accepted claim of the current event; find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                      "description": "Claim ID (CLM-…) of an accepted claim of the current event; find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                     },
                     "instrument_id": {
                       "type": "string",
-                      "description": "Registry instrument key (reg.instruments), venue:market:symbol, shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. binance:spot:BTCUSDT."
+                      "description": "Registry instrument key (reg.instruments), venue:market:symbol, shown after « · » next to the name in Tank's messages and results, e.g. binance:spot:BTCUSDT."
                     },
                     "quote": {
                       "type": "string",
@@ -1372,7 +1372,7 @@
                 "properties": {
                   "token_id": {
                     "type": "string",
-                    "description": "Registry token key (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC in \u00abBitcoin (BTC) \u00b7 bitcoin:BTC\u00bb."
+                    "description": "Registry token key (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC in «Bitcoin (BTC) · bitcoin:BTC»."
                   },
                   "headline_activity": {
                     "type": "object",
@@ -1777,7 +1777,7 @@
                         "items": {
                           "type": "string"
                         },
-                        "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                        "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                       }
                     },
                     "required": [
@@ -1855,7 +1855,7 @@
                     },
                     "claim_id": {
                       "type": "string",
-                      "description": "Claim ID (CLM-\u2026) of an accepted claim of the current event; find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                      "description": "Claim ID (CLM-…) of an accepted claim of the current event; find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                     }
                   },
                   "required": [
@@ -1883,7 +1883,7 @@
                     },
                     "claim_id": {
                       "type": "string",
-                      "description": "Claim ID (CLM-\u2026) of an accepted claim of the current event; find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                      "description": "Claim ID (CLM-…) of an accepted claim of the current event; find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                     }
                   },
                   "required": [
@@ -1943,7 +1943,7 @@
             "properties": {
               "entity_id": {
                 "type": "string",
-                "description": "Registry entity key (reg.entities), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. uniswap in \u00abUniswap \u00b7 uniswap\u00bb."
+                "description": "Registry entity key (reg.entities), shown after « · » next to the name in Tank's messages and results, e.g. uniswap in «Uniswap · uniswap»."
               },
               "entity_name": {
                 "type": "string",
@@ -1954,7 +1954,7 @@
                   "string",
                   "null"
                 ],
-                "description": "Registry token key (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC in \u00abBitcoin (BTC) \u00b7 bitcoin:BTC\u00bb. Null when the entity has no token or the token is outside the registry."
+                "description": "Registry token key (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC in «Bitcoin (BTC) · bitcoin:BTC». Null when the entity has no token or the token is outside the registry."
               },
               "token_name": {
                 "type": "string",
@@ -2014,7 +2014,7 @@
                 "type": "number",
                 "minimum": 0,
                 "maximum": 10,
-                "description": "TDD \u00a74.7 exposure rubric: 10 = sole required rail with counterparty evidence; 8 = required LIVE rail; 6 = likely rail with BUILT, SUBMITTED or APPROVED integration; 4 = compatible candidate; 2 = thematic connection; 0 = none. Supply the evidence and integration state supporting the selected level."
+                "description": "TDD §4.7 exposure rubric: 10 = sole required rail with counterparty evidence; 8 = required LIVE rail; 6 = likely rail with BUILT, SUBMITTED or APPROVED integration; 4 = compatible candidate; 2 = thematic connection; 0 = none. Supply the evidence and integration state supporting the selected level."
               },
               "edge_certainty": {
                 "enum": [
@@ -2028,7 +2028,7 @@
                 "items": {
                   "type": "string"
                 },
-                "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
               },
               "credibility_reasons": {
                 "type": "array",
@@ -2058,7 +2058,7 @@
                     "items": {
                       "type": "string"
                     },
-                    "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
+                    "description": "Claim IDs (CLM-…) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Claims of an event»."
                   }
                 },
                 "description": "Explicit negative economic thesis for a LOSER edge with NEGATIVE direction. Supply the causal mechanism, a verbatim supporting quote and accepted RELATION claim references; the agent judges the quoted causal evidence; Tank applies deterministic role and dependency rules using the structured fields."
@@ -2197,7 +2197,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Registry token keys (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC or uniswap:UNI."
+          "description": "Registry token keys (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC or uniswap:UNI."
         },
         "cutoff": {
           "type": "string",
@@ -2242,7 +2242,7 @@
       "properties": {
         "token_id": {
           "type": "string",
-          "description": "Registry token key (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC in \u00abBitcoin (BTC) \u00b7 bitcoin:BTC\u00bb."
+          "description": "Registry token key (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC in «Bitcoin (BTC) · bitcoin:BTC»."
         }
       },
       "required": [
@@ -2252,7 +2252,7 @@
   },
   {
     "name": "publish_card",
-    "description": "Request publication using the canonical template. Supply a plain-language WHAT explanation, a neutral factual headline verdict and 2\u20133 WHY bullets, following skill wording rules L1\u2013L12. Tank applies lifecycle, alert eligibility and update policy, composes structured values from authoritative MarketTruth/Decision outputs, stores immutable evidence and queues delivery. Tank does not lint or repair prose and does not require a fixed tool-call order. Returns publication status or refusal for the deterministic publication gate. An accepted ordinary UPDATE during cooldown is persisted and queued until delivery_not_before; published=true with delivery_status=QUEUED is not a transport acknowledgment. STALE state-change updates are not published. Delivery sends the accepted immutable payload without a second semantic eligibility judgment. PRELIMINARY is a sourced MATERIAL lead, including LOW certainty, without MarketTruth or decisions. Supply what, at least one why bullet, and unconfirmed. It is stored and delivered in the event thread but does not satisfy ordinary publication requirements. After an official denial invalidates an event that has only PRELIMINARY cards, one PRELIMINARY denial correction is accepted at once, without unconfirmed, and is marked DENIED.",
+    "description": "Request publication using the canonical template. Supply a plain-language WHAT explanation, a neutral factual headline verdict and 2–3 WHY bullets, following skill wording rules L1–L12. Tank applies lifecycle, alert eligibility and update policy, composes structured values from authoritative MarketTruth/Decision outputs, stores immutable evidence and queues delivery. Tank does not lint or repair prose and does not require a fixed tool-call order. Returns publication status or refusal for the deterministic publication gate. An accepted ordinary UPDATE during cooldown is persisted and queued until delivery_not_before; published=true with delivery_status=QUEUED is not a transport acknowledgment. STALE state-change updates are not published. Delivery sends the accepted immutable payload without a second semantic eligibility judgment. PRELIMINARY is a sourced MATERIAL lead, including LOW certainty, without MarketTruth or decisions. Supply what, at least one why bullet, and unconfirmed. It is stored and delivered in the event thread but does not satisfy ordinary publication requirements. After an official denial invalidates an event that has only PRELIMINARY cards, one PRELIMINARY denial correction is accepted at once, without unconfirmed, and is marked DENIED.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -2267,7 +2267,7 @@
         },
         "what": {
           "type": "string",
-          "description": "WHAT exactly happened, in 1\u20133 short plain-language sentences. Explain the concrete change, what the named protocol/product/token does and what it enables for users; unpack jargon. For a token integration, explain the token's purpose and relevant distinctive feature. Ground the explanation in evidence, preserve stage and uncertainty, and state unknowns. Displayed unchanged below the final card headline. At most 500 characters.",
+          "description": "WHAT exactly happened, in 1–3 short plain-language sentences. Explain the concrete change, what the named protocol/product/token does and what it enables for users; unpack jargon. For a token integration, explain the token's purpose and relevant distinctive feature. Ground the explanation in evidence, preserve stage and uncertainty, and state unknowns. Displayed unchanged below the final card headline. At most 500 characters.",
           "minLength": 1,
           "maxLength": 500,
           "pattern": "\\S"
@@ -2318,7 +2318,7 @@
         },
         "source_id": {
           "type": "string",
-          "description": "Registered source key (reg.sources), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. S14 in \u00abVenue instrument lists \u00b7 S14\u00bb."
+          "description": "Registered source key (reg.sources), shown after « · » next to the name in Tank's messages and results, e.g. S14 in «Venue instrument lists · S14»."
         },
         "due_at_prec": {
           "type": "string",
@@ -2364,7 +2364,7 @@
         },
         "evidence": {
           "type": "array",
-          "description": "Each entry cites one stored record by its ID: {claim_id} for a claim, {event_id} for an event or {item_id} for a source document; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb).",
+          "description": "Each entry cites one stored record by its ID: {claim_id} for a claim, {event_id} for an event or {item_id} for a source document; find them with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»).",
           "items": {
             "anyOf": [
               {
@@ -2373,7 +2373,7 @@
                 "properties": {
                   "claim_id": {
                     "type": "string",
-                    "description": "Claim ID (CLM-\u2026)."
+                    "description": "Claim ID (CLM-…)."
                   }
                 },
                 "required": [
@@ -2386,7 +2386,7 @@
                 "properties": {
                   "event_id": {
                     "type": "string",
-                    "description": "Event ID (EVT-\u2026)."
+                    "description": "Event ID (EVT-…)."
                   }
                 },
                 "required": [
@@ -2399,7 +2399,7 @@
                 "properties": {
                   "item_id": {
                     "type": "string",
-                    "description": "Source document ID (ITM-\u2026 or web-\u2026)."
+                    "description": "Source document ID (ITM-… or web-…)."
                   }
                 },
                 "required": [
@@ -2455,11 +2455,11 @@
         },
         "cond_id": {
           "type": "string",
-          "description": "DISARM only: ID of the ARMED watch condition of the current event (CND-\u2026); find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abWatch conditions of an event\u00bb."
+          "description": "DISARM only: ID of the ARMED watch condition of the current event (CND-…); find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Watch conditions of an event»."
         },
         "token_id": {
           "type": "string",
-          "description": "ARM only: Registry token key (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC in \u00abBitcoin (BTC) \u00b7 bitcoin:BTC\u00bb."
+          "description": "ARM only: Registry token key (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC in «Bitcoin (BTC) · bitcoin:BTC»."
         },
         "text": {
           "type": "string",
