@@ -201,8 +201,8 @@ type IdentityKey = tuple[Literal["TOKEN", "ENTITY", "NAME"], str]
 
 
 class CardEvidenceReference(DomainModel):
-    item_id: str | None
-    url: str | None
+    item_id: str | None = Field(min_length=1)
+    url: str | None = Field(min_length=1)
 
     @model_validator(mode="after")
     def real_reference(self) -> Self:
@@ -264,8 +264,6 @@ class CardSubject(DomainModel):
     def named_identity(self) -> Self:
         if self.token_id is None and self.entity_id is None and self.entity_name is None:
             raise ValueError("A named beneficiary requires a token, entity or recorded external name")
-        if self.role != "SECONDARY" and self.integration_verified:
-            raise ValueError("Secondary integration verification is not an event-state alias")
         return self
 
     def identity_key(self) -> IdentityKey:
@@ -505,6 +503,30 @@ class CardInputs(DomainModel):
         if any(key != value.token_id for key, value in self.market_by_token.items()):
             raise ValueError("Card market index disagrees with its token identities")
         if self.narrative.kind != "PARTIAL":
+            subjects = tuple(value.subject for value in self.beneficiaries) + self.other_subjects
+            if not any(
+                value.role == "SECONDARY" and (value.credible or value.outside_scope is not None)
+                for value in subjects
+            ):
+                layers = {
+                    "ISSUER_PRODUCT",
+                    "VENUE_DEX",
+                    "SETTLEMENT_L1_L2",
+                    "LIQUIDITY_EXECUTION",
+                    "LENDING_COLLATERAL",
+                    "ORACLE_DATA",
+                    "INTEROPERABILITY",
+                    "CUSTODY_COMPLIANCE",
+                }
+                if set(self.mapping.layer_explanations) != layers or any(
+                    not text.strip() for text in self.mapping.layer_explanations.values()
+                ):
+                    raise ValueError("A card without a secondary requires the actual eight layer assessments")
+                if (
+                    self.mapping.no_credible_secondary_reason is None
+                    or not self.mapping.no_credible_secondary_reason.strip()
+                ):
+                    raise ValueError("A card without a credible secondary requires its recorded reason")
             for beneficiary in self.beneficiaries:
                 token = beneficiary.token_id
                 if token not in self.decisions_by_token:
