@@ -5127,10 +5127,33 @@ class ConditionInventoryBalanceChange(DomainModel):
         return _sum_native(validated.current_qty_native, validated.previous_qty_native.copy_negate())
 
 
-class ConditionInventoryCaptureError(DomainModel):
+class ConditionInventoryWalletCaptureError(DomainModel):
+    kind: Literal["WALLET_CAPTURE_FAILED"]
     wallet: str = Field(min_length=1, pattern=r"\S")
     chain_id: int = Field(gt=0)
-    reason: str = Field(min_length=1, pattern=r"\S")
+    reason: str
+
+
+class ConditionUnsupportedInventoryChain(DomainModel):
+    kind: Literal["CHAIN_NOT_SUPPORTED"]
+    chain: str = Field(min_length=1, pattern=r"\S")
+    reason: Literal["CHAIN_NOT_SUPPORTED"]
+
+
+class ConditionInventoryDecimalsError(DomainModel):
+    kind: Literal["DECIMALS_CAPTURE_FAILED"]
+    chain: str = Field(min_length=1, pattern=r"\S")
+    chain_id: int = Field(gt=0)
+    contract: str = Field(min_length=1, pattern=r"\S")
+    operation: Literal["decimals"]
+    reason: str
+
+
+type ConditionInventoryCaptureError = (
+    ConditionInventoryWalletCaptureError
+    | ConditionUnsupportedInventoryChain
+    | ConditionInventoryDecimalsError
+)
 
 
 class ConditionInventoryCoverage(DomainModel):
@@ -5254,7 +5277,7 @@ class ComparableConditionExchangeInventory(DomainModel):
         with localcontext() as context:
             context.prec = max(128, 2 * span + 16)
             value = float(change / previous)
-        if not isfinite(value):
+        if not isfinite(value) or value == 0 and change != 0:
             return ConditionInventoryFractionalChange(value=None, reason="NOT_ESTIMABLE")
         return ConditionInventoryFractionalChange(value=value, reason=None)
 
@@ -5273,7 +5296,13 @@ class ConditionWalletFlow(DomainModel):
     visibility: ConditionReceiptVisibility
     classification: (
         Literal[
-            "UNLOCK_DISTRIBUTION", "TREASURY_INTERNAL", "MM_INVENTORY", "CEX_CUSTODY_MIGRATION", "AMBIGUOUS"
+            "UNLOCK_DISTRIBUTION",
+            "TREASURY_INTERNAL",
+            "MM_INVENTORY",
+            "CEX_CUSTODY_MIGRATION",
+            "FRESH_ACCUMULATION",
+            "OTC_SETTLEMENT",
+            "AMBIGUOUS",
         ]
         | None
     )
@@ -5305,7 +5334,7 @@ class ConditionWalletFlow(DomainModel):
         if (
             validated.reaches_exchange is False
             or validated.quantity_native == 0
-            or validated.classification == "CEX_CUSTODY_MIGRATION"
+            or validated.classification in ("CEX_CUSTODY_MIGRATION", "FRESH_ACCUMULATION", "OTC_SETTLEMENT")
         ):
             return ConditionObservedPredicate(status="OBSERVED", value=False)
         if (
@@ -5521,7 +5550,7 @@ class ConditionLendingPoolCalculation(DomainModel):
         if not isfinite(current_float) or not isfinite(previous_float):
             return ConditionLendingUtilizationChange(value=None, reason="NOT_ESTIMABLE")
         value = current_float - previous_float
-        if not isfinite(value):
+        if not isfinite(value) or value == 0 and current.value != previous:
             return ConditionLendingUtilizationChange(value=None, reason="NOT_ESTIMABLE")
         return ConditionLendingUtilizationChange(value=value, reason=None)
 
@@ -5577,3 +5606,429 @@ class UnavailableConditionLending(DomainModel):
 
 
 type ConditionLending = CapturedConditionLending | UnavailableConditionLending
+
+
+class KnownConditionCirculatingShare(DomainModel):
+    status: Literal["OBSERVED"]
+    value: Decimal = Field(ge=0, le=1)
+    unit: Literal["FRACTION"]
+
+
+class UnscaledConditionCirculatingShare(DomainModel):
+    status: Literal["UNSCALED_CAPTURED_VALUE"]
+    value: Decimal = Field(ge=0)
+    unit: Literal["UNSPECIFIED"]
+    reason: Literal["UNIT_NOT_CAPTURED"]
+
+
+class UnavailableConditionCirculatingShare(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    value: None
+    reason: Literal["NOT_CAPTURED"]
+
+
+type ConditionCirculatingShare = (
+    KnownConditionCirculatingShare | UnscaledConditionCirculatingShare | UnavailableConditionCirculatingShare
+)
+
+
+class ConditionScheduledUnlock(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    scheduled_at: Timestamp
+    quantity_native: Decimal | None = Field(ge=0)
+    quantity_reason: Literal["QUANTITY_NOT_CAPTURED"] | None
+    label: str | None
+    circulating_share: ConditionCirculatingShare
+    recipient_class: str | None
+    transferable: bool | None
+    transferability_reason: Literal["TRANSFERABILITY_NOT_CAPTURED"] | None
+    source_observation_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    schedule_index: int | None = Field(ge=0)
+
+    @model_validator(mode="after")
+    def actual_potential_supply(self) -> Self:
+        if self.scheduled_at.value is None:
+            raise ValueError("A scheduled unlock requires its actual published time declaration")
+        if (self.quantity_native is None) != (self.quantity_reason is not None):
+            raise ValueError("Missing scheduled quantity requires its actual provider gap")
+        if (self.transferable is None) != (self.transferability_reason is not None):
+            raise ValueError("Missing transferability must remain explicitly uncaptured")
+        return self
+
+
+class CapturedConditionUnlocks(DomainModel):
+    status: Literal["CAPTURED_SCHEDULE"]
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    cutoff: datetime
+    observed_at: Timestamp
+    visibility: ConditionReceiptVisibility
+    upcoming: tuple[ConditionScheduledUnlock, ...]
+
+    @field_validator("cutoff")
+    @classmethod
+    def aware_cutoff(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_schedule_window(self) -> Self:
+        observed = self.observed_at.value
+        if observed is None or parse_iso_time(observed) > self.cutoff:
+            raise ValueError("An unlock schedule requires its actual nonfuture capture observation")
+        end = self.cutoff + timedelta(days=14)
+        entries: set[tuple[str, int | None]] = set()
+        for unlock in self.upcoming:
+            stamp = unlock.scheduled_at.value
+            if (
+                unlock.token_id != self.token_id
+                or stamp is None
+                or not self.cutoff <= parse_iso_time(stamp) <= end
+            ):
+                raise ValueError(
+                    "Upcoming unlocks must preserve actual token and inclusive fourteen-day scope"
+                )
+            key = (unlock.source_observation_sha256, unlock.schedule_index)
+            if key in entries:
+                raise ValueError("An unlock schedule cannot duplicate the same captured source entry")
+            entries.add(key)
+        return self
+
+
+class UnavailableConditionUnlocks(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: str = Field(min_length=1, pattern=r"\S")
+
+
+type ConditionUnlocks = CapturedConditionUnlocks | UnavailableConditionUnlocks
+
+
+class SelectedConditionStablecoinPoint(DomainModel):
+    status: Literal["SELECTED_SOURCE_POINT"]
+    observed_at: Timestamp
+    value_usd: Decimal | None = Field(ge=0)
+    value_reason: Literal["VALUE_NOT_CAPTURED", "NONFINITE_SOURCE_VALUE"] | None
+    series_index: int | None = Field(ge=0)
+
+    @model_validator(mode="after")
+    def actual_selected_point(self) -> Self:
+        if self.observed_at.value is None:
+            raise ValueError("A selected chain-liquidity point requires its actual source clock")
+        if (self.value_usd is None) != (self.value_reason is not None):
+            raise ValueError("Missing chain-liquidity quantity requires its actual capture/value gap")
+        return self
+
+
+class UnavailableConditionStablecoinPoint(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["NO_ASOF_POINT"]
+
+
+type ConditionStablecoinPoint = SelectedConditionStablecoinPoint | UnavailableConditionStablecoinPoint
+
+
+class ConditionStablecoinSupplyChange(DomainModel):
+    value: Decimal | None
+    unit: Literal["USD"]
+    reason: Literal["INCOMPLETE"] | None
+
+    @model_validator(mode="after")
+    def actual_change(self) -> Self:
+        if (self.value is None) != (self.reason is not None):
+            raise ValueError("Missing chain supply comparison requires an actual missing endpoint/value")
+        return self
+
+
+class CapturedConditionChainLiquidity(DomainModel):
+    status: Literal["CAPTURED_CHAIN_CONTEXT"]
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    chain: str = Field(min_length=1, pattern=r"\S")
+    cutoff: datetime
+    observed_at: Timestamp
+    visibility: ConditionReceiptVisibility
+    current: ConditionStablecoinPoint
+    day_ago: ConditionStablecoinPoint
+    week_ago: ConditionStablecoinPoint
+    source_observation_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("cutoff")
+    @classmethod
+    def aware_cutoff(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_chain_asof_points(self) -> Self:
+        stamp = self.observed_at.value
+        if stamp is None or parse_iso_time(stamp) > self.cutoff:
+            raise ValueError("Captured chain context requires its actual nonfuture source observation")
+        for point, target in (
+            (self.current, self.cutoff),
+            (self.day_ago, self.cutoff - timedelta(days=1)),
+            (self.week_ago, self.cutoff - timedelta(days=7)),
+        ):
+            if isinstance(point, SelectedConditionStablecoinPoint):
+                observed = point.observed_at.value
+                if observed is None or parse_iso_time(observed) > target:
+                    raise ValueError("A selected chain supply point cannot lie after its actual as-of target")
+        return self
+
+    def change_24h(self) -> ConditionStablecoinSupplyChange:
+        validated = type(self).model_validate(self)
+        return validated._change(validated.day_ago)
+
+    def change_7d(self) -> ConditionStablecoinSupplyChange:
+        validated = type(self).model_validate(self)
+        return validated._change(validated.week_ago)
+
+    def _change(self, prior: ConditionStablecoinPoint) -> ConditionStablecoinSupplyChange:
+        if not isinstance(self.current, SelectedConditionStablecoinPoint) or not isinstance(
+            prior, SelectedConditionStablecoinPoint
+        ):
+            return ConditionStablecoinSupplyChange(value=None, unit="USD", reason="INCOMPLETE")
+        current, previous = self.current.value_usd, prior.value_usd
+        if current is None or previous is None:
+            return ConditionStablecoinSupplyChange(value=None, unit="USD", reason="INCOMPLETE")
+        return ConditionStablecoinSupplyChange(
+            value=_sum_native(current, previous.copy_negate()), unit="USD", reason=None
+        )
+
+
+class UnavailableConditionChainLiquidity(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    chain: str | None = Field(min_length=1, pattern=r"\S")
+    reason: str = Field(min_length=1, pattern=r"\S")
+
+
+type ConditionChainLiquidity = CapturedConditionChainLiquidity | UnavailableConditionChainLiquidity
+
+
+class ConfiguredConditionSettlementChain(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    chain: str | None = Field(min_length=1, pattern=r"\S")
+    origin: Literal["CURRENT_CONFIGURED_SETTLEMENT_CHAIN"]
+    versions: ResolvedVersionIdentity
+
+
+type ConditionSupplyInput = Literal[
+    "EXCHANGE_INVENTORY", "WALLET_FLOWS", "UNLOCKS", "LENDING", "CHAIN_LIQUIDITY"
+]
+
+
+class ConditionInventorySupplyWitness(DomainModel):
+    native_change: Decimal = Field(gt=0)
+    fractional_change: float = Field(gt=0)
+    normal_range: FloatBounds
+    current_observed_at: Timestamp
+    previous_observed_at: Timestamp
+
+    @model_validator(mode="after")
+    def actual_positive_comparison(self) -> Self:
+        if (
+            self.fractional_change <= self.normal_range.upper
+            or self.current_observed_at.value is None
+            or self.previous_observed_at.value is None
+        ):
+            raise ValueError(
+                "Inventory supply evidence requires an actual positive rise beyond its normal range"
+            )
+        return self
+
+
+class ConditionPositiveSupplyEvidence(DomainModel):
+    status: Literal["OBSERVED_POSITIVE"]
+    available_inputs: tuple[ConditionSupplyInput, ...] = Field(min_length=1)
+    inventory: ConditionInventorySupplyWitness | None
+    wallet_flows: tuple[ConditionWalletFlowEvidenceRef, ...]
+
+    @model_validator(mode="after")
+    def actual_positive_witness(self) -> Self:
+        if self.inventory is None and not self.wallet_flows:
+            raise ValueError("Positive supply evidence requires an actual inventory or transfer witness")
+        if len(set(self.available_inputs)) != len(self.available_inputs):
+            raise ValueError("Available supply input families must be distinct")
+        if (
+            self.inventory is not None
+            and "EXCHANGE_INVENTORY" not in self.available_inputs
+            or self.wallet_flows
+            and "WALLET_FLOWS" not in self.available_inputs
+        ):
+            raise ValueError("Supply witnesses must retain their actual available input family")
+        return self
+
+
+class ConditionNoPositiveSupplyEvidence(DomainModel):
+    status: Literal["NO_POSITIVE_OBSERVATION"]
+    available_inputs: tuple[ConditionSupplyInput, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def actual_available_subset(self) -> Self:
+        if len(set(self.available_inputs)) != len(self.available_inputs):
+            raise ValueError("Available supply input families must be distinct")
+        return self
+
+
+class UnavailableConditionSupplyEvidence(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["NO_AVAILABLE_INPUTS"]
+
+
+type ConditionSupplyEvidence = (
+    ConditionPositiveSupplyEvidence | ConditionNoPositiveSupplyEvidence | UnavailableConditionSupplyEvidence
+)
+
+
+class ConditionSupplyGraph(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    interval: ConditionInterval
+    assembled_at: Timestamp
+    settlement_chain: ConfiguredConditionSettlementChain
+    exchange_inventory: ConditionExchangeInventory
+    wallet_flows: ConditionWalletFlows
+    unlocks: ConditionUnlocks
+    lending: ConditionLending
+    chain_contexts: tuple[ConditionChainLiquidity, ...]
+    holders_revenue: ConditionHoldersRevenue
+
+    @model_validator(mode="after")
+    def actual_supply_scope(self) -> Self:
+        if self.settlement_chain.token_id != self.token_id:
+            raise ValueError("Settlement-chain policy cannot qualify another token")
+        inventory = self.exchange_inventory
+        if isinstance(inventory, ComparableConditionExchangeInventory) and (
+            inventory.token_id,
+            inventory.cutoff,
+            inventory.current_visibility.assembled_at,
+        ) != (self.token_id, self.interval.cutoff, self.assembled_at):
+            raise ValueError("Inventory must preserve actual supply token/cutoff/assembly scope")
+        flows = self.wallet_flows
+        if isinstance(flows, CapturedConditionWalletFlows) and (
+            flows.token_id,
+            flows.interval,
+            flows.assembled_at,
+        ) != (self.token_id, self.interval, self.assembled_at):
+            raise ValueError("Wallet flows must preserve actual supply token/window/assembly scope")
+        unlocks = self.unlocks
+        if isinstance(unlocks, CapturedConditionUnlocks) and (
+            unlocks.token_id,
+            unlocks.cutoff,
+            unlocks.visibility.assembled_at,
+        ) != (self.token_id, self.interval.cutoff, self.assembled_at):
+            raise ValueError("Unlocks must preserve actual supply token/cutoff/assembly scope")
+        lending = self.lending
+        if isinstance(lending, CapturedConditionLending) and (
+            lending.token_id,
+            lending.cutoff,
+            lending.current_visibility.assembled_at,
+        ) != (self.token_id, self.interval.cutoff, self.assembled_at):
+            raise ValueError("Lending must preserve actual supply token/cutoff/assembly scope")
+        seen: set[str | None] = set()
+        for context in self.chain_contexts:
+            if context.chain in seen:
+                raise ValueError("Supply chain contexts must preserve distinct actual chain scopes")
+            seen.add(context.chain)
+            if isinstance(context, CapturedConditionChainLiquidity) and (
+                context.token_id,
+                context.cutoff,
+                context.visibility.assembled_at,
+            ) != (self.token_id, self.interval.cutoff, self.assembled_at):
+                raise ValueError("Chain context must preserve actual supply token/cutoff/assembly scope")
+        holders = self.holders_revenue
+        if isinstance(holders, CapturedConditionHoldersRevenue) and (
+            holders.token_id,
+            holders.cutoff,
+            holders.visibility.assembled_at,
+        ) != (self.token_id, self.interval.cutoff, self.assembled_at):
+            raise ValueError("Holders revenue must preserve actual supply token/cutoff/assembly scope")
+        return self
+
+    @staticmethod
+    def _visible(visibility: ConditionReceiptVisibility) -> bool:
+        result = visibility.eligible()
+        return isinstance(result, ConditionObservedPredicate) and result.value
+
+    def primary_chain_context(self) -> ConditionChainLiquidity:
+        validated = type(self).model_validate(self)
+        chain = validated.settlement_chain.chain
+        if chain is None:
+            return UnavailableConditionChainLiquidity(
+                status="UNAVAILABLE", chain=None, reason="SETTLEMENT_CHAIN_UNCONFIGURED"
+            )
+        for context in validated.chain_contexts:
+            if context.chain == chain:
+                return context
+        return UnavailableConditionChainLiquidity(
+            status="UNAVAILABLE", chain=chain, reason="NO_CAPTURED_CHAIN_CONTEXT"
+        )
+
+    def _inventory_witness(self) -> ConditionInventorySupplyWitness | None:
+        inventory = self.exchange_inventory
+        if not isinstance(inventory, ComparableConditionExchangeInventory):
+            return None
+        stamp = inventory.current_observed_at.value
+        if (
+            stamp is None
+            or parse_iso_time(stamp) < self.interval.start
+            or not self._visible(inventory.current_visibility)
+            or not self._visible(inventory.previous_visibility)
+        ):
+            return None
+        change = inventory.native_change().value
+        fractional = inventory.fractional_change().value
+        bounds = inventory.normal_range.bounds
+        if (
+            change is None
+            or change <= 0
+            or fractional is None
+            or fractional <= 0
+            or bounds is None
+            or fractional <= bounds.upper
+        ):
+            return None
+        return ConditionInventorySupplyWitness(
+            native_change=change,
+            fractional_change=fractional,
+            normal_range=bounds,
+            current_observed_at=inventory.current_observed_at,
+            previous_observed_at=inventory.previous_observed_at,
+        )
+
+    def evidence(self) -> ConditionSupplyEvidence:
+        validated = type(self).model_validate(self)
+        available: list[ConditionSupplyInput] = []
+        inventory = validated.exchange_inventory
+        if isinstance(inventory, ComparableConditionExchangeInventory) and validated._visible(
+            inventory.current_visibility
+        ):
+            available.append("EXCHANGE_INVENTORY")
+        flows = validated.wallet_flows
+        flow_evidence: tuple[ConditionWalletFlowEvidenceRef, ...] = ()
+        if isinstance(flows, CapturedConditionWalletFlows):
+            observed = flows.observed_evidence()
+            if not isinstance(observed, UnavailableConditionSupplyObservation):
+                available.append("WALLET_FLOWS")
+            if isinstance(observed, ConditionPositiveSupplyObservation):
+                flow_evidence = observed.evidence
+        if isinstance(validated.unlocks, CapturedConditionUnlocks) and validated._visible(
+            validated.unlocks.visibility
+        ):
+            available.append("UNLOCKS")
+        if isinstance(validated.lending, CapturedConditionLending) and validated._visible(
+            validated.lending.current_visibility
+        ):
+            available.append("LENDING")
+        primary_context = validated.primary_chain_context()
+        if isinstance(primary_context, CapturedConditionChainLiquidity) and validated._visible(
+            primary_context.visibility
+        ):
+            available.append("CHAIN_LIQUIDITY")
+        inventory_witness = validated._inventory_witness()
+        if inventory_witness is not None or flow_evidence:
+            return ConditionPositiveSupplyEvidence(
+                status="OBSERVED_POSITIVE",
+                available_inputs=tuple(available),
+                inventory=inventory_witness,
+                wallet_flows=flow_evidence,
+            )
+        if available:
+            return ConditionNoPositiveSupplyEvidence(
+                status="NO_POSITIVE_OBSERVATION", available_inputs=tuple(available)
+            )
+        return UnavailableConditionSupplyEvidence(status="UNAVAILABLE", reason="NO_AVAILABLE_INPUTS")
