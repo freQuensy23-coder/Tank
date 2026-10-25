@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from scheduler_support import operational_reaction_services
-from source_support import fixture_versions
+from source_support import fixture_request_budgets, fixture_versions
 
 from tank.analysis.page_access import LivePageAccess
 from tank.scheduler import Scheduler
@@ -406,7 +406,7 @@ async def real_decision_watch_conditions(monkeypatch: pytest.MonkeyPatch, tmp_pa
     reaction_settings = settings
     reaction_versions = fixture_versions()
     async with operational_reaction_services(
-        repo, reaction_settings, versions=reaction_versions
+        repo, reaction_settings, versions=reaction_versions, budgets=fixture_request_budgets()
     ) as reaction_services:
         service = EventToolService(
             repo,

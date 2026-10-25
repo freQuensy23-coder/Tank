@@ -165,7 +165,7 @@ async def test_agent_extraction_and_publication_gate_explain_silence(tmp_path: P
     reaction_settings = Settings(data_dir=tmp_path)
     reaction_versions = fixture_versions()
     async with operational_reaction_services(
-        repo, reaction_settings, versions=reaction_versions
+        repo, reaction_settings, versions=reaction_versions, budgets=fixture_request_budgets()
     ) as reaction_services:
         service = EventToolService(
             repo,
@@ -199,7 +199,7 @@ async def test_agent_extraction_and_publication_gate_explain_silence(tmp_path: P
                     "kind": "FULL",
                     "what": "Low significance",
                     "verdict": "Low significance",
-                    "why": ["Below threshold"],
+                    "why": ["Below threshold", "The declared significance class is LOW"],
                 },
                 {"event_id": eid, "role": "system"},
             )
@@ -222,7 +222,7 @@ async def test_generated_card_only_becomes_sent_after_telegram_receipt(
     reaction_settings = Settings(data_dir=tmp_path)
     reaction_versions = fixture_versions()
     async with operational_reaction_services(
-        repo, reaction_settings, versions=reaction_versions
+        repo, reaction_settings, versions=reaction_versions, budgets=fixture_request_budgets()
     ) as reaction_services:
         service = EventToolService(
             repo,
@@ -256,7 +256,7 @@ async def test_generated_card_only_becomes_sent_after_telegram_receipt(
                 "kind": "PARTIAL",
                 "what": "A material event",
                 "verdict": "A material event",
-                "why": ["Official release"],
+                "why": ["Official release", "The synthetic assessment declares a structural shock"],
             },
             {"event_id": eid, "role": "system"},
         )

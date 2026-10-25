@@ -7,7 +7,7 @@ import pytest
 from pydantic import JsonValue, ValidationError
 from pydantic_settings import SettingsConfigDict
 from scheduler_support import operational_reaction_services
-from source_support import fixture_versions
+from source_support import fixture_request_budgets, fixture_versions
 
 from tank.analysis.page_access import LivePageAccess
 from tank.contracts.page_evidence import LivePageProvenance, RecordedBodyProvenance
@@ -37,7 +37,9 @@ async def historical_web_record(tmp_path: Path) -> dict[str, JsonValue]:
 
     repo, settings = MemoryRepository(), FixtureSettings(data_dir=tmp_path, ops_progress_enabled=False)
     versions = fixture_versions()
-    async with operational_reaction_services(repo, settings, versions=versions) as services:
+    async with operational_reaction_services(
+        repo, settings, versions=versions, budgets=fixture_request_budgets()
+    ) as services:
         tools = EventToolService(
             repo,
             settings,

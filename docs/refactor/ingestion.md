@@ -737,3 +737,11 @@ the declared positive legacy numeric grammar and exact scope/period. This is an
 explicit bridge for already-written quota evidence, not a generic record parser.
 The transaction owns both rekeying and debit writes, so a blocked grouped attempt
 rolls back all tentative changes. Period remains a separate constraint identity.
+
+The scheduling test composition now receives an explicit shared request-budget
+port. Owned source workflows pass the same actual engine to their source reader
+and reaction services; isolated web/operations cases declare their own real
+configured memory engine. No helper grants admission or allocates an unrelated
+private quota ledger. The consumer selection passes 222 unit cases and four
+actual integration cases, with zero skips; scheduling helpers and source-page
+tests pass strict typing.
