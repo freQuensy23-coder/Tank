@@ -8,6 +8,7 @@ from pydantic import JsonValue
 
 from tank.analysis.condition_graph_contracts import (
     BasicConditionSpot,
+    ConditionClose,
     ConditionFlowAggregate,
     ConditionFlowAggregateProjection,
     ConditionFlowCaptureProjection,
@@ -213,4 +214,20 @@ def encode_basic_condition_spot(
     result["composite_cohort"] = None
     result["cohort_consistent"] = {}
     result["size_profile"] = None
+    return result
+
+
+def encode_condition_reference_close(value: ConditionClose) -> dict[str, JsonValue]:
+    validated = type(value).model_validate(value)
+    result: dict[str, JsonValue] = {
+        "ref_venue": validated.reference_instrument_id,
+        "close_1h_price": str(validated.price) if validated.price is not None else None,
+    }
+    clock_fields: dict[str, JsonValue] = {
+        name: value for name, value in validated.observed_at.fields("close_1h_observed_at").items()
+    }
+    clock = JsonDocument.validate_value(clock_fields)
+    if not isinstance(clock, dict):
+        raise TypeError("Reference close timestamp fields must serialize as an object")
+    result.update(clock)
     return result

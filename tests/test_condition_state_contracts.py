@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -163,3 +164,52 @@ def test_depth_ratio_preserves_actual_zero_numerator() -> None:
         spread_ratio=None,
     ).comparison()
     assert isinstance(result, ObservedConditionRatio) and result.value == 0
+
+
+def test_cache_identity_keeps_subject_and_all_actual_dependency_coordinates() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionStateNodeKey, ConditionTopCacheKey
+
+    cutoff = datetime(2026, 10, 17, 12, tzinfo=UTC)
+    key = ConditionTopCacheKey(
+        domain="spot",
+        token_id="opaque-token",
+        window="W1H",
+        requested_duration_s=3600,
+        cutoff=cutoff,
+        dependency_identity="explicit-provider-head",
+        config_sha256="a" * 64,
+        expected_direction_sha256="b" * 64,
+    )
+    assert key in {key}
+    changes: tuple[dict[str, str | float], ...] = (
+        {"token_id": "other-token"},
+        {"domain": "oi"},
+        {"window": "W4H"},
+        {"requested_duration_s": 7200.0},
+        {"dependency_identity": "another-head"},
+        {"config_sha256": "c" * 64},
+        {"expected_direction_sha256": "d" * 64},
+    )
+    for change in changes:
+        different = ConditionTopCacheKey.model_validate(key.model_copy(update=change))
+        assert different != key and different not in {key}
+    later = ConditionTopCacheKey.model_validate(
+        key.model_copy(update={"cutoff": cutoff + timedelta(seconds=1)})
+    )
+    assert later != key
+    node = ConditionStateNodeKey(
+        node="spot",
+        token_id=key.token_id,
+        start=cutoff - timedelta(hours=1),
+        cutoff=cutoff,
+        dependency_identity=key.dependency_identity,
+        config_sha256=key.config_sha256,
+        expected_direction_sha256=key.expected_direction_sha256,
+    )
+    assert node in {node}
+    with pytest.raises(ValidationError):
+        ConditionStateNodeKey.model_validate(node.model_copy(update={"start": cutoff}))
+    with pytest.raises(ValidationError):
+        ConditionTopCacheKey.model_validate(key.model_copy(update={"cutoff": cutoff.replace(tzinfo=None)}))
+    with pytest.raises(ValidationError):
+        ConditionTopCacheKey.model_validate(key.model_copy(update={"config_sha256": "current"}))

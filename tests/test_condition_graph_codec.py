@@ -256,3 +256,39 @@ def test_basic_spot_wire_refuses_stale_aggregate_before_lookup() -> None:
     with pytest.raises(ValueError, match="does not match"):
         encode_basic_condition_spot(base.model_copy(update={"venues": (first, base.venues[1])}), lookup)
     assert lookup.calls == 0
+
+
+def test_reference_close_wire_preserves_actual_unknown_precision_and_unknown_clock() -> None:
+    from tank.analysis.condition_graph_codec import encode_condition_reference_close
+    from tank.analysis.condition_graph_contracts import ObservedConditionClose, UnavailableConditionClose
+    from tank.time_precision import Timestamp
+
+    known = ObservedConditionClose(
+        status="OBSERVED",
+        reference_instrument_id="opaque-reference",
+        price=Decimal("12.50"),
+        observed_at=Timestamp(
+            value="2026-10-17T12:00:00Z",
+            precision=None,
+            precision_reason="NOT_CAPTURED",
+        ),
+    )
+    wire = encode_condition_reference_close(known)
+    assert wire == {
+        "ref_venue": "opaque-reference",
+        "close_1h_price": "12.50",
+        "close_1h_observed_at": "2026-10-17T12:00:00Z",
+        "close_1h_observed_at_prec": None,
+        "close_1h_observed_at_prec_reason": "NOT_CAPTURED",
+    }
+    unavailable = UnavailableConditionClose(
+        status="UNAVAILABLE",
+        reference_instrument_id=None,
+        price=None,
+        observed_at=Timestamp(value=None, precision=None, precision_reason="NOT_CAPTURED"),
+        reason="INCOMPLETE",
+    )
+    missing = encode_condition_reference_close(unavailable)
+    assert missing["ref_venue"] is None and missing["close_1h_price"] is None
+    assert missing["close_1h_observed_at"] is None
+    assert missing["close_1h_observed_at_prec"] is None

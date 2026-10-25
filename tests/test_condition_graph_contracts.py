@@ -1016,6 +1016,7 @@ def test_derivative_window_refuses_invented_funding_dispersion_and_absent_sync_v
         basis_reason="INCOMPLETE",
     )
     graph = BasicConditionDerivatives(
+        token_id="T",
         kind="BASIC",
         interval=ConditionInterval(window="W1H", start=AT - timedelta(hours=1), cutoff=AT),
         per_venue=(venue,),
@@ -1183,6 +1184,7 @@ def test_enriched_empty_derivative_venues_cannot_create_a_negative_basis_predica
     interval = ConditionInterval(window="W1H", start=AT - timedelta(hours=1), cutoff=AT)
     support = unknown_derivative_support()
     graph = EnrichedConditionDerivatives(
+        token_id="T",
         kind="ENRICHED",
         funding_dispersion_normal_range=DecimalRange(bounds=None, reason="INSUFFICIENT_HISTORY"),
         funding_dispersion_beyond_normal=ConditionUnavailablePredicate(
@@ -1477,6 +1479,7 @@ def relative_graph_without_event() -> ConditionRelativeGraph:
     )
     anchor_at = AT - timedelta(hours=4)
     return ConditionRelativeGraph(
+        token_id="T",
         reference_instrument_id="spot:i",
         reference_reason=None,
         reference_coverage={

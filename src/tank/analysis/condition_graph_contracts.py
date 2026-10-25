@@ -1701,6 +1701,7 @@ class UnrequestedConditionFundingDispersion(DomainModel):
 
 
 class ConditionDerivativeWindow[Venue: ConditionDerivativeVenue](DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
     interval: ConditionInterval
     per_venue: tuple[Venue, ...]
     synchronized: (
@@ -2504,6 +2505,7 @@ class UnrequestedConditionOutcomeRanges(DomainModel):
 
 
 class ConditionRelativeGraph(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
     reference_instrument_id: str | None = Field(min_length=1, pattern=r"\S")
     reference_coverage: dict[
         Annotated[str, Field(min_length=1, pattern=r"\S")], ConditionPriceReferenceCoverage
@@ -6429,7 +6431,15 @@ class FullConditionMarketState(DomainModel):
             or self.supply.interval != primary
         ):
             raise ValueError("Full state families must use the actual primary interval")
-        if self.liquidity.token_id != self.token_id or self.supply.token_id != self.token_id:
+        if any(
+            token != self.token_id
+            for token in (
+                self.derivatives.token_id,
+                self.liquidity.token_id,
+                self.supply.token_id,
+                self.relative.token_id,
+            )
+        ):
             raise ValueError("Full state cannot borrow another token's financial context")
         if any(window.interval.cutoff != self.cutoff for window in self.relative.windows.values()):
             raise ValueError("Full relative context cannot borrow another cutoff")
@@ -6489,3 +6499,60 @@ class FullConditionMarketState(DomainModel):
 
 
 type ConditionMarketState = FullConditionMarketState | NonForwardConditionMarketState
+
+
+type ConditionCacheDomain = Literal["spot", "oi", "funding", "close", "dc", "depth", "state", "relative"]
+
+
+class ConditionTopCacheKey(DomainModel):
+    domain: ConditionCacheDomain
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    window: ConditionWindow
+    requested_duration_s: float = Field(gt=0)
+    cutoff: datetime
+    dependency_identity: str = Field(min_length=1, pattern=r"\S")
+    config_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_direction_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("cutoff")
+    @classmethod
+    def actual_cutoff(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+
+class ConditionStateNodeKey(DomainModel):
+    node: Literal["spot", "relative", "derivatives", "supply"]
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    start: datetime
+    cutoff: datetime
+    dependency_identity: str = Field(min_length=1, pattern=r"\S")
+    config_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_direction_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("start", "cutoff")
+    @classmethod
+    def actual_clock(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def forward_node_interval(self) -> Self:
+        if self.start >= self.cutoff:
+            raise ValueError("A computed state cache node requires its actual forward interval")
+        return self
+
+
+type ConditionTopNodeValue = (
+    BasicConditionSpot
+    | BasicConditionDerivatives
+    | ObservedConditionClose
+    | UnavailableConditionClose
+    | SelectiveConditionConfidence
+    | ConditionDepthNode
+    | FullConditionMarketState
+    | NonForwardConditionMarketState
+    | ConditionRelativeGraph
+)
+
+type ConditionStateNodeValue = (
+    ConditionSpotWindowGraph | ConditionRelativeGraph | BasicConditionDerivatives | ConditionSupplyGraph
+)
