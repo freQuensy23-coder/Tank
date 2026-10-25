@@ -13,9 +13,13 @@ from tank.contracts import DomainModel
 from tank.deployment.api_contracts import (
     ActorSnapshot,
     ActorTagUpdate,
+    APIFailureReason,
     BuildObservation,
     CompletedBuildSnapshot,
     HistoricalBuildSnapshot,
+    ProviderErrorEnvelope,
+    ReportedAPIReason,
+    UnreportedAPIReason,
     UploadedVersion,
     VersionUpload,
 )
@@ -68,6 +72,16 @@ type Method = Literal["GET", "POST", "PUT"]
 type Upload = VersionUpload | ActorTagUpdate
 
 
+class ApifyHTTPFailure(ApifyAPIError):
+    def __init__(self, method: Method, status_code: int, diagnostic: APIFailureReason) -> None:
+        self.status_code = status_code
+        self.diagnostic = diagnostic
+        message = f"Apify {method} failed with HTTP {status_code}"
+        if isinstance(diagnostic, ReportedAPIReason):
+            message += ": " + diagnostic.text
+        super().__init__(message)
+
+
 class ApifyAPI:
     def __init__(self, token: SecretStr, endpoint: ApifyEndpoint) -> None:
         if not token.get_secret_value():
@@ -75,6 +89,34 @@ class ApifyAPI:
         self.token = token
         self.endpoint = endpoint
         self.opener = urllib.request.build_opener(NoRedirect, urllib.request.ProxyHandler({}))
+
+    def _reason(self, error: urllib.error.HTTPError) -> APIFailureReason:
+        try:
+            try:
+                document = error.read()
+            finally:
+                error.close()
+        except (OSError, ValueError):
+            return UnreportedAPIReason(state="UNREPORTED", reason="READ_FAILED")
+        if not document:
+            return UnreportedAPIReason(state="UNREPORTED", reason="EMPTY_OR_MISSING")
+        try:
+            envelope = ProviderErrorEnvelope.model_validate_json(document)
+        except ValueError:
+            return UnreportedAPIReason(state="UNREPORTED", reason="INVALID_JSON_OR_FIELDS")
+        if envelope.error is None:
+            return UnreportedAPIReason(state="UNREPORTED", reason="EMPTY_OR_MISSING")
+        parts: list[str] = []
+        if envelope.error.type is not None:
+            parts.append(envelope.error.type)
+        if envelope.error.message is not None:
+            parts.append(envelope.error.message)
+        text = " ".join(parts).strip()
+        if not text:
+            return UnreportedAPIReason(state="UNREPORTED", reason="EMPTY_OR_MISSING")
+        return ReportedAPIReason(
+            state="REPORTED", text=text.replace(self.token.get_secret_value(), "[token]")[:300]
+        )
 
     def _request(self, method: Method, path: str, body: Upload | None) -> ApiEnvelope:
         payload = (
@@ -95,7 +137,7 @@ class ApifyAPI:
             with self.opener.open(request, timeout=75) as response:
                 document = response.read()
         except urllib.error.HTTPError as error:
-            raise ApifyAPIError(f"Apify {method} failed with HTTP {error.code}") from None
+            raise ApifyHTTPFailure(method, error.code, self._reason(error)) from None
         except OSError:
             raise ApifyAPIError(f"Apify {method} transport failure") from None
         try:
@@ -130,7 +172,7 @@ class ApifyAPI:
     def start_build(self, release_sha: CommitSHA) -> BuildObservation:
         return self._project(
             "POST",
-            "/actors/rbf5CQKQgKNVl4SfO/builds?version=0.3&tag=tank-" + release_sha,
+            "/actors/rbf5CQKQgKNVl4SfO/builds?version=0.3&tag=tank-" + release_sha[:12],
             None,
             BuildObservation,
         )

@@ -7,7 +7,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from tank.deployment.apify_api import ApifyAPI, ApifyAPIError, ApifyEndpoint
+from tank.deployment.api_contracts import ReportedAPIReason, UnreportedAPIReason
+from tank.deployment.apify_api import ApifyAPI, ApifyAPIError, ApifyEndpoint, ApifyHTTPFailure
 
 pytestmark = pytest.mark.integration
 
@@ -145,13 +146,46 @@ def test_real_redirect_never_forwards_credentials_or_contacts_destination() -> N
         assert destination.received == []
 
 
-def test_http_error_does_not_expose_provider_response_body_or_token() -> None:
+def test_http_error_preserves_provider_reason_without_exposing_token() -> None:
     with api_peer(
-        b'{"error":{"message":"synthetic-publisher-token must never be logged"}}',
-        status=403,
+        b'{"error":{"type":"invalid-input","message":"synthetic-publisher-token request refused"}}',
+        status=400,
         location=None,
     ) as peer:
-        with pytest.raises(ApifyAPIError, match="HTTP 403") as caught:
+        with pytest.raises(ApifyHTTPFailure, match="HTTP 400: invalid-input") as caught:
             client(peer).actor()
+        assert caught.value.status_code == 400
+        assert isinstance(caught.value.diagnostic, ReportedAPIReason)
         assert "synthetic-publisher-token" not in str(caught.value)
-        assert "must never" not in str(caught.value)
+        assert "[token] request refused" in str(caught.value)
+
+
+def test_actual_build_tag_fits_provider_limit_without_replacing_full_release_identity() -> None:
+    with api_peer(b'{"data":{"id":"AAAAAAAAAAAAAAAAA","status":"READY"}}', status=201, location=None) as peer:
+        observed = client(peer).start_build("b" * 40)
+        assert observed.id == "A" * 17
+        assert peer.received[0].path == "/v2/actors/rbf5CQKQgKNVl4SfO/builds?version=0.3&tag=tank-" + "b" * 12
+        assert peer.received[0].method == "POST"
+
+
+@pytest.mark.parametrize("document", [b"not JSON", b'{"error":{"message":1}}'])
+def test_malformed_provider_reason_preserves_http_failure_without_coercing_details(document: bytes) -> None:
+    with api_peer(document, status=403, location=None) as peer:
+        with pytest.raises(ApifyHTTPFailure) as caught:
+            client(peer).actor()
+        assert caught.value.status_code == 403
+        assert isinstance(caught.value.diagnostic, UnreportedAPIReason)
+        assert caught.value.diagnostic.reason == "INVALID_JSON_OR_FIELDS"
+        assert str(caught.value) == "Apify GET failed with HTTP 403"
+
+
+def test_provider_reason_is_redacted_before_its_display_bound() -> None:
+    document = b'{"error":{"type":"invalid-input","message":"synthetic-publisher-token ' + b"x" * 600 + b'"}}'
+    with api_peer(document, status=400, location=None) as peer:
+        with pytest.raises(ApifyHTTPFailure) as caught:
+            client(peer).actor()
+        diagnostic = caught.value.diagnostic
+        assert isinstance(diagnostic, ReportedAPIReason)
+        assert len(diagnostic.text) == 300
+        assert diagnostic.text.startswith("invalid-input [token] ")
+        assert "synthetic-publisher-token" not in str(caught.value)

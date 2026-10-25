@@ -166,3 +166,25 @@ class DirectTagsUpdate(DomainModel):
 
 class ActorTagUpdate(DomainModel):
     taggedBuilds: DirectTagsUpdate
+
+
+class ProviderErrorDetail(ApifyProjection):
+    type: str | None = None
+    message: str | None = None
+
+
+class ProviderErrorEnvelope(ApifyProjection):
+    error: ProviderErrorDetail | None = None
+
+
+class ReportedAPIReason(DomainModel):
+    state: Literal["REPORTED"]
+    text: Annotated[str, Field(min_length=1, max_length=300)]
+
+
+class UnreportedAPIReason(DomainModel):
+    state: Literal["UNREPORTED"]
+    reason: Literal["EMPTY_OR_MISSING", "INVALID_JSON_OR_FIELDS", "READ_FAILED"]
+
+
+type APIFailureReason = ReportedAPIReason | UnreportedAPIReason
