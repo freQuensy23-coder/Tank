@@ -17,6 +17,7 @@ from source_support import (
     source_feed,
 )
 
+from tank.analysis.page_access import LivePageAccess
 from tank.contracts.source_items import SourceText, parse_feed_source_item
 from tank.sources import SourceService, parsers
 from tank.util import clock_iso, new_id, sha256
@@ -798,6 +799,7 @@ async def test_milestone_producer_drives_source_cadence_and_cancellation(
             None,
             versions=reaction_versions,
             scheduler=reaction_services.scheduler,
+            pages=LivePageAccess(reaction_services.admission),
         )
         await repo.put("reg.sources", "S15", source)
         await repo.put("evt.events", "cadence-event", {"event_id": "cadence-event"})
@@ -980,6 +982,7 @@ async def test_major_assessment_producer_activates_15s_source_reads(
             None,
             versions=reaction_versions,
             scheduler=reaction_services.scheduler,
+            pages=LivePageAccess(reaction_services.admission),
         )
         result = await tools.dispatch(
             "set_assessment",

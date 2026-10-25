@@ -440,14 +440,25 @@ def sources_check(probe, accounts):
 @main.command()
 def coverage():
     async def command(repo, settings):
+        from tank.http_admission import ConfiguredHttpAdmission
         from tank.market.service import MarketService
+        from tank.request_budget import RequestLedger, SharedRequestBudgets
 
-        service = MarketService(repo, settings, versions=settings.require_versions())
+        versions = settings.require_versions()
+        budgets = SharedRequestBudgets(RequestLedger(repo.database_url, owner="tank-cli-market"))
         try:
-            return await service.coverage()
-        finally:
-            if hasattr(service, "close"):
+            admission = ConfiguredHttpAdmission(
+                SourceApiLimitsConfiguration.model_validate(settings.load_config("api_limits")),
+                versions,
+                budgets,
+            )
+            service = MarketService(repo, settings, versions=versions, admission=admission)
+            try:
+                return await service.coverage()
+            finally:
                 await service.close()
+        finally:
+            await budgets.shutdown()
 
     run_db(command)
 

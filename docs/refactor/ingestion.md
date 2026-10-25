@@ -653,3 +653,26 @@ Scoped proof: 216 owned constructor/helper units pass in 3.84s, and both actual
 source-cadence integration cases pass in 2.45s. No external HTTP is allowed by the
 real composition fixture. Full pinned owned verification is the next gate; these
 results do not assert completed reaction measurement or full scheduler typing.
+
+
+### Held HTTP cohort: required owned consumer composition
+
+Owned MarketService constructors now receive the real configured admission port.
+The operational scheduling fixture constructs it from the actual settings policy,
+the same explicit version facet and an explicitly declared memory backend with
+isolated operational time. The resource container exposes that same port to each
+EventToolService's `LivePageAccess`; it does not fabricate admission or page data.
+Fixture version override is a legitimate choice between the declared synthetic
+default and an explicitly supplied captured facet.
+
+The standalone CLI market command owns a PostgreSQL RequestLedger, configured
+resolver, MarketService and shutdown lifetime. It never infers a memory backend
+from a missing capability or silently skips a required close. Source constructors
+retain their already-required budget port. The exact clean scheduling constructor
+companion was merged normally; source-budget fields were preserved in the owned
+merge conflicts, with both evidence ledgers retained.
+
+Proof: all 512 owned unit cases pass in 7.12s, zero skips. Four operational helper/
+page test modules pass strict mypy. Full physical/E2E qualification remains pending
+the corresponding runtime, recorded-read and quality-owned constructor companions;
+this checkpoint is not a claim that the held HTTP cohort is integrated.

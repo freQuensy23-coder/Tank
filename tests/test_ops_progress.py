@@ -18,6 +18,7 @@ from test_sources import captured
 from test_sources import settings as source_settings
 
 from tank.agents.pipeline import Pipeline
+from tank.analysis.page_access import LivePageAccess
 from tank.delivery import DeliveryError, DeliveryService
 from tank.event_tools import EventToolService
 from tank.ops_progress import RepositorySourceProgress, item_progress, session_progress
@@ -173,6 +174,7 @@ async def test_agent_extraction_and_publication_gate_explain_silence(tmp_path: P
             None,
             versions=reaction_versions,
             scheduler=reaction_services.scheduler,
+            pages=LivePageAccess(reaction_services.admission),
         )
         extraction = await seed(service)
         extraction.update(
@@ -229,6 +231,7 @@ async def test_generated_card_only_becomes_sent_after_telegram_receipt(
             None,
             versions=reaction_versions,
             scheduler=reaction_services.scheduler,
+            pages=LivePageAccess(reaction_services.admission),
         )
         extraction = await seed(service)
         eid = (await service.dispatch("record_event", extraction, {}))["event_id"]

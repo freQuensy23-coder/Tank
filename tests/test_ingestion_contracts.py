@@ -9,6 +9,7 @@ from pydantic import JsonValue, ValidationError
 from scheduler_support import operational_reaction_services
 from source_support import fixture_request_budgets, fixture_versions
 
+from tank.analysis.page_access import LivePageAccess
 from tank.sources.capture_fetch import (
     CaptureRepository,
     CaptureState,
@@ -372,6 +373,7 @@ async def test_real_web_evidence_record_roundtrips_without_feed_source_assumptio
             None,
             versions=reaction_versions,
             scheduler=reaction_services.scheduler,
+            pages=LivePageAccess(reaction_services.admission),
         )
         record = await service.save_web(
             "https://example.org/evidence",
@@ -466,6 +468,7 @@ async def test_feed_duplicate_of_web_evidence_counts_feeds_without_replacing_ori
             None,
             versions=reaction_versions,
             scheduler=reaction_services.scheduler,
+            pages=LivePageAccess(reaction_services.admission),
         )
         original = await tools.save_web(
             "https://example.org/original",
