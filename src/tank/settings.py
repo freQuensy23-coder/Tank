@@ -178,11 +178,11 @@ class Settings(BaseSettings):
     _parsed_config: dict[str, dict[str, JsonValue]] | None = PrivateAttr(default=None)
 
     def model_post_init(self, context: JsonValue) -> None:
-        if self.tank_db_password and "database_url" not in self.model_fields_set:
+        if self.tank_db_password is not None and "database_url" not in self.model_fields_set:
             self.database_url = (
                 f"postgresql://tank:{quote(self.tank_db_password, safe='')}@postgres:5432/tank"
             )
-        if self.oma_db_password and "openma_database_url" not in self.model_fields_set:
+        if self.oma_db_password is not None and "openma_database_url" not in self.model_fields_set:
             self.openma_database_url = (
                 f"postgresql://oma:{quote(self.oma_db_password, safe='')}@postgres:5432/oma"
             )
