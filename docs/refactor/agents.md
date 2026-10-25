@@ -684,3 +684,51 @@ maximum 4.870); all 78 actual integrations pass in 38.68
 seconds, zero skips. Native source/helper/contracts retain their independent
 strict gate, and Ruff/format/source-comment checks pass. This adds no default,
 wire dictionary, endpoint signature or broader session-lifecycle policy.
+
+## Native readback and tool confirmation candidate
+
+The native input checkpoint and role companion remain immutable. This separate
+candidate moves direct session GET decoding into NativeSessionReader: exact
+resource identity, required lifecycle/archive observations, and a distinct
+NativeSessionMissing outcome for HTTP 404. Missing resources cannot become a
+fabricated terminated session. The question continuation path records the missing
+observation and answers NO_SESSION without posting input.
+
+ManagedToolManifest now owns the pure tool-definition boundary shared by sync
+and session migration. The session service no longer imports the OpenMA sync
+application orchestrator. Resolved native tools preserve the actual custom,
+builtin and MCP variants and require their documented nested policy/configuration
+facts. NativePromptObservation hashes the actual resolved session snapshot;
+configured labels and effort remain separate from observed confirmation.
+
+SessionPromptState and PromptRecoveryRecord project only provenance recovery
+facts. Recovery reads the exact native session, refuses absent/incomplete resolved
+evidence, and checks that the stored descriptor still matches before committing.
+It updates the caller's view only after the durable write. Legacy unqualified
+prompt_version labels remain labels and never become resolved hashes.
+
+SessionToolBoundaryState and LegacyToolContext project the actual migration
+owner, role, context versions, journal identities and tool hash. sync_tools reads
+the native session before an update and confirms the requested tools afterwards.
+A contradictory readback cannot record success. If native acceptance preceded a
+lost HTTP response, retry confirms the already-applied toolset without publishing
+again. A changed local owner projection refuses the final write. Read-only replay,
+busy boundaries and unchanged confirmed hashes are explicit named outcomes.
+Private journal storage and the remaining SessionService lifecycle remain open.
+
+The focused 137-case readback/scalar/manifest/sync cohort passed in 47.78 seconds.
+The subsequent ownership-race and migration selection passed all 14 cases in
+8.39 seconds. New projections and the HTTP confirmation tests pass independent
+strict mypy with both source and test roots; sessions.py passes configured mypy.
+Final owner proof: all 613 unit cases pass in 44.29 seconds; all 78 actual
+integrations pass in 38.92 seconds, with zero skips. Unit p90 is
+0.62 seconds and maximum 4.87 seconds. The exact
+logs/XML/metrics use agents-native-readback-final-unit and
+agents-native-readback-owned-integration in the isolated worktree. Cross-owner
+caller qualification remains pending. This is not a whole-session completion.
+
+Strict fixed scalar fields now use canonical ZeroInt, TrueFlag and FalseFlag:
+JevScoreRecord.web_searches, FailedToolResponse.ok,
+NativeToolResult.is_error, RevisedReactionJob.automatic_revision, and
+NativeSessionMissing.missing. Forty real DTO/classifier cases prove boolean,
+integer and integral-float aliases cannot silently satisfy the wrong wire type.

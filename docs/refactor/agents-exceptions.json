@@ -1873,6 +1873,78 @@
         "test_contradictory_created_binding_is_not_returned_as_a_success",
         "test_required_deployment_binding_refuses_before_any_native_effect"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_readback.py",
+          "symbol": "NativeSessionReader._lookup"
+        },
+        {
+          "path": "src/tank/agents/native_readback.py",
+          "symbol": "NativeSessionState.archived_at"
+        }
+      ],
+      "kind": "native resource boundary",
+      "reason": "The request dictionary is confined to the actual HTTP response adapter. A missing resource is an explicit 404 outcome, not a null state or invented termination. archived_at is required nullable because the provider declares unarchived sessions explicitly.",
+      "validation": [
+        "test_http404_is_missing_without_a_fabricated_terminated_status"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/provenance.py",
+          "symbol": "NativeResolvedPromptHeader"
+        },
+        {
+          "path": "src/tank/agents/provenance.py",
+          "symbol": "NativeResolvedModelIdentity"
+        }
+      ],
+      "kind": "provider-declared absence and original fingerprint",
+      "reason": "system and multiagent are required nullable provider facts. Optional effort and _oma preserve genuine omission and reject explicit null. Original schema JSON stays at the adapter to preserve canonical fingerprint values and legitimate provider extensions.",
+      "validation": [
+        "test_prompt_recovery_uses_the_exact_native_session_snapshot"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/session_contracts.py",
+          "symbol": "LegacyPromptDescriptor"
+        },
+        {
+          "path": "src/tank/agents/session_contracts.py",
+          "symbol": "SessionPromptState"
+        },
+        {
+          "path": "src/tank/agents/session_contracts.py",
+          "symbol": "PromptRecoveryRecord"
+        }
+      ],
+      "kind": "historical provenance projection",
+      "reason": "Nullable fields preserve genuinely unreported historical provenance. Recovery labels are declarations only; only exact native evidence can supply a resolved hash. Private row maps are storage-boundary projections, not a complete migrated session domain.",
+      "validation": [
+        "test_legacy_prompt_label_requires_exact_native_snapshot"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/session_contracts.py",
+          "symbol": "LegacyToolContext"
+        },
+        {
+          "path": "src/tank/agents/session_contracts.py",
+          "symbol": "SessionToolBoundaryState"
+        }
+      ],
+      "kind": "historical migration projection",
+      "reason": "Absent context version and tool hash mean an unmigrated historical session; absent proposal selects the actual analyst role. Empty prior legacy ID sets represent no recorded migration lineage. All journal identities and an explicit active owner still validate before migration.",
+      "validation": [
+        "test_tool_update_requires_readback_and_recovers_lost_acceptance_without_republication"
+      ]
     }
   ]
 }
