@@ -101,7 +101,7 @@ jobs:
           version: "0.11.7"
           python-version: "3.13.13"
           enable-cache: true
-      - run: uv sync --python 3.13.13 --frozen --extra dev
+      - run: uv sync --python 3.13.13 --frozen --extra dev --group x-reader
       - run: uv run --frozen --extra dev mypy
       - name: Check completed foundation source family strictly
         env:
@@ -151,10 +151,10 @@ jobs:
           uv run --frozen --extra dev mypy --config-file scripts/ci/mypy-foundation-tests.ini
           tests/configuration_support.py tests/test_configuration_support.py tests/http_support.py
 
-      - name: Install versioned X worker dependencies
-        run: uv pip install --python .venv/bin/python -r apify/x-reader/requirements.txt
+      - name: Verify the frozen actor-only dependency export
+        run: uv run --frozen --extra dev --group x-reader python scripts/ci/check_actor_dependencies.py --root .
       - name: Typecheck the versioned worker and publisher
-        run: uv run --frozen --extra dev mypy apify/x-reader scripts/deploy/apify_deploy.py
+        run: uv run --frozen --extra dev --group x-reader mypy apify/x-reader scripts/deploy/apify_deploy.py
 
   test:
     uses: ./.github/workflows/test-suite.yml
