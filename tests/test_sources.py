@@ -1157,10 +1157,10 @@ async def test_sec_provider_and_source_configured_budgets_are_shared(
                 {"url": "https://www.sec.gov/cgi-bin/browse-edgar", "source_limits": {"rate_per_min": 25}}
             )
         )
-        provider = BudgetBucket(key="sec.gov", capacity=5, window_s=1)
-        source = BudgetBucket(key="www.sec.gov", capacity=25, window_s=60)
+        provider = BudgetBucket(key="sec.gov", window_s=1)
+        source = BudgetBucket(key="www.sec.gov", window_s=60)
         assert len(backend.windows[provider]) == 2
-        assert len(backend.windows[source]) == 1
+        assert len(backend.windows[source]) == 2
     finally:
         await service.close()
 
@@ -1213,17 +1213,10 @@ async def test_shared_weight_budget_large_waiter_does_not_block_fitting_baseline
         await asyncio.wait_for(budget.acquire("binance.spot", 100, 60, weight=2), timeout=1)
         assert not optional.done()
         assert (
-            sum(
-                row.weight
-                for row in backend.windows[
-                    module.BudgetBucket(key="binance.spot", window_s=60.0, capacity=100.0)
-                ]
-            )
+            sum(row.weight for row in backend.windows[module.BudgetBucket(key="binance.spot", window_s=60.0)])
             == 100
         )
-        assert not backend.locks[
-            module.BudgetBucket(key="binance.spot", window_s=60.0, capacity=100.0)
-        ].locked()
+        assert not backend.locks[module.BudgetBucket(key="binance.spot", window_s=60.0)].locked()
     finally:
         optional.cancel()
         with pytest.raises(asyncio.CancelledError):
