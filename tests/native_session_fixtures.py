@@ -32,6 +32,10 @@ def native_session_record(
     }
     if agent_snapshot is not None:
         agent.update(agent_snapshot)
+    tools = agent["tools"]
+    if not isinstance(tools, list):
+        raise ValueError("Synthetic native tool definitions must be an array")
+    agent["tools"] = resolved_native_tools(tools)
     return {
         "id": session_id,
         "agent": agent,
@@ -67,3 +71,45 @@ def created_native_session(
         model_id="gpt-6.1-sol",
         agent_snapshot=agent_snapshot,
     )
+
+
+def resolved_native_tools(tools: list[JsonValue]) -> list[JsonValue]:
+    """Apply pinned definition-resolution.ts defaults in the synthetic provider."""
+    resolved: list[JsonValue] = []
+    for raw in tools:
+        if not isinstance(raw, dict):
+            raise ValueError("Synthetic native tool definition must be an object")
+        kind = raw["type"]
+        if kind == "custom":
+            resolved.append(dict(raw))
+            continue
+        if kind != "agent_toolset_20260401" and kind != "mcp_toolset":
+            raise ValueError("Synthetic native tool type is unsupported")
+        supplied_default = raw.get("default_config")
+        if supplied_default is None:
+            supplied_default = {}
+        if not isinstance(supplied_default, dict):
+            raise ValueError("Synthetic native default configuration must be an object")
+        default: dict[str, JsonValue] = {
+            "enabled": supplied_default.get("enabled", True),
+            "permission_policy": supplied_default.get("permission_policy", {"type": "always_allow"}),
+        }
+        supplied_configs = raw.get("configs")
+        if supplied_configs is None:
+            supplied_configs = []
+        if not isinstance(supplied_configs, list):
+            raise ValueError("Synthetic native configurations must be an array")
+        configs: list[JsonValue] = []
+        for source in supplied_configs:
+            if not isinstance(source, dict):
+                raise ValueError("Synthetic native configuration must be an object")
+            config: dict[str, JsonValue] = {
+                **source,
+                "enabled": source.get("enabled", default["enabled"]),
+                "permission_policy": source.get("permission_policy", default["permission_policy"]),
+            }
+            if kind == "agent_toolset_20260401":
+                config["type"] = source["name"]
+            configs.append(config)
+        resolved.append({**raw, "default_config": default, "configs": configs})
+    return resolved

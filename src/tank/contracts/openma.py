@@ -282,12 +282,22 @@ class CustomToolObservation(DomainModel):
     input_schema: dict[str, JsonValue] | None
 
 
+class McpToolObservation(DomainModel):
+    kind: Literal["mcp"]
+    type: Literal["mcp_toolset"]
+    mcp_server_name: str = Field(min_length=1)
+    default_enabled: bool | None
+    configs: list[ToolSwitchObservation] | None
+
+
 class UnsupportedToolObservation(DomainModel):
     kind: Literal["unsupported"]
     type: str = Field(min_length=1)
 
 
-type ToolObservation = BuiltinToolObservation | CustomToolObservation | UnsupportedToolObservation
+type ToolObservation = (
+    BuiltinToolObservation | CustomToolObservation | McpToolObservation | UnsupportedToolObservation
+)
 
 
 class ManagedAgentObservation(DomainModel):
@@ -423,7 +433,7 @@ def observe_openma_tool(value: JsonValue) -> ToolObservation:
                 "input_schema": value.get("input_schema"),
             }
         )
-    if kind == "agent_toolset_20260401":
+    if kind == "agent_toolset_20260401" or kind == "mcp_toolset":
         default = value.get("default_config")
         if default is not None and not isinstance(default, dict):
             raise OpenMAContractViolation("OpenMA default tool configuration must be an object")
@@ -440,6 +450,16 @@ def observe_openma_tool(value: JsonValue) -> ToolObservation:
                     ToolSwitchObservation.model_validate({"name": raw["name"], "enabled": raw.get("enabled")})
                 )
             switches.sort(key=lambda switch: switch.name)
+        if kind == "mcp_toolset":
+            return McpToolObservation.model_validate(
+                {
+                    "kind": "mcp",
+                    "type": "mcp_toolset",
+                    "mcp_server_name": value["mcp_server_name"],
+                    "default_enabled": None if default is None else default.get("enabled"),
+                    "configs": switches,
+                }
+            )
         return BuiltinToolObservation.model_validate(
             {
                 "kind": "builtin",
@@ -456,7 +476,12 @@ def observe_openma_tool(value: JsonValue) -> ToolObservation:
 def _indexed_openma_tools(tools: Sequence[ToolObservation]) -> dict[str, ToolObservation]:
     indexed: dict[str, ToolObservation] = {}
     for tool in tools:
-        key = "custom:" + tool.name if isinstance(tool, CustomToolObservation) else "builtin:" + tool.type
+        if isinstance(tool, CustomToolObservation):
+            key = "custom:" + tool.name
+        elif isinstance(tool, McpToolObservation):
+            key = "mcp:" + tool.mcp_server_name
+        else:
+            key = "builtin:" + tool.type
         if key in indexed:
             raise OpenMAContractViolation("OpenMA tool observation repeats an identity")
         indexed[key] = tool

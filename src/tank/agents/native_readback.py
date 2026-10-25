@@ -7,6 +7,7 @@ import httpx
 from pydantic import Field, JsonValue
 
 from tank.agents.native_sessions import NativeSessionEndpoint
+from tank.agents.provenance import NativePromptObservation, observe_resolved_native_prompt
 from tank.contracts import DomainModel
 from tank.contracts.scalars import TrueFlag
 
@@ -31,6 +32,10 @@ class NativeSessionMissing(NativeSessionReference):
 type NativeSessionLookup = NativeSessionState | NativeSessionMissing
 
 
+class NativeSessionPrompt(NativeSessionReference):
+    observation: NativePromptObservation
+
+
 def observe_native_state(wire: dict[str, JsonValue], requested: NativeSessionReference) -> NativeSessionState:
     observed = NativeSessionState.model_validate(
         {
@@ -49,12 +54,32 @@ class NativeSessionReader:
     def __init__(self, endpoint: NativeSessionEndpoint) -> None:
         self.endpoint = endpoint
 
-    async def state(self, session_id: str) -> NativeSessionLookup:
-        requested = NativeSessionReference(session_id=session_id)
+    async def _lookup(self, requested: NativeSessionReference) -> dict[str, JsonValue] | NativeSessionMissing:
         try:
-            wire = await self.endpoint.request("GET", f"sessions/{quote(requested.session_id, safe='')}")
+            return await self.endpoint.request("GET", f"sessions/{quote(requested.session_id, safe='')}")
         except httpx.HTTPStatusError as error:
             if error.response.status_code != 404:
                 raise
             return NativeSessionMissing(kind="MISSING", missing=True, session_id=requested.session_id)
+
+    async def state(self, session_id: str) -> NativeSessionLookup:
+        requested = NativeSessionReference(session_id=session_id)
+        wire = await self._lookup(requested)
+        if isinstance(wire, NativeSessionMissing):
+            return wire
         return observe_native_state(wire, requested)
+
+    async def prompt(
+        self, session_id: str, *, prompt_label: str | None
+    ) -> NativeSessionPrompt | NativeSessionMissing:
+        requested = NativeSessionReference(session_id=session_id)
+        wire = await self._lookup(requested)
+        if isinstance(wire, NativeSessionMissing):
+            return wire
+        observed = NativeSessionReference.model_validate({"session_id": wire["id"]})
+        if observed.session_id != requested.session_id:
+            raise ValueError("Native prompt lookup returned a different session identity")
+        return NativeSessionPrompt(
+            session_id=requested.session_id,
+            observation=observe_resolved_native_prompt(wire, prompt_label=prompt_label),
+        )
