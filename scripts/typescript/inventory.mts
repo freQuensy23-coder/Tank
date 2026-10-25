@@ -1,5 +1,5 @@
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, extname, join, relative, resolve } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import ts from "typescript";
 
 type Kind = "untyped_parameter" | "untyped_return" | "any" | "optional" | "fallback" | "object" | "embedded_python" | "embedded_python_command";
@@ -15,6 +15,7 @@ interface EmbeddedSource {
   line: number;
   symbol: string;
   language: "python";
+  encoding: "raw-template" | "decoded-literal";
   source: string;
 }
 interface ReferenceConfiguration {
@@ -52,7 +53,7 @@ function files(root: string): string[] {
         if (excluded.has(entry.name)) continue;
         const path = join(directory, entry.name);
         if (entry.isDirectory()) visit(path);
-        else if ([".js", ".mjs", ".ts", ".mts", ".cts"].includes(extname(path))) result.push(path);
+        else if ([".js", ".mjs", ".jsx", ".ts", ".mts", ".cts", ".tsx"].includes(extname(path))) result.push(path);
       }
     };
     visit(join(root, area));
@@ -68,10 +69,21 @@ function symbol(node: ts.Node, source: ts.SourceFile): string {
   return "";
 }
 
-export function inventory(root: string): Inventory {
+export function inventory(root: string, additionalPaths: readonly string[] = []): Inventory {
   const findings: Finding[] = [];
   const embedded: EmbeddedSource[] = [];
-  const paths = files(root);
+  const physicalRoot = realpathSync(root);
+  const paths = [...new Set([...files(root), ...additionalPaths.map((path: string): string => resolve(root, path))])].sort();
+  for (const path of paths) {
+    const declared = relative(resolve(root), resolve(path));
+    if (declared === ".." || declared.startsWith(".." + sep)) {
+      throw Error("Inventory paths must remain in the declared repository");
+    }
+    const local = relative(physicalRoot, realpathSync(path));
+    if (local === ".." || local.startsWith(".." + sep) || ![".js", ".mjs", ".jsx", ".ts", ".mts", ".cts", ".tsx"].includes(extname(path))) {
+      throw Error("Inventory paths must name repository JavaScript or TypeScript programs");
+    }
+  }
   const references: Record<string, ReferenceProgram> = {};
   let referenceFiles = 0;
   for (const path of paths) {
@@ -121,6 +133,21 @@ export function inventory(root: string): Inventory {
             line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1,
             symbol: scope.join("."),
             language: "python",
+            encoding: "raw-template",
+            source: text,
+          });
+        }
+      }
+      if (ts.isStringLiteralLike(node) && !(ts.isTaggedTemplateExpression(node.parent) && node.parent.tag.getText(source) === "String.raw")) {
+        const text = node.text;
+        if (/^\s*(?:import |from )/m.test(text) && /^\s*(?:def |async def )/m.test(text)) {
+          record(node, "embedded_python", scope);
+          embedded.push({
+            path: local,
+            line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1,
+            symbol: scope.join("."),
+            language: "python",
+            encoding: "decoded-literal",
             source: text,
           });
         }
@@ -138,7 +165,7 @@ export function inventory(root: string): Inventory {
     modules[finding.path] = module;
   }
   return {
-    coverage: ["first-party JavaScript", "first-party MJS", "first-party TypeScript", "static String.raw Python snippets with import and function declarations", "Python command expressions including dynamic arguments", "executed immutable reference programs reported separately"],
+    coverage: ["declared src/tests/scripts/deploy/capture roots plus explicit additional program paths", "JavaScript", "first-party MJS", "first-party TypeScript", "static String.raw Python snippets with import and function declarations", "Python command expressions including dynamic arguments", "executed immutable reference programs reported separately"],
     files: paths.length - referenceFiles,
     counts,
     modules,
@@ -154,8 +181,12 @@ export function inventory(root: string): Inventory {
 export function main(): void {
   const args = process.argv.slice(2);
   const root = resolve(process.cwd());
-  if (args.length !== 2 || args[0] !== "--output" || args[1] === undefined) throw Error("Usage: node scripts/ci/refactor_inventory.mjs --output <report.json>");
-  const report = inventory(root);
+  if (![2, 4].includes(args.length) || args[0] !== "--output" || args[1] === undefined ||
+      (args.length === 4 && (args[2] !== "--additional-paths" || args[3] === undefined))) {
+    throw Error("Usage: node scripts/ci/refactor_inventory.mjs --output <report.json> [--additional-paths <newline-paths.txt>]");
+  }
+  const additional = args[3] === undefined ? [] : readFileSync(args[3], "utf8").split("\n").filter((path: string): boolean => path.length > 0);
+  const report = inventory(root, additional);
   const output = resolve(args[1]);
   mkdirSync(dirname(output), { recursive: true });
   writeFileSync(output, JSON.stringify(report, null, 2) + "\n");
