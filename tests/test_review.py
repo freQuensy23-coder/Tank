@@ -213,6 +213,7 @@ async def test_subminute_boundaries_require_typed_segments_and_exclude_outside_p
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_path: Path) -> None:
+    from test_event_tools import primary_only_map_fixture
     from test_truth_start_fixture import synthetic_start_snapshot
 
     from tank.analysis.decisions import DecisionEngine
@@ -221,11 +222,18 @@ async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_pa
     from tank.settings import Settings
     from tank.util import utcnow
 
-    snapshot = synthetic_start_snapshot()
+    snapshot = synthetic_start_snapshot(end=utcnow().replace(minute=0, second=0, microsecond=0))
+    snapshot["token_id"] = "world:WLD"
+    for family in ("instruments", "flow_bars", "klines", "books", "oi", "funding"):
+        for observation in snapshot[family]:
+            if "token_id" in observation and observation["token_id"] == "T":
+                observation["token_id"] = "world:WLD"
     snapshot["instruments"].append(
         {"instrument_id": "A:spot:BTC", "token_id": "BTC", "venue": "A", "market_type": "SPOT"}
     )
     truth = compute_market_truth(snapshot)
+    assert truth["move_class"] == "SPOT_LED_ACCUMULATION"
+    assert truth["relative"]["ref_venue"] is not None
     truth.update(mta_id="actual-review-truth", event_id="actual-review-event")
     repo = MemoryRepository()
     settings = Settings(data_dir=tmp_path)
@@ -243,15 +251,16 @@ async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_pa
     event = {
         "event_id": eid,
         "statement": "Access approved",
+        "next_milestone": None,
         "current_ems_id": "review-ems",
         "event_state": "APPROVED",
         "state_verified": True,
         "freshness": "FRESH",
         "certainty": "HIGH",
         "lifecycle": "MONITORING",
-        "public_at": now,
+        "public_at": snapshot["anchor"]["ts"],
         "public_at_prec": "EXACT",
-        "known_to_us_at": now,
+        "known_to_us_at": snapshot["anchor"]["ts"],
         "event_time": {"value": None, "precision": "UNKNOWN"},
     }
     assessment = {
@@ -268,22 +277,25 @@ async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_pa
         "event_id": eid,
         "map_version": 1,
         "entity_id": "world",
-        "token_id": "T",
+        "token_id": "world:WLD",
         "role": "PRIMARY",
         "tradable": True,
         "credible": True,
         "capture_class": "DIRECT",
+        "layer": "ISSUER_PRODUCT",
+        "evidence": [],
+        "causal_chain": "Authored approval grants the primary issuer access.",
         "exposure_score": 8,
     }
     for table, key, row in [
         ("evt.events", eid, event),
         ("evt.ems_assessments", "review-ems", assessment),
-        ("evt.beneficiary_maps", "review-map", {"event_id": eid, "map_version": 1, "analysis_set": ["T"]}),
+        ("evt.beneficiary_maps", "review-map", primary_only_map_fixture(eid, "world:WLD")),
         ("evt.beneficiary_edges", "review-edge", edge),
         ("ana.market_truth", truth["mta_id"], truth),
     ]:
         await repo.put(table, key, row)
-    decision = await tools.dispatch("get_decision", {"event_id": eid, "token_id": "T"}, {})
+    decision = await tools.dispatch("get_decision", {"event_id": eid, "token_id": "world:WLD"}, {})
     published = await tools.dispatch(
         "publish_card",
         {

@@ -29,7 +29,16 @@ from tank.util import parse_iso_time
 type PublicationKind = Literal["PARTIAL", "FULL", "UPDATE"]
 type AssessmentClass = Literal["LOW", "MATERIAL", "MAJOR", "STRUCTURAL_SHOCK"]
 type EventLifecycle = Literal[
-    "DETECTED", "SCORED", "TRACKED", "ANALYZING", "MONITORING", "INVALIDATED", "CLOSED", "MERGED"
+    "DETECTED",
+    "SCORED",
+    "TRACKED",
+    "ANALYZING",
+    "ALERTED",
+    "MONITORING",
+    "COOLDOWN",
+    "INVALIDATED",
+    "CLOSED",
+    "MERGED",
 ]
 type EventFreshness = Literal["FRESH", "NORMAL", "POOR", "STALE"]
 type NegativeEventMarker = Literal["CANCELLED", "REVERSED", "REJECTED", "PAUSED"]

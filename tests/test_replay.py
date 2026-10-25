@@ -361,6 +361,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                 "known_to_us_at": earlier,
                 "public_at": earlier,
                 "tokens_mentioned": ["T"],
+                "next_milestone": None,
                 "current_ems_id": ems_id,
             },
         ),
@@ -391,6 +392,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                 "credible": False,
                 "map_version": 1,
                 "capture_class": "UNKNOWN",
+                "exposure_score": None,
             },
         ),
         (
@@ -712,6 +714,11 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
     assert requests[0]["environment_id"] == "tank-replay-fixture-env"
     assert report["session_id"] != old_sid
     assert report["mode"] == "FRESH_OPENMA_SESSION"
+    assert report["output"]["decisions"], [
+        {"tool": row["tool"], "status": row["status"], "result": row.get("result")}
+        for row in await repo.list("ops.tool_calls")
+        if row["status"] in {"REFUSED", "ERROR"}
+    ]
     assert report["output"]["decisions"][0]["action"] == "WAIT"
     assert results[-1]["action"] == "WAIT"
     assert results[0]["market_truth"][0]["move_class"] == "UNKNOWN"
@@ -1801,8 +1808,10 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
         complete_decision_fixture,
         complete_event_fixture,
         complete_truth_fixture,
+        primary_only_map_fixture,
     )
 
+    from tank.analysis.decision_codec import decode_decision, encode_outlook
     from tank.analysis.decisions import DecisionEngine
     from tank.analysis.truth import MarketTruthService
     from tank.event_tools import EventToolService
@@ -1925,10 +1934,11 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
         [
             ("evt.ems_assessments", "fixture-ems", canonical_ems, initial_at),
             ("ana.market_truth", "fixture-truth", canonical_truth, initial_at),
+            ("ana.outlooks", decision["outlook_id"], encode_outlook(decode_decision(decision)), initial_at),
             (
                 "evt.beneficiary_maps",
                 "event:1",
-                {"event_id": "event", "map_version": 1, "analysis_set": ["T"]},
+                primary_only_map_fixture("event", "T"),
                 initial_at,
             ),
             (
@@ -1940,6 +1950,10 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
                     "map_version": 1,
                     "token_id": "T",
                     "role": "PRIMARY",
+                    "tradable": False,
+                    "layer": "ISSUER_PRODUCT",
+                    "evidence": [],
+                    "causal_chain": "The authored primary event is monitored without a capture estimate.",
                     "credible": False,
                     "capture_class": "UNKNOWN",
                     "exposure_score": 0,
@@ -2144,23 +2158,46 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
             scheduler=reaction_scheduler,
             pages=recorded_page_access(load_inputs(packet, config)),
         )
-        report = await replay_agent_session(
-            packet,
-            repo,
-            config,
-            tools,
-            http=http,
-            initial_message={
-                "kind": "ITEM_ADDED",
-                "item_id": "source",
-                "event_id": "event",
-                "replay_at": initial_at,
-            },
-            subsequent_messages=[
-                {"kind": "CALL_EXPIRED", "event_id": "event", "call": old_call, "replay_at": trigger}
-            ],
-            timeout=3,
-        )
+        from pydantic import ValidationError
+
+        schema_errors: list[str] = []
+        publish = tools.publish_card
+
+        async def inspected_publication(arguments, context):
+            try:
+                return await publish(arguments, context)
+            except ValidationError as error:
+                schema_errors.append(str(error))
+                raise
+
+        tools.publish_card = inspected_publication
+        try:
+            report = await replay_agent_session(
+                packet,
+                repo,
+                config,
+                tools,
+                http=http,
+                initial_message={
+                    "kind": "ITEM_ADDED",
+                    "item_id": "source",
+                    "event_id": "event",
+                    "replay_at": initial_at,
+                },
+                subsequent_messages=[
+                    {"kind": "CALL_EXPIRED", "event_id": "event", "call": old_call, "replay_at": trigger}
+                ],
+                timeout=3,
+            )
+        except TimeoutError:
+            failures = [
+                {"tool": row["tool"], "status": row["status"], "result": row.get("result")}
+                for row in await repo.list("ops.tool_calls")
+                if row["status"] in {"REFUSED", "ERROR"}
+            ]
+            assert not schema_errors, schema_errors
+            assert not failures, failures
+            raise
     calls = await repo.list("ana.calls")
     assert len(calls) == 1 and calls[0]["call_id"] != "original-call"
     assert calls[0]["opened_at"] == sent_at
