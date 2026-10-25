@@ -10,6 +10,8 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/budgetpolicy"
 )
 
+var ErrUnboundedResponseWeight = errors.New("unbounded response-size weight requires explicit post-response admission")
+
 type requestMillis int64
 
 func (n *requestMillis) UnmarshalJSON(data []byte) error {
@@ -84,6 +86,8 @@ func (p Policies) hyperPlan(body json.RawMessage) ([]Bucket, error) {
 	weight := float64(base)
 	switch kind {
 	case "meta", "metaAndAssetCtxs", "l2Book", "allMids", "userRole":
+	case "recentTrades":
+		return nil, ErrUnboundedResponseWeight
 	case "fundingHistory":
 		extra, exists := p.hyperliquid.ResponseWeights[kind]
 		if !exists {

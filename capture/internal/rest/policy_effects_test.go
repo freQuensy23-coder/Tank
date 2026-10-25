@@ -3,6 +3,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/freQuensy23-coder/Tank/capture/internal/budget"
@@ -88,5 +89,16 @@ func TestProviderGETAndCaseInsensitiveHostUseActualEffectiveQuery(t *testing.T) 
 	}
 	if len(exchange.requests) != 1 {
 		t.Fatal("valid case-insensitive DNS host failed to reach HTTP")
+	}
+}
+
+func TestConfiguredUnboundedResponseWeightRefusesBeforeQuotaAndHTTP(t *testing.T) {
+	client, exchange, ledger := newClient(t, ok("[]"))
+	result, err := client.Fetch(context.Background(), "POST", "https://api.hyperliquid.xyz/info", nil, nil, []byte("{\"type\":\"recentTrades\",\"coin\":\"BTC\"}"), 0)
+	if !errors.Is(err, budget.ErrUnboundedResponseWeight) || result != nil {
+		t.Fatalf("unbounded configured operation misclassified:result=%+v err=%v", result, err)
+	}
+	if len(exchange.requests) != 0 || ledger.Used(budget.BucketName("hyperliquid", 60, 600), 60) != 0 {
+		t.Fatal("unbounded operation spent quota or reached HTTP")
 	}
 }
