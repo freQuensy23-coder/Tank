@@ -570,3 +570,31 @@ No current-time fallback replaces a missing persisted control clock.
 The existing actual assessment/milestone producer-to-15-second-read tests remain
 in the source cohort. Before final terminal/iterator checks, 208 source/admission
 units passed in 3.19s; contracts strict mypy passes. Final scoped proof follows.
+
+
+### Observed synchronization lifetime in serve
+
+`run_with_synchronization` monitors the actual synchronizer future alongside the
+owned supervisor. A permanent synchronization failure sets the real stop event,
+drains the runtime, awaits background cleanup and propagates the failure.
+A successful one-shot synchronization is normal and leaves runtime running until
+its stop signal. Caller cancellation shields the runtime from abrupt cancellation,
+signals graceful drain, cancels/awaits the owned synchronizer, and then propagates
+cancellation. Simultaneous synchronization/drain failures are observed together;
+neither disappears. CLI error groups expose only error classes, without arbitrary
+provider/configuration payloads or a misleading successful stopped/CURRENT result.
+
+The generic future result type is intentionally unused: this helper governs
+resource lifetime and never invents or interprets a synchronization report.
+`primary=None` means no caught task failure, and the shutdown-cancellation flag
+distinguishes an owned cleanup cancellation from an unexpected service
+cancellation. Exception identity de-duplication is a real collection of observed
+failures, not a domain mapping facade. Transient retry policy stays inside the
+existing synchronizer and is unchanged.
+
+Evidence: 11 CLI/readiness units pass in 1.57s, including the actual uncaptured
+Settings preflight guard, normal one-shot continuation, awaited cancellation and
+dual-failure drain. Tests are strict-mypy clean and the helper emits no errors in
+the full CLI strict check. The wider CLI still has its explicitly inventoried
+untyped command/service boundaries. The permanent OpenMA effort/binding activation
+must be paired by its owner before integrated verification.
