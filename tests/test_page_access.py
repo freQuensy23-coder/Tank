@@ -30,6 +30,7 @@ async def test_live_page_retains_actual_binary_digest_and_borrowed_client_lifeti
         assert not client.is_closed
     assert read.body == body and read.body_sha256 == sha256(body)
     assert read.media_type is None
+    assert read.provenance.content_type_header is None
     assert isinstance(read.provenance, LivePageProvenance)
     assert read.provenance.received_at.precision == "COLLECTION_ONLY"
 
@@ -41,7 +42,9 @@ def test_page_bytes_and_original_body_claim_must_match_actual_digest() -> None:
             body=body,
             body_sha256="0" * 64,
             media_type=None,
-            provenance=LivePageProvenance(mode="LIVE_RESPONSE", received_at=collection_clock()),
+            provenance=LivePageProvenance(
+                mode="LIVE_RESPONSE", received_at=collection_clock(), content_type_header=None
+            ),
         )
     with pytest.raises(ValidationError, match="captured digest"):
         PageRead(
@@ -53,6 +56,7 @@ def test_page_bytes_and_original_body_claim_must_match_actual_digest() -> None:
                 input_sha256="a" * 64,
                 record_id="capture-1",
                 captured_body_sha256="0" * 64,
+                content_type_header=None,
             ),
         )
 
@@ -62,6 +66,7 @@ def test_live_page_receipt_cannot_claim_an_uncaptured_collection_instant() -> No
         LivePageProvenance(
             mode="LIVE_RESPONSE",
             received_at=Timestamp(value=None, precision="COLLECTION_ONLY", precision_reason="NOT_CAPTURED"),
+            content_type_header=None,
         )
 
 
@@ -77,7 +82,7 @@ async def test_live_page_error_does_not_expose_outgoing_credentials() -> None:
     async with httpx.AsyncClient(
         params={"apikey": credential}, transport=httpx.MockTransport(response)
     ) as client:
-        with pytest.raises(RuntimeError, match="HTTP 503") as failure:
+        with pytest.raises(httpx.HTTPStatusError, match="HTTP 503") as failure:
             await read_live_page(
                 LivePageAccess(fixture_http_admission()),
                 "https://api.etherscan.io/v2/api?chainid=1",

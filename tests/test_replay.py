@@ -23,7 +23,7 @@ def packet(tmp_path: Path):
                 "config_version": "test",
                 "code_version": "test",
                 "registry": {},
-                "config": {},
+                "config": {"thresholds": Settings(_env_file=None).load_config("thresholds")},
                 "records": [],
                 "tool_results": [],
             }
