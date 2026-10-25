@@ -7,6 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture
+from native_input_fixtures import acknowledge_native_input
 from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_http_admission
 from test_agents_execution_barrier import config, idle
@@ -64,7 +65,7 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
                 if event["type"] == "user.message":
                     posts.append(request.content)
                 accepted.append(identity)
-                return httpx.Response(200, json={"data": [{"id": identity}]})
+                return httpx.Response(200, json=acknowledge_native_input(request, identity))
             if request.url.path.endswith("/executions"):
                 return httpx.Response(
                     200,

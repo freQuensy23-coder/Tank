@@ -55,11 +55,11 @@ jobs:
           enable-cache: true
       - run: uv sync --python 3.13.13 --frozen --extra dev
       - name: Source comment policy
-        run: uv run --frozen --extra dev python scripts/ci/no_comments.py src tests scripts deploy capture
+        run: uv run --frozen --extra dev python scripts/ci/no_comments.py src tests scripts deploy capture apify/x-reader
       - name: Python lint
-        run: uv run --frozen --extra dev ruff check src tests scripts deploy
+        run: uv run --frozen --extra dev ruff check src tests scripts deploy apify/x-reader
       - name: Python format
-        run: uv run --frozen --extra dev ruff format --check src tests scripts deploy
+        run: uv run --frozen --extra dev ruff format --check src tests scripts deploy apify/x-reader
       - name: CI policy regressions
         run: uv run --frozen --extra dev pytest -q tests/test_ci_no_comments.py
 
@@ -165,6 +165,10 @@ jobs:
           uv run --frozen --extra dev mypy --config-file scripts/ci/mypy-foundation-tests.ini
           tests/configuration_support.py tests/test_configuration_support.py tests/http_support.py
 
+      - name: Install versioned X worker dependencies
+        run: uv pip install --python .venv/bin/python -r apify/x-reader/requirements.txt
+      - name: Typecheck the versioned worker and publisher
+        run: uv run --frozen --extra dev mypy apify/x-reader scripts/deploy/apify_deploy.py
 
   test:
     uses: ./.github/workflows/test-suite.yml
