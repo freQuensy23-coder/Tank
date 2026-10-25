@@ -1,13 +1,28 @@
 """Publication facts, authored narrative and rendering policy independent of I/O."""
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Annotated, Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 
-from tank.analysis.decision_contracts import Action, Confidence, EventState
+from tank.analysis.decision_contracts import (
+    Action,
+    Bias,
+    Confidence,
+    ConfidenceLimitation,
+    EventState,
+    Grade,
+    Horizon,
+    MoveClass,
+    Potential,
+    RepricingBand,
+    TradeReason,
+)
+from tank.analysis.statistics_contracts import DecimalBounds
 from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
+from tank.contracts.score import ScoreAssessmentView
 from tank.time_precision import Timestamp
 from tank.util import parse_iso_time
 
@@ -158,3 +173,362 @@ class PublicationGateResult(DomainModel):
         if self.allowed != (self.reason in {"INITIAL", "UPDATE"}):
             raise ValueError("Publication eligibility does not match its policy reason")
         return self
+
+
+type BeneficiaryLayer = Literal[
+    "ISSUER_PRODUCT",
+    "VENUE_DEX",
+    "SETTLEMENT_L1_L2",
+    "LIQUIDITY_EXECUTION",
+    "LENDING_COLLATERAL",
+    "ORACLE_DATA",
+    "INTEROPERABILITY",
+    "CUSTODY_COMPLIANCE",
+]
+type BeneficiaryRole = Literal["PRIMARY", "SECONDARY", "LOSER"]
+type IntegrationStage = Literal[
+    "COMPATIBLE",
+    "IN_DEVELOPMENT",
+    "BUILT",
+    "SUBMITTED",
+    "APPROVED",
+    "LIVE",
+    "MATERIAL_USAGE",
+    "ECONOMIC_FLOW",
+]
+type MarketWindow = Literal["W15M", "W1H", "W4H", "W24H", "EVENT"]
+type IdentityKey = tuple[Literal["TOKEN", "ENTITY", "NAME"], str]
+
+
+class CardEvidenceReference(DomainModel):
+    item_id: str | None
+    url: str | None
+
+    @model_validator(mode="after")
+    def real_reference(self) -> Self:
+        if self.item_id is None and self.url is None:
+            raise ValueError("Displayed claim evidence requires its actual reference")
+        return self
+
+
+class CardClaim(DomainModel):
+    claim_id: str = Field(min_length=1)
+    subject: str
+    predicate: str
+    object_text: str
+    verified: bool
+    verification_gap: str | None
+    evidence: tuple[CardEvidenceReference, ...]
+
+    @model_validator(mode="after")
+    def actual_fact(self) -> Self:
+        if not " ".join((self.subject, self.predicate, self.object_text)).strip():
+            raise ValueError("A displayed claim requires its actual statement")
+        if self.verified and not self.evidence:
+            raise ValueError("A displayed verified claim requires its recorded evidence")
+        return self
+
+
+class CardEvent(DomainModel):
+    statement: str = Field(min_length=1)
+    state: EventState
+    state_verified: bool
+    certainty: Confidence
+    freshness: EventFreshness
+    public_at: Timestamp
+    known_to_us_at: Timestamp
+    claims: tuple[CardClaim, ...]
+    token_labels: dict[str, str]
+    evidence_labels: dict[str, str]
+    has_expired_call_fact: bool
+
+
+class CardAssessment(DomainModel):
+    classification: AssessmentClass
+    criterion: str = Field(min_length=1)
+    scores: ScoreAssessmentView
+
+
+class CardSubject(DomainModel):
+    token_id: str | None
+    entity_id: str | None
+    entity_name: str | None
+    role: BeneficiaryRole
+    credible: bool
+    outside_scope: Literal["UNREGISTERED_TOKEN", "NO_MAPPED_TOKEN"] | None
+    layer: BeneficiaryLayer | None
+    integration_state: IntegrationStage | None
+    integration_verified: bool
+
+    @model_validator(mode="after")
+    def named_identity(self) -> Self:
+        if self.token_id is None and self.entity_id is None and self.entity_name is None:
+            raise ValueError("A named beneficiary requires a token, entity or recorded external name")
+        if self.role != "SECONDARY" and self.integration_verified:
+            raise ValueError("Secondary integration verification is not an event-state alias")
+        return self
+
+    def identity_key(self) -> IdentityKey:
+        if self.token_id is not None:
+            return ("TOKEN", self.token_id)
+        if self.entity_id is not None:
+            return ("ENTITY", self.entity_id)
+        if self.entity_name is None:
+            raise ValueError("A named beneficiary requires its actual identity")
+        return ("NAME", self.entity_name)
+
+
+class CardBeneficiary(DomainModel):
+    subject: CardSubject
+    capture: Literal["DIRECT", "INDIRECT", "NARRATIVE_ONLY", "UNKNOWN"]
+    causal_chain: str
+    least_repriced: bool
+
+    @model_validator(mode="after")
+    def market_identity(self) -> Self:
+        if self.subject.token_id is None:
+            raise ValueError("A beneficiary market block requires its actual token identity")
+        return self
+
+    @property
+    def token_id(self) -> str:
+        if self.subject.token_id is None:
+            raise ValueError("A beneficiary market block requires its actual token identity")
+        return self.subject.token_id
+
+
+class CardMapping(DomainModel):
+    layer_explanations: dict[BeneficiaryLayer, str]
+    no_credible_secondary_reason: str | None
+
+
+class CardScenarios(DomainModel):
+    base: str | None
+    upside: str | None
+    failure: str | None
+    base_reason: str | None
+    upside_reason: str | None
+    failure_reason: str | None
+
+
+class CardOutlook(DomainModel):
+    direction: Bias
+    potential: Potential
+    horizon: Horizon | None
+    confidence: Confidence
+    limitation: ConfidenceLimitation
+    scenarios: CardScenarios
+
+
+class CardCondition(DomainModel):
+    role: Literal["UPGRADE", "DOWNGRADE", "INVALIDATION", "AGENT"]
+    human_text: str = Field(min_length=1)
+
+
+class ActiveCardDecision(DomainModel):
+    kind: Literal["ACTIVE"]
+    token_id: str = Field(min_length=1)
+    action: Action
+    thesis_grade: Grade
+    trade_grade: Grade
+    raw_trade_grade: Grade
+    trade_reasons: tuple[TradeReason, ...]
+    tactical: bool
+    outlook: CardOutlook
+    conditions: tuple[CardCondition, ...]
+
+
+class InactiveCardDecision(DomainModel):
+    kind: Literal["INACTIVE"]
+    token_id: str = Field(min_length=1)
+    reason: Literal["CALL_EXPIRED", "REMOVED_FROM_ANALYSIS"]
+
+
+type CardDecision = ActiveCardDecision | InactiveCardDecision
+
+
+class CardDataLimit(DomainModel):
+    condition: str = Field(min_length=1)
+    reason: str | None
+
+
+class CardDataConfidence(DomainModel):
+    classification: Confidence
+    limiting: CardDataLimit | None
+
+
+class CardReturns(DomainModel):
+    raw: Decimal | None
+    btc_adjusted: Decimal | None
+    btc_adjusted_reason: str | None
+
+
+class CardMarketContext(DomainModel):
+    state: Literal["NEUTRAL", "HEADWIND", "STRESS"] | None
+    btc_return_24h: Decimal | None
+    normal_return_range: DecimalBounds | None
+
+
+class CardRelative(DomainModel):
+    repricing: RepricingBand | None
+    returns_by_window: dict[MarketWindow, CardReturns]
+    context: CardMarketContext
+
+
+class CardOiAttribution(DomainModel):
+    position_share: Decimal = Field(ge=0, le=1)
+    price_markup: Decimal
+
+
+class CardOiVenue(DomainModel):
+    venue: str = Field(min_length=1)
+    classification: Literal["REAL_NATIVE", "MIXED", "PRICE_MARKUP"]
+    native_change: Decimal | None
+    attribution: CardOiAttribution | None
+
+
+class CardSynchronizedOi(DomainModel):
+    native_change: Decimal | None
+    native_vs_normal: Literal["BELOW", "WITHIN", "ABOVE"] | None
+
+
+class CardDerivatives(DomainModel):
+    window: MarketWindow
+    venues: tuple[CardOiVenue, ...]
+    synchronized: CardSynchronizedOi | None
+
+
+class CardSpotVenue(DomainModel):
+    venue: str = Field(min_length=1)
+    sign: Literal[-1, 0, 1]
+    volume_share: Decimal | None = Field(ge=0, le=1)
+
+    @model_validator(mode="after")
+    def directional_share(self) -> Self:
+        if self.sign != 0 and self.volume_share is None:
+            raise ValueError("A directional complete venue requires its actual volume share")
+        return self
+
+
+class CardExclusion(DomainModel):
+    venue: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    detail: str | None
+    source_reasons: tuple[str, ...]
+    missing_metrics: tuple[str, ...]
+
+
+class CardSpot(DomainModel):
+    window: MarketWindow
+    complete_venues: tuple[CardSpotVenue, ...]
+    excluded: tuple[CardExclusion, ...]
+
+
+class CardRevenuePeriod(DomainModel):
+    value: Decimal
+    provider_period: Literal["24h", "30d"]
+
+
+class CardRevenueChartPoint(DomainModel):
+    epoch_seconds: Decimal
+    value: Decimal
+
+
+class PeriodRevenueProtocol(DomainModel):
+    kind: Literal["PERIOD"]
+    protocol: str = Field(min_length=1)
+    unit: Literal["USD"]
+    period: CardRevenuePeriod
+
+
+class ChartRevenueProtocol(DomainModel):
+    kind: Literal["CHART"]
+    protocol: str = Field(min_length=1)
+    unit: Literal["USD"]
+    point: CardRevenueChartPoint
+
+
+class UnavailableRevenueProtocol(DomainModel):
+    kind: Literal["UNAVAILABLE"]
+    protocol: str = Field(min_length=1)
+    reason: str | None
+
+
+type CardRevenueProtocol = PeriodRevenueProtocol | ChartRevenueProtocol | UnavailableRevenueProtocol
+
+
+class CardRevenue(DomainModel):
+    protocols: tuple[CardRevenueProtocol, ...] = Field(min_length=1)
+    observed_at: Timestamp
+    stale: bool
+    complete_24h: bool
+
+    @model_validator(mode="after")
+    def actual_observed_value(self) -> Self:
+        if not any(
+            isinstance(value, (PeriodRevenueProtocol, ChartRevenueProtocol)) for value in self.protocols
+        ):
+            raise ValueError("A rendered revenue footnote requires an actual provider value")
+        if self.observed_at.value is None:
+            raise ValueError("Rendered fundamental values require their actual observation clock")
+        return self
+
+
+class CardMarket(DomainModel):
+    token_id: str = Field(min_length=1)
+    move: MoveClass
+    absorption_confirmed: bool
+    unresolved: tuple[str, ...]
+    confidence: CardDataConfidence
+    decisive_facts: tuple[str, ...]
+    relative: CardRelative
+    derivatives: CardDerivatives
+    spot: CardSpot
+    holders_revenue: CardRevenue | None
+
+
+class CardInputs(DomainModel):
+    narrative: PublicationNarrative
+    policy: PublicationPolicy
+    event: CardEvent
+    assessment: CardAssessment
+    beneficiaries: tuple[CardBeneficiary, ...] = Field(max_length=3)
+    other_subjects: tuple[CardSubject, ...]
+    mapping: CardMapping
+    decisions_by_token: dict[str, CardDecision]
+    market_by_token: dict[str, CardMarket]
+
+    @model_validator(mode="after")
+    def indexed_market_identity(self) -> Self:
+        if any(key != value.token_id for key, value in self.decisions_by_token.items()):
+            raise ValueError("Card decision index disagrees with its token identities")
+        if any(key != value.token_id for key, value in self.market_by_token.items()):
+            raise ValueError("Card market index disagrees with its token identities")
+        if self.narrative.kind != "PARTIAL":
+            for beneficiary in self.beneficiaries:
+                token = beneficiary.token_id
+                if token not in self.decisions_by_token:
+                    raise ValueError("MISSING_DECISION: " + token)
+                if (
+                    isinstance(self.decisions_by_token[token], ActiveCardDecision)
+                    and token not in self.market_by_token
+                ):
+                    raise ValueError("MISSING_MARKET_TRUTH: " + token)
+        return self
+
+
+class CardLengthSection(DomainModel):
+    line: int = Field(ge=1)
+    section: str
+    chars: int = Field(ge=0)
+
+
+class CardLengthDiagnostics(DomainModel):
+    actual: int = Field(ge=0)
+    max_chars: int = Field(gt=0, serialization_alias="max")
+    excess: int = Field(gt=0)
+    sections: tuple[CardLengthSection, ...]
+    newline_chars: int = Field(ge=0)
+    editable_fields: tuple[str, ...]
+    guidance: str
+    preview: str
