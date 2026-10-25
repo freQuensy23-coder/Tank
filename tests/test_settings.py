@@ -338,3 +338,18 @@ def test_openma_accessor_reads_the_captured_configuration(tmp_path: Path) -> Non
     assert configuration.max_running_sessions > 0
     (config / "openma.yaml").write_text("invalid: replacement\n")
     assert configuration == settings.openma()
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity"])
+def test_nonfinite_json_candidate_cannot_replace_captured_configuration(tmp_path: Path, number: str) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    payload = config / "schema.json"
+    payload.write_text('{"limit":1}')
+    settings = Settings(config_dir=config, data_dir=tmp_path / "data", _env_file=None)
+    captured = resolve_versions(settings)
+    payload.write_text('{"limit":' + number + "}")
+    with pytest.raises(ValueError, match="finite"):
+        resolve_versions(settings)
+    assert captured.read_config_json("schema.json") == {"limit": 1}
+    assert len(list((settings.data_dir / "config_versions").glob("*.json"))) == 1
