@@ -60,6 +60,8 @@ jobs:
         run: uv run --frozen --extra dev ruff check src tests scripts deploy apify/x-reader
       - name: Python format
         run: uv run --frozen --extra dev ruff format --check src tests scripts deploy apify/x-reader
+      - name: Database schema diagrams match the migrations
+        run: uv run --frozen --extra dev python scripts/render_db_schema.py --check
       - name: CI policy regressions
         run: uv run --frozen --extra dev pytest -q tests/test_ci_no_comments.py
 
