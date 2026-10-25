@@ -3,6 +3,7 @@
 from datetime import datetime
 from decimal import Decimal, localcontext
 from math import isfinite
+from statistics import median
 from typing import Annotated, Literal, Self
 
 from pydantic import Field, field_validator, model_validator
@@ -2997,3 +2998,221 @@ def condition_predicates_any(predicates: tuple[ConditionPredicate, ...]) -> Cond
         if isinstance(predicate, ConditionUnavailablePredicate):
             return predicate
     return ConditionObservedPredicate(status="OBSERVED", value=False)
+
+
+class ConditionReplenishmentScope(DomainModel):
+    interval: ConditionInterval
+    refill_window_s: float = Field(gt=0)
+    resilience_window_s: float = Field(gt=0)
+    basis: Literal["CAPTURED_BOOK_AND_FLOW_SAMPLES"]
+    window_origin: Literal["FLOW_START"]
+
+
+class ConditionReplenishmentBurst(DomainModel):
+    venue: str = Field(min_length=1, pattern=r"\S")
+    flow_instrument_id: str = Field(min_length=1, pattern=r"\S")
+    book_instrument_id: str = Field(min_length=1, pattern=r"\S")
+    flow_start: Timestamp
+    flow_end: datetime
+    last_trade_at: Timestamp
+    baseline_bid_depth_usd: Decimal = Field(gt=0)
+    net_sell_usd: Decimal = Field(gt=0)
+    baseline_low_price: Decimal | None = Field(gt=0)
+    baseline_low_reason: Literal["INCOMPLETE"] | None
+    recovery_at: Timestamp
+    flow_start_to_recovery_s: float | None = Field(gt=0)
+    followup_book_sample_count: int = Field(ge=0)
+    post_flow_book_sample_count: int = Field(ge=0)
+    lowest_post_flow_price: Decimal | None = Field(gt=0)
+    post_flow_price_sample_count: int = Field(ge=0)
+    post_flow_price_start: datetime | None
+    post_flow_price_cutoff: datetime | None
+
+    @field_validator("flow_end", "post_flow_price_start", "post_flow_price_cutoff")
+    @classmethod
+    def aware_boundary(cls, value: datetime | None) -> datetime | None:
+        return None if value is None else parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_burst_and_followup(self) -> Self:
+        if self.flow_start.value is None:
+            raise ValueError("A replenishment burst requires its actual source observation clock")
+        start = parse_iso_time(self.flow_start.value)
+        if self.flow_end <= start:
+            raise ValueError("A burst requires its actual positive aggregate flow interval")
+        last = self.last_trade_at.value
+        if last is not None and not start <= parse_iso_time(last) < self.flow_end:
+            raise ValueError("A captured last trade must belong to its actual flow aggregate interval")
+        if self.post_flow_book_sample_count > self.followup_book_sample_count:
+            raise ValueError("Post-flow book samples cannot exceed actual qualified followup samples")
+        if self.net_sell_usd < self.baseline_bid_depth_usd:
+            raise ValueError("An observed burst must actually reach its positive baseline bid depth")
+        if (self.baseline_low_price is None) != (self.baseline_low_reason is not None):
+            raise ValueError("Missing burst price requires its actual source-price gap")
+        if (self.recovery_at.value is None) != (self.flow_start_to_recovery_s is None):
+            raise ValueError("An observed recovery duration requires its actual recovery clock")
+        if self.recovery_at.value is not None:
+            elapsed = (
+                parse_iso_time(self.recovery_at.value) - parse_iso_time(self.flow_start.value)
+            ).total_seconds()
+            after = parse_iso_time(self.recovery_at.value)
+            follows_flow = (
+                after > parse_iso_time(last)
+                if last is not None and self.last_trade_at.precision == "EXACT"
+                else after >= self.flow_end
+            )
+            if not follows_flow:
+                raise ValueError(
+                    "A recovery must follow the actual exact last trade or complete flow interval"
+                )
+            if self.flow_start_to_recovery_s != elapsed or self.post_flow_book_sample_count == 0:
+                raise ValueError(
+                    "Observed recovery must preserve the actual qualified book sample and elapsed time"
+                )
+        if (self.lowest_post_flow_price is not None) != (self.post_flow_price_sample_count > 0):
+            raise ValueError("Observed future price minimum requires actual qualified price samples")
+        if self.post_flow_price_sample_count == 0:
+            if self.post_flow_price_start is not None or self.post_flow_price_cutoff is not None:
+                raise ValueError("Missing post-flow price samples cannot invent observation interval bounds")
+        elif (
+            self.post_flow_price_start is None
+            or self.post_flow_price_cutoff is None
+            or not self.flow_end <= self.post_flow_price_start < self.post_flow_price_cutoff
+        ):
+            raise ValueError("Post-flow price samples require actual non-overlapping interval bounds")
+        return self
+
+    def validate_scope(self, scope: ConditionReplenishmentScope) -> None:
+        validated = type(self).model_validate(self)
+        actual = ConditionReplenishmentScope.model_validate(scope)
+        if validated.flow_start.value is None:
+            raise ValueError("A burst requires its actual occurrence clock")
+        at = parse_iso_time(validated.flow_start.value)
+        if not actual.interval.start <= at < validated.flow_end <= actual.interval.cutoff:
+            raise ValueError("A replenishment burst must belong to its actual analysis interval")
+        if validated.recovery_at.value is not None:
+            recovery = parse_iso_time(validated.recovery_at.value)
+            if recovery > actual.interval.cutoff or (recovery - at).total_seconds() > actual.refill_window_s:
+                raise ValueError("A recovery observation must belong to the actual captured refill window")
+        if validated.post_flow_price_cutoff is not None and (
+            validated.post_flow_price_cutoff > actual.interval.cutoff
+            or (validated.post_flow_price_cutoff - at).total_seconds() > actual.resilience_window_s
+        ):
+            raise ValueError("Post-flow price samples must belong to the actual captured resilience window")
+
+    def replenished(self, scope: ConditionReplenishmentScope) -> ConditionPredicate:
+        self.validate_scope(scope)
+        at_value = self.flow_start.value
+        if at_value is None:
+            raise ValueError("An observed burst requires its actual source clock")
+        if self.recovery_at.value is not None:
+            return ConditionObservedPredicate(status="OBSERVED", value=True)
+        elapsed = (scope.interval.cutoff - parse_iso_time(at_value)).total_seconds()
+        if elapsed >= scope.refill_window_s and self.post_flow_book_sample_count > 0:
+            return ConditionObservedPredicate(status="OBSERVED", value=False)
+        return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+
+    def resilient(self, scope: ConditionReplenishmentScope) -> ConditionPredicate:
+        self.validate_scope(scope)
+        baseline, future = self.baseline_low_price, self.lowest_post_flow_price
+        if baseline is None or future is None:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        if future < baseline:
+            return ConditionObservedPredicate(status="OBSERVED", value=False)
+        at = self.flow_start.value
+        if at is None:
+            raise ValueError("An observed burst requires its actual source clock")
+        if (scope.interval.cutoff - parse_iso_time(at)).total_seconds() >= scope.resilience_window_s:
+            return ConditionObservedPredicate(status="OBSERVED", value=True)
+        return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+
+
+class ComputedConditionReplenishmentSummary(DomainModel):
+    status: Literal["COMPUTED"]
+    observed_bursts: int = Field(ge=0)
+    observed_replenished: int = Field(ge=0)
+    observed_resilient_replenished: int = Field(ge=0)
+    pending_replenishment: int = Field(ge=0)
+    pending_resilience: int = Field(ge=0)
+    median_flow_start_to_recovery_s: float | None = Field(gt=0)
+    median_recovery_reason: Literal["NO_OBSERVED_RECOVERY"] | None
+
+    @model_validator(mode="after")
+    def actual_detected_counts(self) -> Self:
+        if (
+            self.observed_replenished > self.observed_bursts
+            or self.observed_resilient_replenished > self.observed_replenished
+        ):
+            raise ValueError("Replenishment counts cannot exceed actual detected burst/recovery counts")
+        if (
+            self.observed_replenished + self.pending_replenishment > self.observed_bursts
+            or self.observed_resilient_replenished + self.pending_resilience > self.observed_bursts
+        ):
+            raise ValueError("Pending replenishment counts must belong to actual detected bursts")
+        if (self.median_flow_start_to_recovery_s is None) != (self.median_recovery_reason is not None):
+            raise ValueError("Missing recovery median requires an actual absence of observed recoveries")
+        if (self.median_flow_start_to_recovery_s is not None) != (self.observed_replenished > 0):
+            raise ValueError("Recovery median requires actual observed recovery clocks")
+        return self
+
+
+class UnavailableConditionReplenishmentSummary(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["NO_EVALUABLE_CANDIDATES"]
+
+
+class ConditionReplenishmentScan(DomainModel):
+    scope: ConditionReplenishmentScope
+    considered_candidate_count: int = Field(ge=0)
+    observed_non_burst_count: int = Field(ge=0)
+    unqualified_candidate_counts: dict[Literal["INCOMPLETE", "ZERO_BASELINE"], Annotated[int, Field(gt=0)]]
+    bursts: tuple[ConditionReplenishmentBurst, ...]
+
+    @model_validator(mode="after")
+    def actual_candidate_accounting(self) -> Self:
+        if self.considered_candidate_count != self.observed_non_burst_count + len(self.bursts) + sum(
+            self.unqualified_candidate_counts.values()
+        ):
+            raise ValueError("Replenishment candidates must preserve actual tested and unavailable counts")
+        identities = [
+            (burst.venue, burst.flow_instrument_id, burst.flow_start.value) for burst in self.bursts
+        ]
+        if len(identities) != len(set(identities)):
+            raise ValueError("A replenishment scan cannot duplicate a detected flow burst")
+        for burst in self.bursts:
+            burst.validate_scope(self.scope)
+        return self
+
+    def summary(self) -> ComputedConditionReplenishmentSummary | UnavailableConditionReplenishmentSummary:
+        validated = type(self).model_validate(self)
+        if not validated.bursts and validated.observed_non_burst_count == 0:
+            return UnavailableConditionReplenishmentSummary(
+                status="UNAVAILABLE", reason="NO_EVALUABLE_CANDIDATES"
+            )
+        replenished = tuple(burst.replenished(validated.scope) for burst in validated.bursts)
+        resilience = tuple(burst.resilient(validated.scope) for burst in validated.bursts)
+        recoveries = [
+            burst.flow_start_to_recovery_s
+            for burst in validated.bursts
+            if burst.flow_start_to_recovery_s is not None
+        ]
+        return ComputedConditionReplenishmentSummary(
+            status="COMPUTED",
+            observed_bursts=len(validated.bursts),
+            observed_replenished=sum(
+                isinstance(value, ConditionObservedPredicate) and value.value for value in replenished
+            ),
+            observed_resilient_replenished=sum(
+                isinstance(left, ConditionObservedPredicate)
+                and left.value
+                and isinstance(right, ConditionObservedPredicate)
+                and right.value
+                for left, right in zip(replenished, resilience, strict=True)
+            ),
+            pending_replenishment=sum(
+                isinstance(value, ConditionUnavailablePredicate) for value in replenished
+            ),
+            pending_resilience=sum(isinstance(value, ConditionUnavailablePredicate) for value in resilience),
+            median_flow_start_to_recovery_s=median(recoveries) if recoveries else None,
+            median_recovery_reason=None if recoveries else "NO_OBSERVED_RECOVERY",
+        )

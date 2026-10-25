@@ -20,6 +20,8 @@ from tank.analysis.condition_graph_contracts import (
     ConditionInterval,
     ConditionRelativeGraph,
     ConditionRelativeWindow,
+    ConditionReplenishmentBurst,
+    ConditionReplenishmentScope,
     DeclaredConditionCadence,
     NonForwardConditionInterval,
     ObservedConditionClose,
@@ -1850,3 +1852,133 @@ def test_native_depth_comparison_retains_quantity_differences_beyond_default_dec
     assert flow > bound
     result = inputs.weak_response()
     assert result.status == "UNAVAILABLE" and result.reason == "INCOMPLETE"
+
+
+def replenishment_scope() -> ConditionReplenishmentScope:
+    return ConditionReplenishmentScope(
+        interval=ConditionInterval(window="W1H", start=AT - timedelta(hours=1), cutoff=AT),
+        refill_window_s=60.0,
+        resilience_window_s=900.0,
+        basis="CAPTURED_BOOK_AND_FLOW_SAMPLES",
+        window_origin="FLOW_START",
+    )
+
+
+def recovered_burst() -> ConditionReplenishmentBurst:
+    return ConditionReplenishmentBurst(
+        venue="a",
+        flow_instrument_id="spot:i",
+        book_instrument_id="spot:i",
+        flow_start=Timestamp(value="2026-10-17T11:59:30Z", precision="EXACT", precision_reason=None),
+        flow_end=AT - timedelta(seconds=10),
+        last_trade_at=Timestamp(value="2026-10-17T11:59:40Z", precision="EXACT", precision_reason=None),
+        baseline_bid_depth_usd=Decimal(10),
+        net_sell_usd=Decimal(12),
+        baseline_low_price=Decimal(100),
+        baseline_low_reason=None,
+        recovery_at=Timestamp(
+            value="2026-10-17T11:59:45Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+        ),
+        flow_start_to_recovery_s=15.0,
+        followup_book_sample_count=2,
+        post_flow_book_sample_count=1,
+        lowest_post_flow_price=Decimal(99),
+        post_flow_price_sample_count=1,
+        post_flow_price_start=AT - timedelta(seconds=10),
+        post_flow_price_cutoff=AT,
+    )
+
+
+def test_observed_recovery_and_lower_low_survive_an_incomplete_followup_window() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionReplenishmentScan
+
+    burst, scope = recovered_burst(), replenishment_scope()
+    recovered = burst.replenished(scope)
+    failed_resilience = burst.resilient(scope)
+    assert recovered.status == "OBSERVED" and recovered.value is True
+    assert failed_resilience.status == "OBSERVED" and failed_resilience.value is False
+    summary = ConditionReplenishmentScan(
+        scope=scope,
+        considered_candidate_count=1,
+        observed_non_burst_count=0,
+        unqualified_candidate_counts={},
+        bursts=(burst,),
+    ).summary()
+    assert summary.status == "COMPUTED" and summary.observed_replenished == 1
+    assert summary.observed_resilient_replenished == 0 and summary.median_flow_start_to_recovery_s == 15.0
+
+
+def test_recovery_timing_never_guesses_exact_last_trade_from_a_formatted_clock() -> None:
+    burst = recovered_burst()
+    unclocked_precision = burst.last_trade_at.model_copy(
+        update={"precision": None, "precision_reason": "PRECISION_NOT_CAPTURED"}
+    )
+    with pytest.raises(ValidationError, match="actual exact last trade or complete flow interval"):
+        ConditionReplenishmentBurst.model_validate(
+            burst.model_copy(update={"last_trade_at": unclocked_precision})
+        )
+    late_burst = burst.model_copy(
+        update={
+            "last_trade_at": Timestamp(value="2026-10-17T11:59:46Z", precision="EXACT", precision_reason=None)
+        }
+    )
+    with pytest.raises(ValidationError, match="actual exact last trade or complete flow interval"):
+        late_burst.replenished(replenishment_scope())
+    overlapping_price = burst.model_copy(update={"post_flow_price_start": AT - timedelta(seconds=15)})
+    with pytest.raises(ValidationError, match="actual non-overlapping interval"):
+        overlapping_price.resilient(replenishment_scope())
+
+
+def test_incomplete_replenishment_is_unknown_and_zero_baseline_is_not_a_burst() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionReplenishmentScan
+
+    burst = recovered_burst().model_copy(
+        update={
+            "recovery_at": Timestamp(value=None, precision=None, precision_reason="INCOMPLETE"),
+            "flow_start_to_recovery_s": None,
+        }
+    )
+    pending = burst.replenished(replenishment_scope())
+    assert pending.status == "UNAVAILABLE" and pending.reason == "INCOMPLETE"
+    no_test = ConditionReplenishmentScan(
+        scope=replenishment_scope(),
+        considered_candidate_count=1,
+        observed_non_burst_count=0,
+        unqualified_candidate_counts={"ZERO_BASELINE": 1},
+        bursts=(),
+    ).summary()
+    assert no_test.status == "UNAVAILABLE" and no_test.reason == "NO_EVALUABLE_CANDIDATES"
+    with pytest.raises(ValidationError):
+        ConditionReplenishmentBurst.model_validate(
+            burst.model_copy(update={"baseline_bid_depth_usd": Decimal(0)})
+        )
+
+
+def test_replenishment_scan_accounts_for_actual_candidates_and_prevents_duplicate_bursts() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionReplenishmentScan
+
+    burst, scope = recovered_burst(), replenishment_scope()
+    with pytest.raises(ValidationError, match="actual tested and unavailable counts"):
+        ConditionReplenishmentScan(
+            scope=scope,
+            considered_candidate_count=2,
+            observed_non_burst_count=0,
+            unqualified_candidate_counts={},
+            bursts=(burst,),
+        )
+    with pytest.raises(ValidationError, match="duplicate a detected flow burst"):
+        ConditionReplenishmentScan(
+            scope=scope,
+            considered_candidate_count=2,
+            observed_non_burst_count=0,
+            unqualified_candidate_counts={},
+            bursts=(burst, burst),
+        )
+    known_no_burst = ConditionReplenishmentScan(
+        scope=scope,
+        considered_candidate_count=1,
+        observed_non_burst_count=1,
+        unqualified_candidate_counts={},
+        bursts=(),
+    ).summary()
+    assert known_no_burst.status == "COMPUTED" and known_no_burst.observed_bursts == 0
