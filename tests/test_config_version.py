@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from tank.settings import Settings, resolve_versions
 
@@ -62,3 +63,22 @@ def test_packaged_json_resource_changes_code_version_in_cold_process(tmp_path: P
     assert cold_version() == original
     resource.write_bytes(resource.read_bytes() + b"\n")
     assert cold_version() != original
+
+
+@pytest.mark.parametrize("build_sha", ["", "missing", "A" * 40, "a" * 39, "a" * 41])
+def test_explicit_invalid_build_identity_is_not_relabelled_development(build_sha: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, build_sha=build_sha)
+
+
+def test_explicit_dev_mode_keeps_content_derived_identity(tmp_path: Path) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "rules.yaml").write_text("value: 1\n")
+    declared = resolve_versions(Settings(config_dir=config, build_sha="dev", _env_file=None))
+    implicit = resolve_versions(Settings(config_dir=config, build_sha=None, _env_file=None))
+    assert declared.config_version == implicit.config_version
+    assert declared.config_version.startswith("dev.")
+    (config / "rules.yaml").write_text("value: 2\n")
+    changed = resolve_versions(Settings(config_dir=config, build_sha="dev", _env_file=None))
+    assert changed.config_version != declared.config_version

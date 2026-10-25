@@ -258,6 +258,27 @@ def test_frozen_config_is_parsed_once_and_callers_get_copies(
     assert unfrozen.load_config("registry") == {"tokens": []}
 
 
+def test_explicit_empty_codex_home_is_not_replaced_with_a_personal_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", "")
+    monkeypatch.delenv("TANK_CODEX_AUTH_PATH", raising=False)
+    with pytest.raises(ValueError, match="nonempty directory"):
+        Settings(_env_file=None)
+
+
+def test_declared_empty_role_password_keeps_its_declared_host_instead_of_local_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TANK_DATABASE_URL", raising=False)
+    monkeypatch.delenv("TANK_OPENMA_DATABASE_URL", raising=False)
+    settings = Settings(_env_file=None, tank_db_password="", oma_db_password="")
+    assert settings.database_url == "postgresql://tank:@postgres:5432/tank"
+    assert settings.openma_database_url == "postgresql://oma:@postgres:5432/oma"
+    explicit = Settings(_env_file=None, tank_db_password="", database_url="postgresql:///explicit")
+    assert explicit.database_url == "postgresql:///explicit"
+
+
 def test_version_identity_requires_capture_and_detects_post_capture_relabelling(tmp_path: Path) -> None:
     config = tmp_path / "config"
     config.mkdir()

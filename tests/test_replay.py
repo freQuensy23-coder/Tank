@@ -4,6 +4,7 @@ from pathlib import Path
 import httpx
 import pytest
 from model_fixture import audited_result, model_arguments
+from source_support import fixture_versions
 
 from tank.replay import ReplayClock, ReplayError, evaluate_frozen, load_inputs, replay_bundle
 from tank.settings import Settings
@@ -665,9 +666,10 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
         tools = EventToolService(
             repo,
             config,
-            MarketTruthService(repo, config, CapturedMarket()),
+            MarketTruthService(repo, config, CapturedMarket(), versions=fixture_versions()),
             DecisionEngine(config),
             http=http,
+            versions=fixture_versions(),
         )
         report = await replay_agent_session(
             packet,
@@ -873,32 +875,45 @@ def test_assembly_does_not_admit_source_revision(packet) -> None:
         "unknown_observation",
     ],
 )
-def test_reconstructed_quiet_minute_preserves_collection_clock(
-    packet, monkeypatch: pytest.MonkeyPatch, case
-) -> None:
+def test_reconstructed_quiet_minute_preserves_collection_clock(packet, case) -> None:
     from copy import deepcopy
 
     from tank.market import flow, normalize
-    from tank.time_precision import collection_clock
+    from tank.market.trade_contracts import FlowInstrument, QuoteUsdValuation
+    from tank.util import parse_iso_time
 
     received = "2026-10-17T00:00:00Z"
-    monkeypatch.setattr(flow, "collection_clock", lambda value=None: collection_clock(received))
-    instrument = {
-        "instrument_id": "binance:spot:QNTUSDT",
-        "token_id": "quant:QNT",
-        "venue": "binance",
-        "market_type": "SPOT",
-        "quote_asset": "USDT",
-    }
-    accumulator = flow.FlowAccumulator()
+    instrument = FlowInstrument(
+        instrument_id="binance:spot:QNTUSDT",
+        token_id="quant:QNT",
+        venue="binance",
+        market_type="SPOT",
+        quote_asset="USDT",
+        venue_symbol="QNTUSDT",
+        contract_multiplier=None,
+    )
+    valuation = QuoteUsdValuation(
+        rate=None, as_of=None, basis="UNAVAILABLE", unavailable_reason="QUOTE_USD_RATE_UNAVAILABLE"
+    )
+    accumulator = flow.FlowAccumulator(now=lambda: parse_iso_time(received))
     trade = normalize.trade(
         instrument,
-        {"a": 1, "p": "100", "q": "2", "f": 1, "l": 1, "T": "2026-09-24T11:58:30Z", "m": False},
-        received_ts=received,
+        {
+            "a": 1,
+            "p": "100",
+            "q": "2",
+            "f": 1,
+            "l": 1,
+            "T": int(parse_iso_time("2026-09-24T11:58:30Z").timestamp() * 1000),
+            "m": False,
+        },
+        valuation=valuation,
+        received_ts=parse_iso_time(received),
+        source="ARCHIVE",
     )
     accumulator.add(trade, continuity=False)
     accumulator.prove_range(
-        instrument["instrument_id"],
+        instrument.instrument_id,
         "2026-09-24T11:58:00Z",
         "2026-09-24T12:00:00Z",
         complete=True,
@@ -906,10 +921,14 @@ def test_reconstructed_quiet_minute_preserves_collection_clock(
         observed_at=received,
     )
     accumulator.empty_minute(instrument, "2026-09-24T11:59:00Z")
-    bar = accumulator.record((instrument["instrument_id"], "2026-09-24T11:59:00Z"), complete=True)
+    produced = accumulator.record((instrument.instrument_id, "2026-09-24T11:59:00Z"), complete=True)
+    reference = produced.reference_points[0]
+    assert reference.complete and reference.observed_at_prec == "COLLECTION_ONLY"
+    assert reference.last_trade is not None and reference.last_trade.ts == parse_iso_time(
+        "2026-09-24T11:58:30Z"
+    )
+    bar = produced.model_dump(mode="json", by_alias=True, exclude_unset=True)
     point = bar["reference_points"][0]
-    assert point["complete"] and point["observed_at_prec"] == "COLLECTION_ONLY"
-    assert point["last_trade"]["ts"] == "2026-09-24T11:58:30Z"
     original = deepcopy(bar)
     data = json.loads(packet.read_text())
     data["assembled_at"] = "2026-10-17T01:00:00Z"
@@ -1383,8 +1402,11 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
         tools = EventToolService(
             repo,
             config,
-            MarketTruthService(repo, config, ReplayMarketReader(load_inputs(packet, config))),
+            MarketTruthService(
+                repo, config, ReplayMarketReader(load_inputs(packet, config)), versions=fixture_versions()
+            ),
             DecisionEngine(config),
+            versions=fixture_versions(),
         )
         report = await replay_agent_session(
             packet,
@@ -2004,8 +2026,11 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
         tools = EventToolService(
             repo,
             config,
-            MarketTruthService(repo, config, ReplayMarketReader(load_inputs(packet, config))),
+            MarketTruthService(
+                repo, config, ReplayMarketReader(load_inputs(packet, config)), versions=fixture_versions()
+            ),
             DecisionEngine(config),
+            versions=fixture_versions(),
         )
         report = await replay_agent_session(
             packet,
@@ -2368,8 +2393,11 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
         tools = EventToolService(
             repo,
             config,
-            MarketTruthService(repo, config, ReplayMarketReader(load_inputs(packet, config))),
+            MarketTruthService(
+                repo, config, ReplayMarketReader(load_inputs(packet, config)), versions=fixture_versions()
+            ),
             DecisionEngine(config),
+            versions=fixture_versions(),
         )
 
         async def fixture_grade(arguments, context):
@@ -2852,9 +2880,10 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
         tools = EventToolService(
             repo,
             config,
-            MarketTruthService(repo, config, ReplayMarketReader(inputs)),
+            MarketTruthService(repo, config, ReplayMarketReader(inputs), versions=fixture_versions()),
             DecisionEngine(config),
             reference_clock=TrustedFixtureClock(inputs) if inputs.fixture_reference else None,
+            versions=fixture_versions(),
         )
         if profile == "ordinary_missing_sent":
             with pytest.raises(ReplayError, match="one captured SENT delivery receipt required"):
@@ -2927,9 +2956,9 @@ async def test_captured_tools_decision_refreshes_fired_market_watch_offline(
     cfg = Settings(data_dir=tmp_path, _env_file=None)
     await seed_domain(source, cfg, end)
     market = ReleasedMarket(shifted_snapshot(end))
-    truth = MarketTruthService(source, cfg, market)
+    truth = MarketTruthService(source, cfg, market, versions=fixture_versions())
     first = await truth.assess("e", "T", chosen_boundary(earlier, precision="BUCKET(1m)"))
-    tools = EventToolService(source, cfg, truth, DecisionEngine())
+    tools = EventToolService(source, cfg, truth, DecisionEngine(), versions=fixture_versions())
     initial = await tools.dispatch("get_decision", {"event_id": "e", "token_id": "T"}, {})
     watch = next(row for row in initial["conditions"] if row["role"] == "UPGRADE")
     watch.update(status="FIRED", fired_at=data["cutoff"])

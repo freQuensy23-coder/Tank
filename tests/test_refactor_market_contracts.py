@@ -4,7 +4,7 @@ import asyncio
 from decimal import Decimal
 
 import pytest
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 
 from tank.market.funding import FundingObservation
 from tank.market.normalize import funding
@@ -53,7 +53,7 @@ def test_realized_zero_funding_is_preserved_instead_of_replaced_by_forecast():
         {"realizedRate": 0, "fundingRate": "0.001", "fundingTime": 1781654400000},
         kind="SETTLED",
         interval_h=4,
-        received_ts=1781654400012,
+        received_ts="2026-06-17T00:00:00.012Z",
     )
     assert Decimal(result["rate"]) == 0
     assert Decimal(result["rate_8h_eq"]) == 0
@@ -116,15 +116,17 @@ def test_order_book_preserves_decimal_checksum_spelling_and_unavailable_usd():
             "quote_asset": "USDT",
         }
     )
-    book.snapshot([["99", "2"], ["95", "3"]], [["101", "4"], ["105", "5"]], sequence=1, ts=1781654400000)
-    summary = book.summary(received_ts=1781654400012)
+    book.snapshot(
+        [["99", "2"], ["95", "3"]], [["101", "4"], ["105", "5"]], sequence=1, ts="2026-06-17T00:00:00Z"
+    )
+    summary = book.summary(received_ts="2026-06-17T00:00:00.012Z")
     assert summary["quote_usd_rate"] is None
     assert summary["depth"]["bid"]["p1"]["native"] == "2"
     assert summary["depth"]["bid"]["p1"]["usd"] is None
     frozen = book.frozen()
-    book.update([["99", "0"]], [], sequence=2, ts=1781654400013)
-    assert frozen.summary()["best_bid"] == "99"
-    assert book.summary()["best_bid"] == "95"
+    book.update([["99", "0"]], [], sequence=2, ts="2026-06-17T00:00:00.013Z")
+    assert frozen.summary(received_ts="2026-06-17T00:00:00.020Z")["best_bid"] == "99"
+    assert book.summary(received_ts="2026-06-17T00:00:00.020Z")["best_bid"] == "95"
 
 
 @pytest.mark.parametrize(
@@ -177,3 +179,11 @@ def test_capture_boundaries_require_anchor_timestamp_and_include_mirrored_window
     assert parse_time("2026-06-17T03:00:00Z") in points
     with pytest.raises(KeyError):
         capture_boundary_points("2026-06-17T04:00:00Z", {})
+
+
+@pytest.mark.parametrize("anchor", [{"ts": 1781654400000}, {"ts": False}, {"ts": "1781654400000"}])
+def test_capture_boundary_rejects_undeclared_epoch_anchor(anchor: dict[str, JsonValue]) -> None:
+    from tank.market.capture import capture_boundary_points
+
+    with pytest.raises((TypeError, ValueError)):
+        capture_boundary_points("2026-06-17T04:00:00Z", anchor)

@@ -4,6 +4,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
+from source_support import fixture_versions
 
 from tank.analysis.decisions import DecisionEngine
 from tank.scheduler import Scheduler
@@ -61,6 +62,7 @@ async def test_concentrated_sell_only_fires_weaker_watch_downgrade(open_call, ex
         None,
         SimpleNamespace(assess=assess),
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     for hour in (11, 12):
         await scheduler.eval_conditions({"cutoff": iso(start.replace(hour=hour, minute=1))})
@@ -145,6 +147,7 @@ async def fire_generated(condition, event, truth_rows):
         None,
         SimpleNamespace(assess=assess),
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     for hour in (11, 12):
         await scheduler.eval_conditions({"cutoff": iso(start.replace(hour=hour, minute=1))})
