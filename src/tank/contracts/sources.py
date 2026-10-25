@@ -348,6 +348,25 @@ class SourceEtherscanBudget(SourceBudgetEvidence, DocumentedRequestBudget):
         return self
 
 
+class SourceClientProtectionBudget(SourceBudgetEvidence):
+    provider: Literal["binance.www", "binance.vision"]
+    host: Literal["www.binance.com", "data.binance.vision"]
+    policy_kind: Literal["CLIENT_PROTECTION"]
+    documentation_status: Literal["NOT_CAPTURED"]
+    documented_requests: None
+    basis: str = Field(min_length=1)
+    scope: Literal["IP"]
+    period_s: int = Field(gt=0)
+    tank_request_budget: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def exact_public_host(self) -> Self:
+        expected = "www.binance.com" if self.provider == "binance.www" else "data.binance.vision"
+        if self.host != expected:
+            raise ValueError("Client protection provider must match its declared public host")
+        return self
+
+
 type SourceProviderBudget = Annotated[
     SourceSecBudget
     | SourceUncapturedRpsBudget
@@ -356,7 +375,8 @@ type SourceProviderBudget = Annotated[
     | SourceBybitBudget
     | SourceHyperliquidBudget
     | SourceDuckDuckGoBudget
-    | SourceEtherscanBudget,
+    | SourceEtherscanBudget
+    | SourceClientProtectionBudget,
     Field(discriminator="provider"),
 ]
 
