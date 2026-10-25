@@ -83,7 +83,7 @@ async def test_explicit_replay_session_boundaries(
         repo,
         settings,
         reaction_truth,
-        DecisionEngine(settings),
+        DecisionEngine(),
         versions=fixture_versions(),
         scheduler=reaction_scheduler,
         pages=recorded_page_access(load_inputs(path, settings)),

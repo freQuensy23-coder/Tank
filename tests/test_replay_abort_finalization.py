@@ -261,7 +261,7 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
             repo,
             settings,
             reaction_truth,
-            DecisionEngine(settings),
+            DecisionEngine(),
             http=http,
             versions=fixture_versions(),
             scheduler=reaction_scheduler,

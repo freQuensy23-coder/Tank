@@ -130,6 +130,9 @@ def reconcile_decision_watches(
     active: list[WatchCondition] = []
     used: set[str] = set()
     signatures: set[tuple[str, str]] = set()
+    proposal_ids = [proposal.cond_id for proposal in command.proposals]
+    if len(proposal_ids) != len(set(proposal_ids)):
+        raise ValueError("Allocated decision watch identities must be unique")
     for proposal in command.proposals:
         signature = _signature(proposal.role, proposal.expr)
         if signature in signatures:
@@ -157,6 +160,8 @@ def reconcile_decision_watches(
                 )
             )
         else:
+            if proposal.cond_id in conditions:
+                raise ValueError("A new watch cannot overwrite an existing lifecycle identity")
             deadline = expiry
             if isinstance(proposal.expr, WatchLeaf) and proposal.expr.due_at is not None:
                 milestone = offset_schedule(
@@ -170,6 +175,8 @@ def reconcile_decision_watches(
                 )
                 if parse_iso_time(_known_stamp(milestone)) < parse_iso_time(_known_stamp(deadline)):
                     deadline = milestone
+            if parse_iso_time(_known_stamp(deadline)) <= at:
+                raise ValueError("A new armed watch requires an unexpired actual deadline")
             predecessor = max(spent, key=_fired_at) if spent else None
             generation = identity.generation
             condition = WatchCondition(

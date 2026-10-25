@@ -3480,7 +3480,7 @@ async def test_assessment_dispatch_creates_real_reaction_jobs(tmp_path: Path) ->
             repo,
             settings,
             services.truth,
-            DecisionEngine(settings),
+            DecisionEngine(),
             versions=fixture_versions(),
             scheduler=services.scheduler,
             pages=LivePageAccess(services.admission),

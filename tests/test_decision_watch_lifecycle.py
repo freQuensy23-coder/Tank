@@ -199,3 +199,35 @@ def test_open_call_and_declared_milestone_bound_the_new_watch_expiry() -> None:
     assert result.active[0].expires_at == iso(NOW + timedelta(days=1))
     assert result.active[1].expires_at == iso(NOW + timedelta(hours=2))
     assert result.shown == ("new-condition", "milestone")
+
+
+def test_rearming_cannot_overwrite_the_durable_firing_identity() -> None:
+    prior = condition("spent", fired=True)
+    with pytest.raises(ValueError, match="overwrite an existing lifecycle identity"):
+        reconcile_decision_watches(
+            command(proposal("spent")), [prior], [], now=NOW, policy=policy(), prepared_condition_ids=None
+        )
+    assert prior.status == "FIRED" and prior.consumed_by is None
+
+
+def test_past_milestone_grace_cannot_be_recorded_as_a_new_armed_watch() -> None:
+    due = iso(NOW - timedelta(hours=2))
+    expired = WatchProposal(
+        cond_id="expired",
+        role="DOWNGRADE",
+        human_text="Observe actual milestone failure",
+        expr=WatchLeaf(
+            metric="milestone.outcome",
+            window="EVENT",
+            op="==",
+            value="FAILED",
+            persist=WatchPersistence(count=1, unit="consecutive_windows"),
+            due_at=due,
+            due_at_prec="EXACT",
+            due_at_prec_reason=None,
+        ),
+    )
+    with pytest.raises(ValueError, match="unexpired actual deadline"):
+        reconcile_decision_watches(
+            command(expired), [], [], now=NOW, policy=policy(), prepared_condition_ids=None
+        )
