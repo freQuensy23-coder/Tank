@@ -1652,6 +1652,68 @@
         "test_admission_factory_requires_a_declared_positive_integer_cap",
         "test_cap_queues_turns_in_order_never_drops_and_running_session_bypasses"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_inputs.py",
+          "symbol": "NativeInputResponse",
+          "line": 54
+        },
+        {
+          "path": "src/tank/agents/native_inputs.py",
+          "symbol": "NativeSentUserMessage",
+          "line": 30
+        },
+        {
+          "path": "src/tank/agents/native_inputs.py",
+          "symbol": "NativeSentToolResult",
+          "line": 35
+        }
+      ],
+      "kind": "documented native response absence",
+      "reason": "The pinned session-events sent schema permits omitted response data and optional nullable processed_at, is_error and session_thread_id. Missing tool-result content is supported, while explicit null content/data is rejected. Omitted data and an empty list produce distinct named unreported observations; malformed reported entries never become absence.",
+      "validation": [
+        "test_provider_can_omit_acknowledged_events",
+        "test_malformed_reported_acknowledgment_cannot_claim_unreported_acceptance"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_inputs.py",
+          "symbol": "parse_native_input",
+          "line": 76
+        },
+        {
+          "path": "src/tank/agents/native_inputs.py",
+          "symbol": "observe_native_input",
+          "line": 80
+        }
+      ],
+      "kind": "native JSON adapter only",
+      "reason": "Input dictionaries are exact persisted request/HTTP JSON documents at the adapter boundary. They decode into a closed one-event request and discriminated sent-event models; services receive named acknowledgment variants. The synthetic response helper serializes the actual posted model and never fabricates missing provider identity.",
+      "validation": [
+        "test_one_executable_input_is_serialized_without_invented_optional_fields",
+        "test_reported_user_event_binds_the_native_input_identity",
+        "test_tool_continuation_acknowledgment_binds_the_posted_call"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.accepted_input_id",
+          "line": 721
+        }
+      ],
+      "kind": "verified unreported native ownership",
+      "reason": "Only a typed unreported acknowledgment returns None. A present acknowledgment must carry one supported event with a nonempty native ID and matching posted type/tool identity before any acceptance write. Initial input, tool continuation and retry all use the same adapter.",
+      "validation": [
+        "test_malformed_acknowledgment_cannot_commit_input_ownership",
+        "test_retained_old_exhausted_new_retrying_sequence_waits_for_actual_outcome",
+        "test_rest_ack_timeout_retains_result_and_reuses_native_ack_body"
+      ]
     }
   ]
 }

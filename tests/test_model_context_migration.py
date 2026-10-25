@@ -7,6 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture, source_record_fixture
+from native_input_fixtures import acknowledge_native_input
 from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_http_admission
 
@@ -81,7 +82,7 @@ class NativeSession:
         if self.lose_result and body["events"][0]["type"] == "user.custom_tool_result":
             self.lose_result = False
             raise httpx.ReadError("lost acceptance", request=request)
-        return httpx.Response(200, json={"data": [{"id": "accepted_input"}]})
+        return httpx.Response(200, json=acknowledge_native_input(request, "accepted_input"))
 
 
 @pytest.mark.parametrize(

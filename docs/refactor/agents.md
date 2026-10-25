@@ -588,3 +588,29 @@ Qualified proof: 398 owned units pass in 20.39 seconds; all 80 actual native/Mem
 ### Admission combined with the qualified runtime resource lifetime
 
 The ready admission branch normally merges exact parent 679c694c at fa605387. The sole source conflict was the Runtime import block; budget backend/scope/binding types and the new scout/clock codec imports are both retained. Required per-runtime backend selection, bind-before-intake and exact lease release coexist with capacity preparation, typed admission and owned clock updates. All seven independent strict targets remain green. The affected combined runtime/admission/scout cohort passes 78 units in 6.62 seconds and 12 actual Memory/PostgreSQL/native cases in 36.07 seconds, zero skips; no source behavior was dropped to resolve the merge.
+
+## Native executable-input acknowledgment increment
+
+agents.native_inputs models the Tank-owned user-message and custom-tool-result
+request shapes, a one-event batch, the pinned sent-event response variants, and
+named accepted/unreported/empty observations. SessionService.post_input is the
+shared adapter for initial durable messages, tool-result continuations and host
+retries. A reported event must have its actual tag and identity; tool results must
+name the posted call. Malformed, explicit-null or multiple acknowledgments fail
+before sent_at, returned_at, retry ownership or native-input lineage acceptance.
+
+The pinned provider schema permits absent data, an empty response list, an empty
+user content list and nullable/omitted processing metadata. These actual protocol
+cases remain explicit; no domain estimate or accepted identity is manufactured.
+Synthetic HTTP endpoints now echo validated posted inputs instead of returning
+id-only objects that the actual sent-event schema does not produce. Immutable
+retained payloads were not edited. Real initial/retry write-boundary regressions
+also prove malformed provider values do not appear in rendered validation errors.
+
+Independent strict checking passes native_inputs.py, test_native_input_contracts.py
+and native_input_fixtures.py. All 409 owned unit cases pass. The actual owner
+integration scan passed 77 cases and identified one remaining Scout synthetic
+id-only endpoint; after that fixture was corrected, its actual PostgreSQL case
+passed independently. Default mypy accepts sessions.py; whole SessionService and
+the legacy consumer test modules are not independent strict-complete. Discovery,
+creation, native history and complete durable session/journal typing remain open.

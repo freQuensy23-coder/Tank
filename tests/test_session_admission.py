@@ -14,6 +14,7 @@ from datetime import timedelta
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture
+from native_input_fixtures import acknowledge_native_input
 from pydantic import JsonValue
 from pydantic_settings import SettingsConfigDict
 
@@ -213,7 +214,7 @@ async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasse
             sid = request.url.path.split("/")[3]
             text = json.loads(body["events"][0]["content"][0]["text"])
             posted.append((sid, text["item"]["text"].removeprefix("Item ")))
-            return httpx.Response(200, json={"data": [{"id": "in_" + uuid.uuid4().hex[:6]}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, "in_" + uuid.uuid4().hex[:6]))
 
         jobs = {}
         enqueued_at = utcnow() - timedelta(seconds=1)

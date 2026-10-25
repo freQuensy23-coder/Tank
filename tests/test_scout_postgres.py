@@ -13,6 +13,7 @@ from pathlib import Path
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture
+from native_input_fixtures import acknowledge_native_input
 from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_http_admission
 
@@ -92,7 +93,7 @@ class FakeOpenMA:
         self.posted.append((request.url.path, body))
         if request.url.path == "/v1/sessions":
             return httpx.Response(200, json={"id": "ses_scout_" + uuid.uuid4().hex[:8]})
-        return httpx.Response(200, json={"data": [{"id": "in_" + uuid.uuid4().hex[:8]}]})
+        return httpx.Response(200, json=acknowledge_native_input(request, "in_" + uuid.uuid4().hex[:8]))
 
 
 def scout_settings(tmp_path: Path):

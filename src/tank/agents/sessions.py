@@ -23,6 +23,14 @@ from tank.agents.admission import SessionAdmission
 from tank.agents.admission_repository import admission_candidate, build_admission
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
 from tank.agents.context_binding import ContextBinding
+from tank.agents.native_inputs import (
+    AcceptedNativeInput,
+    NativeInput,
+    NativeInputAcknowledgment,
+    NativeInputRequest,
+    observe_native_input,
+    parse_native_input,
+)
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.provenance import resolve_agent_provenance
 from tank.agents.security import redact_tool_arguments
@@ -659,12 +667,7 @@ class SessionService:
         intent = next(row for row in session["message_log"] if row["message_id"] == key)
         if intent.get("remote_event_id"):
             return session
-        accepted = await self.request(
-            "POST",
-            f"sessions/{sid}/events",
-            json={"events": [copy.deepcopy(intent["body"])]},
-            idem="message:" + key,
-        )
+        accepted = await self.post_input(sid, parse_native_input(intent["body"]), idem="message:" + key)
         accepted_at, identity = self.clock_timestamp(), self.accepted_input_id(accepted)
         async with self.repo.lock("session:" + sid):
             session = await self.repo.get("ops.agent_sessions", sid)
@@ -705,19 +708,19 @@ class SessionService:
         if session.get("pending_retry_event"):
             await self.process_event(sid, session["pending_retry_event"])
 
+    async def post_input(self, sid: str, body: NativeInput, *, idem: str) -> NativeInputAcknowledgment:
+        response = await self.request(
+            "POST",
+            f"sessions/{sid}/events",
+            json=NativeInputRequest(events=[body]).model_dump(mode="json", exclude_none=True),
+            idem=idem,
+        )
+        return observe_native_input(response, body)
+
     @staticmethod
-    def accepted_input_id(response):
-        """Tank sends one executable input per POST; native execution uses its ID."""
-        events = response.get("data") if isinstance(response, dict) else None
-        if (
-            isinstance(events, list)
-            and len(events) == 1
-            and isinstance(events[0], dict)
-            and isinstance(events[0].get("id"), str)
-            and events[0]["id"]
-        ):
-            return events[0]["id"]
-        return None
+    def accepted_input_id(response: NativeInputAcknowledgment) -> str | None:
+        """Only a validated reported input establishes native execution ownership."""
+        return response.event_id if isinstance(response, AcceptedNativeInput) else None
 
     async def native_input_owner(self, session, execution_id):
         """Resolve exact accepted-input lineage, including tool-result continuations."""
@@ -1555,9 +1558,7 @@ class SessionService:
                 stored["native_result_body"] = copy.deepcopy(body)
                 await self.repo.put("ops.tool_calls", key, stored)
             body = copy.deepcopy(stored["native_result_body"])
-        accepted = await self.request(
-            "POST", f"sessions/{sid}/events", json={"events": [body]}, idem="tool:" + sha256(key)
-        )
+        accepted = await self.post_input(sid, parse_native_input(body), idem="tool:" + sha256(key))
         async with self.repo.lock("tool:" + key):
             stored.update(
                 remote_event_id=self.accepted_input_id(accepted),
@@ -1842,10 +1843,9 @@ class SessionService:
                         )
                         durable["pending_retry_event"] = copy.deepcopy(event)
                         await put_owned_session(self.repo, sid, durable)
-                    accepted = await self.request(
-                        "POST",
-                        f"sessions/{sid}/events",
-                        json={"events": [body]},
+                    accepted = await self.post_input(
+                        sid,
+                        parse_native_input(body),
                         idem="turn-retry:" + sid + ":" + message_id,
                     )
                     if active:
