@@ -29,8 +29,12 @@ jobs:
         run: uv run --frozen --extra dev python scripts/ci/stage_retained_fixtures.py
       - name: Check CI helper style
         run: uv run --frozen --extra dev ruff check scripts/ci
+      - name: Install versioned X worker dependencies
+        run: uv pip install --python .venv/bin/python -r apify/x-reader/requirements.txt
       - name: Run all offline units
         run: uv run --frozen --extra dev pytest -q -n auto --dist loadfile --junitxml=.test-results/unit.xml
+      - name: Package the exact selected X worker source
+        run: python3 scripts/deploy/apify_deploy.py package "$(git rev-parse HEAD)" .test-results/x-worker-release
       - name: Enforce unit duration and zero skips
         run: uv run --frozen --extra dev python scripts/check-unit-timings.py .test-results/unit.xml
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -69,6 +73,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: "24.22.0"
@@ -85,6 +90,8 @@ jobs:
           cache-dependency-path: capture/go.sum
       - name: Prepare the isolated ClickHouse schema
         run: uv run --frozen --extra dev python scripts/ci/prepare_clickhouse.py
+      - name: Install versioned X worker dependencies
+        run: uv pip install --python .venv/bin/python -r apify/x-reader/requirements.txt
       - name: Prepare the pinned Go modules and offline build cache
         working-directory: capture
         run: |
