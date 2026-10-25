@@ -86,8 +86,8 @@ async def test_transient_http_retry_stops_on_first_success(
 ):
     attempts = sequence(reader, monkeypatch, [http_error() for _ in range(success_on - 1)] + [HTML], clock)
     rows, size = await reader.fetch_profile("alice", 100)
-    assert [row["id"] for row in rows] == ["100"]
-    assert rows[0]["text"] == "Hello" and size == len(HTML)
+    assert [row.id for row in rows] == ["100"]
+    assert rows[0].text == "Hello" and size == len(HTML)
     assert [attempt[0] for attempt in attempts] == expected_times
     assert clock.waits == expected_waits
     assert all(request.method == "GET" and request.content == b"" for _, request, _ in attempts)
@@ -126,7 +126,7 @@ async def test_connection_errors_retry_and_parser_errors_do_not(reader, monkeypa
     attempts = sequence(
         reader, monkeypatch, [httpx.ConnectError("reset"), httpx.ReadTimeout("timeout"), HTML], clock
     )
-    assert (await reader.fetch_profile("alice", 100))[0][0]["id"] == "100"
+    assert (await reader.fetch_profile("alice", 100))[0][0].id == "100"
     assert [a[0] for a in attempts] == [0, 1, 6]
     attempts = sequence(reader, monkeypatch, [b"<title>login</title>"], clock)
     with pytest.raises(reader.ProfileFailure) as failure:
@@ -168,6 +168,7 @@ def test_response_capture_is_bounded_and_preserves_encoding(reader, kind):
     if "gzip" in kind:
         headers["Content-Encoding"] = "gzip"
     evidence = reader.response_evidence(http_error(headers=headers), wire)
+    evidence = evidence.model_dump(mode="json", exclude_unset=True)
     captured = (
         base64.b64decode(evidence["body"])
         if evidence["bodyEncoding"] == "base64"
@@ -206,6 +207,7 @@ async def test_partial_error_stream_preserves_prefix_and_closes_transport(reader
 
 def test_partial_error_response_reports_known_missing_bytes(reader):
     evidence = reader.response_evidence(http_error(headers={"Content-Length": "20"}), b"prefix")
+    evidence = evidence.model_dump(mode="json", exclude_unset=True)
     assert evidence["body"] == "prefix" and evidence["bodyTruncated"]
     assert evidence["omittedWireBytes"] == 14
 
@@ -223,6 +225,7 @@ def test_diagnostics_exclude_credentials_even_if_echoed_by_upstream(reader, monk
         ),
         b"secret-apify-value\nCookie: session-secret\nAuthorization: Bearer auth-secret",
     )
+    evidence = evidence.model_dump(mode="json", exclude_unset=True)
     serialized = json.dumps(evidence)
     assert all(secret not in serialized for secret in ("secret-apify-value", "session-secret", "auth-secret"))
     assert evidence["headers"] == {"content-type": "text/plain", "x-request-id": "safe-id"}
@@ -264,6 +267,7 @@ async def test_recovered_actor_has_no_terminal_failure(reader, monkeypatch, cloc
 )
 def test_credential_value_redaction_preserves_adjacent_response_evidence(reader, raw, expected):
     evidence = reader.response_evidence(http_error(), raw)
+    evidence = evidence.model_dump(mode="json", exclude_unset=True)
     safe = (
         base64.b64decode(evidence["body"])
         if evidence["bodyEncoding"] == "base64"
