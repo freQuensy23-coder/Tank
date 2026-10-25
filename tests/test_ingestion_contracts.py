@@ -968,3 +968,46 @@ def test_filing_registry_projection_keeps_genuine_optional_secondary_name() -> N
     assert labels.tokens[0].name == "Example Protocol"
     assert labels.entities[0].names == ["Example Protocol"]
     assert labels.entities[0].name is None
+
+
+def test_source_escalation_requires_declared_state_and_window() -> None:
+    from tank.contracts.sources import SourceEscalationControlView
+
+    wire: dict[str, JsonValue] = {
+        "source_id": "S15",
+        "status": "ACTIVE",
+        "starts_at": "2026-10-25T00:00:00Z",
+        "expires_at": "2026-10-25T00:15:00Z",
+    }
+    for field in ("status", "starts_at", "expires_at"):
+        incomplete = dict(wire)
+        del incomplete[field]
+        with pytest.raises(ValidationError):
+            SourceEscalationControlView.from_document(incomplete)
+    with pytest.raises(ValidationError):
+        SourceEscalationControlView.from_document({**wire, "expires_at": wire["starts_at"]})
+    for terminal in ("CONFIRMED", "CANCELLED"):
+        with pytest.raises(ValidationError):
+            SourceEscalationControlView.from_document({**wire, "status": terminal})
+
+
+def test_source_escalation_confirmation_closes_exact_half_open_window() -> None:
+    from tank.contracts.sources import SourceEscalationControlView
+    from tank.util import parse_iso_time
+
+    wire: dict[str, JsonValue] = {
+        "source_id": "S15",
+        "status": "ACTIVE",
+        "starts_at": "2026-10-25T00:00:00Z",
+        "expires_at": "2026-10-25T00:15:00Z",
+    }
+    control = SourceEscalationControlView.from_document(wire)
+    assert control.active_at(parse_iso_time("2026-10-25T00:00:00Z"))
+    assert not control.active_at(parse_iso_time("2026-10-25T00:15:00Z"))
+    confirmed = SourceEscalationControlView.from_document(
+        {
+            **wire,
+            "confirmed_at": "2026-10-25T00:01:00Z",
+        }
+    )
+    assert not confirmed.active_at(parse_iso_time("2026-10-25T00:02:00Z"))

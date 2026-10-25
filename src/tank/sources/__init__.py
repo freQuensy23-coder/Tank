@@ -30,6 +30,7 @@ from tank.contracts.sources import (
     SourceApiLimitsConfiguration,
     SourceConfiguration,
     SourceDefinition,
+    SourceEscalationControlView,
     SourceFilingRegistryView,
 )
 from tank.http_admission import ConfiguredHttpAdmission
@@ -41,7 +42,7 @@ from tank.sources.http_client import RequestStarted, SourceHttpTransport
 from tank.sources.ingestion import SourceIngestion
 from tank.sources.raw_store import RawItemStorage
 from tank.sources.xsensor import XSensor
-from tank.util import iso, parse_iso_time, parse_time, utcnow
+from tank.util import iso, parse_iso_time, utcnow
 
 
 def tls_context() -> ssl.SSLContext:
@@ -327,18 +328,15 @@ class SourceService:
         if self.owns_http:
             await self.http.aclose()
 
-    async def is_escalated(self, source_id, *, now=None):
-        moment = parse_time(now) if now is not None else utcnow()
-        rows = await self.repo.list("ops.source_escalations", filters={"source_id": source_id}, limit=10000)
-        return any(
-            row.get("status", "ACTIVE") == "ACTIVE"
-            and not row.get("confirmed_at")
-            and not row.get("cancelled_at")
-            and row.get("starts_at") is not None
-            and row.get("expires_at") is not None
-            and parse_time(row["starts_at"]) <= moment < parse_time(row["expires_at"])
-            for row in rows
-        )
+    async def is_escalated(self, source_id: str, *, now: datetime | str | None = None) -> bool:
+        moment = self.now() if now is None else parse_iso_time(now)
+        controls = [
+            SourceEscalationControlView.from_document(row)
+            async for row in self.repo.iter_all("ops.source_escalations", filters={"source_id": source_id})
+        ]
+        if any(control.source_id != source_id for control in controls):
+            raise ValueError("Source escalation identity conflicts with its requested source")
+        return any(control.active_at(moment) for control in controls)
 
     async def control_once(self, source_id):
         """Re-read durable controls independently of the normal HTTP poll cadence."""

@@ -549,3 +549,24 @@ Final scoped transport proof: 206 source/admission units pass in 3.11s after
 the blank failed-run evidence edge is closed; the three completed source modules
 remain strict-mypy clean. This adds no cross-owner constructor requirement beyond
 the already-coordinated SourceService budget port.
+
+
+### Required source cadence controls
+
+`SourceEscalationControlView` is the narrow persisted-control projection consumed
+by `SourceService.is_escalated`. Source identity, lifecycle status, aware start
+and expiry are required; missing status no longer becomes ACTIVE, and absent
+clock fields no longer silently disable or fabricate a window. Confirmed and
+cancelled statuses require their actual terminal clock. Terminal markers remain
+genuinely absent during ACTIVE phase; a present terminal marker suppresses active
+reads even if a retained row still carries the older ACTIVE label. The declared
+window must be positive and remains half-open at expiry.
+
+The reader validates all source-filtered rows through the declared projection and
+rejects identity mismatch. It uses iter_all rather than truncating control
+eligibility at an arbitrary 10,000 rows. Optional `now=None` selects the actual
+service operational clock; supplied instants must be aware ISO/datetime values.
+No current-time fallback replaces a missing persisted control clock.
+The existing actual assessment/milestone producer-to-15-second-read tests remain
+in the source cohort. Before final terminal/iterator checks, 208 source/admission
+units passed in 3.19s; contracts strict mypy passes. Final scoped proof follows.
