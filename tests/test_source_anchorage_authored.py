@@ -124,7 +124,7 @@ async def test_normal_anchorage_poll_uses_actual_retained_bodies_and_source_inge
         )
         try:
             outcome = await service.poll_once("S28")
-            assert outcome["status"] == "HEALTHY" and outcome["items"] == 12, outcome
+            assert outcome.status == "HEALTHY" and outcome.items == 12, outcome
             items = await repo.list("ingest.source_items")
             assert len(items) == 12
             for original, payload, quote in fixtures:

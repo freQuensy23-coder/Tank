@@ -10,6 +10,7 @@ from typing import Protocol
 from pydantic import Field, JsonValue
 
 from tank.contracts import DomainModel
+from tank.contracts.source_checkpoints import ReadCounter as ReadCounter
 from tank.contracts.sources import SourceConfiguration, SourceDefinition
 from tank.util import clock_iso
 
@@ -24,11 +25,6 @@ class SourceFeedInventory(DomainModel):
 
 class CheckpointReader(Protocol):
     async def get(self, collection: str, key: str) -> dict[str, JsonValue] | None: ...
-
-
-class ReadCounter(DomainModel):
-    ok: int = Field(ge=0)
-    failed: int = Field(ge=0)
 
 
 class FeedReads(DomainModel):

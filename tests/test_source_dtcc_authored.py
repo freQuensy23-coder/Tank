@@ -132,7 +132,7 @@ async def test_normal_dtcc_poll_uses_actual_retained_release_bodies(tmp_path: Pa
         )
         try:
             outcome = await service.poll_once("S08")
-            assert outcome["status"] == "HEALTHY" and outcome["items"] == 2, outcome
+            assert outcome.status == "HEALTHY" and outcome.items == 2, outcome
             rows = await repo.list("ingest.source_items")
             for _, original, payload in fixtures:
                 row = next(x for x in rows if x["external_id"] == original["external_id"])

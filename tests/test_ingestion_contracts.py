@@ -288,7 +288,7 @@ async def test_real_source_record_roundtrips_and_validates_processing_transition
         source = SourceService(
             repo, configuration, http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
         )
-        assert (await source.poll_once("S30"))["items"] == 1
+        assert (await source.poll_once("S30")).items == 1
     [record] = await repo.list("ingest.source_items")
     item = parse_feed_source_item(record)
     assert item.storage_record() == record
@@ -1036,3 +1036,10 @@ def test_source_escalation_confirmation_closes_exact_half_open_window() -> None:
         }
     )
     assert not confirmed.active_at(parse_iso_time("2026-10-25T00:02:00Z"))
+
+
+def test_source_poll_summary_cannot_hide_failed_reads_as_healthy() -> None:
+    from tank.contracts.sources import PolledSource
+
+    with pytest.raises(ValidationError, match="cannot claim healthy"):
+        PolledSource(source_id="S30", items=0, errors=["HTTP 503"], status="HEALTHY")

@@ -745,6 +745,78 @@ configured memory engine. No helper grants admission or allocates an unrelated
 private quota ledger. The consumer selection passes 222 unit cases and four
 actual integration cases, with zero skips; scheduling helpers and source-page
 tests pass strict typing.
+### Independent next branch: source workflow outcomes (not activated)
+
+The independent source-state branch replaces actual acquire/drain count records
+with `FeedPollOutcome`, and the aggregate with `PolledSource | UnconfiguredSource`.
+Producers and aggregation use model attributes; no model implements dictionary
+access. An explicitly empty feed configuration returns UNCONFIGURED rather than
+claiming a healthy read. Required item counts/errors remain supplied by the actual
+workflow, and a nonempty error list cannot validate as healthy.
+
+Owned callers now consume attributes, retaining their original raw evidence,
+restart, malformed sibling, concurrency and queue assertions. The existing
+disabled/retired Binance-source regression now expects the honest unconfigured
+outcome and still verifies no reconstruction or I/O. Source configuration and
+the X tests pass strict mypy; the previous five untyped poll-call dependencies
+in that test module are closed. 209 source/admission units pass in 3.24s.
+
+This is deliberately not part of held head 477d58e. Two quality-owned E2E map
+subscriptions still need a later paired attribute migration; full integration
+is not claimed. Checkpoint ownership/state schemas and unknown prior Coinbase
+flags remain the next work inside this independent branch.
+
+
+### Independent next branch: explicit checkpoint operation ownership
+
+Every checkpoint write now receives the actual `SourceDefinition` operation.
+`SourcePoller.save` never derives source identity from key text or the number of
+configured sources. Existing contradictory ownership rejects before persistence;
+new checkpoint ownership comes from the required operation object. Opaque storage
+addresses are addresses, not evidence of a publisher identity.
+
+HTTP reads also receive that source context. The Go request's source_id and the
+receipt callback use the actual definition, not key.split(). The application
+must explicitly select whether a read persists feed HTTP evidence. The generic
+reader accepts a required nullable evidence hook: None means a detail/history
+read returns its typed receipt to its owning backlog instead of mutating the
+feed checkpoint. Primary versus detail behavior no longer depends on matching a
+generic key regex. The actor's request-start callback now marks the owning feed
+after admission and before actual I/O, preserving cadence when a provider block
+delays the paid run.
+
+Evidence before final start-hook assertion: 211 source/admission units pass in
+3.05s. The opaque/misleading-key test uses two configured sources and proves
+ownership follows the explicit definition; contradictory rows refuse with no
+write. Reader tests prove an opaque feed address persists evidence when explicitly
+selected, while a feed-looking detail address does not. Reader/X adapter strict
+checks pass. Full checkpoint record schemas and generic clock annotation remain
+open in this independent branch; these changes do not imply that migration is done.
+
+
+### Independent next branch: unknown prior Coinbase restriction flags
+
+The available imported baseline (0d3e0cb2, retained in 1216b4b) already contains
+the status_flags parser and the history backfill; 23aaac8b moved that diff work
+into a thread. Its regression simulates an older snapshot by removing the
+field. This establishes migration intent, not any actual prior flag values.
+Copying the current flags into that history therefore lacks evidentiary support.
+
+The backfill is removed. `CoinbaseRestrictionFlags` is a strict named five-flag
+facet: None means an unreported prior/current value, never false. A flag transition
+requires both observations. A newly observed flag alone updates the real snapshot
+baseline without claiming a market-state change. Existing proven false-to-true/
+true-to-false restriction changes still emit source items. If another real
+instrument state changes while prior flags are absent, new change evidence writes
+status_flags:null for that unknown side; it never inserts the current flags into
+the past. Historical input maps and retained raw bytes remain unchanged.
+
+Evidence: 214 source/admission units pass in 3.39s, including existing live flag
+transition, restart/baseline and dedup regressions plus explicit unknown-history
+evidence and input-immutability tests. The named facet is strict-mypy clean and
+Ruff passes touched files. Full instrument snapshot/parser record typing remains
+open; this is a bounded correction of a concrete evidence defect, not a claim
+that the entire polling module is complete.
 
 The paired transition has now been qualified on immutable combined checkpoint
 9f35afaa: 515 owned unit cases passed in 6.06 seconds at its unchanged application
@@ -765,3 +837,79 @@ and new structured callers contend on one canonical lock; capacity remains each
 caller's explicit policy input. Distinct periods retain distinct constraints.
 There is no claim of an authoritative minimum capacity across stale deployments
 or continuity when a configured period is changed.
+
+## Instrument snapshot ownership migration
+
+contracts.source_checkpoints now owns the required instrument observation
+schema, associative symbol-indexed snapshot, observed Coinbase restriction flags,
+and the inward ReadCounter. read_report.ReadCounter is a temporary import
+reexport; the source-only flag implementation is retired. Snapshot validation
+rejects missing observation fields and mismatched symbol keys, hides raw inputs
+in validation errors, and verifies venue/market ownership against the actual feed
+before decisions.
+
+InstrumentObservation.base, quote, and contract_type are required nullable
+facts: OKX swap observations omit the base/quote projection, Hyperliquid
+universe rows omit an explicit quote, and spot listings omit contract type.
+InstrumentObservation.status is required nonempty text; an omitted provider
+status fails validation instead of becoming an unknown healthy snapshot. They are not filled from symbol spelling or
+market assumptions. CoinbaseInstrument.status_flags=None means no historical
+flag collection; each nullable flag means that specific flag was absent. Only
+two known observations of the same flag establish a flag change. Unknown prior
+flags remain explicitly unknown in event evidence.
+
+The pure sources.instruments.instrument_changes consumes validated snapshots
+and actual InstrumentPage evidence and returns typed instrument discoveries.
+It refuses an owner mismatch or a change without response evidence. Composite
+action tuples group equivalent transitions; symbol maps retain associative
+identity, and symbol-to-page-index maps preserve the actual supporting response.
+JSON dictionaries exist only when hashing the established serialized identity or
+rendering before/after evidence. The grouping digest and external identity retain
+the existing canonical algorithm, including a dedicated parity assertion.
+
+The poller validates both newly parsed and persisted instrument snapshots before
+comparison and serializes models only at checkpoint storage. It no longer mutates
+or copies current restriction flags into prior history. Tests declare synthetic
+unknown currencies/contract metadata explicitly; this fixture constructor is not
+a production source fallback. The selected source/contract cohort passes 152
+unit cases; the new contract, pure comparison, fixture helper, and behavioral
+tests pass strict typing. Full feed lifecycle checkpoints, pending batches,
+parser wire variants, and recursive clock annotation remain open and are not
+claimed complete by this instrument slice.
+
+The actual source workflow regression additionally admits a valid mocked provider
+response, stores its baseline, then observes a response missing required status.
+The result is DEGRADED with no new source item; the prior instrument checkpoint
+is exactly equal as a decoded stored document, and the validation report omits an
+unrelated private raw field. Twelve focused instrument cases now cover this
+workflow alongside identity/parity, required fields, and actual page ownership.
+
+
+At canonical source-state checkpoint 29195f2d the full owned selection passed
+533 unit cases in 6.86 seconds and 38 actual integration cases in 7.60 seconds,
+with zero skips. Quality's two typed-outcome E2E caller changes preserved the
+four actual workflows and passed all four cases in 10.85 seconds; the exact
+consumer was merged normally into 10c7b8aa. These checks qualify the explicit
+owner/outcome and instrument tranche, not the remaining full checkpoint/parser
+migration. The ready quota/HTTP checkpoint remains separately preserved.
+
+## X range boundary preservation
+
+XSensor.scan now retains a previously checkpointed account cursor when that
+account reports history_gap=True, even if the response offers a higher cursor.
+Returned posts and their exact run bytes are retained; the next actual request
+still asks from the prior boundary. Only a complete successful account report
+can advance that existing range. Cursor-regression and missing-account/error
+validation continue to run.
+
+The no-prior-cursor branch retains the explicit baseline policy: it establishes
+the first observed head, emits no historical posts, and still reports the actor's
+gap. It does not claim a completed historical range before monitoring began.
+The new regression performs two real MockTransport requests: the partial run
+offers cursor 110 over checkpoint 100, the follow-up still requests 100 and
+returns the previously missing 105, and only then commits 110. Exact response
+bytes remain attached to the respective post observations.
+
+All 20 X adapter cases pass with zero skips, including both new boundary/baseline
+cases; source and tests pass strict typing and Ruff. This is independent of the
+unactivated pending checkpoint/quarantine work.

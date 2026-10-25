@@ -512,7 +512,7 @@ async def test_full_sse_pipeline_postgres(
                 text += " The synthetic fee burn is now live and fees accrued are burned."
             now = clock_iso()
             polled = await source.poll_once("S30")
-            assert polled["status"] == "HEALTHY" and polled["items"] == 1, polled
+            assert polled.status == "HEALTHY" and polled.items == 1, polled
             item = (await repo.list("ingest.source_items", filters={"external_id": sid}))[0]
             sha = item["raw_sha256"]
             pipeline = Pipeline(
@@ -826,7 +826,7 @@ async def test_full_sse_pipeline_postgres(
                 source = SourceService(
                     repo, settings, versions=versions, budgets=admission.budgets, http=http
                 )
-                assert (await source.poll_once("S30"))["status"] == "HEALTHY"
+                assert (await source.poll_once("S30")).status == "HEALTHY"
                 denial_item = (await repo.list("ingest.source_items", filters={"external_id": feed_guid}))[0]
                 pipeline = Pipeline(
                     repo, settings, progress=DisabledSourceProgress(), versions=versions, http=http
