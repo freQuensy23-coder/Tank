@@ -8,6 +8,7 @@ from pydantic import Field, JsonValue
 
 from tank.agents.native_sessions import NativeSessionEndpoint
 from tank.contracts import DomainModel
+from tank.contracts.scalars import TrueFlag
 
 type NativeLifecycle = Literal["rescheduling", "running", "idle", "terminated"]
 
@@ -24,7 +25,7 @@ class NativeSessionState(NativeSessionReference):
 
 class NativeSessionMissing(NativeSessionReference):
     kind: Literal["MISSING"]
-    missing: Literal[True]
+    missing: TrueFlag
 
 
 type NativeSessionLookup = NativeSessionState | NativeSessionMissing

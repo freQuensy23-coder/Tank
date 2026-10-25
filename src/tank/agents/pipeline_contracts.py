@@ -9,6 +9,7 @@ from pydantic import Field, JsonValue, field_serializer, model_validator
 from tank.agents.jev import JevBinding, JevQuestion, JevUsage
 from tank.analysis.identity import EntityIdentity, TokenIdentity
 from tank.contracts import DomainModel
+from tank.contracts.scalars import ZeroInt
 from tank.time_precision import Timestamp
 
 type ClassificationName = Literal["relevant", "same_event"]
@@ -85,7 +86,7 @@ class JevScoreRecord(DomainModel):
     output_tokens: int | None = Field(ge=0)
     effort: None
     stop_reason: Literal["NON_GENERATIVE_CLASSIFICATION"]
-    web_searches: Literal[0]
+    web_searches: ZeroInt
     missing_fields: MissingClassificationFields
     cost_usd: Decimal | None = Field(ge=0)
     cost_reason: str | None
