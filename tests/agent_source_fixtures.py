@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Literal
 from urllib.parse import quote
 
 from pydantic import JsonValue
@@ -139,3 +140,32 @@ def declared_versions_fixture(
 ) -> ResolvedVersionIdentity:
     """Declare the synthetic producer identity instead of reading runtime marker defaults."""
     return ResolvedVersionIdentity(config_version=config_version, code_version=code_version)
+
+
+def native_tool_arguments_fixture(
+    tool: Literal["record_event", "fetch_page", "get_market_truth"],
+) -> dict[str, JsonValue]:
+    """Declare valid external tool inputs for tests of transport and transaction behavior."""
+    if tool == "fetch_page":
+        return {"url": "https://example.test/evidence"}
+    if tool == "get_market_truth":
+        return {"token_ids": []}
+    return {
+        "is_event": True,
+        "statement": "Synthetic fixture event",
+        "certainty": "LOW",
+        "certainty_reason": "Synthetic transport fixture",
+        "entities": [],
+        "token_ids": [],
+        "event_time": {"value": None, "precision": "UNKNOWN", "quote": None},
+        "public_at": {
+            "value": "2026-10-18T00:00:00Z",
+            "precision": "EXACT",
+            "basis": "Synthetic fixture clock",
+            "quote": None,
+        },
+        "freshness": "NORMAL",
+        "claims": [],
+        "next_milestone": None,
+        "checked_sources": [],
+    }
