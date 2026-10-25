@@ -1808,7 +1808,7 @@ def test_canonical_text_facts_print_units_windows_and_preserve_audit_companion()
         assert "coverage" in text or "covered" in text or "complete" in text
     from test_card_template import card_inputs, wire_card_inputs
 
-    from tank.analysis.card_codec import card_inputs_from_records
+    from tank.analysis.card_codec import card_inputs_from_records, card_registry_from_record
     from tank.analysis.decision_codec import decision_inputs_from_records
 
     event, assessment, beneficiary, _, _ = wire_card_inputs()
@@ -1834,6 +1834,7 @@ def test_canonical_text_facts_print_units_windows_and_preserve_audit_companion()
             [beneficiary],
             [decision],
             [truth],
+            registry=card_registry_from_record({"tokens": [{"token_id": "T"}]}),
             narrative=authored.narrative,
             policy=authored.policy,
         )

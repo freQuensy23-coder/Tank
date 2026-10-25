@@ -3,14 +3,17 @@
 from pathlib import Path
 
 import pytest
+from card_registry_support import fixture_registry_membership
+from card_wire_support import card_inputs, wire_card_inputs
 from foundation_helpers import array_field
 from pydantic import JsonValue
 from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_http_admission, fixture_versions
-from test_card_template import card_inputs, render, wire_card_inputs
+from test_card_template import render
 from test_event_tools import seed
 
-from tank.analysis.card_codec import card_inputs_from_records
+from tank.analysis.card_codec import card_inputs_from_records, card_registry_from_record
+from tank.analysis.card_contracts import CardRegistryMembership
 from tank.analysis.page_access import LivePageAccess
 from tank.event_tools import EventToolService
 from tank.settings import Settings
@@ -25,6 +28,8 @@ def render_claim_wire(
         dict[str, JsonValue],
         dict[str, JsonValue],
     ],
+    *,
+    registry: CardRegistryMembership,
 ) -> str:
     event, assessment, beneficiary, decision, truth = values
     authored = card_inputs()
@@ -35,6 +40,7 @@ def render_claim_wire(
             [beneficiary],
             [decision],
             [truth],
+            registry=registry,
             narrative=authored.narrative,
             policy=authored.policy,
         )
@@ -76,7 +82,11 @@ async def test_agent_verification_gap_reaches_card_through_public_tool(tmp_path:
     assert stored["verification_missing"] == gap
     values = wire_card_inputs()
     values[0]["claims"] = [stored]
-    line = next(line for line in render_claim_wire(values).splitlines() if line.startswith("NOT VERIFIED:"))
+    line = next(
+        line
+        for line in render_claim_wire(values, registry=fixture_registry_membership()).splitlines()
+        if line.startswith("NOT VERIFIED:")
+    )
     assert "NOT VERIFIED: World announces Product — " + gap in line
 
 
@@ -88,7 +98,11 @@ def test_missing_verification_gap_does_not_invent_a_reason(provided) -> None:
     claim["verified"] = False
     if provided:
         claim["verification_missing"] = None
-    line = next(line for line in render_claim_wire(values).splitlines() if line.startswith("NOT VERIFIED:"))
+    line = next(
+        line
+        for line in render_claim_wire(values, registry=fixture_registry_membership()).splitlines()
+        if line.startswith("NOT VERIFIED:")
+    )
     assert "n/a (verification gap not supplied)" in line
     assert "HIGH-certainty primary confirmation missing" not in line
     assert "None" not in line
@@ -127,7 +141,7 @@ def test_outside_participant_keeps_current_claim_eligibility_without_a_financial
             "evidence": ["outside-integration"],
         }
     ]
-    card = render_claim_wire(values)
+    card = render_claim_wire(values, registry=fixture_registry_membership())
     who = next(line for line in card.splitlines() if line.startswith("WHO:"))
     if accepted:
         assert "secondary Venue X" in who and "BUILT" in who
@@ -137,11 +151,20 @@ def test_outside_participant_keeps_current_claim_eligibility_without_a_financial
     assert card.count("── ") == 1
 
 
-def test_outside_participant_cannot_be_promoted_into_a_selected_financial_block() -> None:
+@pytest.mark.parametrize("with_evidence", [True, False])
+def test_outside_participant_cannot_be_promoted_into_a_selected_financial_block(with_evidence: bool) -> None:
+    values = wire_card_inputs()
+    if not with_evidence:
+        values[2]["evidence"] = []
+    registry = card_registry_from_record({"tokens": []})
+    with pytest.raises(ValueError, match="outside-scope participant"):
+        render_claim_wire(values, registry=registry)
+
+
+def test_missing_display_label_cannot_remove_actual_registry_membership() -> None:
     from foundation_helpers import object_field
 
     values = wire_card_inputs()
-    labels = object_field(values[0], "token_labels")
-    del labels["world:WLD"]
-    with pytest.raises(ValueError, match="outside-scope participant"):
-        render_claim_wire(values)
+    del object_field(values[0], "token_labels")["world:WLD"]
+    card = render_claim_wire(values, registry=fixture_registry_membership())
+    assert card.count("── ") == 1 and "outside the token universe" not in card

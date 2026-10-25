@@ -2632,6 +2632,8 @@ class EventToolService:
     async def publish_card(self, a, c):
         from tank.analysis.card_codec import (
             card_inputs_from_records,
+            card_registry_from_record,
+            encode_card_registry,
             publication_baseline_from_records,
             publication_gate_inputs_from_records,
         )
@@ -2937,12 +2939,15 @@ class EventToolService:
                     evidence_labels[item_id] = (source or {}).get("name") or source_id or "source"
         event["evidence_labels"] = evidence_labels
 
+        registry_record = self.settings.load_config("registry")
+        registry_membership = card_registry_from_record(registry_record)
+        ctx["registry_membership"] = encode_card_registry(registry_membership)
         event["token_labels"] = {
             row["token_id"]: str(row.get("project") or row.get("name") or row["token_id"])
             + " ("
             + str(row.get("symbol") or row["token_id"].rpartition(":")[2])
             + ")"
-            for row in self.settings.load_config("registry").get("tokens", [])
+            for row in registry_record["tokens"]
         }
         card_inputs = card_inputs_from_records(
             event,
@@ -2950,6 +2955,7 @@ class EventToolService:
             beneficiaries,
             decisions,
             truths,
+            registry=registry_membership,
             narrative=narrative,
             policy=policy,
         )
@@ -3018,6 +3024,7 @@ class EventToolService:
             "data_confidence": [m["data_confidence"] for m in truths],
             "unresolved_fields": [],
             "config_hash": self.versions.config_version,
+            "registry_membership": encode_card_registry(registry_membership),
             "analysis_inputs_hash": sha256(
                 {
                     name: self.settings.load_config(name)

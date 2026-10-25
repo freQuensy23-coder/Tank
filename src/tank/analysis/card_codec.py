@@ -29,6 +29,7 @@ from tank.analysis.card_contracts import (
     CardOiAttribution,
     CardOiVenue,
     CardOutlook,
+    CardRegistryMembership,
     CardRelative,
     CardReturns,
     CardRevenue,
@@ -74,7 +75,7 @@ from tank.analysis.statistics_contracts import DecimalBounds
 from tank.contracts import DomainModel
 from tank.contracts.score import ScoreAssessmentView, ScoreDimensionsView, ScoreDimensionView
 from tank.time_precision import propagate_timestamp
-from tank.util import canonical_json, parse_iso_time
+from tank.util import canonical_json, parse_iso_time, sha256
 
 
 def _field(row: Mapping[str, JsonValue], key: str) -> JsonValue:
@@ -553,18 +554,20 @@ class CardUsdUnit(DomainModel):
     value: Literal["USD"]
 
 
-def _subject(row: Mapping[str, JsonValue], event: CardEvent) -> CardSubject:
+def _subject(row: Mapping[str, JsonValue], event: CardEvent, registry: CardRegistryMembership) -> CardSubject:
     token_wire = _field(row, "token_id")
     token = _text(token_wire, "token_id") if token_wire is not None else None
-    outside: Literal["UNREGISTERED_TOKEN", "NO_MAPPED_TOKEN"] | None = None
+    membership: Literal["REGISTERED", "UNREGISTERED_TOKEN", "NO_MAPPED_TOKEN"] = (
+        "NO_MAPPED_TOKEN"
+        if token is None
+        else "REGISTERED"
+        if token in registry.token_ids
+        else "UNREGISTERED_TOKEN"
+    )
     evidence = _texts(_field(row, "evidence"), "beneficiary.evidence")
     current_verified = {claim.claim_id for claim in event.claims if claim.verified}
     accepted_ids = {claim.claim_id for claim in event.claims}
-    if any(reference in accepted_ids for reference in evidence) and row.get("dependency_ref") is None:
-        if token is not None and token not in event.token_labels:
-            outside = "UNREGISTERED_TOKEN"
-        elif token is None:
-            outside = "NO_MAPPED_TOKEN"
+    outside_evidence_accepted = any(reference in accepted_ids for reference in evidence)
     refs = _texts(row.get("integration_state_evidence", []), "integration_state_evidence")
     verified = any(reference in current_verified for reference in refs)
     return _project(
@@ -575,7 +578,8 @@ def _subject(row: Mapping[str, JsonValue], event: CardEvent) -> CardSubject:
             "entity_name": row.get("entity_name"),
             "role": _field(row, "role"),
             "credible": _field(row, "credible"),
-            "outside_scope": outside,
+            "registry_membership": membership,
+            "outside_evidence_accepted": outside_evidence_accepted,
             "layer": _field(row, "layer"),
             "integration_state": row.get("integration_state"),
             "integration_verified": verified,
@@ -599,6 +603,25 @@ def _mapping(event: Mapping[str, JsonValue]) -> CardMapping:
     )
 
 
+def card_registry_from_record(record: Mapping[str, JsonValue]) -> CardRegistryMembership:
+    tokens = [
+        _text(_field(row, "token_id"), "registry.token_id")
+        for row in _records(_field(record, "tokens"), "registry.tokens")
+    ]
+    if len(tokens) != len(set(tokens)):
+        raise ValueError("Registry membership cannot contain duplicate token identities")
+    return CardRegistryMembership(token_ids=frozenset(tokens), registry_snapshot_sha256=sha256(dict(record)))
+
+
+def encode_card_registry(registry: CardRegistryMembership) -> dict[str, JsonValue]:
+    registry = CardRegistryMembership.model_validate(registry)
+    token_ids: list[JsonValue] = [token for token in sorted(registry.token_ids)]
+    return {
+        "token_ids": token_ids,
+        "registry_snapshot_sha256": registry.registry_snapshot_sha256,
+    }
+
+
 def card_inputs_from_records(
     event: Mapping[str, JsonValue],
     assessment: Mapping[str, JsonValue],
@@ -606,9 +629,11 @@ def card_inputs_from_records(
     decisions: Sequence[Mapping[str, JsonValue]],
     market_truths: Sequence[Mapping[str, JsonValue]],
     *,
+    registry: CardRegistryMembership,
     narrative: PublicationNarrative,
     policy: PublicationPolicy,
 ) -> CardInputs:
+    registry = CardRegistryMembership.model_validate(registry)
     event_view = _event(event)
     if narrative.kind == "PARTIAL" and event.get("beneficiary_map") is None:
         edges = event.get("beneficiary_edges")
@@ -621,6 +646,7 @@ def card_inputs_from_records(
         ):
             raise ValueError("Pending PARTIAL analysis cannot claim unscoped financial subjects or results")
         return CardInputs(
+            registry=registry,
             narrative=narrative,
             policy=policy,
             event=event_view,
@@ -634,7 +660,7 @@ def card_inputs_from_records(
     mapping_wire = _record(_field(event, "beneficiary_map"), "beneficiary_map")
     selected: list[CardBeneficiary] = []
     for row in beneficiaries:
-        subject = _subject(row, event_view)
+        subject = _subject(row, event_view, registry)
         header = _project(
             CardBeneficiaryHeader,
             {"capture": _field(row, "capture_class"), "causal_chain": _field(row, "causal_chain")},
@@ -652,7 +678,7 @@ def card_inputs_from_records(
     other: list[CardSubject] = []
     for row in _records(_field(event, "beneficiary_edges"), "beneficiary_edges"):
         if _field(row, "token_id") is None or _field(row, "tradable") is False:
-            other.append(_subject(row, event_view))
+            other.append(_subject(row, event_view, registry))
     by_token: dict[str, CardDecision] = {}
     for row in decisions:
         decision = _decision(row)
@@ -666,6 +692,7 @@ def card_inputs_from_records(
             raise ValueError("Duplicate card market token")
         markets[market.token_id] = market
     return CardInputs(
+        registry=registry,
         narrative=narrative,
         policy=policy,
         event=event_view,

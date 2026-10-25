@@ -5,11 +5,12 @@ from decimal import Decimal
 from typing import Literal
 
 import pytest
+from card_registry_support import fixture_registry_membership
+from card_wire_support import card_inputs as template_inputs
+from card_wire_support import wire_card_inputs
 from foundation_helpers import object_field, present, text_field
 from score_fixtures import unassessed_score_dimensions
 from test_card_policy import gate_inputs as publication_case
-from test_card_template import card_inputs as template_inputs
-from test_card_template import wire_card_inputs
 from test_decision_contracts import decision_wire_fixture
 
 from tank.analysis.card_contracts import (
@@ -209,13 +210,13 @@ def test_three_token_template_with_structured_figures() -> None:
     beneficiaries = []
     decisions: dict[str, ActiveCardDecision] = {}
     markets = {}
-    for token in ("AAA", "BBB", "CCC"):
+    for token in ("world:WLD", "ethereum:ETH", "cow:COW"):
         edge = dict(b, token_id=token)
         truth = deepcopy(m)
         truth["token_id"] = token
         evaluated = DecisionEngine().evaluate(policy_inputs(e, a, edge, truth))
         subject = values.beneficiaries[0].subject.model_copy(
-            update={"token_id": token, "entity_id": token, "entity_name": token}
+            update={"token_id": token, "entity_id": None, "entity_name": None}
         )
         beneficiaries.append(values.beneficiaries[0].model_copy(update={"subject": subject}))
         decisions[token] = card_projection(evaluated, token)
@@ -427,6 +428,7 @@ def test_canonical_claim_evidence_and_verification_update() -> None:
             [beneficiary],
             [decision],
             [truth],
+            registry=fixture_registry_membership(),
             narrative=fixture.narrative,
             policy=fixture.policy,
         )
@@ -496,6 +498,7 @@ def test_card_keeps_secondary_layer_explanations_and_least_repriced() -> None:
                 [beneficiary],
                 [decision],
                 [truth],
+                registry=fixture_registry_membership(),
                 narrative=fixture.narrative,
                 policy=fixture.policy,
             )
@@ -561,7 +564,8 @@ def test_full_who_names_outside_primary_but_omits_unverified_compatibility_candi
         entity_name=None,
         role="PRIMARY",
         credible=False,
-        outside_scope="NO_MAPPED_TOKEN",
+        registry_membership="NO_MAPPED_TOKEN",
+        outside_evidence_accepted=True,
         layer=None,
         integration_state=None,
         integration_verified=False,
@@ -572,7 +576,8 @@ def test_full_who_names_outside_primary_but_omits_unverified_compatibility_candi
         entity_name=None,
         role="SECONDARY",
         credible=False,
-        outside_scope=None,
+        registry_membership="NO_MAPPED_TOKEN",
+        outside_evidence_accepted=False,
         layer="SETTLEMENT_L1_L2",
         integration_state="COMPATIBLE",
         integration_verified=False,

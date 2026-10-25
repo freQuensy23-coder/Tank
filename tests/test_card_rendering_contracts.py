@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 import pytest
+from card_registry_support import fixture_registry_membership
 from pydantic import JsonValue, ValidationError
 
 from tank.analysis.card_contracts import (
@@ -19,6 +20,7 @@ from tank.util import canonical_json
 def rendering_inputs() -> CardInputs:
     dimension: JsonValue = {"value": 7, "rationale": None, "reason": None}
     values: dict[str, JsonValue] = {
+        "registry": fixture_registry_membership().model_dump(mode="json"),
         "narrative": {
             "kind": "FULL",
             "what": "World approved the product.",
@@ -85,7 +87,8 @@ def rendering_inputs() -> CardInputs:
                     "entity_name": "World",
                     "role": "PRIMARY",
                     "credible": True,
-                    "outside_scope": None,
+                    "registry_membership": "REGISTERED",
+                    "outside_evidence_accepted": True,
                     "layer": "ISSUER_PRODUCT",
                     "integration_state": None,
                     "integration_verified": False,
@@ -276,13 +279,31 @@ def test_projection_requires_authored_facts_without_repairing_headline() -> None
         why=("Approval changes access.", "Usage remains unmeasured."),
     )
     policy = PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900)
-    projected = card_inputs_from_records(event, assessment, [], [], [], narrative=narrative, policy=policy)
+    projected = card_inputs_from_records(
+        event,
+        assessment,
+        [],
+        [],
+        [],
+        registry=fixture_registry_membership(),
+        narrative=narrative,
+        policy=policy,
+    )
     text = compose_card(projected)
     assert "Market analysis pending" in text
     assert "MAJOR (M2) — The product was approved." in text
     del event["certainty"]
     with pytest.raises(ValueError, match="Missing required card fact: certainty"):
-        card_inputs_from_records(event, assessment, [], [], [], narrative=narrative, policy=policy)
+        card_inputs_from_records(
+            event,
+            assessment,
+            [],
+            [],
+            [],
+            registry=fixture_registry_membership(),
+            narrative=narrative,
+            policy=policy,
+        )
 
 
 def test_projection_never_borrows_rejected_claim_as_verified_evidence() -> None:
@@ -323,6 +344,7 @@ def test_projection_never_borrows_rejected_claim_as_verified_evidence() -> None:
         [],
         [],
         [],
+        registry=fixture_registry_membership(),
         narrative=narrative,
         policy=PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900),
     )
@@ -470,6 +492,7 @@ def test_duplicate_claim_identity_is_refused_without_picking_an_authority() -> N
             [],
             [],
             [],
+            registry=fixture_registry_membership(),
             narrative=narrative,
             policy=PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900),
         )
@@ -510,10 +533,30 @@ def test_outside_subject_evidence_requires_a_current_accepted_claim() -> None:
         why=("The proposal changes intended access.", "Deployment remains unverified."),
     )
     policy = PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900)
-    rejected = card_inputs_from_records(event, assessment, [], [], [], narrative=narrative, policy=policy)
-    assert rejected.other_subjects[0].outside_scope is None
+    rejected = card_inputs_from_records(
+        event,
+        assessment,
+        [],
+        [],
+        [],
+        registry=fixture_registry_membership(),
+        narrative=narrative,
+        policy=policy,
+    )
+    assert rejected.other_subjects[0].registry_membership == "UNREGISTERED_TOKEN"
+    assert rejected.other_subjects[0].outside_evidence_accepted is False
+    assert rejected.display_subjects() == ()
     claim["accepted"] = True
-    accepted = card_inputs_from_records(event, assessment, [], [], [], narrative=narrative, policy=policy)
+    accepted = card_inputs_from_records(
+        event,
+        assessment,
+        [],
+        [],
+        [],
+        registry=fixture_registry_membership(),
+        narrative=narrative,
+        policy=policy,
+    )
     assert accepted.other_subjects[0].outside_scope == "UNREGISTERED_TOKEN"
     assert not accepted.other_subjects[0].integration_verified
 
@@ -533,7 +576,16 @@ def test_first_partial_card_requires_no_fabricated_beneficiary_map_or_market_res
         why=("Approval changes access.", "Market analysis remains pending."),
     )
     policy = PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900)
-    partial = card_inputs_from_records(event, assessment, [], [], [], narrative=narrative, policy=policy)
+    partial = card_inputs_from_records(
+        event,
+        assessment,
+        [],
+        [],
+        [],
+        registry=fixture_registry_membership(),
+        narrative=narrative,
+        policy=policy,
+    )
     assert isinstance(partial.mapping, PendingCardAnalysis)
     text = compose_card(partial)
     assert text.startswith("STRUCTURAL SHOCK (M2) — The product was approved.")
@@ -546,6 +598,7 @@ def test_first_partial_card_requires_no_fabricated_beneficiary_map_or_market_res
             [],
             [],
             [],
+            registry=fixture_registry_membership(),
             narrative=narrative.model_copy(update={"kind": "FULL"}),
             policy=policy,
         )
@@ -570,6 +623,7 @@ def test_pending_partial_projection_cannot_hide_supplied_unscoped_financial_fact
             [{"token_id": "T"}],
             [],
             [],
+            registry=fixture_registry_membership(),
             narrative=narrative,
             policy=PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900),
         )

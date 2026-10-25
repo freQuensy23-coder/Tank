@@ -271,13 +271,25 @@ class CardAssessment(DomainModel):
     scores: ScoreAssessmentView
 
 
+class CardRegistryMembership(DomainModel):
+    token_ids: frozenset[str]
+    registry_snapshot_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def actual_member_identities(self) -> Self:
+        if any(not value.strip() for value in self.token_ids):
+            raise ValueError("Registry membership requires actual token identities")
+        return self
+
+
 class CardSubject(DomainModel):
     token_id: str | None
     entity_id: str | None
     entity_name: str | None
     role: BeneficiaryRole
     credible: bool
-    outside_scope: Literal["UNREGISTERED_TOKEN", "NO_MAPPED_TOKEN"] | None
+    registry_membership: Literal["REGISTERED", "UNREGISTERED_TOKEN", "NO_MAPPED_TOKEN"]
+    outside_evidence_accepted: bool
     layer: BeneficiaryLayer | None
     integration_state: IntegrationStage | None
     integration_verified: bool
@@ -286,7 +298,15 @@ class CardSubject(DomainModel):
     def named_identity(self) -> Self:
         if self.token_id is None and self.entity_id is None and self.entity_name is None:
             raise ValueError("A named beneficiary requires a token, entity or recorded external name")
+        if (self.token_id is None) != (self.registry_membership == "NO_MAPPED_TOKEN"):
+            raise ValueError("Participant registry classification disagrees with its token identity")
         return self
+
+    @property
+    def outside_scope(self) -> Literal["UNREGISTERED_TOKEN", "NO_MAPPED_TOKEN"] | None:
+        if self.registry_membership == "REGISTERED":
+            return None
+        return self.registry_membership
 
     def identity_key(self) -> IdentityKey:
         if self.token_id is not None:
@@ -514,6 +534,7 @@ class PendingCardAnalysis(DomainModel):
 
 
 class CardInputs(DomainModel):
+    registry: CardRegistryMembership
     narrative: PublicationNarrative
     policy: PublicationPolicy
     event: CardEvent
@@ -526,6 +547,20 @@ class CardInputs(DomainModel):
 
     @model_validator(mode="after")
     def indexed_market_identity(self) -> Self:
+        subjects = tuple(value.subject for value in self.beneficiaries) + self.other_subjects
+        for subject in subjects:
+            expected = (
+                "NO_MAPPED_TOKEN"
+                if subject.token_id is None
+                else "REGISTERED"
+                if subject.token_id in self.registry.token_ids
+                else "UNREGISTERED_TOKEN"
+            )
+            if subject.registry_membership != expected:
+                raise ValueError("Participant classification disagrees with actual registry membership")
+        for beneficiary in self.beneficiaries:
+            if beneficiary.token_id not in self.registry.token_ids:
+                raise ValueError("A selected financial block requires affirmative registry membership")
         if any(key != value.token_id for key, value in self.decisions_by_token.items()):
             raise ValueError("Card decision index disagrees with its token identities")
         if any(key != value.token_id for key, value in self.market_by_token.items()):
@@ -585,9 +620,14 @@ class CardInputs(DomainModel):
         shown: set[IdentityKey] = set()
         subjects: list[CardSubject] = []
         for edge in named:
+            if edge.registry_membership != "REGISTERED" and not edge.outside_evidence_accepted:
+                continue
             identity = edge.identity_key()
             if edge.role == "SECONDARY" and (
-                not (edge.credible or edge.outside_scope is not None)
+                not (
+                    edge.credible
+                    or (edge.registry_membership != "REGISTERED" and edge.outside_evidence_accepted)
+                )
                 or identity in primary_ids
                 or edge.entity_id in primary_entities
             ):
