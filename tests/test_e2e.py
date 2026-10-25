@@ -834,6 +834,8 @@ async def test_runtime_autonomous_source_to_telegram(
     import asyncio
     import importlib
 
+    from bootstrap_support import bootstrap_fixture
+
     from tank.analysis.truth import MarketTruthService
     from tank.bootstrap import sync_registry
     from tank.codex_gateway import CodexGateway
@@ -865,6 +867,7 @@ async def test_runtime_autonomous_source_to_telegram(
         if hasattr(module, "utcnow"):
             monkeypatch.setattr(module, "utcnow", lambda: clock)
     config = {
+        **bootstrap_fixture(tmp_path / "bootstrap-inputs", clock).documents(),
         "sources": source_configuration(
             {
                 "sources": [
@@ -879,16 +882,6 @@ async def test_runtime_autonomous_source_to_telegram(
             }
         ),
         "api_limits": _fixture_api_limits(),
-        "exchange_addresses": {"version": "synthetic-fixture", "wallet_lists": []},
-        "registry": {
-            "x_accounts": [],
-            "tokens": [{"token_id": "T", "symbol": "T"}],
-            "entities": [
-                {"entity_id": "binance", "name": "Binance"},
-                {"entity_id": "synthetic-venue", "name": "Synthetic venue"},
-            ],
-            "instruments": [{"instrument_id": "mock:spot:T", "token_id": "T"}],
-        },
         "thresholds": _fixture_thresholds(),
         "openma": {
             "agent_id": "synthetic-offline-agent",
@@ -897,8 +890,6 @@ async def test_runtime_autonomous_source_to_telegram(
             "agent_version": "synthetic-agent-v1",
             "reasoning_effort": "medium",
         },
-        "semantics": {"metrics": []},
-        "dependency_map": {},
     }
 
     settings = Settings(
