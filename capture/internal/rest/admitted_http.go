@@ -33,20 +33,20 @@ func (e *httpAdmissionError) Unwrap() error { return e.cause }
 
 type admittedBody struct {
 	io.ReadCloser
-	lease *hostLease
+	finish func()
 }
 
 func (b *admittedBody) Read(data []byte) (int, error) {
 	n, err := b.ReadCloser.Read(data)
 	if err != nil {
-		b.lease.close()
+		b.finish()
 	}
 	return n, err
 }
 
 func (b *admittedBody) Close() error {
 	err := b.ReadCloser.Close()
-	b.lease.close()
+	b.finish()
 	return err
 }
 
@@ -123,13 +123,21 @@ func (t *admittingTransport) RoundTrip(original *http.Request) (*http.Response, 
 		}
 		lease = &hostLease{release: release}
 	}
+	request, admission := newPhysicalAdmission(request, t.gate, host, buckets, t.priority, lease)
 	response, err := t.base.RoundTrip(request)
+	if rejected := admission.rejection(); rejected != nil {
+		if response != nil && response.Body != nil {
+			rejected = errors.Join(rejected, response.Body.Close())
+		}
+		admission.finish()
+		return nil, &httpAdmissionError{cause: rejected}
+	}
 	if err != nil {
-		lease.close()
+		admission.finish()
 		return nil, err
 	}
 	if response == nil {
-		lease.close()
+		admission.finish()
 		return nil, fmt.Errorf("HTTP transport returned no response")
 	}
 	retry, err := t.gate.Observe(request.Context(), host, response.StatusCode, response.Header)
@@ -137,13 +145,13 @@ func (t *admittingTransport) RoundTrip(original *http.Request) (*http.Response, 
 		if response.Body != nil {
 			err = errors.Join(err, response.Body.Close())
 		}
-		lease.close()
+		admission.finish()
 		return nil, &httpAdmissionError{cause: err}
 	}
 	if response.Body == nil {
-		lease.close()
+		admission.finish()
 	} else {
-		response.Body = &admittedBody{ReadCloser: response.Body, lease: lease}
+		response.Body = &admittedBody{ReadCloser: response.Body, finish: admission.finish}
 	}
 	t.mu.Lock()
 	t.lastResponse = response
