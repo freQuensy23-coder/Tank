@@ -399,9 +399,13 @@ def test_calendar_bucket_and_unknown_precision_do_not_gain_intraday_precision() 
 
 def test_missing_no_secondary_layer_fact_is_refused_instead_of_padded() -> None:
     inputs = rendering_inputs()
-    notes = dict(inputs.mapping.layer_explanations)
+    from tank.analysis.card_contracts import CardMapping
+
+    original = inputs.mapping
+    assert isinstance(original, CardMapping)
+    notes = dict(original.layer_explanations)
     del notes["LENDING_COLLATERAL"]
-    mapping = inputs.mapping.model_copy(update={"layer_explanations": notes})
+    mapping = original.model_copy(update={"layer_explanations": notes})
     with pytest.raises(ValidationError, match="actual eight layer assessments"):
         compose_card(inputs.model_copy(update={"mapping": mapping}))
 
@@ -512,3 +516,85 @@ def test_outside_subject_evidence_requires_a_current_accepted_claim() -> None:
     accepted = card_inputs_from_records(event, assessment, [], [], [], narrative=narrative, policy=policy)
     assert accepted.other_subjects[0].outside_scope == "UNREGISTERED_TOKEN"
     assert not accepted.other_subjects[0].integration_verified
+
+
+def test_first_partial_card_requires_no_fabricated_beneficiary_map_or_market_result() -> None:
+    from tank.analysis.card_codec import card_inputs_from_records
+    from tank.analysis.card_contracts import PendingCardAnalysis, PublicationNarrative, PublicationPolicy
+
+    event, assessment = publication_wire()
+    del event["beneficiary_map"]
+    del event["beneficiary_edges"]
+    assessment["class"] = "STRUCTURAL_SHOCK"
+    narrative = PublicationNarrative(
+        kind="PARTIAL",
+        what="The issuer confirmed approval.",
+        verdict="The product was approved.",
+        why=("Approval changes access.", "Market analysis remains pending."),
+    )
+    policy = PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900)
+    partial = card_inputs_from_records(event, assessment, [], [], [], narrative=narrative, policy=policy)
+    assert isinstance(partial.mapping, PendingCardAnalysis)
+    text = compose_card(partial)
+    assert text.startswith("STRUCTURAL SHOCK (M2) — The product was approved.")
+    assert "Market analysis pending" in text and "WHO:" not in text and "WHAT TO DO:" not in text
+    assert "token mechanism unavailable" in text
+    with pytest.raises(ValueError, match="beneficiary_map"):
+        card_inputs_from_records(
+            event,
+            assessment,
+            [],
+            [],
+            [],
+            narrative=narrative.model_copy(update={"kind": "FULL"}),
+            policy=policy,
+        )
+
+
+def test_pending_partial_projection_cannot_hide_supplied_unscoped_financial_facts() -> None:
+    from tank.analysis.card_codec import card_inputs_from_records
+    from tank.analysis.card_contracts import PublicationNarrative, PublicationPolicy
+
+    event, assessment = publication_wire()
+    del event["beneficiary_map"]
+    narrative = PublicationNarrative(
+        kind="PARTIAL",
+        what="The issuer confirmed approval.",
+        verdict="The product was approved.",
+        why=("Approval changes access.", "Market analysis remains pending."),
+    )
+    with pytest.raises(ValueError, match="unscoped financial subjects"):
+        card_inputs_from_records(
+            event,
+            assessment,
+            [{"token_id": "T"}],
+            [],
+            [],
+            narrative=narrative,
+            policy=PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900),
+        )
+
+
+def test_gate_reads_actual_event_contradictions_without_requiring_undeclared_assessment_duplicate() -> None:
+    from datetime import UTC, datetime
+
+    from tank.analysis.card_codec import publication_gate_inputs_from_records
+    from tank.analysis.card_contracts import PublicationPolicy
+
+    event, assessment = publication_wire()
+    del assessment["contradictions"]
+    event["contradictions"] = [{"contradiction_id": "actual-fatal", "type": "FATAL"}]
+    facts = publication_gate_inputs_from_records(
+        event,
+        assessment,
+        [],
+        previous=None,
+        policy=PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900),
+        now=datetime(2026, 10, 18, 13, tzinfo=UTC),
+    )
+    assert facts.event.active_fatal_ids == frozenset({"actual-fatal"})
+    del event["contradictions"]
+    with pytest.raises(ValueError, match="Missing required card fact: contradictions"):
+        publication_gate_inputs_from_records(
+            event, assessment, [], previous=None, policy=facts.policy, now=facts.now
+        )

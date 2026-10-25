@@ -507,6 +507,10 @@ class CardMarket(DomainModel):
     holders_revenue: CardRevenue | None
 
 
+class PendingCardAnalysis(DomainModel):
+    kind: Literal["ANALYSIS_PENDING"]
+
+
 class CardInputs(DomainModel):
     narrative: PublicationNarrative
     policy: PublicationPolicy
@@ -514,7 +518,7 @@ class CardInputs(DomainModel):
     assessment: CardAssessment
     beneficiaries: tuple[CardBeneficiary, ...] = Field(max_length=3)
     other_subjects: tuple[CardSubject, ...]
-    mapping: CardMapping
+    mapping: CardMapping | PendingCardAnalysis
     decisions_by_token: dict[str, CardDecision]
     market_by_token: dict[str, CardMarket]
 
@@ -527,10 +531,21 @@ class CardInputs(DomainModel):
         tokens = [value.token_id for value in self.beneficiaries]
         if len(tokens) != len(set(tokens)):
             raise ValueError("A card cannot repeat a selected beneficiary token")
+        if isinstance(self.mapping, PendingCardAnalysis) and (
+            self.narrative.kind != "PARTIAL"
+            or self.beneficiaries
+            or self.other_subjects
+            or self.decisions_by_token
+            or self.market_by_token
+        ):
+            raise ValueError("Pending PARTIAL analysis cannot claim mapped financial subjects or results")
         if self.narrative.kind != "PARTIAL":
+            mapping = self.mapping
+            if not isinstance(mapping, CardMapping):
+                raise ValueError("Full analysis requires its actual beneficiary mapping")
             subjects = self.display_subjects()
             if not any(value.role == "SECONDARY" and value.credible for value in subjects):
-                reason = self.mapping.no_credible_secondary_reason
+                reason = mapping.no_credible_secondary_reason
                 if reason is None or not reason.strip():
                     raise ValueError("A card without a credible secondary requires its recorded reason")
             if not any(value.role == "SECONDARY" for value in subjects):
@@ -544,8 +559,8 @@ class CardInputs(DomainModel):
                     "INTEROPERABILITY",
                     "CUSTODY_COMPLIANCE",
                 }
-                if set(self.mapping.layer_explanations) != layers or any(
-                    not text.strip() for text in self.mapping.layer_explanations.values()
+                if set(mapping.layer_explanations) != layers or any(
+                    not text.strip() for text in mapping.layer_explanations.values()
                 ):
                     raise ValueError("A card without a secondary requires the actual eight layer assessments")
             for beneficiary in self.beneficiaries:
