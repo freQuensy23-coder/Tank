@@ -335,8 +335,12 @@ func (c *Client) Fetch(ctx context.Context, method, rawURL string, params, heade
 			return nil, fmt.Errorf("invalid fetch JSON body: %w", err)
 		}
 	}
+	buckets, err := budget.FetchConstraints(host, u.Path, effective, payload)
+	if err != nil {
+		return nil, err
+	}
 	for attempt := 0; attempt < Attempts; attempt++ {
-		if err := c.Gate.AdmitBuckets(ctx, host, budget.FetchConstraints(host, u.Path, effective, payload), priority); err != nil {
+		if err := c.Gate.AdmitBuckets(ctx, host, buckets, priority); err != nil {
 			return nil, err
 		}
 		release, err := c.Gate.Enter(ctx, host, priority)

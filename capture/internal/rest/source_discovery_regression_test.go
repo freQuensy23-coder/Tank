@@ -56,17 +56,37 @@ func TestSourceDiscoveryUnknownWeightsRemainBounded(t *testing.T) {
 			t.Fatalf("rejected API request spent budget or reached HTTP: %+v", exchange.requests)
 		}
 	})
-	t.Run("raw fetch conservative shared bucket", func(t *testing.T) {
+	t.Run("raw fetch refuses unconfigured API weight", func(t *testing.T) {
 		client, exchange, ledger := newClient(t, ok("announcement"))
 		got, err := client.Fetch(context.Background(), "GET", Binance+"/unconfigured-api-path", nil, nil, nil, -1)
-		if err != nil || got == nil || string(got.Body) != "announcement" {
-			t.Fatalf("raw source response: %+v %v", got, err)
+		if err == nil || !strings.Contains(err.Error(), "Unconfigured Binance request weight") || got != nil {
+			t.Fatalf("unknown raw source weight was accepted: %+v %v", got, err)
 		}
-		if used := ledger.Used(budget.BucketName("binance.spot", 60, 3000), 60); used != 20 {
-			t.Fatalf("unlisted raw source charged %v, want conservative shared weight 20", used)
+		if used := ledger.Used(budget.BucketName("binance.spot", 60, 3000), 60); used != 0 {
+			t.Fatalf("rejected raw source consumed budget: %v", used)
 		}
-		if len(exchange.requests) != 1 {
-			t.Fatalf("raw source requests: %+v", exchange.requests)
+		if len(exchange.requests) != 0 {
+			t.Fatalf("rejected raw source reached HTTP: %+v", exchange.requests)
 		}
 	})
+}
+
+func TestFetchPlannerErrorsCannotBecomeGuessedAdmission(t *testing.T) {
+	for _, rawURL := range []string{
+		Binance + "/api/v3/depth?limit=invalid",
+		"https://www.okx.com/unconfigured-endpoint",
+		"https://api.hyperliquid.xyz/info",
+		"https://unconfigured.invalid/announcement",
+	} {
+		t.Run(rawURL, func(t *testing.T) {
+			client, exchange, _ := newClient(t, ok("{}"))
+			got, err := client.Fetch(context.Background(), "GET", rawURL, nil, nil, nil, 0)
+			if err == nil || got != nil {
+				t.Fatalf("planner failure became a request: %+v %v", got, err)
+			}
+			if len(exchange.requests) != 0 {
+				t.Fatalf("planner failure reached HTTP: %+v", exchange.requests)
+			}
+		})
+	}
 }
