@@ -318,6 +318,8 @@ def _agent_observation(value: JsonValue) -> ManagedAgentObservation:
     model_id = _object(model).get("id") if isinstance(model, dict) else model
     effort = model.get("effort") if isinstance(model, dict) else None
     observed_effort = _optional_text(effort.get("type") if isinstance(effort, dict) else effort)
+    oma = row.get("_oma")
+    harness = None if oma is None else _optional_text(_object(oma).get("harness"))
     tools = row.get("tools")
     skills = row.get("skills")
     references: list[AgentSkillReference] | None = None
@@ -347,6 +349,7 @@ def _agent_observation(value: JsonValue) -> ManagedAgentObservation:
             "name": row.get("name"),
             "model_id": model_id,
             "model_effort": observed_effort,
+            "harness": harness,
             "system": row.get("system"),
             "tools": None if tools is None else [_tool_observation(tool) for tool in _array(tools)],
             "skills": references,
@@ -540,6 +543,11 @@ def _agent_current(
         and observed.model_effort == wanted.model.effort
         and observed.system == wanted.system
         and observed.skill_mount == wanted.metadata.skill_mount
+        and observed.harness == wanted.oma.harness
+        and all(
+            key in observed.retained_metadata and observed.retained_metadata[key] == value
+            for key, value in wanted.metadata.retained_entries.items()
+        )
         and _tools_key(observed.tools) == _tools_key(desired_tools)
         and sorted(observed.skills, key=lambda skill: (skill.type, skill.skill_id, skill.version))
         == sorted(wanted.skills, key=lambda skill: (skill.type, skill.skill_id, skill.version))

@@ -931,3 +931,59 @@ async def test_full_owned_state_must_be_confirmed_on_the_published_version(
             timeout=1,
         )
     assert len(fake.writes("/v1/agents/")) == 1
+
+
+@pytest.mark.parametrize(
+    "failure", ["missing_harness", "wrong_harness", "missing_metadata", "changed_metadata"]
+)
+async def test_harness_and_retained_metadata_require_observed_confirmation(
+    tmp_path: Path,
+    failure: Literal["missing_harness", "wrong_harness", "missing_metadata", "changed_metadata"],
+) -> None:
+    settings = settings_for(ROOT / "config", tmp_path)
+    fake = FakeOpenMA(settings)
+    fixture_object(fake.agents[CONFIG.agent_id]["metadata"])["provider_tag"] = "preserve exactly"
+
+    def contradictory(request: httpx.Request) -> httpx.Response:
+        response = fake.handler(request)
+        if request.method == "GET" and request.url.params.get("version") is not None:
+            body = fixture_object(decode_json(response.content))
+            if failure == "missing_harness":
+                fixture_object(body["_oma"]).pop("harness")
+            elif failure == "wrong_harness":
+                fixture_object(body["_oma"])["harness"] = "acp"
+            elif failure == "missing_metadata":
+                fixture_object(body["metadata"]).pop("provider_tag")
+            else:
+                fixture_object(body["metadata"])["provider_tag"] = "changed"
+            return httpx.Response(200, json=body)
+        return response
+
+    with pytest.raises(OpenMAContractViolation):
+        await asyncio.wait_for(
+            openma_sync.keep_in_sync(
+                settings, asyncio.Event(), transport_factory=lambda: httpx.MockTransport(contradictory)
+            ),
+            timeout=1,
+        )
+    assert len(fake.writes("/v1/agents/")) == 1
+
+
+async def test_additional_provider_metadata_after_publication_is_preserved_as_an_extension(
+    tmp_path: Path,
+) -> None:
+    settings = settings_for(ROOT / "config", tmp_path)
+    fake = FakeOpenMA(settings)
+    fixture_object(fake.agents[CONFIG.agent_id]["metadata"])["provider_tag"] = "preserved"
+
+    def additional(request: httpx.Request) -> httpx.Response:
+        response = fake.handler(request)
+        if request.method == "GET" and request.url.params.get("version") is not None:
+            body = fixture_object(decode_json(response.content))
+            fixture_object(body["metadata"])["server_generated_tag"] = "new"
+            return httpx.Response(200, json=body)
+        return response
+
+    async with httpx.AsyncClient(base_url="http://oma", transport=httpx.MockTransport(additional)) as client:
+        result = await openma_sync.sync(settings, client)
+    assert {outcome.status for outcome in result.agents.values()} == {"UPDATED"}

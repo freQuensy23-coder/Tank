@@ -265,6 +265,7 @@ class ManagedAgentObservation(DomainModel):
     registrations_declared: bool
     retained_metadata: dict[str, str] = Field(repr=False)
     skill_mount: str | None
+    harness: str | None
 
 
 class EnvironmentNetworkObservation(DomainModel):
