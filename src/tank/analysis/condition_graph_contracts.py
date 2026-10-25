@@ -3907,3 +3907,84 @@ class ConditionIndependentPairConfirmation(DomainModel):
         return _condition_book_price_gap(
             left, right, validated.cutoff, validated.quote_conversion_uncertainty_bps
         )
+
+
+class ObservedConditionVolatility(DomainModel):
+    status: Literal["OBSERVED"]
+    value: float = Field(ge=0)
+    completed_hour: Timestamp
+    return_count: Annotated[Literal[24], BeforeValidator(require_integer)]
+    resolution_s: Annotated[Literal[3600], BeforeValidator(require_number)]
+
+    @model_validator(mode="after")
+    def actual_completed_hour(self) -> Self:
+        if self.completed_hour.value is None:
+            raise ValueError("Observed rolling volatility requires its actual source-hour clock")
+        at = parse_iso_time(self.completed_hour.value)
+        if at.minute != 0 or at.second != 0 or at.microsecond != 0:
+            raise ValueError("Rolling volatility requires its actual completed UTC hour")
+        return self
+
+
+class UnavailableConditionVolatility(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    value: None
+    reason: Literal["INCOMPLETE"]
+
+
+type ConditionVolatility = ObservedConditionVolatility | UnavailableConditionVolatility
+
+
+class ObservedConditionVolatilityState(DomainModel):
+    status: Literal["OBSERVED"]
+    value: Literal["COMPRESSED", "EXPANDED", "NORMAL"]
+
+
+class UnavailableConditionVolatilityState(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    value: None
+    reason: Literal["INCOMPLETE", "INSUFFICIENT_HISTORY", "DEGENERATE_HISTORY"]
+
+
+class ConditionVolatilityCompression(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    reference_venue: str = Field(min_length=1, pattern=r"\S")
+    cutoff: datetime
+    window: Literal["W24H"]
+    realized: ConditionVolatility
+    normal_range: FloatRange
+
+    @field_validator("cutoff")
+    @classmethod
+    def aware_cutoff(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_measurement_and_history(self) -> Self:
+        if isinstance(self.realized, ObservedConditionVolatility):
+            stamp = self.realized.completed_hour.value
+            if stamp is None:
+                raise ValueError("Observed rolling volatility requires its actual source-hour clock")
+            if parse_iso_time(stamp) > self.cutoff:
+                raise ValueError("Rolling volatility cannot use a completed hour after its actual cutoff")
+        if self.normal_range.bounds is not None and self.normal_range.bounds.lower < 0:
+            raise ValueError("Realized-volatility history cannot have negative bounds")
+        return self
+
+    def classification(self) -> ObservedConditionVolatilityState | UnavailableConditionVolatilityState:
+        validated = type(self).model_validate(self)
+        if isinstance(validated.realized, UnavailableConditionVolatility):
+            return UnavailableConditionVolatilityState(
+                status="UNAVAILABLE", value=None, reason=validated.realized.reason
+            )
+        bounds = validated.normal_range.bounds
+        if bounds is None:
+            reason = validated.normal_range.reason
+            if reason is None:
+                raise ValueError("An unavailable volatility baseline requires its actual reason")
+            return UnavailableConditionVolatilityState(status="UNAVAILABLE", value=None, reason=reason)
+        measured = validated.realized.value
+        state: Literal["COMPRESSED", "EXPANDED", "NORMAL"] = (
+            "COMPRESSED" if measured < bounds.lower else "EXPANDED" if measured > bounds.upper else "NORMAL"
+        )
+        return ObservedConditionVolatilityState(status="OBSERVED", value=state)

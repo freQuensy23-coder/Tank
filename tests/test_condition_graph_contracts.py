@@ -2434,3 +2434,91 @@ def test_discrete_direction_and_missing_composite_sign_are_not_boolean_or_neutra
     assert observed.sign == 0 and missing.sign is None
     with pytest.raises(ValidationError):
         UnavailableConditionComposite.model_validate(missing.model_copy(update={"sign": 0}))
+
+
+def test_volatility_compression_preserves_measured_zero_and_actual_completed_hour() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionVolatilityCompression,
+        ObservedConditionVolatility,
+    )
+
+    measured = ObservedConditionVolatility(
+        status="OBSERVED",
+        value=0.0,
+        completed_hour=Timestamp(
+            value="2026-10-17T10:00:00Z", precision=None, precision_reason="NOT_CAPTURED"
+        ),
+        return_count=24,
+        resolution_s=3600,
+    )
+    graph = ConditionVolatilityCompression(
+        token_id="T",
+        reference_venue="v",
+        cutoff=AT,
+        window="W24H",
+        realized=measured,
+        normal_range=FloatRange(bounds=FloatBounds(lower=0.0, upper=0.0), reason=None),
+    )
+    assert graph.classification().value == "NORMAL"
+    assert graph.realized == measured
+    assert measured.completed_hour.value == "2026-10-17T10:00:00Z"
+    assert measured.completed_hour.precision is None
+    float_resolution = ObservedConditionVolatility.model_validate(
+        measured.model_copy(update={"resolution_s": 3600.0})
+    )
+    assert float_resolution.resolution_s == 3600
+    with pytest.raises(ValidationError, match="after its actual cutoff"):
+        ConditionVolatilityCompression.model_validate(
+            graph.model_copy(update={"cutoff": AT - timedelta(hours=3)})
+        )
+    with pytest.raises(ValidationError, match="integer"):
+        ObservedConditionVolatility.model_validate(measured.model_copy(update={"return_count": 24.0}))
+
+
+def test_volatility_absence_and_missing_baseline_do_not_become_normal_state() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionVolatilityCompression,
+        ObservedConditionVolatility,
+        UnavailableConditionVolatility,
+    )
+
+    graph = ConditionVolatilityCompression(
+        token_id="T",
+        reference_venue="v",
+        cutoff=AT,
+        window="W24H",
+        realized=UnavailableConditionVolatility(status="UNAVAILABLE", value=None, reason="INCOMPLETE"),
+        normal_range=FloatRange(bounds=FloatBounds(lower=0.01, upper=0.03), reason=None),
+    )
+    from tank.analysis.condition_graph_contracts import UnavailableConditionVolatilityState
+
+    unavailable = graph.classification()
+    assert isinstance(unavailable, UnavailableConditionVolatilityState)
+    assert unavailable.reason == "INCOMPLETE"
+    missing_history = ConditionVolatilityCompression.model_validate(
+        graph.model_copy(
+            update={
+                "realized": ObservedConditionVolatility(
+                    status="OBSERVED",
+                    value=0.02,
+                    completed_hour=Timestamp(
+                        value="2026-10-17T12:00:00Z", precision=None, precision_reason="NOT_CAPTURED"
+                    ),
+                    return_count=24,
+                    resolution_s=3600,
+                ),
+                "normal_range": FloatRange(bounds=None, reason="INSUFFICIENT_HISTORY"),
+            }
+        )
+    )
+    missing = missing_history.classification()
+    assert isinstance(missing, UnavailableConditionVolatilityState)
+    assert missing.reason == "INSUFFICIENT_HISTORY"
+    with pytest.raises(ValidationError, match="negative bounds"):
+        ConditionVolatilityCompression.model_validate(
+            graph.model_copy(
+                update={
+                    "normal_range": FloatRange(bounds=FloatBounds(lower=-0.01, upper=0.03), reason=None),
+                }
+            )
+        )
