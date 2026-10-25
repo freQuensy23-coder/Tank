@@ -130,6 +130,10 @@ class DiagnosticAttachment(DomainModel):
         )
 
 
+def absent_body(value: str | None) -> bool:
+    return value is None
+
+
 class DiagnosticDocumentResponse(DomainModel):
     status: int
     headers: dict[str, str]
@@ -144,7 +148,7 @@ class DiagnosticDocumentResponse(DomainModel):
     readError: str | None = None
     decodeError: str | None = None
     redacted: bool
-    body: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    body: str | None = Field(default=None, exclude_if=absent_body)
     bodyDocument: str | None
 
 
