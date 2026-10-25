@@ -47,10 +47,6 @@ func (b Bucket) Validate() error {
 }
 
 func BinanceWeight(host, path string, params map[string]string) (float64, error) {
-	limit, err := intParam(params, "limit", 100)
-	if err != nil {
-		return 0, err
-	}
 	switch host {
 	case "api.binance.com":
 		switch path {
@@ -61,6 +57,10 @@ func BinanceWeight(host, path string, params map[string]string) (float64, error)
 		case "/api/v3/klines":
 			return 2, nil
 		case "/api/v3/depth":
+			limit, err := intParam(params, "limit", 100)
+			if err != nil {
+				return 0, err
+			}
 			switch {
 			case limit <= 100:
 				return 5, nil
@@ -99,6 +99,10 @@ func BinanceWeight(host, path string, params map[string]string) (float64, error)
 			}
 			return 10, nil
 		case "/fapi/v1/depth":
+			limit, err := intParam(params, "limit", 100)
+			if err != nil {
+				return 0, err
+			}
 			switch {
 			case limit <= 50:
 				return 2, nil
@@ -263,4 +267,33 @@ func FetchConstraints(host, path string, params map[string]string, payload map[s
 		return nil, errors.New("Unconfigured fetch request budget: " + host)
 	}
 	return buckets, nil
+}
+
+func RequestQueryFields(host, path string) []string {
+	switch host {
+	case "api.binance.com":
+		switch path {
+		case "/api/v3/depth":
+			return []string{"limit"}
+		case "/api/v3/ticker/24hr":
+			return []string{"symbol"}
+		}
+	case "fapi.binance.com":
+		switch path {
+		case "/fapi/v1/depth", "/fapi/v1/klines":
+			return []string{"limit"}
+		case "/fapi/v1/ticker/24hr", "/fapi/v1/premiumIndex":
+			return []string{"symbol"}
+		}
+	case "www.okx.com", "openapi.okx.com":
+		if rule, ok := okxCaps[path]; ok {
+			switch rule.scope {
+			case "instrument":
+				return []string{"instId"}
+			case "instrument_type":
+				return []string{"instType"}
+			}
+		}
+	}
+	return nil
 }

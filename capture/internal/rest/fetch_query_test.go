@@ -2,7 +2,9 @@ package rest
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,4 +48,47 @@ func TestAmbiguousFetchQueryCannotSpendOrSend(t *testing.T) {
 	if len(exchange.requests) != 0 || ledger.Used(budget.BucketName("binance.spot", 60, 3000), 60) != 0 {
 		t.Fatal("ambiguous query crossed admission boundary")
 	}
+}
+
+func TestFetchPreservesRepeatedNonBudgetQueryFields(t *testing.T) {
+	for _, rawURL := range []string{
+		"https://www.binance.com/announcement?tag=first&tag=second",
+		Binance + "/api/v3/depth?limit=100&filter=first&filter=second",
+	} {
+		t.Run(rawURL, func(t *testing.T) {
+			client, _, _ := newClient(t)
+			transport := &queryTransport{}
+			client.HTTP = &http.Client{Transport: transport}
+			if _, err := client.Fetch(context.Background(), "GET", rawURL, nil, nil, nil, 0); err != nil {
+				t.Fatal(err)
+			}
+			if transport.rawURL != rawURL {
+				t.Fatalf("non-budget query multiplicity changed: %s", transport.rawURL)
+			}
+		})
+	}
+}
+
+func TestFetchOverrideResolvesRepeatedBudgetFieldBeforeAdmission(t *testing.T) {
+	client, _, ledger := newClient(t)
+	transport := &queryTransport{}
+	client.HTTP = &http.Client{Transport: transport}
+	if _, err := client.Fetch(context.Background(), "GET", Binance+"/api/v3/depth?limit=100&limit=5000", map[string]string{"limit": "100"}, nil, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	if used := ledger.Used(budget.BucketName("binance.spot", 60, 3000), 60); used != 5 {
+		t.Fatalf("resolved override charged %v", used)
+	}
+	if transport.rawURL != Binance+"/api/v3/depth?limit=100" {
+		t.Fatalf("override did not match admitted query: %s", transport.rawURL)
+	}
+}
+
+type queryTransport struct {
+	rawURL string
+}
+
+func (t *queryTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	t.rawURL = request.URL.String()
+	return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("{}")), Request: request}, nil
 }
