@@ -132,8 +132,13 @@ type FollowupClosure = NoSession | Terminated | Archived | RetentionArchived
 type FollowupEligibility = FollowupCandidate | FollowupClosure
 
 
+class FollowupRefusalTarget(DomainModel):
+    question_id: str = Field(min_length=1, pattern=r"\S")
+    session_id: str = Field(min_length=1, pattern=r"\S")
+
+
 class FollowupRefusalSink(Protocol):
-    async def record(self, question_id: str, closure: FollowupClosure) -> None: ...
+    async def record(self, target: FollowupRefusalTarget, closure: FollowupClosure) -> None: ...
 
 
 def followup_eligibility(session: FollowupSession | None) -> FollowupEligibility:

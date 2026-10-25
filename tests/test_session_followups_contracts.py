@@ -8,6 +8,7 @@ from pydantic import JsonValue, ValidationError
 from tank.contracts.session_followups import (
     Archived,
     FollowupCandidate,
+    FollowupRefusalTarget,
     FollowupSession,
     NoSession,
     RetentionArchived,
@@ -136,3 +137,23 @@ def test_checked_at_metadata_is_projection_only_and_preserves_actual_missing_ide
         }
     )
     assert followup_eligibility(facts) == NoSession(status="NO_SESSION", reason="NATIVE_MISSING")
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        {"question_id": "", "session_id": "session"},
+        {"question_id": "question", "session_id": ""},
+        {"question_id": " ", "session_id": "session"},
+        {"question_id": "question"},
+        {"session_id": "session"},
+    ],
+)
+def test_refusal_requires_actual_question_and_session_identity(target: dict[str, JsonValue]) -> None:
+    with pytest.raises(ValidationError):
+        FollowupRefusalTarget.model_validate(target)
+
+
+def test_refusal_target_preserves_both_actual_identities() -> None:
+    target = FollowupRefusalTarget(question_id="question", session_id="session")
+    assert target.model_dump(mode="json") == {"question_id": "question", "session_id": "session"}
