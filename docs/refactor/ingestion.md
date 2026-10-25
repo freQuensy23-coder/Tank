@@ -880,6 +880,15 @@ claimed complete by this instrument slice.
 The actual source workflow regression additionally admits a valid mocked provider
 response, stores its baseline, then observes a response missing required status.
 The result is DEGRADED with no new source item; the prior instrument checkpoint
-is byte-for-byte equal as a stored document, and the validation report omits an
+is exactly equal as a decoded stored document, and the validation report omits an
 unrelated private raw field. Twelve focused instrument cases now cover this
 workflow alongside identity/parity, required fields, and actual page ownership.
+
+
+At canonical source-state checkpoint 29195f2d the full owned selection passed
+533 unit cases in 6.86 seconds and 38 actual integration cases in 7.60 seconds,
+with zero skips. Quality's two typed-outcome E2E caller changes preserved the
+four actual workflows and passed all four cases in 10.85 seconds; the exact
+consumer was merged normally into 10c7b8aa. These checks qualify the explicit
+owner/outcome and instrument tranche, not the remaining full checkpoint/parser
+migration. The ready quota/HTTP checkpoint remains separately preserved.
