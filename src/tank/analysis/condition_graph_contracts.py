@@ -6,6 +6,8 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 
+from tank.analysis.positioning import MissingOIDecomposition, OIDecomposition, oi_class
+from tank.analysis.statistics_contracts import DecimalRange, FloatRange
 from tank.contracts import DomainModel
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.time_precision import Timestamp
@@ -1155,3 +1157,187 @@ class ConditionSpotWindowGraph(DomainModel):
             if (spot.interval.cutoff - spot.interval.start).total_seconds() != self.durations_s[name]:
                 raise ValueError("A spot duration must preserve its actual interval bounds")
         return self
+
+
+class ObservedConditionOpenInterest(DomainModel):
+    status: Literal["OBSERVED"]
+    requested_window_duration_s: float = Field(gt=0)
+    observed_window_duration_s: float = Field(ge=0)
+    oi_native_start: Decimal = Field(gt=0)
+    oi_native_end: Decimal = Field(ge=0)
+    oi_native_chg_pct: float = Field(ge=-1)
+    oi_usd_start: Decimal | None = Field(ge=0)
+    oi_usd_end: Decimal | None = Field(ge=0)
+    oi_usd_chg_pct: float | None = Field(ge=-1)
+    oi_usd_reason: Literal["INCOMPLETE"] | None
+    oi_usd_detail: Literal["SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE"] | None
+    decomposition: OIDecomposition | MissingOIDecomposition
+    native_normal_range: FloatRange
+    usd_normal_range: FloatRange
+    native_oi_vs_normal: Literal["BELOW", "WITHIN", "ABOVE"] | None
+    native_beyond: bool | None
+    usd_beyond: bool | None
+    oi_class: Literal["REAL_NATIVE", "MIXED", "PRICE_MARKUP"] | None
+    classification_ready: bool
+    start_observed_at: Timestamp
+    end_observed_at: Timestamp
+
+    @model_validator(mode="after")
+    def supported_comparisons(self) -> Self:
+        if self.start_observed_at.value is None or self.end_observed_at.value is None:
+            raise ValueError("Observed OI endpoints require their actual observation clocks")
+        start = parse_iso_time(self.start_observed_at.value)
+        end = parse_iso_time(self.end_observed_at.value)
+        if (end - start).total_seconds() != self.observed_window_duration_s:
+            raise ValueError("OI observed duration must preserve its actual endpoint clocks")
+        usd_ready = self.oi_usd_start is not None and self.oi_usd_start > 0 and self.oi_usd_end is not None
+        if usd_ready != (self.oi_usd_chg_pct is not None):
+            raise ValueError("USD OI change requires a positive initial and known final USD quantity")
+        if usd_ready:
+            if self.oi_usd_reason is not None or self.oi_usd_detail is not None:
+                raise ValueError("An observed USD OI change cannot carry a missing-conversion reason")
+        elif self.oi_usd_reason is None or self.oi_usd_detail is None:
+            raise ValueError("Unavailable USD OI change requires its actual conversion gap")
+        nr = self.native_normal_range.bounds
+        ur = self.usd_normal_range.bounds
+        native_position = (
+            None
+            if nr is None
+            else "BELOW"
+            if self.oi_native_chg_pct < nr.lower
+            else "ABOVE"
+            if self.oi_native_chg_pct > nr.upper
+            else "WITHIN"
+        )
+        native_beyond = None if nr is None else native_position != "WITHIN"
+        usd_beyond = (
+            None
+            if ur is None or self.oi_usd_chg_pct is None
+            else self.oi_usd_chg_pct < ur.lower or self.oi_usd_chg_pct > ur.upper
+        )
+        if self.native_oi_vs_normal != native_position or self.native_beyond != native_beyond:
+            raise ValueError("Native OI comparisons must use the actual available baseline")
+        if self.usd_beyond != usd_beyond:
+            raise ValueError("USD OI comparison must use the actual change and baseline")
+        expected_class = oi_class(
+            self.oi_native_chg_pct,
+            self.oi_usd_chg_pct,
+            self.decomposition,
+            None if nr is None else (nr.lower, nr.upper),
+            None if ur is None else (ur.lower, ur.upper),
+        )
+        if self.oi_class != expected_class or self.classification_ready != (expected_class is not None):
+            raise ValueError(
+                "OI classification readiness must preserve its actual decomposition and baselines"
+            )
+        return self
+
+
+class UnavailableConditionOpenInterest(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["INCOMPLETE"]
+    detail: Literal["OI_BUCKET_EDGE_UNSPECIFIED"] | None
+
+
+class UnrequestedConditionOpenInterest(DomainModel):
+    status: Literal["NOT_REQUESTED"]
+
+
+type ConditionOpenInterest = (
+    ObservedConditionOpenInterest | UnavailableConditionOpenInterest | UnrequestedConditionOpenInterest
+)
+
+
+class ConditionFundingObservation(DomainModel):
+    kind: Literal["SETTLED", "CURRENT_ESTIMATE"]
+    rate: Decimal
+    interval_h: Decimal | None = Field(gt=0)
+    equivalent_eight_hour_rate: Decimal | None
+    equivalent_rate_reason: Literal["INCOMPLETE"] | None
+    observed_at: Timestamp
+
+    @model_validator(mode="after")
+    def actual_rate_basis(self) -> Self:
+        if self.observed_at.value is None:
+            raise ValueError("A funding observation requires its actual source observation clock")
+        if self.interval_h is None:
+            if self.equivalent_eight_hour_rate is not None or self.equivalent_rate_reason is None:
+                raise ValueError("Unknown funding settlement duration cannot produce an eight-hour rate")
+        elif self.equivalent_eight_hour_rate is None or self.equivalent_rate_reason is not None:
+            raise ValueError("A known funding rate and duration require an available eight-hour rate")
+        return self
+
+
+class AvailableConditionFunding(DomainModel):
+    status: Literal["OBSERVED"]
+    settled: ConditionFundingObservation | None
+    estimate: ConditionFundingObservation | None
+    start: ConditionFundingObservation | None
+    selected_kind: Literal["SETTLED", "CURRENT_ESTIMATE"]
+    normal_range: DecimalRange
+    funding_vs_normal: Literal["BELOW", "WITHIN", "ABOVE"] | None
+
+    @model_validator(mode="after")
+    def selected_rate(self) -> Self:
+        for kind, observation in (
+            ("SETTLED", self.settled),
+            ("CURRENT_ESTIMATE", self.estimate),
+            ("SETTLED", self.start),
+        ):
+            if observation is not None and observation.kind != kind:
+                raise ValueError("A funding observation must preserve its actual settlement or estimate kind")
+        selected = self.estimate if self.selected_kind == "CURRENT_ESTIMATE" else self.settled
+        if selected is None or selected.equivalent_eight_hour_rate is None:
+            raise ValueError("Selected funding requires an actual normalized observation")
+        if (
+            self.selected_kind == "SETTLED"
+            and self.estimate is not None
+            and self.estimate.equivalent_eight_hour_rate is not None
+        ):
+            raise ValueError("A current normalized estimate takes precedence over settled funding")
+        bounds = self.normal_range.bounds
+        value = selected.equivalent_eight_hour_rate
+        position = (
+            None
+            if bounds is None
+            else "BELOW"
+            if value < bounds.lower
+            else "ABOVE"
+            if value > bounds.upper
+            else "WITHIN"
+        )
+        if self.funding_vs_normal != position:
+            raise ValueError("Funding comparison requires the actual normalized rate and baseline")
+        return self
+
+
+class UnavailableConditionFunding(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["INCOMPLETE"]
+    settled: ConditionFundingObservation | None
+    estimate: ConditionFundingObservation | None
+    start: ConditionFundingObservation | None
+    normal_range: DecimalRange
+
+    @model_validator(mode="after")
+    def no_normalized_current_observation(self) -> Self:
+        for kind, observation in (
+            ("SETTLED", self.settled),
+            ("CURRENT_ESTIMATE", self.estimate),
+            ("SETTLED", self.start),
+        ):
+            if observation is not None and observation.kind != kind:
+                raise ValueError("A funding observation must preserve its actual settlement or estimate kind")
+        if any(
+            observation is not None and observation.equivalent_eight_hour_rate is not None
+            for observation in (self.settled, self.estimate)
+        ):
+            raise ValueError("A normalized current funding observation cannot be classified as missing")
+        return self
+
+
+class UnrequestedConditionFunding(DomainModel):
+    status: Literal["NOT_REQUESTED"]
+
+
+type ConditionFunding = AvailableConditionFunding | UnavailableConditionFunding | UnrequestedConditionFunding

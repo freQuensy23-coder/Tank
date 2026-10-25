@@ -6,19 +6,25 @@ import pytest
 from pydantic import ValidationError
 
 from tank.analysis.condition_graph_contracts import (
+    AvailableConditionFunding,
     BasicConditionSpot,
     ConditionCadenceScope,
     ConditionCollection,
     ConditionDepthValues,
     ConditionFieldObservation,
     ConditionFlowAggregate,
+    ConditionFundingObservation,
     ConditionInterval,
     DeclaredConditionCadence,
     NonForwardConditionInterval,
     ObservedConditionClose,
+    ObservedConditionOpenInterest,
     UnavailableConditionClose,
+    UnavailableConditionFunding,
     WindowedConditionSpot,
 )
+from tank.analysis.positioning import MissingOIDecomposition
+from tank.analysis.statistics_contracts import DecimalRange, FloatBounds, FloatRange
 from tank.time_precision import Timestamp
 
 AT = datetime(2026, 10, 17, 12, tzinfo=UTC)
@@ -724,3 +730,119 @@ def test_spot_native_validation_does_not_round_away_a_wide_precision_unit() -> N
     assert venue.volume_native == total and venue.cvd == cvd
     with pytest.raises(ValidationError, match="actual native buy and sell"):
         ConditionSpotVenue.model_validate(venue.model_copy(update={"volume_native": buy}))
+
+
+def observed_oi_without_usd() -> ObservedConditionOpenInterest:
+    return ObservedConditionOpenInterest(
+        status="OBSERVED",
+        requested_window_duration_s=3600.0,
+        observed_window_duration_s=3600.0,
+        oi_native_start=Decimal(10),
+        oi_native_end=Decimal(0),
+        oi_native_chg_pct=-1.0,
+        oi_usd_start=Decimal(0),
+        oi_usd_end=Decimal(0),
+        oi_usd_chg_pct=None,
+        oi_usd_reason="INCOMPLETE",
+        oi_usd_detail="SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE",
+        decomposition=MissingOIDecomposition(),
+        native_normal_range=FloatRange(bounds=FloatBounds(lower=-0.1, upper=0.1), reason=None),
+        usd_normal_range=FloatRange(bounds=None, reason="INSUFFICIENT_HISTORY"),
+        native_oi_vs_normal="BELOW",
+        native_beyond=True,
+        usd_beyond=None,
+        oi_class=None,
+        classification_ready=False,
+        start_observed_at=Timestamp(
+            value="2026-10-17T11:00:00Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+        ),
+        end_observed_at=Timestamp(
+            value="2026-10-17T12:00:00Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+        ),
+    )
+
+
+def test_native_oi_zero_end_preserves_unknown_usd_and_classification() -> None:
+    observed = observed_oi_without_usd()
+    assert observed.oi_native_end == 0 and observed.oi_native_chg_pct == -1
+    assert observed.oi_usd_start == 0 and observed.oi_usd_end == 0
+    assert observed.oi_usd_chg_pct is None and not observed.classification_ready
+    assert observed.end_observed_at.precision is None
+    with pytest.raises(ValidationError, match="USD OI change requires"):
+        ObservedConditionOpenInterest.model_validate(observed.model_copy(update={"oi_usd_chg_pct": 0.0}))
+    with pytest.raises(ValidationError, match="classification readiness"):
+        ObservedConditionOpenInterest.model_validate(
+            observed.model_copy(update={"classification_ready": True})
+        )
+    with pytest.raises(ValidationError, match="actual endpoint clocks"):
+        ObservedConditionOpenInterest.model_validate(
+            observed.model_copy(update={"observed_window_duration_s": 60.0})
+        )
+
+
+def test_oi_baseline_absence_cannot_be_relabelled_as_a_known_normal_comparison() -> None:
+    observed = observed_oi_without_usd()
+    with pytest.raises(ValidationError, match="actual available baseline"):
+        ObservedConditionOpenInterest.model_validate(
+            observed.model_copy(
+                update={"native_normal_range": FloatRange(bounds=None, reason="INSUFFICIENT_HISTORY")}
+            )
+        )
+
+
+def funding_observation(
+    kind: Literal["SETTLED", "CURRENT_ESTIMATE"], interval: Decimal | None
+) -> ConditionFundingObservation:
+    return ConditionFundingObservation(
+        kind=kind,
+        rate=Decimal(0),
+        interval_h=interval,
+        equivalent_eight_hour_rate=None if interval is None else Decimal(0),
+        equivalent_rate_reason="INCOMPLETE" if interval is None else None,
+        observed_at=Timestamp(
+            value="2026-10-17T12:00:00Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+        ),
+    )
+
+
+def test_funding_known_zero_estimate_takes_precedence_without_inventing_history() -> None:
+    baseline = DecimalRange(bounds=None, reason="INSUFFICIENT_HISTORY")
+    settled = funding_observation("SETTLED", Decimal(8))
+    estimate = funding_observation("CURRENT_ESTIMATE", Decimal(1))
+    funding = AvailableConditionFunding(
+        status="OBSERVED",
+        settled=settled,
+        estimate=estimate,
+        start=None,
+        selected_kind="CURRENT_ESTIMATE",
+        normal_range=baseline,
+        funding_vs_normal=None,
+    )
+    assert funding.estimate is not None and funding.estimate.equivalent_eight_hour_rate == 0
+    assert funding.funding_vs_normal is None
+    with pytest.raises(ValidationError, match="takes precedence"):
+        AvailableConditionFunding.model_validate(funding.model_copy(update={"selected_kind": "SETTLED"}))
+    with pytest.raises(ValidationError, match="actual normalized rate and baseline"):
+        AvailableConditionFunding.model_validate(funding.model_copy(update={"funding_vs_normal": "WITHIN"}))
+
+
+def test_funding_unknown_interval_preserves_observation_but_never_selects_a_kind() -> None:
+    unsettled = funding_observation("CURRENT_ESTIMATE", None)
+    unavailable = UnavailableConditionFunding(
+        status="UNAVAILABLE",
+        reason="INCOMPLETE",
+        settled=None,
+        estimate=unsettled,
+        start=None,
+        normal_range=DecimalRange(bounds=None, reason="INSUFFICIENT_HISTORY"),
+    )
+    assert unavailable.estimate is not None and unavailable.estimate.rate == 0
+    assert unavailable.estimate.equivalent_eight_hour_rate is None
+    with pytest.raises(ValidationError, match="cannot be classified as missing"):
+        UnavailableConditionFunding.model_validate(
+            unavailable.model_copy(update={"estimate": funding_observation("CURRENT_ESTIMATE", Decimal(8))})
+        )
+    with pytest.raises(ValidationError, match="Unknown funding settlement duration"):
+        ConditionFundingObservation.model_validate(
+            unsettled.model_copy(update={"equivalent_eight_hour_rate": Decimal(0)})
+        )
