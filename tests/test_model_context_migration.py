@@ -6,7 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from agent_source_fixtures import source_record_fixture
+from agent_source_fixtures import declared_versions_fixture, source_record_fixture
 
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
 from tank.agents.sessions import SessionService
@@ -104,7 +104,11 @@ async def test_legacy_callbacks_upgrade_before_delivery_and_new_turns_reject_ids
     native = NativeSession()
     async with httpx.AsyncClient(transport=httpx.MockTransport(native)) as http:
         service = SessionService(
-            repo, settings, EventToolService(repo, settings, None, None).dispatch, http=http
+            repo,
+            settings,
+            EventToolService(repo, settings, None, None).dispatch,
+            http=http,
+            versions=declared_versions_fixture(),
         )
         service.start_stream = lambda sid: None
         current = await service.send_message(payload)
@@ -185,7 +189,7 @@ async def test_old_description_call_in_a_legacy_turn_is_refused_once_and_the_id_
         },
     }
     async with httpx.AsyncClient(transport=httpx.MockTransport(native)) as http:
-        service = SessionService(repo, settings, dispatch, http=http)
+        service = SessionService(repo, settings, dispatch, http=http, versions=declared_versions_fixture())
         with pytest.raises(ValueError, match="native tool boundary"):
             await service.tool(session, old)
         assert count == 0
@@ -200,7 +204,7 @@ async def test_old_description_call_in_a_legacy_turn_is_refused_once_and_the_id_
         current = await repo.get("ops.agent_sessions", session["session_id"])
         assert current["model_context_version"] == CONTEXT_VERSION
         assert current["legacy_model_message_ids"] == ["old_message"]
-        restarted = SessionService(repo, settings, dispatch, http=http)
+        restarted = SessionService(repo, settings, dispatch, http=http, versions=declared_versions_fixture())
         await restarted.tool(current, old)
         assert count == 0
         result_posts = [row[2]["events"][0] for row in native.requests if row[1].endswith("/events")]
@@ -234,7 +238,7 @@ async def test_busy_legacy_session_defers_new_callbacks_without_changing_the_act
     await repo.put("ops.agent_sessions", session["session_id"], session)
     native = NativeSession()
     async with httpx.AsyncClient(transport=httpx.MockTransport(native)) as http:
-        service = SessionService(repo, settings, None, http=http)
+        service = SessionService(repo, settings, None, http=http, versions=declared_versions_fixture())
         with pytest.raises(DeliveryDeferred):
             await service.send_message(
                 {"kind": "ITEM_ADDED", "event_id": event["event_id"], "item_id": item["item_id"]}
@@ -251,7 +255,7 @@ async def test_failed_migration_never_marks_old_contract_current_or_delivers_a_c
     native = NativeSession()
     native.fail_update = status
     async with httpx.AsyncClient(transport=httpx.MockTransport(native)) as http:
-        service = SessionService(repo, settings, None, http=http)
+        service = SessionService(repo, settings, None, http=http, versions=declared_versions_fixture())
         with pytest.raises(httpx.HTTPStatusError):
             await service.send_message({"kind": "MILESTONE", "event_id": event["event_id"]})
     assert not any(row[1].endswith("/events") for row in native.requests)
@@ -280,8 +284,8 @@ async def test_old_remote_snapshot_is_not_recovered_as_a_new_context(legacy) -> 
         return httpx.Response(200, json={"id": "new_remote"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        current = await SessionService(repo, settings, None, http=http).resolve(
-            {"kind": "NEW_ITEM", "item_id": item_id}
-        )
+        current = await SessionService(
+            repo, settings, None, http=http, versions=declared_versions_fixture()
+        ).resolve({"kind": "NEW_ITEM", "item_id": item_id})
     assert current["session_id"] == "new_remote" and current["model_context_version"] == CONTEXT_VERSION
     assert len(requests) == 1

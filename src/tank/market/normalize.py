@@ -1,20 +1,69 @@
 """Strict exchange normalization. Missing semantic fields are errors, never estimates."""
 
 from bisect import bisect_right
+from collections.abc import Mapping
 from datetime import datetime, timedelta
+from decimal import Decimal
+
+from pydantic import JsonValue
 
 from tank.market.errors import SemanticError
 from tank.market.funding import FundingObservation
 from tank.market.numbers import decimal
 from tank.market.precision import precise
-from tank.time_precision import collection_clock, propagate_timestamp
-from tank.util import canonical_json, iso, jsonable, parse_time
+from tank.market.trade_contracts import FlowInstrument, NormalizedTrade, QuoteUsdValuation, TradeCaptureSource
+from tank.market.trade_wire import TradeWire, decode_trade
+from tank.time_precision import Timestamp, collection_clock, propagate_timestamp
+from tank.util import (
+    EpochUnit,
+    canonical_json,
+    iso,
+    jsonable,
+    parse_epoch,
+    parse_iso_time,
+    utcnow,
+)
+
+
+def _provider_epoch(value: JsonValue | Decimal, *, unit: EpochUnit) -> datetime:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+        raise SemanticError("Provider timestamp requires a numeric epoch")
+    return parse_epoch(value, unit=unit)
+
+
+def _reported_milliseconds(raw: Mapping[str, JsonValue], fields: tuple[str, ...]) -> datetime | None:
+    for field in fields:
+        if field in raw and raw[field] is not None:
+            return _provider_epoch(raw[field], unit="ms")
+    return None
+
+
+def _receipt(value: datetime | str | None, raw: Mapping[str, JsonValue]) -> datetime | None:
+    if value is not None:
+        return parse_iso_time(value)
+    captured = raw.get("_capture_observed_at")
+    if captured is None:
+        return None
+    if not isinstance(captured, str):
+        raise SemanticError("Captured receipt clock requires an ISO timestamp")
+    return parse_iso_time(captured)
+
+
+def _received_fields(value: datetime | None) -> dict[str, str | int | None]:
+    stamp = Timestamp(None, None, "RECEIPT_NOT_CAPTURED") if value is None else collection_clock(value)
+    return stamp.fields("received_ts")
+
+
+def _current_receipt(value: datetime | None) -> datetime:
+    if value is None:
+        raise SemanticError("Current observation requires a captured receipt clock")
+    return value
 
 
 def timestamp_fields(field, value, precision, *, bucket_size=None):
     """Emit caller-declared source precision through the shared time contract."""
     return propagate_timestamp(
-        {field: iso(value) if value is not None else None, field + "_prec": precision},
+        {field: iso(parse_iso_time(value)) if value is not None else None, field + "_prec": precision},
         field,
         bucket_size=bucket_size,
     ).fields(field)
@@ -28,7 +77,7 @@ QUOTE_USD_MAX_AGE = timedelta(hours=6)
 def remember_quote_usd(quote, samples):
     """Add (as_of, rate) samples; those older than QUOTE_USD_REACH before the newest drop."""
     merged = dict(QUOTE_USD_HISTORY.get(quote, ()))
-    merged.update((parse_time(as_of), str(rate)) for as_of, rate in samples)
+    merged.update((parse_iso_time(as_of), str(rate)) for as_of, rate in samples)
     if not merged:
         return
     newest = max(merged)
@@ -43,7 +92,7 @@ def quote_usd_rate(instrument, at):
     quote = instrument.get("quote_asset", "").upper()
     if quote == "USD":
         return "1", None
-    at = parse_time(at)
+    at = parse_iso_time(at)
     history = QUOTE_USD_HISTORY.get(quote)
     if history:
         index = bisect_right(history, at, key=lambda sample: sample[0])
@@ -51,7 +100,7 @@ def quote_usd_rate(instrument, at):
             return history[index - 1][1], iso(history[index - 1][0])
         return None, None
     rate, as_of = instrument.get("quote_usd_rate"), instrument.get("quote_usd_rate_as_of")
-    if rate is None or as_of and parse_time(as_of) > at:
+    if rate is None or as_of is not None and parse_iso_time(as_of) > at:
         return None, None
     return rate, as_of
 
@@ -70,128 +119,98 @@ def venue_key(instrument):
     return venue.split(".")[0] + ".spot"
 
 
-@precise
-def trade(instrument, raw, *, received_ts=None, source="WS"):
-    key = venue_key(instrument)
-    venue = key.split(".")[0]
-    aggregation = "PER_FILL"
-    if venue == "binance":
-        if not isinstance(raw["m"], bool):
-            raise SemanticError("buyer-is-maker must be boolean")
-        side, qty, price, ts, tid = ("SELL" if raw["m"] else "BUY"), raw["q"], raw["p"], raw["T"], raw["a"]
-        aggregation = "PER_TAKER_ORDER_SAME_PRICE"
-    elif venue == "coinbase":
-        if raw["side"] not in ("buy", "sell"):
-            raise SemanticError("unknown Coinbase maker side")
-        side, qty, price, ts, tid = (
-            ("BUY" if raw["side"] == "sell" else "SELL"),
-            raw["size"],
-            raw["price"],
-            raw["time"],
-            raw["trade_id"],
-        )
-    elif venue == "okx":
-        if raw["side"] not in ("buy", "sell"):
-            raise SemanticError("unknown OKX taker side")
-        side, qty, price, ts, tid = raw["side"].upper(), raw["sz"], raw["px"], raw["ts"], raw["tradeId"]
-        if key == "okx.swap":
-            multiplier = instrument.get("contract_multiplier")
-            if multiplier is None:
-                raise SemanticError("OKX ctVal base multiplier unverified")
-            qty = decimal(qty) * decimal(multiplier)
-        aggregation = "PER_TAKER_ORDER_SAME_PRICE"
-    elif venue == "bybit":
-        s = raw.get("S", raw.get("side"))
-        if s not in ("Buy", "Sell"):
-            raise SemanticError("unknown Bybit taker side")
-        side, qty, price, ts, tid = (
-            s.upper(),
-            raw.get("v", raw.get("size")),
-            raw.get("p", raw.get("price")),
-            raw.get("T", raw.get("time")),
-            raw.get("i", raw.get("execId")),
-        )
-    elif venue == "kraken":
-        if isinstance(raw, list):
-            if len(raw) < 7:
-                raise SemanticError("Kraken trade ID absent")
-            price, qty, ts, s, _, _, tid = raw[:7]
-        else:
-            price, qty, ts, s, tid = raw["price"], raw["qty"], raw["timestamp"], raw["side"], raw["trade_id"]
-        if s not in ("buy", "sell", "b", "s"):
-            raise SemanticError("unknown Kraken taker side")
-        side = "BUY" if s in ("buy", "b") else "SELL"
-    elif venue == "hyperliquid":
-        if raw["side"] not in ("B", "A"):
-            raise SemanticError("unknown Hyperliquid side")
-        side, qty, price, ts, tid = (
-            ("BUY" if raw["side"] == "B" else "SELL"),
-            raw["sz"],
-            raw["px"],
-            raw["time"],
-            raw["tid"],
-        )
-    else:
-        raise SemanticError(f"unsupported venue {venue}")
-    if tid is None:
-        raise SemanticError("missing trade ID")
-    qty, price = decimal(qty), decimal(price)
-    if qty <= 0 or price <= 0:
-        raise SemanticError("nonpositive trade")
-    quote = instrument.get("quote_asset", "").upper()
+def _trade_metric(instrument: FlowInstrument, source: TradeCaptureSource) -> str:
+    prefixes = {
+        ("binance", "SPOT"): "binance.spot",
+        ("binance", "PERP_LINEAR"): "binance.usdm",
+        ("bybit", "SPOT"): "bybit.spot",
+        ("bybit", "PERP_LINEAR"): "bybit.linear",
+        ("okx", "SPOT"): "okx.spot",
+        ("okx", "PERP_LINEAR"): "okx.swap",
+        ("coinbase", "SPOT"): "coinbase.spot",
+        ("kraken", "SPOT"): "kraken.spot",
+        ("hyperliquid", "PERP_LINEAR"): "hyperliquid.perp",
+    }
+    identity = (instrument.venue, instrument.market_type)
+    if identity not in prefixes:
+        raise SemanticError("unsupported venue market type")
+    if instrument.venue == "coinbase":
+        if source == "ARCHIVE":
+            raise SemanticError("Archived Coinbase trade requires its original metric provenance")
+        return prefixes[identity] + (".trades" if source == "REST" else ".matches")
+    suffixes = {
+        "binance": ".aggTrade",
+        "bybit": ".publicTrade",
+        "okx": ".trades",
+        "kraken": ".trade",
+        "hyperliquid": ".trades",
+    }
+    return prefixes[identity] + suffixes[instrument.venue]
 
-    fx, _ = quote_usd_rate(instrument, ts)
-    usd = qty * price * decimal(fx) if fx is not None else None
-    return jsonable(
-        {
-            "instrument_id": instrument["instrument_id"],
-            "token_id": instrument["token_id"],
-            "venue": venue,
-            "venue_symbol": instrument.get("venue_symbol"),
-            "market_type": instrument["market_type"],
-            "trade_id": str(tid),
-            "source_payload_json": canonical_json(raw),
-            **timestamp_fields("ts", ts, "EXACT"),
-            **collection_clock(received_ts).fields("received_ts"),
-            "side": side,
-            "qty_native": qty,
-            "price": price,
-            "quote_notional": qty * price,
-            "notional_usd": usd,
-            "quote_asset": quote,
-            "usd_reason": None if usd is not None else "QUOTE_USD_RATE_UNAVAILABLE",
-            "metric_key": key
-            + (
-                ".aggTrade"
-                if venue == "binance"
-                else ".trades"
-                if venue in ("okx", "hyperliquid")
-                else (".trades" if source == "REST" else ".matches")
-                if venue == "coinbase"
-                else ".publicTrade"
-                if venue == "bybit"
-                else ".trade"
-            ),
-            "trade_aggregation": aggregation,
-            "raw_first_id": raw.get("f") if isinstance(raw, dict) else None,
-            "raw_last_id": raw.get("l") if isinstance(raw, dict) else None,
-            "sequence": raw.get("seq", raw.get("seqId", raw.get("_stream_sequence")))
-            if isinstance(raw, dict)
-            else None,
-            "sequence_semantics": "MONOTONIC" if venue in ("okx", "bybit") else "N_A",
-            "capture_source": source,
-        }
+
+@precise
+def trade(
+    instrument: FlowInstrument,
+    raw: TradeWire,
+    *,
+    valuation: QuoteUsdValuation,
+    received_ts: datetime,
+    source: TradeCaptureSource,
+) -> NormalizedTrade:
+    """Decode actual provider fields; caller owns quote valuation and receipt observation."""
+    metric = _trade_metric(instrument, source)
+    decoded = decode_trade(instrument.venue, raw)
+    qty = decoded.reported_quantity
+    if instrument.venue == "okx" and instrument.market_type == "PERP_LINEAR":
+        if instrument.contract_multiplier is None:
+            raise SemanticError("OKX ctVal base multiplier unverified")
+        qty *= instrument.contract_multiplier
+    if valuation.as_of is not None and valuation.as_of > decoded.ts:
+        raise SemanticError("Quote USD valuation is newer than the trade")
+    if valuation.basis == "USD_UNIT" and instrument.quote_asset.upper() != "USD":
+        raise SemanticError("USD unit valuation requires a USD quote")
+    quote_notional = qty * decoded.price
+    usd = None if valuation.rate is None else quote_notional * valuation.rate
+    return NormalizedTrade(
+        instrument_id=instrument.instrument_id,
+        token_id=instrument.token_id,
+        venue=instrument.venue,
+        venue_symbol=instrument.venue_symbol,
+        market_type=instrument.market_type,
+        quote_asset=instrument.quote_asset.upper(),
+        trade_id=decoded.trade_id,
+        source_payload_json=canonical_json(raw),
+        ts=decoded.ts,
+        ts_prec="EXACT",
+        ts_prec_reason=None,
+        received_ts=parse_iso_time(received_ts),
+        received_ts_prec="COLLECTION_ONLY",
+        received_ts_prec_reason=None,
+        side=decoded.side,
+        qty_native=qty,
+        price=decoded.price,
+        quote_notional=quote_notional,
+        notional_usd=usd,
+        usd_reason=valuation.unavailable_reason,
+        metric_key=metric,
+        trade_aggregation=decoded.aggregation,
+        raw_first_id=decoded.raw_first_id,
+        raw_last_id=decoded.raw_last_id,
+        sequence=decoded.sequence,
+        sequence_semantics="MONOTONIC" if instrument.venue in {"okx", "bybit"} else "N_A",
+        capture_source=source,
     )
 
 
 @precise
 def kline(instrument, row, *, now=None):
     key = venue_key(instrument)
+    observed = utcnow() if now is None else parse_iso_time(now)
     extra = {}
     if key.startswith("binance"):
         ts, o, h, low, c, v, closed, q, n, b, bq = row[:11]
         extra = {"quote_volume": q, "n_trades": int(n), "taker_buy_native": b, "taker_buy_quote": bq}
-        complete = parse_time(closed) < parse_time(now or iso())
+        complete = _provider_epoch(closed, unit="ms") < observed
     elif key.startswith("okx"):
         ts, o, h, low, c, v = row[:6]
         if key == "okx.swap":
@@ -207,14 +226,14 @@ def kline(instrument, row, *, now=None):
         complete = str(row[8]) == "1" if len(row) > 8 else False
     elif key.startswith("bybit"):
         ts, o, h, low, c, v, q = row[:7]
-        complete = parse_time(ts) + timedelta(minutes=1) <= parse_time(now or iso())
+        complete = _provider_epoch(ts, unit="ms") + timedelta(minutes=1) <= observed
         extra = {"quote_volume": q, "n_trades": None, "taker_buy_native": None, "taker_buy_quote": None}
     elif key.startswith("coinbase"):
         ts, low, h, o, c, v = row[:6]
-        complete = parse_time(ts) + timedelta(minutes=1) <= parse_time(now or iso())
+        complete = _provider_epoch(ts, unit="s") + timedelta(minutes=1) <= observed
     elif key.startswith("kraken"):
         ts, o, h, low, c, vwap, v, n = row[:8]
-        complete = parse_time(ts) + timedelta(minutes=1) <= parse_time(now or iso())
+        complete = _provider_epoch(ts, unit="s") + timedelta(minutes=1) <= observed
         extra = {
             "n_trades": int(n),
             "quote_volume": decimal(vwap) * decimal(v),
@@ -222,10 +241,11 @@ def kline(instrument, row, *, now=None):
         }
     elif key.startswith("hyperliquid"):
         ts, o, h, low, c, v = (row[x] for x in ("t", "o", "h", "l", "c", "v"))
-        complete = parse_time(row["T"]) < parse_time(now or iso())
+        complete = _provider_epoch(row["T"], unit="ms") < observed
         extra = {"n_trades": int(row["n"])}
     else:
         raise SemanticError("unsupported kline")
+    ts = _provider_epoch(ts, unit="s" if key.startswith(("coinbase", "kraken")) else "ms")
     result = {
         "instrument_id": instrument["instrument_id"],
         "token_id": instrument["token_id"],
@@ -236,14 +256,14 @@ def kline(instrument, row, *, now=None):
         "c": str(decimal(c)),
         "volume_native": str(decimal(v)),
         "complete": complete,
-        **collection_clock(now).fields("received_ts"),
+        **collection_clock(observed).fields("received_ts"),
         "interval_s": 60,
     }
     for name in ("quote_volume", "n_trades", "taker_buy_native", "taker_buy_quote"):
         result[name] = extra.get(name)
     quote = result.get("quote_volume")
 
-    fx, fx_asof = quote_usd_rate(instrument, parse_time(ts) + timedelta(minutes=1))
+    fx, fx_asof = quote_usd_rate(instrument, ts + timedelta(minutes=1))
     result.update(
         quote_asset=instrument.get("quote_asset"),
         quote_volume_method=extra.get("quote_volume_method", "REPORTED" if quote is not None else None),
@@ -261,7 +281,7 @@ def kline(instrument, row, *, now=None):
 
 @precise
 def oi(instrument, raw, *, mark=None, mark_ts=None, mark_ts_prec=None, received_ts=None, bucket_size_s=300):
-    received_ts = received_ts or raw.get("_capture_observed_at")
+    received_ts = _receipt(received_ts, raw)
     key = venue_key(instrument)
     sidedness = "SINGLE_SIDED"
     reason = None
@@ -282,7 +302,7 @@ def oi(instrument, raw, *, mark=None, mark_ts=None, mark_ts_prec=None, received_
         metric = key + ".open-interest"
     elif key == "hyperliquid.perp":
         value = raw["openInterest"]
-        ts = received_ts or iso()
+        ts = _current_receipt(received_ts)
         metric = key + ".ctx"
         sidedness = "UNKNOWN"
         reason = "SIDEDNESS_UNPUBLISHED"
@@ -290,6 +310,7 @@ def oi(instrument, raw, *, mark=None, mark_ts=None, mark_ts_prec=None, received_
         raise SemanticError("spot has no OI")
     if ts is None:
         raise SemanticError("OI source timestamp absent")
+    ts = parse_iso_time(ts) if key == "hyperliquid.perp" else _provider_epoch(ts, unit="ms")
     bucketed = "Hist" in metric
 
     if bucketed or key == "bybit.linear":
@@ -312,9 +333,7 @@ def oi(instrument, raw, *, mark=None, mark_ts=None, mark_ts_prec=None, received_
     if value < 0:
         raise SemanticError("negative open interest")
     mark_aligned = (
-        mark is not None
-        and mark_ts is not None
-        and abs((parse_time(mark_ts) - parse_time(ts)).total_seconds()) <= 60
+        mark is not None and mark_ts is not None and abs((parse_iso_time(mark_ts) - ts).total_seconds()) <= 60
     )
     fx = "1" if instrument.get("quote_asset") == "USD" else instrument.get("quote_usd_rate")
     usd = (
@@ -331,7 +350,7 @@ def oi(instrument, raw, *, mark=None, mark_ts=None, mark_ts_prec=None, received_
             "instrument_id": instrument["instrument_id"],
             "token_id": instrument["token_id"],
             **timestamp_fields("ts", ts, precision),
-            **collection_clock(received_ts).fields("received_ts"),
+            **_received_fields(received_ts),
             "ts_bucket_size_s": bucket_size_s if bucketed else None,
             **({"ts_bucket_anchor": "END" if key == "binance.usdm" else "UNSPECIFIED"} if bucketed else {}),
             "raw_value": str(value),
@@ -354,15 +373,17 @@ def oi(instrument, raw, *, mark=None, mark_ts=None, mark_ts_prec=None, received_
 
 @precise
 def funding(instrument, raw, *, kind, interval_h, received_ts=None):
-    received_ts = received_ts or raw.get("_capture_observed_at")
+    received_ts = _receipt(received_ts, raw)
     key = venue_key(instrument)
     interval = decimal(interval_h)
     if interval <= 0:
         raise SemanticError("invalid funding interval")
     if key.startswith("binance"):
         rate = raw["fundingRate"] if kind == "SETTLED" else raw.get("lastFundingRate", raw.get("r"))
-        timestamp = (
-            raw["fundingTime"] if kind == "SETTLED" else raw.get("time", raw.get("E", received_ts or iso()))
+        reported = (
+            _provider_epoch(raw["fundingTime"], unit="ms")
+            if kind == "SETTLED"
+            else _reported_milliseconds(raw, ("time", "E"))
         )
     elif key.startswith("okx"):
         rate = (
@@ -370,29 +391,30 @@ def funding(instrument, raw, *, kind, interval_h, received_ts=None):
             if kind == "SETTLED" and raw.get("realizedRate") is not None
             else raw["fundingRate"]
         )
-        timestamp = raw["fundingTime"] if kind == "SETTLED" else raw.get("ts", received_ts or iso())
+        reported = (
+            _provider_epoch(raw["fundingTime"], unit="ms")
+            if kind == "SETTLED"
+            else _reported_milliseconds(raw, ("ts",))
+        )
     elif key.startswith("bybit"):
         rate = raw["fundingRate"]
-        timestamp = raw["fundingRateTimestamp"] if kind == "SETTLED" else received_ts or iso()
+        reported = _provider_epoch(raw["fundingRateTimestamp"], unit="ms") if kind == "SETTLED" else None
     elif key.startswith("hyperliquid"):
         rate = raw["fundingRate"] if kind == "SETTLED" else raw["funding"]
-        timestamp = raw.get("time", received_ts or iso())
+        reported = (
+            _provider_epoch(raw["time"], unit="ms")
+            if kind == "SETTLED"
+            else _reported_milliseconds(raw, ("time",))
+        )
     else:
         raise SemanticError("spot has no funding")
-    rate = decimal(rate)
-    source_clock = kind == "SETTLED" or (
-        key.startswith("binance")
-        and (raw.get("time") is not None or raw.get("E") is not None)
-        or key.startswith("okx")
-        and raw.get("ts") is not None
-        or key.startswith("hyperliquid")
-        and raw.get("time") is not None
-    )
+    source_clock = reported is not None
+    timestamp = _current_receipt(received_ts) if reported is None else reported
     observation = FundingObservation(
         instrument_id=instrument["instrument_id"],
         token_id=instrument["token_id"],
         kind=kind,
-        rate=rate,
+        rate=decimal(rate),
         interval_h=interval,
         timestamp=iso(timestamp),
         source_clock=source_clock,
@@ -415,7 +437,7 @@ def funding(instrument, raw, *, kind, interval_h, received_ts=None):
                 if kind == "SETTLED"
                 else {}
             ),
-            **collection_clock(received_ts).fields("received_ts"),
+            **_received_fields(received_ts),
             metric_key=key + ".funding",
         )
     )
@@ -423,6 +445,7 @@ def funding(instrument, raw, *, kind, interval_h, received_ts=None):
 
 @precise
 def liquidation(instrument, raw, *, received_ts=None):
+    received_ts = _receipt(received_ts, raw)
     key = venue_key(instrument)
     if key == "binance.usdm":
         x = raw.get("o", raw)
@@ -453,6 +476,7 @@ def liquidation(instrument, raw, *, received_ts=None):
         coverage = "SAMPLED"
     else:
         raise SemanticError("liquidations unsupported")
+    ts = _provider_epoch(ts, unit="ms")
     qty, price = decimal(qty), decimal(price)
     if qty < 0 or price <= 0:
         raise SemanticError("invalid liquidation quantity/price")
@@ -462,7 +486,7 @@ def liquidation(instrument, raw, *, received_ts=None):
             "instrument_id": instrument["instrument_id"],
             "token_id": instrument["token_id"],
             **timestamp_fields("ts", ts, "EXACT"),
-            **collection_clock(received_ts).fields("received_ts"),
+            **_received_fields(received_ts),
             "side": side,
             "qty_native": qty,
             "price": price,

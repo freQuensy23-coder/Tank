@@ -8,6 +8,7 @@ import pytest
 import zstandard
 from source_support import (
     fetch_plan,
+    fixture_versions,
     operational_configuration,
     source_configuration,
     source_definition,
@@ -49,8 +50,8 @@ def captured(svc, sid, item, payload=b"<html>source evidence</html>", observed_a
     return dict(
         {"url": "https://synthetic.invalid/source-evidence", "feed": sid, "published_at": None, **item},
         item_id=item_id,
-        discovery_config_version=svc.settings.config_version,
-        discovery_code_version=svc.settings.code_version,
+        discovery_config_version=svc.versions.config_version,
+        discovery_code_version=svc.versions.code_version,
         raw_ref=raw_ref,
         raw_sha256=digest,
         observed_at=observed_at,
@@ -268,6 +269,7 @@ async def test_raw_first_dedup_and_conditional_get(tmp_path: Path) -> None:
             tmp_path, [{"source_id": "S30", "feeds": [{"url": "https://example.org/rss", "kind": "rss"}]}]
         ),
         http=http,
+        versions=fixture_versions(),
     )
     assert (await svc.poll_once("S30"))["items"] == 1
     assert (await svc.poll_once("S30"))["items"] == 0
@@ -322,7 +324,7 @@ async def test_raw_stored_only_for_captured_items_across_repeated_polls(
             ],
         },
     ]
-    svc = SourceService(repo, settings(tmp_path, sources), http=http)
+    svc = SourceService(repo, settings(tmp_path, sources), http=http, versions=fixture_versions())
     for _ in range(3):
         await svc.poll_once("S30")
         await svc.poll_once("S14")
@@ -350,7 +352,7 @@ async def test_sighting_in_another_feed_counts_one_observation(tmp_path: Path) -
             {"url": "https://example.org/rss2", "kind": "rss"},
         ],
     }
-    svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+    svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
     await svc.poll_once("S30")
     await svc.poll_once("S30")
     items = [v for (c, k), v in repo.rows.items() if c == "ingest.source_items"]
@@ -439,7 +441,7 @@ async def test_instrument_baseline_diff_and_bybit_cursor(tmp_path: Path, collect
             }
         ],
     }
-    svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+    svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
     assert (await svc.poll_once("S14"))["items"] == 0
     phase[0] = 1
     assert (await svc.poll_once("S14"))["items"] == 1
@@ -484,7 +486,7 @@ async def test_snapshot_closed_proposal_checked_after_leaving_latest(tmp_path: P
             }
         ],
     }
-    svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+    svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
     assert (await svc.poll_once("S24"))["items"] == 1
     phase[0] = 1
     assert (await svc.poll_once("S24"))["items"] == 1
@@ -522,7 +524,9 @@ async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path: Pat
                 "name": "BBC",
                 "feeds": [{"kind": "rss", "url": "https://example.org/rss"}],
             }
-            svc = SourceService(repo, settings(tmp_path, [official, filtered]), http=http)
+            svc = SourceService(
+                repo, settings(tmp_path, [official, filtered]), http=http, versions=fixture_versions()
+            )
             for source, expected, job_kind in [
                 (official, "ALWAYS", "ROUTE_ITEM"),
                 (filtered, None, "FILTER_ITEM"),
@@ -538,8 +542,8 @@ async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path: Pat
                 item = {
                     "item_id": item_id,
                     "feed": source["feeds"][0]["url"],
-                    "discovery_config_version": svc.settings.config_version,
-                    "discovery_code_version": svc.settings.code_version,
+                    "discovery_config_version": svc.versions.config_version,
+                    "discovery_code_version": svc.versions.code_version,
                     "raw_ref": raw_ref,
                     "raw_sha256": digest,
                     "observed_at": "2026-10-16T12:00:01Z",
@@ -633,6 +637,7 @@ async def test_probe_reads_current_payload_without_ingestion_jobs(tmp_path: Path
             ],
         ),
         http=http,
+        versions=fixture_versions(),
     )
     results = await svc.check(probe=True)
     assert [r["status"] for r in results] == ["PASS", "HTTP_ERROR", "PASS", "UNAVAILABLE"]
@@ -746,8 +751,8 @@ async def test_milestone_producer_drives_source_cadence_and_cancellation(
         return httpx.Response(200, content=RSS)
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(response))
-    service = SourceService(repo, SourceSettings(), http=http)
-    tools = EventToolService(repo, settings_obj, None, None)
+    service = SourceService(repo, SourceSettings(), http=http, versions=fixture_versions())
+    tools = EventToolService(repo, settings_obj, None, None, versions=fixture_versions())
     await repo.put("reg.sources", "S15", source)
     await repo.put("evt.events", "cadence-event", {"event_id": "cadence-event"})
     due = clock[0] + timedelta(hours=1)
@@ -812,7 +817,7 @@ async def test_run_controls_wake_within_15s_for_600s_source_without_extra_reads(
             lambda request: calls.append(request) or httpx.Response(200, content=RSS)
         )
     )
-    service = SourceService(repo, settings(tmp_path, [source]), http=http)
+    service = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
     stop = asyncio.Event()
     timeouts = []
 
@@ -857,7 +862,7 @@ async def test_major_assessment_producer_activates_15s_source_reads(
             lambda request: calls.append(clock[0]) or httpx.Response(200, content=RSS)
         )
     )
-    service = SourceService(repo, config, http=http)
+    service = SourceService(repo, config, http=http, versions=fixture_versions())
     service.sources["S15"] = source_definition(
         {
             "source_id": "S15",
@@ -909,7 +914,7 @@ async def test_major_assessment_producer_activates_15s_source_reads(
             "implementation",
         ]
     }
-    tools = EventToolService(repo, config, None, None)
+    tools = EventToolService(repo, config, None, None, versions=fixture_versions())
     result = await tools.set_assessment(
         {
             "event_id": event["event_id"],
@@ -960,7 +965,7 @@ async def test_control_ticks_do_not_overpoll_failed_normal_cadence(
             lambda request: calls.append(request) or httpx.Response(200, text="<html>Broken RSS</html>")
         )
     )
-    service = SourceService(repo, settings(tmp_path, [source]), http=http)
+    service = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
     assert (await service.control_once("S15"))["status"] == "DEGRADED"
     assert len(calls) == 1
     clock[0] += timedelta(seconds=15)
@@ -975,7 +980,7 @@ async def test_control_ticks_do_not_overpoll_failed_normal_cadence(
 def test_sec_filing_identity_boundaries_and_date_only_precision(tmp_path: Path) -> None:
     from tank.settings import Settings
 
-    svc = SourceService(Repo(), Settings(data_dir=tmp_path))
+    svc = SourceService(Repo(), Settings(data_dir=tmp_path), versions=fixture_versions())
     assert not svc.filing_matches(
         SourceText.model_validate({"title": "Linear Manufacturing S-1", "text": "Filed with SEC"})
     )
@@ -1035,6 +1040,7 @@ async def test_s09_seen_articles_do_not_refetch_detail(tmp_path: Path, collector
             [{"source_id": "S09", "feeds": [{"kind": "json", "url": "https://www.binance.com/list"}]}],
         ),
         http=http,
+        versions=fixture_versions(),
     )
     await svc.poll_once("S09")
     await svc.poll_once("S09")
@@ -1056,7 +1062,7 @@ async def test_sec_provider_and_source_configured_budgets_are_shared(
         calls.append((key, capacity, window_s, weight))
 
     monkeypatch.setattr(module.shared_request_budgets, "acquire", acquire)
-    service = SourceService(Repo(), Settings(data_dir=tmp_path))
+    service = SourceService(Repo(), Settings(data_dir=tmp_path), versions=fixture_versions())
     try:
         await service.acquire_budget(fetch_plan({"url": "https://www.sec.gov/news/pressreleases.rss"}))
         await service.acquire_budget(
@@ -1083,7 +1089,7 @@ async def test_binance_source_discovery_leaves_shared_market_weights_to_capture(
         acquired.append((key, capacity, window_s, weight))
 
     monkeypatch.setattr(module.shared_request_budgets, "acquire", acquire)
-    service = SourceService(Repo(), Settings(data_dir=tmp_path))
+    service = SourceService(Repo(), Settings(data_dir=tmp_path), versions=fixture_versions())
     try:
         for url in (
             "https://api.binance.com/api/v3/exchangeInfo",
@@ -1180,6 +1186,7 @@ async def test_missing_publisher_article_keeps_raw_error_and_continues_valid_ent
             ],
         ),
         http=http,
+        versions=fixture_versions(),
     )
     try:
         result = await service.poll_once("S20")
@@ -1242,6 +1249,7 @@ async def test_empty_200_article_isolated_without_suppressing_valid_sibling(
             ],
         ),
         http=http,
+        versions=fixture_versions(),
     )
     try:
         result = await service.poll_once("S20")
@@ -1291,7 +1299,7 @@ async def test_seen_full_article_empty_index_deduplicates_before_new_content_gua
             }
         ],
     }
-    service = SourceService(repo, settings(tmp_path, [source]), http=http)
+    service = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
     try:
         assert (await service.poll_once("S20"))["status"] == "HEALTHY"
         original = next(r for (table, _), r in repo.rows.items() if table == "ingest.source_items")
@@ -1336,7 +1344,7 @@ async def test_declared_author_organization_precedence_and_identity_without_body
 
     repo = MemoryRepository()
     config = Settings(data_dir=tmp_path)
-    service = SourceService(repo, config)
+    service = SourceService(repo, config, versions=fixture_versions())
     source = {
         "source_id": "S01",
         "name": "SEC",
@@ -1429,7 +1437,7 @@ async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path: Pat
     }
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         collector_http(http)
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         await svc.poll_once("S14")
         phase[0] = "Settling"
         original = svc.ingest
@@ -1454,7 +1462,7 @@ async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path: Pat
 @pytest.mark.asyncio
 async def test_content_duplicate_counts_once_and_is_remembered_by_the_feed(tmp_path: Path) -> None:
     repo = Repo()
-    svc = SourceService(repo, settings(tmp_path, []))
+    svc = SourceService(repo, settings(tmp_path, []), versions=fixture_versions())
     first = await svc.ingest(
         source_definition({"source_id": "S01"}),
         captured(svc, "S01", {"external_id": "a", "title": "Same", "text": "Release"}),
@@ -1479,7 +1487,9 @@ async def test_content_duplicate_counts_once_and_is_remembered_by_the_feed(tmp_p
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(200, content=republished))
     ) as http:
-        svc = SourceService(repo, settings(tmp_path / "feed", [source]), http=http)
+        svc = SourceService(
+            repo, settings(tmp_path / "feed", [source]), http=http, versions=fixture_versions()
+        )
         await svc.poll_once("S30")
         state = await repo.get("ops.source_checkpoints", "S30:0")
         assert len(state["duplicate_ids"]) == 1
@@ -1511,7 +1521,7 @@ async def test_slow_feed_does_not_block_fast_sibling_ingestion(tmp_path: Path) -
     }
     repo = Repo()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         poll = asyncio.create_task(svc.poll_once("S30"))
         await asyncio.wait_for(blocked.wait(), 1)
 
@@ -1560,7 +1570,7 @@ async def test_slow_detail_does_not_block_index_cadence_and_restart_preserves_fi
     }
     repo = Repo()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         stop = asyncio.Event()
         run = asyncio.create_task(svc.run(stop))
         await asyncio.wait_for(detail_started.wait(), 1)
@@ -1577,7 +1587,7 @@ async def test_slow_detail_does_not_block_index_cadence_and_restart_preserves_fi
         stop.set()
         await asyncio.wait_for(run, 1)
         release.set()
-        restarted = SourceService(repo, settings(tmp_path, [source]), http=http)
+        restarted = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         await restarted.poll_once("S20")
         row = next(v for (c, _), v in repo.rows.items() if c == "ingest.source_items")
         assert row["observed_at"] == first_seen
@@ -1682,7 +1692,7 @@ async def test_json_discovery_burst_reads_every_page_until_durable_boundary(
     repo = Repo()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         collector_http(http)
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         assert (await svc.poll_once(source_id))["status"] == "HEALTHY"
         assert (await repo.get("ops.source_checkpoints", source_id + ":0"))["discovery_checkpoint"] == "1"
         phase[0] = 1
@@ -1728,7 +1738,7 @@ async def test_failed_later_history_page_retains_earlier_items_without_advancing
     source = {"source_id": "S03", "feeds": [{"url": "https://example.org/list", "kind": "json"}]}
     repo = Repo()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         await svc.poll_once("S03")
         phase[0] = 1
         assert (await svc.poll_once("S03"))["status"] == "DEGRADED"
@@ -1817,7 +1827,7 @@ async def test_completed_later_batch_cannot_erase_failed_earlier_coverage(tmp_pa
     source = {"source_id": "S03", "feeds": [{"url": "https://example.org/list", "kind": "json"}]}
     repo = Repo()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         original = svc.ingest
 
         async def ingest(*args):
@@ -1858,7 +1868,7 @@ async def test_conditional_304_does_not_starve_durable_pending_detail(tmp_path: 
             )
         )
     ) as http:
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         state = {"etag": "older-index", "fetched_at": clock_iso()}
         await svc.poller.queue_rows(
             state,
@@ -1929,7 +1939,7 @@ async def test_due_time_uses_actual_request_start_after_budget_admission(
             lambda request: calls.append(clock[0]) or httpx.Response(200, content=RSS)
         )
     ) as http:
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         first = [True]
 
         async def budget(feed) -> None:
@@ -1965,7 +1975,7 @@ async def test_invalid_index_retains_source_associated_raw_before_parse_failure(
             lambda request: httpx.Response(200, content=payload, headers={"ETag": "unprocessed"})
         )
     ) as http:
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         assert (await svc.poll_once("S30"))["status"] == "DEGRADED"
         state = await repo.get("ops.source_checkpoints", "S30:0")
         assert state["response_url"] == "https://example.org/rss"
@@ -2031,7 +2041,7 @@ async def test_malformed_index_entry_does_not_starve_valid_sibling_or_advance_va
     }
     repo = Repo()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         result = await svc.poll_once(source_id)
         assert result["items"] == 1 and result["status"] == "DEGRADED"
         state = await repo.get("ops.source_checkpoints", source_id + ":0")
@@ -2092,7 +2102,7 @@ async def test_paginated_instrument_change_uses_actual_page_time_and_raw_evidenc
     repo = Repo()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         collector_http(http)
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         await svc.poll_once("S14")
         phase[0] = 1
         await svc.poll_once("S14")
@@ -2160,7 +2170,7 @@ async def test_long_history_catchup_refreshes_current_head_at_feed_cadence(
     }
     repo = Repo()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         await svc.poll_once("S03")
         phase[0] = 1
         assert (await svc.poll_once("S03"))["status"] == "HEALTHY"
@@ -2208,7 +2218,7 @@ async def test_coinbase_trading_restriction_change_emits_item_without_status_enu
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         collector_http(http)
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         assert (await svc.poll_once("S14"))["items"] == 0
         restricted[0] = True
         assert (await svc.poll_once("S14"))["items"] == 1
@@ -2252,7 +2262,7 @@ async def test_new_coinbase_flag_observation_does_not_fabricate_historical_statu
         )
     ) as http:
         collector_http(http)
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         assert (await svc.poll_once("S14"))["items"] == 0
         assert (await repo.get("ops.source_checkpoints", "S14:0"))["instrument_snapshot_schema_version"] == 2
         flag[0] = False
@@ -2291,7 +2301,7 @@ async def test_unavailable_known_snapshot_proposal_remains_pending_and_explicitl
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"data": {"proposals": []}}))
     ) as http:
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         result = await svc.poll_once("S24")
         assert result["items"] == 0 and result["status"] == "DEGRADED"
         state = await repo.get("ops.source_checkpoints", "S24:0")
@@ -2356,7 +2366,7 @@ async def test_new_source_item_raw_path_uses_final_item_id_without_rewriting_old
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda request: httpx.Response(200, content=RSS))
     ) as http:
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         await svc.poll_once("S30")
         row = next(v for (c, _), v in repo.rows.items() if c == "ingest.source_items")
         day = row["observed_at"][:10].replace("-", "/")
@@ -2383,7 +2393,7 @@ async def test_raw_durability_failure_prevents_source_item_and_job_persistence(
     source = {"source_id": "S30", "feeds": [{"url": "https://example.org/rss", "kind": "rss"}]}
     repo = Repo()
     http = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, content=RSS)))
-    svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+    svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
     original_fsync = os.fsync
 
     def fail_fsync(descriptor):
@@ -2498,14 +2508,14 @@ async def test_binance_empty_body_pending_recovers_after_restart(
     monkeypatch.setattr(parsers, "binance_body", lambda _: "")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         collector_http(http)
-        first = SourceService(repo, cfg, http=http)
+        first = SourceService(repo, cfg, http=http, versions=fixture_versions())
         assert (await first.poll_once("S09"))["status"] == "DEGRADED"
         before = deepcopy(await repo.get("ops.source_checkpoints", "S09:0"))
         assert before["pending_batches"] and not before.get("discovery_checkpoint")
         assert not any(table == "ingest.source_items" for table, _ in repo.rows)
         await first.close()
         monkeypatch.setattr(parsers, "binance_body", parser)
-        resumed = SourceService(repo, cfg, http=http)
+        resumed = SourceService(repo, cfg, http=http, versions=fixture_versions())
         result = await resumed.poller.drain(
             source_definition(cfg.load_config("sources")["sources"][0]), 0, force=True
         )
@@ -2539,7 +2549,7 @@ async def test_read_counters_and_failed_read_rate_report(tmp_path: Path) -> None
     ]
     repo = Repo()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
-        svc = SourceService(repo, settings(tmp_path, sources), http=http)
+        svc = SourceService(repo, settings(tmp_path, sources), http=http, versions=fixture_versions())
 
         async def no_wait(delay) -> None:
             return None
@@ -2575,7 +2585,7 @@ def test_source_http_client_uses_standard_tls_hello(tmp_path: Path) -> None:
     from tank.sources import tls_context
 
     assert tls_context().post_handshake_auth is True
-    svc = SourceService(Repo(), settings(tmp_path, []))
+    svc = SourceService(Repo(), settings(tmp_path, []), versions=fixture_versions())
     assert svc.http._transport._pool._ssl_context.post_handshake_auth is True
 
 
@@ -2651,7 +2661,7 @@ async def test_pending_rows_without_item_id_are_dropped_and_rediscovered(tmp_pat
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(200, content=RSS))
     ) as http:
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         await svc.poller.drain(source_definition(source), 0, force=True)
         assert not (await repo.get("ops.source_checkpoints", "S30:0"))["pending_batches"]
         assert (await svc.poll_once("S30"))["items"] == 1
@@ -2667,7 +2677,7 @@ async def test_stale_article_errors_clear_when_nothing_is_pending(tmp_path: Path
         "S30:0",
         {"source_id": "S30", "status": "DEGRADED", "article_errors": stale, "pending_batches": []},
     )
-    svc = SourceService(repo, settings(tmp_path, [source]))
+    svc = SourceService(repo, settings(tmp_path, [source]), versions=fixture_versions())
     await svc.poller.drain(source_definition(source), 0, force=True)
     state = await repo.get("ops.source_checkpoints", "S30:0")
     assert state["article_errors"] == {} and state["status"] == "HEALTHY"
@@ -2688,7 +2698,7 @@ async def test_poll_clears_stale_article_errors(tmp_path: Path) -> None:
         },
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(304))) as http:
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         await svc.poller.acquire(source_definition(source), 0)
         assert (await repo.get("ops.source_checkpoints", "S30:0"))["article_errors"] == {}
 
@@ -2724,7 +2734,7 @@ async def test_instrument_snapshot_written_only_when_it_changes(tmp_path: Path, 
     }
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         collector_http(http)
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         for _ in range(3):
             await svc.poll_once("S14")
         assert repo.snapshot_writes == 1

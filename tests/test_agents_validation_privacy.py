@@ -4,6 +4,7 @@ from typing import Never
 
 import httpx
 import pytest
+from agent_source_fixtures import declared_versions_fixture
 from pydantic import JsonValue, field_validator
 from test_agents_session_audit import seed, settings
 
@@ -43,7 +44,9 @@ async def test_schema_failure_never_enters_tool_capture_native_body_or_logs(
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(native)) as client:
-        service = SessionService(repo, settings(), dispatch, http=client)
+        service = SessionService(
+            repo, settings(), dispatch, http=client, versions=declared_versions_fixture()
+        )
         await service.process_event(
             "s",
             {

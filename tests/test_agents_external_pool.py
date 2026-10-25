@@ -5,6 +5,7 @@ import json
 
 import httpx
 import pytest
+from agent_source_fixtures import declared_versions_fixture
 from test_agents import seed_session, settings
 from test_session_binding_concurrency import fixture_repo, seed
 
@@ -48,7 +49,7 @@ async def exercise_external_tool_burst(repo, tool) -> None:
         return httpx.Response(200, json={"data": [{"id": f"ack-{len(posts)}"}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(acknowledge)) as http:
-        controller = SessionService(repo, opts, dispatch, http=http)
+        controller = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
         tasks = [
             asyncio.create_task(
                 controller.process_event(
@@ -106,13 +107,13 @@ async def test_external_error_survives_lost_ack_without_refetch_or_new_ordinal(s
         "input": {"url": "https://source.invalid/article"},
     }
     async with httpx.AsyncClient(transport=httpx.MockTransport(acknowledge)) as http:
-        first = SessionService(repo, opts, dispatch, http=http)
+        first = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
         with pytest.raises(httpx.ConnectError):
             await first.process_event("ses_1", event)
         stored = await repo.get("ops.tool_calls", "ses_1:call")
         assert stored["status"] == "ERROR" and stored["is_error"]
         assert not stored.get("returned_at")
-        resumed = SessionService(repo, opts, dispatch, http=http)
+        resumed = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
         await resumed.process_event("ses_1", event)
         await resumed.process_event("ses_1", event)
     assert dispatched == ["fetch_page"]

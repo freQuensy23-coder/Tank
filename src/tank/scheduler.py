@@ -8,10 +8,11 @@ from datetime import UTC, date, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
 from pathlib import Path
 
-from pydantic import JsonValue
+from pydantic import Field, JsonValue
 
 from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.settings import Settings
 from tank.time_precision import chosen_boundary, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import iso, new_id, parse_time, utcnow
@@ -111,10 +112,22 @@ class BackupIdentity(DomainModel):
     complete: BackupFileIdentity | None
 
 
+class ReactionEventIdentity(DomainModel):
+    event_id: str = Field(min_length=1, pattern=r"^\S+$")
+
+
 class Scheduler:
     def __init__(
-        self, repo, settings: Settings, market, truth, *, thresholds: Thresholds | None = None
+        self,
+        repo,
+        settings: Settings,
+        market,
+        truth,
+        *,
+        versions: ResolvedVersionIdentity,
+        thresholds: Thresholds | None = None,
     ) -> None:
+        self.versions = ResolvedVersionIdentity.model_validate(versions)
         self.repo, self.settings, self.market, self.truth = repo, settings, market, truth
         self.thresholds = settings.thresholds() if thresholds is None else thresholds
         self.background: dict[str, asyncio.Task[None]] = {}
@@ -227,6 +240,18 @@ class Scheduler:
         if (now.hour, now.minute) >= (heartbeat_hour, heartbeat_minute):
             await self.heartbeat(now)
         self.launch("backup", lambda: self.maintenance(now))
+
+    async def ensure_event_reactions(self, event_id: str) -> None:
+        requested = ReactionEventIdentity(event_id=event_id)
+        record = await self.repo.get("evt.events", requested.event_id)
+        if record is None:
+            raise ValueError("Reaction scheduling event does not exist")
+        stored = ReactionEventIdentity.model_validate(
+            {name: record[name] for name in ("event_id",) if name in record}
+        )
+        if stored.event_id != requested.event_id:
+            raise ValueError("Reaction scheduling event identity differs from its lookup")
+        await self.ensure_reactions(record)
 
     async def ensure_reactions(self, event, *, now=None):
         """Open the pack outside the analyst transaction; only POST windows are jobs.
@@ -1100,8 +1125,8 @@ class Scheduler:
             snapshot,
             config={
                 **knobs,
-                "config_version": self.settings.config_version,
-                "code_version": self.settings.code_version,
+                "config_version": self.versions.config_version,
+                "code_version": self.versions.code_version,
             },
         )
         relative = truth.get("relative", {})
@@ -1220,8 +1245,8 @@ class Scheduler:
             "market_truth_id": truth.get("mta_id"),
             "market_truth": truth,
             **checkpoint_data,
-            "config_version": self.settings.config_version,
-            "code_version": self.settings.code_version,
+            "config_version": self.versions.config_version,
+            "code_version": self.versions.code_version,
         }
         async with self.repo.transaction():
             await self.repo.put("out.reaction_checkpoints", key, record, immutable=True)
@@ -1269,8 +1294,8 @@ class Scheduler:
                 "evidence": [],
                 **collection_clock(now).fields("created_at"),
                 "created_by": "scheduler",
-                "config_version": self.settings.config_version,
-                "code_version": self.settings.code_version,
+                "config_version": self.versions.config_version,
+                "code_version": self.versions.code_version,
             }
             proposal.update(
                 occurrences=proposal["occurrences"] + 1,
@@ -1454,8 +1479,8 @@ class Scheduler:
                 "checkpoint_id": "scout_hooks",
                 **collection_clock(now).fields("at"),
                 "state": {"criteria": "TDD10"},
-                "config_version": self.settings.config_version,
-                "code_version": self.settings.code_version,
+                "config_version": self.versions.config_version,
+                "code_version": self.versions.code_version,
             },
         )
 

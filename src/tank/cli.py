@@ -11,7 +11,7 @@ from pydantic import Field
 
 from tank.contracts import DomainModel
 from tank.contracts.configuration import DeliveryConfiguration
-from tank.contracts.sources import SourceConfiguration
+from tank.contracts.sources import SourceApiLimitsConfiguration, SourceConfiguration
 from tank.logging import configure_logging
 from tank.settings import Settings, configured_values, resolve_versions
 from tank.time_precision import collection_clock
@@ -363,7 +363,7 @@ def sources_check(probe, accounts):
     async def command(repo, settings):
         from tank.sources import SourceService
 
-        service = SourceService(repo, settings)
+        service = SourceService(repo, settings, versions=settings.require_versions())
         try:
             return await service.check(probe=probe, check_accounts=accounts)
         finally:
@@ -378,7 +378,7 @@ def coverage():
     async def command(repo, settings):
         from tank.market.service import MarketService
 
-        service = MarketService(repo, settings)
+        service = MarketService(repo, settings, versions=settings.require_versions())
         try:
             return await service.coverage()
         finally:
@@ -461,12 +461,23 @@ def readiness_checks(settings: Settings) -> list[ReadinessCheck]:
     import re
 
     checks: list[ReadinessCheck] = []
-    for name in ("sources", "delivery", "registry", "semantics", "dependency_map", "thresholds", "openma"):
+    for name in (
+        "sources",
+        "delivery",
+        "api_limits",
+        "registry",
+        "semantics",
+        "dependency_map",
+        "thresholds",
+        "openma",
+    ):
         try:
             if name == "sources":
                 settings.load_config_as("sources", SourceConfiguration)
             elif name == "delivery":
                 settings.load_config_as("delivery", DeliveryConfiguration)
+            elif name == "api_limits":
+                settings.load_config_as("api_limits", SourceApiLimitsConfiguration)
             elif name == "registry":
                 settings.registry()
             elif name == "semantics":
@@ -567,7 +578,7 @@ def doctor() -> None:
 @main.command()
 @click.argument("input_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--output-dir", required=True, type=click.Path(file_okay=False, path_type=Path))
-def calibrate(input_path, output_dir):
+def calibrate(input_path: Path, output_dir: Path) -> None:
     """Score >=200 frozen labeled news items with Jev and propose measured cutoffs."""
     import httpx
 
@@ -578,22 +589,19 @@ def calibrate(input_path, output_dir):
     configure_logging(settings)
     try:
         result = asyncio.run(acquire(input_path, output_dir, settings=settings))
-        summary = {
-            key: result[key]
-            for key in (
-                "status",
-                "counts",
-                "selected",
-                "routing_target_90_90_met",
-                "rejection_reasons",
+        output(
+            result.model_dump(
+                mode="json",
+                include={
+                    "status",
+                    "counts",
+                    "selected",
+                    "routing_target_90_90_met",
+                    "rejection_reasons",
+                    "best_measured_routing",
+                },
             )
-        }
-        best = result["best_measured_routing"]
-        summary["best_measured_routing"] = {
-            **best,
-            "metrics": {key: value for key, value in best["metrics"].items() if key != "decisions"},
-        }
-        output(summary)
+        )
     except (ValueError, OSError) as exc:
         raise click.ClickException(str(exc)) from None
     except (httpx.HTTPError, KeyError, TypeError, RuntimeError) as exc:
@@ -620,7 +628,9 @@ def backup(force, prune):
         from tank.scheduler import Scheduler
         from tank.util import utcnow
 
-        return await Scheduler(repo, settings, None, None).maintenance(utcnow(), force=force, prune=prune)
+        return await Scheduler(repo, settings, None, None, versions=settings.require_versions()).maintenance(
+            utcnow(), force=force, prune=prune
+        )
 
     run_db(command)
 

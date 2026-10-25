@@ -6,6 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 from pydantic import JsonValue, ValidationError
+from source_support import fixture_versions
 
 from tank.sources.capture_fetch import (
     CaptureRepository,
@@ -282,7 +283,7 @@ async def test_real_source_record_roundtrips_and_validates_processing_transition
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda request: httpx.Response(200, content=RSS))
     ) as http:
-        source = SourceService(repo, configuration, http=http)
+        source = SourceService(repo, configuration, http=http, versions=fixture_versions())
         assert (await source.poll_once("S30"))["items"] == 1
     [record] = await repo.list("ingest.source_items")
     item = parse_feed_source_item(record)
@@ -356,7 +357,9 @@ async def test_real_web_evidence_record_roundtrips_without_feed_source_assumptio
     from tank.settings import Settings
 
     repo = MemoryRepository()
-    service = EventToolService(repo, Settings(data_dir=tmp_path, ops_progress_enabled=False), None, None)
+    service = EventToolService(
+        repo, Settings(data_dir=tmp_path, ops_progress_enabled=False), None, None, versions=fixture_versions()
+    )
     record = await service.save_web(
         "https://example.org/evidence",
         "Verified public document text",
@@ -420,7 +423,7 @@ async def test_missing_provider_limits_prevents_source_service_start(tmp_path: P
     settings = MissingProviderLimits(data_dir=tmp_path, ops_progress_enabled=False)
     async with httpx.AsyncClient() as http:
         with pytest.raises(ValidationError, match="limits"):
-            SourceService(repo, settings, http=http)
+            SourceService(repo, settings, http=http, versions=fixture_versions())
     assert await repo.list("ops.jobs") == []
     assert await repo.list("ingest.source_items") == []
 
@@ -436,7 +439,7 @@ async def test_feed_duplicate_of_web_evidence_counts_feeds_without_replacing_ori
 
     repo = MemoryRepository()
     settings = Settings(data_dir=tmp_path, ops_progress_enabled=False)
-    tools = EventToolService(repo, settings, None, None)
+    tools = EventToolService(repo, settings, None, None, versions=fixture_versions())
     original = await tools.save_web(
         "https://example.org/original",
         "Shared independently observed facts",
@@ -448,7 +451,7 @@ async def test_feed_duplicate_of_web_evidence_counts_feeds_without_replacing_ori
     original_raw = Path(original["raw_ref"])
     original_bytes = original_raw.read_bytes()
     async with httpx.AsyncClient() as http:
-        service = SourceService(repo, settings, http=http)
+        service = SourceService(repo, settings, http=http, versions=fixture_versions())
         for external_id in ("feed-first", "feed-repeat"):
             incoming = captured(
                 service,
@@ -486,7 +489,12 @@ async def test_duplicate_ingestion_cannot_delete_foreign_raw_evidence(tmp_path: 
 
     repo = MemoryRepository()
     async with httpx.AsyncClient() as http:
-        service = SourceService(repo, Settings(data_dir=tmp_path, ops_progress_enabled=False), http=http)
+        service = SourceService(
+            repo,
+            Settings(data_dir=tmp_path, ops_progress_enabled=False),
+            http=http,
+            versions=fixture_versions(),
+        )
         first = captured(service, "S30", {"external_id": "first", "title": "Title", "text": "Same facts"})
         await service.ingest(service.sources["S30"], first)
         foreign = tmp_path / "unrelated-evidence"
@@ -516,7 +524,12 @@ async def test_ingestion_cannot_invent_a_missing_capture_clock(tmp_path: Path) -
 
     repo = MemoryRepository()
     async with httpx.AsyncClient() as http:
-        service = SourceService(repo, Settings(data_dir=tmp_path, ops_progress_enabled=False), http=http)
+        service = SourceService(
+            repo,
+            Settings(data_dir=tmp_path, ops_progress_enabled=False),
+            http=http,
+            versions=fixture_versions(),
+        )
         incoming = captured(service, "S30", {"external_id": "entry", "title": "Title", "text": "Facts"})
         del incoming["observed_at"]
         with pytest.raises(ValidationError, match="observed_at"):
@@ -578,10 +591,327 @@ async def test_ingestion_requires_an_aware_capture_clock(tmp_path: Path, clock: 
 
     repo = MemoryRepository()
     async with httpx.AsyncClient() as http:
-        service = SourceService(repo, Settings(data_dir=tmp_path, ops_progress_enabled=False), http=http)
+        service = SourceService(
+            repo,
+            Settings(data_dir=tmp_path, ops_progress_enabled=False),
+            http=http,
+            versions=fixture_versions(),
+        )
         incoming = captured(service, "S30", {"external_id": "clock-test", "title": "Title", "text": "Facts"})
         incoming["observed_at"] = clock
         with pytest.raises(ValidationError, match="observed_at"):
             await service.ingest(service.sources["S30"], incoming)
     assert await repo.list("ingest.source_items") == []
     assert await repo.list("ops.jobs") == []
+
+
+def test_endpoint_clock_declarations_preserve_wire_and_reject_conflicting_aliases() -> None:
+    from tank.contracts.sources import EndpointVerification
+    from tank.util import canonical_json
+
+    plain: dict[str, JsonValue] = {
+        "checked_at": "2026-10-17T16:54:49.052127+00:00",
+        "status": "VERIFIED",
+        "basis": "Explicit synthetic endpoint verification",
+    }
+    assert EndpointVerification.model_validate(plain).model_dump(mode="json", exclude_unset=True) == plain
+    declared = {**plain, "checked_at_prec": "EXACT", "checked_at_precision": "EXACT"}
+    assert canonical_json(
+        EndpointVerification.model_validate(declared).model_dump(mode="json", exclude_unset=True)
+    ) == canonical_json(declared)
+    with pytest.raises(ValidationError, match="Conflicting timestamp precision"):
+        EndpointVerification.model_validate(
+            {
+                **declared,
+                "checked_at_precision": "BUCKET(1m)",
+            }
+        )
+
+
+def test_explicit_source_budget_numbers_keep_their_declared_json_form() -> None:
+    from tank.contracts.sources import SourceApiLimitsConfiguration, SourceConfiguration, SourceDefinition
+    from tank.settings import Settings
+    from tank.util import canonical_json
+
+    settings = Settings()
+    raw_api_limits = settings.load_config("api_limits")
+    budgets = SourceApiLimitsConfiguration.model_validate(raw_api_limits)
+    assert canonical_json(budgets.model_dump(mode="json", exclude_unset=True)) == canonical_json(
+        raw_api_limits
+    )
+    configured = settings.load_config_as("sources", SourceConfiguration)
+    source = configured.sources[0].model_dump(mode="json", exclude_unset=True)
+    limits = source["limits"]
+    feeds = source["feeds"]
+    assert isinstance(limits, dict) and isinstance(feeds, list) and isinstance(feeds[0], dict)
+    limits["budget_fraction"] = 1
+    feeds[0]["request_weight"] = 2
+    feeds[0]["requests_per_minute"] = 60
+    feeds[0]["interval_s"] = 0.5
+    reparsed = SourceDefinition.model_validate(source)
+    assert canonical_json(reparsed.model_dump(mode="json", exclude_unset=True)) == canonical_json(source)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_budget", [None, 6])
+async def test_source_service_rejects_missing_or_excessive_known_provider_budget(
+    tmp_path: Path, bad_budget: int | None
+) -> None:
+    from tank.settings import Settings
+    from tank.sources import SourceService
+
+    class InvalidProviderBudget(Settings):
+        def load_config(self, name: str) -> dict[str, JsonValue]:
+            configuration = super().load_config(name)
+            if name == "api_limits":
+                rules = configuration["limits"]
+                assert isinstance(rules, list)
+                sec = next(rule for rule in rules if isinstance(rule, dict) and rule["provider"] == "sec.gov")
+                assert isinstance(sec, dict)
+                if bad_budget is None:
+                    del sec["tank_max_requests_per_s"]
+                else:
+                    sec["tank_max_requests_per_s"] = bad_budget
+            return configuration
+
+    repo = MemoryRepository()
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(ValidationError, match="tank_max_requests_per_s|half the documented"):
+            SourceService(
+                repo, InvalidProviderBudget(data_dir=tmp_path), http=http, versions=fixture_versions()
+            )
+    assert await repo.list("ops.jobs") == []
+    assert await repo.list("ingest.source_items") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider,missing_fields,assigned_field",
+    [
+        ("sec.gov", ("documented_requests_per_s",), "tank_max_requests_per_s"),
+        ("binance.spot", ("documented_weight_per_min",), "tank_max_weight_per_min"),
+        ("binance.usdm", ("documented_weight_per_min",), "tank_max_weight_per_min"),
+        ("hyperliquid", ("documented_weight_per_min",), "tank_max_weight_per_min"),
+        ("etherscan", ("documented_requests_per_s",), "tank_max_requests_per_s"),
+        ("etherscan", ("documented_requests_per_day",), "tank_max_requests_per_day"),
+        ("etherscan", ("tank_max_requests_per_day",), None),
+        ("etherscan", ("documented_requests_per_day", "tank_max_requests_per_day"), None),
+    ],
+)
+async def test_required_documented_provider_capacity_cannot_be_omitted(
+    tmp_path: Path, provider: str, missing_fields: tuple[str, ...], assigned_field: str | None
+) -> None:
+    from tank.settings import Settings
+    from tank.sources import SourceService
+
+    class MissingDocumentedCapacity(Settings):
+        def load_config(self, name: str) -> dict[str, JsonValue]:
+            configuration = super().load_config(name)
+            if name == "api_limits":
+                rows = configuration["limits"]
+                assert isinstance(rows, list)
+                rule = next(row for row in rows if isinstance(row, dict) and row["provider"] == provider)
+                assert isinstance(rule, dict)
+                for field in missing_fields:
+                    del rule[field]
+                if assigned_field is not None:
+                    rule[assigned_field] = 1_000_000
+            return configuration
+
+    repo = MemoryRepository()
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(ValidationError):
+            SourceService(
+                repo, MissingDocumentedCapacity(data_dir=tmp_path), http=http, versions=fixture_versions()
+            )
+    assert await repo.list("ops.jobs") == []
+    assert await repo.list("ingest.source_items") == []
+
+
+def test_coinbase_and_kraken_keep_uncaptured_documented_capacity_explicit() -> None:
+    from tank.contracts.sources import SourceApiLimitsConfiguration, SourceUncapturedRpsBudget
+    from tank.settings import Settings
+
+    configuration = SourceApiLimitsConfiguration.model_validate(Settings().load_config("api_limits"))
+    rules = [rule for rule in configuration.limits if isinstance(rule, SourceUncapturedRpsBudget)]
+    assert {rule.provider for rule in rules} == {"coinbase", "kraken"}
+    for rule in rules:
+        assert rule.documented_requests_per_s is None
+        assert "documented_requests_per_s" not in rule.model_dump(mode="json", exclude_unset=True)
+        assert rule.tank_max_requests_per_s > 0 and rule.basis
+
+
+@pytest.mark.parametrize("key_policy", [0, True])
+def test_search_budget_does_not_coerce_boolean_access_policy(key_policy: int | bool) -> None:
+    from tank.contracts.sources import SourceApiLimitsConfiguration
+    from tank.settings import Settings
+
+    configuration = Settings().load_config("api_limits")
+    rules = configuration["limits"]
+    assert isinstance(rules, list)
+    search = next(rule for rule in rules if isinstance(rule, dict) and rule["provider"] == "duckduckgo")
+    assert isinstance(search, dict)
+    search["api_key_required"] = key_policy
+    with pytest.raises(ValidationError):
+        SourceApiLimitsConfiguration.model_validate(configuration)
+
+
+@pytest.mark.asyncio
+async def test_source_ingestion_persists_explicit_version_facet_not_raw_settings(tmp_path: Path) -> None:
+    from test_sources import captured
+
+    from tank.contracts.provenance import ResolvedVersionIdentity
+    from tank.contracts.source_items import ArticleSourceItem, SourceItemDocument
+    from tank.settings import Settings
+    from tank.sources import SourceService
+
+    settings = Settings(data_dir=tmp_path, ops_progress_enabled=False)
+    with pytest.raises(ValueError, match="resolve_versions"):
+        settings.require_versions()
+    versions = ResolvedVersionIdentity(
+        config_version="declared-source-config", code_version="declared-source-code"
+    )
+    repo = MemoryRepository()
+    async with httpx.AsyncClient() as http:
+        source = SourceService(repo, settings, versions=versions, http=http)
+        wire = captured(source, "S30", {"external_id": "versioned", "title": "Title", "text": "Facts"})
+        record = await source.ingest(source.sources["S30"], wire)
+    item = SourceItemDocument.model_validate(record).root
+    assert isinstance(item, ArticleSourceItem)
+    assert item.config_version == versions.config_version
+    assert item.code_version == versions.code_version
+    assert item.discovery_config_version == versions.config_version
+    assert item.discovery_code_version == versions.code_version
+
+
+def test_public_host_client_protection_is_explicit_and_preserves_windows() -> None:
+    from tank.contracts.sources import SourceApiLimitsConfiguration, SourceClientProtectionBudget
+    from tank.settings import Settings
+    from tank.util import canonical_json
+
+    raw = Settings().load_config("api_limits")
+    configured = SourceApiLimitsConfiguration.model_validate(raw)
+    protection = {
+        row.provider: row for row in configured.limits if isinstance(row, SourceClientProtectionBudget)
+    }
+    assert {key: (row.host, row.period_s, row.tank_request_budget) for key, row in protection.items()} == {
+        "binance.www": ("www.binance.com", 60, 60),
+        "binance.vision": ("data.binance.vision", 1, 10),
+    }
+    assert all(row.documented_requests is None for row in protection.values())
+    assert all(row.documentation_status == "NOT_CAPTURED" for row in protection.values())
+    assert canonical_json(configured.model_dump(mode="json", exclude_unset=True)) == canonical_json(raw)
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "host",
+        "policy_kind",
+        "documentation_status",
+        "documented_requests",
+        "tank_request_budget",
+        "period_s",
+        "scope",
+        "basis",
+    ],
+)
+def test_client_protection_cannot_omit_its_explicit_policy(missing: str) -> None:
+    from tank.contracts.sources import SourceApiLimitsConfiguration
+    from tank.settings import Settings
+
+    raw = Settings().load_config("api_limits")
+    rules = raw["limits"]
+    assert isinstance(rules, list)
+    row = next(item for item in rules if isinstance(item, dict) and item["provider"] == "binance.www")
+    assert isinstance(row, dict)
+    del row[missing]
+    with pytest.raises(ValidationError):
+        SourceApiLimitsConfiguration.model_validate(raw)
+
+
+def test_client_protection_cannot_replace_a_documented_api_quota_or_another_host() -> None:
+    from tank.contracts.sources import SourceClientProtectionBudget
+
+    declared: dict[str, JsonValue] = {
+        "provider": "binance.www",
+        "host": "www.binance.com",
+        "policy_kind": "CLIENT_PROTECTION",
+        "documentation_status": "NOT_CAPTURED",
+        "documented_requests": None,
+        "tank_request_budget": 60,
+        "period_s": 60,
+        "scope": "IP",
+        "basis": "Existing internal client protection, not provider quota documentation",
+    }
+    for changed in (
+        {"host": "api.binance.com"},
+        {"provider": "binance.spot"},
+        {"documented_requests": 120},
+        {"scope": "API_KEY"},
+    ):
+        with pytest.raises(ValidationError):
+            SourceClientProtectionBudget.model_validate({**declared, **changed})
+
+
+def test_calendar_verification_label_does_not_gain_an_assumed_clock() -> None:
+    from tank.contracts.sources import EndpointVerification
+
+    unrecorded: dict[str, JsonValue] = {
+        "checked_at": "2026-10-20",
+        "status": "VERIFIED",
+        "basis": "Calendar audit label",
+        "checked_at_prec": None,
+        "checked_at_precision": None,
+        "checked_at_prec_reason": None,
+    }
+    value = EndpointVerification.model_validate(unrecorded)
+    assert value.model_dump(mode="json", exclude_unset=True) == unrecorded
+    day = {**unrecorded, "checked_at_precision": "BUCKET(1d)"}
+    assert EndpointVerification.model_validate(day).model_dump(mode="json", exclude_unset=True) == day
+    with pytest.raises(ValidationError, match="day-bucket"):
+        EndpointVerification.model_validate({**unrecorded, "checked_at_precision": "EXACT"})
+
+
+def test_usdm_operation_protection_keeps_required_exact_shared_windows() -> None:
+    from tank.contracts.sources import SourceApiLimitsConfiguration, SourceBinanceUsdmBudget
+    from tank.settings import Settings
+
+    policy = SourceApiLimitsConfiguration.model_validate(Settings().load_config("api_limits"))
+    usdm = next(row for row in policy.limits if isinstance(row, SourceBinanceUsdmBudget))
+    actual = {
+        row.bucket: (row.paths, row.period_s, row.tank_request_budget)
+        for row in usdm.client_protection_limits
+    }
+    assert actual == {
+        "binance.usdm.funding": (["/fapi/v1/fundingRate", "/fapi/v1/fundingInfo"], 300, 250),
+        "binance.usdm.statistics": (["/futures/data/openInterestHist"], 300, 500),
+    }
+    assert all(row.documented_requests is None for row in usdm.client_protection_limits)
+    assert usdm.documented_weight_per_min > 0 and usdm.tank_max_weight_per_min > 0
+
+
+@pytest.mark.parametrize(
+    "change", ["missing_list", "missing_group", "wrong_path", "wrong_scope", "invented_docs"]
+)
+def test_usdm_protection_cannot_be_dropped_or_reused_for_other_routes(change: str) -> None:
+    from tank.contracts.sources import SourceApiLimitsConfiguration, SourceBinanceUsdmBudget
+    from tank.settings import Settings
+
+    policy = SourceApiLimitsConfiguration.model_validate(Settings().load_config("api_limits"))
+    usdm = next(row for row in policy.limits if isinstance(row, SourceBinanceUsdmBudget))
+    raw = usdm.model_dump(mode="json", exclude_unset=True)
+    rules = raw["client_protection_limits"]
+    assert isinstance(rules, list) and isinstance(rules[0], dict)
+    if change == "missing_list":
+        del raw["client_protection_limits"]
+    elif change == "missing_group":
+        rules.pop()
+    elif change == "wrong_path":
+        rules[0]["paths"] = ["/fapi/v1/unknown"]
+    elif change == "wrong_scope":
+        rules[0]["scope"] = "API_KEY"
+    else:
+        rules[0]["documented_requests"] = 500
+    with pytest.raises(ValidationError):
+        SourceBinanceUsdmBudget.model_validate(raw)

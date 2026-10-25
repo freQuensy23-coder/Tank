@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
+from source_support import fixture_versions
 from test_truth_start_fixture import synthetic_start_snapshot
 
 from tank.analysis.truth import MarketTruthService, compute_market_truth
@@ -81,13 +82,13 @@ async def test_actual_service_preserves_event_public_and_anchor_precision_withou
             return value
 
     result = await MarketTruthService(
-        Repo(), SimpleNamespace(config_version="t", code_version="t"), Market()
+        Repo(), SimpleNamespace(config_version="t", code_version="t"), Market(), versions=fixture_versions()
     ).assess("E", "T", "2026-10-16T12:00:00Z")
     assert result["event_public_at_prec"] == "BUCKET(1h)"
     assert result["relative"]["anchor"]["ts_prec"] == "BUCKET(1h)"
     del event["public_at_prec"]
     legacy = await MarketTruthService(
-        Repo(), SimpleNamespace(config_version="t", code_version="t"), Market()
+        Repo(), SimpleNamespace(config_version="t", code_version="t"), Market(), versions=fixture_versions()
     ).assess("E", "T", "2026-10-16T12:00:00Z")
     assert legacy["event_public_at_prec"] is None
     assert legacy["relative"]["anchor"]["ts_prec"] is None

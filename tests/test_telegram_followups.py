@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from source_support import fixture_versions
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
@@ -335,7 +336,7 @@ async def test_question_goes_into_the_same_session_and_final_turn_text_becomes_t
         },
     ]
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma(posts, history))) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         service.start_stream = lambda sid: None
         payload = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
         await service.send_message(payload)
@@ -365,7 +366,7 @@ async def test_failed_session_reopens_and_retires_its_failed_turn_from_the_barri
     question_id = await ask(repo, session_status="FAILED")
     posts = []
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma(posts, []))) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         service.start_stream = lambda sid: None
         await service.send_message(
             {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
@@ -385,7 +386,7 @@ async def test_terminated_session_answers_only_the_reason_and_answer_job_replies
     session["termination_receipt"] = {"event_id": "t"}
     await repo.put("ops.agent_sessions", "ses_1", session)
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma([], []))) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         assert (
             await service.send_message(
                 {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
@@ -408,7 +409,7 @@ async def test_session_with_delivered_card_is_kept_open_instead_of_archived() ->
     repo = MemoryRepository()
     await seed(repo)
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma([], []))) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         assert await service.followable(await repo.get("ops.agent_sessions", "ses_1"))
 
 
@@ -418,7 +419,7 @@ async def test_archived_session_answers_archived_instead_of_posting() -> None:
     question_id = await ask(repo, session_status="ENDED")
     posts = []
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma(posts, []))) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         payload = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
         assert await service.send_message(payload) is None
     assert posts == []
@@ -442,7 +443,7 @@ async def test_retried_question_is_never_retired_by_a_concurrent_failure() -> No
         return healthy(request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         service.start_stream = lambda sid: None
         with pytest.raises(httpx.HTTPStatusError):
             await service.send_message(payload)
@@ -570,7 +571,7 @@ async def test_first_question_is_answered_while_a_second_is_still_running() -> N
         return httpx.Response(200, json={"data": ordered, "next_page": None})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         service.start_stream = lambda sid: None
         await service.send_message({"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": first})
         await service.send_message({"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": "q_2"})
@@ -599,7 +600,7 @@ async def test_failed_session_without_answer_is_reconciled_after_restart() -> No
     )
     await repo.put("ops.agent_sessions", "ses_1", session)
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma([], []))) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         await service.reconcile_answers()
     assert (await repo.get("out.user_questions", question_id))["answer_status"] == "FAILED"
 
@@ -695,7 +696,7 @@ async def test_send_telegram_file_replies_with_the_session_output_once() -> None
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 3001, "date": 1_800_000_000}})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         service.telegram = TelegramInbox(repo, inbox_settings(), http=http)
         first = await service.invoke_tool(session, "send_telegram_file", {"filename": "report.pdf"}, "call_1")
         again = await service.invoke_tool(session, "send_telegram_file", {"filename": "report.pdf"}, "call_1")
@@ -711,7 +712,7 @@ async def test_send_telegram_file_outside_a_follow_up_is_refused() -> None:
     await seed(repo)
     session = await repo.get("ops.agent_sessions", "ses_1")
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma([], []))) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         service.telegram = TelegramInbox(repo, inbox_settings(), http=http)
         with pytest.raises(ValueError, match="only while answering"):
             await service.invoke_tool(session, "send_telegram_file", {"filename": "a.pdf"}, "call_2")
@@ -733,7 +734,7 @@ async def test_idle_session_receives_the_current_tools_once() -> None:
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, settings, None, http=http)
+        service = SessionService(repo, settings, None, http=http, versions=fixture_versions())
         await service.sync_tools("ses_1")
         await service.sync_tools("ses_1")
     posts = [row for row in requests if row[0] == "POST"]
@@ -753,6 +754,7 @@ async def test_agent_watch_rules_arm_disarm_and_survive_decision_reconciliation(
     repo = MemoryRepository()
     await repo.put("evt.events", "evt_1", {"event_id": "evt_1", "lifecycle": "MONITORING"})
     tools = object.__new__(EventToolService)
+    tools.versions = fixture_versions()
     tools.repo = repo
     tools.settings = SimpleNamespace(
         config_version="c", code_version="v", ops_progress_enabled=False, replay=False
@@ -898,7 +900,7 @@ async def test_reader_file_is_stored_for_the_session_and_named_in_the_agent_mess
         return httpx.Response(200, json={"id": "resource_private"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma)) as http:
-        sessions = SessionService(repo, session_settings(), None, http=http)
+        sessions = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         session = await repo.get("ops.agent_sessions", "ses_1")
         ready = await sessions.prepare_attachments(session, question)
         again = await sessions.prepare_attachments(session, question)
@@ -952,6 +954,7 @@ async def test_numeric_watch_comparisons_need_numbers() -> None:
     repo = MemoryRepository()
     await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
     tools = object.__new__(EventToolService)
+    tools.versions = fixture_versions()
     tools.repo = repo
     tools.settings = SimpleNamespace(
         config_version="c", code_version="v", ops_progress_enabled=False, replay=False
@@ -1039,7 +1042,7 @@ async def test_output_filename_is_one_encoded_path_segment() -> None:
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 3002, "date": 1}})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         service.telegram = TelegramInbox(repo, inbox_settings(), http=http)
         await service.invoke_tool(session, "send_telegram_file", {"filename": "q?a#b.txt"}, "call_9")
     assert paths == [b"/v1/sessions/ses_1/outputs/q%3Fa%23b.txt"]
@@ -1082,6 +1085,7 @@ async def test_fired_agent_watch_wakes_the_session_that_armed_it() -> None:
         None,
         SimpleNamespace(assess=AsyncMock(return_value={})),
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     await scheduler.eval_conditions({"cutoff": iso(now)})
     jobs = await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
@@ -1097,6 +1101,7 @@ async def test_event_scoped_watches_refuse_persistence() -> None:
     repo = MemoryRepository()
     await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
     tools = object.__new__(EventToolService)
+    tools.versions = fixture_versions()
     tools.repo = repo
     tools.settings = SimpleNamespace(
         config_version="c", code_version="v", ops_progress_enabled=False, replay=False
@@ -1128,6 +1133,7 @@ async def test_ordered_watch_on_categorical_metric_is_refused() -> None:
     repo = MemoryRepository()
     await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
     tools = object.__new__(EventToolService)
+    tools.versions = fixture_versions()
     tools.repo = repo
     tools.settings = SimpleNamespace(
         config_version="c", code_version="v", ops_progress_enabled=False, replay=False
@@ -1157,7 +1163,7 @@ async def test_tool_sync_retries_transient_rejections_only(status, raises) -> No
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(status, json={}))
     ) as http:
-        service = SessionService(repo, settings, None, http=http)
+        service = SessionService(repo, settings, None, http=http, versions=fixture_versions())
         if raises:
             with pytest.raises(httpx.HTTPStatusError):
                 await service.sync_tools("ses_1")
@@ -1332,6 +1338,7 @@ async def test_watch_rules_refuse_mixed_windows_and_unevaluated_metrics() -> Non
     repo = MemoryRepository()
     await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
     tools = object.__new__(EventToolService)
+    tools.versions = fixture_versions()
     tools.repo = repo
     tools.settings = SimpleNamespace(
         config_version="c", code_version="v", ops_progress_enabled=False, replay=False
@@ -1456,7 +1463,9 @@ async def test_abandoned_question_retires_its_unsent_intent_but_keeps_accepted_o
         },
     ]
     await repo.put("ops.agent_sessions", "ses_1", session)
-    service = SessionService(repo, session_settings(), None, http=httpx.AsyncClient())
+    service = SessionService(
+        repo, session_settings(), None, http=httpx.AsyncClient(), versions=fixture_versions()
+    )
     assert await service.abandon_question("ses_1", "q_a") is True
     assert await service.abandon_question("ses_1", "q_b") is False
     session = await repo.get("ops.agent_sessions", "ses_1")
@@ -1479,7 +1488,7 @@ async def test_follow_up_to_a_busy_session_with_stale_tools_is_deferred() -> Non
         {"name": "x", "description": "d", "input_schema": {"type": "object"}}
     ]
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma([], []))) as http:
-        service = SessionService(repo, settings, None, http=http)
+        service = SessionService(repo, settings, None, http=http, versions=fixture_versions())
         with pytest.raises(DeliveryDeferred):
             await service.send_message(
                 {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
@@ -1520,7 +1529,7 @@ async def test_answer_lookup_reads_history_only_back_to_the_question() -> None:
         return httpx.Response(200, json={"data": chunk, "next_page": following})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         answers = await service.turn_answers(session, ["in_q"])
     assert answers["mq"] == {"text": "Ответ", "ended": True} and pages == [0]
 
@@ -1553,7 +1562,7 @@ async def test_oversized_session_output_is_refused_while_streaming(monkeypatch: 
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 1}})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         service.telegram = TelegramInbox(repo, inbox_settings(), http=http)
         with pytest.raises(ValueError, match="45 MB"):
             await service.send_file(session, {"filename": "big.bin"}, "call_big")
@@ -1599,6 +1608,7 @@ async def test_watch_token_must_exist_in_the_registry() -> None:
     repo = MemoryRepository()
     await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
     tools = object.__new__(EventToolService)
+    tools.versions = fixture_versions()
     tools.repo = repo
     tools.settings = SimpleNamespace(
         config_version="c",
@@ -1686,7 +1696,7 @@ async def test_watch_mutation_hydrates_prompt_provenance_first() -> None:
         return {"tool": tool, "prompt_version": context["prompt_version"]}
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, session_settings(), dispatch, http=http)
+        service = SessionService(repo, session_settings(), dispatch, http=http, versions=fixture_versions())
         result = await service.invoke_tool(session, "set_watch_condition", {"action": "ARM"}, "call_w")
     assert calls == ["/v1/sessions/ses_1"] and len(result["prompt_version"]) == 64
 
@@ -1760,7 +1770,7 @@ async def test_question_to_a_remotely_terminated_session_answers_terminated() ->
         return httpx.Response(200, json={"id": "ses_1", "status": "terminated"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         payload = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
         assert await service.send_message(payload) is None
     assert (await repo.get("out.user_questions", question_id))["answer_status"] == "TERMINATED"
@@ -1859,7 +1869,7 @@ async def test_question_to_a_session_missing_in_openma_answers_terminated() -> N
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(404, json={}))
     ) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         payload = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
         assert await service.send_message(payload) is None
     assert (await repo.get("out.user_questions", question_id))["answer_status"] == "TERMINATED"
@@ -2029,7 +2039,7 @@ async def test_dot_segment_output_names_are_refused(name) -> None:
     session["message_log"].append({"message_id": "mq", "payload": payload, "turn_status": "RUNNING"})
     session["active_message_id"] = "mq"
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(500))) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         service.telegram = TelegramInbox(repo, inbox_settings(), http=http)
         with pytest.raises(ValueError, match="plain name"):
             await service.send_file(session, {"filename": name}, "call_dot")
@@ -2042,6 +2052,7 @@ async def test_agent_rules_are_coalesced_and_capped_per_event() -> None:
     repo = MemoryRepository()
     await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
     tools = object.__new__(EventToolService)
+    tools.versions = fixture_versions()
     tools.repo = repo
     tools.settings = SimpleNamespace(
         config_version="c", code_version="v", ops_progress_enabled=False, replay=False
@@ -2094,7 +2105,7 @@ async def test_text_of_a_failed_attempt_is_never_the_answer() -> None:
         },
     ]
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma([], history))) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         answers = await service.turn_answers(session, ["in_first"])
     assert answers["mq"] == {"text": None, "ended": True}
 
@@ -2172,7 +2183,7 @@ async def test_question_text_keeps_user_filenames_and_literal_hashes() -> None:
     await repo.put("out.user_questions", question_id, question)
     posts = []
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma(posts, []))) as http:
-        sessions = SessionService(repo, session_settings(), None, http=http)
+        sessions = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         sessions.start_stream = lambda sid: None
         await sessions.send_message(
             {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}

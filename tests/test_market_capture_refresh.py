@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from source_support import fixture_versions
 from test_agents_session_audit import settings as session_settings
 from test_event_tools import complete_assessment_fixture, complete_event_fixture
 from test_session_binding_concurrency import fixture_repo
@@ -206,9 +207,9 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
         logical_now = [end]
         monkeypatch.setattr("tank.event_tools.utcnow", lambda: logical_now[0])
         market = ReleasedMarket(shifted_snapshot(end, full_flow_history=True))
-        truth = MarketTruthService(repo, settings, market)
-        tools = EventToolService(repo, settings, truth, DecisionEngine())
-        scheduler = Scheduler(repo, settings, market, truth)
+        truth = MarketTruthService(repo, settings, market, versions=fixture_versions())
+        tools = EventToolService(repo, settings, truth, DecisionEngine(), versions=fixture_versions())
+        scheduler = Scheduler(repo, settings, market, truth, versions=fixture_versions())
         await seed_domain(repo, settings, end)
         first = await truth.assess(
             "e", "T", chosen_boundary(end - timedelta(minutes=1), precision="BUCKET(1m)")
@@ -255,7 +256,9 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
         }
         try:
             async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-                sessions = SessionService(repo, session_settings(), tools.dispatch, http=http)
+                sessions = SessionService(
+                    repo, session_settings(), tools.dispatch, http=http, versions=fixture_versions()
+                )
                 sessions.start_stream = lambda sid: None
                 runtime.handlers["AGENT_MESSAGE"] = sessions.send_message
                 worker = asyncio.create_task(runtime.worker(stop))
@@ -366,8 +369,8 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
         settings = Settings(data_dir=tmp_path, _env_file=None)
         end = utcnow().replace(second=0, microsecond=0)
         market = ReleasedMarket(shifted_snapshot(end, full_flow_history=False))
-        truth = MarketTruthService(repo, settings, market)
-        tools = EventToolService(repo, settings, truth, DecisionEngine())
+        truth = MarketTruthService(repo, settings, market, versions=fixture_versions())
+        tools = EventToolService(repo, settings, truth, DecisionEngine(), versions=fixture_versions())
         await seed_domain(repo, settings, end)
         first = await truth.assess(
             "e", "T", chosen_boundary(end - timedelta(minutes=1), precision="BUCKET(1m)")
@@ -390,7 +393,9 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
             return httpx.Response(200, json={})
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(accepted)) as http:
-            sessions = SessionService(repo, session_settings(), tools.dispatch, http=http)
+            sessions = SessionService(
+                repo, session_settings(), tools.dispatch, http=http, versions=fixture_versions()
+            )
             pending = asyncio.create_task(sessions.process_event("s", event, 8))
             async with asyncio.timeout(5):
                 while not [
@@ -455,9 +460,9 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
                 "semantics": [],
             }
         )
-        truth = MarketTruthService(repo, settings, market)
+        truth = MarketTruthService(repo, settings, market, versions=fixture_versions())
         engine = DecisionEngine()
-        tools = EventToolService(repo, settings, truth, engine)
+        tools = EventToolService(repo, settings, truth, engine, versions=fixture_versions())
         await seed_domain(repo, settings, end)
         await truth.assess("e", "T", chosen_boundary(end - timedelta(minutes=1), precision="BUCKET(1m)"))
         decision = await tools.dispatch("get_decision", {"event_id": "e", "token_id": "T"}, {})
@@ -494,7 +499,9 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(lambda request: httpx.Response(200, json={}))
         ) as http:
-            sessions = SessionService(repo, session_settings(), tools.dispatch, http=http)
+            sessions = SessionService(
+                repo, session_settings(), tools.dispatch, http=http, versions=fixture_versions()
+            )
             event = {
                 "id": "first-condition",
                 "type": "agent.custom_tool_use",
@@ -543,8 +550,8 @@ async def test_event_only_risk_watch_never_waits_for_market_refresh(
     settings = Settings(data_dir=tmp_path, _env_file=None)
     end = utcnow().replace(second=0, microsecond=0)
     market = ReleasedMarket(shifted_snapshot(end, full_flow_history=False))
-    truth = MarketTruthService(repo, settings, market)
-    tools = EventToolService(repo, settings, truth, DecisionEngine())
+    truth = MarketTruthService(repo, settings, market, versions=fixture_versions())
+    tools = EventToolService(repo, settings, truth, DecisionEngine(), versions=fixture_versions())
     await seed_domain(repo, settings, end)
     first = await truth.assess("e", "T", chosen_boundary(end - timedelta(minutes=1), precision="BUCKET(1m)"))
     await repo.put(

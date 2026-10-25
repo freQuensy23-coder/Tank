@@ -4,6 +4,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from source_support import fixture_versions
 
 import tank.analysis.truth as truth_module
 from tank.scheduler import Scheduler
@@ -70,7 +71,9 @@ async def test_benchmark_checkpoint_uses_base_klines_only_outside_analysis_set(
     for row in klines("bitcoin:BTC", "binance:spot:BTCUSDT", end):
         row = {k: v for k, v in row.items() if k != "token_id"}
         await repo.put("mkt.klines_1m", row["instrument_id"] + ":" + row["open_time"], row)
-    scheduler = Scheduler(repo, Settings(_env_file=None, data_dir=tmp_path), market, None)
+    scheduler = Scheduler(
+        repo, Settings(_env_file=None, data_dir=tmp_path), market, None, versions=fixture_versions()
+    )
     payload = {
         "event_id": "e",
         "token_id": "bitcoin:BTC",
@@ -112,7 +115,9 @@ async def test_late_changes_keep_one_queued_revision_per_checkpoint(tmp_path: Pa
             },
         )
     market = KlineMarket(end)
-    scheduler = Scheduler(repo, Settings(_env_file=None, data_dir=tmp_path), market, None)
+    scheduler = Scheduler(
+        repo, Settings(_env_file=None, data_dir=tmp_path), market, None, versions=fixture_versions()
+    )
     for n in range(3):
         market.changes = [
             {

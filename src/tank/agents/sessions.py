@@ -12,7 +12,7 @@ import time
 from collections.abc import Mapping, Sequence
 from contextlib import AsyncExitStack, suppress
 from datetime import timedelta
-from typing import Literal
+from typing import Literal, Protocol
 from urllib.parse import quote
 
 import httpx
@@ -23,6 +23,7 @@ from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContex
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.provenance import resolve_agent_provenance
 from tank.agents.security import redact_tool_arguments
+from tank.agents.session_contracts import ExecutionPoll, HistoryPoll
 from tank.agents.tool_contracts import (
     CapturedToolResult,
     FailedToolResponse,
@@ -35,7 +36,7 @@ from tank.agents.tool_contracts import (
 from tank.agents.wire import tool_wire_result
 from tank.agents.workflow import SOURCE_COMPLETION_VERSION
 from tank.contracts.json import decode_json
-from tank.contracts.provenance import AgentProvenance
+from tank.contracts.provenance import AgentProvenance, ResolvedVersionIdentity
 from tank.contracts.source_items import (
     FailedExtraction,
     SkippedExtraction,
@@ -107,31 +108,49 @@ class AdmissionDeferred(Exception):
         super().__init__("Running-session cap reached; the message waits for a free slot")
 
 
+class SessionFileSender(Protocol):
+    async def send_session_file(
+        self,
+        question_id: str,
+        call_id: str,
+        filename: str,
+        content: bytes,
+        caption: str | None,
+    ) -> dict[str, JsonValue]: ...
+
+
 class SessionService:
-    def __init__(self, repo, settings, tool_dispatch, *, http=None, stream_http=None):
+    def __init__(
+        self, repo, settings, tool_dispatch, *, versions: ResolvedVersionIdentity, http=None, stream_http=None
+    ):
+        self.versions = ResolvedVersionIdentity.model_validate(versions)
         self.repo, self.settings, self.tool_dispatch = repo, settings, tool_dispatch
         self.source_extraction = SourceExtractionRepository(repo)
-        self.http = http or httpx.AsyncClient(timeout=REST_TIMEOUT_S)
+        self.http = httpx.AsyncClient(timeout=REST_TIMEOUT_S) if http is None else http
         self.owns_http = http is None
 
-        self.stream_http = stream_http or (
-            http
-            if http is not None
-            else httpx.AsyncClient(
-                timeout=httpx.Timeout(30, read=None),
-                limits=httpx.Limits(max_connections=None, max_keepalive_connections=20),
+        self.stream_http = (
+            stream_http
+            if stream_http is not None
+            else (
+                http
+                if http is not None
+                else httpx.AsyncClient(
+                    timeout=httpx.Timeout(30, read=None),
+                    limits=httpx.Limits(max_connections=None, max_keepalive_connections=20),
+                )
             )
         )
         self.owns_stream_http = stream_http is None and http is None
-        self.tasks = {}
-        self.event_locks = {}
-        self.send_locks = {}
-        self.execution_polls = {}
-        self.history_polls = {}
-        self.pending_seq = {}
-        self.seen_events = {}
+        self.tasks: dict[str, asyncio.Task[None]] = {}
+        self.event_locks: dict[str, asyncio.Lock] = {}
+        self.send_locks: dict[str, asyncio.Lock] = {}
+        self.execution_polls: dict[str, ExecutionPoll] = {}
+        self.history_polls: dict[str, HistoryPoll] = {}
+        self.pending_seq: dict[str, int] = {}
+        self.seen_events: dict[str, set[str]] = {}
         self.closed = False
-        self.telegram = None
+        self.telegram: SessionFileSender | None = None
 
     def clock_timestamp(self) -> Timestamp:
         return collection_clock()
@@ -177,12 +196,17 @@ class SessionService:
         files: Mapping[str, tuple[str, bytes, str]] | None = None,
         idem: str | None = None,
     ) -> dict[str, JsonValue]:
+        query = (
+            None
+            if params is None
+            else httpx.QueryParams(params if isinstance(params, Mapping) else list(params))
+        )
         response = await self.http.request(
             method,
             self.url(path),
             headers=self.headers(idem),
             json=json,
-            params=params,
+            params=query,
             files=files,
             timeout=REST_TIMEOUT_S,
         )
@@ -323,8 +347,8 @@ class SessionService:
             **propagate_timestamp(
                 {}, "last_item_at", missing_reason="No accepted source item message"
             ).fields("last_item_at"),
-            "config_version": self.settings.config_version,
-            "code_version": self.settings.code_version,
+            "config_version": self.versions.config_version,
+            "code_version": self.versions.code_version,
             **opened.fields("created_at"),
             "messages": [],
         }
@@ -772,8 +796,8 @@ class SessionService:
         )
         states = copy.deepcopy(session.get("native_execution_states", {}))
         signature = tuple(sorted(required))
-        poll = self.execution_polls.get(session["session_id"], (0, 0.05, None))
-        should_read = poll[2] != signature or time.monotonic() >= poll[0]
+        poll = self.execution_polls.get(session["session_id"])
+        should_read = poll is None or poll.signature != signature or time.monotonic() >= poll.deadline
         if verify_remote and required and not unknown and should_read:
             pending_read = sorted(
                 identity for identity in required if states.get(identity, {}).get("state") != "COMPLETED"
@@ -822,8 +846,10 @@ class SessionService:
                         }
                 required.difference_update(current.get("superseded_native_inputs", {}))
                 await self.repo.put("ops.agent_sessions", session["session_id"], current)
-            delay = min(poll[1] * 2, 1.0) if poll[2] == signature else 0.05
-            self.execution_polls[session["session_id"]] = (time.monotonic() + delay, delay, signature)
+            delay = min(poll.delay * 2, 1.0) if poll is not None and poll.signature == signature else 0.05
+            self.execution_polls[session["session_id"]] = ExecutionPoll(
+                deadline=time.monotonic() + delay, delay=delay, signature=signature
+            )
         failed = sorted(
             identity
             for identity in required
@@ -1030,11 +1056,14 @@ class SessionService:
         if local["unidentified_inputs"] or not any(
             receipt.get("type") == "session.status_idle" for receipt in local["terminal_receipts"].values()
         ):
-            deadline, delay = self.history_polls.get(sid, (0, 0.05))
-            if time.monotonic() < deadline:
+            poll = self.history_polls.get(sid)
+            if poll is not None and time.monotonic() < poll.deadline:
                 return dict(local, complete=False)
+            delay = poll.delay if poll is not None else 0.05
             await self.catch_up(sid)
-            self.history_polls[sid] = (time.monotonic() + delay, min(delay * 2, 1))
+            self.history_polls[sid] = HistoryPoll(
+                deadline=time.monotonic() + delay, delay=min(delay * 2, 1.0)
+            )
             session = await self.repo.get("ops.agent_sessions", sid)
         before = await self.execution_barrier(session, verify_remote=True)
         if not before["complete"]:
@@ -1160,8 +1189,8 @@ class SessionService:
         }
         context["session_config_version"] = context["config_version"]
         context["session_code_version"] = context["code_version"]
-        context["config_version"] = self.settings.config_version
-        context["code_version"] = self.settings.code_version
+        context["config_version"] = self.versions.config_version
+        context["code_version"] = self.versions.code_version
         context.update(call_id=call_id, role="scout" if session.get("proposal_id") else "analyst")
         return context
 
@@ -1591,8 +1620,8 @@ class SessionService:
                 **measured_at.fields("at"),
                 **self.clock_timestamp().fields("created_at"),
                 **propagate_timestamp(event, "processed_at").fields("processed_at"),
-                "config_version": self.settings.config_version,
-                "code_version": self.settings.code_version,
+                "config_version": self.versions.config_version,
+                "code_version": self.versions.code_version,
                 "session_config_version": session.get("config_version"),
                 "session_code_version": session.get("code_version"),
             },
