@@ -133,7 +133,6 @@ class SourcePoller:
         rows: Sequence[DiscoveryEnvelope | Mapping[str, JsonValue | bytes]],
         kind: str,
         coverage,
-        token: str,
         acquired_at: str,
     ) -> None:
         """Validate discoveries before binding first-seen identity and durable raw evidence."""
@@ -183,7 +182,7 @@ class SourcePoller:
             fresh.append(row.storage_record())
         current.setdefault("pending_batches", []).append(
             {
-                "batch_id": sha256(key + "|" + token),
+                "batch_id": new_id("batch"),
                 "acquired_at": acquired_at,
                 "acquired_at_precision": "COLLECTION_ONLY",
                 "kind": kind,
@@ -204,7 +203,6 @@ class SourcePoller:
                 rows,
                 kind,
                 {},
-                "page:" + page_state["payload_sha256"] + "|" + str(page_state["fetched_at"]),
                 page_state["fetched_at"],
             )
             await self.save(source, key, current)
@@ -577,7 +575,6 @@ class SourcePoller:
                             rows,
                             kind,
                             coverage,
-                            attempted,
                             acquired.get("fetched_at") or self.stamp(),
                         )
                     for field in (
