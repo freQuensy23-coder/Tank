@@ -91,6 +91,10 @@ export class LiteBoxSandbox implements SandboxExecutor {
     if (this.boxPromise) throw new Error("Retained lifecycle must bind before first sandbox use");
     this.retainedBoxFactory = factory;
   }
+  async prepareRetainedRuntime(): Promise<void> {
+    if (!this.retainedBoxFactory) throw Error('retained_lifecycle_not_bound');
+    await this.ensureBox();
+  }
   private envVars: Record<string, string> = {};
   private commandSecrets: Array<{ prefix: string; secrets: Record<string, string> }> = [];
   private volumes: Array<{ hostPath: string; guestPath: string; readOnly?: boolean }> = [];

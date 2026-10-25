@@ -23,6 +23,25 @@ from tank.agents.admission import SessionAdmission
 from tank.agents.admission_repository import admission_candidate, build_admission
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
 from tank.agents.context_binding import ContextBinding
+from tank.agents.native_inputs import (
+    AcceptedNativeInput,
+    NativeInput,
+    NativeInputAcknowledgment,
+    NativeInputRequest,
+    observe_native_input,
+    parse_native_input,
+)
+from tank.agents.native_sessions import (
+    NativeOpeningSource,
+    NativeSessionCreate,
+    NativeSessionDeployment,
+    NativeSessionDiscovery,
+    NativeSessionIdentity,
+    NativeSessionIdentityMetadata,
+    NativeSessionResolution,
+    NativeStoredSessionBinding,
+    native_role_for_message,
+)
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.provenance import resolve_agent_provenance
 from tank.agents.security import redact_tool_arguments
@@ -215,132 +234,104 @@ class SessionService:
             raise ValueError("Native endpoint returned a non-object JSON response")
         return payload
 
-    async def resolve(self, payload):
-        replay_run_id = payload.get("replay_run_id") if getattr(self.settings, "replay", False) else None
-        if getattr(self.settings, "replay", False) and not replay_run_id:
-            raise ValueError("Replay requires a fresh explicit replay_run_id")
-        if payload.get("session_id"):
-            session = await self.repo.get("ops.agent_sessions", payload["session_id"])
+    async def resolve(self, request: NativeSessionResolution) -> dict[str, JsonValue]:
+        target = request.target
+        replay_run_id = request.replay.run_id if request.replay is not None else None
+        if target.session_id is not None:
+            session = await self.repo.get("ops.agent_sessions", target.session_id)
             if session is None:
-                raise KeyError(payload["session_id"])
-            if replay_run_id and session.get("replay_run_id") != replay_run_id:
-                raise ValueError("Replay cannot reuse an original session")
+                raise KeyError(target.session_id)
+            NativeStoredSessionBinding.from_record(session).verify(request)
             return session
-        event_id = payload.get("event_id")
-        item_id = payload.get("item_id")
+        event_id, item_id = target.event_id, target.item_id
         identifiers = [
             ("event_id", event_id),
-            ("item_id", item_id if not event_id else None),
-            ("proposal_id", payload.get("proposal_id")),
+            ("item_id", item_id if event_id is None else None),
+            ("proposal_id", target.proposal_id),
         ]
         for field, value in identifiers:
-            if value:
+            if value is not None:
                 async for session in self.repo.iter_all(
                     "ops.agent_sessions",
-                    filters={field: value, **({"replay_run_id": replay_run_id} if replay_run_id else {})},
+                    filters={
+                        field: value,
+                        **({"replay_run_id": replay_run_id} if replay_run_id is not None else {}),
+                    },
                 ):
+                    cached = NativeStoredSessionBinding.from_record(session)
+                    if request.replay is None and cached.replay_run_id is not None:
+                        continue
+                    cached.verify(request)
                     return session
-        config = self.config()
-        scout = payload.get("kind") == "SCOUT_REVIEW"
-        agent = config.get("scout_agent_id") if scout else config["agent_id"]
-        if not agent:
-            raise ConfigurationError("scout_agent_id required")
-        if not item_id and event_id and not scout:
+        deployment = NativeSessionDeployment.from_wire(
+            self.config(), role=request.role, replay=request.replay is not None
+        )
+        scout = request.role == "SCOUT"
+        if item_id is None and event_id is not None and not scout:
             async for observation in self.repo.iter_range(
                 "evt.event_observations", "observed_at", filters={"event_id": event_id}
             ):
-                item_id = observation.get("item_id")
-                if item_id:
+                source = NativeOpeningSource.model_validate(
+                    {"item_id": observation.get("item_id"), "opened_by_item": None}
+                )
+                if source.item_id is not None:
+                    item_id = source.item_id
                     break
-            if not item_id:
+            if item_id is None:
                 async for origin in self.repo.iter_all("ops.agent_sessions", filters={"event_id": event_id}):
-                    item_id = origin.get("opened_by_item") or origin.get("item_id")
-                    if item_id:
+                    if not NativeStoredSessionBinding.from_record(origin).matches_origin_scope(request):
+                        continue
+                    source = NativeOpeningSource.model_validate(
+                        {"item_id": origin.get("item_id"), "opened_by_item": origin.get("opened_by_item")}
+                    )
+                    item_id = source.opening_item()
+                    if item_id is not None:
                         break
-            if not item_id:
+            if item_id is None:
                 raise ValueError("Event session has no durable opening source item")
-        identity = event_id or item_id or payload.get("proposal_id")
-        if not identity:
+        identity = event_id if event_id is not None else item_id
+        if identity is None:
+            identity = target.proposal_id
+        if identity is None:
             raise ValueError("Session needs event, item or proposal identity")
-
-        marker = sha256(
-            {
-                "identity": identity,
-                "scout": scout,
-                "model_context_version": CONTEXT_VERSION,
-                **({"replay_run_id": replay_run_id} if replay_run_id else {}),
-            }
+        marker = NativeSessionIdentity(
+            identity=identity,
+            scout=scout,
+            model_context_version=CONTEXT_VERSION,
+            replay_run_id=replay_run_id,
+        ).marker()
+        wanted = NativeSessionCreate(
+            agent=deployment.agent_id,
+            environment_id=deployment.environment_id,
+            metadata=NativeSessionIdentityMetadata.from_binding(marker, request.replay),
         )
-        replay_metadata = (
-            {
-                "tank_replay_run_id": replay_run_id,
-                **(
-                    {
-                        "tank_replay_evidence_sha256": payload["replay_evidence_sha256"],
-                        "tank_replay_cutoff": payload["replay_cutoff"],
-                    }
-                    if payload.get("replay_evidence_sha256")
-                    else {}
-                ),
-            }
-            if replay_run_id
-            else {}
+        remote = await NativeSessionDiscovery(self, deployment).discover_or_create(
+            wanted, idem="create:" + marker
         )
-        remote = None
-        page = None
-        while True:
-            params = {"limit": 100}
-            if page:
-                params["page"] = page
-            listing = await self.request("GET", "sessions", params=params)
-            for row in listing.get("data", []):
-                if row.get("metadata", {}).get("tank_identity") == marker:
-                    remote = row
-                    break
-            page = listing.get("next_page")
-            if remote or not page:
-                break
-        if remote is None:
-            environment = (
-                config.get("replay_environment_id")
-                if getattr(self.settings, "replay", False)
-                else config["environment_id"]
-            )
-            if not environment:
-                raise ConfigurationError("replay_environment_id required for replay")
-            remote = await self.request(
-                "POST",
-                "sessions",
-                json={
-                    "agent": agent,
-                    "environment_id": environment,
-                    "metadata": {"tank_identity": marker, **replay_metadata},
-                },
-                idem="create:" + marker,
-            )
-        if (
-            replay_metadata
-            and remote.get("metadata")
-            and any(remote["metadata"].get(key) != value for key, value in replay_metadata.items())
-        ):
-            raise ValueError("Replay session evidence binding does not match requested run")
-        sid = remote["id"]
+        sid = remote.session_id
         opened = self.clock_timestamp()
         session = {
             "session_id": sid,
             "model_context_version": CONTEXT_VERSION,
             "event_id": event_id,
             "replay_run_id": replay_run_id,
-            "replay_source_session_id": payload.get("replay_source_session_id"),
-            "replay_evidence_sha256": payload.get("replay_evidence_sha256"),
-            "replay_cutoff": payload.get("replay_cutoff"),
+            "replay_source_session_id": request.replay.source_session_id
+            if request.replay is not None
+            else None,
+            "replay_evidence_sha256": request.replay.evidence_sha256 if request.replay is not None else None,
+            "replay_cutoff": request.replay.cutoff if request.replay is not None else None,
             "item_id": item_id,
-            "proposal_id": payload.get("proposal_id"),
+            "proposal_id": target.proposal_id,
             "opened_by_item": item_id,
             **opened.fields("opened_at"),
-            **self.agent_provenance(remote, config, agent).model_dump(mode="json"),
+            **remote.provenance.model_dump(mode="json"),
             "billing_basis": "SUBSCRIPTION",
-            "effort": config.get("reasoning_effort"),
+            "configured_effort": deployment.effort,
+            "effort": remote.effort,
+            "effort_basis": "RESOLVED_SESSION_AGENT" if remote.effort is not None else None,
+            "effort_reason": (
+                "Native resolved agent did not report reasoning effort" if remote.effort is None else None
+            ),
             "status": "OPEN",
             "last_event_seq": 0,
             **propagate_timestamp(
@@ -356,12 +347,10 @@ class SessionService:
             for key, reason in {
                 "opened_by_item": "Proposal or event follow-up has no opening source item",
                 "last_item_at": "No source item message accepted yet",
-                "agent_version": "Deployed agent version not exposed by remote snapshot or configuration",
                 "prompt_version": "INCOMPLETE: remote resolved prompt snapshot unavailable",
             }.items()
             if session.get(key) is None
         }
-        session["agent_version_reason"] = session["missing_fields"].get("agent_version")
         session["last_item_at_reason"] = session["missing_fields"].get("last_item_at")
         await put_owned_session(self.repo, sid, session)
         return session
@@ -584,7 +573,13 @@ class SessionService:
             or payload.get("item_id")
         )
         async with self.repo.lock("session-mapping:" + str(mapping_identity)):
-            session = await self.resolve(payload)
+            session = await self.resolve(
+                NativeSessionResolution.from_wire(
+                    payload,
+                    role=native_role_for_message(payload["kind"]),
+                    replay=self.settings.replay,
+                )
+            )
             ContextBinding.from_session(session)
         sid, key = session["session_id"], sha256(payload)
         migrating = session.get("model_context_version", 0) < CONTEXT_VERSION
@@ -659,12 +654,7 @@ class SessionService:
         intent = next(row for row in session["message_log"] if row["message_id"] == key)
         if intent.get("remote_event_id"):
             return session
-        accepted = await self.request(
-            "POST",
-            f"sessions/{sid}/events",
-            json={"events": [copy.deepcopy(intent["body"])]},
-            idem="message:" + key,
-        )
+        accepted = await self.post_input(sid, parse_native_input(intent["body"]), idem="message:" + key)
         accepted_at, identity = self.clock_timestamp(), self.accepted_input_id(accepted)
         async with self.repo.lock("session:" + sid):
             session = await self.repo.get("ops.agent_sessions", sid)
@@ -705,19 +695,19 @@ class SessionService:
         if session.get("pending_retry_event"):
             await self.process_event(sid, session["pending_retry_event"])
 
+    async def post_input(self, sid: str, body: NativeInput, *, idem: str) -> NativeInputAcknowledgment:
+        response = await self.request(
+            "POST",
+            f"sessions/{sid}/events",
+            json=NativeInputRequest(events=[body]).model_dump(mode="json", exclude_none=True),
+            idem=idem,
+        )
+        return observe_native_input(response, body)
+
     @staticmethod
-    def accepted_input_id(response):
-        """Tank sends one executable input per POST; native execution uses its ID."""
-        events = response.get("data") if isinstance(response, dict) else None
-        if (
-            isinstance(events, list)
-            and len(events) == 1
-            and isinstance(events[0], dict)
-            and isinstance(events[0].get("id"), str)
-            and events[0]["id"]
-        ):
-            return events[0]["id"]
-        return None
+    def accepted_input_id(response: NativeInputAcknowledgment) -> str | None:
+        """Only a validated reported input establishes native execution ownership."""
+        return response.event_id if isinstance(response, AcceptedNativeInput) else None
 
     async def native_input_owner(self, session, execution_id):
         """Resolve exact accepted-input lineage, including tool-result continuations."""
@@ -1555,9 +1545,7 @@ class SessionService:
                 stored["native_result_body"] = copy.deepcopy(body)
                 await self.repo.put("ops.tool_calls", key, stored)
             body = copy.deepcopy(stored["native_result_body"])
-        accepted = await self.request(
-            "POST", f"sessions/{sid}/events", json={"events": [body]}, idem="tool:" + sha256(key)
-        )
+        accepted = await self.post_input(sid, parse_native_input(body), idem="tool:" + sha256(key))
         async with self.repo.lock("tool:" + key):
             stored.update(
                 remote_event_id=self.accepted_input_id(accepted),
@@ -1842,10 +1830,9 @@ class SessionService:
                         )
                         durable["pending_retry_event"] = copy.deepcopy(event)
                         await put_owned_session(self.repo, sid, durable)
-                    accepted = await self.request(
-                        "POST",
-                        f"sessions/{sid}/events",
-                        json={"events": [body]},
+                    accepted = await self.post_input(
+                        sid,
+                        parse_native_input(body),
                         idem="turn-retry:" + sid + ":" + message_id,
                     )
                     if active:

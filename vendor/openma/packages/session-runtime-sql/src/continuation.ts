@@ -19,6 +19,12 @@ export async function loadSessionContinuationSnapshot(sql: SqlClient, scope: {
     attempt_count: number | string;
     interrupt_requested_at_ms: number | string | null;
   }>();
+  const recoveries = await sql.prepare(`SELECT execution_id, after_event_id FROM managed_session_image_recoveries
+    WHERE workspace_id = ? AND execution_id IN (SELECT id FROM managed_session_executions WHERE workspace_id = ? AND session_id = ?)`)
+    .bind(scope.workspaceId, scope.workspaceId, scope.sessionId).all<{ execution_id: string; after_event_id: string }>();
+  const recoveryBoundaries = new Map<string, { afterEventId: string; interruptRequestedAt: string | null; retryAfterEventId?: string }>((recoveries.results ?? []).map(row => [row.execution_id, row.after_event_id.startsWith('{')
+    ? JSON.parse(row.after_event_id) as { afterEventId: string; interruptRequestedAt: null; retryAfterEventId?: string }
+    : { afterEventId: row.after_event_id, interruptRequestedAt: null }]));
   const history = await new SqlSessionRuntimeHistorySource(sql).load(scope);
   if (!history || history.revision === undefined)
     throw new SessionContinuationMissingError('Continuation Session no longer exists');
@@ -27,6 +33,9 @@ export async function loadSessionContinuationSnapshot(sql: SqlClient, scope: {
     ...(history.orderedEvents === undefined ? { invalidReason: 'Continuation requires complete trusted ordered native history' } : {}),
     executions: (result.results ?? []).map(row => ({
       id: row.id, laneId: row.lane_id,
+      ...(recoveryBoundaries.has(row.id) ? { imageRecoveryAfterEventId: recoveryBoundaries.get(row.id)!.afterEventId,
+        imageRecoveryInterruptRequestedAt: recoveryBoundaries.get(row.id)!.interruptRequestedAt,
+        imageRecoveryRetryAfterEventId: recoveryBoundaries.get(row.id)!.retryAfterEventId } : {}),
       state: row.state, revision: Number(row.revision), events: JSON.parse(row.events_json),
       attemptCount: Number(row.attempt_count), interruptRequestedAt: row.interrupt_requested_at_ms === null
         ? null : new Date(Number(row.interrupt_requested_at_ms)).toISOString()

@@ -192,3 +192,28 @@ def test_vendor_ownership_rejects_inconsistent_native_manifest(
     }
     with pytest.raises(ValueError, match=reasons[invalid]):
         load_ownership(path)
+
+
+def test_inventory_covers_actor_runtime_and_sibling_import_cycles(tmp_path: Path) -> None:
+    runtime = tmp_path / "apify" / "x-reader"
+    runtime.mkdir(parents=True)
+    (runtime / "main.py").write_text(
+        "from direct_fetch import fetch\nfrom apify import Actor\nraise RuntimeError('must never execute')\n"
+    )
+    (runtime / "direct_fetch.py").write_text(
+        "from public_profile import collect\ndef fetch(payload):\n    return collect(payload)\n"
+    )
+    (runtime / "public_profile.py").write_text("from direct_fetch import fetch\n")
+    fixture = runtime / "testdata"
+    fixture.mkdir()
+    (fixture / "payload.json").write_text("retained data")
+    (fixture / "generator.py").write_text("def generate():\n    return 1\n")
+    report = inventory_module.inventory(tmp_path)
+    assert report.files == 4
+    assert report.areas["apify"] == {"untyped_parameter": 1, "untyped_return": 2}
+    assert report.imports["actor:x-reader.main"] == ["actor:x-reader.direct_fetch"]
+    assert report.cycles == [["actor:x-reader.direct_fetch", "actor:x-reader.public_profile"]]
+    assert {finding.path for finding in report.findings} == {
+        "apify/x-reader/direct_fetch.py",
+        "apify/x-reader/testdata/generator.py",
+    }

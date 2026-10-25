@@ -77,9 +77,13 @@ function resolveToolConfig(
     case "glob":
       return { ...common, name: input.name, type: input.name };
     case "browser":
+      return { ...common, name: input.name, type: input.name };
     case "schedule":
+      return { ...common, name: input.name, type: input.name };
     case "cancel_schedule":
+      return { ...common, name: input.name, type: input.name };
     case "list_schedules":
+      return { ...common, name: input.name, type: input.name };
     case "grep":
       return { ...common, name: input.name, type: input.name };
   }
