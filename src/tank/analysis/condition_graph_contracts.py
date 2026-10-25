@@ -7,7 +7,15 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, field_validator, model_validator
 
 from tank.analysis.positioning import MissingOIDecomposition, OIDecomposition, oi_class
-from tank.analysis.statistics_contracts import DecimalRange, FloatRange
+from tank.analysis.price_reference import ReferencePriceReturn
+from tank.analysis.statistics_contracts import (
+    BetaEstimate,
+    DecimalRange,
+    FloatBounds,
+    FloatRange,
+    HistoryDiagnostic,
+    UnavailableBeta,
+)
 from tank.contracts import DomainModel
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.time_precision import Timestamp
@@ -1923,3 +1931,113 @@ class EnrichedConditionDerivatives(ConditionDerivativeWindow[EnrichedConditionDe
 
 
 type ConditionDerivatives = BasicConditionDerivatives | EnrichedConditionDerivatives
+
+
+class ConditionRelativeReturn(DomainModel):
+    value: float | None
+    reason: (
+        Literal[
+            "INCOMPLETE",
+            "INSUFFICIENT_HISTORY",
+            "NOT_ESTIMABLE",
+            "NO_FRESH_ENDPOINTS",
+            "NOT_APPLICABLE_BENCHMARK",
+            "NOT_APPLICABLE",
+        ]
+        | None
+    )
+
+    @model_validator(mode="after")
+    def actual_availability(self) -> Self:
+        if (self.value is None) != (self.reason is not None):
+            raise ValueError("An unavailable relative return requires its actual missing-input cause")
+        return self
+
+
+class ConditionRelativeNormalRange(DomainModel):
+    bounds: FloatBounds | None
+    reason: Literal["INCOMPLETE", "INSUFFICIENT_HISTORY", "NOT_ESTIMABLE", "DEGENERATE_HISTORY"] | None
+
+    @model_validator(mode="after")
+    def actual_history_availability(self) -> Self:
+        if (self.bounds is None) != (self.reason is not None):
+            raise ValueError("An unavailable relative baseline requires its actual statistical cause")
+        return self
+
+
+class ConditionRelativeWindow(DomainModel):
+    interval: ConditionInterval
+    observed_at: Timestamp
+    reference_instrument_id: str | None = Field(min_length=1, pattern=r"\S")
+    raw: ConditionRelativeReturn
+    btc_adjusted: ConditionRelativeReturn
+    eth_adjusted: ConditionRelativeReturn
+    sector_adjusted: ConditionRelativeReturn
+    measure: Literal["R_RAW", "R_BTC_ADJ"]
+    btc_reference: ReferencePriceReturn
+    eth_reference: ReferencePriceReturn
+    btc_beta: BetaEstimate
+    eth_beta: BetaEstimate
+    percentile: float | None = Field(ge=0, le=1)
+    percentile_reason: Literal["INCOMPLETE", "NOT_ESTIMABLE"] | None
+    normal_range: ConditionRelativeNormalRange
+    history: HistoryDiagnostic
+
+    def relative_return(self) -> float | None:
+        validated = type(self).model_validate(self)
+        return validated.raw.value if validated.measure == "R_RAW" else validated.btc_adjusted.value
+
+    def beyond_normal(self) -> bool | None:
+        validated = type(self).model_validate(self)
+        bounds = validated.normal_range.bounds
+        value = validated.raw.value if validated.measure == "R_RAW" else validated.btc_adjusted.value
+        return None if bounds is None or value is None else value < bounds.lower or value > bounds.upper
+
+    @model_validator(mode="after")
+    def actual_adjustment_and_history(self) -> Self:
+        duration = (self.interval.cutoff - self.interval.start).total_seconds()
+        if self.history.target_window_duration_s != duration:
+            raise ValueError("A relative baseline must preserve its actual requested window duration")
+        if self.raw.value is not None and self.reference_instrument_id is None:
+            raise ValueError("An observed raw return requires its actual reference instrument")
+        if self.raw.value is not None and self.observed_at.value is None:
+            raise ValueError("An observed raw return requires its actual last price observation clock")
+        if (
+            self.observed_at.value is not None
+            and parse_iso_time(self.observed_at.value) > self.interval.cutoff
+        ):
+            raise ValueError("A relative price observation cannot lie after its actual cutoff")
+        if self.measure == "R_RAW":
+            if self.btc_adjusted.value is not None or self.btc_adjusted.reason != "NOT_APPLICABLE_BENCHMARK":
+                raise ValueError("A raw benchmark measure cannot invent a self-beta adjustment")
+        else:
+            self.validate_adjustment(self.btc_adjusted, self.btc_beta, self.btc_reference)
+        self.validate_adjustment(self.eth_adjusted, self.eth_beta, self.eth_reference)
+        measure = self.raw.value if self.measure == "R_RAW" else self.btc_adjusted.value
+        expected_percentile = measure is not None and self.history.sample_count > 0
+        if (self.percentile is not None) != expected_percentile:
+            raise ValueError("An observed percentile requires the actual return and historical samples")
+        if (self.percentile is None) != (self.percentile_reason is not None):
+            raise ValueError("An unavailable percentile requires its actual missing-input reason")
+        if self.normal_range.bounds is not None and self.history.sample_count == 0:
+            raise ValueError("An empty statistical history cannot establish normal-return bounds")
+        return self
+
+    def validate_adjustment(
+        self, adjusted: ConditionRelativeReturn, beta: BetaEstimate, reference: ReferencePriceReturn
+    ) -> None:
+        raw = self.raw.value
+        if isinstance(beta, UnavailableBeta):
+            if adjusted.value is not None or adjusted.reason != beta.reason:
+                raise ValueError("Unavailable beta cannot manufacture an adjusted relative return")
+            return
+        if raw is None or reference.value is None:
+            if adjusted.value is not None:
+                raise ValueError(
+                    "An adjusted relative return requires actual raw and fresh benchmark returns"
+                )
+            return
+        if adjusted.value != raw - beta.value * reference.value:
+            raise ValueError(
+                "An adjusted relative return must preserve its actual beta and fresh benchmark return"
+            )

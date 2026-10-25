@@ -16,6 +16,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionFlowAggregate,
     ConditionFundingObservation,
     ConditionInterval,
+    ConditionRelativeWindow,
     DeclaredConditionCadence,
     NonForwardConditionInterval,
     ObservedConditionClose,
@@ -1186,3 +1187,109 @@ def test_enriched_empty_derivative_venues_cannot_create_a_negative_basis_predica
                 }
             )
         )
+
+
+def relative_without_beta() -> ConditionRelativeWindow:
+    from tank.analysis.condition_graph_contracts import ConditionRelativeNormalRange, ConditionRelativeReturn
+    from tank.analysis.price_reference import ReferencePriceReturn, UnavailableReferencePrice
+    from tank.analysis.statistics_contracts import UnavailableBeta, UnavailableHistoryDiagnostics
+
+    no_price = UnavailableReferencePrice(
+        status="UNAVAILABLE", reason="NO_OBSERVATION", observed_at=None, age_s=None, cadence=None
+    )
+    no_reference = ReferencePriceReturn(value=None, start=no_price, end=no_price, reason="NO_FRESH_ENDPOINTS")
+    beta = UnavailableBeta(
+        kind="UNAVAILABLE", value=None, reason="INSUFFICIENT_HISTORY", paired_sample_count=0
+    )
+    missing_adjustment = ConditionRelativeReturn(value=None, reason="INSUFFICIENT_HISTORY")
+    return ConditionRelativeWindow(
+        interval=ConditionInterval(window="W1H", start=AT - timedelta(hours=1), cutoff=AT),
+        observed_at=Timestamp(
+            value="2026-10-17T12:00:00Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+        ),
+        reference_instrument_id="spot:i",
+        raw=ConditionRelativeReturn(value=0.05, reason=None),
+        btc_adjusted=missing_adjustment,
+        eth_adjusted=missing_adjustment,
+        sector_adjusted=ConditionRelativeReturn(value=None, reason="NOT_ESTIMABLE"),
+        measure="R_BTC_ADJ",
+        btc_reference=no_reference,
+        eth_reference=no_reference,
+        btc_beta=beta,
+        eth_beta=beta,
+        percentile=None,
+        percentile_reason="NOT_ESTIMABLE",
+        normal_range=ConditionRelativeNormalRange(bounds=None, reason="INSUFFICIENT_HISTORY"),
+        history=UnavailableHistoryDiagnostics(
+            target_window_duration_s=3600.0,
+            exact=False,
+            reason="INSUFFICIENT_HISTORY",
+            resolution_s=None,
+            sample_count=0,
+        ),
+    )
+
+
+def test_relative_window_preserves_raw_return_without_inventing_beta_adjustment() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionRelativeReturn
+
+    window = relative_without_beta()
+    assert window.raw.value == 0.05 and window.relative_return() is None
+    assert window.beyond_normal() is None and window.observed_at.precision is None
+    with pytest.raises(ValidationError, match="Unavailable beta cannot manufacture"):
+        ConditionRelativeWindow.model_validate(
+            window.model_copy(update={"btc_adjusted": ConditionRelativeReturn(value=0.05, reason=None)})
+        )
+    with pytest.raises(ValidationError, match="actual return and historical samples"):
+        ConditionRelativeWindow.model_validate(
+            window.model_copy(update={"percentile": 0.5, "percentile_reason": None})
+        )
+
+
+def test_known_zero_beta_is_valid_and_missing_fresh_benchmark_is_still_unavailable() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionRelativeReturn
+    from tank.analysis.price_reference import ObservedReferencePrice, PriceCadence, ReferencePriceReturn
+    from tank.analysis.statistics_contracts import EstimatedBeta
+
+    window = relative_without_beta()
+    endpoint = ObservedReferencePrice(
+        status="OBSERVED",
+        observed_at=AT,
+        age_s=0.0,
+        cadence=PriceCadence(seconds=60.0, source="BAR_INTERVAL"),
+        price=1.0,
+    )
+    known_zero = EstimatedBeta(kind="ESTIMATED", value=0.0, paired_sample_count=24)
+    still_missing = ConditionRelativeWindow.model_validate(
+        window.model_copy(
+            update={
+                "btc_beta": known_zero,
+                "btc_adjusted": ConditionRelativeReturn(value=None, reason="NO_FRESH_ENDPOINTS"),
+            }
+        )
+    )
+    assert still_missing.relative_return() is None
+    observed = ConditionRelativeWindow.model_validate(
+        still_missing.model_copy(
+            update={
+                "btc_reference": ReferencePriceReturn(value=0.0, start=endpoint, end=endpoint, reason=None),
+                "btc_adjusted": ConditionRelativeReturn(value=0.05, reason=None),
+            }
+        )
+    )
+    assert observed.relative_return() == 0.05
+    with pytest.raises(ValidationError, match="actual beta and fresh benchmark"):
+        ConditionRelativeWindow.model_validate(
+            observed.model_copy(update={"btc_adjusted": ConditionRelativeReturn(value=0.0, reason=None)})
+        )
+
+
+def test_relative_calculation_revalidates_a_constructed_or_mutated_nested_return() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionRelativeReturn
+
+    window = relative_without_beta()
+    invalid = window.model_copy(update={"btc_adjusted": ConditionRelativeReturn(value=1.0, reason=None)})
+    with pytest.raises(ValidationError, match="Unavailable beta cannot manufacture"):
+        invalid.relative_return()
+    with pytest.raises(ValidationError, match="Unavailable beta cannot manufacture"):
+        invalid.beyond_normal()
