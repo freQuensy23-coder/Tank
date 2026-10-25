@@ -4,6 +4,7 @@ import asyncio
 import json
 import signal
 import sys
+from collections.abc import Awaitable
 from pathlib import Path
 
 import click
@@ -50,12 +51,69 @@ def run_db(fn, *, database_url=None, replay=False):
 
     try:
         output(asyncio.run(execute()))
+    except ExceptionGroup as exc:
+        raise click.ClickException(
+            "Operation failed with multiple service errors: "
+            + ", ".join(type(error).__name__ for error in exc.exceptions)
+        ) from None
     except (ValueError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from None
     except Exception as exc:
         raise click.ClickException(
             "Operation failed: " + type(exc).__name__ + "; check database connectivity and operator logs"
         ) from None
+
+
+async def run_with_synchronization[T](
+    runtime_work: Awaitable[None],
+    synchronization_work: Awaitable[T],
+    stop: asyncio.Event,
+) -> None:
+    """Observe the synchronizer and drain the owned runtime before reporting a failure."""
+    runtime = asyncio.ensure_future(runtime_work)
+    synchronization = asyncio.ensure_future(synchronization_work)
+    primary: BaseException | None = None
+    cancelled_sync_for_shutdown = False
+    try:
+        done, _ = await asyncio.wait((runtime, synchronization), return_when=asyncio.FIRST_COMPLETED)
+        if synchronization in done:
+            await synchronization
+        await asyncio.shield(runtime)
+    except BaseException as caught:
+        primary = caught
+    finally:
+        stop.set()
+        if not synchronization.done():
+            cancelled_sync_for_shutdown = synchronization.cancel()
+        settled = asyncio.gather(runtime, synchronization, return_exceptions=True)
+        while not settled.done():
+            try:
+                await asyncio.shield(settled)
+            except asyncio.CancelledError as cancellation:
+                if primary is None:
+                    primary = cancellation
+        settled.result()
+
+    failures: list[BaseException] = []
+    for future in (runtime, synchronization):
+        if not future.cancelled():
+            failure = future.exception()
+            if failure is not None and not any(failure is known for known in failures):
+                failures.append(failure)
+    if (
+        primary is not None
+        and not isinstance(primary, asyncio.CancelledError)
+        and not any(primary is known for known in failures)
+    ):
+        failures.append(primary)
+    if failures:
+        if len(failures) == 1:
+            raise failures[0]
+        raise BaseExceptionGroup("Runtime and synchronization failed", failures)
+    if isinstance(primary, asyncio.CancelledError):
+        raise primary
+    if runtime.cancelled() or (synchronization.cancelled() and not cancelled_sync_for_shutdown):
+        raise asyncio.CancelledError("An owned service was cancelled unexpectedly")
 
 
 @click.group()
@@ -82,11 +140,11 @@ def serve():
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, stop.set)
         loop.add_signal_handler(signal.SIGHUP, reload_requested.set)
-        openma = asyncio.create_task(openma_sync.keep_in_sync(settings, stop))
-        try:
-            await build_supervisor(repo, settings).run(stop, reload_requested)
-        finally:
-            openma.cancel()
+        await run_with_synchronization(
+            build_supervisor(repo, settings).run(stop, reload_requested),
+            openma_sync.keep_in_sync(settings, stop),
+            stop,
+        )
         return {"status": "stopped"}
 
     run_db(launch)
@@ -361,14 +419,20 @@ def sources():
 @click.option("--accounts", is_flag=True, help="Check configured X account identities.")
 def sources_check(probe, accounts):
     async def command(repo, settings):
+        from tank.request_budget import RequestLedger, shared_request_budgets
         from tank.sources import SourceService
 
-        service = SourceService(repo, settings, versions=settings.require_versions())
+        binding = shared_request_budgets.bind(RequestLedger(repo.database_url, owner="tank-cli"))
         try:
-            return await service.check(probe=probe, check_accounts=accounts)
-        finally:
-            if hasattr(service, "close"):
+            service = SourceService(
+                repo, settings, versions=settings.require_versions(), budgets=shared_request_budgets
+            )
+            try:
+                return await service.check(probe=probe, check_accounts=accounts)
+            finally:
                 await service.close()
+        finally:
+            await shared_request_budgets.release(binding)
 
     run_db(command)
 

@@ -5,8 +5,11 @@ from tank.request_budget import (
     BudgetAdmission,
     BudgetBucket,
     BudgetConstraint,
+    MemoryBudgetBackend,
+    RequestBudgetScope,
     RequestLedger,
     SharedRequestBudgets,
+    SystemBudgetClock,
     shared_request_budgets,
 )
 
@@ -15,7 +18,10 @@ __all__ = (
     "BudgetAdmission",
     "BudgetBucket",
     "BudgetConstraint",
+    "MemoryBudgetBackend",
+    "RequestBudgetScope",
     "RequestLedger",
+    "SystemBudgetClock",
     "SharedRequestBudgets",
     "shared_request_budgets",
 )

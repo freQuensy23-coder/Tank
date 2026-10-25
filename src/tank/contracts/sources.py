@@ -1,10 +1,11 @@
 """Validated publisher configuration, independent of polling and presentation."""
 
 import re
+from datetime import datetime
 from typing import Annotated, Literal, Self
 from urllib.parse import urlsplit
 
-from pydantic import Field, JsonValue, model_validator
+from pydantic import Field, JsonValue, field_validator, model_validator
 
 from tank.contracts import DomainModel
 from tank.time_precision import normalize_precision, propagate_timestamp
@@ -505,3 +506,55 @@ class SourceFilingRegistryView(DomainModel):
             for entity in wire.entities
         ]
         return cls(tokens=token_labels, entities=entity_labels)
+
+
+class AccountProbeResponse(DomainModel):
+    handle: str = Field(min_length=1)
+    http_status: int = Field(ge=100, le=599)
+    exists: None = None
+    identity_status: Literal["REQUIRES_OWNER_EVIDENCE"] = "REQUIRES_OWNER_EVIDENCE"
+    role: SourceAuthorRole
+
+
+class AccountProbeFailure(DomainModel):
+    handle: str = Field(min_length=1)
+    exists: None = None
+    error: str = Field(min_length=1)
+
+
+type AccountProbeResult = AccountProbeResponse | AccountProbeFailure
+
+
+class SourceEscalationControlView(DomainModel):
+    source_id: str = Field(min_length=1)
+    status: Literal["ACTIVE", "CONFIRMED", "CANCELLED"]
+    starts_at: str
+    expires_at: str
+    confirmed_at: str | None = None
+    cancelled_at: str | None = None
+
+    @field_validator("starts_at", "expires_at", "confirmed_at", "cancelled_at")
+    @classmethod
+    def aware_control_clock(cls, value: str | None) -> str | None:
+        if value is not None:
+            parse_iso_time(value)
+        return value
+
+    @model_validator(mode="after")
+    def positive_control_window(self) -> Self:
+        if self.status == "CONFIRMED" and self.confirmed_at is None:
+            raise ValueError("Confirmed source escalation requires its confirmation clock")
+        if self.status == "CANCELLED" and self.cancelled_at is None:
+            raise ValueError("Cancelled source escalation requires its cancellation clock")
+        if parse_iso_time(self.expires_at) <= parse_iso_time(self.starts_at):
+            raise ValueError("Source escalation requires a positive declared window")
+        return self
+
+    @classmethod
+    def from_document(cls, document: dict[str, JsonValue]) -> Self:
+        return cls.model_validate({key: document[key] for key in cls.model_fields if key in document})
+
+    def active_at(self, moment: datetime) -> bool:
+        if self.status != "ACTIVE" or self.confirmed_at is not None or self.cancelled_at is not None:
+            return False
+        return parse_iso_time(self.starts_at) <= parse_iso_time(moment) < parse_iso_time(self.expires_at)

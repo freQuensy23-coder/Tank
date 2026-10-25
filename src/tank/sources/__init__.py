@@ -22,23 +22,27 @@ from tank.contracts.http_policy import HttpRefused
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.source_items import SourceText, captured_item
 from tank.contracts.sources import (
+    AccountProbeFailure,
+    AccountProbeResponse,
+    AccountProbeResult,
     HttpFetchPlan,
     SourceAccountRegistryView,
     SourceApiLimitsConfiguration,
     SourceConfiguration,
     SourceDefinition,
+    SourceEscalationControlView,
     SourceFilingRegistryView,
 )
 from tank.http_admission import ConfiguredHttpAdmission
 from tank.ops_progress import RepositorySourceProgress
-from tank.request_budget import BudgetConstraint, shared_request_budgets
+from tank.request_budget import BudgetConstraint, RequestBudgets
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.sources.fetch import FetchEvidence, FetchResult, HttpCheckpointProjection, SourceHttpReader
 from tank.sources.http_client import RequestStarted, SourceHttpTransport
 from tank.sources.ingestion import SourceIngestion
 from tank.sources.raw_store import RawItemStorage
 from tank.sources.xsensor import XSensor
-from tank.util import iso, parse_iso_time, parse_time, utcnow
+from tank.util import iso, parse_iso_time, utcnow
 
 
 def tls_context() -> ssl.SSLContext:
@@ -53,15 +57,18 @@ def tls_context() -> ssl.SSLContext:
 
 
 class SourceService:
-    def __init__(self, repo, settings, *, versions: ResolvedVersionIdentity, http=None) -> None:
+    def __init__(
+        self, repo, settings, *, versions: ResolvedVersionIdentity, budgets: RequestBudgets, http=None
+    ) -> None:
         self.versions = ResolvedVersionIdentity.model_validate(versions)
+        self.budgets = budgets
         cfg = SourceConfiguration.model_validate(settings.load_config("sources"))
         registry = settings.load_config("registry")
         account_registry = SourceAccountRegistryView.model_validate(
             {name: registry[name] for name in ("x_accounts",) if name in registry}
         )
         self.api_limits = SourceApiLimitsConfiguration.model_validate(settings.load_config("api_limits"))
-        self.http_admission = ConfiguredHttpAdmission(self.api_limits, self.versions, shared_request_budgets)
+        self.http_admission = ConfiguredHttpAdmission(self.api_limits, self.versions, self.budgets)
         self.thresholds = Thresholds.model_validate(settings.load_config("thresholds"))
         self.escalated_interval_s = self.thresholds.escalated_interval_s
         self.repo = repo
@@ -78,7 +85,9 @@ class SourceService:
         )
         self.transport = SourceHttpTransport(self.http, self._admit_request)
         self.owns_http = http is None
-        self.xsensor = XSensor(self.http, getattr(settings, "apify_api_token", None))
+        self.xsensor = XSensor(
+            self.http, getattr(settings, "apify_api_token", None), admission=self.http_admission
+        )
         self.configuration = cfg
         self.sources = {source.source_id: source for source in cfg.sources}
         self.source_host_limits: dict[str, int] = {}
@@ -138,7 +147,7 @@ class SourceService:
         )
         if is_exchange_url(str(actual.url)):
             if constraints:
-                await shared_request_budgets.acquire_many(constraints)
+                await self.budgets.acquire_many(constraints)
             return
         result = await self.http_admission.admit_with_constraints(actual, constraints)
         if isinstance(result, HttpRefused):
@@ -301,41 +310,33 @@ class SourceService:
             )
         return results
 
-    async def _account_checks(self):
-        results = []
+    async def _account_checks(self) -> list[AccountProbeResult]:
+        results: list[AccountProbeResult] = []
         for handle, account in self.accounts.items():
             try:
-                response = await self.http.get(
-                    "https://publish.twitter.com/oembed", params={"url": f"https://x.com/{handle}"}
-                )
+                plan = HttpFetchPlan(url="https://publish.twitter.com/oembed")
+                request = self.http.build_request("GET", plan.url, params={"url": f"https://x.com/{handle}"})
+                response = await self.transport.send(plan, request, None)
                 results.append(
-                    {
-                        "handle": handle,
-                        "exists": response.status_code == 200,
-                        "identity_status": "REQUIRES_OWNER_EVIDENCE",
-                        "role": account.role,
-                    }
+                    AccountProbeResponse(handle=handle, http_status=response.status_code, role=account.role)
                 )
             except httpx.HTTPError as exc:
-                results.append({"handle": handle, "exists": None, "error": str(exc)})
+                results.append(AccountProbeFailure(handle=handle, error=type(exc).__name__))
         return results
 
     async def close(self):
         if self.owns_http:
             await self.http.aclose()
 
-    async def is_escalated(self, source_id, *, now=None):
-        moment = parse_time(now) if now is not None else utcnow()
-        rows = await self.repo.list("ops.source_escalations", filters={"source_id": source_id}, limit=10000)
-        return any(
-            row.get("status", "ACTIVE") == "ACTIVE"
-            and not row.get("confirmed_at")
-            and not row.get("cancelled_at")
-            and row.get("starts_at") is not None
-            and row.get("expires_at") is not None
-            and parse_time(row["starts_at"]) <= moment < parse_time(row["expires_at"])
-            for row in rows
-        )
+    async def is_escalated(self, source_id: str, *, now: datetime | str | None = None) -> bool:
+        moment = self.now() if now is None else parse_iso_time(now)
+        controls = [
+            SourceEscalationControlView.from_document(row)
+            async for row in self.repo.iter_all("ops.source_escalations", filters={"source_id": source_id})
+        ]
+        if any(control.source_id != source_id for control in controls):
+            raise ValueError("Source escalation identity conflicts with its requested source")
+        return any(control.active_at(moment) for control in controls)
 
     async def control_once(self, source_id):
         """Re-read durable controls independently of the normal HTTP poll cadence."""
