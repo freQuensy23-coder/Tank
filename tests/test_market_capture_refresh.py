@@ -670,7 +670,7 @@ async def test_event_only_risk_watch_never_waits_for_market_refresh(
             },
             **collection_clock().fields("created_at"),
             **collection_clock().fields("fired_at"),
-            **collection_clock(end + timedelta(days=1)).fields("expires_at"),
+            **chosen_boundary(end + timedelta(days=1), precision="EXACT").fields("expires_at"),
         }
     )
     await repo.put("ana.watch_conditions", "risk", risk.model_dump(mode="json", exclude_unset=True))
