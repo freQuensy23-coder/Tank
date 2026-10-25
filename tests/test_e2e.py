@@ -975,6 +975,7 @@ async def test_runtime_autonomous_source_to_telegram(
         "thresholds": _fixture_thresholds(),
         "openma": {
             "agent_id": "synthetic-offline-agent",
+            "max_running_sessions": 2,
             "environment_id": "synthetic-offline-environment",
             "prompt_version": "synthetic-prompt-v1",
             "agent_version": "synthetic-agent-v1",
