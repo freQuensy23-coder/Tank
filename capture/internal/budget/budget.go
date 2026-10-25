@@ -40,7 +40,7 @@ func valid(capacity, weight float64) error {
 }
 
 func (b Bucket) Validate() error {
-	if b.Key == "" || b.WindowS <= 0 || math.IsNaN(b.WindowS) || math.IsInf(b.WindowS, 0) || b.WindowS > float64(math.MaxInt64)/1e9 {
+	if b.Key == "" || b.WindowS <= 0 || math.IsNaN(b.WindowS) || math.IsInf(b.WindowS, 0) || b.WindowS >= float64(math.MaxInt64)/1e9 {
 		return ErrInvalidBudget
 	}
 	return valid(b.Capacity, b.Weight)

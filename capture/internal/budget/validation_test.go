@@ -9,7 +9,7 @@ import (
 )
 
 func TestInvalidWindowCannotConsumeLedgerCapacity(t *testing.T) {
-	for _, window := range []float64{0, -1, math.NaN(), math.Inf(1), math.MaxFloat64} {
+	for _, window := range []float64{0, -1, math.NaN(), math.Inf(1), float64(math.MaxInt64) / 1e9, math.MaxFloat64} {
 		ledger := NewMemoryLedger(func() time.Time { return time.Unix(100, 0) })
 		if _, err := ledger.Acquire(context.Background(), "policy", 1, window, 1, "owner", "host"); !errors.Is(err, ErrInvalidBudget) {
 			t.Fatalf("window %v accepted: %v", window, err)
