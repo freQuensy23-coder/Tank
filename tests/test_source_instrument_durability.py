@@ -37,11 +37,13 @@ class VenueResponse:
         return {
             "retCode": 0,
             "result": {
+                "category": "linear",
                 "list": [
                     {
                         "symbol": "BTCUSDT",
                         "baseCoin": "BTC",
                         "quoteCoin": "USDT",
+                        "settleCoin": "USDT",
                         "contractType": "LinearPerpetual",
                         "status": self.status,
                     }
