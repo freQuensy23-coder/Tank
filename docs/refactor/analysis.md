@@ -661,3 +661,25 @@ actual persisted owner rows and unbound/closed refusal remain independently asse
 All115 targeted units pass in12.07s and all3 actual ledger/ownership cases pass in7.12s,
 zero skips. A fresh complete owned selection is run on the resulting immutable head;
 previous logs/XML remain preserved separately. No production-policy waiver is involved.
+
+### Qualified complete owned HTTP cohort
+
+The complete owned cohort at immutable c17512bfd10f1bf3d96954288ac332eee85e9697
+passes all779 units in30.72s (p90 .845s, max3.04s) and every one of83 collected
+actual integrations in83.50s, zero skips. This includes PostgreSQL cross-process
+budget sharing/stable identity/host isolation, memory behavior, real20-second fetch
+deadlines, replay/reference, publication, reaction and source evidence consumers.
+All27 required caller files are present; this is not the earlier API-only a783 head.
+The actual shared-budget operational helper is explicitly owned/drained. Paired
+canonical Go/backend/SQL/E2E and clean native narrative companions are included.
+CI-target Ruff/format (src tests scripts deploy,392 files) and all9 new strict
+HTTP/page/retained-resource source/test targets pass. Default mypy has only the
+separately assigned whole condition graph cache error; it remains visible.
+
+analysis-http-qualification.json records exact targets, counts and evidence paths.
+The known historical artifact limits remain explicit:8normal loader admissions,
+5actual captured result selections,11unavailable captured-code refusals and6host-only
+identity-map refusals, all zero live effects. These are not acceptance waivers.
+No held decision755/renderer activation, production deployment or global completion
+is claimed. Whole Truth/Market/event-tools typing and the other owned module/fallback
+inventory remain active work after this coherent application boundary.
