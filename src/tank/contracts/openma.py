@@ -301,6 +301,18 @@ class AgentVersionIdentity(DomainModel):
 
 class AgentUpdateReceipt(AgentVersionIdentity):
     model: AgentModelSelection
+    definition: ManagedAgentObservation
+
+    @model_validator(mode="after")
+    def exact_observed_binding(self) -> Self:
+        if (
+            self.definition.id != self.id
+            or self.definition.version != self.version
+            or self.definition.model_id != self.model.id
+            or self.definition.model_effort != self.model.effort
+        ):
+            raise ValueError("Agent update receipt must identify its exact observed version and binding")
+        return self
 
 
 class AgentSyncResult(DomainModel):

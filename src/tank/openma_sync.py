@@ -455,7 +455,9 @@ class OpenMAApi:
             selection = AgentModelSelection.model_validate(
                 {"id": observed.model_id, "effort": observed.model_effort}
             )
-            return AgentUpdateReceipt(id=observed.id, version=observed.version, model=selection)
+            return AgentUpdateReceipt(
+                id=observed.id, version=observed.version, model=selection, definition=observed
+            )
         except (httpx.HTTPError, KeyError, ValueError):
             raise OpenMAContractViolation("OpenMA did not provide a typed update confirmation") from None
 
@@ -519,7 +521,7 @@ def _tools_key(tools: list[ToolObservation]) -> dict[str, ToolObservation]:
     for tool in tools:
         key = "custom:" + tool.name if isinstance(tool, CustomToolObservation) else "builtin:" + tool.type
         if key in result:
-            raise ValueError("OpenMA tool observation repeats an identity")
+            raise OpenMAContractViolation("OpenMA tool observation repeats an identity")
         result[key] = tool
     return result
 
@@ -611,6 +613,7 @@ class OpenMASynchronizer:
                 updated.id != configuration.agent_id_for(name)
                 or updated.version <= agents[name].version
                 or updated.model != wanted.model
+                or not _agent_current(updated.definition, wanted, expected)
             ):
                 raise OpenMAContractViolation("OpenMA did not confirm the requested new agent binding")
             agent_report[name] = AgentSyncResult(status="UPDATED", version=updated.version)

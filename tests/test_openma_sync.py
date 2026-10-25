@@ -899,3 +899,35 @@ async def test_malformed_or_unknown_skill_type_is_not_coerced_into_custom(
     with pytest.raises((ValueError, OpenMAContractViolation)):
         await run(settings, fake)
     assert not any(request.method == "POST" for request in fake.requests)
+
+
+@pytest.mark.parametrize("field", ["tools", "skills", "system", "tank_skills", "skill_mount"])
+async def test_full_owned_state_must_be_confirmed_on_the_published_version(
+    tmp_path: Path, field: Literal["tools", "skills", "system", "tank_skills", "skill_mount"]
+) -> None:
+    settings = settings_for(ROOT / "config", tmp_path)
+    fake = FakeOpenMA(settings)
+
+    def missing_owned_fact(request: httpx.Request) -> httpx.Response:
+        response = fake.handler(request)
+        if request.method == "GET" and request.url.params.get("version") is not None:
+            body = fixture_object(decode_json(response.content))
+            if field in {"tank_skills", "skill_mount"}:
+                fixture_object(body["metadata"]).pop(field)
+            elif field in {"tools", "skills"}:
+                fixture_array(body[field]).pop()
+            else:
+                body["system"] = "Contradictory observed system"
+            return httpx.Response(200, json=body)
+        return response
+
+    with pytest.raises(OpenMAContractViolation):
+        await asyncio.wait_for(
+            openma_sync.keep_in_sync(
+                settings,
+                asyncio.Event(),
+                transport_factory=lambda: httpx.MockTransport(missing_owned_fact),
+            ),
+            timeout=1,
+        )
+    assert len(fake.writes("/v1/agents/")) == 1
