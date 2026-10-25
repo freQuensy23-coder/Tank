@@ -720,8 +720,12 @@ The focused 137-case readback/scalar/manifest/sync cohort passed in 47.78 second
 The subsequent ownership-race and migration selection passed all 14 cases in
 8.39 seconds. New projections and the HTTP confirmation tests pass independent
 strict mypy with both source and test roots; sessions.py passes configured mypy.
-Broader owned unit and actual integration qualification is pending; this candidate
-must not be advertised as a whole-session completion.
+Final owner proof: all 613 unit cases pass in 44.29 seconds; all 78 actual
+integrations pass in 38.92 seconds, with zero skips. Unit p90 is
+0.62 seconds and maximum 4.87 seconds. The exact
+logs/XML/metrics use agents-native-readback-final-unit and
+agents-native-readback-owned-integration in the isolated worktree. Cross-owner
+caller qualification remains pending. This is not a whole-session completion.
 
 Strict fixed scalar fields now use canonical ZeroInt, TrueFlag and FalseFlag:
 JevScoreRecord.web_searches, FailedToolResponse.ok,
