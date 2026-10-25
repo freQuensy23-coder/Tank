@@ -5,7 +5,7 @@ import re
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from datetime import timedelta
-from typing import Protocol
+from typing import Protocol, Self
 
 from pydantic import JsonValue
 
@@ -45,8 +45,8 @@ class EntryNoticeRepository(Protocol):
     async def put(
         self, collection: str, key: str, record: dict[str, JsonValue], *, immutable: bool = False
     ) -> dict[str, JsonValue]: ...
-    def lock(self, key: str) -> AbstractAsyncContextManager[None]: ...
-    def transaction(self) -> AbstractAsyncContextManager[None]: ...
+    def lock(self, key: str) -> AbstractAsyncContextManager[Self]: ...
+    def transaction(self) -> AbstractAsyncContextManager[Self]: ...
     async def enqueue(
         self,
         kind: str,
