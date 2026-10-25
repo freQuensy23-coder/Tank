@@ -175,7 +175,7 @@ async def test_actual_producer_consumer_workflow(tmp_path: Path, backend, case, 
                             "kind": "PARTIAL",
                             "what": "Product announced",
                             "verdict": "Product announced",
-                            "why": ["Official primary fact"],
+                            "why": ["Official primary fact", "The source publication time is recorded."],
                         },
                     )
                     assert partial["result"]["published"]
@@ -214,7 +214,7 @@ async def test_actual_producer_consumer_workflow(tmp_path: Path, backend, case, 
                             "kind": "FULL",
                             "what": "No retained market claim",
                             "verdict": "No retained market claim",
-                            "why": [],
+                            "why": ["The fixture event is stale.", "The source is retained in the fixture."],
                         },
                     )
                     assert publication["result"]["publication_receipt"]["reason"] == "STALE"
