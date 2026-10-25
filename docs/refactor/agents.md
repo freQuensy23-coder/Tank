@@ -662,3 +662,25 @@ state still need their full typed domain migration. The refreshed inventory
 records every remaining unannotated owned function; maps/defaults there remain
 implementation work rather than approved exceptions. The 42 assigned OpenMA
 vendor programs remain a separate implementation backlog.
+
+## Fresh creation-role selector companion
+
+The qualified native checkpoint remains 017e8402. Its separate companion adds
+NativeSessionResolution.fresh_context_matches_role: fresh scouts require their
+proposal and cannot select analyst event/item context; fresh analysts require
+their event/item context and cannot select a scout proposal. These are the actual
+ScoutMessage/SourceMessage producer shapes. Mixed fresh selectors otherwise
+collide with the resolver's identity priority or invert the proposal-based context.
+
+An explicit session_id is a continuation selector. It does not require invented
+fresh-role facts, and the existing stored analyst/scout context remains unchanged
+for either creation-role hint. An explicit missing ID still refuses before native
+creation. Controls cover all valid fresh shapes, all absent/mixed role contexts,
+both actual stored roles, opaque numeric/boolean field preservation, and missing
+continuation IDs.
+
+All 496 owner unit cases pass in 26.60 seconds (p90 0.526,
+maximum 4.870); all 78 actual integrations pass in 38.68
+seconds, zero skips. Native source/helper/contracts retain their independent
+strict gate, and Ruff/format/source-comment checks pass. This adds no default,
+wire dictionary, endpoint signature or broader session-lifecycle policy.

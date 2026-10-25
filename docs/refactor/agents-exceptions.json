@@ -1720,7 +1720,7 @@
         {
           "path": "src/tank/agents/native_sessions.py",
           "symbol": "NativeSessionResolution.from_wire",
-          "line": 34
+          "line": 51
         },
         {
           "path": "src/tank/agents/native_sessions.py",
@@ -1730,23 +1730,32 @@
         {
           "path": "src/tank/agents/native_sessions.py",
           "symbol": "NativeStoredSessionBinding.from_record",
-          "line": 334
+          "line": 351
         },
         {
           "path": "src/tank/agents/native_sessions.py",
           "symbol": "NativeStoredSessionBinding.verify",
-          "line": 355
+          "line": 372
+        },
+        {
+          "path": "src/tank/agents/native_sessions.py",
+          "symbol": "NativeSessionResolution.fresh_context_matches_role",
+          "line": 34
         }
       ],
       "kind": "actual alternative identity and historical replay absence",
-      "reason": "Nullable target identities select actual session/event/item/proposal alternatives. Replay is absent for live input; missing historical private replay facets remain unknown and are never padded into captured evidence. Live lookup skips actual replay rows and cannot borrow replay-only origin lineage. Explicit replay requests must match their run and any supplied evidence/source/cutoff binding, including a cutoff declared without a digest. Cutoffs bind exact caller identity labels here; artifact verification remains the replay composition's responsibility, with no time guessing or network authority inferred by this adapter.",
+      "reason": "Nullable target identities select actual session/event/item/proposal alternatives. Replay is absent for live input; missing historical private replay facets remain unknown and are never padded into captured evidence. Live lookup skips actual replay rows and cannot borrow replay-only origin lineage. Explicit replay requests must match their run and any supplied evidence/source/cutoff binding, including a cutoff declared without a digest. Cutoffs bind exact caller identity labels here; artifact verification remains the replay composition's responsibility, with no time guessing or network authority inferred by this adapter. Fresh-role selectors follow actual producer shapes; nullable event/item/proposal fields are inapplicable by role, or unknown to an explicit existing-session caller. Continuation lookup retains actual stored context without inventing fresh facts.",
       "validation": [
         "test_cached_private_state_does_not_require_invented_replay_provenance",
         "test_cached_replay_binding_must_match_the_requested_recorded_evidence",
         "test_replay_identity_requires_explicit_composition_and_real_recorded_metadata",
         "test_opening_source_lookup_does_not_cross_an_undeclared_replay_scope",
         "test_live_native_creation_cannot_borrow_a_replay_only_opening_source",
-        "test_declared_unrecorded_cutoff_is_bound_without_inventing_an_evidence_digest"
+        "test_declared_unrecorded_cutoff_is_bound_without_inventing_an_evidence_digest",
+        "test_fresh_role_selectors_accept_complete_actual_creation_context",
+        "test_invalid_fresh_role_combinations_cannot_create_a_native_resource",
+        "test_explicit_native_continuation_preserves_the_actual_stored_context",
+        "test_explicit_missing_native_session_never_falls_back_to_creation"
       ]
     },
     {
@@ -1754,17 +1763,17 @@
         {
           "path": "src/tank/agents/native_sessions.py",
           "symbol": "NativeSessionIdentity",
-          "line": 88
-        },
-        {
-          "path": "src/tank/agents/native_sessions.py",
-          "symbol": "NativeSessionIdentityMetadata.from_binding",
           "line": 105
         },
         {
           "path": "src/tank/agents/native_sessions.py",
+          "symbol": "NativeSessionIdentityMetadata.from_binding",
+          "line": 122
+        },
+        {
+          "path": "src/tank/agents/native_sessions.py",
           "symbol": "NativeSessionIdentityMetadata.expected_fields",
-          "line": 123
+          "line": 140
         }
       ],
       "kind": "canonical metadata wire serialization",
@@ -1780,22 +1789,22 @@
         {
           "path": "src/tank/agents/native_sessions.py",
           "symbol": "NativeSessionHeader",
-          "line": 140
+          "line": 157
         },
         {
           "path": "src/tank/agents/native_sessions.py",
           "symbol": "NativeResolvedPromptHeader",
-          "line": 161
+          "line": 178
         },
         {
           "path": "src/tank/agents/native_sessions.py",
           "symbol": "observe_native_session",
-          "line": 198
+          "line": 215
         },
         {
           "path": "src/tank/agents/native_sessions.py",
           "symbol": "observe_native_session_page",
-          "line": 238
+          "line": 255
         }
       ],
       "kind": "provider JSON projections and exact fingerprint input",
@@ -1812,12 +1821,12 @@
         {
           "path": "src/tank/agents/native_sessions.py",
           "symbol": "NativeResolvedModelIdentity",
-          "line": 150
+          "line": 167
         },
         {
           "path": "src/tank/agents/native_sessions.py",
           "symbol": "NativeSessionObservation",
-          "line": 179
+          "line": 196
         }
       ],
       "kind": "genuinely unreported native effort",
@@ -1833,7 +1842,7 @@
         {
           "path": "src/tank/agents/native_sessions.py",
           "symbol": "NativeOpeningSource",
-          "line": 252
+          "line": 269
         }
       ],
       "kind": "durable opening-source alternatives",
@@ -1848,12 +1857,12 @@
         {
           "path": "src/tank/agents/native_sessions.py",
           "symbol": "NativeSessionEndpoint.request",
-          "line": 271
+          "line": 288
         },
         {
           "path": "src/tank/agents/native_sessions.py",
           "symbol": "NativeSessionDiscovery.discover_or_create",
-          "line": 287
+          "line": 304
         }
       ],
       "kind": "HTTP operation absence and discovery state",

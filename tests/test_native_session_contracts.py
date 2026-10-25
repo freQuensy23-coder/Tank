@@ -424,3 +424,55 @@ def test_declared_unrecorded_cutoff_is_bound_without_inventing_an_evidence_diges
     )
     with pytest.raises(ValueError, match="cutoff"):
         stored.verify(resolution(changed))
+
+
+@pytest.mark.parametrize(
+    ("role", "target"),
+    [
+        ("SCOUT", {"proposal_id": "proposal"}),
+        ("ANALYST", {"event_id": "event"}),
+        ("ANALYST", {"item_id": "item"}),
+        ("ANALYST", {"event_id": "event", "item_id": "item"}),
+    ],
+)
+def test_fresh_role_selectors_accept_complete_actual_creation_context(
+    role: Literal["ANALYST", "SCOUT"], target: dict[str, JsonValue]
+) -> None:
+    request = NativeSessionResolution.from_wire(target, role=role, replay=False)
+    assert request.role == role and request.target.session_id is None
+    assert request.target.proposal_id == target.get("proposal_id")
+    assert request.target.event_id == target.get("event_id")
+    assert request.target.item_id == target.get("item_id")
+
+
+@pytest.mark.parametrize(
+    ("role", "target"),
+    [
+        ("SCOUT", {}),
+        ("SCOUT", {"item_id": "item"}),
+        ("SCOUT", {"event_id": "event"}),
+        ("SCOUT", {"event_id": "event", "item_id": "item"}),
+        ("SCOUT", {"proposal_id": "proposal", "item_id": "item"}),
+        ("SCOUT", {"proposal_id": "proposal", "event_id": "event"}),
+        ("SCOUT", {"proposal_id": "proposal", "event_id": "event", "item_id": "item"}),
+        ("ANALYST", {}),
+        ("ANALYST", {"proposal_id": "proposal"}),
+        ("ANALYST", {"proposal_id": "proposal", "item_id": "item"}),
+        ("ANALYST", {"proposal_id": "proposal", "event_id": "event"}),
+        ("ANALYST", {"proposal_id": "proposal", "event_id": "event", "item_id": "item"}),
+    ],
+)
+def test_invalid_fresh_role_combinations_cannot_create_a_native_resource(
+    role: Literal["ANALYST", "SCOUT"], target: dict[str, JsonValue]
+) -> None:
+    with pytest.raises(ValidationError):
+        NativeSessionResolution.from_wire(target, role=role, replay=False)
+
+
+@pytest.mark.parametrize("role", ["ANALYST", "SCOUT"])
+def test_explicit_session_continuation_does_not_require_fresh_role_facts(
+    role: Literal["ANALYST", "SCOUT"],
+) -> None:
+    request = NativeSessionResolution.from_wire({"session_id": "existing"}, role=role, replay=False)
+    assert request.target.session_id == "existing"
+    assert request.target.event_id is request.target.item_id is request.target.proposal_id is None
