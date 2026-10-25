@@ -318,12 +318,13 @@ async def acquire(input_path, output_dir, *, settings=None, http=None):
     settings = resolve_versions(Settings()) if settings is None else settings
     if settings.load_config("thresholds")["routing_window_days"] != window.days:
         raise CalibrationError("Packet routing window differs from config routing_window_days")
+    versions = settings.require_versions()
     output = Path(output_dir)
     pinned = binding(settings.opencode_api_key)
     generation = {
         "packet_sha256": hashlib.sha256(raw).hexdigest(),
-        "code_version": settings.code_version,
-        "config_version": settings.config_version,
+        "code_version": versions.code_version,
+        "config_version": versions.config_version,
         "prompt_version": JEV_PROMPT_VERSION,
         "registry_sha256": sha256(settings.load_config("registry")),
         "routing_window_days": window.days,
@@ -333,7 +334,7 @@ async def acquire(input_path, output_dir, *, settings=None, http=None):
     }
     owned = http is None
     http = httpx.AsyncClient(timeout=30) if http is None else http
-    scorer = JevClassifier(_Ledger(output / "usage"), settings, http)
+    scorer = JevClassifier(_Ledger(output / "usage"), settings, http, versions=versions)
     repository = MemoryRepository()
     selector = RoutingSelector(repository, RoutingRegistry.from_wire(settings.load_config("registry")))
     capacity = asyncio.Semaphore(CONCURRENCY)

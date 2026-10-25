@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from source_support import fixture_versions
 
 from tank.agents.pipeline import FILTER, ROUTE
 from tank.calibration import (
@@ -138,6 +139,7 @@ async def test_acquire_scores_the_service_inputs_at_the_historical_clock(tmp_pat
     settings = SimpleNamespace(
         opencode_api_key=None,
         replay=False,
+        require_versions=fixture_versions,
         config_version="cfg",
         code_version="code",
         load_config=lambda name: {
