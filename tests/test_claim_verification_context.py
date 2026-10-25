@@ -135,3 +135,13 @@ def test_outside_participant_keeps_current_claim_eligibility_without_a_financial
     else:
         assert "Venue X" not in who
     assert card.count("── ") == 1
+
+
+def test_outside_participant_cannot_be_promoted_into_a_selected_financial_block() -> None:
+    from foundation_helpers import object_field
+
+    values = wire_card_inputs()
+    labels = object_field(values[0], "token_labels")
+    del labels["world:WLD"]
+    with pytest.raises(ValueError, match="outside-scope participant"):
+        render_claim_wire(values)

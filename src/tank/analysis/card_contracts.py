@@ -308,6 +308,8 @@ class CardBeneficiary(DomainModel):
     def market_identity(self) -> Self:
         if self.subject.token_id is None:
             raise ValueError("A beneficiary market block requires its actual token identity")
+        if self.subject.outside_scope is not None:
+            raise ValueError("An outside-scope participant cannot have a selected financial block")
         return self
 
     @property
