@@ -17,7 +17,7 @@ from tank.analysis.watch_contracts import WatchCondition, WatchLeaf
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.time_precision import collection_clock
+from tank.time_precision import chosen_boundary, collection_clock
 from tank.util import iso, parse_time
 
 
@@ -44,7 +44,7 @@ def generated_condition(rule: DecisionWatch, start, identity="generated-watch") 
             "status": "ARMED",
             "created_by": "declared-test-decision",
             **collection_clock(start).fields("created_at"),
-            **collection_clock(start + timedelta(hours=10)).fields("expires_at"),
+            **chosen_boundary(start + timedelta(hours=10), precision="EXACT").fields("expires_at"),
         }
     )
 
