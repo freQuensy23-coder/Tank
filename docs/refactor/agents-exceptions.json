@@ -654,11 +654,12 @@
         }
       ],
       "kind": "persisted input-owner projection and genuine pre-input/legacy absence",
-      "reason": "Session creation precedes first message_log admission; explicit origin-only legacy rows remain readable. Required nullable scope fields represent real absent bindings. Missing active payload cannot borrow observation origin. from_session is the wire adapter, not a model mapping facade.",
+      "reason": "A missing journal is valid only with no explicit active pointer (first admission or explicit origin-only legacy state). Any non-null pointer must match exactly one actual journal row. Optional source/event/proposal bindings remain genuinely absent; callbacks do not borrow source origin for mutation. No unmatched-pointer last_payload fallback remains.",
       "validation": [
-        "test_callback_without_source_cannot_borrow_session_origin",
-        "test_unaccepted_session_without_input_journal_has_no_active_owner",
-        "test_legacy_source_without_journal_retains_its_explicit_origin"
+        "test_explicit_active_pointer_never_uses_a_stale_last_payload",
+        "test_corrupt_owner_cannot_post_or_change_terminal_source_state",
+        "test_active_callback_terminal_failure_does_not_fail_the_opening_or_last_source",
+        "test_acknowledged_execution_can_rebind_only_to_its_actual_journal_owner"
       ]
     },
     {
@@ -881,6 +882,27 @@
       "validation": [
         "test_provider_metadata_survives_owned_update_and_second_sync_is_current",
         "test_invalid_provider_document_logs_only_sanitized_error_class"
+      ]
+    },
+    {
+      "ledger_key": "session-owned-persistence",
+      "sites": [
+        {
+          "path": "src/tank/agents/session_ownership.py",
+          "symbol": "SessionWriteStore.put",
+          "line": 13
+        },
+        {
+          "path": "src/tank/agents/session_ownership.py",
+          "symbol": "put_owned_session",
+          "line": 18
+        }
+      ],
+      "kind": "explicit persisted-document adapter",
+      "reason": "The storage mapping is the actual document-store JSON wire. It is validated through the closed ownership projection before writing, while unrelated historical/session bytes remain preserved. This is not a BaseModel mapping facade or approval of unfinished internal SessionService domain dictionaries.",
+      "validation": [
+        "test_persistence_guard_refuses_an_unrecorded_pointer_before_store_write",
+        "test_send_writer_revalidates_owner_after_reloading_under_lock"
       ]
     }
   ]

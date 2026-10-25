@@ -5,6 +5,7 @@ from pathlib import Path
 import httpx
 import pytest
 from pydantic import JsonValue
+from scheduling_support import RecordingReactionScheduling
 from score_fixtures import unassessed_score_dimensions
 from source_support import fixture_versions
 
@@ -22,7 +23,9 @@ async def service(tmp_path: Path):
     repo = MemoryRepository()
     await repo.open()
     settings = Settings(data_dir=tmp_path)
-    return EventToolService(repo, settings, None, None, versions=fixture_versions())
+    return EventToolService(
+        repo, settings, None, None, versions=fixture_versions(), scheduler=RecordingReactionScheduling()
+    )
 
 
 @pytest.fixture
@@ -2159,6 +2162,7 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
         search=service.search_service,
         reference_clock=service.reference_clock,
         versions=fixture_versions(),
+        scheduler=RecordingReactionScheduling(),
     )
     item_id = new_id("item")
     stamp = clock_iso()
@@ -3415,22 +3419,58 @@ async def test_assessment_defers_reaction_ownership_to_scheduler_after_commit(se
 
     class SchedulerObserver:
         def __init__(self) -> None:
-            self.events = []
+            self.events: list[str] = []
 
-        async def ensure_reactions(self, event) -> None:
+        async def ensure_event_reactions(self, event_id: str) -> None:
             async def independent_read():
-                async with service.repo.transaction(), service.repo.lock("event:" + event["event_id"]):
-                    stored = await service.repo.get("evt.events", event["event_id"])
+                async with service.repo.transaction(), service.repo.lock("event:" + event_id):
+                    stored = await service.repo.get("evt.events", event_id)
                     return await service.repo.get("evt.ems_assessments", stored["current_ems_id"])
 
             assessment = await asyncio.wait_for(asyncio.create_task(independent_read()), 1)
             assert assessment["class"] == "MAJOR"
-            self.events.append(event["event_id"])
+            self.events.append(event_id)
 
     service.scheduler = SchedulerObserver()
     created, _, _ = await seed_economic_event(service, negative_relation=False)
     assert service.scheduler.events == [created["event_id"]]
     assert not await service.repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
+
+
+async def test_assessment_dispatch_creates_real_reaction_jobs(tmp_path: Path) -> None:
+    from scheduler_support import operational_reaction_services
+
+    from tank.analysis.decisions import DecisionEngine
+
+    repo = MemoryRepository()
+    await repo.open()
+    settings = Settings(data_dir=tmp_path, _env_file=None)
+    async with operational_reaction_services(repo, settings, versions=fixture_versions()) as services:
+        tools = EventToolService(
+            repo,
+            settings,
+            services.truth,
+            DecisionEngine(settings),
+            versions=fixture_versions(),
+            scheduler=services.scheduler,
+        )
+        created, _, _ = await seed_economic_event(tools, negative_relation=False)
+        jobs = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
+        assert jobs
+        assert {job["payload"]["event_id"] for job in jobs} == {created["event_id"]}
+        assert {job["payload"]["token_id"] for job in jobs} == {"bitcoin:BTC", "ethereum:ETH"}
+        assert {job["payload"]["checkpoint"] for job in jobs} == {
+            "POST_15M",
+            "POST_1H",
+            "POST_4H",
+            "POST_24H",
+            "POST_72H",
+        }
+        assert len(jobs) == 10
+        assert all(job["payload"]["retro"] is False for job in jobs)
+    assert services.scheduler.closing and not services.scheduler.background
+    assert services.market.http.is_closed
+    await repo.close()
 
 
 async def test_full_card_blocks_only_analysis_tokens_with_decisions(
@@ -3611,6 +3651,7 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
             search=service.search_service,
             reference_clock=service.reference_clock,
             versions=fixture_versions(),
+            scheduler=RecordingReactionScheduling(),
         )
     repo = service.repo
     sid = new_id("native-session")
@@ -4155,14 +4196,32 @@ async def test_trusted_reference_clock_changes_logical_age_only(
     clock = TrustedFixtureClock(load_inputs(path, options))
     with pytest.raises(ValueError, match="isolated fixture"):
         EventToolService(
-            service.repo, service.settings, None, None, reference_clock=clock, versions=fixture_versions()
+            service.repo,
+            service.settings,
+            None,
+            None,
+            reference_clock=clock,
+            versions=fixture_versions(),
+            scheduler=RecordingReactionScheduling(),
         )
     with pytest.raises(ValueError, match="isolated fixture"):
         EventToolService(
-            service.repo, options, None, None, reference_clock=object(), versions=fixture_versions()
+            service.repo,
+            options,
+            None,
+            None,
+            reference_clock=object(),
+            versions=fixture_versions(),
+            scheduler=RecordingReactionScheduling(),
         )
     reference = EventToolService(
-        service.repo, options, None, None, reference_clock=clock, versions=fixture_versions()
+        service.repo,
+        options,
+        None,
+        None,
+        reference_clock=clock,
+        versions=fixture_versions(),
+        scheduler=RecordingReactionScheduling(),
     )
     x = extraction()
     x["public_at"] = dict(value=public, precision="DAY", basis="Original publication", quote=None)
@@ -4197,7 +4256,13 @@ async def test_trusted_reference_clock_changes_logical_age_only(
     ] == "i"
 
     unimported = EventToolService(
-        MemoryRepository(), options, None, None, reference_clock=clock, versions=fixture_versions()
+        MemoryRepository(),
+        options,
+        None,
+        None,
+        reference_clock=clock,
+        versions=fixture_versions(),
+        scheduler=RecordingReactionScheduling(),
     )
     assert not (await unimported.dispatch("search_tank_items", {"query": "Product"}, {}))["items"]
     monkeypatch.setattr("tank.event_tools.utcnow", lambda: parse_time("2022-09-22T01:00:00Z"))

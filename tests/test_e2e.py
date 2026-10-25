@@ -1,6 +1,7 @@
 """Synthetic offline service integration; no historical acceptance claim."""
 
 import json
+from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import httpx
 import pytest
 from configuration_support import captured_fixture_settings
 from delivery_support import delivery_job
+from scheduler_support import operational_reaction_services
 from score_fixtures import unassessed_score_dimensions
 from source_support import source_configuration, source_definition
 
@@ -18,7 +20,9 @@ from tank.analysis.decisions import DecisionEngine
 from tank.delivery import DeliveryError, DeliveryService
 from tank.event_tools import EventToolService
 from tank.market.capture_contracts import RepairOutcome
+from tank.market.service import MarketService
 from tank.ops_progress import DisabledSourceProgress
+from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.sources import SourceService
 from tank.storage import ImmutableRecordError, MemoryRepository
@@ -175,7 +179,10 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 100 + len(sent)}})
         raise AssertionError(str(request.url))
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+    async with (
+        operational_reaction_services(repo, settings, versions=versions) as reactions,
+        httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http,
+    ):
         source = SourceService(repo, settings, versions=versions, http=http)
         item_id, seen = "item-e2e-one", "2026-10-17T00:00:01Z"
         raw, sha = source.raw(
@@ -203,7 +210,13 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
         await pipeline.filter_item_wire({"item_id": item["item_id"]})
         routed_origin = await pipeline.route_item_wire({"item_id": item["item_id"]})
         toolservice = EventToolService(
-            repo, settings, None, DecisionEngine(settings), versions=versions, http=http
+            repo,
+            settings,
+            reactions.truth,
+            DecisionEngine(settings),
+            versions=versions,
+            scheduler=reactions.scheduler,
+            http=http,
         )
         session = SessionService(repo, settings, toolservice.dispatch, versions=versions, http=http)
 
@@ -282,7 +295,11 @@ async def isolated_e2e_database(postgres_template):
 @pytest.mark.parametrize("complete_market", [False, True])
 @pytest.mark.postgres
 async def test_full_sse_pipeline_postgres(
-    tmp_path: Path, complete_market, monkeypatch: pytest.MonkeyPatch, isolated_e2e_database
+    tmp_path: Path,
+    complete_market,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_e2e_database,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Whole synthetic call graph on PostgreSQL, including validated publication."""
     import importlib
@@ -355,7 +372,7 @@ async def test_full_sse_pipeline_postgres(
             "agent_version": "synthetic-agent-v1",
             "reasoning_effort": "medium",
         },
-        "semantics": {},
+        "semantics": {"metrics": []},
         "dependency_map": {},
     }
 
@@ -431,8 +448,10 @@ async def test_full_sse_pipeline_postgres(
 
         return synthetic_start_snapshot()
 
-    class CapturedMarket:
-        async def snapshot(self, token_id, cutoff, anchor=None):
+    class CapturedMarket(MarketService):
+        async def snapshot(self, token_id, cutoff, anchor=None, *, scope=None):
+            if scope == "REACTION":
+                return await super().snapshot(token_id, cutoff, anchor=anchor, scope=scope)
             if complete_market:
                 from tank.util import parse_time
 
@@ -469,7 +488,10 @@ async def test_full_sse_pipeline_postgres(
             }
 
     try:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+        async with (
+            httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http,
+            AsyncExitStack() as services,
+        ):
             source = SourceService(repo, settings, versions=versions, http=http)
             text = f"Binance approved the synthetic $T listing {sid}."
             if complete_market:
@@ -484,11 +506,24 @@ async def test_full_sse_pipeline_postgres(
             )
             await pipeline.filter_item_wire({"item_id": item["item_id"]})
             routed_origin = await pipeline.route_item_wire({"item_id": item["item_id"]})
-            truth_service = MarketTruthService(repo, settings, CapturedMarket(), versions=versions)
+            market = CapturedMarket(repo, settings, versions=versions, http=http)
+            services.push_async_callback(market.close)
+            truth_service = MarketTruthService(repo, settings, market, versions=versions)
+            scheduler = Scheduler(
+                repo, settings, market, truth_service, versions=versions, thresholds=settings.thresholds()
+            )
+            services.push_async_callback(scheduler.close)
             tools = EventToolService(
-                repo, settings, truth_service, DecisionEngine(settings), http=http, versions=versions
+                repo,
+                settings,
+                truth_service,
+                DecisionEngine(settings),
+                http=http,
+                versions=versions,
+                scheduler=scheduler,
             )
             session = SessionService(repo, settings, tools.dispatch, versions=versions, http=http)
+            services.push_async_callback(session.close)
             session.start_stream = lambda sid: None
             await session.send_message(routed_origin["routing_message"])
             count = 0
@@ -719,7 +754,7 @@ async def test_full_sse_pipeline_postgres(
             bundle = await repo.get("out.evidence_bundles", published["evidence_bundle_id"])
             assert bundle["payload"]["source_items"][0]["raw_sha256"] == sha
             assert bundle["payload"]["what"] == what
-            await session.close()
+            await services.aclose()
             await repo.close()
 
             repo = PostgresRepository(settings.database_url)
@@ -733,15 +768,24 @@ async def test_full_sse_pipeline_postgres(
                 and (await repo.list("out.alerts", filters={"event_id": eid}))[0]["card_text"] == frozen
             )
             assert rich_message_text(sends[0]["rich_message"]).splitlines()[1] == "WHAT: " + what
+            market = CapturedMarket(repo, settings, versions=versions, http=http)
+            services.push_async_callback(market.close)
+            truth_service = MarketTruthService(repo, settings, market, versions=versions)
+            scheduler = Scheduler(
+                repo, settings, market, truth_service, versions=versions, thresholds=settings.thresholds()
+            )
+            services.push_async_callback(scheduler.close)
             tools = EventToolService(
                 repo,
                 settings,
-                MarketTruthService(repo, settings, CapturedMarket(), versions=versions),
+                truth_service,
                 DecisionEngine(settings),
                 http=http,
                 versions=versions,
+                scheduler=scheduler,
             )
             resumed = SessionService(repo, settings, tools.dispatch, versions=versions, http=http)
+            services.push_async_callback(resumed.close)
             resumed.start_stream = lambda sid: None
             session = resumed
             before = len(posted)
@@ -840,7 +884,7 @@ async def test_full_sse_pipeline_postgres(
                 )
                 assert len(posted) == before and len(sends) == 2
                 assert len(await repo.list("ana.calls", filters={"event_id": eid})) == 1
-            await resumed.close()
+        assert not [record for record in caplog.records if record.levelno >= 40], caplog.text
     finally:
         await repo.close()
 
@@ -1241,7 +1285,9 @@ async def test_runtime_autonomous_source_to_telegram(
         async def demote(self, token_id, event_id=None) -> None:
             pass
 
-        async def snapshot(self, token_id, cutoff, anchor=None):
+        async def snapshot(self, token_id, cutoff, anchor=None, *, scope=None):
+            if scope == "REACTION":
+                return await self.actual_capture_reader.snapshot(token_id, cutoff, anchor=anchor, scope=scope)
             from tank.time_precision import Timestamp, chosen_boundary
 
             boundary = cutoff if isinstance(cutoff, Timestamp) else chosen_boundary(cutoff, precision="EXACT")
@@ -1298,18 +1344,23 @@ async def test_runtime_autonomous_source_to_telegram(
             pipeline = Pipeline(
                 repo, settings, progress=DisabledSourceProgress(), versions=versions, http=http
             )
+            scheduler = FixtureScheduler(
+                repo, settings, market, truth, versions=versions, thresholds=settings.thresholds()
+            )
             tools = EventToolService(
-                repo, settings, truth, DecisionEngine(settings), versions=versions, http=http
+                repo,
+                settings,
+                truth,
+                DecisionEngine(settings),
+                versions=versions,
+                scheduler=scheduler,
+                http=http,
             )
             sessions = SessionService(repo, settings, tools.dispatch, versions=versions, http=http)
             delivery = DeliveryService(repo, settings, http=http)
             gateway = CodexGateway(settings)
             inbox = TelegramInbox(repo, settings, http=http)
-            scheduler = FixtureScheduler(
-                repo, settings, market, truth, versions=versions, thresholds=settings.thresholds()
-            )
             sessions.telegram = inbox
-            tools.scheduler = scheduler
 
             async def bootstrap_registry() -> None:
                 await sync_registry(repo, settings, versions=versions)

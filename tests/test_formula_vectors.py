@@ -8,6 +8,7 @@ from decimal import ROUND_DOWN, Decimal
 from pathlib import Path
 
 import pytest
+from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_versions
 
 from tank.analysis.truth import decomposition, enrich_evidence, oi_class, spot_truth
@@ -144,7 +145,14 @@ async def service(tmp_path: Path):
 
     repo = MemoryRepository()
     await repo.open()
-    return EventToolService(repo, Settings(data_dir=tmp_path), None, None, versions=fixture_versions())
+    return EventToolService(
+        repo,
+        Settings(data_dir=tmp_path),
+        None,
+        None,
+        versions=fixture_versions(),
+        scheduler=RecordingReactionScheduling(),
+    )
 
 
 async def recorded(service, state):
