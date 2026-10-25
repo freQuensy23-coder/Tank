@@ -5,12 +5,13 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterator
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 import pytest
-from publisher_docker_stand import DockerState, state
+from publisher_docker_stand import ContainerLabels, ContainerState, DockerState, state
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -27,10 +28,8 @@ def finish_owned_stand_processes(tmp_path: Path) -> Iterator[None]:
                 continue
             actual = int((root / "started").read_text())
             assert actual == container.process_id
-            try:
+            with suppress(ProcessLookupError):
                 os.kill(actual, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
 
 
 @dataclass(frozen=True)
@@ -163,3 +162,38 @@ def test_failed_drain_keeps_lease_and_next_command_drains_before_starting(tmp_pa
         assert len(creations) == 2
         assert removals[-1] < creations[-1]
     assert not (stand.host / "apify-state/.worker-active").exists()
+
+
+def test_unverified_prior_container_is_preserved_before_any_new_worker_effect(tmp_path: Path) -> None:
+    stand = worker_stand(tmp_path, "NORMAL")
+    state_directory = stand.host / "apify-state"
+    state_directory.mkdir(mode=0o700)
+    lease = state_directory / ".worker-active"
+    image = "ghcr.io/example/project/tank:" + "a" * 40
+    identifier = "d" * 64
+    lease.write_text(
+        "\n".join(("tank-publisher-worker-v1", identifier, ".publisher-run.ownedXYZ", image)) + "\n"
+    )
+    lease.chmod(0o600)
+    with state(stand.root) as observed:
+        observed.containers[identifier] = ContainerState(
+            labels=ContainerLabels(
+                role="worker-v1",
+                owner="foreign",
+                image=image,
+                root=str(stand.host),
+            ),
+            status="created",
+            exit_code=0,
+            process_id=None,
+        )
+    original = lease.read_bytes()
+    process = stand.launch()
+    _, stderr = process.communicate(timeout=4)
+    assert process.returncode == 125
+    assert b"ownership is unverified" in stderr
+    assert lease.read_bytes() == original
+    with state(stand.root) as observed:
+        assert identifier in observed.containers
+        assert [call.command for call in observed.calls] == ["inspect"]
+        assert observed.drain_attempts == 0
