@@ -90,6 +90,7 @@ async def test_every_ingested_material_reaches_ops_before_filtering_and_duplicat
                 Settings(data_dir=tmp_path),
                 progress=RepositorySourceProgress(repo, settings),
                 http=http,
+                versions=fixture_versions(),
             )
             job = ItemJob.model_validate({"item_id": result["item_id"]})
             await pipeline.route_item(job)
@@ -127,7 +128,13 @@ async def test_filter_outcomes_and_routing_are_visible_without_publishing(
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(classify)) as http:
-        pipeline = Pipeline(repo, settings, progress=RepositorySourceProgress(repo, settings), http=http)
+        pipeline = Pipeline(
+            repo,
+            settings,
+            progress=RepositorySourceProgress(repo, settings),
+            http=http,
+            versions=fixture_versions(),
+        )
         await pipeline.filter_item(ItemJob(item_id=item.item_id))
         await pipeline.filter_item(ItemJob(item_id=item.item_id))
         assert [row["stage"] for row in await notices(repo)] == [expected]
@@ -153,7 +160,7 @@ async def test_filter_outcomes_and_routing_are_visible_without_publishing(
 @pytest.mark.parametrize("is_event", [False, True])
 async def test_agent_extraction_and_publication_gate_explain_silence(tmp_path: Path, is_event) -> None:
     repo = MemoryRepository()
-    service = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+    service = EventToolService(repo, Settings(data_dir=tmp_path), None, None, versions=fixture_versions())
     extraction = await seed(service)
     extraction.update(
         is_event=is_event,
@@ -195,7 +202,7 @@ async def test_generated_card_only_becomes_sent_after_telegram_receipt(
     import tank.analysis.cards as cards
 
     repo = MemoryRepository()
-    service = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+    service = EventToolService(repo, Settings(data_dir=tmp_path), None, None, versions=fixture_versions())
     extraction = await seed(service)
     eid = (await service.dispatch("record_event", extraction, {}))["event_id"]
     event = await repo.get("evt.events", eid)

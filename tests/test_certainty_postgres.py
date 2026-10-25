@@ -8,7 +8,7 @@ from source_support import fixture_versions
 
 from tank.event_tools import EventToolService
 from tank.settings import Settings
-from tank.util import iso, new_id, sha256
+from tank.util import clock_iso, new_id, sha256
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
@@ -20,7 +20,7 @@ async def test_primary_paraphrase_persists_high_in_postgres(tmp_path: Path, post
     async with postgres_template.repository(url) as repo:
         item_id, event_id = new_id("item"), None
         service = EventToolService(repo, Settings(data_dir=tmp_path), None, None, versions=fixture_versions())
-        stamp = iso()
+        stamp = clock_iso()
         quote = "The SEC announced approval of the application."
         (tmp_path / "source.txt").write_text(quote)
         await repo.put(

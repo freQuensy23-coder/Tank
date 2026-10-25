@@ -10,7 +10,7 @@ from source_support import fixture_versions
 from tank.event_tools import LAYERS, EventToolService
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.util import iso, utcnow
+from tank.util import clock_iso, iso, utcnow
 
 
 @pytest.fixture
@@ -36,7 +36,7 @@ async def test_registry_filter_returns_only_the_named_identity(owner_service) ->
 
 
 async def create(service, *, verified=True, state="LIVE", certainty="HIGH"):
-    now = iso()
+    now = clock_iso()
     await service.repo.put(
         "ingest.source_items",
         "owned",

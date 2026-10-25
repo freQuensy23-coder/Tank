@@ -21,24 +21,22 @@ from pydantic import JsonValue
 
 import tank.sources.parsers as parsers
 from tank.contracts.configuration import Thresholds
+from tank.contracts.http_policy import HttpRefused
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.source_items import SourceText, captured_item
 from tank.contracts.sources import (
     HttpFetchPlan,
     SourceAccountRegistryView,
     SourceApiLimitsConfiguration,
-    SourceBinanceBudget,
     SourceConfiguration,
     SourceDefinition,
-    SourceEtherscanBudget,
-    SourceHyperliquidBudget,
-    SourceSecBudget,
-    SourceUncapturedRpsBudget,
 )
+from tank.http_admission import ConfiguredHttpAdmission
 from tank.ops_progress import RepositorySourceProgress
+from tank.request_budget import BudgetConstraint, shared_request_budgets
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
+from tank.sources.http_client import RequestStarted, SourceHttpTransport
 from tank.sources.ingestion import SourceIngestion
-from tank.sources.rate_limits import shared_request_budgets
 from tank.sources.raw_store import RawItemStorage
 from tank.sources.xsensor import XSensor
 from tank.util import iso, parse_iso_time, parse_time, sha256, utcnow
@@ -63,9 +61,8 @@ class SourceService:
         account_registry = SourceAccountRegistryView.model_validate(
             {name: registry[name] for name in ("x_accounts",) if name in registry}
         )
-        self.api_limits = SourceApiLimitsConfiguration.model_validate(
-            settings.load_config("api_limits")
-        ).limits
+        self.api_limits = SourceApiLimitsConfiguration.model_validate(settings.load_config("api_limits"))
+        self.http_admission = ConfiguredHttpAdmission(self.api_limits, self.versions, shared_request_budgets)
         self.thresholds = Thresholds.model_validate(settings.load_config("thresholds"))
         self.escalated_interval_s = self.thresholds.escalated_interval_s
         self.repo = repo
@@ -80,6 +77,7 @@ class SourceService:
                 verify=tls_context(),
             )
         )
+        self.transport = SourceHttpTransport(self.http, self._admit_request)
         self.owns_http = http is None
         self.xsensor = XSensor(self.http, getattr(settings, "apify_api_token", None))
         self.configuration = cfg
@@ -117,20 +115,14 @@ class SourceService:
 
         return write_raw_item(self.settings.data_dir, source_id, item_id, observed_at, payload)
 
-    async def acquire_budget(self, feed: HttpFetchPlan) -> None:
-        host = urlsplit(feed.url).hostname or ""
+    async def _admit_request(self, feed: HttpFetchPlan, request: httpx.Request) -> None:
+        await self.acquire_budget(feed, request=request)
 
-        provider = "sec.gov" if host == "sec.gov" or host.endswith(".sec.gov") else host
-        weight = feed.request_weight
-        for rule in self.api_limits:
-            if rule.provider != provider or is_exchange_url(feed.url):
-                continue
-            if isinstance(rule, (SourceSecBudget, SourceUncapturedRpsBudget, SourceEtherscanBudget)):
-                await shared_request_budgets.acquire(provider, rule.tank_max_requests_per_s, 1, host=host)
-            elif isinstance(rule, (SourceBinanceBudget, SourceHyperliquidBudget)):
-                await shared_request_budgets.acquire(
-                    provider, rule.tank_max_weight_per_min, 60, weight=weight, host=host
-                )
+    async def acquire_budget(self, feed: HttpFetchPlan, *, request: httpx.Request | None = None) -> None:
+        actual = self.http.build_request(feed.method, feed.url) if request is None else request
+        host = actual.url.host
+        if not host:
+            raise ValueError("Source fetch requires an absolute request destination")
         capacities = [
             value
             for value in [
@@ -140,11 +132,20 @@ class SourceService:
             ]
             if value is not None
         ]
-        per_min = min(capacities) if capacities else None
-        if per_min is not None:
-            await shared_request_budgets.acquire(host, per_min, 60, host=host)
+        constraints = (
+            (BudgetConstraint(key=host, capacity=float(min(capacities)), window_s=60, weight=1, host=host),)
+            if capacities
+            else ()
+        )
+        if is_exchange_url(str(actual.url)):
+            if constraints:
+                await shared_request_budgets.acquire_many(constraints)
+            return
+        result = await self.http_admission.admit_with_constraints(actual, constraints)
+        if isinstance(result, HttpRefused):
+            raise ValueError("Source HTTP admission refused: " + result.reason)
 
-    async def fetch(self, feed: HttpFetchPlan, key, *, on_start=None):
+    async def fetch(self, feed: HttpFetchPlan, key: str, *, on_start: RequestStarted | None = None):
         state = deepcopy(await self.repo.get("ops.source_checkpoints", key) or {})
         headers = dict(feed.headers)
         if state.get("etag") and not state.get("article_errors") and not state.get("entry_errors"):
@@ -154,10 +155,10 @@ class SourceService:
         error = None
         for attempt in range(4):
             try:
-                await self.acquire_budget(feed)
-                if on_start is not None:
-                    await on_start()
                 if is_exchange_url(feed.url):
+                    await self.acquire_budget(feed)
+                    if on_start is not None:
+                        await on_start()
                     response = await capture_fetch(
                         self.repo,
                         feed.method,
@@ -167,13 +168,7 @@ class SourceService:
                         source_id=key.split(":", 1)[0],
                     )
                 else:
-                    response = await self.http.request(
-                        feed.method,
-                        feed.url,
-                        headers=headers,
-                        json=feed.body if feed.method.upper() == "POST" else None,
-                        data=feed.form if feed.method.upper() == "POST" else None,
-                    )
+                    response = await self.transport.request(feed, headers, on_start)
                 if response.status_code == 304:
                     return None, state
                 payload = response.content

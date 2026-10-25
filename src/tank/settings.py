@@ -18,6 +18,7 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 
 from tank.contracts.configuration import DeliveryConfiguration, Thresholds
 from tank.contracts.json import JsonDocument, decode_json
+from tank.contracts.openma import OpenMAConfiguration
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.registry import (
     DependencyConfiguration,
@@ -200,6 +201,14 @@ class Settings(BaseSettings):
             raise ValueError("Version provenance no longer matches the captured identity")
         return self._version_identity
 
+    def captured_config_paths(self) -> tuple[str, ...]:
+        """List the immutable configuration inventory attached to resolved provenance."""
+        self.require_versions()
+        snapshot = self._config_snapshot
+        if snapshot is None:
+            raise ValueError("Captured configuration is unavailable")
+        return tuple(sorted(snapshot))
+
     def configured_secrets(self) -> frozenset[str]:
         """Return configured credentials without reading any credential files."""
         secrets = {
@@ -273,6 +282,9 @@ class Settings(BaseSettings):
         relative = name if name.endswith((".yaml", ".yml")) else name + ".yaml"
         payload = yaml.load(self.read_config_bytes(relative), Loader=_YAML_LOADER)
         return schema.model_validate(payload, strict=True)
+
+    def openma(self) -> OpenMAConfiguration:
+        return self.load_config_as("openma", OpenMAConfiguration)
 
     def registry(self) -> RegistryConfiguration:
         return self.load_config_as("registry", RegistryConfiguration)

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 import pytest
-from agent_source_fixtures import declared_versions_fixture
+from agent_source_fixtures import declared_versions_fixture, native_tool_arguments_fixture
 from test_agents import seed_session, settings
 
 from tank.agents import sessions as session_module
@@ -96,7 +96,12 @@ async def test_rest_ack_timeout_retains_result_and_reuses_native_ack_body() -> N
             raise httpx.ReadTimeout("Synthetic lost native ACK", request=request)
         return httpx.Response(200, json={"data": [{"id": "accepted"}]})
 
-    event = {"id": "call", "type": "agent.custom_tool_use", "name": "fetch_page", "input": {}}
+    event = {
+        "id": "call",
+        "type": "agent.custom_tool_use",
+        "name": "fetch_page",
+        "input": native_tool_arguments_fixture("fetch_page"),
+    }
     async with httpx.AsyncClient(transport=httpx.MockTransport(acknowledge), timeout=None) as http:
         first = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
         with pytest.raises(httpx.ReadTimeout):

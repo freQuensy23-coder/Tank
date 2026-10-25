@@ -42,7 +42,9 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
         await repo.put("ops.agent_sessions", "s", session)
         args["token_ids"] = ["world:WLD"]
         args["claims"] = extraction()["claims"]
-        tools = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+        tools = EventToolService(
+            repo, Settings(data_dir=tmp_path), None, None, versions=declared_versions_fixture()
+        )
         requests, posts, accepted = [], [], []
 
         def handler(request: pytest.FixtureRequest):

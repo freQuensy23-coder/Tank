@@ -8,8 +8,10 @@ from typing import Literal
 
 from pydantic import BaseModel, JsonValue
 
+from tank.agents.context_binding import ContextBinding
+from tank.agents.context_registry import ContextRegistry
 from tank.contracts import DomainModel
-from tank.contracts.tool_schema import SCOPED_TOOLS, validate_schema
+from tank.contracts.tool_schema import SCOPED_TOOLS, parse_tool_definitions, validate_schema
 from tank.util import JsonInput
 
 type RecordKind = Literal["item", "event", "claim", "condition", "proposal"]
@@ -373,18 +375,13 @@ def claim_reference(row):
 class ModelContext:
     def __init__(self, repo, settings, session):
         self.repo, self.settings, self.session = repo, settings, session
-        self.scout = bool(session.get("proposal_id"))
-        try:
-            self.registry = settings.load_config("registry")
-        except (KeyError, AttributeError):
-            self.registry = {}
-        self.tokens = {r["token_id"]: r for r in self.registry.get("tokens", [])}
-        self.entities = {r["entity_id"]: r for r in self.registry.get("entities", [])}
-        self.instruments = {r["instrument_id"]: r for r in self.registry.get("instruments", [])}
-        try:
-            self.sources = {r["source_id"]: r for r in settings.load_config("sources").get("sources", [])}
-        except (KeyError, AttributeError):
-            self.sources = {}
+        self.binding = ContextBinding.from_session(session)
+        self.scout = self.binding.proposal_id is not None
+        self.registry = ContextRegistry.from_configuration(settings)
+        self.tokens = {row.token_id: row for row in self.registry.tokens}
+        self.entities = {row.entity_id: row for row in self.registry.entities}
+        self.instruments = {row.instrument_id: row for row in self.registry.instruments}
+        self.sources = {row.source_id: row for row in self.registry.sources}
         self.registry_labels = {
             **{key: self.entity_label(key) for key in self.entities},
             **{key: self.source_label(key) for key in self.sources},
@@ -402,34 +399,27 @@ class ModelContext:
         )
         self.described = {}
 
-    def token_label(self, key):
+    def token_label(self, key: str) -> str:
         row = self.tokens.get(key)
-        if row:
-            return labelled(
-                f"{row.get('project') or row.get('name') or row.get('symbol')} ({row.get('symbol')})", key
-            )
-        return str(key).removeprefix("UNRESOLVED:").rsplit(":", 1)[-1]
+        if row is not None:
+            return labelled(f"{row.display_name()} ({row.symbol})", key)
+        return key.removeprefix("UNRESOLVED:").rsplit(":", 1)[-1]
 
-    def entity_label(self, key):
+    def entity_label(self, key: str) -> str:
         row = self.entities.get(key)
-        if not row:
-            return str(key).removeprefix("UNRESOLVED:")
-        name = row.get("name")
-        if not name or name == key:
-            name = (row.get("aliases") or row.get("names") or [key])[0]
-        return labelled(name, key)
+        if row is None:
+            return key.removeprefix("UNRESOLVED:")
+        return labelled(row.display_name(), key)
 
-    def instrument_label(self, key):
+    def instrument_label(self, key: str) -> str:
         row = self.instruments.get(key)
-        if row:
-            return labelled(
-                " ".join(str(row.get(k) or "") for k in ("venue", "market_type", "venue_symbol")).strip(), key
-            )
-        return " ".join(str(key).split(":"))
+        if row is not None:
+            return labelled(f"{row.venue} {row.market_type} {row.venue_symbol}", key)
+        return " ".join(key.split(":"))
 
-    def source_label(self, key):
+    def source_label(self, key: str) -> str | None:
         row = self.sources.get(key)
-        return labelled(row.get("name") or row.get("url") or "registered source", key) if row else None
+        return labelled(row.name, key) if row is not None else None
 
     def diagnostic_text(self, value):
         if self.registry_pattern is None:
@@ -625,23 +615,17 @@ class ModelContext:
             )
         return f"Look it up with read-only SQL: {ID_LOOKUP[self.scout]}, «{QUERIES[kind]}»."
 
-    def public_schema(self, tool):
-        reader = getattr(self.settings, "read_config_json", None)
-        if reader is None:
-            return None
-        try:
-            tools = reader(f"skills/{AGENT_SKILLS[self.scout]}/tools.json")
-        except (OSError, ValueError, KeyError):
-            return None
-        for row in tools:
-            if row.get("name") == tool:
-                return row["input_schema"]
+    def public_schema(self, tool: str) -> dict[str, JsonValue]:
+        tools = parse_tool_definitions(
+            self.settings.read_config_json(f"skills/{AGENT_SKILLS[self.scout]}/tools.json")
+        )
+        for definition in tools:
+            if definition.name == tool:
+                return definition.input_schema
         raise ValueError(f"{tool} is not a tool of this agent")
 
-    def validate_shape(self, tool, arguments):
+    def validate_shape(self, tool: str, arguments: dict[str, JsonValue]) -> None:
         schema = self.public_schema(tool)
-        if schema is None:
-            return
         if tool == "set_beneficiaries":
             schema = novel_layers_allowed(schema)
         legacy = legacy_reference(arguments, schema)
@@ -662,20 +646,9 @@ class ModelContext:
                 )
             raise ValueError(text) from None
 
-    def trigger(self):
-        active = next(
-            (
-                row
-                for row in self.session.get("message_log", [])
-                if row.get("message_id") == self.session.get("active_message_id")
-            ),
-            {},
-        )
-        return active, (active.get("payload") if active else self.session.get("last_payload")) or {}
-
     def bind(self, tool, result):
         """Fill the implicit records: the current event, the incoming source and the current proposal."""
-        current = self.session.get("event_id")
+        current = self.binding.event_id
         if tool in SCOPED_TOOLS:
             if not current:
                 raise ValueError(f"{tool} works on the current event; record it with record_event first")
@@ -700,11 +673,8 @@ class ModelContext:
                     "that covers the same development. " + self.lookup("event")
                 )
         if tool in {"record_event", "add_observation", "get_item"}:
-            active, trigger = self.trigger()
             if tool == "add_observation":
-                source = trigger.get("item_id") or (
-                    self.session.get("item_id") if not active and not trigger else None
-                )
+                source = self.binding.observation_source()
                 if source and result.get("item_id", source) != source:
                     raise ValueError(
                         "$.item_id: this observation is bound to the incoming source; "
@@ -719,18 +689,18 @@ class ModelContext:
                         + self.lookup("item")
                     )
             elif tool == "record_event":
-                result["item_id"] = trigger.get("item_id") or self.session.get("item_id")
+                result["item_id"] = self.binding.incoming_source()
                 if not result["item_id"]:
                     raise ValueError("record_event records the incoming source; this session has none")
             else:
-                result.setdefault("item_id", trigger.get("item_id") or self.session.get("item_id"))
+                result.setdefault("item_id", self.binding.incoming_source())
                 if not result["item_id"]:
                     raise ValueError(
                         "$.item_id: there is no incoming source; pass the item_id to read. "
                         + self.lookup("item")
                     )
         if tool == "record_review":
-            result["proposal_id"] = self.session.get("proposal_id")
+            result["proposal_id"] = self.binding.proposal_id
 
     async def check(self, tool, path, kind, value):
         """One record ID: it exists, has the expected kind and lies in the tool's scope."""
@@ -757,7 +727,7 @@ class ModelContext:
                     + self.lookup(kind)
                 )
             raise ValueError(f"{path}: no {label} has this ID. {self.lookup(kind)}")
-        current = self.session.get("event_id")
+        current = self.binding.event_id
         if kind == "claim" and tool not in PATTERN_TOOLS and row.get("event_id") != current:
             raise ValueError(f"{path}: this is not a claim of the current event. {self.lookup('claim')}")
         if kind == "condition" and row.get("event_id") != current:
@@ -769,7 +739,7 @@ class ModelContext:
                 f"$.event_id: that event is {row['lifecycle']}; merge into an open event. {self.lookup('event')}"
             )
         if tool == "record_review" and path == "$.duplicate_of":
-            if value == self.session.get("proposal_id"):
+            if value == self.binding.proposal_id:
                 raise ValueError(
                     "$.duplicate_of: this is the current proposal; name the earlier one, or null"
                 )

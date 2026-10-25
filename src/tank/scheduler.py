@@ -8,7 +8,7 @@ from datetime import UTC, date, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
 from pathlib import Path
 
-from pydantic import JsonValue
+from pydantic import Field, JsonValue
 
 from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
@@ -110,6 +110,10 @@ class BackupIdentity(DomainModel):
     day: date
     manifest: BackupFileIdentity | None
     complete: BackupFileIdentity | None
+
+
+class ReactionEventIdentity(DomainModel):
+    event_id: str = Field(min_length=1, pattern=r"^\S+$")
 
 
 class Scheduler:
@@ -236,6 +240,18 @@ class Scheduler:
         if (now.hour, now.minute) >= (heartbeat_hour, heartbeat_minute):
             await self.heartbeat(now)
         self.launch("backup", lambda: self.maintenance(now))
+
+    async def ensure_event_reactions(self, event_id: str) -> None:
+        requested = ReactionEventIdentity(event_id=event_id)
+        record = await self.repo.get("evt.events", requested.event_id)
+        if record is None:
+            raise ValueError("Reaction scheduling event does not exist")
+        stored = ReactionEventIdentity.model_validate(
+            {name: record[name] for name in ("event_id",) if name in record}
+        )
+        if stored.event_id != requested.event_id:
+            raise ValueError("Reaction scheduling event identity differs from its lookup")
+        await self.ensure_reactions(record)
 
     async def ensure_reactions(self, event, *, now=None):
         """Open the pack outside the analyst transaction; only POST windows are jobs.

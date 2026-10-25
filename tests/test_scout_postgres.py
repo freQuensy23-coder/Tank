@@ -197,7 +197,7 @@ async def seed_event(tools, sessions):
 async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_path: Path) -> None:
     repository, dsn = repo
     settings = scout_settings(tmp_path)
-    tools = EventToolService(repository, settings, None, None)
+    tools = EventToolService(repository, settings, None, None, versions=declared_versions_fixture())
     openma = FakeOpenMA()
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma)) as http:
         sessions = SessionService(

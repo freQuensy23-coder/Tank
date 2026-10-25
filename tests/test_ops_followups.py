@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from source_support import fixture_versions
 from test_telegram_followups import (
     ALERTS,
     BOT,
@@ -146,7 +147,7 @@ async def test_ops_reply_about_analyzed_unpublished_item_continues_its_session_a
     assert "Tank Ops" in text and "itm_2" in text and "Делистинг токена" in text
     posts = []
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma(posts, []))) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         service.start_stream = lambda sid: None
         await service.send_message(jobs[0]["payload"])
     assert posts[0][0] == "/v1/sessions/ses_2/events"
@@ -200,7 +201,7 @@ async def test_ops_reply_about_published_item_continues_its_session_and_answers_
     ]
     posts = []
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma(posts, []))) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         service.start_stream = lambda sid: None
         await service.send_message(jobs[0]["payload"])
     assert posts[0][0] == "/v1/sessions/ses_1/events"
@@ -291,7 +292,7 @@ async def test_ops_reply_about_archived_session_gets_only_the_reason(retention) 
     assert (await repo.get("out.user_questions", question_id))["session_id"] == "ses_4"
     posts = []
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma(posts, []))) as http:
-        service = SessionService(repo, session_settings(), None, http=http)
+        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
         payload = {"kind": "USER_QUESTION", "session_id": "ses_4", "question_id": question_id}
         assert await service.send_message(payload) is None
     assert posts == []

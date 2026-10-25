@@ -14,6 +14,7 @@ import logging
 
 import httpx
 
+from tank.contracts.openma import OpenMAConfiguration
 from tank.settings import resolve_versions
 
 log = logging.getLogger(__name__)
@@ -98,7 +99,7 @@ def agent_tools(settings, name):
 def agent_payload(settings, config, name, skills):
     return {
         "name": name,
-        "model": {"id": config["model_id"], "effort": config.get("reasoning_effort", "medium")},
+        "model": {"id": config.model_id, "effort": config.reasoning_effort},
         "_oma": {"harness": "pi"},
         "system": SYSTEM,
         "tools": agent_tools(settings, name),
@@ -169,18 +170,18 @@ async def sync(settings, client):
     """One pass; returns what changed. Raises on an unreachable or refusing OpenMA."""
     if settings._config_snapshot is None:
         settings = resolve_versions(settings)
-    config = settings.load_config("openma")
+    config = OpenMAConfiguration.model_validate(settings.load_config("openma"))
     client.headers.update({"anthropic-beta": BETA, "x-api-key": settings.openma_api_key or ""})
     report = {"skills": {}, "agents": {}, "environments": {}}
     cards = _data(await client.get("/v1/oma/model_cards"))
-    card = next((c for c in cards if c["model_id"] == config["model_id"]), None)
+    card = next((c for c in cards if c["model_id"] == config.model_id), None)
     _data(
         await client.post(
             "/v1/oma/model_cards/" + card["id"] if card else "/v1/oma/model_cards",
-            json={**model_card(config["model_id"]), "api_key": settings.codex_gateway_key},
+            json={**model_card(config.model_id), "api_key": settings.codex_gateway_key},
         )
     )
-    agents = {name: _data(await client.get("/v1/agents/" + config[key])) for name, (key, _) in AGENTS.items()}
+    agents = {name: _data(await client.get("/v1/agents/" + config.agent_id_for(name))) for name in AGENTS}
     skills = registered_skills(agents)
     for name in SKILLS:
         digest = skill_digest(settings, name)
@@ -206,19 +207,21 @@ async def sync(settings, client):
                 "sha256": digest,
             }
             report["skills"][name] = "CREATED"
-    for name, (key, _) in AGENTS.items():
+    for name in AGENTS:
         wanted = agent_payload(settings, config, name, skills)
         if _agent_key(agents[name]) == _agent_key(wanted):
             report["agents"][name] = "CURRENT"
             continue
         updated = _data(
             await client.post(
-                "/v1/agents/" + config[key], json={**wanted, "version": agents[name]["version"]}
+                "/v1/agents/" + config.agent_id_for(name), json={**wanted, "version": agents[name]["version"]}
             )
         )
         report["agents"][name] = "VERSION " + str(updated.get("version"))
-    for name, (key, network) in ENVIRONMENTS.items():
-        deployed = _data(await client.get("/v1/environments/" + config[key])).get("config") or {}
+    for name, (_key, network) in ENVIRONMENTS.items():
+        deployed = (
+            _data(await client.get("/v1/environments/" + config.environment_id_for(name))).get("config") or {}
+        )
         networking = deployed.get("networking") or {}
         packages = deployed.get("packages") or {}
         current = (
@@ -232,7 +235,7 @@ async def sync(settings, client):
                 "OpenMA environment %s (%s) differs from the configuration; environments are immutable: "
                 "create the new one and put its ID into config/openma.yaml",
                 name,
-                config[key],
+                config.environment_id_for(name),
             )
     return report
 

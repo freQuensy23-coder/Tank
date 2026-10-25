@@ -17,7 +17,7 @@ from tank.analysis.truth import MarketTruthService, compute_market_truth
 from tank.market.cadences import supply_cadences
 from tank.market.service import MarketService
 from tank.settings import Settings
-from tank.util import iso, parse_time
+from tank.util import clock_iso, iso, parse_time
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
@@ -88,7 +88,7 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
                 raw_value=row["oi_native"],
                 raw_unit="BASE",
                 sidedness="SINGLE_SIDED",
-                received_ts=iso(),
+                received_ts=clock_iso(),
             )
         for row in packet["funding"]:
             row.update(
@@ -107,10 +107,10 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
                 l=min(Decimal(str(row["o"])), Decimal(str(row["c"]))),
             )
         for row in packet["books"]:
-            row.update(best_bid="101", best_ask="101.2", received_ts=iso())
+            row.update(best_bid="101", best_ask="101.2", received_ts=clock_iso())
         for family in ("flow_bars", "klines", "oi", "funding", "books"):
             for row in packet[family]:
-                row.update(recorded_at=iso(), recorded_at_prec="COLLECTION_ONLY")
+                row.update(recorded_at=clock_iso(), recorded_at_prec="COLLECTION_ONLY")
                 if row.get("received_ts") is not None:
                     row["received_ts_prec"] = "COLLECTION_ONLY"
                 field = {
@@ -172,7 +172,7 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
                     subject="METRIC_SEMANTICS",
                     instrument_id=iid,
                     metric_key=definition["metric_key"],
-                    at=iso(),
+                    at=clock_iso(),
                     semantics=dict(definition, instrument_id=iid, semantic_confidence="VERIFIED"),
                 ),
             )

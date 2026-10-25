@@ -309,3 +309,32 @@ def test_version_identity_requires_capture_and_detects_post_capture_relabelling(
 def test_version_identity_refuses_empty_or_unknown_provenance(config_version: str) -> None:
     with pytest.raises(ValueError):
         ResolvedVersionIdentity(config_version=config_version, code_version="declared-code")
+
+
+def test_captured_config_inventory_requires_resolution_and_stays_frozen(tmp_path: Path) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "z.yaml").write_text("value: 1\n")
+    (config / "a.yaml").write_text("value: 2\n")
+    intake = Settings(config_dir=config, data_dir=tmp_path / "data", _env_file=None)
+    with pytest.raises(ValueError, match="requires resolve_versions"):
+        intake.captured_config_paths()
+    resolved = resolve_versions(intake)
+    assert resolved.captured_config_paths() == ("a.yaml", "z.yaml")
+    (config / "later.yaml").write_text("value: 3\n")
+    assert resolved.captured_config_paths() == ("a.yaml", "z.yaml")
+    with pytest.raises(ValueError, match="no longer matches"):
+        resolved.model_copy(update={"code_version": "different"}).captured_config_paths()
+
+
+def test_openma_accessor_reads_the_captured_configuration(tmp_path: Path) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    original = Settings(_env_file=None).read_config_bytes("openma.yaml")
+    (config / "openma.yaml").write_bytes(original)
+    settings = resolve_versions(Settings(config_dir=config, data_dir=tmp_path / "data", _env_file=None))
+    configuration = settings.openma()
+    assert configuration.model_id in configuration.model_prices
+    assert configuration.max_running_sessions > 0
+    (config / "openma.yaml").write_text("invalid: replacement\n")
+    assert configuration == settings.openma()

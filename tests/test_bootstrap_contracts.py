@@ -83,3 +83,55 @@ def test_registry_loader_refuses_invalid_captured_instrument_before_bootstrap(
     monkeypatch.setattr(RegistryFixtureSettings, "read_config_bytes", captured)
     with pytest.raises(ValidationError):
         settings.load_config_as("registry", RegistryConfiguration)
+
+
+@pytest.mark.parametrize("declared_bucket", [False, True])
+def test_calendar_review_label_loader_preserves_date_without_inventing_midnight(
+    declared_bucket: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = RegistryFixtureSettings()
+    document = settings.load_config("registry")
+    entities = document["entities"]
+    assert isinstance(entities, list) and isinstance(entities[0], dict)
+    entity = entities[0]
+    entity["identity_reviewed_at"] = "2026-10-18"
+    if declared_bucket:
+        entity["identity_reviewed_at_prec"] = "BUCKET"
+        entity["identity_reviewed_at_bucket_size_s"] = 86400
+        entity["identity_reviewed_at_precision"] = "BUCKET(1d)"
+
+    def captured(self: RegistryFixtureSettings, name: str) -> bytes:
+        assert name == "registry.yaml"
+        return encode_json(document)
+
+    monkeypatch.setattr(RegistryFixtureSettings, "read_config_bytes", captured)
+    result = settings.load_config_as("registry", RegistryConfiguration)
+    assert result.entities[0].identity_reviewed_at == "2026-10-18"
+    assert canonical_json(decode_json(result.model_dump_json(exclude_unset=True))) == canonical_json(document)
+
+
+@pytest.mark.parametrize("defect", ["invalid_date", "naive_datetime", "conflicting_precision"])
+def test_calendar_review_loader_rejects_invalid_occurrence_or_metadata(
+    defect: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = RegistryFixtureSettings()
+    document = settings.load_config("registry")
+    entities = document["entities"]
+    assert isinstance(entities, list) and isinstance(entities[0], dict)
+    entity = entities[0]
+    entity["identity_reviewed_at"] = {
+        "invalid_date": "2026-02-30",
+        "naive_datetime": "2026-10-18T12:00:00",
+        "conflicting_precision": "2026-10-18",
+    }[defect]
+    if defect == "conflicting_precision":
+        entity["identity_reviewed_at_prec"] = "EXACT"
+        entity["identity_reviewed_at_precision"] = "BUCKET(1d)"
+
+    def captured(self: RegistryFixtureSettings, name: str) -> bytes:
+        assert name == "registry.yaml"
+        return encode_json(document)
+
+    monkeypatch.setattr(RegistryFixtureSettings, "read_config_bytes", captured)
+    with pytest.raises(ValidationError):
+        settings.load_config_as("registry", RegistryConfiguration)
