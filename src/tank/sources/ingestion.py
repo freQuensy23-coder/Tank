@@ -191,7 +191,9 @@ class SourceIngestion:
             await self.progress.record(
                 item.item_id,
                 "RECEIVED",
-                "Ожидает проверки Jev" if filtered else "Jev не требуется; ожидает маршрутизации к агенту",
+                "Ожидает проверки Decision-1"
+                if filtered
+                else "Decision-1 не требуется; ожидает маршрутизации к агенту",
             )
             if not filtered:
                 await self.progress.record(

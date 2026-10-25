@@ -44,13 +44,13 @@ def test_readiness_validates_missing_cutoff_without_leaking_input() -> None:
             configuration["filter_cutoff"] = None
             return Thresholds.model_validate(configuration)
 
-    settings = InvalidCalibration(opencode_api_key="synthetic-private-readiness-key")
+    settings = InvalidCalibration(foundry_api_key="synthetic-private-readiness-key")
     checks = cli.readiness_checks(settings)
     by_name = {check.check: check for check in checks}
     assert not by_name["thresholds_syntax"].ok
     assert not by_name["calibration"].ok
     assert by_name["calibration"].reason == "ValidationError"
-    assert by_name["opencode_api_key"].ok
+    assert by_name["foundry_api_key"].ok
     wire = json.dumps([check.model_dump(mode="json", exclude_none=True) for check in checks])
     assert "synthetic-private-readiness-key" not in wire
     assert "filter_cutoff" not in wire

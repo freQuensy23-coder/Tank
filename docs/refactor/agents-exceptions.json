@@ -2225,6 +2225,85 @@
         "test_native_stream_keeps_json_looking_tool_text_opaque",
         "test_refused_old_frame_does_not_starve_fresh_owned_input"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/decision.py",
+          "symbol": "DecisionItem"
+        },
+        {
+          "path": "src/tank/agents/decision.py",
+          "symbol": "DecisionEvent"
+        },
+        {
+          "path": "src/tank/agents/decision.py",
+          "symbol": "DecisionState"
+        },
+        {
+          "path": "src/tank/agents/decision.py",
+          "symbol": "DecisionQuestion"
+        }
+      ],
+      "kind": "provider projection and optional criteria",
+      "reason": "Optional item/event facts are omitted only after typed routing projection identifies actual absence or duplicate content. Event absence distinguishes filter from route. Criteria is genuinely optional in the verified Foundry protocol; no required provider identity or credential is fabricated.",
+      "validation": [
+        "test_configured_key_deployment_exact_wire_and_cache",
+        "test_provider_errors_are_not_retried_or_chat_wrapped"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/decision.py",
+          "symbol": "DecisionUsage"
+        },
+        {
+          "path": "src/tank/agents/decision.py",
+          "symbol": "DecisionResponse"
+        },
+        {
+          "path": "src/tank/agents/decision.py",
+          "symbol": "classify"
+        }
+      ],
+      "kind": "unreported provider accounting and metadata",
+      "reason": "Input/output counts, monetary cost, response ID and upstream provider can genuinely be unreported. Explicit absence is preserved, missing-cost reasons are written, and reported zero stays known. Nullable credential permits exact-cache/offline usage; live admission rejects it before HTTP. Raw bytes require unique JSON keys before closed DTO admission; no missing-answer/usage fallback exists.",
+      "validation": [
+        "test_omitted_provider_accounting_remains_explicitly_unknown",
+        "test_old_provider_cache_cannot_answer_new_request_and_zero_cost_is_known",
+        "test_missing_key_refuses_before_network",
+        "test_raw_duplicate_answers_refuse_before_score_persistence",
+        "test_actual_optional_provider_metadata_is_preserved"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/decision.py",
+          "symbol": "binding"
+        },
+        {
+          "path": "src/tank/agents/decision.py",
+          "symbol": "DecisionBinding"
+        },
+        {
+          "path": "src/tank/agents/classification.py",
+          "symbol": "DecisionClassifier.score_identity"
+        },
+        {
+          "path": "src/tank/agents/pipeline_contracts.py",
+          "symbol": "DecisionScoreRecord"
+        }
+      ],
+      "kind": "declared binding and actual question namespace",
+      "reason": "Settings declares upstream endpoint/deployment defaults; the adapter requires their explicit validated binding. Configured deployment and semantic version are not presented as response attestation. Label-keyed questions/answers and exact serialized fingerprints are wire namespaces, while the ledger is a closed model. Resource/deployment/provider/semantic/prompt identity isolates historical providers and changed requests.",
+      "validation": [
+        "test_endpoint_refuses_untrusted_origin",
+        "test_request_identity_isolated_by_resource_deployment_and_semantic_model",
+        "test_prompt_change_has_distinct_cache_identity",
+        "test_old_provider_cache_cannot_answer_new_request_and_zero_cost_is_known"
+      ]
     }
   ]
 }

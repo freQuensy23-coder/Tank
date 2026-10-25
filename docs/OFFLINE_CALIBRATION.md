@@ -1,14 +1,12 @@
-# Jev calibration (`tank calibrate`)
+# Decision-1 calibration (`tank calibrate`)
 
-Both Jev cutoffs are calibrated offline, before the service first starts (03 §3.1, 01 V0-B), and recorded in
-`config/thresholds.yaml` at a checkpoint (01 D6). One command does the whole pass:
+The existing cutoffs remain the user-selected uncalibrated 0.5 midpoint. Calibrate Decision-1 independently on labeled data and record approved results in `config/thresholds.yaml` at a checkpoint (01 D6). Historical Jev evidence does not validate Decision-1. One command does the whole pass:
 
 ```sh
 uv run tank calibrate packet.json --output-dir runs/<name>
 ```
 
-It starts no service, session, collector or delivery. It calls only `POST https://opencode.ai/inference/systemone/v1/systemone`
-with `jev-1.13-free`, or `jev-1.13` when an OpenCode key is configured, through the service's own `Pipeline`: same item state, same
+It starts no service, session, collector or delivery. With the Foundry settings in [FOUNDRY_DECISION.md](FOUNDRY_DECISION.md), it calls `/providers/microsoft/v1/systemone` with the configured Decision-1 deployment through the service's own `Pipeline`: same item state, same
 questions, same registry identities, same candidate builder. Production configuration is never changed.
 
 ## Packet
@@ -44,7 +42,7 @@ One frozen JSON file:
 ## Report
 
 The output directory gets `calibration-report.json`, `scored-items.json`, `thresholds.proposed.yaml` and
-`usage/`: one immutable Jev usage row per exact request. A rerun reuses them and pays only for new requests.
+`usage/`: one immutable Decision-1 usage row per exact request. A rerun reuses them and pays only for new requests.
 
 - Filter cutoff: the highest value at which at least 95% of the items labeled relevant pass.
 - Routing cutoff: the highest value at which routing precision and recall both reach 0.90. Per item the online
@@ -58,5 +56,5 @@ The output directory gets `calibration-report.json`, `scored-items.json`, `thres
 First-known times, freshness grades and stages (the rest of V0-B) are the agent's outputs and are checked in
 the session acceptance, not here.
 
-The current packet and how it was rebuilt from the reviewed 1403-item set are in
+The historical Jev packet and how it was rebuilt from the reviewed 1403-item set are in
 `docs/verification/v0b-calibration-2026-10-20/`.

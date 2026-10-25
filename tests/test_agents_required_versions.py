@@ -9,10 +9,10 @@ from agent_source_fixtures import declared_versions_fixture, pipeline_settings_f
 from pydantic import ValidationError
 from pydantic_settings import SettingsConfigDict
 
-from tank.agents.classification import JevClassifier
-from tank.agents.jev import JevItem, JevState
+from tank.agents.classification import DecisionClassifier
+from tank.agents.decision import DecisionItem, DecisionState
 from tank.agents.pipeline import Pipeline
-from tank.agents.pipeline_contracts import JevScoreRecord
+from tank.agents.pipeline_contracts import DecisionScoreRecord
 from tank.agents.sessions import SessionService
 from tank.bootstrap import sync_registry
 from tank.contracts.provenance import ResolvedVersionIdentity
@@ -64,34 +64,36 @@ async def test_invalid_bootstrap_provenance_fails_before_reads_or_mutation() -> 
 
 @dataclass(frozen=True)
 class ClassificationConfig:
-    opencode_api_key: str | None
+    foundry_api_key: str | None
     replay: bool
+    foundry_endpoint: str = "https://synthetic.services.ai.azure.com"
+    foundry_deployment: str = "decision-1"
 
 
 @pytest.mark.asyncio
 async def test_classification_writes_explicit_identity_without_raw_settings_version_fields() -> None:
     store = MemoryRepository()
-    scores = Repository(store, Collection("ops.llm_usage", JevScoreRecord))
+    scores = Repository(store, Collection("ops.llm_usage", DecisionScoreRecord))
 
     def provider(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13-free",
+                "model": "microsoft-decision-1",
                 "answers": {"relevant": {"type": "noul", "noul": 0.97}},
                 "usage": {"input_tokens": 10, "output_tokens": 0},
             },
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as http:
-        classifier = JevClassifier(
+        classifier = DecisionClassifier(
             scores,
-            ClassificationConfig(None, False),
+            ClassificationConfig("FAKE_FOUNDRY_KEY", False),
             http,
             versions=declared_versions_fixture("explicit-config", "explicit-code"),
         )
         item = source_item_fixture("provenance", source_id="S30", text="ETH announcement")
         result = await classifier._score_record(
-            item, "relevant", JevState(item=JevItem(source=item.source, text=item.text))
+            item, "relevant", DecisionState(item=DecisionItem(source=item.source, text=item.text))
         )
     assert result.config_version == "explicit-config" and result.code_version == "explicit-code"
