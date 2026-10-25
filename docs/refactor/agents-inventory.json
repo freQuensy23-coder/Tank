@@ -1557,50 +1557,10 @@
     },
     {
       "path": "src/tank/bootstrap.py",
-      "lines": 456,
+      "lines": 498,
       "functions": [
         {
           "symbol": "RegistrySettings.config_version",
-          "line": 66,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "RegistrySettings.code_version",
-          "line": 68,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "RegistrySettings.read_config_bytes",
-          "line": 69,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "RegistrySettings.load_config_as",
-          "line": 70,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "RegistrySettings.registry",
-          "line": 71,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "RegistrySettings.dependencies",
           "line": 72,
           "missing_parameters": [],
           "missing_return": false,
@@ -1608,15 +1568,7 @@
           "get_calls": 0
         },
         {
-          "symbol": "RegistrySettings.semantics",
-          "line": 73,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "RegistrySettings.exchange_addresses",
+          "symbol": "RegistrySettings.code_version",
           "line": 74,
           "missing_parameters": [],
           "missing_return": false,
@@ -1624,7 +1576,31 @@
           "get_calls": 0
         },
         {
-          "symbol": "RegistryStore.get",
+          "symbol": "RegistrySettings.read_config_bytes",
+          "line": 75,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "RegistrySettings.load_config_as",
+          "line": 76,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "RegistrySettings.registry",
+          "line": 77,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "RegistrySettings.dependencies",
           "line": 78,
           "missing_parameters": [],
           "missing_return": false,
@@ -1632,7 +1608,7 @@
           "get_calls": 0
         },
         {
-          "symbol": "RegistryStore.put",
+          "symbol": "RegistrySettings.semantics",
           "line": 79,
           "missing_parameters": [],
           "missing_return": false,
@@ -1640,8 +1616,32 @@
           "get_calls": 0
         },
         {
+          "symbol": "RegistrySettings.exchange_addresses",
+          "line": 80,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "RegistryStore.get",
+          "line": 84,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "RegistryStore.put",
+          "line": 85,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
           "symbol": "RegistryStore.delete",
-          "line": 82,
+          "line": 88,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1649,7 +1649,7 @@
         },
         {
           "symbol": "RegistryStore.iter_all",
-          "line": 83,
+          "line": 89,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1657,7 +1657,7 @@
         },
         {
           "symbol": "RegistryStore.lock",
-          "line": 86,
+          "line": 92,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1665,7 +1665,7 @@
         },
         {
           "symbol": "RegistryStore.transaction",
-          "line": 87,
+          "line": 93,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1673,7 +1673,7 @@
         },
         {
           "symbol": "ExchangeAddressRecord.from_wallet",
-          "line": 117,
+          "line": 123,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1681,7 +1681,7 @@
         },
         {
           "symbol": "PreparedRegistry.unique_storage_keys",
-          "line": 149,
+          "line": 155,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1689,7 +1689,7 @@
         },
         {
           "symbol": "RegistrySyncResult.to_wire",
-          "line": 173,
+          "line": 179,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -1697,7 +1697,7 @@
         },
         {
           "symbol": "_unique_rows",
-          "line": 187,
+          "line": 193,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1705,7 +1705,7 @@
         },
         {
           "symbol": "_config_timestamp_metadata",
-          "line": 196,
+          "line": 202,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -1713,7 +1713,7 @@
         },
         {
           "symbol": "_key",
-          "line": 210,
+          "line": 216,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1721,7 +1721,7 @@
         },
         {
           "symbol": "_routing_aliases",
-          "line": 214,
+          "line": 220,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1729,7 +1729,7 @@
         },
         {
           "symbol": "_artifact",
-          "line": 230,
+          "line": 236,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1737,7 +1737,7 @@
         },
         {
           "symbol": "_row",
-          "line": 240,
+          "line": 246,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1745,7 +1745,7 @@
         },
         {
           "symbol": "_entity_record",
-          "line": 260,
+          "line": 266,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -1753,7 +1753,7 @@
         },
         {
           "symbol": "validate_registry",
-          "line": 267,
+          "line": 273,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 2,
@@ -1761,7 +1761,7 @@
         },
         {
           "symbol": "_validate_documents",
-          "line": 387,
+          "line": 393,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1769,7 +1769,7 @@
         },
         {
           "symbol": "_preflight",
-          "line": 392,
+          "line": 398,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1777,15 +1777,31 @@
         },
         {
           "symbol": "_document",
-          "line": 404,
+          "line": 410,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
           "get_calls": 0
         },
         {
+          "symbol": "_schema_fields",
+          "line": 419,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "_owned_fields",
+          "line": 423,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
           "symbol": "_sync_rows",
-          "line": 413,
+          "line": 455,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 4,
@@ -1793,7 +1809,7 @@
         },
         {
           "symbol": "sync_registry",
-          "line": 442,
+          "line": 484,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,

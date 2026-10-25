@@ -327,3 +327,40 @@ async def test_removing_configured_qualifier_clears_owned_state_without_erasing_
     updated = await repo.get("reg.entity_aliases", key)
     assert updated is not None and "requires_any" not in updated
     assert canonical_json(updated["discovery_owned"]) == canonical_json({"flag": True, "serial": 1})
+
+
+async def test_metric_family_replacement_removes_all_old_family_fields_and_preserves_discovery(
+    tmp_path: Path,
+) -> None:
+    captured = documents()
+    metrics = records(captured["semantics"], "metrics")
+    depth = next(
+        row
+        for row in metrics
+        if row["metric_family"] == "depth"
+        and row["market_type"] == "PERP_LINEAR"
+        and "current_doc_ref" in row
+    )
+    funding = next(
+        row for row in metrics if row["metric_family"] == "funding" and row["venue"] == depth["venue"]
+    )
+    key = depth["metric_key"]
+    assert isinstance(key, str)
+    captured["semantics"]["metrics"] = [depth]
+    write_documents(tmp_path, captured)
+    repo = PagedRepository()
+    settings = FixtureSettings(config_dir=tmp_path)
+    await sync_registry(repo, settings)
+    original = await repo.get("reg.metric_semantics", key)
+    assert original is not None and "current_doc_ref" in original
+    await repo.put("reg.metric_semantics", key, {**original, "discovery_owned": {"flag": True, "serial": 1}})
+    replacement = dict(funding)
+    replacement["metric_key"] = key
+    captured["semantics"]["metrics"] = [replacement]
+    write_documents(tmp_path, captured)
+    await sync_registry(repo, settings)
+    updated = await repo.get("reg.metric_semantics", key)
+    assert updated is not None and updated["metric_family"] == "funding"
+    assert "current_doc_ref" not in updated and "endpoint_change_evidence" not in updated
+    assert updated["estimate"] == funding["estimate"] and updated["settled"] == funding["settled"]
+    assert canonical_json(updated["discovery_owned"]) == canonical_json({"flag": True, "serial": 1})

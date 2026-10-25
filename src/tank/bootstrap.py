@@ -4,15 +4,21 @@ import hashlib
 import json
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
-from typing import Literal, Protocol, Self
+from typing import Literal, Protocol, Self, assert_never
 
 from pydantic import BaseModel, Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.json import decode_json
 from tank.contracts.registry import (
+    AggressorSemantics,
     DependencyConfiguration,
+    DepthSemantics,
     ExchangeAddressesConfiguration,
+    FundingSemantics,
+    LiquidationSemantics,
+    OpenInterestSemantics,
+    PriceSemantics,
     RegisteredMetric,
     RegistryConfiguration,
     RegistryDependency,
@@ -410,6 +416,42 @@ def _document[T: DomainModel](row: PreparedRow[T]) -> dict[str, JsonValue]:
     return {**record, **metadata}
 
 
+def _schema_fields(*schemas: type[DomainModel]) -> frozenset[str]:
+    return frozenset(name for schema in schemas for name in schema.model_fields)
+
+
+def _owned_fields(table: RegistryTable) -> frozenset[str]:
+    provenance = _schema_fields(RegistryProvenance)
+    match table:
+        case "reg.sources":
+            return provenance | _schema_fields(SourceDefinition)
+        case "reg.tokens":
+            return provenance | _schema_fields(RegistryToken)
+        case "reg.instruments":
+            return provenance | _schema_fields(RegistryInstrument)
+        case "reg.entities":
+            return provenance | _schema_fields(RegistryEntity)
+        case "reg.entity_aliases":
+            return provenance | _schema_fields(EntityAliasRecord)
+        case "reg.sector_baskets":
+            return provenance | _schema_fields(SectorBasketRecord)
+        case "reg.dependency_map":
+            return provenance | _schema_fields(DependencyRecord)
+        case "reg.metric_semantics":
+            return provenance | _schema_fields(
+                AggressorSemantics,
+                DepthSemantics,
+                FundingSemantics,
+                LiquidationSemantics,
+                OpenInterestSemantics,
+                PriceSemantics,
+            )
+        case "reg.exchange_addresses":
+            return provenance | _schema_fields(ExchangeAddressRecord)
+        case _:
+            assert_never(table)
+
+
 async def _sync_rows[T: DomainModel](
     repo: RegistryStore,
     table: RegistryTable,
@@ -433,7 +475,7 @@ async def _sync_rows[T: DomainModel](
         if existing is None:
             await repo.put(table, key, document)
         else:
-            owned = set(type(row.record).model_fields) | set(RegistryProvenance.model_fields)
+            owned = _owned_fields(table)
             unowned = {name: value for name, value in existing.items() if name not in owned}
             await repo.put(table, key, {**unowned, **document})
     return len(rows)
