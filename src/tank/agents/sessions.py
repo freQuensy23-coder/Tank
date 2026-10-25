@@ -425,6 +425,8 @@ class SessionService:
     async def continuable(self, request: UserQuestionMessage) -> bool:
         target = FollowupRefusalTarget(question_id=request.question_id, session_id=request.session_id)
         session = await self.repo.get("ops.agent_sessions", request.session_id)
+        if session is not None:
+            require_owned_session_identity(request.session_id, session)
         eligibility: FollowupEligibility
         if self.settings.replay:
             eligibility = NoSession(status="NO_SESSION", reason="REPLAY")
@@ -676,6 +678,8 @@ class SessionService:
             async with self.repo.lock("session:" + sid):
                 session = await self.repo.get("ops.agent_sessions", sid)
                 if payload.get("kind") == "USER_QUESTION":
+                    if session is not None:
+                        require_owned_session_identity(sid, session)
                     eligibility = followup_eligibility(
                         FollowupSession.from_record(session) if session is not None else None
                     )

@@ -176,3 +176,23 @@ async def test_refusal_persistence_failure_never_posts_and_can_reconcile_retaine
         assert not await service.continuable(question())
     assert len(requests) == 1 and len(refusals.calls) == 2
     assert refusals.calls[0] == refusals.calls[1]
+
+
+@pytest.mark.asyncio
+async def test_foreign_persisted_session_cannot_authorize_question_refusal() -> None:
+    repo = MemoryRepository()
+    original: dict[str, JsonValue] = {"session_id": "foreign", "status": "ENDED"}
+    await repo.put("ops.agent_sessions", "session", original)
+    refusals = RecordingRefusals()
+
+    def forbidden(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("Foreign persistence identity cannot authorize native I/O")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(forbidden)) as http:
+        service = SessionService(
+            repo, options(), None, versions=declared_versions_fixture(), refusals=refusals, http=http
+        )
+        with pytest.raises(ValueError, match="identity differs"):
+            await service.continuable(question())
+    assert refusals.calls == []
+    assert await repo.get("ops.agent_sessions", "session") == original
