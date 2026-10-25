@@ -502,6 +502,7 @@ export async function createNodeFoundation(
     modelCardsService,
     memoryBlobs,
     memoryBlobDescription,
+    memoryBlobLocalDir,
     memoryService,
     dreamsService,
     outputsRoot,

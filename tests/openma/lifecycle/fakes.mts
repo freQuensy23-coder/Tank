@@ -27,7 +27,8 @@ interface Disk {
 }
 export interface NativeRuntime {
   runtimeHandle(): Handle;
-  suspend(): Promise<void>;
+  flushFilesystem(assertCurrent?: () => Promise<void>): Promise<void>;
+  suspend(input?: { kind: "filesystem"; assertCurrent?: () => Promise<void> }): Promise<void>;
   exec(command: string, env?: Record<string, string>): Promise<{ disk: Disk; env: Record<string, string> }>;
 }
 export type Call = ["stop" | "fresh-get" | "create" | "remove-owned", string] | ["exec", string, string];
@@ -101,8 +102,13 @@ export function setup(): Setup {
     let invalid = false;
     const value: NativeRuntime = {
       runtimeHandle: (): Handle => ({ provider: "litebox", runtimeId: disk.id }),
-      async suspend(): Promise<void> {
+      async flushFilesystem(assertCurrent?: () => Promise<void>): Promise<void> {
         assert.equal(invalid, false);
+        await assertCurrent?.();
+      },
+      async suspend(input?: { kind: "filesystem"; assertCurrent?: () => Promise<void> }): Promise<void> {
+        assert.equal(invalid, false);
+        await input?.assertCurrent?.();
         calls.push(["stop", disk.id]);
         invalid = true;
         disk.running = false;
