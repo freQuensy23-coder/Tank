@@ -4,6 +4,7 @@ import copy
 from types import SimpleNamespace
 
 import pytest
+from source_support import fixture_versions
 
 import tank.event_tools as event_tools
 from tank.storage import MemoryRepository
@@ -34,7 +35,7 @@ async def prepare(
         code_version="isolated",
         load_config=lambda name: copy.deepcopy(config[name]),
     )
-    service = event_tools.EventToolService(repo, settings, None, None)
+    service = event_tools.EventToolService(repo, settings, None, None, versions=fixture_versions())
     await repo.put(
         "evt.events",
         "e",

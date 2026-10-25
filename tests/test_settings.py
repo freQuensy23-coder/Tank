@@ -5,11 +5,15 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import JsonValue
 
+from tank.contracts import DomainModel
 from tank.contracts.configuration import DeliveryConfiguration
+from tank.contracts.json import JsonDocument
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.sources import SourceConfiguration
 from tank.settings import Settings, resolve_versions
+from tank.util import canonical_json
 
 
 def test_runtime_generation_freezes_config_and_preserves_exact_recovery_inputs(tmp_path: Path) -> None:
@@ -338,3 +342,72 @@ def test_openma_accessor_reads_the_captured_configuration(tmp_path: Path) -> Non
     assert configuration.max_running_sessions > 0
     (config / "openma.yaml").write_text("invalid: replacement\n")
     assert configuration == settings.openma()
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity"])
+def test_nonfinite_json_candidate_cannot_replace_captured_configuration(tmp_path: Path, number: str) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    payload = config / "schema.json"
+    payload.write_text('{"limit":1}')
+    settings = Settings(config_dir=config, data_dir=tmp_path / "data", _env_file=None)
+    captured = resolve_versions(settings)
+    payload.write_text('{"limit":' + number + "}")
+    with pytest.raises(ValueError, match="finite"):
+        resolve_versions(settings)
+    assert captured.read_config_json("schema.json") == {"limit": 1}
+    assert len(list((settings.data_dir / "config_versions").glob("*.json"))) == 1
+
+
+class CapturedRuleFixture(DomainModel):
+    values: list[str]
+
+
+def test_typed_captured_config_reuses_parsing_and_keeps_model_data_independent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    file = config / "rules.yaml"
+    file.write_text("values: [first, second]\n")
+    intake = Settings(config_dir=config, data_dir=tmp_path / "data", _env_file=None)
+    captured = resolve_versions(intake)
+    original_load = yaml.load
+    parses = 0
+
+    def counted_load(stream: str | bytes, Loader: type[yaml.SafeLoader]) -> JsonValue:
+        nonlocal parses
+        parses += 1
+        return JsonDocument.validate_value(original_load(stream, Loader=Loader))
+
+    monkeypatch.setattr(yaml, "load", counted_load)
+    first = captured.load_config_as("rules", CapturedRuleFixture)
+    first.values.append("caller-only")
+    assert captured.load_config_as("rules", CapturedRuleFixture).values == ["first", "second"]
+    assert parses == 1
+    file.write_text("values: [changed]\n")
+    assert captured.load_config_as("rules", CapturedRuleFixture).values == ["first", "second"]
+    assert intake.load_config_as("rules", CapturedRuleFixture).values == ["changed"]
+    file.write_text("values: [later]\n")
+    assert intake.load_config_as("rules", CapturedRuleFixture).values == ["later"]
+    updated = resolve_versions(intake)
+    assert updated.load_config_as("rules", CapturedRuleFixture).values == ["later"]
+    assert updated.require_versions() != captured.require_versions()
+    file.write_text("values: [\n")
+    with pytest.raises(yaml.YAMLError):
+        resolve_versions(intake)
+    assert captured.load_config_as("rules", CapturedRuleFixture).values == ["first", "second"]
+
+
+def test_cached_typed_actual_registry_preserves_canonical_config_and_nested_isolation(
+    tmp_path: Path,
+) -> None:
+    captured = resolve_versions(Settings(data_dir=tmp_path / "data", _env_file=None))
+    expected = hashlib.sha256(canonical_json(Settings(_env_file=None).registry()).encode()).hexdigest()
+    registry = captured.registry()
+    assert hashlib.sha256(canonical_json(registry).encode()).hexdigest() == expected
+    count = len(registry.tokens)
+    assert count > 0
+    registry.tokens.clear()
+    assert len(captured.registry().tokens) == count
+    assert hashlib.sha256(canonical_json(captured.registry()).encode()).hexdigest() == expected

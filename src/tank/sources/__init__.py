@@ -6,20 +6,17 @@ persists probability/model provenance; source ingestion never guesses relevance.
 """
 
 import asyncio
-import math
 import re
 import ssl
 from collections.abc import Mapping
-from contextlib import suppress
-from copy import deepcopy
 from datetime import datetime
+from functools import cached_property
 from urllib.parse import urlsplit
 
 import certifi
 import httpx
 from pydantic import JsonValue
 
-import tank.sources.parsers as parsers
 from tank.contracts.configuration import Thresholds
 from tank.contracts.http_policy import HttpRefused
 from tank.contracts.provenance import ResolvedVersionIdentity
@@ -30,19 +27,21 @@ from tank.contracts.sources import (
     SourceApiLimitsConfiguration,
     SourceConfiguration,
     SourceDefinition,
+    SourceFilingRegistryView,
 )
 from tank.http_admission import ConfiguredHttpAdmission
 from tank.ops_progress import RepositorySourceProgress
 from tank.request_budget import BudgetConstraint, shared_request_budgets
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
+from tank.sources.fetch import FetchEvidence, FetchResult, HttpCheckpointProjection, SourceHttpReader
 from tank.sources.http_client import RequestStarted, SourceHttpTransport
 from tank.sources.ingestion import SourceIngestion
 from tank.sources.raw_store import RawItemStorage
 from tank.sources.xsensor import XSensor
-from tank.util import iso, parse_iso_time, parse_time, sha256, utcnow
+from tank.util import iso, parse_iso_time, parse_time, utcnow
 
 
-def tls_context():
+def tls_context() -> ssl.SSLContext:
     """The TLS hello of Python's standard HTTPS client (http.client sets post_handshake_auth).
 
     WordPress.com's bot check (S12 blog.kraken.com) answers httpx's default hello with
@@ -145,81 +144,45 @@ class SourceService:
         if isinstance(result, HttpRefused):
             raise ValueError("Source HTTP admission refused: " + result.reason)
 
-    async def fetch(self, feed: HttpFetchPlan, key: str, *, on_start: RequestStarted | None = None):
-        state = deepcopy(await self.repo.get("ops.source_checkpoints", key) or {})
-        headers = dict(feed.headers)
-        if state.get("etag") and not state.get("article_errors") and not state.get("entry_errors"):
-            headers["If-None-Match"] = state["etag"]
-        if state.get("last_modified") and not state.get("article_errors") and not state.get("entry_errors"):
-            headers["If-Modified-Since"] = state["last_modified"]
-        error = None
-        for attempt in range(4):
-            try:
-                if is_exchange_url(feed.url):
-                    await self.acquire_budget(feed)
-                    if on_start is not None:
-                        await on_start()
-                    response = await capture_fetch(
-                        self.repo,
-                        feed.method,
-                        feed.url,
-                        headers=headers,
-                        body=feed.body if feed.method.upper() == "POST" else None,
-                        source_id=key.split(":", 1)[0],
-                    )
-                else:
-                    response = await self.transport.request(feed, headers, on_start)
-                if response.status_code == 304:
-                    return None, state
-                payload = response.content
-                received_at = iso(self.now())
-                digest = sha256(payload)
+    async def _send_fetch(
+        self,
+        feed: HttpFetchPlan,
+        headers: Mapping[str, str],
+        key: str,
+        on_start: RequestStarted | None,
+    ) -> httpx.Response:
+        if is_exchange_url(feed.url):
+            await self.acquire_budget(feed)
+            if on_start is not None:
+                await on_start()
+            return await capture_fetch(
+                self.repo,
+                feed.method,
+                feed.url,
+                headers=headers,
+                body=feed.body if feed.method == "POST" else None,
+                source_id=key.split(":", 1)[0],
+            )
+        return await self.transport.request(feed, headers, on_start)
 
-                if re.fullmatch(r"S\d{2}:\d+", key):
-                    async with self.poller.lock(self.poller.state_locks, key):
-                        evidence = await self.poller.state(key)
-                        evidence.update(
-                            payload_sha256=digest,
-                            fetched_at=received_at,
-                            http_status=response.status_code,
-                            response_url=str(response.url),
-                        )
-                        await self.poller.save(key, evidence)
-                response.raise_for_status()
-                state.update(
-                    etag=response.headers.get("etag"),
-                    last_modified=response.headers.get("last-modified"),
-                    payload_sha256=digest,
-                    fetched_at=received_at,
-                    http_status=response.status_code,
-                    response_url=str(response.url),
-                )
-                return payload, state
-            except (httpx.HTTPError, TimeoutError) as exc:
-                error = exc
-                if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404:
-                    raise
-                if attempt < 3:
-                    delay = 2 ** (attempt + 1)
-                    if isinstance(exc, httpx.HTTPStatusError):
-                        retry = exc.response.headers.get("retry-after")
-                        if retry:
-                            try:
-                                retry_seconds = float(retry)
-                                if not math.isfinite(retry_seconds) or retry_seconds < 0:
-                                    raise ValueError("Invalid retry delay")
-                                delay = max(delay, retry_seconds)
-                            except ValueError:
-                                retry_at = parsers.published(retry)
-                                if retry_at is not None:
-                                    with suppress(ValueError, TypeError):
-                                        delay = max(
-                                            delay, (parse_time(retry_at) - self.now()).total_seconds()
-                                        )
-                    await asyncio.sleep(delay)
-        if error is None:
-            raise RuntimeError("Source fetch exhausted retries without a recorded failure")
-        raise error
+    async def _record_fetch(self, key: str, receipt: FetchEvidence) -> None:
+        async with self.poller.lock(self.poller.state_locks, key):
+            evidence = await self.poller.state(key)
+            evidence.update(receipt.storage_record())
+            await self.poller.save(key, evidence)
+
+    async def fetch(
+        self,
+        feed: HttpFetchPlan,
+        key: str,
+        *,
+        on_start: RequestStarted | None = None,
+    ) -> FetchResult:
+        checkpoint = await self.repo.get("ops.source_checkpoints", key)
+        cache = HttpCheckpointProjection.from_document(checkpoint)
+        return await SourceHttpReader(self._send_fetch, self._record_fetch, self.now).read(
+            feed, key, cache, on_start
+        )
 
     def _ingestion(self) -> SourceIngestion:
         return SourceIngestion(
@@ -250,12 +213,10 @@ class SourceService:
     async def poll_once(self, source_id, *, due_only=False, escalated=False):
         return await self.poller.poll_once(source_id, due_only=due_only, escalated=escalated)
 
-    def _filing_pattern(self):
-        """One compiled pattern of registry names per configuration version (S02 filter)."""
-        cached = getattr(self, "_filing_cache", None)
-        if cached and cached[0] == self.versions.config_version:
-            return cached[1]
-        registry = self.settings.load_config("registry")
+    @cached_property
+    def _filing_registry_pattern(self) -> re.Pattern[str]:
+        """One immutable registry-label pattern for the service's captured configuration."""
+        registry = SourceFilingRegistryView.from_document(self.settings.load_config("registry"))
         ambiguous = {"near", "world", "curve", "quant", "cow", "lit", "lighter", "plasma"}
         candidates = [
             "Curve Finance",
@@ -279,20 +240,19 @@ class SourceService:
             "World ID",
             "Tools for Humanity",
         ]
-        for token in registry.get("tokens", []):
-            candidates.extend([token.get("name", ""), token.get("symbol", "")])
-        for entity in registry.get("entities", []):
-            if entity.get("kind") == "REGULATOR":
+        for token in registry.tokens:
+            candidates.extend([token.name, token.symbol])
+        for entity in registry.entities:
+            if entity.kind == "REGULATOR":
                 continue
-            candidates.extend(entity.get("names", []) or [entity.get("name", "")])
-            candidates.extend(
-                alias for alias in entity.get("aliases", []) if '"' not in alias and " only " not in alias
-            )
+            candidates.extend(entity.names)
+            if not entity.names and entity.name is not None:
+                candidates.append(entity.name)
+            candidates.extend(alias for alias in entity.aliases if '"' not in alias and " only " not in alias)
         names = sorted(
             {n.casefold() for n in candidates if n and n.casefold() not in ambiguous}, key=len, reverse=True
         )
         pattern = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(n) for n in names) + r")(?!\w)")
-        self._filing_cache = (self.versions.config_version, pattern)
         return pattern
 
     def filing_matches(self, item: SourceText) -> bool:
@@ -301,7 +261,7 @@ class SourceService:
             return True
         if re.search(r"\bplasma\b", value) and re.search(r"\bxpl\b", value):
             return True
-        if self._filing_pattern().search(value):
+        if self._filing_registry_pattern.search(value):
             return True
         crypto_context = re.search(
             r"\b(?:crypto(?:currency|currencies|assets?)?|digital\s+assets?|bitcoin|ether(?:eum)?|blockchain|tokens?|tokenized|stablecoins?|defi|decentralized)\b",
