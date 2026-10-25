@@ -70,10 +70,15 @@ async def test_historical_web_row_keeps_absent_page_provenance_absent(tmp_path: 
 
 
 @pytest.mark.asyncio
-async def test_live_page_provenance_roundtrips_its_actual_receipt(tmp_path: Path) -> None:
+@pytest.mark.parametrize("content_type_header", ["text/html", None])
+async def test_live_page_provenance_roundtrips_its_actual_receipt(
+    tmp_path: Path, content_type_header: str | None
+) -> None:
     record = await historical_web_record(tmp_path)
     stamp = collection_clock("2026-10-25T02:00:00Z")
-    provenance = LivePageProvenance(mode="LIVE_RESPONSE", received_at=stamp)
+    provenance = LivePageProvenance(
+        mode="LIVE_RESPONSE", received_at=stamp, content_type_header=content_type_header
+    )
     item = WebEvidenceItem.model_validate(
         {
             **record,
@@ -82,6 +87,7 @@ async def test_live_page_provenance_roundtrips_its_actual_receipt(tmp_path: Path
     )
     assert isinstance(item.page_read_provenance, LivePageProvenance)
     assert item.page_read_provenance.received_at == stamp
+    assert item.page_read_provenance.content_type_header == content_type_header
     assert parse_source_item(item.storage_record()) == item
 
 
@@ -95,6 +101,7 @@ async def test_recorded_page_provenance_must_match_the_actual_stored_raw_digest(
         input_sha256="a" * 64,
         record_id="captured-body-1",
         captured_body_sha256=digest,
+        content_type_header="text/html",
     )
     item = WebEvidenceItem.model_validate(
         {
