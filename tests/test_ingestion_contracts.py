@@ -6,6 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 from pydantic import JsonValue, ValidationError
+from source_support import fixture_versions
 
 from tank.sources.capture_fetch import (
     CaptureRepository,
@@ -282,7 +283,7 @@ async def test_real_source_record_roundtrips_and_validates_processing_transition
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda request: httpx.Response(200, content=RSS))
     ) as http:
-        source = SourceService(repo, configuration, http=http)
+        source = SourceService(repo, configuration, http=http, versions=fixture_versions())
         assert (await source.poll_once("S30"))["items"] == 1
     [record] = await repo.list("ingest.source_items")
     item = parse_feed_source_item(record)
@@ -420,7 +421,7 @@ async def test_missing_provider_limits_prevents_source_service_start(tmp_path: P
     settings = MissingProviderLimits(data_dir=tmp_path, ops_progress_enabled=False)
     async with httpx.AsyncClient() as http:
         with pytest.raises(ValidationError, match="limits"):
-            SourceService(repo, settings, http=http)
+            SourceService(repo, settings, http=http, versions=fixture_versions())
     assert await repo.list("ops.jobs") == []
     assert await repo.list("ingest.source_items") == []
 
@@ -448,7 +449,7 @@ async def test_feed_duplicate_of_web_evidence_counts_feeds_without_replacing_ori
     original_raw = Path(original["raw_ref"])
     original_bytes = original_raw.read_bytes()
     async with httpx.AsyncClient() as http:
-        service = SourceService(repo, settings, http=http)
+        service = SourceService(repo, settings, http=http, versions=fixture_versions())
         for external_id in ("feed-first", "feed-repeat"):
             incoming = captured(
                 service,
@@ -486,7 +487,12 @@ async def test_duplicate_ingestion_cannot_delete_foreign_raw_evidence(tmp_path: 
 
     repo = MemoryRepository()
     async with httpx.AsyncClient() as http:
-        service = SourceService(repo, Settings(data_dir=tmp_path, ops_progress_enabled=False), http=http)
+        service = SourceService(
+            repo,
+            Settings(data_dir=tmp_path, ops_progress_enabled=False),
+            http=http,
+            versions=fixture_versions(),
+        )
         first = captured(service, "S30", {"external_id": "first", "title": "Title", "text": "Same facts"})
         await service.ingest(service.sources["S30"], first)
         foreign = tmp_path / "unrelated-evidence"
@@ -516,7 +522,12 @@ async def test_ingestion_cannot_invent_a_missing_capture_clock(tmp_path: Path) -
 
     repo = MemoryRepository()
     async with httpx.AsyncClient() as http:
-        service = SourceService(repo, Settings(data_dir=tmp_path, ops_progress_enabled=False), http=http)
+        service = SourceService(
+            repo,
+            Settings(data_dir=tmp_path, ops_progress_enabled=False),
+            http=http,
+            versions=fixture_versions(),
+        )
         incoming = captured(service, "S30", {"external_id": "entry", "title": "Title", "text": "Facts"})
         del incoming["observed_at"]
         with pytest.raises(ValidationError, match="observed_at"):
@@ -578,7 +589,12 @@ async def test_ingestion_requires_an_aware_capture_clock(tmp_path: Path, clock: 
 
     repo = MemoryRepository()
     async with httpx.AsyncClient() as http:
-        service = SourceService(repo, Settings(data_dir=tmp_path, ops_progress_enabled=False), http=http)
+        service = SourceService(
+            repo,
+            Settings(data_dir=tmp_path, ops_progress_enabled=False),
+            http=http,
+            versions=fixture_versions(),
+        )
         incoming = captured(service, "S30", {"external_id": "clock-test", "title": "Title", "text": "Facts"})
         incoming["observed_at"] = clock
         with pytest.raises(ValidationError, match="observed_at"):
@@ -632,3 +648,135 @@ def test_explicit_source_budget_numbers_keep_their_declared_json_form() -> None:
     feeds[0]["interval_s"] = 0.5
     reparsed = SourceDefinition.model_validate(source)
     assert canonical_json(reparsed.model_dump(mode="json", exclude_unset=True)) == canonical_json(source)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_budget", [None, 6])
+async def test_source_service_rejects_missing_or_excessive_known_provider_budget(
+    tmp_path: Path, bad_budget: int | None
+) -> None:
+    from tank.settings import Settings
+    from tank.sources import SourceService
+
+    class InvalidProviderBudget(Settings):
+        def load_config(self, name: str) -> dict[str, JsonValue]:
+            configuration = super().load_config(name)
+            if name == "api_limits":
+                rules = configuration["limits"]
+                assert isinstance(rules, list)
+                sec = next(rule for rule in rules if isinstance(rule, dict) and rule["provider"] == "sec.gov")
+                assert isinstance(sec, dict)
+                if bad_budget is None:
+                    del sec["tank_max_requests_per_s"]
+                else:
+                    sec["tank_max_requests_per_s"] = bad_budget
+            return configuration
+
+    repo = MemoryRepository()
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(ValidationError, match="tank_max_requests_per_s|half the documented"):
+            SourceService(
+                repo, InvalidProviderBudget(data_dir=tmp_path), http=http, versions=fixture_versions()
+            )
+    assert await repo.list("ops.jobs") == []
+    assert await repo.list("ingest.source_items") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider,missing_fields,assigned_field",
+    [
+        ("sec.gov", ("documented_requests_per_s",), "tank_max_requests_per_s"),
+        ("binance.spot", ("documented_weight_per_min",), "tank_max_weight_per_min"),
+        ("binance.usdm", ("documented_weight_per_min",), "tank_max_weight_per_min"),
+        ("hyperliquid", ("documented_weight_per_min",), "tank_max_weight_per_min"),
+        ("etherscan", ("documented_requests_per_s",), "tank_max_requests_per_s"),
+        ("etherscan", ("documented_requests_per_day",), "tank_max_requests_per_day"),
+        ("etherscan", ("tank_max_requests_per_day",), None),
+        ("etherscan", ("documented_requests_per_day", "tank_max_requests_per_day"), None),
+    ],
+)
+async def test_required_documented_provider_capacity_cannot_be_omitted(
+    tmp_path: Path, provider: str, missing_fields: tuple[str, ...], assigned_field: str | None
+) -> None:
+    from tank.settings import Settings
+    from tank.sources import SourceService
+
+    class MissingDocumentedCapacity(Settings):
+        def load_config(self, name: str) -> dict[str, JsonValue]:
+            configuration = super().load_config(name)
+            if name == "api_limits":
+                rows = configuration["limits"]
+                assert isinstance(rows, list)
+                rule = next(row for row in rows if isinstance(row, dict) and row["provider"] == provider)
+                assert isinstance(rule, dict)
+                for field in missing_fields:
+                    del rule[field]
+                if assigned_field is not None:
+                    rule[assigned_field] = 1_000_000
+            return configuration
+
+    repo = MemoryRepository()
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(ValidationError):
+            SourceService(
+                repo, MissingDocumentedCapacity(data_dir=tmp_path), http=http, versions=fixture_versions()
+            )
+    assert await repo.list("ops.jobs") == []
+    assert await repo.list("ingest.source_items") == []
+
+
+def test_coinbase_and_kraken_keep_uncaptured_documented_capacity_explicit() -> None:
+    from tank.contracts.sources import SourceApiLimitsConfiguration, SourceUncapturedRpsBudget
+    from tank.settings import Settings
+
+    configuration = SourceApiLimitsConfiguration.model_validate(Settings().load_config("api_limits"))
+    rules = [rule for rule in configuration.limits if isinstance(rule, SourceUncapturedRpsBudget)]
+    assert {rule.provider for rule in rules} == {"coinbase", "kraken"}
+    for rule in rules:
+        assert rule.documented_requests_per_s is None
+        assert "documented_requests_per_s" not in rule.model_dump(mode="json", exclude_unset=True)
+        assert rule.tank_max_requests_per_s > 0 and rule.basis
+
+
+@pytest.mark.parametrize("key_policy", [0, True])
+def test_search_budget_does_not_coerce_boolean_access_policy(key_policy: int | bool) -> None:
+    from tank.contracts.sources import SourceApiLimitsConfiguration
+    from tank.settings import Settings
+
+    configuration = Settings().load_config("api_limits")
+    rules = configuration["limits"]
+    assert isinstance(rules, list)
+    search = next(rule for rule in rules if isinstance(rule, dict) and rule["provider"] == "duckduckgo")
+    assert isinstance(search, dict)
+    search["api_key_required"] = key_policy
+    with pytest.raises(ValidationError):
+        SourceApiLimitsConfiguration.model_validate(configuration)
+
+
+@pytest.mark.asyncio
+async def test_source_ingestion_persists_explicit_version_facet_not_raw_settings(tmp_path: Path) -> None:
+    from test_sources import captured
+
+    from tank.contracts.provenance import ResolvedVersionIdentity
+    from tank.contracts.source_items import ArticleSourceItem, SourceItemDocument
+    from tank.settings import Settings
+    from tank.sources import SourceService
+
+    settings = Settings(data_dir=tmp_path, ops_progress_enabled=False)
+    with pytest.raises(ValueError, match="resolve_versions"):
+        settings.require_versions()
+    versions = ResolvedVersionIdentity(
+        config_version="declared-source-config", code_version="declared-source-code"
+    )
+    repo = MemoryRepository()
+    async with httpx.AsyncClient() as http:
+        source = SourceService(repo, settings, versions=versions, http=http)
+        wire = captured(source, "S30", {"external_id": "versioned", "title": "Title", "text": "Facts"})
+        record = await source.ingest(source.sources["S30"], wire)
+    item = SourceItemDocument.model_validate(record).root
+    assert isinstance(item, ArticleSourceItem)
+    assert item.config_version == versions.config_version
+    assert item.code_version == versions.code_version
+    assert item.discovery_config_version == versions.config_version
+    assert item.discovery_code_version == versions.code_version

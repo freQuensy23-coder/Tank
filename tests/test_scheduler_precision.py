@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from source_support import fixture_versions
 
 from tank.scheduler import Scheduler
 from tank.settings import Settings
@@ -37,7 +38,14 @@ def test_selected_event_anchor_preserves_provenance(field, extra, kind, precisio
 async def test_tick_preserves_source_milestone_and_offset_job_precision() -> None:
     repo = MemoryRepository()
     now = parse_time(STAMP)
-    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     scheduler.launch = lambda *args: None
     scheduler.expire_calls = AsyncMock()
     scheduler.demote = AsyncMock()
@@ -90,6 +98,7 @@ async def test_reaction_windows_inherit_anchor_and_capture_clock_is_collection(
         market,
         None,
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     anchor = {"type": "T1", "ts": STAMP}
     if precision:
@@ -119,7 +128,14 @@ async def test_retention_json_records_clock_and_offset_cutoffs(tmp_path: Path) -
     repo = SimpleNamespace(
         prune_market=AsyncMock(), prune_jobs=AsyncMock(), get=AsyncMock(return_value=None), put=AsyncMock()
     )
-    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     await scheduler.retention(parse_time(STAMP), tmp_path)
     metadata = json.loads((tmp_path / "RETENTION_COMPLETE.json").read_text())
     assert metadata["completed_at_prec"] == "COLLECTION_ONLY"
@@ -136,6 +152,7 @@ async def test_legacy_condition_cutoff_stays_explicit_unknown() -> None:
         None,
         SimpleNamespace(assess=AsyncMock(return_value={})),
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     await repo.put("evt.events", "e", {"event_id": "e"})
     await repo.put(
@@ -169,6 +186,7 @@ async def test_provenance_only_addition_does_not_create_late_data_revision(
         SimpleNamespace(snapshot=AsyncMock(return_value={})),
         None,
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     original = await scheduler.reaction_capture(
         {

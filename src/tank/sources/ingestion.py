@@ -8,6 +8,7 @@ from pydantic import Field, JsonValue
 
 from tank.contracts import DomainModel
 from tank.contracts.progress import SourceProgressSink
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.repository import DocumentStore, Repository
 from tank.contracts.source_items import (
     SOURCE_ITEMS,
@@ -45,11 +46,6 @@ class RawCaptureStore(Protocol):
     def discard(self, item: CapturedItem) -> None: ...
 
 
-class IngestionVersions(DomainModel):
-    config_version: str = Field(min_length=1)
-    code_version: str = Field(min_length=1)
-
-
 class EmptyContentIdentity(DomainModel):
     source_id: str
     external_id: str
@@ -60,13 +56,13 @@ class SourceIngestion:
     def __init__(
         self,
         store: IngestionStore,
-        versions: IngestionVersions,
+        versions: ResolvedVersionIdentity,
         accounts: Mapping[str, SourceAccount],
         raw: RawCaptureStore,
         progress: SourceProgressSink,
     ) -> None:
         self.store = store
-        self.versions = versions
+        self.versions = ResolvedVersionIdentity.model_validate(versions)
         self.accounts = accounts
         self.raw = raw
         self.progress = progress

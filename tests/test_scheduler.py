@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from source_support import fixture_versions
 
 from tank.scheduler import Scheduler
 from tank.settings import Settings
@@ -18,7 +19,14 @@ async def test_recursive_hourly_persistence_does_not_count_same_window_twice() -
     truth = SimpleNamespace(
         assess=AsyncMock(return_value={"spot": {"W1H": {"direction": "BUY", "cw_breadth": {"buy": 0.8}}}})
     )
-    scheduler = Scheduler(repo, Settings(), None, truth, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        truth,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     await repo.put("evt.events", "e", {"event_id": "e"})
     await repo.put(
         "ana.watch_conditions",
@@ -66,7 +74,14 @@ async def test_tracked_event_closes_after_seven_days_without_news() -> None:
         "e",
         {"event_id": "e", "lifecycle": "TRACKED", "known_to_us_at": iso(now - timedelta(days=8))},
     )
-    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     await scheduler.lifecycle(now)
     assert (await repo.get("evt.events", "e"))["lifecycle"] == "CLOSED"
 
@@ -89,6 +104,7 @@ async def test_pre_event_capture_uses_pre_window_and_is_immutable(monkeypatch: p
         market,
         None,
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
 
     payload = {
@@ -135,6 +151,7 @@ async def test_missing_market_value_never_fires_not_equal_condition() -> None:
         None,
         SimpleNamespace(assess=AsyncMock(return_value={})),
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     await scheduler.eval_conditions({"cutoff": iso(now)})
     assert (await repo.get("ana.watch_conditions", "c"))["status"] == "ARMED"
@@ -154,7 +171,14 @@ async def test_cooldown_requires_all_analysis_and_benchmark_checkpoints() -> Non
             "analysis_set": ["token:T"],
         },
     )
-    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     for token in ["token:T", "bitcoin:BTC"]:
         await repo.put(
             "out.reaction_checkpoints",
@@ -190,7 +214,14 @@ async def test_failed_backup_never_prunes_market(monkeypatch: pytest.MonkeyPatch
         data_dir=tmp_path / "data",
         market_retention_days=90,
     )
-    scheduler = Scheduler(repo, settings, None, None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        settings,
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     with pytest.raises(RuntimeError, match="pg_dump failed"):
         await scheduler.maintenance(utcnow().replace(hour=8))
     repo.prune_market.assert_not_called()
@@ -230,7 +261,12 @@ async def test_planned_backup_copies_bundles_and_dumps_only(
         config_dir=config,
     )
     result = await Scheduler(
-        repo, settings, None, None, thresholds=Settings(_env_file=None).thresholds()
+        repo,
+        settings,
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     ).maintenance(utcnow(), force=True, prune=False)
     final = Path(result["path"])
     manifest = verify_backup(final)
@@ -247,9 +283,14 @@ async def test_heartbeat_preserves_unknown_llm_cost() -> None:
     repo = MemoryRepository()
     await repo.put("ops.llm_usage", "unknown", {"at": clock_iso(), "cost_usd": None})
     await repo.put("ops.llm_usage", "known", {"at": clock_iso(), "cost_usd": "1.25"})
-    await Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds()).heartbeat(
-        utcnow()
-    )
+    await Scheduler(
+        repo,
+        Settings(),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    ).heartbeat(utcnow())
     notices = await repo.list("out.ops_notices")
     assert "known subtotal $1.25; unknown cost records=1" in notices[0]["text"]
 
@@ -308,9 +349,14 @@ async def test_relocated_backup_recovers_source_web_replay_config_logs_and_both_
     )
     now = utcnow().replace(hour=8)
     legacy_full_backup_fixture(settings, now)
-    await Scheduler(repo, settings, None, None, thresholds=Settings(_env_file=None).thresholds()).maintenance(
-        now
-    )
+    await Scheduler(
+        repo,
+        settings,
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    ).maintenance(now)
     final = backup / f"tank-{now.date()}"
     verify_backup(final)
     assert (final / "tank.dump").read_bytes() == b"dump tank"
@@ -387,7 +433,12 @@ async def test_real_generated_conditions_use_two_closed_nonoverlapping_hours(
         }
 
     scheduler = Scheduler(
-        repo, settings, None, SimpleNamespace(assess=assess), thresholds=Settings(_env_file=None).thresholds()
+        repo,
+        settings,
+        None,
+        SimpleNamespace(assess=assess),
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     upgrade = next(c for c in conditions if c["role"] == "UPGRADE")
     await scheduler.eval_conditions({"cutoff": iso(created.replace(hour=12, minute=7))})
@@ -411,7 +462,14 @@ async def test_real_generated_fatal_condition_fires_next_minute_without_hour_thr
 ) -> None:
     repo, settings, created, conditions = await real_decision_watch_conditions(monkeypatch, tmp_path)
     truth = SimpleNamespace(assess=AsyncMock(return_value={"relative": {"close_1h_price": "10"}}))
-    scheduler = Scheduler(repo, settings, None, truth, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        settings,
+        None,
+        truth,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     fatal = next(c for c in conditions if c["expr"].get("metric") == "event.contradiction_fatal")
     await scheduler.eval_conditions({"cutoff": iso(created.replace(hour=12, minute=0))})
     assert (await repo.get("ana.watch_conditions", fatal["cond_id"]))["status"] == "ARMED"
@@ -477,6 +535,7 @@ async def test_post72_reaction_uses_cumulative_event_derivatives(monkeypatch: py
         market,
         None,
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     await scheduler.reaction_capture(
         {
@@ -502,7 +561,14 @@ async def test_automatic_scout_hooks_dedup_and_ignore_low_confidence_or_single_u
     repo = MemoryRepository()
     now = utcnow()
     settings = Settings(data_dir=tmp_path)
-    scheduler = Scheduler(repo, settings, None, None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        settings,
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     for token, confidence in [("T", "HIGH"), ("LOW", "LOW")]:
         for i, hours in enumerate([25, 12, 0]):
             await repo.put(
@@ -564,7 +630,12 @@ async def test_scout_earlier_primary_discovery_and_contradictions_without_truth(
     repo = MemoryRepository()
     now = utcnow()
     scheduler = Scheduler(
-        repo, Settings(data_dir=tmp_path), None, None, thresholds=Settings(_env_file=None).thresholds()
+        repo,
+        Settings(data_dir=tmp_path),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     await repo.put("evt.events", "e", {"event_id": "e", "known_to_us_at": iso(now), "public_at": iso(now)})
     for key, klass, sid, published, observed in [
@@ -629,6 +700,7 @@ async def test_reaction_cpu_computation_does_not_block_async_heartbeat(
         SimpleNamespace(snapshot=AsyncMock(return_value={})),
         None,
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
 
     async def heartbeat() -> None:
@@ -670,6 +742,7 @@ async def test_reaction_revision_appends_reasoned_frozen_history_without_duplica
         SimpleNamespace(snapshot=AsyncMock(return_value={})),
         None,
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     values = [0.01, 0.02]
 
@@ -727,7 +800,14 @@ async def test_call_expiry_sets_durable_marker_before_message_and_does_not_exit(
             "opened_at": iso(now - timedelta(days=8)),
         },
     )
-    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     await scheduler.expire_calls(now)
     event = await repo.get("evt.events", "e")
     call = await repo.get("ana.calls", "c")
@@ -752,7 +832,12 @@ async def test_heartbeat_reports_actual_queued_and_running_analysis_backlog(tmp_
     await repo.enqueue("DELIVER", {}, "delivery")
     await repo.enqueue("MAINTENANCE", {}, "maintenance")
     await Scheduler(
-        repo, Settings(data_dir=tmp_path), None, None, thresholds=Settings(_env_file=None).thresholds()
+        repo,
+        Settings(data_dir=tmp_path),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     ).heartbeat(now)
     notice = (await repo.list("out.ops_notices"))[0]
     assert notice["analysis_backlog"] == {"queued": 2, "running": 1}
@@ -812,7 +897,12 @@ async def test_backup_excludes_fake_auth_secrets_and_browser_state_in_every_evid
         codex_auth_path=auth,
     )
     result = await Scheduler(
-        repo, settings, None, None, thresholds=Settings(_env_file=None).thresholds()
+        repo,
+        settings,
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     ).maintenance(now, force=True, prune=False)
     backup = Path(result["path"])
     manifest = verify_backup(backup)
@@ -865,7 +955,14 @@ async def test_tick_does_not_wait_for_backup() -> None:
     import asyncio
 
     repo = MemoryRepository()
-    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     entered = asyncio.Event()
     release = asyncio.Event()
 
@@ -890,7 +987,14 @@ async def test_tick_does_not_wait_for_backup() -> None:
 @pytest.mark.asyncio
 async def test_milestone_payload_contains_only_verified_outcome_and_quotes() -> None:
     repo = MemoryRepository()
-    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     event = {
         "event_id": "e",
         "milestone_resolutions": [
@@ -942,7 +1046,14 @@ async def test_reaction_future_expiry_and_completed_checkpoint_not_recreated() -
         {"event_id": "e", "token_id": "bitcoin:BTC", "checkpoint": "PRE_1H", "revision": 1},
         immutable=True,
     )
-    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     scheduler.detect_scout_hooks = AsyncMock()
     scheduler.heartbeat = AsyncMock()
     scheduler.maintenance = AsyncMock()
@@ -976,6 +1087,7 @@ async def test_scheduler_honors_configured_call_expiry() -> None:
         thresholds=Settings(_env_file=None)
         .thresholds()
         .model_copy(update={"call_expiry_days": 2, "hot_token_cap": 1}),
+        versions=fixture_versions(),
     )
     await repo.put("evt.events", "e", {"event_id": "e"})
     await repo.put(
@@ -1005,16 +1117,31 @@ async def test_reaction_pack_ulid_stable_for_group_across_restart_and_legacy() -
         immutable=True,
     )
     first = await Scheduler(
-        repo, settings, None, None, thresholds=Settings(_env_file=None).thresholds()
+        repo,
+        settings,
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     ).reaction_pack_id("e", "t")
     second = await Scheduler(
-        repo, settings, None, None, thresholds=Settings(_env_file=None).thresholds()
+        repo,
+        settings,
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     ).reaction_pack_id("e", "t")
     assert first == second and first.startswith("RWP-") and len(first) == 30
     assert (await repo.get("out.reaction_checkpoints", "legacy"))["rwp_id"] == "event:token"
     assert (
         await Scheduler(
-            repo, settings, None, None, thresholds=Settings(_env_file=None).thresholds()
+            repo,
+            settings,
+            None,
+            None,
+            thresholds=Settings(_env_file=None).thresholds(),
+            versions=fixture_versions(),
         ).reaction_pack_id("e", "other")
         != first
     )
@@ -1023,7 +1150,14 @@ async def test_reaction_pack_ulid_stable_for_group_across_restart_and_legacy() -
 @pytest.mark.asyncio
 async def test_reaction_targets_use_current_analysis_map_not_historical_edges() -> None:
     repo = MemoryRepository()
-    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     await repo.put(
         "evt.beneficiary_maps", "old", {"event_id": "e", "map_version": 1, "analysis_set": ["old"]}
     )
@@ -1101,6 +1235,7 @@ async def test_reaction_measurement_releases_database_scope_and_duplicate_commit
         SimpleNamespace(snapshot=snapshot),
         None,
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     payload = {
         "event_id": "e",
@@ -1122,7 +1257,14 @@ async def test_reaction_creation_registers_only_five_post_jobs_and_starts_pre_wi
     repo = MemoryRepository()
     now = utcnow()
     event = {"event_id": "new-major", "public_at": iso(now), "public_at_prec": "EXACT"}
-    scheduler = Scheduler(repo, Settings(), object(), None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        object(),
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     scheduler.latest_assessment = AsyncMock(return_value={"class": "MAJOR"})
     scheduler.analysis_tokens = AsyncMock(return_value={"token:T"})
     started, release = asyncio.Event(), asyncio.Event()
@@ -1171,7 +1313,14 @@ async def test_reaction_pre_capture_restart_resumes_only_missing_immutable_rows(
     event = {"event_id": "resume-major", "public_at": iso(now), "public_at_prec": "EXACT"}
     settings = Settings(config_version="config", code_version="code")
     market = SimpleNamespace(snapshot=AsyncMock(return_value={}))
-    first = Scheduler(repo, settings, market, None, thresholds=Settings(_env_file=None).thresholds())
+    first = Scheduler(
+        repo,
+        settings,
+        market,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     first.latest_assessment = AsyncMock(return_value={"class": "MAJOR"})
     first.analysis_tokens = AsyncMock(return_value={"token:T"})
     original = await first.reaction_capture(
@@ -1184,7 +1333,14 @@ async def test_reaction_pre_capture_restart_resumes_only_missing_immutable_rows(
         }
     )
     await first.close()
-    restarted = Scheduler(repo, settings, market, None, thresholds=Settings(_env_file=None).thresholds())
+    restarted = Scheduler(
+        repo,
+        settings,
+        market,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     restarted.latest_assessment = AsyncMock(return_value={"class": "MAJOR"})
     restarted.analysis_tokens = AsyncMock(return_value={"token:T"})
     try:
@@ -1205,7 +1361,14 @@ async def test_reaction_pre_error_retries_missing_windows_and_close_cancels_owne
 
     repo = MemoryRepository()
     event = {"event_id": "e", "public_at": clock_iso(), "public_at_prec": "EXACT"}
-    scheduler = Scheduler(repo, Settings(), object(), None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        object(),
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     scheduler.latest_assessment = AsyncMock(return_value={"class": "MAJOR"})
     scheduler.analysis_tokens = AsyncMock(return_value={"T"})
     scheduler.reaction_capture = AsyncMock(side_effect=RuntimeError("synthetic capture failure"))
@@ -1232,7 +1395,12 @@ async def test_dynamic_scheduler_work_does_not_retain_completed_task_frames() ->
     import asyncio
 
     scheduler = Scheduler(
-        MemoryRepository(), Settings(), None, None, thresholds=Settings(_env_file=None).thresholds()
+        MemoryRepository(),
+        Settings(),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     operation = AsyncMock()
     for number in range(200):
@@ -1249,7 +1417,12 @@ async def test_older_completion_callback_preserves_same_name_replacement_until_s
     import asyncio
 
     scheduler = Scheduler(
-        MemoryRepository(), Settings(), None, None, thresholds=Settings(_env_file=None).thresholds()
+        MemoryRepository(),
+        Settings(),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     started = asyncio.Event()
 
@@ -1294,7 +1467,14 @@ async def test_rearmed_market_watch_needs_a_new_window_and_a_clear() -> None:
     )
     price = {"relative": {"close_1h_price": "9"}}
     truth = SimpleNamespace(assess=AsyncMock(side_effect=lambda *a, **k: price))
-    scheduler = Scheduler(repo, Settings(), None, truth, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        truth,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
 
     await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=10))})
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "ARMED"
@@ -1341,6 +1521,7 @@ async def test_rearmed_instant_watch_fires_again_only_after_it_cleared() -> None
         None,
         SimpleNamespace(assess=AsyncMock(return_value={})),
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     await scheduler.eval_conditions({"cutoff": iso(now + timedelta(minutes=1))})
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "ARMED"
@@ -1389,7 +1570,14 @@ async def test_rearmed_persistent_watch_clears_only_on_an_observed_false_window(
         return {"spot": {"W1H": {"direction": "SELL" if hour in sell_hours else "BUY"}}}
 
     truth = SimpleNamespace(assess=AsyncMock(side_effect=by_window))
-    scheduler = Scheduler(repo, Settings(), None, truth, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        truth,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     for minutes in (5, 55, 115, 175):
         await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=minutes))})
         row = await repo.get("ana.watch_conditions", "c2")
@@ -1438,7 +1626,14 @@ async def test_late_data_revisions_coalesce_to_one_queued_job_per_checkpoint() -
                 "observed_at": iso(now),
             }
 
-    scheduler = Scheduler(repo, Settings(), Market(), None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        Market(),
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     for _ in range(3):
         await scheduler.detect_late_data(now)
     jobs = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
@@ -1482,7 +1677,14 @@ async def test_late_revision_is_deferred_so_following_late_completions_fold_into
                 "observed_at": iso(now),
             }
 
-    scheduler = Scheduler(repo, Settings(), Market(), None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        Market(),
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     for minute in range(0, 30, 5):
         await scheduler.detect_late_data(now + timedelta(minutes=minute))
     (job,) = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
@@ -1503,7 +1705,14 @@ async def test_queued_duplicate_late_revision_is_skipped_at_run_time() -> None:
         "REACTION_CAPTURE", dict(payload, change_id="newer"), "reaction-late:x:PRE_4H", priority=2
     )
     market = SimpleNamespace(snapshot=AsyncMock(side_effect=AssertionError("must not measure")))
-    scheduler = Scheduler(repo, Settings(), market, None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        market,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     result = await scheduler.reaction_capture(dict(payload, change_id="older"))
     assert result == {"coalesced_into": queued["job_id"]}
     market.snapshot.assert_not_called()
@@ -1519,7 +1728,12 @@ async def test_reaction_measurements_are_limited_and_extra_jobs_requeue() -> Non
     from tank.scheduler import REACTION_MEASUREMENT_SLOTS
 
     scheduler = Scheduler(
-        MemoryRepository(), Settings(), None, None, thresholds=Settings(_env_file=None).thresholds()
+        MemoryRepository(),
+        Settings(),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     release = asyncio.Event()
     started = []
@@ -1588,6 +1802,7 @@ async def test_eval_conditions_budget_stops_cleanly_and_rotates(monkeypatch: pyt
         None,
         SimpleNamespace(assess=AsyncMock(return_value={})),
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     await scheduler.eval_conditions({"cutoff": iso(now)})
     for cond_id in ("exit", "old-upgrade", "new-upgrade"):
@@ -1641,7 +1856,12 @@ async def test_late_data_after_a_window_end_does_not_revise_that_window() -> Non
             }
 
     await Scheduler(
-        repo, Settings(), Market(), None, thresholds=Settings(_env_file=None).thresholds()
+        repo,
+        Settings(),
+        Market(),
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     ).detect_late_data(now)
     jobs = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
     assert [job["payload"]["checkpoint"] for job in jobs] == ["POST_1H"]
@@ -1700,6 +1920,7 @@ async def test_eval_conditions_progresses_when_one_market_read_outlasts_the_budg
         None,
         SimpleNamespace(condition_values=condition_values),
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     await asyncio.wait_for(scheduler.eval_conditions({"cutoff": iso(now)}), 2)
     assert (await repo.get("ana.watch_conditions", "fatal")).get("last_evaluated_at")
@@ -1753,6 +1974,7 @@ async def test_eval_conditions_per_condition_budget_and_explicit_outcomes(
         None,
         SimpleNamespace(condition_values=condition_values),
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     outcomes = await asyncio.wait_for(scheduler.eval_conditions({"cutoff": iso(now)}), 3)
     assert outcomes["deferred"] == [{"cond_id": "slow", "reason": "READ_TIMEOUT"}]
@@ -1788,6 +2010,7 @@ async def test_pre_windows_each_read_only_their_checkpoint_window(monkeypatch: p
         Market(),
         None,
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     for label in ("PRE_24H", "PRE_4H", "PRE_1H"):
         payload = {
@@ -1823,7 +2046,14 @@ async def test_latest_revision_is_read_as_metadata_not_the_whole_row() -> None:
     }
     await repo.put("out.reaction_checkpoints", "e:t:PRE_1H:1", dict(row, revision=1))
     await repo.put("out.reaction_checkpoints", "e:t:PRE_1H:2", row)
-    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
 
     async def no_full_get(collection, key) -> None:
         raise AssertionError("full row read: " + key)
@@ -1840,7 +2070,14 @@ async def test_failed_capture_job_of_this_event_records_a_gap_and_other_events_j
     repo = MemoryRepository()
     now = utcnow()
     event = {"event_id": "evt-1", "public_at": iso(now - timedelta(hours=2)), "public_at_prec": "EXACT"}
-    scheduler = Scheduler(repo, Settings(), object(), None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        object(),
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     scheduler.latest_assessment = AsyncMock(return_value={"class": "MAJOR"})
     scheduler.analysis_tokens = AsyncMock(return_value={"token:T"})
     scheduler.reaction_capture = AsyncMock()
@@ -1859,3 +2096,28 @@ async def test_failed_capture_job_of_this_event_records_a_gap_and_other_events_j
         assert len(await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})) == 6
     finally:
         await scheduler.close()
+
+
+@pytest.mark.asyncio
+async def test_scout_write_uses_required_version_facet_with_a_custom_fixture_root(tmp_path: Path) -> None:
+    from tank.contracts.provenance import ResolvedVersionIdentity
+
+    settings = Settings(config_dir=tmp_path / "no-runtime-config", data_dir=tmp_path)
+    versions = ResolvedVersionIdentity(
+        config_version="declared-scout-config", code_version="declared-scout-code"
+    )
+    repo = MemoryRepository()
+    scheduler = Scheduler(repo, settings, None, None, versions=versions, thresholds=Settings().thresholds())
+    result = await scheduler.scout_proposal(
+        "UNCLASSIFIED_EVENT",
+        "Synthetic fixture concept",
+        ["fixture:source-evidence"],
+        "An isolated controlled observation",
+        utcnow(),
+    )
+    assert result is not None
+    stored = await repo.get("scout.expansion_proposals", result["prp_id"])
+    assert stored is not None
+    assert stored["config_version"] == versions.config_version
+    assert stored["code_version"] == versions.code_version
+    assert len(await repo.list("ops.jobs", filters={"type": "SCOUT_REVIEW"})) == 1
