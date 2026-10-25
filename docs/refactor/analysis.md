@@ -264,3 +264,28 @@ The current-minute synthetic refresh helper preserves requested minute-bound cut
 supply_truth now propagates actual fundamentals.ts timestamp provenance into as_of. COLLECTION_ONLY and explicit unknown precision/reasons remain distinct instead of a formatted ISO string becoming an intraday accuracy claim; receipt clocks and cadence are not substituted. A real calculator regression checks both states.
 
 Broad baseline/freshness migration is isolated under immutable stash efc063547cbd58a42aaad677dfc0b6aad0ccf0d1 while this compatible repair is qualified.248 affected unit cases pass4.76s and35 targeted current-minute/holders cases pass2.15s. Actual integration qualification follows on the immutable committed repair.
+
+### Required reaction scheduling capability (activation cohort)
+
+`EventToolService.__init__.scheduler` is now required and implements the narrow
+`ReactionScheduling.ensure_event_reactions(event_id)` command. Successful assessment
+dispatch always issues that command; the former `scheduler is not None` branch
+silently discarded required scheduling work. Runtime composition and operational
+replay must supply the actual Scheduler with captured policy and own its cleanup.
+This activation is held until those constructor companions are integrated.
+
+`AssessmentFreeDiagnosticScheduling` is an explicit restricted capability for a
+verified recorded diagnostic whose complete call catalog contains no assessment.
+`diagnostic_call_catalog` validates required call identities/tools and uniqueness,
+and binds the entire captured catalog (including arguments) to a digest alongside
+its verified input digest. Artifact verification remains the recorded reader's
+responsibility; a caller-supplied digest alone does not establish artifact trust.
+Dispatch refuses `set_assessment` before schema lookup, storage access or mutation
+when this capability is present. It cannot silently absorb a scheduling command.
+No live request, quota admission or clock sleep belongs to this capability.
+
+Three behavior cases prove that declared assessments prohibit this mode, changes
+to captured arguments change the catalog binding, and forbidden assessment cannot
+reach its implementation or change persisted event/assessment state. The named
+contract passes strict mypy; Ruff/format pass. Actual scheduling effects and replay
+reader qualification belong to the companion cohort, not this initial checkpoint.
