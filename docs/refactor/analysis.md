@@ -435,3 +435,10 @@ freshness allowance or an alternative venue fabricated for the fixture.
 All132 unit cases in test_replay/test_fixture_reference/test_market_snapshot_comparators
 pass in3.24s with zero skips. Ruff/format pass. This companion descends clean26862f39;
 held HTTP caller work remains isolated at immutable e68ab1f1dbe749b934182165618791eb811d85b2.
+
+The separate replay_ingest_policy operational fixture now explicitly captures its
+complete known Thresholds as well. Both actual memory/PostgreSQL cases pass in1.94s
+with zero skips, retaining all original classifier-output reset, policy rederivation
+and imported-source assertions. This is an authored fixture change; no production
+fallback or frozen data is altered. This follow-up remains a clean fd077 descendant
+without held HTTP ancestry.
