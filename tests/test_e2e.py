@@ -206,8 +206,8 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
                 "external_id": "one",
                 "url": "https://synthetic.invalid/feed/one",
                 "feed": "synthetic-integration",
-                "discovery_config_version": settings.config_version,
-                "discovery_code_version": settings.code_version,
+                "discovery_config_version": versions.config_version,
+                "discovery_code_version": versions.code_version,
                 "title": "Synthetic",
                 "text": "Synthetic crypto T approval",
                 "published_at": "2026-10-17T00:00:00Z",
@@ -1258,8 +1258,8 @@ async def test_runtime_autonomous_source_to_telegram(
                         "status": "FAILED",
                         "reason": "SYNTHETIC_CAPTURE_INPUTS_UNAVAILABLE",
                         "result": None,
-                        "config_version": settings.config_version,
-                        "code_version": settings.code_version,
+                        "config_version": versions.config_version,
+                        "code_version": versions.code_version,
                     },
                 )
 
