@@ -1,5 +1,5 @@
 {
-  "scope": "Completed bootstrap/registry/historical-source/context projections/OpenMA families with exact listed retained sites; remaining full session/runtime/context-reference maps/defaults remain work",
+  "scope": "Completed bootstrap/registry/historical-source/context projections/OpenMA families with exact retained sites; full session and runtime job-domain migrations remain work",
   "entries": [
     {
       "sites": [
@@ -903,6 +903,277 @@
       "validation": [
         "test_persistence_guard_refuses_an_unrecorded_pointer_before_store_write",
         "test_send_writer_revalidates_owner_after_reloading_under_lock"
+      ]
+    },
+    {
+      "ledger_key": "context-reference-facts",
+      "sites": [
+        {
+          "path": "src/tank/agents/context_records.py",
+          "symbol": "DocumentReference",
+          "line": 11
+        },
+        {
+          "path": "src/tank/agents/context_records.py",
+          "symbol": "EventReference",
+          "line": 18
+        },
+        {
+          "path": "src/tank/agents/context_records.py",
+          "symbol": "ClaimReference",
+          "line": 23
+        },
+        {
+          "path": "src/tank/agents/context_records.py",
+          "symbol": "ConditionReference",
+          "line": 33
+        },
+        {
+          "path": "src/tank/agents/context_records.py",
+          "symbol": "ProposalReference",
+          "line": 41
+        },
+        {
+          "path": "src/tank/agents/context_records.py",
+          "symbol": "ClaimEvidenceOwner",
+          "line": 50
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "document_reference",
+          "line": 408
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "event_reference",
+          "line": 422
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "claim_reference",
+          "line": 426
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.condition_reference",
+          "line": 498
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.describe_claim",
+          "line": 512
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.describe",
+          "line": 538
+        }
+      ],
+      "kind": "required nullable readable-reference facts",
+      "reason": "These closed read projections describe partial tool results and retained records, not full admission records. Nullable URL/title/time/quote/subject/predicate/object/verified/stage/condition/token/role/proposal name means that exact descriptive fact was not declared. Missing evidence is unknown resolved-source information (None); a declared array supplies actual resolved references. Missing evidence-owner identity cannot invent a source. The excerpt comes only from actual string text. Existing complete watch expressions validate through shared WatchExpression; no missing window/persistence is invented.",
+      "validation": [
+        "test_reference_cache_retains_closed_records_and_real_unknown_absence",
+        "test_text_excerpt_requires_real_text_and_does_not_invent_title_or_time",
+        "test_watch_audit_relationships_are_removed_entirely_without_mutating_storage"
+      ]
+    },
+    {
+      "ledger_key": "context-owner-projections",
+      "sites": [
+        {
+          "path": "src/tank/agents/context_records.py",
+          "symbol": "EventOwnership",
+          "line": 62
+        },
+        {
+          "path": "src/tank/agents/context_records.py",
+          "symbol": "EventMergeState",
+          "line": 66
+        },
+        {
+          "path": "src/tank/agents/context_records.py",
+          "symbol": "ProposalAvailability",
+          "line": 70
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.check",
+          "line": 817
+        }
+      ],
+      "kind": "strict selected ownership facts and real undecided state",
+      "reason": "Temporary dictionaries project only fields consumed at the document-store adapter. Event ownership and merge lifecycle are required and missing values refuse; no current-owner/lifecycle default exists. human_action None represents the actual not-yet-decided proposal field, which historical and current proposal producers may omit. Empty declared action is invalid.",
+      "validation": [
+        "test_missing_reference_event_ownership_refuses_instead_of_inheriting_current",
+        "test_merge_into_by_event_id_works_when_the_session_never_displayed_the_target",
+        "test_scout_review_binds_its_proposal_and_names_the_duplicate_by_id"
+      ]
+    },
+    {
+      "ledger_key": "context-message-wire",
+      "sites": [
+        {
+          "path": "src/tank/agents/context_records.py",
+          "symbol": "ContextMessageProjection",
+          "line": 74
+        },
+        {
+          "path": "src/tank/agents/context_records.py",
+          "symbol": "ContextMessageProjection.to_wire",
+          "line": 81
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.message",
+          "line": 681
+        }
+      ],
+      "kind": "closed native context frame and real scope absence",
+      "reason": "message/item/current_event/proposal/open_proposals are required fields of the named projection. JSON-valued content is already projected model-facing wire text, not an opaque service-domain record. Null means no applicable/found scope. The serializer omits nonapplicable optional frame members using the actual binding facts while preserving required item null and scoped missing-proposal null.",
+      "validation": [
+        "test_initial_message_is_text_and_the_incoming_item_stays_implicit",
+        "test_scout_review_binds_its_proposal_and_names_the_duplicate_by_id"
+      ]
+    },
+    {
+      "ledger_key": "context-native-json-tree",
+      "sites": [
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "clean_value",
+          "line": 261
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.project",
+          "line": 560
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.project_wire",
+          "line": 563
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.result",
+          "line": 660
+        }
+      ],
+      "kind": "recursive model-facing JSON protocol and privacy projection",
+      "reason": "These maps/lists are the actual unknown-extension JSON tree at the native text boundary; property names and result shapes vary by tool/provider. Known source/event/claim/watch/proposal descriptions are extracted into closed records first. Unknown opaque/private relationship fields are removed, authored text/URLs preserve their literal values, and required known identity scalar/list shapes reject instead of coercing or fabricating empties. publish_card returns only its explicit public wire allowlist; omitted keys mean that actual result variant did not emit them.",
+      "validation": [
+        "test_projection_preserves_declared_empty_identity_lists_and_refuses_wrong_scalars",
+        "test_watch_audit_relationships_are_removed_entirely_without_mutating_storage",
+        "test_real_domain_refusal_uses_display_names_and_keeps_raw_audit"
+      ]
+    },
+    {
+      "ledger_key": "context-schema-and-arguments",
+      "sites": [
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "references",
+          "line": 303
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "reject_text_ids",
+          "line": 317
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "legacy_reference",
+          "line": 334
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "novel_layers_allowed",
+          "line": 370
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.public_schema",
+          "line": 730
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.validate_shape",
+          "line": 739
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.bind",
+          "line": 761
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.arguments",
+          "line": 872
+        }
+      ],
+      "kind": "external JSON Schema and validated native argument wire",
+      "reason": "JSON Schema property/anyOf/items namespaces and public tool input objects are actual wire contracts, not application record facades. A missing schema items field is the standard unconstrained-array schema case. Root path '$' and field None describe traversal position; reference-kind lookup None means an ordinary authored field. Binding injects explicitly host-owned current event/incoming source/proposal facts after validation; optional explicit read targets use the declared current scope. Legacy replacements are closed LegacyReference records, not anonymous tuples.",
+      "validation": [
+        "test_an_id_of_the_wrong_kind_is_named_as_such",
+        "test_incoming_source_binding_rejects_override_but_allows_other_claim_evidence",
+        "test_old_description_references_are_refused_and_name_the_id_field"
+      ]
+    },
+    {
+      "ledger_key": "context-read-and-label-namespaces",
+      "sites": [
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ContextRecordReader.get",
+          "line": 397
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ContextRecordReader.iter_all",
+          "line": 399
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.__init__",
+          "line": 434
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.reference",
+          "line": 551
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.token_label",
+          "line": 465
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.entity_label",
+          "line": 471
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.instrument_label",
+          "line": 477
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.source_label",
+          "line": 483
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.diagnostic_text",
+          "line": 487
+        }
+      ],
+      "kind": "read-only repository adapter, memoization and registry namespaces",
+      "reason": "Reader dictionaries are persisted JSON boundary documents and query filters; filters None means no predicate, and batch_size is the existing reader pagination contract. described is a composite (record kind, identity) memoization namespace of typed references; None caches a real missing row. Registry dictionaries are genuine key-indexed typed label namespaces. Unknown/unresolved registry values use their declared display identity; unknown source name is absent. registry_pattern None means the required catalogs contain zero labels, so no replacement regex is needed.",
+      "validation": [
+        "test_reference_cache_retains_closed_records_and_real_unknown_absence",
+        "test_registry_objects_are_shown_with_their_key_and_the_key_is_what_tools_take",
+        "test_a_source_registered_only_in_the_database_is_accepted"
       ]
     }
   ]

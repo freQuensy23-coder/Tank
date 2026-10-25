@@ -3,19 +3,38 @@ Tool arguments name records by ID and registry objects by key; the host validate
 
 import copy
 import re
-from collections.abc import Iterator
-from typing import Literal
+from collections.abc import AsyncIterator, Iterator
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, JsonValue
 
 from tank.agents.context_binding import ContextBinding
-from tank.agents.context_registry import ContextRegistry
+from tank.agents.context_records import (
+    ClaimEvidenceOwner,
+    ClaimReference,
+    ConditionReference,
+    ContextMessageProjection,
+    DocumentReference,
+    EventMergeState,
+    EventOwnership,
+    EventReference,
+    ProposalAvailability,
+    ProposalReference,
+    RecordReference,
+    reference_wire,
+)
+from tank.agents.context_registry import ContextConfiguration, ContextRegistry
 from tank.contracts import DomainModel
 from tank.contracts.tool_schema import SCOPED_TOOLS, parse_tool_definitions, validate_schema
-from tank.util import JsonInput
+from tank.util import JsonInput, jsonable
 
 type RecordKind = Literal["item", "event", "claim", "condition", "proposal"]
 type ReferenceKind = RecordKind | Literal["token", "entity", "instrument", "source"]
+
+
+class LegacyReference(DomainModel):
+    path: str
+    replacement: str
 
 
 class ToolArgumentReference(DomainModel):
@@ -137,6 +156,11 @@ ID_FIELDS: dict[str, ReferenceKind] = {
     "source_ids": "source",
 }
 CLAIM_EVIDENCE_TOOLS = {"set_assessment", "set_beneficiaries"}
+CLAIM_REFERENCE_LABELS = {
+    "claim_ids": "claims",
+    "supersedes_claim_ids": "supersedes_claims",
+    "certainty_evidence_claims": "certainty_evidence_claims",
+}
 PATTERN_TOOLS = {"propose_pattern", "record_review"}
 LEGACY_REFERENCES = {
     "document": "item_id",
@@ -216,14 +240,14 @@ CONTEXT_TRANSITION = {
 
 
 def identifier_field(key: str) -> bool:
-    name = re.sub(r"([a-z])([A-Z])", r"\1_\2", str(key)).lower()
+    name = re.sub(r"([a-z])([A-Z])", r"\1_\2", key).lower()
     return name in {"id", "ids", "hash", "hashes", "sha256", "version"} or name.endswith(
         ("_id", "_ids", "_hash", "_hashes", "_sha256", "_version", "_ref")
     )
 
 
 def private_field(key: str) -> bool:
-    name = re.sub(r"([a-z])([A-Z])", r"\1_\2", str(key)).lower()
+    name = re.sub(r"([a-z])([A-Z])", r"\1_\2", key).lower()
     return name in PRIVATE_FIELDS or name.endswith("_provenance") or identifier_field(key)
 
 
@@ -242,7 +266,7 @@ def clean_value(value: JsonInput) -> JsonInput:
         return {
             clean_text(key): item if key in LITERAL_FIELDS and isinstance(item, str) else clean_value(item)
             for key, item in value.items()
-            if not private_field(key) and not OPAQUE.search(str(key))
+            if not private_field(key) and not OPAQUE.search(key)
         }
     if isinstance(value, (list, tuple, set)):
         return [clean_value(item) for item in value]
@@ -307,7 +331,7 @@ def reject_text_ids(tool: str, value: JsonValue, path: str = "$", field: str | N
         raise ValueError(f"{path}: write this text without internal record IDs; IDs go only in ID fields")
 
 
-def legacy_reference(value: JsonValue, schema: JsonValue, path: str = "$") -> tuple[str, str] | None:
+def legacy_reference(value: JsonValue, schema: JsonValue, path: str = "$") -> LegacyReference | None:
     """The first old description-based reference field, with the ID field that replaced it."""
     if isinstance(value, dict) and isinstance(schema, dict):
         properties: dict[str, JsonValue] = {}
@@ -330,7 +354,7 @@ def legacy_reference(value: JsonValue, schema: JsonValue, path: str = "$") -> tu
         for key, item in value.items():
             if key not in properties:
                 if key in LEGACY_REFERENCES:
-                    return f"{path}.{key}", LEGACY_REFERENCES[key]
+                    return LegacyReference(path=f"{path}.{key}", replacement=LEGACY_REFERENCES[key])
                 continue
             found = legacy_reference(item, properties[key], f"{path}.{key}")
             if found:
@@ -357,24 +381,63 @@ def novel_layers_allowed(schema: dict[str, JsonValue]) -> dict[str, JsonValue]:
     return schema
 
 
-def document_reference(row):
-    description = {key: row[key] for key in ("url", "title", "observed_at") if row.get(key)}
-    if not row.get("url") and not row.get("title") and row.get("text"):
-        description["excerpt"] = str(row["text"])[:200]
-    return description
+def wire_string(value: JsonValue, field: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"Context field {field} must be a nonempty string")
+    return value
 
 
-def event_reference(row):
-    return {key: row[key] for key in ("statement", "public_at") if row.get(key)}
+def wire_strings(value: JsonValue, field: str) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"Context field {field} must be an array")
+    return [wire_string(item, field) for item in value]
 
 
-def claim_reference(row):
-    return {key: row[key] for key in ("quote", "subject", "predicate", "object") if row.get(key)}
+class ContextRecordReader(Protocol):
+    async def get(self, collection: str, key: str) -> dict[str, JsonValue] | None: ...
+
+    def iter_all(
+        self,
+        collection: str,
+        *,
+        filters: dict[str, JsonValue] | None = None,
+        batch_size: int = 1000,
+    ) -> AsyncIterator[dict[str, JsonValue]]: ...
+
+
+def document_reference(row: dict[str, JsonValue]) -> DocumentReference:
+    source = DocumentReference.model_validate(
+        {field: row.get(field) for field in ("url", "title", "observed_at")} | {"excerpt": None}
+    )
+    if source.url is None and source.title is None and "text" in row:
+        text = row["text"]
+        if not isinstance(text, str):
+            raise ValueError("Source reference text must be a string")
+        return DocumentReference(
+            url=source.url, title=source.title, observed_at=source.observed_at, excerpt=text[:200]
+        )
+    return source
+
+
+def event_reference(row: dict[str, JsonValue]) -> EventReference:
+    return EventReference.model_validate({field: row.get(field) for field in ("statement", "public_at")})
+
+
+def claim_reference(row: dict[str, JsonValue]) -> ClaimReference:
+    return ClaimReference.model_validate(
+        {field: row.get(field) for field in ("quote", "subject", "predicate", "object", "verified")}
+        | {"sources": None, "stage": row.get("state_claim")}
+    )
 
 
 class ModelContext:
-    def __init__(self, repo, settings, session):
-        self.repo, self.settings, self.session = repo, settings, session
+    def __init__(
+        self,
+        repo: ContextRecordReader,
+        settings: ContextConfiguration,
+        session: dict[str, JsonValue],
+    ) -> None:
+        self.repo, self.settings = repo, settings
         self.binding = ContextBinding.from_session(session)
         self.scout = self.binding.proposal_id is not None
         self.registry = ContextRegistry.from_configuration(settings)
@@ -384,7 +447,7 @@ class ModelContext:
         self.sources = {row.source_id: row for row in self.registry.sources}
         self.registry_labels = {
             **{key: self.entity_label(key) for key in self.entities},
-            **{key: self.source_label(key) for key in self.sources},
+            **{key: labelled(row.name, key) for key, row in self.sources.items()},
             **{key: self.instrument_label(key) for key in self.instruments},
             **{key: self.token_label(key) for key in self.tokens},
         }
@@ -397,7 +460,7 @@ class ModelContext:
             if self.registry_labels
             else None
         )
-        self.described = {}
+        self.described: dict[tuple[RecordKind, str], RecordReference | None] = {}
 
     def token_label(self, key: str) -> str:
         row = self.tokens.get(key)
@@ -421,7 +484,7 @@ class ModelContext:
         row = self.sources.get(key)
         return labelled(row.name, key) if row is not None else None
 
-    def diagnostic_text(self, value):
+    def diagnostic_text(self, value: str) -> str:
         if self.registry_pattern is None:
             return clean_text(value)
         pattern = self.registry_pattern
@@ -432,52 +495,72 @@ class ModelContext:
             for part in re.split(r"(https?://[^\s<>\"]+)", value)
         )
 
-    def condition_reference(self, row):
-        description = {"text": row.get("human_text"), "conditions": row.get("expr")}
-        if row.get("token_id"):
-            description["token"] = self.token_label(row["token_id"])
-        for field in ("role", "created_at"):
-            if row.get(field):
-                description[field] = row[field]
-        return description
+    def condition_reference(self, row: dict[str, JsonValue]) -> ConditionReference:
+        token_id = row.get("token_id")
+        if token_id is not None and not isinstance(token_id, str):
+            raise ValueError("Condition reference token identity must be a string")
+        return ConditionReference.model_validate(
+            {
+                "text": row.get("human_text"),
+                "conditions": row.get("expr"),
+                "token": self.token_label(token_id) if token_id is not None else None,
+                "role": row.get("role"),
+                "created_at": row.get("created_at"),
+            }
+        )
 
-    async def describe_claim(self, row):
+    async def describe_claim(self, row: dict[str, JsonValue]) -> ClaimReference:
         description = claim_reference(row)
-        sources = []
-        for entry in row.get("evidence") or []:
-            if isinstance(entry, dict) and entry.get("item_id"):
-                source = await self.reference("item", entry["item_id"])
-                if source and source not in sources:
-                    sources.append(source)
-        if sources:
-            description["sources"] = sources
-        if "verified" in row:
-            description["verified"] = row["verified"]
-        if row.get("state_claim"):
-            description["stage"] = row["state_claim"]
-        return description
+        evidence = row.get("evidence")
+        sources: list[DocumentReference] | None = None
+        if evidence is not None:
+            sources = []
+            if not isinstance(evidence, list):
+                raise ValueError("Claim evidence must be an array")
+            for entry in evidence:
+                if not isinstance(entry, dict):
+                    raise ValueError("Claim evidence must contain source reference objects")
+                owner = ClaimEvidenceOwner.model_validate({"item_id": entry.get("item_id")})
+                if owner.item_id is not None:
+                    source = await self.reference("item", owner.item_id)
+                    if isinstance(source, DocumentReference) and source not in sources:
+                        sources.append(source)
+        return ClaimReference(
+            quote=description.quote,
+            subject=description.subject,
+            predicate=description.predicate,
+            object=description.object,
+            sources=sources,
+            verified=description.verified,
+            stage=description.stage,
+        )
 
-    async def describe(self, kind, row):
-        if kind == "claim":
-            return await self.describe_claim(row)
-        if kind == "item":
-            return document_reference(row)
-        if kind == "event":
-            return event_reference(row)
-        if kind == "condition":
-            return self.condition_reference(row)
-        return {"subject": row.get("concept_name")}
+    async def describe(self, kind: RecordKind, row: dict[str, JsonValue]) -> RecordReference:
+        match kind:
+            case "claim":
+                return await self.describe_claim(row)
+            case "item":
+                return document_reference(row)
+            case "event":
+                return event_reference(row)
+            case "condition":
+                return self.condition_reference(row)
+            case "proposal":
+                return ProposalReference.model_validate({"subject": row.get("concept_name")})
 
-    async def reference(self, kind, key):
+    async def reference(self, kind: RecordKind, key: str) -> RecordReference | None:
         """A readable description of a referenced record, read once per projection."""
-        if not isinstance(key, str) or not key:
-            return None
+        if not key:
+            raise ValueError("Record references require a nonempty identity")
         if (kind, key) not in self.described:
             row = await self.repo.get(RECORDS[kind][0], key)
-            self.described[kind, key] = await self.describe(kind, row) if row else None
+            self.described[kind, key] = await self.describe(kind, row) if row is not None else None
         return self.described[kind, key]
 
-    async def project(self, value, *, diagnostic=False):
+    async def project(self, value: JsonInput, *, diagnostic: bool = False) -> JsonValue:
+        return await self.project_wire(jsonable(value), diagnostic=diagnostic)
+
+    async def project_wire(self, value: JsonValue, *, diagnostic: bool = False) -> JsonValue:
         if isinstance(value, list):
             return [await self.project(item, diagnostic=diagnostic) for item in value]
         if isinstance(value, str):
@@ -493,57 +576,64 @@ class ModelContext:
             if kind and OPAQUE.search(value):
                 described = await self.reference(kind, value)
                 if described:
-                    return clean_value(described)
+                    return jsonable(clean_value(reference_wire(described)))
             return self.diagnostic_text(value) if diagnostic else clean_text(value)
         if not isinstance(value, dict):
             return value
-        result = {}
-        for kind, field, label in (
+        result: dict[str, JsonValue] = {}
+        fields: tuple[tuple[RecordKind, str, str], ...] = (
             ("item", "item_id", "document"),
             ("claim", "claim_id", "claim"),
             ("condition", "cond_id", "condition"),
             ("proposal", "prp_id", "proposal"),
-        ):
-            if value.get(field):
-                description = await self.describe(kind, value)
-                if not any(description.values()):
-                    description = await self.reference(kind, value[field])
-                if description:
-                    result[label] = clean_value(description)
+        )
+        for kind, field, label in fields:
+            if field in value and value[field] is not None:
+                identity = wire_string(value[field], field)
+                direct = await self.describe(kind, value)
+                description: RecordReference | None = direct
+                if not any(reference_wire(direct).values()):
+                    description = await self.reference(kind, identity)
+                if description is not None:
+                    result[label] = jsonable(clean_value(reference_wire(description)))
         for key, item in value.items():
-            if key == "token_id" and item:
-                result["token"] = self.token_label(item)
-            elif key == "token_ids" and item:
-                result["tokens"] = [self.token_label(v) for v in item]
-            elif key == "instrument_ids" and item:
-                result["instruments"] = [self.instrument_label(v) for v in item]
-            elif key == "entity_ids" and item:
-                result["entities"] = [self.entity_label(v) for v in item]
-            elif key == "entity_id" and item:
-                result["entity"] = self.entity_label(item)
-            elif key == "instrument_id" and item:
-                result["instrument"] = self.instrument_label(item)
-            elif key == "source_id" and item:
-                name = self.source_label(item)
+            if key == "token_id" and item is not None:
+                result["token"] = self.token_label(wire_string(item, key))
+            elif key == "token_ids" and item is not None:
+                result["tokens"] = [self.token_label(v) for v in wire_strings(item, key)]
+            elif key == "instrument_ids" and item is not None:
+                result["instruments"] = [self.instrument_label(v) for v in wire_strings(item, key)]
+            elif key == "entity_ids" and item is not None:
+                result["entities"] = [self.entity_label(v) for v in wire_strings(item, key)]
+            elif key == "entity_id" and item is not None:
+                result["entity"] = self.entity_label(wire_string(item, key))
+            elif key == "instrument_id" and item is not None:
+                result["instrument"] = self.instrument_label(wire_string(item, key))
+            elif key == "source_id" and item is not None:
+                name = self.source_label(wire_string(item, key))
                 if name:
                     result["source"] = name
-            elif key in {"claim_ids", "supersedes_claim_ids", "certainty_evidence_claims"}:
-                result[{"claim_ids": "claims", "supersedes_claim_ids": "supersedes_claims"}.get(key, key)] = [
-                    ref for ref in [await self.reference("claim", v) for v in item or []] if ref
+            elif key in CLAIM_REFERENCE_LABELS:
+                result[CLAIM_REFERENCE_LABELS[key]] = [
+                    reference_wire(ref)
+                    for ref in [await self.reference("claim", v) for v in wire_strings(item, key)]
+                    if ref is not None
                 ]
             elif key == "evidence" and isinstance(item, list):
-                refs = []
+                refs: list[JsonValue] = []
                 for entry in item:
                     if isinstance(entry, str):
                         ref = None
-                        for kind in (
-                            [record_kind(entry)] if record_kind(entry) else ["claim", "item", "event"]
-                        ):
-                            ref = await self.reference(kind, entry)
+                        inferred = record_kind(entry)
+                        candidates: tuple[RecordKind, ...] = (
+                            (inferred,) if inferred is not None else ("claim", "item", "event")
+                        )
+                        for candidate in candidates:
+                            ref = await self.reference(candidate, entry)
                             if ref:
                                 break
                         if ref:
-                            refs.append(clean_value(ref))
+                            refs.append(jsonable(clean_value(reference_wire(ref))))
                         elif not OPAQUE.search(entry):
                             refs.append(clean_text(entry))
                     else:
@@ -557,7 +647,7 @@ class ModelContext:
                     if key in self.instruments
                     else key
                 )
-                if not OPAQUE.search(str(named)):
+                if not OPAQUE.search(named):
                     result[named] = (
                         item
                         if key in LITERAL_FIELDS
@@ -565,9 +655,9 @@ class ModelContext:
                         and (not diagnostic or key in {"quote", "quoted", "url", "query"})
                         else await self.project(item, diagnostic=diagnostic or key in DIAGNOSTIC_FIELDS)
                     )
-        return clean_value(result)
+        return jsonable(clean_value(result))
 
-    async def result(self, tool, result):
+    async def result(self, tool: str, result: JsonInput) -> JsonValue:
         projected = await self.project(result)
         if tool == "publish_card" and isinstance(projected, dict):
             return {
@@ -588,26 +678,48 @@ class ModelContext:
             }
         return projected
 
-    async def message(self, payload, item):
-        content = {"message": await self.project(payload), "item": await self.project(item)}
-        if self.session.get("event_id"):
-            event = await self.repo.get("evt.events", self.session["event_id"])
-            if event:
-                claims = [
-                    r async for r in self.repo.iter_all("evt.claims", filters={"event_id": event["event_id"]})
+    async def message(self, payload: JsonValue, item: JsonValue) -> dict[str, JsonValue]:
+        current_event: JsonValue = None
+        proposal: JsonValue = None
+        open_proposals: list[JsonValue] | None = None
+        event_scope = False
+        if self.binding.event_id is not None:
+            event = await self.repo.get("evt.events", self.binding.event_id)
+            if event is not None:
+                claims: list[JsonValue] = [
+                    row
+                    async for row in self.repo.iter_all(
+                        "evt.claims", filters={"event_id": self.binding.event_id}
+                    )
                 ]
-                content["current_event"] = await self.project({**event, "claims": claims})
-        if self.session.get("proposal_id"):
-            proposal = await self.repo.get("scout.expansion_proposals", self.session["proposal_id"])
-            content["proposal"] = await self.project(proposal)
-            content["open_proposals"] = [
-                await self.project(r)
-                async for r in self.repo.iter_all("scout.expansion_proposals")
-                if not r.get("human_action")
+                current_event = await self.project({**event, "claims": claims})
+                event_scope = True
+        proposal_scope = self.binding.proposal_id is not None
+        if self.binding.proposal_id is not None:
+            proposal = await self.project(
+                await self.repo.get("scout.expansion_proposals", self.binding.proposal_id)
+            )
+            open_proposals = [
+                await self.project(row)
+                async for row in self.repo.iter_all("scout.expansion_proposals")
+                if ProposalAvailability.model_validate({"human_action": row.get("human_action")}).human_action
+                is None
             ]
-        return clean_value(content)
+        content = ContextMessageProjection(
+            message=await self.project(payload),
+            item=await self.project(item),
+            current_event=current_event,
+            proposal=proposal,
+            open_proposals=open_proposals,
+        )
+        public = jsonable(
+            clean_value(content.to_wire(event_scope=event_scope, proposal_scope=proposal_scope))
+        )
+        if not isinstance(public, dict):
+            raise TypeError("Context message projection must remain an object")
+        return public
 
-    def lookup(self, kind):
+    def lookup(self, kind: ReferenceKind) -> str:
         if kind in REGISTRY:
             return (
                 "Use the registry key shown after « · » next to the name in Tank's messages and results "
@@ -631,7 +743,7 @@ class ModelContext:
         legacy = legacy_reference(arguments, schema)
         if legacy:
             raise ValueError(
-                f"{legacy[0]} is no longer accepted: pass {legacy[1]}, the record's ID. "
+                f"{legacy.path} is no longer accepted: pass {legacy.replacement}, the record's ID. "
                 f"Look IDs up with read-only SQL: {ID_LOOKUP[self.scout]}."
             )
         try:
@@ -646,7 +758,7 @@ class ModelContext:
                 )
             raise ValueError(text) from None
 
-    def bind(self, tool, result):
+    def bind(self, tool: str, result: dict[str, JsonValue]) -> None:
         """Fill the implicit records: the current event, the incoming source and the current proposal."""
         current = self.binding.event_id
         if tool in SCOPED_TOOLS:
@@ -702,17 +814,18 @@ class ModelContext:
         if tool == "record_review":
             result["proposal_id"] = self.binding.proposal_id
 
-    async def check(self, tool, path, kind, value):
+    async def check(self, tool: str, path: str, kind: ReferenceKind, value: str) -> None:
         """One record ID: it exists, has the expected kind and lies in the tool's scope."""
         if kind in REGISTRY:
-            known = {
-                "token": self.tokens,
-                "entity": self.entities,
-                "instrument": self.instruments,
-                "source": self.sources,
-            }[kind]
-            registered = value in known or (
-                kind == "source" and await self.repo.get("reg.sources", value) is not None
+            registered = (
+                kind == "token"
+                and value in self.tokens
+                or kind == "entity"
+                and value in self.entities
+                or kind == "instrument"
+                and value in self.instruments
+                or kind == "source"
+                and (value in self.sources or await self.repo.get("reg.sources", value) is not None)
             )
             if not registered:
                 raise ValueError(f"{path}: not a {REGISTRY[kind]}. {self.lookup(kind)}")
@@ -728,28 +841,35 @@ class ModelContext:
                 )
             raise ValueError(f"{path}: no {label} has this ID. {self.lookup(kind)}")
         current = self.binding.event_id
-        if kind == "claim" and tool not in PATTERN_TOOLS and row.get("event_id") != current:
-            raise ValueError(f"{path}: this is not a claim of the current event. {self.lookup('claim')}")
-        if kind == "condition" and row.get("event_id") != current:
-            raise ValueError(
-                f"{path}: this watch condition belongs to another event. {self.lookup('condition')}"
-            )
-        if tool == "merge_into" and path == "$.event_id" and row.get("lifecycle") in OPEN_LIFECYCLES_EXCLUDED:
-            raise ValueError(
-                f"$.event_id: that event is {row['lifecycle']}; merge into an open event. {self.lookup('event')}"
-            )
+        if kind == "claim" and tool not in PATTERN_TOOLS:
+            owner = EventOwnership.model_validate({key: row[key] for key in ("event_id",) if key in row})
+            if owner.event_id != current:
+                raise ValueError(f"{path}: this is not a claim of the current event. {self.lookup('claim')}")
+        if kind == "condition":
+            owner = EventOwnership.model_validate({key: row[key] for key in ("event_id",) if key in row})
+            if owner.event_id != current:
+                raise ValueError(
+                    f"{path}: this watch condition belongs to another event. {self.lookup('condition')}"
+                )
+        if tool == "merge_into" and path == "$.event_id":
+            state = EventMergeState.model_validate({key: row[key] for key in ("lifecycle",) if key in row})
+            if state.lifecycle in OPEN_LIFECYCLES_EXCLUDED:
+                raise ValueError(
+                    f"$.event_id: that event is {state.lifecycle}; merge into an open event. {self.lookup('event')}"
+                )
         if tool == "record_review" and path == "$.duplicate_of":
             if value == self.binding.proposal_id:
                 raise ValueError(
                     "$.duplicate_of: this is the current proposal; name the earlier one, or null"
                 )
-            if row.get("human_action"):
+            availability = ProposalAvailability.model_validate({"human_action": row.get("human_action")})
+            if availability.human_action is not None:
                 raise ValueError(
                     f"$.duplicate_of: that proposal is already decided; name an open proposal. "
                     f"{self.lookup('proposal')}"
                 )
 
-    async def arguments(self, tool, arguments):
+    async def arguments(self, tool: str, arguments: JsonValue) -> dict[str, JsonValue]:
         """Validate the model's arguments and every record ID in them, then bind the implicit records."""
         if not isinstance(arguments, dict):
             raise ValueError("Tool arguments must be an object")
