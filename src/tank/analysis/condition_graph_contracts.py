@@ -1,6 +1,6 @@
 """Condition-query evidence independent of orchestration and cached wire documents."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, localcontext
 from math import isfinite
 from statistics import median
@@ -4118,8 +4118,40 @@ class ConditionBookPairHistory(DomainModel):
                 return row
         return None
 
+    def _continuous_coverage(
+        self, rows: tuple[ConditionPrimaryBookQuote, ...], cadence: ConditionCadence
+    ) -> ConditionPredicate:
+        if not isinstance(cadence, DeclaredConditionCadence):
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        initial = self.latest_at(rows, self.interval.start)
+        if initial is None or initial.observed_at.value is None:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        previous = parse_iso_time(initial.observed_at.value)
+        if (self.interval.start - previous).total_seconds() > cadence.seconds:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        for row in rows:
+            stamp = row.observed_at.value
+            if stamp is None:
+                raise ValueError("Continuous quote coverage requires its actual source clock")
+            at = parse_iso_time(stamp)
+            if at <= self.interval.start:
+                continue
+            if (at - previous).total_seconds() > cadence.seconds:
+                return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+            previous = at
+        if (self.interval.cutoff - previous).total_seconds() > cadence.seconds:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        return ConditionObservedPredicate(status="OBSERVED", value=True)
+
     def persistent_gap(self) -> ConditionPredicate:
-        return condition_predicates_all(tuple(point.gap for point in self.gap_series()[:-1]))
+        validated = type(self).model_validate(self)
+        return condition_predicates_all(
+            (
+                *(point.gap for point in validated.gap_series()[:-1]),
+                validated._continuous_coverage(validated.left, validated.left_cadence),
+                validated._continuous_coverage(validated.right, validated.right_cadence),
+            )
+        )
 
     def gap_closed_quickly(self) -> ConditionPredicate:
         points = self.gap_series()
@@ -4185,6 +4217,7 @@ class ConditionIndependentFundingRate(DomainModel):
 
 class ConditionFundingConfirmationGraph(DomainModel):
     token_id: str = Field(min_length=1, pattern=r"\S")
+    assembled_at: Timestamp
     cutoff: datetime
     primary: tuple[ConditionScopedFundingRate, ...]
     independent: tuple[ConditionIndependentFundingRate, ...]
@@ -4209,6 +4242,8 @@ class ConditionFundingConfirmationGraph(DomainModel):
                     "Primary funding must preserve actual token scope and nonfuture source clocks"
                 )
         for observation in self.independent:
+            if observation.visibility.assembled_at != self.assembled_at:
+                raise ValueError("Independent funding visibility must use the actual snapshot assembly clock")
             source = primary.get(observation.instrument_id)
             if source is None or (observation.token_id, observation.venue) != (self.token_id, source.venue):
                 raise ValueError("Independent funding cannot borrow another token or instrument cohort")
@@ -4258,3 +4293,359 @@ class ConditionFundingConfirmationGraph(DomainModel):
         return ConditionObservedPredicate(
             status="OBSERVED", value=dispersion < bounds.lower or dispersion > bounds.upper
         )
+
+
+class ConditionFlowCapturePiece(DomainModel):
+    basis: Literal["FULL_MINUTE", "BOUNDARY"]
+    aggregate: ConditionFlowAggregate
+    visibility: ConditionReceiptVisibility
+
+
+class ConditionFlowWindowQualification(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    assembled_at: Timestamp
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    venue: str = Field(min_length=1, pattern=r"\S")
+    interval: ConditionInterval
+    pieces: tuple[ConditionFlowCapturePiece, ...]
+
+    def _minute_bounds(self) -> tuple[datetime, datetime]:
+        start = self.interval.start.replace(second=0, microsecond=0)
+        if start < self.interval.start:
+            start += timedelta(minutes=1)
+        return start, self.interval.cutoff.replace(second=0, microsecond=0)
+
+    def _boundaries(self) -> tuple[tuple[datetime, datetime], ...]:
+        first, last = self._minute_bounds()
+        start, end = self.interval.start, self.interval.cutoff
+        ranges: list[tuple[datetime, datetime]] = []
+        if first > start:
+            ranges.append((start, min(first, end)))
+        if last < end and (not ranges or last >= ranges[0][1]):
+            ranges.append((max(last, start), end))
+        return tuple(ranges)
+
+    @model_validator(mode="after")
+    def actual_qualifying_pieces(self) -> Self:
+        first, last = self._minute_bounds()
+        boundaries = self._boundaries()
+        identities: set[tuple[datetime, datetime]] = set()
+        for piece in self.pieces:
+            if piece.visibility.assembled_at != self.assembled_at:
+                raise ValueError("Flow visibility must use the actual snapshot assembly clock")
+            row = piece.aggregate
+            if (
+                row.instrument_id != self.instrument_id
+                or not self.interval.start <= row.start < row.end <= self.interval.cutoff
+            ):
+                raise ValueError(
+                    "Flow capture evidence must preserve actual instrument and requested interval"
+                )
+            key = (row.start, row.end)
+            if key in identities:
+                raise ValueError("Flow capture qualification cannot double-count an aggregate interval")
+            identities.add(key)
+            if piece.basis == "FULL_MINUTE":
+                if (
+                    row.start.second != 0
+                    or row.start.microsecond != 0
+                    or row.end - row.start != timedelta(minutes=1)
+                    or not first <= row.start < row.end <= last
+                ):
+                    raise ValueError(
+                        "Full-minute capture requires an actual aligned complete interior minute"
+                    )
+            elif not any(left <= row.start < row.end <= right for left, right in boundaries):
+                raise ValueError("Boundary capture cannot replace missing full-minute evidence")
+        return self
+
+    def complete(self) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        eligible: list[ConditionFlowCapturePiece] = []
+        for piece in validated.pieces:
+            visibility = piece.visibility.eligible()
+            if isinstance(visibility, ConditionObservedPredicate) and visibility.value:
+                eligible.append(piece)
+        first, last = validated._minute_bounds()
+        expected: set[datetime] = set()
+        cursor = first
+        while cursor < last:
+            expected.add(cursor)
+            cursor += timedelta(minutes=1)
+        observed = {piece.aggregate.start for piece in eligible if piece.basis == "FULL_MINUTE"}
+        if observed != expected:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        for left, right in validated._boundaries():
+            cursor = left
+            while cursor < right:
+                ends = tuple(
+                    piece.aggregate.end
+                    for piece in eligible
+                    if piece.basis == "BOUNDARY"
+                    and piece.aggregate.start == cursor
+                    and piece.aggregate.end <= right
+                )
+                if not ends:
+                    return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+                cursor = max(ends)
+        return ConditionObservedPredicate(status="OBSERVED", value=True)
+
+
+class ConditionFragmentationPriceConfirmation(DomainModel):
+    left_instrument_id: str = Field(min_length=1, pattern=r"\S")
+    right_instrument_id: str = Field(min_length=1, pattern=r"\S")
+    observations: tuple[ConditionIndependentPairConfirmation, ...]
+
+
+class ConditionVenueSignObservation(DomainModel):
+    venue: str = Field(min_length=1, pattern=r"\S")
+    value: Annotated[Literal[-1, 0, 1], BeforeValidator(require_integer)] | None
+    reason: Literal["INCOMPLETE"] | None
+
+    @model_validator(mode="after")
+    def actual_direction(self) -> Self:
+        if (self.value is None) != (self.reason is not None):
+            raise ValueError("A missing venue direction requires its actual incomplete-flow reason")
+        return self
+
+
+class ConditionSignHistoryWindow(DomainModel):
+    interval: ConditionInterval
+    observations: tuple[ConditionVenueSignObservation, ...]
+
+    @model_validator(mode="after")
+    def actual_quarter_hour(self) -> Self:
+        if (
+            self.interval.window != "W15M"
+            or (self.interval.cutoff - self.interval.start).total_seconds() != 900
+        ):
+            raise ValueError("Direction history requires actual fifteen-minute subwindows")
+        if len({row.venue for row in self.observations}) != len(self.observations):
+            raise ValueError("A sign-history window cannot duplicate a venue observation")
+        return self
+
+
+class ConditionTopVenueSignHistory(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    interval: ConditionInterval
+    selected_venues: tuple[str, ...]
+    windows: tuple[ConditionSignHistoryWindow, ...]
+
+    @model_validator(mode="after")
+    def actual_selected_history(self) -> Self:
+        selected = set(self.selected_venues)
+        if len(selected) != len(self.selected_venues) or any(not venue.strip() for venue in selected):
+            raise ValueError("Selected sign-history venues must be distinct actual identifiers")
+        cursor = self.interval.start
+        for window in self.windows:
+            if window.interval.start != cursor or window.interval.cutoff > self.interval.cutoff:
+                raise ValueError(
+                    "Sign-history subwindows must preserve the actual consecutive requested interval"
+                )
+            if {row.venue for row in window.observations} != selected:
+                raise ValueError(
+                    "Sign history must explicitly preserve each selected venue's observation or absence"
+                )
+            cursor = window.interval.cutoff
+        return self
+
+    def multiple_flips(self) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        expected = int((validated.interval.cutoff - validated.interval.start).total_seconds() // 900)
+        if not validated.selected_venues or len(validated.windows) < 3 or len(validated.windows) != expected:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        signs: dict[str, list[int]] = {venue: [] for venue in validated.selected_venues}
+        for window in validated.windows:
+            for observation in window.observations:
+                if observation.value is None:
+                    return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+                if observation.value != 0:
+                    signs[observation.venue].append(observation.value)
+        flipped = any(
+            sum(a != b for a, b in zip(values, values[1:], strict=False)) > 1 for values in signs.values()
+        )
+        return ConditionObservedPredicate(status="OBSERVED", value=flipped)
+
+
+class ConditionFragmentationGraph(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    assembled_at: Timestamp
+    interval: ConditionInterval
+    price_pairs: tuple[ConditionBookPairHistory, ...]
+    top_sign_history: ConditionTopVenueSignHistory
+    price_confirmations: tuple[ConditionFragmentationPriceConfirmation, ...]
+    funding: ConditionFundingConfirmationGraph
+    flow_capture: tuple[ConditionFlowWindowQualification, ...]
+
+    @model_validator(mode="after")
+    def actual_fragmentation_scopes(self) -> Self:
+        if (
+            self.interval.window != "W15M"
+            or (self.interval.cutoff - self.interval.start).total_seconds() != 900
+        ):
+            raise ValueError(
+                "Fragmentation qualification requires the actual fifteen-minute capture interval"
+            )
+        if (
+            self.top_sign_history.token_id != self.token_id
+            or self.top_sign_history.interval.cutoff != self.interval.cutoff
+        ):
+            raise ValueError("Top-venue sign history must preserve actual token and cutoff")
+        pairs: dict[tuple[str, str], ConditionBookPairHistory] = {}
+        unordered: set[frozenset[str]] = set()
+        for pair in self.price_pairs:
+            key = (pair.left_instrument_id, pair.right_instrument_id)
+            identity = frozenset(key)
+            if identity in unordered or pair.token_id != self.token_id or pair.interval != self.interval:
+                raise ValueError(
+                    "Fragmentation price pairs must preserve distinct actual token/window scopes"
+                )
+            unordered.add(identity)
+            pairs[key] = pair
+        seen: set[tuple[str, str]] = set()
+        for confirmation in self.price_confirmations:
+            key = (confirmation.left_instrument_id, confirmation.right_instrument_id)
+            primary_pair = pairs.get(key)
+            if primary_pair is None or key in seen:
+                raise ValueError("Independent price confirmation requires its actual unique primary pair")
+            seen.add(key)
+            for observation in confirmation.observations:
+                if (
+                    observation.cutoff != self.interval.cutoff
+                    or observation.quote_conversion_uncertainty_bps
+                    != primary_pair.quote_conversion_uncertainty_bps
+                ):
+                    raise ValueError(
+                        "Independent price confirmation cannot change the actual cutoff/conversion policy"
+                    )
+                for secondary, primary_rows, venue, instrument in (
+                    (
+                        observation.left,
+                        primary_pair.left,
+                        primary_pair.left_venue,
+                        primary_pair.left_instrument_id,
+                    ),
+                    (
+                        observation.right,
+                        primary_pair.right,
+                        primary_pair.right_venue,
+                        primary_pair.right_instrument_id,
+                    ),
+                ):
+                    if secondary is None:
+                        continue
+                    if secondary.visibility.assembled_at != self.assembled_at:
+                        raise ValueError("REST visibility must use the actual snapshot assembly clock")
+                    if (secondary.token_id, secondary.venue, secondary.instrument_id) != (
+                        self.token_id,
+                        venue,
+                        instrument,
+                    ):
+                        raise ValueError(
+                            "Independent price evidence cannot borrow another primary instrument"
+                        )
+                    matching = tuple(
+                        row for row in primary_rows if row.observed_at == secondary.primary_observed_at
+                    )
+                    if not matching or secondary.quote_asset != matching[0].quote_asset:
+                        raise ValueError(
+                            "Independent price evidence requires its actual primary source observation and currency"
+                        )
+        if (
+            self.funding.token_id != self.token_id
+            or self.funding.cutoff != self.interval.cutoff
+            or self.funding.assembled_at != self.assembled_at
+        ):
+            raise ValueError("Funding fragmentation must preserve actual token and cutoff")
+        captures: set[str] = set()
+        known_venues: dict[str, str] = {}
+        for pair in self.price_pairs:
+            known_venues[pair.left_instrument_id] = pair.left_venue
+            known_venues[pair.right_instrument_id] = pair.right_venue
+        for rate in self.funding.primary:
+            prior = known_venues.get(rate.instrument_id)
+            if prior is not None and prior != rate.venue:
+                raise ValueError("A fragmentation instrument cannot change venue between source families")
+            known_venues[rate.instrument_id] = rate.venue
+        for capture in self.flow_capture:
+            if capture.assembled_at != self.assembled_at:
+                raise ValueError("Flow qualification cannot borrow another snapshot assembly clock")
+            if (
+                capture.instrument_id in captures
+                or capture.token_id != self.token_id
+                or capture.interval != self.interval
+            ):
+                raise ValueError("Flow capture qualification requires a distinct actual token/window scope")
+            captures.add(capture.instrument_id)
+            if known_venues.get(capture.instrument_id) != capture.venue:
+                raise ValueError("Flow capture cannot qualify an unrelated fragmentation instrument")
+        return self
+
+    def _capture(self, instrument: str) -> ConditionPredicate:
+        for capture in self.flow_capture:
+            if capture.assembled_at != self.assembled_at:
+                raise ValueError("Flow qualification cannot borrow another snapshot assembly clock")
+            if capture.instrument_id == instrument:
+                return capture.complete()
+        return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+
+    def persistent_gap(self) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        if not validated.price_pairs:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        return condition_predicates_any(tuple(pair.persistent_gap() for pair in validated.price_pairs))
+
+    def gap_closed_quickly(self) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        if not validated.price_pairs:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        return condition_predicates_any(tuple(pair.gap_closed_quickly() for pair in validated.price_pairs))
+
+    def price_path_validated(self) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        results: list[ConditionPredicate] = []
+        confirmations = {
+            (row.left_instrument_id, row.right_instrument_id): row for row in validated.price_confirmations
+        }
+        for pair in validated.price_pairs:
+            confirmation = confirmations.get((pair.left_instrument_id, pair.right_instrument_id))
+            secondary: ConditionPredicate
+            if confirmation is None or not confirmation.observations:
+                secondary = ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+            else:
+                secondary = condition_predicates_any(
+                    tuple(row.confirmed_gap() for row in confirmation.observations)
+                )
+            results.append(
+                condition_predicates_all(
+                    (
+                        pair.persistent_gap(),
+                        secondary,
+                        validated._capture(pair.left_instrument_id),
+                        validated._capture(pair.right_instrument_id),
+                    )
+                )
+            )
+        if not results:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        return condition_predicates_any(tuple(results))
+
+    def funding_path_validated(self) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        captures = tuple(validated._capture(row.instrument_id) for row in validated.funding.primary)
+        capture = (
+            condition_predicates_all(captures)
+            if captures
+            else ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        )
+        return condition_predicates_all(
+            (
+                validated.funding.primary_beyond_normal(),
+                validated.funding.independent_beyond_normal(),
+                capture,
+            )
+        )
+
+    def validated(self) -> ConditionPredicate:
+        checked = type(self).model_validate(self)
+        return condition_predicates_any((checked.price_path_validated(), checked.funding_path_validated()))

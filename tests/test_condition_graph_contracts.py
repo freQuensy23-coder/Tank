@@ -17,6 +17,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionElasticityInputs,
     ConditionFieldObservation,
     ConditionFlowAggregate,
+    ConditionFlowWindowQualification,
     ConditionFundingConfirmationGraph,
     ConditionFundingObservation,
     ConditionIndependentRestQuote,
@@ -27,6 +28,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionRelativeWindow,
     ConditionReplenishmentBurst,
     ConditionReplenishmentScope,
+    ConditionTopVenueSignHistory,
     DeclaredConditionCadence,
     NonForwardConditionInterval,
     ObservedConditionClose,
@@ -2575,6 +2577,17 @@ def test_fragmentation_history_replays_actual_quote_changes_and_terminal_gap_clo
     persistent, closed = history.persistent_gap(), history.gap_closed_quickly()
     assert isinstance(persistent, ConditionObservedPredicate) and persistent.value is True
     assert isinstance(closed, ConditionObservedPredicate) and closed.value is True
+    from tank.analysis.condition_graph_contracts import ConditionUnavailablePredicate
+
+    sparse = ConditionBookPairHistory.model_validate(
+        history.model_copy(
+            update={
+                "left": (left_rows[0], left_rows[-1]),
+                "right": (right_rows[0], right_rows[-1]),
+            }
+        )
+    )
+    assert isinstance(sparse.persistent_gap(), ConditionUnavailablePredicate)
     with pytest.raises(ValidationError, match="ordered, distinct"):
         ConditionBookPairHistory.model_validate(
             history.model_copy(update={"left": (left_rows[1], left_rows[0])})
@@ -2706,6 +2719,7 @@ def funding_confirmation_graph() -> ConditionFundingConfirmationGraph:
             )
         )
     return ConditionFundingConfirmationGraph(
+        assembled_at=Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY"),
         token_id="T",
         cutoff=AT,
         primary=tuple(primary),
@@ -2765,3 +2779,219 @@ def test_funding_confirmation_missing_secondary_or_history_stays_unavailable() -
     result = unknown.primary_beyond_normal()
     assert isinstance(result, ConditionUnavailablePredicate) and result.reason == "INCOMPLETE"
     assert isinstance(unknown.independent_beyond_normal(), ConditionUnavailablePredicate)
+
+
+def complete_flow_window(instrument: str, venue: str) -> ConditionFlowWindowQualification:
+    from tank.analysis.condition_graph_contracts import ConditionFlowCapturePiece
+
+    pieces: list[ConditionFlowCapturePiece] = []
+    prototype = legacy_boundary_calculation()
+    for minute in range(15):
+        start = AT - timedelta(minutes=15 - minute)
+        aggregate = ConditionFlowAggregate.model_validate(
+            prototype.model_copy(
+                update={
+                    "instrument_id": instrument,
+                    "start": start,
+                    "end": start + timedelta(minutes=1),
+                }
+            )
+        )
+        pieces.append(
+            ConditionFlowCapturePiece(
+                basis="FULL_MINUTE",
+                aggregate=aggregate,
+                visibility=ConditionReceiptVisibility(
+                    received_at=Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY"),
+                    assembled_at=Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY"),
+                ),
+            )
+        )
+    return ConditionFlowWindowQualification(
+        assembled_at=Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY"),
+        token_id="T",
+        instrument_id=instrument,
+        venue=venue,
+        interval=ConditionInterval(window="W15M", start=AT - timedelta(minutes=15), cutoff=AT),
+        pieces=tuple(pieces),
+    )
+
+
+def test_fragmentation_flow_capture_requires_actual_minute_grid_and_visible_evidence() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionObservedPredicate,
+        ConditionUnavailablePredicate,
+    )
+
+    window = complete_flow_window("a:perp:T", "a")
+    known = window.complete()
+    assert isinstance(known, ConditionObservedPredicate) and known.value is True
+    partial = type(window).model_validate(window.model_copy(update={"pieces": window.pieces[:-1]}))
+    assert isinstance(partial.complete(), ConditionUnavailablePredicate)
+    hidden_piece = window.pieces[0].model_copy(
+        update={
+            "visibility": ConditionReceiptVisibility(
+                received_at=Timestamp(value=None, precision=None, precision_reason="NOT_CAPTURED"),
+                assembled_at=Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY"),
+            )
+        }
+    )
+    hidden = type(window).model_validate(
+        window.model_copy(update={"pieces": (hidden_piece, *window.pieces[1:])})
+    )
+    assert isinstance(hidden.complete(), ConditionUnavailablePredicate)
+    with pytest.raises(ValidationError, match="cannot replace missing full-minute"):
+        type(window).model_validate(
+            window.model_copy(
+                update={
+                    "pieces": (
+                        window.pieces[0].model_copy(update={"basis": "BOUNDARY"}),
+                        *window.pieces[1:],
+                    )
+                }
+            )
+        )
+
+
+def test_fragmentation_funding_validation_requires_actual_scoped_flow_windows() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionFragmentationGraph,
+        ConditionObservedPredicate,
+        ConditionUnavailablePredicate,
+    )
+
+    graph = ConditionFragmentationGraph(
+        assembled_at=Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY"),
+        token_id="T",
+        interval=ConditionInterval(window="W15M", start=AT - timedelta(minutes=15), cutoff=AT),
+        top_sign_history=ConditionTopVenueSignHistory(
+            token_id="T",
+            interval=ConditionInterval(window="W15M", start=AT - timedelta(minutes=15), cutoff=AT),
+            selected_venues=(),
+            windows=(),
+        ),
+        price_pairs=(),
+        price_confirmations=(),
+        funding=funding_confirmation_graph(),
+        flow_capture=(complete_flow_window("a:perp:T", "a"), complete_flow_window("b:perp:T", "b")),
+    )
+    assert isinstance(graph.persistent_gap(), ConditionUnavailablePredicate)
+    assert isinstance(graph.price_path_validated(), ConditionUnavailablePredicate)
+    validated = graph.validated()
+    assert isinstance(validated, ConditionObservedPredicate) and validated.value is True
+    no_capture = type(graph).model_validate(graph.model_copy(update={"flow_capture": ()}))
+    assert isinstance(no_capture.funding_path_validated(), ConditionUnavailablePredicate)
+    assert isinstance(no_capture.validated(), ConditionUnavailablePredicate)
+    with pytest.raises(ValidationError, match="unrelated fragmentation"):
+        type(graph).model_validate(
+            graph.model_copy(update={"flow_capture": (complete_flow_window("other:perp:T", "other"),)})
+        )
+
+
+def test_unaligned_fragmentation_window_requires_both_actual_boundary_chains() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionFlowCapturePiece,
+        ConditionObservedPredicate,
+        ConditionUnavailablePredicate,
+    )
+
+    prototype = complete_flow_window("a:perp:T", "a")
+    assembled = Timestamp(value="2026-10-17T12:00:10Z", precision="COLLECTION_ONLY")
+    visibility = ConditionReceiptVisibility(
+        received_at=Timestamp(value="2026-10-17T12:00:06Z", precision="COLLECTION_ONLY"),
+        assembled_at=assembled,
+    )
+    middle = tuple(
+        type(piece).model_validate(piece.model_copy(update={"visibility": visibility}))
+        for piece in prototype.pieces[1:]
+    )
+    template = prototype.pieces[0].aggregate
+    left = ConditionFlowCapturePiece(
+        basis="BOUNDARY",
+        visibility=visibility,
+        aggregate=ConditionFlowAggregate.model_validate(
+            template.model_copy(
+                update={
+                    "start": AT - timedelta(minutes=15) + timedelta(seconds=5),
+                    "end": AT - timedelta(minutes=14),
+                }
+            )
+        ),
+    )
+    right = ConditionFlowCapturePiece(
+        basis="BOUNDARY",
+        visibility=visibility,
+        aggregate=ConditionFlowAggregate.model_validate(
+            template.model_copy(update={"start": AT, "end": AT + timedelta(seconds=5)})
+        ),
+    )
+    interval = ConditionInterval(
+        window="W15M",
+        start=AT - timedelta(minutes=15) + timedelta(seconds=5),
+        cutoff=AT + timedelta(seconds=5),
+    )
+    complete = type(prototype).model_validate(
+        prototype.model_copy(
+            update={
+                "assembled_at": assembled,
+                "interval": interval,
+                "pieces": (*middle, left, right),
+            }
+        )
+    )
+    result = complete.complete()
+    assert isinstance(result, ConditionObservedPredicate) and result.value is True
+    partial = type(prototype).model_validate(complete.model_copy(update={"pieces": (*middle, left)}))
+    assert isinstance(partial.complete(), ConditionUnavailablePredicate)
+    with pytest.raises(ValidationError, match="actual snapshot assembly"):
+        type(prototype).model_validate(complete.model_copy(update={"assembled_at": prototype.assembled_at}))
+
+
+def sign_history(values: tuple[Literal[-1, 0, 1] | None, ...]) -> ConditionTopVenueSignHistory:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionSignHistoryWindow,
+        ConditionVenueSignObservation,
+    )
+
+    start = AT - timedelta(hours=1)
+    windows = tuple(
+        ConditionSignHistoryWindow(
+            interval=ConditionInterval(
+                window="W15M",
+                start=start + timedelta(minutes=15 * index),
+                cutoff=start + timedelta(minutes=15 * (index + 1)),
+            ),
+            observations=(
+                ConditionVenueSignObservation(
+                    venue="a", value=value, reason="INCOMPLETE" if value is None else None
+                ),
+            ),
+        )
+        for index, value in enumerate(values)
+    )
+    return ConditionTopVenueSignHistory(
+        token_id="T",
+        interval=ConditionInterval(window="W1H", start=start, cutoff=AT),
+        selected_venues=("a",),
+        windows=windows,
+    )
+
+
+def test_top_sign_history_distinguishes_observed_neutral_from_missing_direction() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionObservedPredicate,
+        ConditionUnavailablePredicate,
+        ConditionVenueSignObservation,
+    )
+
+    actual = sign_history((1, 0, -1, 1)).multiple_flips()
+    assert isinstance(actual, ConditionObservedPredicate) and actual.value is True
+    neutral = sign_history((0, 0, 0, 0)).multiple_flips()
+    assert isinstance(neutral, ConditionObservedPredicate) and neutral.value is False
+    assert isinstance(sign_history((1, None, -1, 1)).multiple_flips(), ConditionUnavailablePredicate)
+    assert isinstance(sign_history((1, -1)).multiple_flips(), ConditionUnavailablePredicate)
+    with pytest.raises(ValidationError, match="integer"):
+        ConditionVenueSignObservation.model_validate({"venue": "a", "value": True, "reason": None})
+    original = sign_history((1, 0, -1, 1))
+    with pytest.raises(ValidationError, match="consecutive"):
+        type(original).model_validate(original.model_copy(update={"windows": original.windows[1:]}))
