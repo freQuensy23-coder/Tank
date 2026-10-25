@@ -9,7 +9,7 @@ from tank.settings import Settings
 _KNOWN_SECRETS: set[str] = set()
 
 
-def redact_text(value: str, secrets: tuple[str, ...] = ()) -> str:
+def redact_text(value: str, secrets: tuple[str, ...]) -> str:
     text = value
     for secret in sorted((s for s in secrets if s), key=len, reverse=True):
         text = text.replace(secret, "[REDACTED]")
@@ -25,7 +25,7 @@ def redact_text(value: str, secrets: tuple[str, ...] = ()) -> str:
 
 
 class CredentialFilter(logging.Filter):
-    def __init__(self, secrets: tuple[str, ...] = ()) -> None:
+    def __init__(self, secrets: tuple[str, ...]) -> None:
         super().__init__()
         self.secrets = secrets
 
@@ -40,10 +40,9 @@ class CredentialFilter(logging.Filter):
         return True
 
 
-def configure_logging(settings: Settings | None = None) -> None:
+def configure_logging(settings: Settings) -> None:
     """Install filters before clients are constructed, without logging settings."""
-    if settings is not None:
-        _KNOWN_SECRETS.update(settings.configured_secrets())
+    _KNOWN_SECRETS.update(settings.configured_secrets())
     safe_filter = CredentialFilter(tuple(_KNOWN_SECRETS))
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     for handler in logging.getLogger().handlers:
