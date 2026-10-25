@@ -12,6 +12,7 @@ from pydantic import JsonValue
 
 from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.settings import Settings
 from tank.time_precision import chosen_boundary, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import iso, new_id, parse_time, utcnow
@@ -113,8 +114,16 @@ class BackupIdentity(DomainModel):
 
 class Scheduler:
     def __init__(
-        self, repo, settings: Settings, market, truth, *, thresholds: Thresholds | None = None
+        self,
+        repo,
+        settings: Settings,
+        market,
+        truth,
+        *,
+        versions: ResolvedVersionIdentity,
+        thresholds: Thresholds | None = None,
     ) -> None:
+        self.versions = ResolvedVersionIdentity.model_validate(versions)
         self.repo, self.settings, self.market, self.truth = repo, settings, market, truth
         self.thresholds = settings.thresholds() if thresholds is None else thresholds
         self.background: dict[str, asyncio.Task[None]] = {}
@@ -1100,8 +1109,8 @@ class Scheduler:
             snapshot,
             config={
                 **knobs,
-                "config_version": self.settings.config_version,
-                "code_version": self.settings.code_version,
+                "config_version": self.versions.config_version,
+                "code_version": self.versions.code_version,
             },
         )
         relative = truth.get("relative", {})
@@ -1220,8 +1229,8 @@ class Scheduler:
             "market_truth_id": truth.get("mta_id"),
             "market_truth": truth,
             **checkpoint_data,
-            "config_version": self.settings.config_version,
-            "code_version": self.settings.code_version,
+            "config_version": self.versions.config_version,
+            "code_version": self.versions.code_version,
         }
         async with self.repo.transaction():
             await self.repo.put("out.reaction_checkpoints", key, record, immutable=True)
@@ -1269,8 +1278,8 @@ class Scheduler:
                 "evidence": [],
                 **collection_clock(now).fields("created_at"),
                 "created_by": "scheduler",
-                "config_version": self.settings.config_version,
-                "code_version": self.settings.code_version,
+                "config_version": self.versions.config_version,
+                "code_version": self.versions.code_version,
             }
             proposal.update(
                 occurrences=proposal["occurrences"] + 1,
@@ -1454,8 +1463,8 @@ class Scheduler:
                 "checkpoint_id": "scout_hooks",
                 **collection_clock(now).fields("at"),
                 "state": {"criteria": "TDD10"},
-                "config_version": self.settings.config_version,
-                "code_version": self.settings.code_version,
+                "config_version": self.versions.config_version,
+                "code_version": self.versions.code_version,
             },
         )
 

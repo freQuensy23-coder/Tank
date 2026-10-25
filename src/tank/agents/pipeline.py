@@ -26,6 +26,7 @@ from tank.agents.routing import RoutingItem, RoutingSelector, item_state, item_v
 from tank.contracts.configuration import Thresholds
 from tank.contracts.job_repository import JobRepository, QueueStore
 from tank.contracts.progress import SourceProgressSink
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.repository import Collection, Repository
 from tank.contracts.source_items import (
     SOURCE_ITEMS,
@@ -48,10 +49,10 @@ type CutoffName = Literal["filter_cutoff", "routing_cutoff"]
 
 
 class PipelineSettings(Protocol):
-    opencode_api_key: str | None
-    replay: bool
-    config_version: str
-    code_version: str
+    @property
+    def opencode_api_key(self) -> str | None: ...
+    @property
+    def replay(self) -> bool: ...
 
     def load_config(self, name: str) -> dict[str, JsonValue]: ...
     def thresholds(self) -> Thresholds: ...
@@ -85,8 +86,10 @@ class Pipeline:
         settings: PipelineSettings,
         *,
         progress: SourceProgressSink,
+        versions: ResolvedVersionIdentity,
         http: httpx.AsyncClient | None = None,
     ) -> None:
+        versions = ResolvedVersionIdentity.model_validate(versions)
         self.repo, self.settings = repo, settings
         self.progress = progress
         self.http = httpx.AsyncClient(timeout=15) if http is None else http
@@ -94,7 +97,7 @@ class Pipeline:
         self.items = Repository(repo, SOURCE_ITEMS)
         self.scores = Repository(repo, Collection("ops.llm_usage", JevScoreRecord))
         self.jobs = JobRepository(repo)
-        self.classifier = JevClassifier(self.scores, settings, self.http)
+        self.classifier = JevClassifier(self.scores, settings, self.http, versions=versions)
 
     def cutoff(self, name: CutoffName) -> float:
         try:

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import yaml
-from agent_source_fixtures import source_record_fixture
+from agent_source_fixtures import declared_versions_fixture, source_record_fixture
 from pydantic import ValidationError
 
 from tank.agents.pipeline import FILTER, ROUTE, Pipeline
@@ -66,9 +66,9 @@ def test_filter_question_asks_the_03_3_1_condition_about_the_named_item() -> Non
 )
 def test_audit_2_12_generic_words_do_not_resolve(text) -> None:
     opts, _ = options()
-    assert not Pipeline(MemoryRepository(), opts, progress=DisabledSourceProgress()).identities(
-        parse_feed_source_item(source_record_fixture({"item_id": "fixture", "text": text}))
-    )
+    assert not Pipeline(
+        MemoryRepository(), opts, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
+    ).identities(parse_feed_source_item(source_record_fixture({"item_id": "fixture", "text": text})))
 
 
 @pytest.mark.parametrize(
@@ -84,9 +84,9 @@ def test_audit_2_12_generic_words_do_not_resolve(text) -> None:
 )
 def test_audit_2_12_canonical_aliases(text, entity, token) -> None:
     opts, _ = options()
-    ids = Pipeline(MemoryRepository(), opts, progress=DisabledSourceProgress()).identities(
-        parse_feed_source_item(source_record_fixture({"item_id": "fixture", "title": text}))
-    )
+    ids = Pipeline(
+        MemoryRepository(), opts, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
+    ).identities(parse_feed_source_item(source_record_fixture({"item_id": "fixture", "title": text})))
     assert {entity, token} <= ids
 
 
@@ -123,7 +123,7 @@ async def test_scored_match_joins_running_event_despite_other_pending_extraction
             "last_item_at": at,
         },
     )
-    pipe = Pipeline(repo, opts, progress=DisabledSourceProgress())
+    pipe = Pipeline(repo, opts, progress=DisabledSourceProgress(), versions=declared_versions_fixture())
 
     async def score(item, name, state):
         assert name == "same_event"
@@ -151,9 +151,9 @@ async def test_filter_job_expiry_preserves_source_observation_precision(precisio
         item["published_at"] = item["observed_at"]
         item["published_prec"] = precision
     await repo.put("ingest.source_items", item["item_id"], source_record_fixture(item))
-    await Pipeline(repo, opts, progress=DisabledSourceProgress()).filter_item_wire(
-        {"item_id": item["item_id"]}
-    )
+    await Pipeline(
+        repo, opts, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
+    ).filter_item_wire({"item_id": item["item_id"]})
     jobs = await repo.list("ops.jobs")
     assert len(jobs) == 1
     assert jobs[0]["expires_at"] == "2026-10-18T06:00:00.123456Z"
@@ -168,7 +168,9 @@ async def test_new_item_routes_without_reservation_state() -> None:
     await repo.put(
         "ingest.source_items", "new", source_record_fixture({"item_id": "new", "title": "Aave announcement"})
     )
-    routed = await Pipeline(repo, opts, progress=DisabledSourceProgress()).route_item_wire({"item_id": "new"})
+    routed = await Pipeline(
+        repo, opts, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
+    ).route_item_wire({"item_id": "new"})
     assert routed["routing_message"] == {"kind": "NEW_ITEM", "item_id": "new"}
     assert routed["route"] == {"decision": "NEW_SESSION", "event_id": None, "p_same": None}
 
@@ -202,7 +204,9 @@ async def test_pending_extraction_is_not_a_candidate_then_real_event_is_scored(s
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        pipe = Pipeline(repo, opts, http=http, progress=DisabledSourceProgress())
+        pipe = Pipeline(
+            repo, opts, http=http, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
+        )
         config["thresholds"]["routing_cutoff"] = None
         with pytest.raises(ValidationError):
             await pipe.route_item_wire({"item_id": "first"})
@@ -245,7 +249,9 @@ async def test_other_pending_session_never_blocks_unmatched_item(status) -> None
         "ingest.source_items", "i", source_record_fixture({"item_id": "i", "title": "Aave other event"})
     )
     await repo.put("ops.agent_sessions", "ses", {"event_id": None, "session_id": "ses", "status": status})
-    result = await Pipeline(repo, opts, progress=DisabledSourceProgress()).route_item_wire({"item_id": "i"})
+    result = await Pipeline(
+        repo, opts, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
+    ).route_item_wire({"item_id": "i"})
     assert result["route"]["decision"] == "NEW_SESSION"
 
 
@@ -260,7 +266,9 @@ def test_identity_matching_uses_registry_aliases_and_qualifiers_without_code_ove
             "tokens": ["lighter:LIT"],
         }
     ]
-    pipe = Pipeline(MemoryRepository(), opts, progress=DisabledSourceProgress())
+    pipe = Pipeline(
+        MemoryRepository(), opts, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
+    )
     assert "lighter" in pipe.identities(
         parse_feed_source_item(source_record_fixture({"item_id": "fixture", "text": "NEW VENUE"}))
     )
@@ -281,7 +289,7 @@ def test_identity_matching_uses_registry_aliases_and_qualifiers_without_code_ove
 def test_explicit_token_identity_expands_to_its_entity() -> None:
     opts, _ = options()
     assert {"aave", "aave:AAVE"} <= Pipeline(
-        MemoryRepository(), opts, progress=DisabledSourceProgress()
+        MemoryRepository(), opts, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
     ).identities(
         parse_feed_source_item(
             source_record_fixture({"item_id": "fixture", "tokens_mentioned": ["aave:AAVE"]})
@@ -330,9 +338,9 @@ async def test_official_repost_promotion_during_filter_request_preserves_latest_
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        result = await Pipeline(repo, opts, http=http, progress=DisabledSourceProgress()).filter_item_wire(
-            {"item_id": "i"}
-        )
+        result = await Pipeline(
+            repo, opts, http=http, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
+        ).filter_item_wire({"item_id": "i"})
     stored = await repo.get("ingest.source_items", "i")
     assert result == stored
     assert stored["relevance"] == {"decision": "ALWAYS"}
@@ -346,7 +354,9 @@ async def test_official_repost_promotion_during_filter_request_preserves_latest_
 @pytest.mark.parametrize("field", ["author", "monitored_author"])
 def test_organization_author_and_repost_resolve_canonical_entity_and_token(field) -> None:
     opts, _ = options()
-    ids = Pipeline(MemoryRepository(), opts, progress=DisabledSourceProgress()).identities(
+    ids = Pipeline(
+        MemoryRepository(), opts, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
+    ).identities(
         parse_feed_source_item(
             source_record_fixture(
                 {"item_id": "fixture", "source_id": "S29", "author": "unknown_original", field: "@Aave"}
@@ -381,7 +391,9 @@ async def test_failed_event_is_not_a_routing_candidate() -> None:
         {"session_id": "s", "event_id": "failed", "last_item_at": clock_iso(), "status": "FAILED"},
     )
 
-    routed = await Pipeline(repo, opts, progress=DisabledSourceProgress()).route_item_wire({"item_id": "i"})
+    routed = await Pipeline(
+        repo, opts, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
+    ).route_item_wire({"item_id": "i"})
     assert routed["route"]["decision"] == "NEW_SESSION"
     assert routed["routing_scores"] == {}
 
@@ -404,7 +416,7 @@ async def test_candidate_questions_overlap_and_reduce_in_stable_order() -> None:
         )
         for key in ("a", "b", "c")
     ]
-    pipe = Pipeline(repo, opts, progress=DisabledSourceProgress())
+    pipe = Pipeline(repo, opts, progress=DisabledSourceProgress(), versions=declared_versions_fixture())
 
     async def candidates(*args):
         return events
@@ -461,9 +473,9 @@ async def test_candidate_window_includes_equal_clock_and_lower_boundary_only() -
             key,
             {"status": "OPEN", "session_id": key, "event_id": key, "last_item_at": iso(at)},
         )
-    events = await Pipeline(repo, opts, progress=DisabledSourceProgress())._candidate_events(
-        {"aave"}, iso(since), now
-    )
+    events = await Pipeline(
+        repo, opts, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
+    )._candidate_events({"aave"}, iso(since), now)
     assert [event.event_id for event in events] == ["a_lower", "z_equal"]
 
 
@@ -518,7 +530,9 @@ def test_long_body_is_cut_at_a_sentence() -> None:
 
 def test_routing_state_names_item_and_event_with_readable_identities() -> None:
     opts, _ = options()
-    state = Pipeline(MemoryRepository(), opts, progress=DisabledSourceProgress()).routing_state(
+    state = Pipeline(
+        MemoryRepository(), opts, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
+    ).routing_state(
         parse_feed_source_item(
             source_record_fixture(
                 {
@@ -580,7 +594,7 @@ async def test_event_with_resolved_token_id_is_a_candidate_for_alias_or_ticker(t
         "s",
         {"status": "OPEN", "session_id": "s", "event_id": "e", "last_item_at": iso(now)},
     )
-    pipe = Pipeline(repo, opts, progress=DisabledSourceProgress())
+    pipe = Pipeline(repo, opts, progress=DisabledSourceProgress(), versions=declared_versions_fixture())
     assert "uniswap:UNI" in pipe.identities(
         parse_feed_source_item(source_record_fixture({"item_id": "fixture", "title": text}))
     )
@@ -594,7 +608,9 @@ async def test_event_with_resolved_token_id_is_a_candidate_for_alias_or_ticker(t
 
 def test_bare_item_ticker_resolves_to_registry_token_id() -> None:
     opts, _ = options()
-    ids = Pipeline(MemoryRepository(), opts, progress=DisabledSourceProgress()).identities(
+    ids = Pipeline(
+        MemoryRepository(), opts, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
+    ).identities(
         parse_feed_source_item(
             source_record_fixture({"item_id": "fixture", "title": "fee switch", "tokens_mentioned": ["UNI"]})
         )

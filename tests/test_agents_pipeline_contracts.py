@@ -2,7 +2,7 @@
 
 import httpx
 import pytest
-from agent_source_fixtures import pipeline_settings_fixture, source_item_fixture
+from agent_source_fixtures import declared_versions_fixture, pipeline_settings_fixture, source_item_fixture
 from pydantic import ValidationError
 
 from tank.agents.pipeline import Pipeline
@@ -30,6 +30,7 @@ async def test_pipeline_refuses_invalid_persisted_capture_before_provider_or_enq
             pipeline_settings_fixture({"registry": {}, "thresholds": {}}),
             progress=DisabledSourceProgress(),
             http=http,
+            versions=declared_versions_fixture(),
         )
         with pytest.raises(ValidationError):
             await pipeline.filter_item_wire({"item_id": "invalid"})
@@ -52,6 +53,7 @@ async def test_pipeline_requires_completed_relevance_and_owned_job_fields() -> N
             pipeline_settings_fixture({"registry": {}, "thresholds": {}}),
             progress=DisabledSourceProgress(),
             http=http,
+            versions=declared_versions_fixture(),
         )
         with pytest.raises(ValueError, match="relevance"):
             await pipeline.route_item_wire({"item_id": "pending"})

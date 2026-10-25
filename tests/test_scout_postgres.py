@@ -12,6 +12,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from agent_source_fixtures import declared_versions_fixture
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
@@ -199,7 +200,9 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
     tools = EventToolService(repository, settings, None, None)
     openma = FakeOpenMA()
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma)) as http:
-        sessions = SessionService(repository, settings, tools.dispatch, http=http)
+        sessions = SessionService(
+            repository, settings, tools.dispatch, http=http, versions=declared_versions_fixture()
+        )
         sessions.start_stream = lambda sid: None
         analyst, recorded = await seed_event(tools, sessions)
         eid = analyst["event_id"]

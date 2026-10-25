@@ -9,7 +9,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import pytest
-from agent_source_fixtures import source_record_fixture
+from agent_source_fixtures import declared_versions_fixture, source_record_fixture
 from test_agents_execution_barrier import config
 
 from tank.agents.sessions import SessionService
@@ -168,7 +168,9 @@ async def test_controller_snapshot_cannot_erase_domain_binding(
             )
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            service = SessionService(repo, config(), tools.dispatch, http=client)
+            service = SessionService(
+                repo, config(), tools.dispatch, http=client, versions=declared_versions_fixture()
+            )
             poll_task = asyncio.create_task(service.execution_barrier(session, verify_remote=True))
             await writer_ready.wait()
             domain_task = asyncio.create_task(

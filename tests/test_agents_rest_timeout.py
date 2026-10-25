@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 import pytest
+from agent_source_fixtures import declared_versions_fixture
 from test_agents import seed_session, settings
 
 from tank.agents import sessions as session_module
@@ -52,7 +53,9 @@ async def test_stalled_rest_read_times_out_without_changing_sse(
     async with stalled_http_peer() as (url, accepted):
         opts, _ = settings(openma_url=url)
         injected = httpx.AsyncClient(timeout=None) if injected_unbounded_client else None
-        service = SessionService(MemoryRepository(), opts, None, http=injected)
+        service = SessionService(
+            MemoryRepository(), opts, None, http=injected, versions=declared_versions_fixture()
+        )
         try:
             if not injected_unbounded_client:
                 assert service.http.timeout.read == 30
@@ -95,12 +98,12 @@ async def test_rest_ack_timeout_retains_result_and_reuses_native_ack_body() -> N
 
     event = {"id": "call", "type": "agent.custom_tool_use", "name": "fetch_page", "input": {}}
     async with httpx.AsyncClient(transport=httpx.MockTransport(acknowledge), timeout=None) as http:
-        first = SessionService(repo, opts, dispatch, http=http)
+        first = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
         with pytest.raises(httpx.ReadTimeout):
             await first.process_event("ses_1", event)
         stored = await repo.get("ops.tool_calls", "ses_1:call")
         assert stored["status"] == "DONE" and not stored.get("returned_at")
-        resumed = SessionService(repo, opts, dispatch, http=http)
+        resumed = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
         await resumed.process_event("ses_1", event)
         await resumed.process_event("ses_1", event)
     assert dispatched == ["fetch_page"]

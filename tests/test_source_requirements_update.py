@@ -9,7 +9,12 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import yaml
-from source_support import operational_configuration, source_configuration, source_definition
+from source_support import (
+    fixture_versions,
+    operational_configuration,
+    source_configuration,
+    source_definition,
+)
 
 from tank.sources import SourceService, parsers
 from tank.storage import MemoryRepository
@@ -62,7 +67,7 @@ async def test_dtcc_official_html_only_and_zero_links_stays_degraded(tmp_path: P
 
     repo = MemoryRepository()
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-        service = SourceService(repo, config(tmp_path, [source]), http=http)
+        service = SourceService(repo, config(tmp_path, [source]), http=http, versions=fixture_versions())
         try:
             first = await service.poll_once("S08")
             assert first["status"] == "HEALTHY" and first["items"] == 1
@@ -83,7 +88,7 @@ async def test_dtcc_official_html_only_and_zero_links_stays_degraded(tmp_path: P
 async def test_duplicate_preserves_capture_and_counts_one_observation(tmp_path: Path) -> None:
     repo = MemoryRepository()
     source = {"source_id": "S30", "name": "Original publisher", "feeds": []}
-    service = SourceService(repo, config(tmp_path, [source]))
+    service = SourceService(repo, config(tmp_path, [source]), versions=fixture_versions())
     first_time, later = "2026-10-20T10:00:00Z", "2026-10-20T10:05:00Z"
 
     def captured(item_id, payload, item):
@@ -146,7 +151,7 @@ async def test_poll_and_loop_never_reconstruct_legacy_binance_body_or_metadata(
 ) -> None:
     repo = MemoryRepository()
     source = {"source_id": "S09", "feeds": []}
-    service = SourceService(repo, config(tmp_path, [source]))
+    service = SourceService(repo, config(tmp_path, [source]), versions=fixture_versions())
     ref, digest = service.raw(
         json.dumps(
             {

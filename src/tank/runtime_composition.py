@@ -60,27 +60,28 @@ def validate_runtime_settings(settings: Settings) -> None:
     if settings.backup_dir is None:
         raise ValueError("TANK_BACKUP_DIR is required for nightly external backups")
     settings.thresholds()
-    validate_registry(settings)
+    validate_registry(settings, settings.require_versions())
 
 
 def build_runtime(repo: Repository, settings: Settings) -> Runtime:
     validate_runtime_settings(settings)
+    versions = settings.require_versions()
     configure_logging(settings)
     market = MarketService(repo, settings)
     truth = MarketTruthService(repo, settings, market)
-    sources = SourceService(repo, settings)
-    pipeline = Pipeline(repo, settings, progress=RepositorySourceProgress(repo, settings))
+    sources = SourceService(repo, settings, versions=versions)
+    pipeline = Pipeline(repo, settings, progress=RepositorySourceProgress(repo, settings), versions=versions)
     tools = EventToolService(repo, settings, truth, DecisionEngine(settings))
     inbox = TelegramInbox(repo, settings)
-    sessions = SessionService(repo, settings, tools.dispatch)
+    sessions = SessionService(repo, settings, tools.dispatch, versions=versions)
     delivery = DeliveryService(repo, settings)
-    scheduler = Scheduler(repo, settings, market, truth)
+    scheduler = Scheduler(repo, settings, market, truth, thresholds=settings.thresholds(), versions=versions)
     gateway = CodexGateway(settings)
     sessions.telegram = inbox
     tools.scheduler = scheduler
 
     async def bootstrap_registry() -> None:
-        await sync_registry(repo, settings)
+        await sync_registry(repo, settings, versions=versions)
 
     def validate_generation() -> None:
         validate_runtime_settings(settings)
