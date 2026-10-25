@@ -353,7 +353,7 @@ async def test_scoped_tools_bind_the_current_event_and_refuse_an_explicit_one(co
         await boundary.arguments("get_decision", {"token_id": "world:WLD"})
     event = await bound_event(repo, session)
     boundary = ModelContext(repo, settings, session)
-    card = {"kind": "FULL", "what": "x", "verdict": "y", "why": []}
+    card = {"kind": "FULL", "what": "x", "verdict": "y", "why": ["First fact.", "Second fact."]}
     assert await boundary.arguments("publish_card", card) == {**card, "event_id": event["event_id"]}
     with pytest.raises(ValueError, match=r"unknown fields \['event_id'\]"):
         await boundary.arguments("publish_card", {**card, "event_id": new_id("evt")})
