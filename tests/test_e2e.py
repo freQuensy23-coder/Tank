@@ -165,7 +165,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
             )
         if path.endswith("/sessions"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": list(native_sessions.values())})
+                return httpx.Response(200, json={"data": list(native_sessions.values()), "next_page": None})
             if request.method != "POST":
                 raise AssertionError(f"Unexpected native session method: {request.method}")
             created = _native_session(request, "s1")
@@ -441,7 +441,7 @@ async def test_full_sse_pipeline_postgres(
             )
         if path.endswith("/sessions"):
             if req.method == "GET":
-                return httpx.Response(200, json={"data": list(native_sessions.values())})
+                return httpx.Response(200, json={"data": list(native_sessions.values()), "next_page": None})
             if req.method != "POST":
                 raise AssertionError(f"Unexpected native session method: {req.method}")
             created = _native_session(req, sid)
@@ -1086,7 +1086,7 @@ async def test_runtime_autonomous_source_to_telegram(
             )
         if path.endswith("/sessions"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": list(native_sessions.values())})
+                return httpx.Response(200, json={"data": list(native_sessions.values()), "next_page": None})
             if request.method != "POST":
                 raise AssertionError(f"Unexpected native session method: {request.method}")
             created = _native_session(request, "autonomous-session")
