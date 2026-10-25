@@ -51,6 +51,8 @@ class BootstrapFixture(DomainModel):
 
 
 def bootstrap_fixture(directory: Path, observed_at: datetime) -> BootstrapFixture:
+    if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+        raise ValueError("Bootstrap fixture requires an aware observation clock")
     directory.mkdir(mode=0o700, exist_ok=False)
     catalog_path = directory / "empty-lending-pools.json"
     catalog_bytes = b"[]\n"
