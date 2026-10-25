@@ -18,6 +18,7 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 
 from tank.contracts.configuration import DeliveryConfiguration, Thresholds
 from tank.contracts.json import JsonDocument, decode_json
+from tank.contracts.openma import OpenMAConfiguration
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.registry import (
     DependencyConfiguration,
@@ -281,6 +282,9 @@ class Settings(BaseSettings):
         relative = name if name.endswith((".yaml", ".yml")) else name + ".yaml"
         payload = yaml.load(self.read_config_bytes(relative), Loader=_YAML_LOADER)
         return schema.model_validate(payload, strict=True)
+
+    def openma(self) -> OpenMAConfiguration:
+        return self.load_config_as("openma", OpenMAConfiguration)
 
     def registry(self) -> RegistryConfiguration:
         return self.load_config_as("registry", RegistryConfiguration)
