@@ -817,3 +817,23 @@ evidence and input-immutability tests. The named facet is strict-mypy clean and
 Ruff passes touched files. Full instrument snapshot/parser record typing remains
 open; this is a bounded correction of a concrete evidence defect, not a claim
 that the entire polling module is complete.
+
+The paired transition has now been qualified on immutable combined checkpoint
+9f35afaa: 515 owned unit cases passed in 6.06 seconds at its unchanged application
+parent, 38 actual integration cases passed in 7.99 seconds, and the final combined
+four-E2E plus ten PostgreSQL admission/transition selection passed all 14 cases in
+11.49 seconds with zero skips. Quality's exact paired Go checkpoint passed all
+354 race-enabled cases against actual PostgreSQL/ClickHouse, including legacy
+capacity variants and twelve mixed old/new concurrent callers. Global Ruff and
+formatting passed 336 files; six focused budget/helper/source-page modules passed
+strict typing. Default mypy retained one analysis-owned Truth cache annotation
+error, reported to that owner.
+
+The new SQL tests seed two genuinely historical capacity-suffixed records with
+unequal weights, compare timestamps/weights/owners before and after a blocked
+group, and then verify a larger-cap request sees exactly the combined prior spend.
+Adversarial scopes contain pipes and trailing numeric segments. Old serialized
+and new structured callers contend on one canonical lock; capacity remains each
+caller's explicit policy input. Distinct periods retain distinct constraints.
+There is no claim of an authoritative minimum capacity across stale deployments
+or continuity when a configured period is changed.
