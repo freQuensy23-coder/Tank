@@ -23,19 +23,11 @@ func TestSourceDiscoveryFetchChargesSharedMarketWeights(t *testing.T) {
 			if err != nil || got == nil || got.Status != 200 || string(got.Body) != "{}" {
 				t.Fatalf("source discovery response: %+v %v", got, err)
 			}
-			capacity := float64(3000)
-			if tc.bucket == "binance.usdm" {
-				capacity = 1200
-			}
-			name := budget.BucketName(tc.bucket, 60, capacity)
+			name := budget.BucketName(tc.bucket, 60)
 			if used := ledger.Used(name, 60); used != tc.weight {
 				t.Fatalf("source discovery charged %v in %s, want %v", used, name, tc.weight)
 			}
-			otherCapacity := float64(3000)
-			if tc.otherBucket == "binance.usdm" {
-				otherCapacity = 1200
-			}
-			if used := ledger.Used(budget.BucketName(tc.otherBucket, 60, otherCapacity), 60); used != 0 {
+			if used := ledger.Used(budget.BucketName(tc.otherBucket, 60), 60); used != 0 {
 				t.Fatalf("source discovery spent the other venue's budget: %v", used)
 			}
 			if len(exchange.requests) != 1 || exchange.requests[0].Method != "GET" || exchange.requests[0].URL != tc.url {
@@ -52,7 +44,7 @@ func TestSourceDiscoveryUnknownWeightsRemainBounded(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "Unconfigured Binance request weight") {
 			t.Fatalf("unknown API weight was accepted: %v", err)
 		}
-		if len(exchange.requests) != 0 || ledger.Used(budget.BucketName("binance.spot", 60, 3000), 60) != 0 {
+		if len(exchange.requests) != 0 || ledger.Used(budget.BucketName("binance.spot", 60), 60) != 0 {
 			t.Fatalf("rejected API request spent budget or reached HTTP: %+v", exchange.requests)
 		}
 	})
@@ -62,7 +54,7 @@ func TestSourceDiscoveryUnknownWeightsRemainBounded(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "Unconfigured Binance request weight") || got != nil {
 			t.Fatalf("unknown raw source weight was accepted: %+v %v", got, err)
 		}
-		if used := ledger.Used(budget.BucketName("binance.spot", 60, 3000), 60); used != 0 {
+		if used := ledger.Used(budget.BucketName("binance.spot", 60), 60); used != 0 {
 			t.Fatalf("rejected raw source consumed budget: %v", used)
 		}
 		if len(exchange.requests) != 0 {

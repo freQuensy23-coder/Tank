@@ -37,31 +37,8 @@ func NewMemoryLedger(now func() time.Time) *MemoryLedger {
 	return &MemoryLedger{now: now, windows: map[string][]spend{}, blocks: map[string]time.Time{}}
 }
 
-func (m *MemoryLedger) Acquire(_ context.Context, bucket string, capacity, windowS, weight float64, _, host string) (time.Duration, error) {
-	if err := (Bucket{Key: bucket, Capacity: capacity, WindowS: windowS, Weight: weight}).Validate(); err != nil {
-		return 0, err
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	now := m.now()
-	if until, ok := m.blocks[host]; ok && host != "" && until.After(now) {
-		return max(minWait, until.Sub(now)), nil
-	}
-	window := seconds(windowS)
-	history := m.windows[bucket]
-	for len(history) > 0 && !history[0].at.After(now.Add(-window)) {
-		history = history[1:]
-	}
-	used := 0.0
-	for _, s := range history {
-		used += s.weight
-	}
-	if used+weight <= capacity {
-		m.windows[bucket] = append(history, spend{now, weight})
-		return 0, nil
-	}
-	m.windows[bucket] = history
-	return max(minWait, history[0].at.Add(window).Sub(now)), nil
+func (m *MemoryLedger) Acquire(ctx context.Context, scope string, capacity, windowS, weight float64, owner, host string) (time.Duration, error) {
+	return m.AcquireGroup(ctx, []Bucket{{Key: scope, Capacity: capacity, WindowS: windowS, Weight: weight}}, owner, host)
 }
 
 func (m *MemoryLedger) Block(_ context.Context, host string, until time.Time, _, _ string) error {

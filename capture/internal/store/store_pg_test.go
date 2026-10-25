@@ -214,10 +214,10 @@ func TestClaimAndFinishRequests(t *testing.T) {
 func TestLedger(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	bucket := "storetest:" + suffix() + "|1.0|2.0"
+	bucket := "storetest:" + suffix()
 	host := "storetest-" + suffix() + ".example"
 	t.Cleanup(func() {
-		if _, err := s.Pool.Exec(context.Background(), "DELETE FROM ops.request_budget_ledger WHERE bucket=$1", bucket); err != nil {
+		if _, err := s.Pool.Exec(context.Background(), "DELETE FROM ops.request_budget_ledger WHERE bucket=ops.request_budget_scope_key($1::text,1::float8)", bucket); err != nil {
 			t.Error(err)
 		}
 		if _, err := s.Pool.Exec(context.Background(), "DELETE FROM ops.request_budget_blocks WHERE host=$1", host); err != nil {
@@ -244,7 +244,7 @@ func TestLedger(t *testing.T) {
 	if err := ledger.Block(ctx, host, time.Now().Add(time.Second), "HTTP 429", "test"); err != nil {
 		t.Fatal(err)
 	}
-	wait, err = ledger.Acquire(ctx, "storetest:"+suffix()+"|1.0|5.0", 5, 1, 1, "test", host)
+	wait, err = ledger.Acquire(ctx, "storetest:"+suffix(), 5, 1, 1, "test", host)
 	if err != nil || wait < 25*time.Second {
 		t.Fatalf("a blocked host waits for its latest block: %v %v", wait, err)
 	}

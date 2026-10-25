@@ -34,8 +34,8 @@ func TestBlockedWeightedRequestsLeaveHostSlotsForBaseline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	ledger := budget.NewMemoryLedger(nil)
-	name := budget.BucketName("binance.spot", 60, 3000)
-	if wait, err := ledger.Acquire(ctx, name, 3000, 60, 2990, "fixture", "api.binance.com"); wait != 0 || err != nil {
+	name := budget.BucketName("binance.spot", 60)
+	if wait, err := ledger.Acquire(ctx, "binance.spot", 3000, 60, 2990, "fixture", "api.binance.com"); wait != 0 || err != nil {
 		t.Fatalf("prefill %v %v", wait, err)
 	}
 	waiting := make(chan float64, budget.HostInFlight)
