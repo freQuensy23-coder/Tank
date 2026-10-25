@@ -303,25 +303,14 @@ def test_t8_data_confidence_medium_funding_freshness_blocks_start() -> None:
     assert dc["class"] == "MEDIUM", dc
     assert dc["limiting"]["condition"] == "freshness" and dc["limiting"]["collection"] == "funding"
 
-    e, a, b = (
-        {"event_id": "e", "event_state": "APPROVED", "state_verified": True, "freshness": "FRESH"},
-        {"class": "MAJOR", "certainty": "HIGH", "impact_horizon": {"impact_start": "NOW"}},
-        {"token_id": "T", "role": "PRIMARY", "credible": True, "capture_class": "DIRECT"},
-    )
-    m = {
-        "token_id": "T",
-        "move_class": "SPOT_LED_ACCUMULATION",
-        "data_confidence": {"class": "HIGH"},
-        "relative": {"repricing_band": "EARLY", "market_context": "NEUTRAL", "anchor": {"ref_price": "10"}},
-        "liquidity": {"liquidity_state": "NORMAL"},
-        "spot": {},
-        "derivatives": {},
-    }
+    from test_decisions import inputs, policy_inputs
+
+    e, a, b, m = inputs()
     engine = DecisionEngine()
-    assert engine.evaluate(e, a, b, m)["action"] == "START"
+    assert engine.evaluate(policy_inputs(e, a, b, m)).action == "START"
     n = deepcopy(m)
     n["data_confidence"] = dc
-    assert engine.evaluate(e, a, b, n)["action"] != "START"
+    assert engine.evaluate(policy_inputs(e, a, b, n)).action != "START"
 
 
 def test_t9_disconnected_minutes_are_incomplete_and_exclude_the_venue() -> None:

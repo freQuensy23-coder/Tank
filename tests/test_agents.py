@@ -1578,3 +1578,48 @@ async def test_explicit_missing_native_session_never_falls_back_to_creation(
         await service.close()
     assert not calls
     assert await repo.list("ops.agent_sessions") == []
+
+
+@pytest.mark.asyncio
+async def test_missing_native_followup_records_absence_without_termination_or_input() -> None:
+    from tank.telegram_inbox import GONE_TEXT
+
+    repo = MemoryRepository()
+    opts, _ = settings()
+    await seed_session(repo)
+    await repo.put(
+        "out.user_questions",
+        "question",
+        {
+            "question_id": "question",
+            "session_id": "ses_1",
+            "status": "PENDING",
+            "answer_status": None,
+            "text": "Can the analysis continue?",
+        },
+    )
+    calls: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        return httpx.Response(404, json={"error": "synthetic-private-provider-message"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        result = await service.send_message(
+            {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": "question"}
+        )
+        await service.close()
+    assert result is None
+    assert calls == [("GET", "/v1/sessions/ses_1")]
+    stored = await repo.get("ops.agent_sessions", "ses_1")
+    assert stored is not None
+    remote = stored["remote_state"]
+    assert isinstance(remote, dict)
+    assert remote["kind"] == "MISSING" and remote["missing"] is True
+    assert "status" not in remote and "termination_receipt" not in stored
+    assert remote["checked_at_prec"] == "COLLECTION_ONLY"
+    answer = await repo.get("out.user_questions", "question")
+    assert answer is not None
+    assert answer["answer_status"] == "NO_SESSION" and answer["reason_text"] == GONE_TEXT
+    assert len(await repo.list("ops.jobs", filters={"type": "TELEGRAM_ANSWER"})) == 1

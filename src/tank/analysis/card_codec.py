@@ -22,6 +22,7 @@ from tank.analysis.card_contracts import (
     CardEvent,
     CardEvidenceReference,
     CardExclusion,
+    CardHoldersRevenue,
     CardInputs,
     CardMapping,
     CardMarket,
@@ -33,6 +34,7 @@ from tank.analysis.card_contracts import (
     CardRelative,
     CardReturns,
     CardRevenue,
+    CardRevenueAbsence,
     CardRevenueChartPoint,
     CardRevenuePeriod,
     CardRevenueProtocol,
@@ -56,6 +58,7 @@ from tank.analysis.card_contracts import (
     PublicationNarrative,
     PublicationPolicy,
     PublicationPriorFacts,
+    UnavailableCardRevenue,
     UnavailableRevenueProtocol,
 )
 from tank.analysis.decision_contracts import (
@@ -443,6 +446,7 @@ def _market(row: Mapping[str, JsonValue]) -> CardMarket:
     market_header = _project(
         CardMarketHeader, {"token_id": _field(row, "token_id"), "move": _field(row, "move_class")}
     )
+    revenue = _field(_record(_field(row, "supply"), "supply"), "holders_revenue")
     return CardMarket(
         token_id=market_header.token_id,
         move=market_header.move,
@@ -463,12 +467,13 @@ def _market(row: Mapping[str, JsonValue]) -> CardMarket:
             complete_venues=tuple(spot_rows),
             excluded=excluded,
         ),
-        holders_revenue=_revenue(_record(_field(row, "supply"), "supply")),
+        holders_revenue=None
+        if revenue is None
+        else holders_revenue_from_record(_record(revenue, "holders_revenue")),
     )
 
 
-def _revenue(supply: Mapping[str, JsonValue]) -> CardRevenue | None:
-    observed = _record(_field(supply, "holders_revenue"), "holders_revenue")
+def holders_revenue_from_record(observed: Mapping[str, JsonValue]) -> CardHoldersRevenue:
     protocols: list[CardRevenueProtocol] = []
     for protocol in _records(_field(observed, "protocols"), "holders_revenue.protocols"):
         name = _text(_field(protocol, "protocol"), "protocol")
@@ -515,7 +520,8 @@ def _revenue(supply: Mapping[str, JsonValue]) -> CardRevenue | None:
                 )
             )
     if not any(isinstance(value, (PeriodRevenueProtocol, ChartRevenueProtocol)) for value in protocols):
-        return None
+        unavailable = tuple(value for value in protocols if isinstance(value, UnavailableRevenueProtocol))
+        return UnavailableCardRevenue(reason=_revenue_absence(observed.get("reason")), protocols=unavailable)
     coverage = _record(_field(observed, "coverage"), "holders_revenue.coverage")
     day = _record(_field(coverage, "24h"), "holders_revenue.coverage.24h")
     return CardRevenue(
@@ -524,6 +530,21 @@ def _revenue(supply: Mapping[str, JsonValue]) -> CardRevenue | None:
         stale=_field(observed, "status") == "STALE",
         complete_24h=_boolean(_field(day, "complete"), "coverage.complete"),
     )
+
+
+def _revenue_absence(reason: JsonValue) -> CardRevenueAbsence:
+    """Bound presentation labels without rewriting the captured provider diagnostic."""
+    if reason is not None and not isinstance(reason, str):
+        raise ValueError("Captured revenue absence diagnostics must be text or null")
+    if reason == "NO_CAPTURED_FUNDAMENTALS":
+        return "NO_CAPTURED_FUNDAMENTALS"
+    if reason == "ONLY_FUTURE_FUNDAMENTALS":
+        return "ONLY_FUTURE_FUNDAMENTALS"
+    if reason in ("PROVIDER_METRIC_NOT_SUPPORTED", "NO_SUPPORTED_PUBLIC_FEES_ADAPTER"):
+        return "PROVIDER_METRIC_UNSUPPORTED"
+    if reason == "NO_PUBLIC_FEES_ADAPTER_MATCHING_TOKEN_IDENTITY":
+        return "NO_VERIFIED_PROVIDER_MATCH"
+    return "INCOMPLETE_PROVIDER_DATA"
 
 
 class CardWindowKey(DomainModel):

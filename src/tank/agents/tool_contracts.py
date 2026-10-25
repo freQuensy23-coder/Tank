@@ -5,6 +5,7 @@ from typing import Literal, Self
 from pydantic import JsonValue
 
 from tank.contracts import DomainModel
+from tank.contracts.scalars import FalseFlag, TrueFlag
 from tank.util import canonical_json
 
 type CompletedToolStatus = Literal["DONE", "ERROR", "REFUSED"]
@@ -42,7 +43,7 @@ class ToolFailure(DomainModel):
 
 
 class FailedToolResponse(DomainModel):
-    ok: Literal[False]
+    ok: FalseFlag
     error: ToolFailure
 
 
@@ -55,4 +56,4 @@ class NativeToolResult(DomainModel):
     type: Literal["user.custom_tool_result"]
     custom_tool_use_id: str
     content: list[NativeText]
-    is_error: Literal[True] | None = None
+    is_error: TrueFlag | None = None

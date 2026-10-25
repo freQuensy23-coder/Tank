@@ -746,17 +746,16 @@ async def test_structural_assessment_requires_agent_partial_without_parallel_pub
 
 
 def resolved_native_domain_fixture(session_id):
-    return {
-        "id": session_id,
-        "agent": {
-            "id": "native-domain-fixture",
-            "version": 1,
-            "system": "Actual resolved synthetic domain integration instructions",
-            "skills": [],
-            "tools": [],
-            "model": {"id": "gpt-6.1-sol"},
-        },
-    }
+    from native_session_fixtures import native_session_record
+
+    return native_session_record(
+        session_id,
+        agent_id="native-domain-fixture",
+        environment_id="synthetic-domain-environment",
+        metadata={},
+        model_id="gpt-6.1-sol",
+        agent_snapshot={"system": "Actual resolved synthetic domain integration instructions"},
+    )
 
 
 async def test_real_session_tool_refuses_cross_event_mutation(service) -> None:
@@ -853,7 +852,7 @@ async def test_novel_layer_proposal_survives_real_session_transaction(service) -
     )
     ledger = await service.repo.get("ops.tool_calls", "novel-session:novel-call")
     assert ledger["returned_at"]
-    assert ledger["result"]["accepted"] is False
+    assert ledger["result"].get("accepted") is False, ledger["result"]
     proposals = await service.repo.list("scout.expansion_proposals")
     assert len(proposals) == 1
     assert proposals[0]["hook"] == "BENEFICIARY_LAYER"
@@ -1979,6 +1978,7 @@ async def test_other_tank_item_quote_read_through_real_session_is_admissible(ser
     x["token_ids"] = ["world:WLD"]
     await sessions.tool(session, {"id": "extract", "name": "record_event", "input": x})
     result = (await service.repo.get("ops.tool_calls", "item-proof-session:extract"))["result"]
+    assert result.get("accepted_claims"), result
     assert result["accepted_claims"][0]["evidence"] == [{"item_id": "i", "quote": "Fee switch approved."}]
     assert result["accepted_claims"][0]["verified"]
 
