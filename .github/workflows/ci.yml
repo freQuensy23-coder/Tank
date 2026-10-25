@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      sandbox-qualification:
+        description: Run isolated amd64 KVM and vendored sandbox upgrade qualification
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -101,7 +107,7 @@ jobs:
           version: "0.11.7"
           python-version: "3.13.13"
           enable-cache: true
-      - run: uv sync --python 3.13.13 --frozen --extra dev
+      - run: uv sync --python 3.13.13 --frozen --extra dev --group x-reader
       - run: uv run --frozen --extra dev mypy
       - name: Check completed foundation source family strictly
         env:
@@ -134,6 +140,20 @@ jobs:
           tests/test_truth_percentile_precision.py tests/test_statistics_contracts.py
           tests/test_runtime_scheduling_composition.py tests/scheduling_support.py
           tests/scheduler_support.py tests/test_scheduler_support.py
+      - name: Check completed context admission and metadata contracts strictly
+        env:
+          MYPYPATH: src:tests
+        run: >-
+          uv run --frozen --extra dev mypy --config-file scripts/ci/mypy-foundation-tests.ini
+          src/tank/agents/context.py src/tank/agents/context_records.py
+          src/tank/contracts/session_admission.py src/tank/agents/admission.py
+          src/tank/agents/admission_repository.py src/tank/agents/session_contracts.py
+          src/tank/runtime_contracts.py src/tank/contracts/source_checkpoints.py
+          src/tank/sources/instruments.py src/tank/analysis/condition_graph_contracts.py
+          tests/test_context_record_contracts.py tests/test_agents_context_binding.py
+          tests/test_session_admission_contracts.py tests/agent_configuration_fixtures.py
+          tests/test_source_instrument_snapshots.py tests/source_support.py
+          tests/test_condition_graph_contracts.py
       - name: Check completed quality module families strictly
         env:
           MYPYPATH: src:tests
@@ -151,10 +171,10 @@ jobs:
           uv run --frozen --extra dev mypy --config-file scripts/ci/mypy-foundation-tests.ini
           tests/configuration_support.py tests/test_configuration_support.py tests/http_support.py
 
-      - name: Install versioned X worker dependencies
-        run: uv pip install --python .venv/bin/python -r apify/x-reader/requirements.txt
+      - name: Verify the frozen actor-only dependency export
+        run: uv run --frozen --extra dev --group x-reader python scripts/ci/check_actor_dependencies.py --root .
       - name: Typecheck the versioned worker and publisher
-        run: uv run --frozen --extra dev mypy apify/x-reader scripts/deploy/apify_deploy.py
+        run: uv run --frozen --extra dev --group x-reader mypy apify/x-reader scripts/deploy/apify_deploy.py
 
   test:
     uses: ./.github/workflows/test-suite.yml
@@ -247,6 +267,168 @@ jobs:
           tags: ${{ steps.name.outputs.image }}:${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: ${{ github.event_name == 'push' && format('type=gha,mode=max,scope={0}', matrix.image) || '' }}
+
+  sandbox-kvm-prerequisites:
+    name: Isolated amd64 KVM prerequisites
+    if: github.event_name == 'workflow_dispatch' && inputs.sandbox-qualification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24.22.0"
+          package-manager-cache: false
+      - name: Prove real KVM_CREATE_VM using existing executor access
+        run: node scripts/ci/kvm-preflight.mjs
+        env:
+          TANK_QUALIFICATION_EVIDENCE: ${{ runner.temp }}/sandbox-qualification
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: sandbox-kvm-prerequisites-${{ github.sha }}
+          path: ${{ runner.temp }}/sandbox-qualification/*.json
+          if-no-files-found: error
+
+  sandbox-vendored:
+    name: Vendored sandbox TypeScript and SQL qualification
+    if: github.event_name == 'workflow_dispatch' && inputs.sandbox-qualification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24.22.0"
+          package-manager-cache: false
+      - name: Native qualification evidence and exact input-settlement regressions
+        run: node --test scripts/ci/qualification-evidence.test.mjs
+      - name: Install the actual frozen vendored workspace
+        working-directory: vendor/openma
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.0.8 --activate
+          pnpm install --frozen-lockfile
+      - name: Typecheck touched vendored runtime composition
+        run: node scripts/ci/vendored-typecheck.mjs
+        env:
+          TANK_QUALIFICATION_EVIDENCE: ${{ runner.temp }}/sandbox-qualification
+      - name: Actual SQL coordinator upgrade recovery integration
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/qualify-sandbox-sql.mjs
+        env:
+          TANK_QUALIFICATION_EVIDENCE: ${{ runner.temp }}/sandbox-qualification
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: sandbox-vendored-${{ github.sha }}
+          path: ${{ runner.temp }}/sandbox-qualification/
+          if-no-files-found: error
+
+  sandbox-native:
+    name: Real isolated KVM Managed API A-to-B runs
+    if: github.event_name == 'workflow_dispatch' && inputs.sandbox-qualification && github.repository == 'freQuensy23-coder/Tank' && github.actor == 'freQuensy23-coder'
+    needs: sandbox-kvm-prerequisites
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24.22.0"
+          package-manager-cache: false
+      - name: Prove KVM in the actual qualification executor
+        run: |
+          node --input-type=module -e 'import {qualificationExecutor} from "./scripts/ci/qualification-executor.mjs"; console.log(await qualificationExecutor());'
+          node scripts/ci/kvm-preflight.mjs
+        env:
+          TANK_QUALIFICATION_EVIDENCE: ${{ runner.temp }}/sandbox-qualification
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Build the shipping sandbox as a coherent amd64 OCI layout
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: deploy/sandbox.Dockerfile
+          platforms: linux/amd64
+          provenance: false
+          outputs: type=oci,dest=${{ runner.temp }}/sandbox-base.tar
+          cache-from: type=gha,scope=tank-sandbox
+      - name: Build genuine executable and Python-package A and B image layers
+        run: |
+          mkdir -p "$RUNNER_TEMP/sandbox-base"
+          tar -xf "$RUNNER_TEMP/sandbox-base.tar" -C "$RUNNER_TEMP/sandbox-base"
+          rm "$RUNNER_TEMP/sandbox-base.tar"
+          for version in A B; do
+            docker buildx build --platform linux/amd64 --provenance=false \
+              --build-context "sandbox=oci-layout://$RUNNER_TEMP/sandbox-base" \
+              --file scripts/ci/qualification-sandbox.Dockerfile \
+              --build-arg "IMAGE_VERSION=$version" \
+              --output "type=oci,dest=$RUNNER_TEMP/sandbox-$version.tar" .
+            mkdir -p "$RUNNER_TEMP/sandbox-$version"
+            tar -xf "$RUNNER_TEMP/sandbox-$version.tar" -C "$RUNNER_TEMP/sandbox-$version"
+            rm "$RUNNER_TEMP/sandbox-$version.tar"
+          done
+          cp -al "$RUNNER_TEMP/sandbox-B" "$RUNNER_TEMP/sandbox-metadata"
+          node --input-type=module -e 'import {readFileSync,unlinkSync,writeFileSync} from "node:fs"; const p=process.env.RUNNER_TEMP+"/sandbox-metadata/index.json"; const index=JSON.parse(readFileSync(p,"utf8")); index.annotations={...index.annotations,"org.tank.qualification.metadata":"export-only"}; unlinkSync(p); writeFileSync(p,JSON.stringify(index,null,2)+"\n");'
+      - name: Build and load the exact candidate OpenMA service
+        id: candidate
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: vendor/openma
+          file: vendor/openma/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          build-contexts: sandbox=${{ runner.temp }}/sandbox-A
+          build-args: SKIP_CONSOLE=1
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+          tags: tank-qualification:${{ github.sha }}
+          cache-from: type=gha,scope=tank-openma
+      - name: Execute two real same-session native upgrades using only fresh owned services
+        run: node scripts/ci/managed-upgrade-qualification.mjs
+        env:
+          TANK_QUALIFICATION_IMAGE: ${{ steps.candidate.outputs.imageid }}
+          TANK_QUALIFICATION_EVIDENCE: ${{ runner.temp }}/sandbox-qualification
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: sandbox-native-${{ github.sha }}
+          path: ${{ runner.temp }}/sandbox-qualification/
+          if-no-files-found: error
+
+  sandbox-acceptance:
+    name: Sandbox upgrade acceptance
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.sandbox-qualification
+    needs: [sandbox-kvm-prerequisites, sandbox-vendored, sandbox-native]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Refuse failed or skipped prerequisites and native executions
+        env:
+          KVM_RESULT: ${{ needs.sandbox-kvm-prerequisites.result }}
+          VENDORED_RESULT: ${{ needs.sandbox-vendored.result }}
+          NATIVE_RESULT: ${{ needs.sandbox-native.result }}
+        run: |
+          test "$KVM_RESULT" = success
+          test "$VENDORED_RESULT" = success
+          test "$NATIVE_RESULT" = success
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: sandbox-native-${{ github.sha }}
+          path: ${{ runner.temp }}/sandbox-native-evidence
+      - name: Require complete exact-head native evidence, never a partial green
+        run: node scripts/ci/check-sandbox-acceptance.mjs
+        env:
+          TANK_QUALIFICATION_EVIDENCE: ${{ runner.temp }}/sandbox-native-evidence
 
   publish:
     if: github.event_name == 'push'

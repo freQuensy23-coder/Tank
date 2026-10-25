@@ -396,6 +396,8 @@ Sizing estimate (ClickHouse): prints ≈ 0.5 GB/day compressed at 15 hot tokens;
 | Time | The host's NTP client (e.g. `chrony`); containers use the host clock |
 | Backups | Nightly `pg_dump` + `bundles/` copy to the volume `backup` (an external disk on the host) |
 
+A sandbox image upgrade continues existing non-archived sessions on the current deployed image through a fenced replacement at an idle boundary (03 §3.2, “Sandbox image upgrades and retained-session recovery”). Preserve the session ID, transcript, pending input and persistent user/browser files without copying the old operating system over the new image. Separate executable image identity from session/security compatibility; metadata-only OCI rebuilds do not invalidate retained sessions. Legacy retained sessions and inputs failed by the image mismatch have a recoverable application-managed upgrade path. An unexplained security/configuration mismatch remains a refusal, not permission to reset the session or bypass validation.
+
 Concurrency: one asyncio event loop with 8 job workers; CPU-heavy steps run in a thread pool; sessions run in parallel inside OpenMA, one per event; `publish_card` takes one lock per event.
 
 ---

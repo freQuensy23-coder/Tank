@@ -2,8 +2,10 @@ package capture
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/freQuensy23-coder/Tank/capture/internal/hotstate"
 	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"sort"
 	"strings"
@@ -21,7 +23,7 @@ type memStore struct {
 	queued   []points.Row
 	rows     map[string]map[string]map[string]any
 	writes   map[string]int
-	hot      []map[string]any
+	hot      []hotstate.Record
 	runs     []map[string]any
 	requests []requeststate.Record
 }
@@ -165,7 +167,39 @@ func (m *memStore) LatestRecords(context.Context, string, []string, string, []st
 	return nil, nil
 }
 
-func (m *memStore) HotTokens(context.Context) ([]map[string]any, error) { return m.hot, nil }
+func (m *memStore) HotTokens(context.Context) ([]hotstate.Record, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]hotstate.Record(nil), m.hot...), nil
+}
+func (m *memStore) BackfillAnchors(_ context.Context, scopes []hotstate.Scope) ([]hotstate.AnchorRecord, error) {
+	wanted := make(map[hotstate.Scope]struct{}, len(scopes))
+	for _, scope := range scopes {
+		wanted[scope] = struct{}{}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result []hotstate.AnchorRecord
+	for key, row := range m.rows["mkt.backfill_runs"] {
+		document, err := json.Marshal(row)
+		if err != nil {
+			return nil, err
+		}
+		var record hotstate.AnchorRecord
+		if err := json.Unmarshal(document, &record); err != nil {
+			return nil, err
+		}
+		record.StorageKey = key
+		scope, err := record.Scope()
+		if err != nil {
+			continue
+		}
+		if _, found := wanted[scope]; found {
+			result = append(result, record)
+		}
+	}
+	return result, nil
+}
 
 func (m *memStore) BackfillRuns(_ context.Context, statuses []string) ([]map[string]any, error) {
 	m.mu.Lock()

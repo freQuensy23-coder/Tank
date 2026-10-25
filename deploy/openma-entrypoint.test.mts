@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   main, replayDatabaseRoute, runEntrypoint, sandboxDatabaseRoute, verifyNativePlatform, verifyNativeQualification,
   type Architecture, type ChildPort, type EntrypointDependencies, type ForwardedSignal, type NativeSystem, type SecretName,
 } from "../vendor/openma/tank-deploy/openma_entrypoint.mts";
 
-interface SpawnInvocation { command: "pnpm"; args: readonly ["start"]; stdio: "inherit"; env: NodeJS.ProcessEnv }
+interface SpawnInvocation { command: string; args: readonly [string, "src/index.ts"]; stdio: "inherit"; env: NodeJS.ProcessEnv; cwd: string | undefined }
 interface ResolutionInvocation { host: "postgres"; family: 4 }
 interface FixtureOptions {
   env?: NodeJS.ProcessEnv;
@@ -105,8 +105,8 @@ function fixture(options: FixtureOptions = {}): Fixture {
       resolutions.push({ host, family: query.family });
       return { address: options.address === undefined ? "172.29.0.2" : options.address };
     },
-    launch(command: "pnpm", args: readonly ["start"], options: { stdio: "inherit"; env: NodeJS.ProcessEnv }): ChildPort {
-      spawns.push({ command, args, stdio: options.stdio, env: { ...options.env } });
+    launch(command: string, args: readonly [string, "src/index.ts"], options: { stdio: "inherit"; env: NodeJS.ProcessEnv; cwd?: string }): ChildPort {
+      spawns.push({ command, args, stdio: options.stdio, env: { ...options.env }, cwd: options.cwd });
       return child;
     },
     onSignal(signal: ForwardedSignal, listener: () => void): void { signals.set(signal, listener); },
@@ -116,13 +116,20 @@ function fixture(options: FixtureOptions = {}): Fixture {
   return { dependencies, reads, resolutions, spawns, exits, errors, signals, secrets, child };
 }
 
-test("main selects service and sandbox credentials and starts the child", async (): Promise<void> => {
+test("main starts the installed application without package-manager installs and preserves credentials and cwd", async (): Promise<void> => {
+  const cwd = process.cwd();
   const f = fixture({ env: { TANK_SANDBOX_DATABASE_NAME: "tank_check", TANK_SANDBOX_DATABASE_ROLE: "tank_audit_reader" } });
   await main(f.dependencies);
   assert.deepEqual(f.resolutions, [{ host: "postgres", family: 4 }]);
   assert.equal(f.spawns.length, 1);
   const child = f.spawns[0];
-  assert.deepEqual({ command: child.command, args: child.args, stdio: child.stdio }, { command: "pnpm", args: ["start"], stdio: "inherit" });
+  assert.deepEqual({ command: child.command, args: child.args, stdio: child.stdio }, {
+    command: process.execPath,
+    args: [fileURLToPath(new URL("../vendor/openma/apps/main-node/node_modules/tsx/dist/cli.mjs", import.meta.url)), "src/index.ts"],
+    stdio: "inherit",
+  });
+  assert.equal(child.cwd, undefined);
+  assert.equal(process.cwd(), cwd);
   assert.equal(child.env.DATABASE_URL, "postgresql://oma:synthetic%20oma%20password@postgres:5432/oma");
   assert.equal(child.env.API_KEY, f.secrets.oma_api_key);
   assert.equal(child.env.PLATFORM_ROOT_SECRET, f.secrets.oma_root_secret);

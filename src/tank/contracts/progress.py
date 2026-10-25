@@ -2,11 +2,12 @@
 
 from collections.abc import AsyncIterator, Mapping
 from contextlib import AbstractAsyncContextManager
-from typing import Literal, Protocol, Self
+from typing import Annotated, Literal, Protocol, Self
 
-from pydantic import Field, JsonValue, model_validator
+from pydantic import BeforeValidator, Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
+from tank.contracts.scalars import OneInt, require_integer
 from tank.contracts.source_items import SourceContextId, SourceRoutingMessage
 from tank.time_precision import Timestamp
 
@@ -89,7 +90,7 @@ class SourceProgressSink(Protocol):
 
 
 class PublicationReceipt(DomainModel):
-    contract_version: Literal[1]
+    contract_version: OneInt
     event_id: SourceContextId
     kind: Literal["FULL", "PARTIAL", "UPDATE"] | None
     ems_id: SourceContextId
@@ -187,7 +188,7 @@ class ProgressNotice(DomainModel):
     event_id: SourceContextId | None
     reason: str
     text: str
-    format_version: Literal[2] = 2
+    format_version: Annotated[Literal[2], BeforeValidator(require_integer)] = 2
     details: ProgressDetails
     created_at: str
     created_at_prec: Literal["COLLECTION_ONLY"] = "COLLECTION_ONLY"

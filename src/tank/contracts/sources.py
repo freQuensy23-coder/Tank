@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 from pydantic import Field, JsonValue, field_validator, model_validator
 
 from tank.contracts import DomainModel
+from tank.contracts.scalars import ZeroInt
 from tank.time_precision import normalize_precision, propagate_timestamp
 from tank.util import iso, parse_iso_time, parse_utc_time
 
@@ -88,20 +89,23 @@ class HttpFetchPlan(DomainModel):
     requests_per_minute: int | float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
 
+type FeedKind = Literal[
+    "rss",
+    "atom",
+    "feed",
+    "html",
+    "rendered",
+    "rendered_html",
+    "html_diff",
+    "json",
+    "graphql",
+    "instruments",
+    "x",
+]
+
+
 class SourceFeed(FeedParsingSpec):
-    kind: Literal[
-        "rss",
-        "atom",
-        "feed",
-        "html",
-        "rendered",
-        "rendered_html",
-        "html_diff",
-        "json",
-        "graphql",
-        "instruments",
-        "x",
-    ]
+    kind: FeedKind
     interval_s: int | float = Field(gt=0, allow_inf_nan=False)
     method: Literal["GET", "POST"] = "GET"
     author_organization: str | None = None
@@ -578,7 +582,7 @@ class PolledSource(FeedPollOutcome):
 
 class UnconfiguredSource(FeedPollOutcome):
     source_id: str = Field(min_length=1)
-    items: Literal[0]
+    items: ZeroInt
     status: Literal["UNCONFIGURED"] = "UNCONFIGURED"
     reason: Literal["NO_CONFIGURED_FEEDS"] = "NO_CONFIGURED_FEEDS"
 

@@ -112,19 +112,90 @@ def passed_jobs(completed: str = "2026-10-23T12:03:20Z") -> list[budget.Job]:
 
 
 def test_budget_starts_at_mr_creation_including_workflow_delay() -> None:
-    event = {"action": "opened", "pull_request": {"created_at": "2026-10-23T12:00:00Z"}}
-    run = {"created_at": "2026-10-23T12:01:00Z"}
-    assert budget.origin(
-        budget.Event.model_validate(event), budget.Run.model_validate(run)
-    ) == budget.timestamp("2026-10-23T12:00:00Z")
+    event = budget.Event(action="opened", pull_request=budget.PullRequest(created_at="2026-10-23T12:00:00Z"))
+    run = budget.Run(created_at="2026-10-23T12:01:00Z", run_attempt=1)
+    assert budget.origin(event, run) == budget.timestamp("2026-10-23T12:00:00Z")
 
 
 def test_new_commit_gets_its_own_feedback_budget() -> None:
-    event = {"action": "synchronize", "pull_request": {"created_at": "2026-10-22T12:00:00Z"}}
-    run = {"created_at": "2026-10-23T12:00:00Z"}
-    assert budget.origin(
-        budget.Event.model_validate(event), budget.Run.model_validate(run)
-    ) == budget.timestamp(run["created_at"])
+    event = budget.Event(
+        action="synchronize", pull_request=budget.PullRequest(created_at="2026-10-22T12:00:00Z")
+    )
+    run = budget.Run(created_at="2026-10-23T12:00:00Z", run_attempt=1)
+    assert budget.origin(event, run) == budget.timestamp(run.created_at)
+
+
+@pytest.mark.parametrize("action", ["opened", "synchronize"])
+def test_rerun_uses_its_attempt_creation_before_queue_and_setup(action: str) -> None:
+    calls: list[tuple[str, str, float | None]] = []
+    event = budget.Event.model_validate(
+        {"action": action, "pull_request": {"created_at": "2026-10-22T12:00:00Z"}}
+    )
+
+    def api(suffix: str, method: Literal["GET", "POST"], deadline: float | None) -> JsonValue:
+        calls.append((suffix, method, deadline))
+        if not suffix:
+            return {"created_at": "2026-10-23T12:00:00Z", "run_attempt": 2}
+        if suffix == "/attempts/2":
+            return {
+                "created_at": "2026-10-23T12:10:01Z",
+                "run_started_at": "2026-10-23T12:10:00Z",
+                "run_attempt": 2,
+            }
+        assert suffix == "/attempts/2/jobs?per_page=100&page=1"
+        return {
+            "jobs": [job.model_dump(mode="json") for job in passed_jobs("2026-10-23T12:11:40Z")],
+            "total_count": len(passed_jobs()),
+        }
+
+    outcome = budget.watch(
+        event,
+        api,
+        now=lambda: budget.timestamp("2026-10-23T12:11:41Z"),
+        sleep=lambda _: pytest.fail("the current attempt is complete"),
+    )
+    assert outcome.budget_seconds == 240
+    assert outcome.elapsed_seconds == 101
+    assert calls == [
+        ("", "GET", None),
+        ("/attempts/2", "GET", None),
+        ("/attempts/2/jobs?per_page=100&page=1", "GET", budget.timestamp("2026-10-23T12:14:00Z")),
+    ]
+
+
+def test_rerun_queued_past_its_own_budget_is_cancelled() -> None:
+    calls: list[tuple[str, str]] = []
+
+    def api(suffix: str, method: Literal["GET", "POST"], deadline: float | None) -> JsonValue:
+        calls.append((suffix, method))
+        if not suffix:
+            return {"created_at": "2026-10-23T12:00:00Z", "run_attempt": 2}
+        if suffix == "/attempts/2":
+            return {
+                "created_at": "2026-10-23T12:10:00Z",
+                "run_started_at": "2026-10-23T12:13:30Z",
+                "run_attempt": 2,
+            }
+        assert (suffix, method) == ("/force-cancel", "POST")
+        return {}
+
+    with pytest.raises(TimeoutError):
+        budget.watch(
+            budget.Event(),
+            api,
+            now=lambda: budget.timestamp("2026-10-23T12:14:01Z"),
+            sleep=lambda _: pytest.fail("queue and setup must count"),
+        )
+    assert calls == [("", "GET"), ("/attempts/2", "GET"), ("/force-cancel", "POST")]
+
+
+def test_first_attempt_does_not_drop_queue_time() -> None:
+    run = budget.Run(
+        created_at="2026-10-23T12:00:00Z",
+        run_started_at="2026-10-23T12:03:30Z",
+        run_attempt=1,
+    )
+    assert budget.origin(budget.Event(), run) == budget.timestamp("2026-10-23T12:00:00Z")
 
 
 def test_budget_waits_for_all_lanes_and_images() -> None:
@@ -157,7 +228,7 @@ def test_queued_past_deadline_is_cancelled_without_accepting_results() -> None:
 
     def api(suffix: str, method: Literal["GET", "POST"], deadline: float | None) -> JsonValue:
         calls.append((suffix, method))
-        return {"created_at": "2026-10-23T12:00:00Z"} if not suffix else {}
+        return {"created_at": "2026-10-23T12:00:00Z", "run_attempt": 1} if not suffix else {}
 
     def now() -> float:
         return budget.timestamp("2026-10-23T12:04:01Z")
@@ -170,7 +241,7 @@ def test_queued_past_deadline_is_cancelled_without_accepting_results() -> None:
 def test_watcher_accepts_only_complete_results_within_budget() -> None:
     def api(suffix: str, method: Literal["GET", "POST"], deadline: float | None) -> JsonValue:
         if not suffix:
-            return {"created_at": "2026-10-23T12:00:00Z"}
+            return {"created_at": "2026-10-23T12:00:00Z", "run_attempt": 1}
         assert method == "GET"
         return {
             "jobs": [job.model_dump(mode="json") for job in passed_jobs()],
@@ -190,7 +261,7 @@ def test_watcher_rejects_empty_nonterminal_page() -> None:
     def api(suffix: str, method: Literal["GET", "POST"], deadline: float | None) -> JsonValue:
         calls.append(suffix)
         if not suffix:
-            return {"created_at": "2026-10-23T12:00:00Z"}
+            return {"created_at": "2026-10-23T12:00:00Z", "run_attempt": 1}
         return {"jobs": [], "total_count": 1}
 
     with pytest.raises(ValueError, match="pagination made no progress"):
@@ -236,3 +307,24 @@ def test_budget_workflow_provisions_frozen_runtime_before_launch() -> None:
     assert steps[setup]["with"]["version"] == "0.11.7"
     assert steps[setup]["with"]["python-version"] == "3.13.13"
     assert steps[launch]["run"] == "uv run --frozen --extra dev python scripts/ci/ci_budget.py"
+
+
+def test_missing_run_attempt_refuses_before_origin_or_jobs() -> None:
+    calls: list[str] = []
+
+    def api(suffix: str, method: Literal["GET", "POST"], deadline: float | None) -> JsonValue:
+        calls.append(suffix)
+        return {"created_at": "2026-10-23T12:00:00Z"}
+
+    def now() -> float:
+        pytest.fail("An unreported attempt must not select budget-origin semantics")
+
+    with pytest.raises(ValueError, match="run_attempt"):
+        budget.watch(budget.Event(), api, now=now, sleep=lambda _: pytest.fail("must not wait"))
+    assert calls == [""]
+
+
+@pytest.mark.parametrize("attempt", [0, -1, True, "1", None])
+def test_run_attempt_requires_positive_integer(attempt: int | str | None) -> None:
+    with pytest.raises(ValueError):
+        budget.Run.model_validate({"created_at": "2026-10-23T12:00:00Z", "run_attempt": attempt})
