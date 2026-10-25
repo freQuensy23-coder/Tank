@@ -34,7 +34,7 @@ type JsonInput = (
     | set[JsonInput]
 )
 
-type TimeInput = datetime | str | int | float | Decimal
+type TimeInput = datetime | str
 
 
 type EpochInput = str | int | float | Decimal
@@ -96,34 +96,12 @@ def parse_utc_time(value: datetime | str) -> datetime:
 
 
 def parse_time(value: TimeInput) -> datetime:
-    """Read supported ISO and numeric epoch forms without echoing invalid source values."""
-    if isinstance(value, bool):
-        raise ValueError("Timestamp must not be a boolean")
-    if isinstance(value, datetime):
-        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
-    if isinstance(value, (int, float, Decimal)) or (
-        isinstance(value, str) and value.replace(".", "", 1).isdigit()
-    ):
-        try:
-            number = float(value)
-            if abs(number) > 1e14:
-                number /= 1e6
-            elif abs(number) > 1e11:
-                number /= 1e3
-            return datetime.fromtimestamp(number, UTC)
-        except (OSError, OverflowError, ValueError):
-            raise ValueError("Invalid or out-of-range epoch timestamp") from None
-    if not isinstance(value, str):
-        raise ValueError("Unsupported timestamp input type")
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        raise ValueError("Invalid ISO timestamp") from None
-    return parse_time(parsed)
+    """Decode an explicitly zoned ISO timestamp; provider epochs require declared units."""
+    return parse_iso_time(value)
 
 
-def iso(value: TimeInput | None = None) -> str:
-    return parse_time(value if value is not None else utcnow()).isoformat().replace("+00:00", "Z")
+def iso(value: TimeInput) -> str:
+    return parse_time(value).isoformat().replace("+00:00", "Z")
 
 
 def new_id(prefix: str, *, timestamp: TimeInput | None = None, entropy: int | None = None) -> str:

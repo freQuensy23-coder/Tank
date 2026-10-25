@@ -1,10 +1,21 @@
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
+from pydantic import JsonValue
 
 from tank.models import Record
 from tank.time_precision import chosen_boundary, collection_clock, offset_schedule, propagate_timestamp
-from tank.util import EpochInput, EpochUnit, clock_iso, iso, parse_epoch, parse_iso_time, parse_utc_time
+from tank.util import (
+    EpochInput,
+    EpochUnit,
+    clock_iso,
+    iso,
+    parse_epoch,
+    parse_iso_time,
+    parse_time,
+    parse_utc_time,
+)
 
 AT = "2026-10-18T00:00:00Z"
 
@@ -184,3 +195,20 @@ def test_iso_decoder_requires_a_declared_timezone() -> None:
         parse_iso_time(datetime(2026, 10, 24, 12))
     with pytest.raises(ValueError, match="explicit epoch unit"):
         parse_iso_time("1700000000000")
+
+
+def test_generic_iso_clock_is_required_and_aware() -> None:
+    assert iso("2026-10-24T14:03:04.123456+02:00") == "2026-10-24T12:03:04.123456Z"
+    for value in ("2026-10-24 12:03:04", "1700000000000"):
+        with pytest.raises(ValueError):
+            parse_time(value)
+        with pytest.raises(ValueError):
+            iso(value)
+    with pytest.raises(ValueError, match="explicit timezone"):
+        iso(datetime(2026, 10, 24, 12))
+
+
+@pytest.mark.parametrize("value", [0, 1700000000000, True, Decimal("1700000000"), float("inf")])
+def test_generic_timestamp_wire_evidence_does_not_guess_epoch_units(value: JsonValue | Decimal) -> None:
+    with pytest.raises(ValueError, match="requires ISO date-time"):
+        propagate_timestamp({"ts": value, "ts_prec": "EXACT"}, "ts")

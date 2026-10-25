@@ -28,8 +28,8 @@ def _text(value: JsonValue | datetime | Decimal, field: str) -> str | None:
 
 
 def _time(value: JsonValue | datetime | Decimal) -> TimeInput:
-    if isinstance(value, bool) or not isinstance(value, (datetime, str, int, float, Decimal)):
-        raise ValueError("Timestamp value must be a declared date or number")
+    if not isinstance(value, (datetime, str)):
+        raise ValueError("Timestamp evidence requires ISO date-time text or an aware datetime")
     return value
 
 
