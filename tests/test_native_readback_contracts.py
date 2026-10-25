@@ -7,6 +7,7 @@ import pytest
 from agent_source_fixtures import declared_versions_fixture
 from native_session_fixtures import native_session_record
 from pydantic import JsonValue, ValidationError
+from session_followup_fixtures import UnexpectedFollowupRefusals
 
 from tank.agents.native_readback import (
     NativeSessionMissing,
@@ -213,6 +214,7 @@ async def test_invalid_archive_clock_refuses_actual_followup_before_local_or_inp
             None,
             http=http,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         with pytest.raises(ValidationError):
             await service.continuable(

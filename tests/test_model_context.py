@@ -10,6 +10,7 @@ import pytest
 from agent_source_fixtures import declared_versions_fixture
 from pydantic import JsonValue
 from scheduling_support import RecordingReactionScheduling
+from session_followup_fixtures import UnexpectedFollowupRefusals
 from source_support import fixture_http_admission
 
 from tank.agents.context import CONTEXT_VERSION, ID_FIELDS, ModelContext, identifier_field
@@ -175,7 +176,12 @@ async def test_real_record_and_followup_tools_take_ids_and_reply_without_them(co
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
         service = SessionService(
-            repo, settings, tools.dispatch, http=http, versions=declared_versions_fixture()
+            repo,
+            settings,
+            tools.dispatch,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         await service.tool(session, {"id": "call_record", "name": "record_event", "input": recorded(item)})
     ledger = await repo.get("ops.tool_calls", "session_private:call_record")
@@ -422,7 +428,12 @@ async def test_merge_into_by_event_id_works_when_the_session_never_displayed_the
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
         service = SessionService(
-            repo, settings, tools.dispatch, http=http, versions=declared_versions_fixture()
+            repo,
+            settings,
+            tools.dispatch,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         await service.tool(
             session, {"id": "merge", "name": "merge_into", "input": {"event_id": target["event_id"]}}
@@ -645,7 +656,12 @@ async def test_real_domain_refusal_uses_display_names_and_keeps_raw_audit(contex
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
         service = SessionService(
-            repo, settings, tools.dispatch, http=http, versions=declared_versions_fixture()
+            repo,
+            settings,
+            tools.dispatch,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         await service.tool(
             session, {"id": "decision_error", "name": "get_decision", "input": {"token_id": "uniswap:UNI"}}
@@ -932,7 +948,12 @@ async def test_milestone_callback_confirms_from_the_fetched_official_document_by
             {},
         )
         sessions = SessionService(
-            repo, settings, domain.dispatch, http=http, versions=declared_versions_fixture()
+            repo,
+            settings,
+            domain.dispatch,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         await sessions.tool(session, {"id": "fetch-proof", "name": "fetch_page", "input": {"url": url}})
         fetched_call = await repo.get("ops.tool_calls", session["session_id"] + ":fetch-proof")
@@ -1023,7 +1044,13 @@ async def test_active_sourceless_callback_cannot_record_or_implicitly_read_the_o
     arguments: dict[str, JsonValue] = recorded(item) if tool == "record_event" else {}
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
         service = SessionService(
-            repo, settings, dispatch, http=http, stream_http=http, versions=declared_versions_fixture()
+            repo,
+            settings,
+            dispatch,
+            http=http,
+            stream_http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         await service.tool(session, {"id": "callback-call", "name": tool, "input": arguments})
         refused = await repo.get("ops.tool_calls", "session_private:callback-call")

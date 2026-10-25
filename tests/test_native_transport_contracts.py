@@ -12,6 +12,7 @@ from agent_source_fixtures import declared_versions_fixture
 from native_input_fixtures import acknowledge_native_input
 from postgres_helpers import PostgresTemplate
 from pydantic import JsonValue
+from session_followup_fixtures import UnexpectedFollowupRefusals
 
 from tank.agents.native_transport import (
     NativeFrameIdentity,
@@ -114,7 +115,14 @@ async def test_refused_old_frame_does_not_starve_fresh_owned_input(
         return httpx.Response(200, json=page)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, settings(), None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            settings(),
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         if transport == "stream":
             await service.stream("session")
         else:
@@ -185,7 +193,14 @@ async def test_refusal_persistence_failure_never_advances_memory_and_restart_kee
         return httpx.Response(200, json={"data": [old, old, fresh], "has_more": False})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        first = SessionService(repo, settings(), None, http=http, versions=declared_versions_fixture())
+        first = SessionService(
+            repo,
+            settings(),
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         first.retry_refusals = NativeRetryRefusalJournal(
             RefusalWriteFailure(repo, mode), declared_versions_fixture(), collection_clock
         )
@@ -199,7 +214,14 @@ async def test_refusal_persistence_failure_never_advances_memory_and_restart_kee
         else:
             assert after_failure["last_event_seq"] == 1
             assert len(NativeRetryRefusalLedger.from_record("session", after_failure).entries) == 1
-        restarted = SessionService(repo, settings(), None, http=http, versions=declared_versions_fixture())
+        restarted = SessionService(
+            repo,
+            settings(),
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         await restarted.catch_up("session")
         snapshot = await repo.get("ops.agent_sessions", "session")
         await restarted.catch_up("session")
@@ -246,7 +268,14 @@ async def test_node_has_more_uses_actual_sequence_for_the_next_request() -> None
         return httpx.Response(200, json={"data": [fresh], "has_more": False})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, settings(), None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            settings(),
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         await service.catch_up("session")
     assert cursors == [None, "17"] and posts == ["turn-retry:session:fresh"]
     row = await repo.get("ops.agent_sessions", "session")
@@ -279,7 +308,14 @@ async def test_invalid_native_paging_refuses_before_any_frame_effect(page: dict[
         return httpx.Response(200, json=page)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, settings(), None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            settings(),
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         with pytest.raises(ValueError):
             await service.catch_up("session")
     assert methods == ["GET"]
@@ -317,7 +353,14 @@ async def test_actual_native_http_duplicate_ownership_cannot_commit_acceptance()
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, settings(), None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            settings(),
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         with pytest.raises(DuplicateJsonKeyError) as rejected:
             await service.post_message_intent("session", "message")
     assert "private-first" not in str(rejected.value) and "private-second" not in str(rejected.value)
@@ -340,7 +383,14 @@ async def test_native_stream_duplicate_frame_never_reaches_refusal_or_budget_sta
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, settings(), None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            settings(),
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         with pytest.raises(DuplicateJsonKeyError):
             await service.stream("session")
         assert service.seen_events == {}
@@ -369,7 +419,14 @@ async def test_actual_postgres_refusal_is_atomic_and_restarts_without_starving_f
             return httpx.Response(200, json={"data": [old, old, fresh], "has_more": False})
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-            first = SessionService(repo, settings(), None, http=http, versions=declared_versions_fixture())
+            first = SessionService(
+                repo,
+                settings(),
+                None,
+                http=http,
+                versions=declared_versions_fixture(),
+                refusals=UnexpectedFollowupRefusals(),
+            )
             first.retry_refusals = NativeRetryRefusalJournal(
                 RefusalWriteFailure(repo, mode), declared_versions_fixture(), collection_clock
             )
@@ -384,7 +441,12 @@ async def test_actual_postgres_refusal_is_atomic_and_restarts_without_starving_f
                 assert after_failure["last_event_seq"] == 1
                 assert len(NativeRetryRefusalLedger.from_record("session", after_failure).entries) == 1
             restarted = SessionService(
-                repo, settings(), None, http=http, versions=declared_versions_fixture()
+                repo,
+                settings(),
+                None,
+                http=http,
+                versions=declared_versions_fixture(),
+                refusals=UnexpectedFollowupRefusals(),
             )
             await restarted.catch_up("session")
             saved = await repo.get("ops.agent_sessions", "session")
@@ -412,11 +474,15 @@ async def test_refusal_controller_provenance_does_not_relabel_unknown_producer_o
         return httpx.Response(200, json={"data": [frame], "has_more": False})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        first = SessionService(repo, settings(), None, http=http, versions=first_versions)
+        first = SessionService(
+            repo, settings(), None, http=http, versions=first_versions, refusals=UnexpectedFollowupRefusals()
+        )
         await first.catch_up("session")
         saved = await repo.get("ops.agent_sessions", "session")
         assert saved is not None
-        later = SessionService(repo, settings(), None, http=http, versions=later_versions)
+        later = SessionService(
+            repo, settings(), None, http=http, versions=later_versions, refusals=UnexpectedFollowupRefusals()
+        )
         await later.catch_up("session")
     assert await repo.get("ops.agent_sessions", "session") == saved
     ledger = NativeRetryRefusalLedger.from_record("session", saved)
@@ -447,7 +513,14 @@ async def test_repeating_native_cursor_refuses_instead_of_guessing_progress(prot
         return httpx.Response(200, json={"data": [], "next_page": "same-cursor"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, settings(), None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            settings(),
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         with pytest.raises(ValueError, match="advance|repeated"):
             await service.catch_up("session")
     assert reads == 2

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from session_followup_fixtures import UnexpectedFollowupRefusals
 
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.market.capture_contracts import CaptureReadiness
@@ -130,7 +131,13 @@ async def test_real_admission_deferral_replaces_clock_facets_and_copies_creation
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(no_native_request)) as http:
         sessions = SessionService(
-            repo, opts, None, http=http, stream_http=http, versions=declared_versions_fixture()
+            repo,
+            opts,
+            None,
+            http=http,
+            stream_http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         admit = sessions.admit
 
@@ -197,7 +204,13 @@ async def test_runtime_prepare_refuses_missing_admission_capacity_before_gateway
         runtime.repo = repo
         runtime.settings = opts
         runtime.sessions = SessionService(
-            repo, opts, None, http=client, stream_http=client, versions=declared_versions_fixture()
+            repo,
+            opts,
+            None,
+            http=client,
+            stream_http=client,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         runtime.gateway = Gateway()
         runtime._validate = lambda: None
