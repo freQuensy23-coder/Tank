@@ -11,12 +11,22 @@ from contextvars import ContextVar
 from copy import deepcopy
 from datetime import datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
+from pydantic import ValidationError
 
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.market import normalize as norm
+from tank.market.cache_contracts import (
+    DayCountKey,
+    DependencyHeadKey,
+    DependencyHeadMemo,
+    RequestCounts,
+    SavedDayCounts,
+    SavedKlineDayCounts,
+)
 from tank.market.capture import TimeInput
 from tank.market.capture_composition import build_capture_lifecycle
 from tank.market.capture_contracts import (
@@ -37,6 +47,7 @@ from tank.market_storage import (
     market_series_day_counts,
     sampled_market_history,
 )
+from tank.models import Record
 from tank.sources.capture_fetch import is_exchange_url
 from tank.time_precision import Timestamp, chosen_boundary, collection_clock, propagate_timestamp
 from tank.util import clock_iso, iso, jsonable, new_id, parse_time, sha256, utcnow
@@ -281,18 +292,18 @@ class MarketService:
             r["instrument_id"]: dict(r) for r in registry["instruments"] if r.get("active", True)
         }
         self.semantics = settings.load_config("semantics")["metrics"]
-        self._reads = {}
-        self._hot_since = {}
+        self._reads: dict[str, RequestCounts] = {}
+        self._hot_since: dict[str, str] = {}
 
-        self._kline_day_counts = {}
-        self._kline_day_counts_saved = ({}, 0.0)
-        self._pending_market = {}
+        self._kline_day_counts: dict[DayCountKey, int] = {}
+        self._kline_day_counts_saved = SavedDayCounts(counts={}, monotonic_at=0.0)
+        self._pending_market: dict[str, dict[str, Record]] = {}
         self._market_flush_lock = asyncio.Lock()
-        self._condition_heads_memo = {}
+        self._condition_heads_memo: dict[DependencyHeadKey, DependencyHeadMemo] = {}
         self._stop = None
-        self._last_request = {}
-        self._request_locks = {}
-        self._request_pace_locks = {}
+        self._last_request: dict[str, float] = {}
+        self._request_locks: dict[str, PriorityGate] = {}
+        self._request_pace_locks: dict[str, asyncio.Lock] = {}
         self.thresholds = settings.load_config("thresholds")
         self._capture = build_capture_lifecycle(
             repo, settings, frozenset(self.tokens), _MarketCaptureClock(), versions=versions
@@ -440,13 +451,13 @@ class MarketService:
 
     async def _request(self, method, url, **kwargs):
         host = httpx.URL(url).host
-        counts = self._reads.setdefault(host, [0, 0])
+        self._reads.setdefault(host, RequestCounts(succeeded=0, failed=0))
         try:
             body = await self._request_once(method, url, **kwargs)
         except Exception:
-            counts[1] += 1
+            self._reads[host] = self._reads[host].failure()
             raise
-        counts[0] += 1
+        self._reads[host] = self._reads[host].success()
         return body
 
     async def _request_once(self, method, url, **kwargs):
@@ -1315,11 +1326,11 @@ class MarketService:
         if (
             hit is not None
             and at is not None
-            and hit["at"] <= at
-            and (written is None or written <= hit["at"])
-            and time.monotonic() - hit["computed"] < HEAD_REUSE_S
+            and hit.at <= at
+            and (written is None or written <= hit.at)
+            and time.monotonic() - hit.computed < HEAD_REUSE_S
         ):
-            return hit["heads"]
+            return list(hit.heads)
         found = await market_dependency_head(
             self.repo,
             collection,
@@ -1333,7 +1344,9 @@ class MarketService:
         heads = [found[o] for o in orders]
         if at is not None:
             memo.pop(key, None)
-            memo[key] = {"at": at, "heads": heads, "computed": time.monotonic()}
+            memo[key] = DependencyHeadMemo(
+                at=at, heads=(heads[0], heads[1], heads[2]), computed=time.monotonic()
+            )
             if len(memo) > 4096:
                 memo.pop(next(iter(memo)))
         return heads
@@ -2205,58 +2218,56 @@ class MarketService:
             for iid in instrument_ids
         }
 
-    def _day_counts_path(self):
-        from pathlib import Path
-
+    def _day_counts_path(self) -> Path:
         return Path(self.settings.data_dir) / "market" / "kline_day_counts.json"
 
-    async def _load_day_counts(self):
+    async def _load_day_counts(self) -> int:
         """Past-day counts an earlier process saved, less every day a kline was recorded
         into since (r113: a cold 90-day count was half of an MT snapshot)."""
         path = self._day_counts_path()
 
-        def read():
+        def read() -> SavedKlineDayCounts | None:
             try:
-                return json.loads(path.read_text())
-            except (OSError, ValueError):
+                return SavedKlineDayCounts.model_validate_json(path.read_bytes(), strict=True)
+            except (OSError, ValidationError):
                 return None
 
         saved = await asyncio.to_thread(read)
-        if not isinstance(saved, dict) or saved.get("version") != 1:
+        if saved is None:
             return 0
         today = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
         changed = await market_kline_days_recorded_since(
-            self.repo, parse_time(saved["saved_at"]) - DAY_COUNTS_MARGIN, today
+            self.repo, parse_time(saved.saved_at) - DAY_COUNTS_MARGIN, today
         )
         loaded = 0
 
-        for iid, day, count in saved["counts"]:
+        for iid, day, count in saved.counts:
             key = (iid, parse_time(day))
             if key[1] < today and key not in changed and key not in self._kline_day_counts:
-                self._kline_day_counts[key] = int(count)
+                self._kline_day_counts[key] = count
                 loaded += 1
         return loaded
 
-    async def _save_day_counts(self, *, force=False):
-        counts, at = self._kline_day_counts_saved
+    async def _save_day_counts(self, *, force: bool = False) -> None:
+        counts, at = self._kline_day_counts_saved.counts, self._kline_day_counts_saved.monotonic_at
         if counts == self._kline_day_counts or not force and time.monotonic() - at < DAY_COUNTS_SAVE_S:
             return
         counts = dict(self._kline_day_counts)
-        payload = {
-            "version": 1,
-            "saved_at": clock_iso(),
-            "counts": [[iid, iso(day), count] for (iid, day), count in counts.items()],
-        }
+        payload = SavedKlineDayCounts(
+            version=1,
+            saved_at=clock_iso(),
+            counts=[(iid, iso(day), count) for (iid, day), count in counts.items()],
+        )
         path = self._day_counts_path()
 
-        def write():
+        def write() -> None:
             path.parent.mkdir(parents=True, exist_ok=True)
             temp = path.with_suffix(".tmp")
-            temp.write_text(json.dumps(payload))
+            temp.write_text(payload.model_dump_json())
             temp.replace(path)
 
         await asyncio.to_thread(write)
-        self._kline_day_counts_saved = (counts, time.monotonic())
+        self._kline_day_counts_saved = SavedDayCounts(counts=counts, monotonic_at=time.monotonic())
 
     async def _warm_series_counts(self):
         """Count past days of every spot series once, a few instruments at a time, so the
