@@ -187,6 +187,14 @@ jobs:
           src/tank/agents/input_ownership.py src/tank/agents/outbound_inputs.py
           src/tank/agents/session_ownership.py tests/test_native_transport_contracts.py
           tests/test_session_native_lineage.py tests/test_session_outbound_intents.py
+      - name: Check completed source error layer contracts strictly
+        env:
+          MYPYPATH: src:tests
+        run: >-
+          uv run --frozen --extra dev mypy --config-file scripts/ci/mypy-foundation-tests.ini
+          src/tank/contracts/source_errors.py src/tank/diagnostic_documents.py
+          src/tank/sources/x_diagnostics.py tests/test_x_diagnostic_admission.py
+          tests/test_source_error_layering.py
       - name: Check completed quality module families strictly
         env:
           MYPYPATH: src:tests
