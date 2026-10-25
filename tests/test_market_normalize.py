@@ -1,12 +1,39 @@
+from datetime import datetime
 from decimal import Decimal
 
 import pytest
+from pydantic import JsonValue
 
+from tank.contracts.registry import RegistryMarketType, RegistryVenue
 from tank.market import normalize as n
 from tank.market.books import OrderBook
 from tank.market.flow import FlowAccumulator
+from tank.market.trade_contracts import ActiveFlowBar, FlowInstrument, QuoteUsdValuation, TradeSide
+from tank.market.trade_wire import TradeWire
+from tank.util import iso, parse_epoch, parse_iso_time
 
 TS = 1781654400000
+RECEIPT = parse_epoch(TS + 100, unit="ms")
+FIXTURE_FX = QuoteUsdValuation(
+    rate=Decimal("1.00001"), as_of=None, basis="EXPLICIT_UNCLOCKED_INPUT", unavailable_reason=None
+)
+UNAVAILABLE_FX = QuoteUsdValuation(
+    rate=None, as_of=None, basis="UNAVAILABLE", unavailable_reason="QUOTE_USD_RATE_UNAVAILABLE"
+)
+
+
+def trade_instrument(
+    venue: RegistryVenue, market: RegistryMarketType = "SPOT", *, multiplier: Decimal | None = None
+) -> FlowInstrument:
+    return FlowInstrument(
+        instrument_id=f"{venue}:{market}:ABC",
+        token_id="test:ABC",
+        venue=venue,
+        market_type=market,
+        venue_symbol="ABCUSDT",
+        quote_asset="USDT",
+        contract_multiplier=multiplier,
+    )
 
 
 def test_market_timestamp_precision_tracks_source_and_collection_clocks() -> None:
@@ -47,13 +74,19 @@ def test_market_timestamp_precision_tracks_source_and_collection_clocks() -> Non
         instrument("bybit", "PERP_LINEAR"), {"singleOpenInterest": "1", "timestamp": TS}, received_ts=TS + 12
     )
     assert bucket["ts_prec"] == "EXACT" and bucket["ts_bucket_size_s"] is None
-    flow = FlowAccumulator()
-    print_row = n.trade(instrument("binance"), {"a": 1, "p": "1", "q": "2", "T": TS, "m": False})
+    flow = FlowAccumulator(now=lambda: RECEIPT)
+    print_row = n.trade(
+        trade_instrument("binance"),
+        {"a": 1, "p": "1", "q": "2", "T": TS, "m": False},
+        valuation=FIXTURE_FX,
+        received_ts=RECEIPT,
+        source="WS",
+    )
     bar = flow.add(print_row)
-    assert bar["minute_start_prec"] == "BUCKET(60s)" and bar["received_ts_prec"] == "COLLECTION_ONLY"
+    assert bar.minute_start_prec == "BUCKET(60s)" and bar.received_ts_prec == "COLLECTION_ONLY"
 
 
-def instrument(venue, market="SPOT", **kwargs):
+def instrument(venue: str, market: str = "SPOT", **kwargs: JsonValue) -> dict[str, JsonValue]:
     return dict(
         instrument_id=f"{venue}:{market}:ABC",
         token_id="test:ABC",
@@ -75,7 +108,13 @@ def instrument(venue, market="SPOT", **kwargs):
         (
             "coinbase",
             "SPOT",
-            {"trade_id": 1, "price": "2", "size": "3", "time": TS, "side": "sell"},
+            {
+                "trade_id": 1,
+                "price": "2",
+                "size": "3",
+                "time": iso(parse_epoch(TS, unit="ms")),
+                "side": "sell",
+            },
             "BUY",
             "3",
         ),
@@ -105,25 +144,37 @@ def instrument(venue, market="SPOT", **kwargs):
         ),
     ],
 )
-def test_nine_trade_paths_exact_native_and_aggressor(venue, market, raw, side, qty) -> None:
-    t = n.trade(instrument(venue, market), raw, received_ts=TS)
-    assert t["side"] == side and t["qty_native"] == qty
-    expected = (
-        Decimal(qty)
-        * Decimal(raw.get("p", raw.get("px", raw.get("price", "2"))) if isinstance(raw, dict) else "2")
-        * Decimal("1.00001")
+def test_nine_trade_paths_exact_native_and_aggressor(
+    venue: RegistryVenue,
+    market: RegistryMarketType,
+    raw: TradeWire,
+    side: TradeSide,
+    qty: str,
+) -> None:
+    inst = trade_instrument(
+        venue, market, multiplier=Decimal("2") if venue == "okx" and market == "PERP_LINEAR" else None
     )
-    assert Decimal(t["notional_usd"]) == expected
-    assert t["trade_id"] in ("1", "uuid")
+    trade = n.trade(inst, raw, valuation=FIXTURE_FX, received_ts=RECEIPT, source="WS")
+    expected_price = (
+        Decimal("1.000000000000000001") if venue == "binance" and market == "SPOT" else Decimal("2")
+    )
+    assert trade.side == side and trade.qty_native == Decimal(qty) and trade.price == expected_price
+    assert trade.notional_usd == Decimal(qty) * expected_price * Decimal("1.00001")
+    assert trade.trade_id in {"1", "uuid"}
 
 
 def test_missing_or_future_usd_rate_never_assumed() -> None:
-    i = instrument("binance")
-    i.pop("quote_usd_rate")
-    raw = {"a": 1, "p": "2", "q": "3", "T": TS, "m": False}
-    assert n.trade(i, raw)["notional_usd"] is None
-    i.update(quote_usd_rate="1", quote_usd_rate_as_of=TS + 1)
-    assert n.trade(i, raw)["notional_usd"] is None
+    inst = trade_instrument("binance")
+    raw: dict[str, JsonValue] = {"a": 1, "p": "2", "q": "3", "T": TS, "m": False}
+    assert n.trade(inst, raw, valuation=UNAVAILABLE_FX, received_ts=RECEIPT, source="WS").notional_usd is None
+    future = QuoteUsdValuation(
+        rate=Decimal("1"),
+        as_of=parse_epoch(TS + 1, unit="ms"),
+        basis="HISTORICAL_SAMPLE",
+        unavailable_reason=None,
+    )
+    with pytest.raises(n.SemanticError, match="newer than"):
+        n.trade(inst, raw, valuation=future, received_ts=RECEIPT, source="WS")
 
 
 def test_bybit_oi_no_division_fallback_and_immediate_registry_eligibility() -> None:
@@ -147,18 +198,32 @@ def test_hyperliquid_sidedness_never_eligible() -> None:
 
 
 def test_okx_contract_multiplier_mandatory() -> None:
-    i = instrument("okx", "PERP_LINEAR")
-    i.pop("contract_multiplier")
-    with pytest.raises(n.SemanticError):
-        n.trade(i, {"tradeId": "1", "px": "2", "sz": "3", "ts": TS, "side": "buy"})
+    with pytest.raises(n.SemanticError, match="multiplier"):
+        n.trade(
+            trade_instrument("okx", "PERP_LINEAR"),
+            {"tradeId": "1", "px": "2", "sz": "3", "ts": TS, "side": "buy"},
+            valuation=FIXTURE_FX,
+            received_ts=RECEIPT,
+            source="WS",
+        )
 
 
 def test_binance_bool_not_string_and_coinbase_unknown_side() -> None:
-    with pytest.raises(n.SemanticError):
-        n.trade(instrument("binance"), {"a": 1, "p": "2", "q": "3", "T": TS, "m": "false"})
-    with pytest.raises(n.SemanticError):
+    with pytest.raises(n.SemanticError, match="buyer-is-maker"):
         n.trade(
-            instrument("coinbase"), {"trade_id": 1, "side": "unknown", "price": "2", "size": "3", "time": TS}
+            trade_instrument("binance"),
+            {"a": 1, "p": "2", "q": "3", "T": TS, "m": "false"},
+            valuation=FIXTURE_FX,
+            received_ts=RECEIPT,
+            source="WS",
+        )
+    with pytest.raises(n.SemanticError, match="unknown Coinbase"):
+        n.trade(
+            trade_instrument("coinbase"),
+            {"trade_id": 1, "side": "unknown", "price": "2", "size": "3", "time": iso(RECEIPT)},
+            valuation=FIXTURE_FX,
+            received_ts=RECEIPT,
+            source="WS",
         )
 
 
@@ -183,16 +248,28 @@ def test_liquidations_position_side_and_sampled_limits() -> None:
 
 
 def test_flow_exact_sum_sq_size_buckets_and_gap() -> None:
-    flow = FlowAccumulator()
-    i = instrument("binance")
-    a = n.trade(i, {"a": 1, "p": "100000", "q": "2", "T": TS, "m": False})
+    flow = FlowAccumulator(now=lambda: RECEIPT)
+    inst = trade_instrument("binance")
+    a = n.trade(
+        inst,
+        {"a": 1, "p": "100000", "q": "2", "T": TS, "m": False},
+        valuation=FIXTURE_FX,
+        received_ts=RECEIPT,
+        source="WS",
+    )
     bar = flow.add(a)
-    assert bar["size_buckets"]["B4"]["buy_qty"] == "2" and bar["sum_sq_qty"] == "4"
-    b = n.trade(i, {"a": 3, "p": "100001", "q": "1", "T": TS + 1, "m": True})
+    assert bar.size_buckets is not None
+    assert bar.size_buckets.B4.buy_qty == Decimal("2") and bar.sum_sq_qty == Decimal("4")
+    b = n.trade(
+        inst,
+        {"a": 3, "p": "100001", "q": "1", "T": TS + 1, "m": True},
+        valuation=FIXTURE_FX,
+        received_ts=RECEIPT,
+        source="WS",
+    )
     bar = flow.add(b)
-    assert bar["gap_reason"] == "TRADE_ID_GAP" and bar["sum_sq_qty"] == "5"
-    bar = flow.record((i["instrument_id"], bar["minute_start"]), complete=True)
-    assert not bar["complete"]
+    assert bar.gap_reason == "TRADE_ID_GAP" and bar.sum_sq_qty == Decimal("5")
+    assert not flow.record((inst.instrument_id, iso(bar.minute_start)), complete=True).complete
 
 
 def test_book_snapshot_sequence_gap_and_incomplete_depth() -> None:
@@ -263,10 +340,17 @@ def test_evm_precision_products_and_squared_flow_sizes_are_not_rounded_to28digit
 
     qty = "123456789012345678.123456789012345678"
     price = "12345.123456789012345678"
-    normalized = n.trade(instrument("binance"), {"a": 1, "p": price, "q": qty, "T": TS, "m": False})
-    assert Fraction(normalized["notional_usd"]) == Fraction(qty) * Fraction(price) * Fraction("1.00001")
-    bar = FlowAccumulator().add(normalized)
-    assert Fraction(bar["sum_sq_qty"]) == Fraction(qty) ** 2
+    normalized = n.trade(
+        trade_instrument("binance"),
+        {"a": 1, "p": price, "q": qty, "T": TS, "m": False},
+        valuation=FIXTURE_FX,
+        received_ts=RECEIPT,
+        source="WS",
+    )
+    assert normalized.notional_usd is not None
+    assert Fraction(normalized.notional_usd) == Fraction(qty) * Fraction(price) * Fraction("1.00001")
+    bar = FlowAccumulator(now=lambda: RECEIPT).add(normalized)
+    assert Fraction(bar.sum_sq_qty) == Fraction(qty) ** 2
 
 
 @pytest.mark.parametrize(
@@ -293,19 +377,21 @@ def test_oi_canonical_precision_and_missing_exchange_timestamp_is_not_invented()
 
 
 def test_native_only_flow_preserves_complete_native_evidence_and_explicit_null_reasons() -> None:
-    inst = instrument("binance", "PERP_LINEAR")
-    inst.pop("quote_usd_rate")
-    raw = {"a": 1, "p": "2", "q": "3", "T": TS, "m": False}
-    accumulator = FlowAccumulator()
-    row = accumulator.add(n.trade(inst, raw))
-    key = (inst["instrument_id"], row["minute_start"])
-    bar = accumulator.record(key, complete=True)
-    assert bar["complete"] and bar["buy_qty"] == "3" and bar["sum_sq_qty"] == "9"
-    assert bar["buy_notional"] is None and bar["sell_notional"] is None and bar["size_buckets"] is None
-    assert all(
-        bar["null_reasons"][field] == "INCOMPLETE" for field in ("buy_usd", "sell_usd", "size_buckets")
+    inst = trade_instrument("binance", "PERP_LINEAR")
+    raw: dict[str, JsonValue] = {"a": 1, "p": "2", "q": "3", "T": TS, "m": False}
+    accumulator = FlowAccumulator(now=lambda: RECEIPT)
+    snapshot = accumulator.add(n.trade(inst, raw, valuation=UNAVAILABLE_FX, received_ts=RECEIPT, source="WS"))
+    bar = accumulator.record((inst.instrument_id, iso(snapshot.minute_start)), complete=True)
+    assert isinstance(bar, ActiveFlowBar)
+    assert bar.complete and bar.buy_qty == Decimal("3") and bar.sum_sq_qty == Decimal("9")
+    assert bar.buy_notional is None and bar.sell_notional is None and bar.size_buckets is None
+    assert (
+        bar.null_reasons["buy_usd"]
+        == bar.null_reasons["sell_usd"]
+        == bar.null_reasons["size_buckets"]
+        == "INCOMPLETE"
     )
-    assert bar["notional_reason"] == "HISTORICAL_QUOTE_USD_RATE_UNAVAILABLE"
+    assert bar.notional_reason == "HISTORICAL_QUOTE_USD_RATE_UNAVAILABLE"
 
 
 @pytest.mark.parametrize(
@@ -336,7 +422,7 @@ def test_oi_verified_request_bucket_metadata_is_not_hardcoded(venue, raw) -> Non
 
 
 def test_prints_are_valued_with_the_latest_quote_usd_sample_at_or_before_them() -> None:
-    from datetime import UTC, datetime, timedelta
+    from datetime import UTC, timedelta
 
     from tank.market import normalize as norm
     from tank.util import iso
@@ -354,15 +440,86 @@ def test_prints_are_valued_with_the_latest_quote_usd_sample_at_or_before_them() 
 
     inst.update(quote_usd_rate="1.001", quote_usd_rate_as_of=iso(t0 + timedelta(minutes=5)))
 
-    def usd(at):
-        raw = {"S": "Buy", "v": "2", "p": "100", "T": int(at.timestamp() * 1000), "i": "1"}
-        return norm.trade(inst, raw)["notional_usd"]
+    identity = FlowInstrument(
+        instrument_id="bybit:spot:BTCUSDT",
+        token_id="bitcoin:BTC",
+        venue="bybit",
+        market_type="SPOT",
+        venue_symbol="BTCUSDT",
+        quote_asset="USDT",
+        contract_multiplier=None,
+    )
 
-    assert usd(t0 + timedelta(minutes=4, seconds=59)) == "199.800"
-    assert usd(t0 + timedelta(minutes=5)) == "200.200"
+    def usd(at: datetime) -> Decimal | None:
+        raw: dict[str, JsonValue] = {
+            "S": "Buy",
+            "v": "2",
+            "p": "100",
+            "T": int(at.timestamp() * 1000),
+            "i": "1",
+        }
+        rate, as_of = norm.quote_usd_rate(inst, at)
+        if rate is None:
+            valuation = UNAVAILABLE_FX
+        else:
+            assert as_of is not None
+            valuation = QuoteUsdValuation(
+                rate=Decimal(rate),
+                as_of=parse_iso_time(as_of),
+                basis="HISTORICAL_SAMPLE",
+                unavailable_reason=None,
+            )
+        return norm.trade(identity, raw, valuation=valuation, received_ts=at, source="WS").notional_usd
+
+    assert usd(t0 + timedelta(minutes=4, seconds=59)) == Decimal("199.800")
+    assert usd(t0 + timedelta(minutes=5)) == Decimal("200.200")
     assert usd(t0 - timedelta(seconds=1)) is None
     assert usd(t0 + timedelta(hours=7)) is None
     kline = norm.kline(
         inst, [int((t0 + timedelta(minutes=3)).timestamp() * 1000), "1", "1", "1", "1", "2", "10"]
     )
     assert kline["quote_usd_rate"] == "0.999" and kline["quote_usd_rate_as_of"] == iso(t0)
+
+
+def test_declared_millisecond_wire_clock_preserves_zero_ids_and_raw_lexemes() -> None:
+    raw: dict[str, JsonValue] = {
+        "a": 0,
+        "p": "2.000",
+        "q": "3.00",
+        "T": 1000,
+        "m": False,
+        "f": 0,
+        "l": 0,
+        "seq": 0,
+        "provider_extra": {"retained": True},
+    }
+    row = n.trade(
+        trade_instrument("binance"),
+        raw,
+        valuation=FIXTURE_FX,
+        received_ts=parse_epoch(2000, unit="ms"),
+        source="WS",
+    )
+    assert row.ts == parse_epoch(1, unit="s")
+    assert row.trade_id == "0" and row.raw_first_id == row.raw_last_id == row.sequence == 0
+    assert '"p":"2.000"' in row.source_payload_json and '"q":"3.00"' in row.source_payload_json
+    assert '"provider_extra":{"retained":true}' in row.source_payload_json
+
+
+@pytest.mark.parametrize("field", ["a", "f", "l", "seq"])
+def test_boolean_wire_identifiers_are_rejected_instead_of_becoming_numbers(field: str) -> None:
+    raw: dict[str, JsonValue] = {"a": 1, "p": "2", "q": "3", "T": TS, "m": False}
+    raw[field] = True
+    with pytest.raises(n.SemanticError):
+        n.trade(trade_instrument("binance"), raw, valuation=FIXTURE_FX, received_ts=RECEIPT, source="WS")
+
+
+def test_trade_identity_cannot_reinterpret_unsupported_market_as_spot() -> None:
+    with pytest.raises(n.SemanticError, match="venue market"):
+        n.trade(
+            trade_instrument("coinbase", "PERP_LINEAR"),
+            {"trade_id": 1, "side": "sell", "size": "3", "price": "2", "time": iso(RECEIPT)},
+            valuation=FIXTURE_FX,
+            received_ts=RECEIPT,
+            source="WS",
+        )

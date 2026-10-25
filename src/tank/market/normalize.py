@@ -7,8 +7,10 @@ from tank.market.errors import SemanticError
 from tank.market.funding import FundingObservation
 from tank.market.numbers import decimal
 from tank.market.precision import precise
+from tank.market.trade_contracts import FlowInstrument, NormalizedTrade, QuoteUsdValuation, TradeCaptureSource
+from tank.market.trade_wire import TradeWire, decode_trade
 from tank.time_precision import collection_clock, propagate_timestamp
-from tank.util import canonical_json, iso, jsonable, parse_time
+from tank.util import canonical_json, iso, jsonable, parse_iso_time, parse_time
 
 
 def timestamp_fields(field, value, precision, *, bucket_size=None):
@@ -70,117 +72,86 @@ def venue_key(instrument):
     return venue.split(".")[0] + ".spot"
 
 
-@precise
-def trade(instrument, raw, *, received_ts=None, source="WS"):
-    key = venue_key(instrument)
-    venue = key.split(".")[0]
-    aggregation = "PER_FILL"
-    if venue == "binance":
-        if not isinstance(raw["m"], bool):
-            raise SemanticError("buyer-is-maker must be boolean")
-        side, qty, price, ts, tid = ("SELL" if raw["m"] else "BUY"), raw["q"], raw["p"], raw["T"], raw["a"]
-        aggregation = "PER_TAKER_ORDER_SAME_PRICE"
-    elif venue == "coinbase":
-        if raw["side"] not in ("buy", "sell"):
-            raise SemanticError("unknown Coinbase maker side")
-        side, qty, price, ts, tid = (
-            ("BUY" if raw["side"] == "sell" else "SELL"),
-            raw["size"],
-            raw["price"],
-            raw["time"],
-            raw["trade_id"],
-        )
-    elif venue == "okx":
-        if raw["side"] not in ("buy", "sell"):
-            raise SemanticError("unknown OKX taker side")
-        side, qty, price, ts, tid = raw["side"].upper(), raw["sz"], raw["px"], raw["ts"], raw["tradeId"]
-        if key == "okx.swap":
-            multiplier = instrument.get("contract_multiplier")
-            if multiplier is None:
-                raise SemanticError("OKX ctVal base multiplier unverified")
-            qty = decimal(qty) * decimal(multiplier)
-        aggregation = "PER_TAKER_ORDER_SAME_PRICE"
-    elif venue == "bybit":
-        s = raw.get("S", raw.get("side"))
-        if s not in ("Buy", "Sell"):
-            raise SemanticError("unknown Bybit taker side")
-        side, qty, price, ts, tid = (
-            s.upper(),
-            raw.get("v", raw.get("size")),
-            raw.get("p", raw.get("price")),
-            raw.get("T", raw.get("time")),
-            raw.get("i", raw.get("execId")),
-        )
-    elif venue == "kraken":
-        if isinstance(raw, list):
-            if len(raw) < 7:
-                raise SemanticError("Kraken trade ID absent")
-            price, qty, ts, s, _, _, tid = raw[:7]
-        else:
-            price, qty, ts, s, tid = raw["price"], raw["qty"], raw["timestamp"], raw["side"], raw["trade_id"]
-        if s not in ("buy", "sell", "b", "s"):
-            raise SemanticError("unknown Kraken taker side")
-        side = "BUY" if s in ("buy", "b") else "SELL"
-    elif venue == "hyperliquid":
-        if raw["side"] not in ("B", "A"):
-            raise SemanticError("unknown Hyperliquid side")
-        side, qty, price, ts, tid = (
-            ("BUY" if raw["side"] == "B" else "SELL"),
-            raw["sz"],
-            raw["px"],
-            raw["time"],
-            raw["tid"],
-        )
-    else:
-        raise SemanticError(f"unsupported venue {venue}")
-    if tid is None:
-        raise SemanticError("missing trade ID")
-    qty, price = decimal(qty), decimal(price)
-    if qty <= 0 or price <= 0:
-        raise SemanticError("nonpositive trade")
-    quote = instrument.get("quote_asset", "").upper()
+def _trade_metric(instrument: FlowInstrument, source: TradeCaptureSource) -> str:
+    prefixes = {
+        ("binance", "SPOT"): "binance.spot",
+        ("binance", "PERP_LINEAR"): "binance.usdm",
+        ("bybit", "SPOT"): "bybit.spot",
+        ("bybit", "PERP_LINEAR"): "bybit.linear",
+        ("okx", "SPOT"): "okx.spot",
+        ("okx", "PERP_LINEAR"): "okx.swap",
+        ("coinbase", "SPOT"): "coinbase.spot",
+        ("kraken", "SPOT"): "kraken.spot",
+        ("hyperliquid", "PERP_LINEAR"): "hyperliquid.perp",
+    }
+    identity = (instrument.venue, instrument.market_type)
+    if identity not in prefixes:
+        raise SemanticError("unsupported venue market type")
+    if instrument.venue == "coinbase":
+        if source == "ARCHIVE":
+            raise SemanticError("Archived Coinbase trade requires its original metric provenance")
+        return prefixes[identity] + (".trades" if source == "REST" else ".matches")
+    suffixes = {
+        "binance": ".aggTrade",
+        "bybit": ".publicTrade",
+        "okx": ".trades",
+        "kraken": ".trade",
+        "hyperliquid": ".trades",
+    }
+    return prefixes[identity] + suffixes[instrument.venue]
 
-    fx, _ = quote_usd_rate(instrument, ts)
-    usd = qty * price * decimal(fx) if fx is not None else None
-    return jsonable(
-        {
-            "instrument_id": instrument["instrument_id"],
-            "token_id": instrument["token_id"],
-            "venue": venue,
-            "venue_symbol": instrument.get("venue_symbol"),
-            "market_type": instrument["market_type"],
-            "trade_id": str(tid),
-            "source_payload_json": canonical_json(raw),
-            **timestamp_fields("ts", ts, "EXACT"),
-            **collection_clock(received_ts).fields("received_ts"),
-            "side": side,
-            "qty_native": qty,
-            "price": price,
-            "quote_notional": qty * price,
-            "notional_usd": usd,
-            "quote_asset": quote,
-            "usd_reason": None if usd is not None else "QUOTE_USD_RATE_UNAVAILABLE",
-            "metric_key": key
-            + (
-                ".aggTrade"
-                if venue == "binance"
-                else ".trades"
-                if venue in ("okx", "hyperliquid")
-                else (".trades" if source == "REST" else ".matches")
-                if venue == "coinbase"
-                else ".publicTrade"
-                if venue == "bybit"
-                else ".trade"
-            ),
-            "trade_aggregation": aggregation,
-            "raw_first_id": raw.get("f") if isinstance(raw, dict) else None,
-            "raw_last_id": raw.get("l") if isinstance(raw, dict) else None,
-            "sequence": raw.get("seq", raw.get("seqId", raw.get("_stream_sequence")))
-            if isinstance(raw, dict)
-            else None,
-            "sequence_semantics": "MONOTONIC" if venue in ("okx", "bybit") else "N_A",
-            "capture_source": source,
-        }
+
+@precise
+def trade(
+    instrument: FlowInstrument,
+    raw: TradeWire,
+    *,
+    valuation: QuoteUsdValuation,
+    received_ts: datetime,
+    source: TradeCaptureSource,
+) -> NormalizedTrade:
+    """Decode actual provider fields; caller owns quote valuation and receipt observation."""
+    metric = _trade_metric(instrument, source)
+    decoded = decode_trade(instrument.venue, raw)
+    qty = decoded.reported_quantity
+    if instrument.venue == "okx" and instrument.market_type == "PERP_LINEAR":
+        if instrument.contract_multiplier is None:
+            raise SemanticError("OKX ctVal base multiplier unverified")
+        qty *= instrument.contract_multiplier
+    if valuation.as_of is not None and valuation.as_of > decoded.ts:
+        raise SemanticError("Quote USD valuation is newer than the trade")
+    if valuation.basis == "USD_UNIT" and instrument.quote_asset.upper() != "USD":
+        raise SemanticError("USD unit valuation requires a USD quote")
+    quote_notional = qty * decoded.price
+    usd = None if valuation.rate is None else quote_notional * valuation.rate
+    return NormalizedTrade(
+        instrument_id=instrument.instrument_id,
+        token_id=instrument.token_id,
+        venue=instrument.venue,
+        venue_symbol=instrument.venue_symbol,
+        market_type=instrument.market_type,
+        quote_asset=instrument.quote_asset.upper(),
+        trade_id=decoded.trade_id,
+        source_payload_json=canonical_json(raw),
+        ts=decoded.ts,
+        ts_prec="EXACT",
+        ts_prec_reason=None,
+        received_ts=parse_iso_time(received_ts),
+        received_ts_prec="COLLECTION_ONLY",
+        received_ts_prec_reason=None,
+        side=decoded.side,
+        qty_native=qty,
+        price=decoded.price,
+        quote_notional=quote_notional,
+        notional_usd=usd,
+        usd_reason=valuation.unavailable_reason,
+        metric_key=metric,
+        trade_aggregation=decoded.aggregation,
+        raw_first_id=decoded.raw_first_id,
+        raw_last_id=decoded.raw_last_id,
+        sequence=decoded.sequence,
+        sequence_semantics="MONOTONIC" if instrument.venue in {"okx", "bybit"} else "N_A",
+        capture_source=source,
     )
 
 
