@@ -21,6 +21,14 @@ from tank.analysis.statistics_contracts import (
     UnavailableBeta,
 )
 from tank.contracts import DomainModel
+from tank.contracts.market_classification import (
+    DirectMarketMoveClass,
+    KnownMarketDivergenceState,
+    KnownMarketMoveClass,
+    MarketClassificationFlag,
+    MarketDivergenceState,
+    MarketMoveClass,
+)
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.registry import FundamentalsEvidence, LendingPool
 from tank.contracts.scalars import TrueFlag, require_integer, require_number
@@ -6119,3 +6127,362 @@ class ConditionSupplyGraph(DomainModel):
                 status="NO_POSITIVE_OBSERVATION", available_inputs=tuple(available)
             )
         return UnavailableConditionSupplyEvidence(status="UNAVAILABLE", reason="NO_AVAILABLE_INPUTS")
+
+
+class ConditionDivergenceCandidateBase(DomainModel):
+    eligibility: ConditionPredicate
+    refutation: ConditionPredicate
+    support: int | None = Field(ge=0)
+    support_reason: Literal["NOT_ELIGIBLE"] | None
+
+    def _eligible(self) -> bool:
+        return (
+            isinstance(self.eligibility, ConditionObservedPredicate)
+            and self.eligibility.value
+            and not (isinstance(self.refutation, ConditionObservedPredicate) and self.refutation.value)
+        )
+
+    @model_validator(mode="after")
+    def actual_support_evaluation(self) -> Self:
+        if (self.support is not None) != self._eligible() or (self.support is None) != (
+            self.support_reason is not None
+        ):
+            raise ValueError("Candidate support is computed only for an eligible unrefuted candidate")
+        return self
+
+    def eligible(self) -> bool:
+        return type(self).model_validate(self)._eligible()
+
+    def testable(self) -> bool:
+        validated = type(self).model_validate(self)
+        return isinstance(validated.eligibility, ConditionObservedPredicate)
+
+
+class ConditionDirectionalDivergenceCandidate(ConditionDivergenceCandidateBase):
+    state: Literal["PERP_LED_MARKUP", "LIQUIDITY_VACUUM", "FRAGMENTATION"]
+
+    @model_validator(mode="after")
+    def actual_support_slots(self) -> Self:
+        maximum = {"PERP_LED_MARKUP": 4, "LIQUIDITY_VACUUM": 2, "FRAGMENTATION": 2}[self.state]
+        if self.support is not None and self.support > maximum:
+            raise ValueError("Candidate support cannot exceed its actual written supporting conditions")
+        return self
+
+
+class ConditionAbsorptionDivergenceCandidate(ConditionDivergenceCandidateBase):
+    state: Literal["ABSORPTION_CANDIDATE", "ABSORPTION_CONFIRMED"]
+    confirmation: ConditionPredicate
+
+    @model_validator(mode="after")
+    def actual_repeated_confirmation(self) -> Self:
+        confirmed = (
+            self._eligible()
+            and isinstance(self.confirmation, ConditionObservedPredicate)
+            and self.confirmation.value
+        )
+        if (
+            (self.state == "ABSORPTION_CONFIRMED") != confirmed
+            or self.support is not None
+            and self.support > 3
+        ):
+            raise ValueError(
+                "Confirmed absorption requires the actual repeated/resilient and OI confirmation result"
+            )
+        return self
+
+
+type ConditionDivergenceCandidate = (
+    ConditionDirectionalDivergenceCandidate | ConditionAbsorptionDivergenceCandidate
+)
+
+
+class ConditionDivergenceEvaluation(DomainModel):
+    trigger: ConditionPredicate
+    candidates: tuple[ConditionDivergenceCandidate, ...]
+
+    @model_validator(mode="after")
+    def actual_triggered_tests(self) -> Self:
+        triggered = isinstance(self.trigger, ConditionObservedPredicate) and self.trigger.value
+        if not triggered and self.candidates:
+            raise ValueError(
+                "A nontriggered or unavailable divergence cannot invent evaluated candidate tests"
+            )
+        if triggered:
+            families = tuple(
+                "ABSORPTION"
+                if isinstance(candidate, ConditionAbsorptionDivergenceCandidate)
+                else candidate.state
+                for candidate in self.candidates
+            )
+            if len(families) != 4 or set(families) != {
+                "PERP_LED_MARKUP",
+                "ABSORPTION",
+                "LIQUIDITY_VACUUM",
+                "FRAGMENTATION",
+            }:
+                raise ValueError("A triggered divergence must preserve all four actual candidate tests")
+        return self
+
+    def selected(self) -> ConditionDivergenceCandidate | None:
+        validated = type(self).model_validate(self)
+        ranked: list[tuple[int, int, ConditionDivergenceCandidate]] = []
+        priority: dict[KnownMarketDivergenceState, int] = {
+            "LIQUIDITY_VACUUM": 4,
+            "PERP_LED_MARKUP": 3,
+            "ABSORPTION_CONFIRMED": 2,
+            "ABSORPTION_CANDIDATE": 1,
+            "FRAGMENTATION": 0,
+        }
+        for candidate in validated.candidates:
+            if candidate.eligible():
+                support = candidate.support
+                if support is None:
+                    raise ValueError("An eligible divergence requires actual computed support")
+                ranked.append((support, priority[candidate.state], candidate))
+        return max(ranked, key=lambda row: (row[0], row[1]))[2] if ranked else None
+
+    def state(self) -> MarketDivergenceState:
+        validated = type(self).model_validate(self)
+        if isinstance(validated.trigger, ConditionUnavailablePredicate):
+            return "UNKNOWN"
+        if not validated.trigger.value:
+            return "NONE"
+        chosen = validated.selected()
+        return chosen.state if chosen is not None else "UNKNOWN"
+
+    def unresolved(self) -> tuple[KnownMarketDivergenceState, ...]:
+        validated = type(self).model_validate(self)
+        chosen = validated.selected()
+        return tuple(
+            candidate.state
+            for candidate in validated.candidates
+            if candidate.eligible() and candidate != chosen
+        )
+
+
+class ConditionProposedMove(DomainModel):
+    status: Literal["PROPOSED"]
+    move_class: KnownMarketMoveClass
+    support: int = Field(ge=0)
+
+
+class UnavailableConditionProposedMove(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    move_class: Literal["UNKNOWN"]
+    support: None
+    reason: Literal[
+        "NO_ELIGIBLE_CLASS",
+        "NO_ELIGIBLE_DIVERGENCE",
+        "TRIGGER_INPUTS_UNAVAILABLE",
+        "UNVALIDATED_FRAGMENTATION",
+    ]
+
+
+type ConditionMoveProposal = ConditionProposedMove | UnavailableConditionProposedMove
+
+
+class ConditionMoveCandidates(DomainModel):
+    eligible_before_divergence: dict[DirectMarketMoveClass, Annotated[int, Field(ge=0)]]
+    divergence: ConditionDivergenceEvaluation
+    flags: tuple[MarketClassificationFlag, ...]
+
+    @model_validator(mode="after")
+    def actual_support_counts(self) -> Self:
+        maximum: dict[DirectMarketMoveClass, int] = {
+            "SPOT_LED_ACCUMULATION": 5,
+            "ORGANIC_MIXED": 2,
+            "DISTRIBUTION": 3,
+            "SELL_SIDE_ABSORPTION": 3,
+            "REAL_MARKET_FRAGMENTATION": 2,
+            "PRICE_MARKUP_FAKE_OI": 0,
+            "SHORT_SQUEEZE": 2,
+            "PERP_LED_CHASE": 4,
+            "LIQUIDITY_VACUUM": 2,
+        }
+        if any(support > maximum[name] for name, support in self.eligible_before_divergence.items()) or len(
+            set(self.flags)
+        ) != len(self.flags):
+            raise ValueError("Move support and flags must preserve actual distinct written tests")
+        return self
+
+    def direct_order(self) -> tuple[DirectMarketMoveClass, ...]:
+        validated = type(self).model_validate(self)
+        risk: tuple[DirectMarketMoveClass, ...] = (
+            "LIQUIDITY_VACUUM",
+            "SHORT_SQUEEZE",
+            "PERP_LED_CHASE",
+            "DISTRIBUTION",
+            "SELL_SIDE_ABSORPTION",
+            "ORGANIC_MIXED",
+            "SPOT_LED_ACCUMULATION",
+            "REAL_MARKET_FRAGMENTATION",
+            "PRICE_MARKUP_FAKE_OI",
+        )
+        return tuple(
+            sorted(
+                validated.eligible_before_divergence,
+                key=lambda name: (-validated.eligible_before_divergence[name], risk.index(name)),
+            )
+        )
+
+    def proposal(self, *, fragmentation: ConditionPredicate) -> ConditionMoveProposal:
+        validated = type(self).model_validate(self)
+        trigger = validated.divergence.trigger
+        if isinstance(trigger, ConditionUnavailablePredicate):
+            return UnavailableConditionProposedMove(
+                status="UNAVAILABLE", move_class="UNKNOWN", support=None, reason="TRIGGER_INPUTS_UNAVAILABLE"
+            )
+        if trigger.value:
+            chosen = validated.divergence.selected()
+            if chosen is None:
+                return UnavailableConditionProposedMove(
+                    status="UNAVAILABLE", move_class="UNKNOWN", support=None, reason="NO_ELIGIBLE_DIVERGENCE"
+                )
+            if chosen.state == "FRAGMENTATION" and not (
+                isinstance(fragmentation, ConditionObservedPredicate) and fragmentation.value
+            ):
+                return UnavailableConditionProposedMove(
+                    status="UNAVAILABLE",
+                    move_class="UNKNOWN",
+                    support=None,
+                    reason="UNVALIDATED_FRAGMENTATION",
+                )
+            mapped: dict[KnownMarketDivergenceState, KnownMarketMoveClass] = {
+                "PERP_LED_MARKUP": "PERP_LED_CHASE",
+                "LIQUIDITY_VACUUM": "LIQUIDITY_VACUUM",
+                "ABSORPTION_CONFIRMED": "PASSIVE_SPOT_ABSORPTION",
+                "ABSORPTION_CANDIDATE": "PASSIVE_SPOT_ABSORPTION",
+                "FRAGMENTATION": "REAL_MARKET_FRAGMENTATION",
+            }
+            support = chosen.support
+            if support is None:
+                raise ValueError("A selected candidate requires actual support")
+            return ConditionProposedMove(status="PROPOSED", move_class=mapped[chosen.state], support=support)
+        ordered = validated.direct_order()
+        if not ordered:
+            return UnavailableConditionProposedMove(
+                status="UNAVAILABLE", move_class="UNKNOWN", support=None, reason="NO_ELIGIBLE_CLASS"
+            )
+        chosen_class = ordered[0]
+        if chosen_class == "REAL_MARKET_FRAGMENTATION" and not (
+            isinstance(fragmentation, ConditionObservedPredicate) and fragmentation.value
+        ):
+            return UnavailableConditionProposedMove(
+                status="UNAVAILABLE", move_class="UNKNOWN", support=None, reason="UNVALIDATED_FRAGMENTATION"
+            )
+        return ConditionProposedMove(
+            status="PROPOSED",
+            move_class=chosen_class,
+            support=validated.eligible_before_divergence[chosen_class],
+        )
+
+
+class NonForwardConditionMarketState(DomainModel):
+    kind: Literal["NON_FORWARD"]
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    interval: NonForwardConditionInterval
+    move_class: Literal["UNKNOWN"]
+    divergence_state: Literal["UNKNOWN"]
+    confidence: Literal["LOW"]
+    reason: Literal["NON_FORWARD_ANALYSIS_WINDOW"]
+
+
+class FullConditionMarketState(DomainModel):
+    kind: Literal["FULL_STATE"]
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    cutoff: datetime
+    spot: dict[ConditionWindow, EnrichedConditionSpot]
+    primary_window: ConditionWindow
+    derivatives: EnrichedConditionDerivatives
+    liquidity: EnrichedConditionLiquidity
+    supply: ConditionSupplyGraph
+    relative: ConditionRelativeGraph
+    data_confidence: FullConditionConfidence
+    candidates: ConditionMoveCandidates
+
+    @field_validator("cutoff")
+    @classmethod
+    def aware_cutoff(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_primary_state_scope(self) -> Self:
+        names = {"W15M", "W1H", "W4H", "W24H", "EVENT"}
+        if set(self.spot) != names:
+            raise ValueError("Full market state requires the actual five spot windows")
+        for name, spot in self.spot.items():
+            if (spot.token_id, spot.interval.window, spot.interval.cutoff) != (
+                self.token_id,
+                name,
+                self.cutoff,
+            ):
+                raise ValueError("Full state spot windows must preserve actual token/window/cutoff")
+            if (spot.enrichment_role == "PRIMARY") != (name == self.primary_window):
+                raise ValueError("Full state primary enrichment must preserve its actual selected window")
+        primary = self.spot[self.primary_window].interval
+        if (
+            self.derivatives.interval != primary
+            or self.liquidity.interval != primary
+            or self.supply.interval != primary
+        ):
+            raise ValueError("Full state families must use the actual primary interval")
+        if self.liquidity.token_id != self.token_id or self.supply.token_id != self.token_id:
+            raise ValueError("Full state cannot borrow another token's financial context")
+        if any(window.interval.cutoff != self.cutoff for window in self.relative.windows.values()):
+            raise ValueError("Full relative context cannot borrow another cutoff")
+        return self
+
+    def move_class(self) -> MarketMoveClass:
+        validated = type(self).model_validate(self)
+        if validated.data_confidence.classification == "LOW":
+            return "UNKNOWN"
+        return validated.candidates.proposal(
+            fragmentation=validated.liquidity.fragmentation.validated()
+        ).move_class
+
+    def divergence_state(self) -> MarketDivergenceState:
+        validated = type(self).model_validate(self)
+        state = validated.candidates.divergence.state()
+        if state == "NONE":
+            return "NONE"
+        if validated.data_confidence.classification == "LOW":
+            return "UNKNOWN"
+        return state
+
+    def selected_support(self) -> int | None:
+        validated = type(self).model_validate(self)
+        if validated.data_confidence.classification == "LOW":
+            return None
+        return validated.candidates.proposal(
+            fragmentation=validated.liquidity.fragmentation.validated()
+        ).support
+
+    def alternatives(self) -> tuple[KnownMarketMoveClass, ...]:
+        validated = type(self).model_validate(self)
+        trigger = validated.candidates.divergence.trigger
+        if isinstance(trigger, ConditionUnavailablePredicate):
+            return ()
+        proposal = validated.candidates.proposal(fragmentation=validated.liquidity.fragmentation.validated())
+        if trigger.value:
+            if validated.data_confidence.classification == "LOW" and isinstance(
+                proposal, ConditionProposedMove
+            ):
+                return (proposal.move_class,)
+            return ()
+        ordered = validated.candidates.direct_order()
+        return ordered if validated.data_confidence.classification == "LOW" else ordered[1:]
+
+    def class_confidence(self) -> ConditionConfidenceLevel:
+        validated = type(self).model_validate(self)
+        if validated.move_class() == "UNKNOWN":
+            return "LOW"
+        return (
+            "MEDIUM" if validated.alternatives() or validated.candidates.divergence.unresolved() else "HIGH"
+        )
+
+    def absorption_confirmed(self) -> bool:
+        validated = type(self).model_validate(self)
+        return validated.divergence_state() == "ABSORPTION_CONFIRMED"
+
+
+type ConditionMarketState = FullConditionMarketState | NonForwardConditionMarketState
