@@ -1,6 +1,6 @@
 {
   "status": "HELD_NOT_ACTIVATED",
-  "implementation_revision": "af7daaa3",
+  "implementation_revision": "87dc6a7c",
   "not_a_lint_exclusion": true,
   "entries": [
     {
@@ -327,6 +327,42 @@
       "reason": "Package declarations identify required image/metadata coordinates. IMAGE_RUNTIME verifies the declared image identity before runtime probes; SOURCE_ARCHIVE proves explicit orchestrator Git bytes without borrowing TANK_BUILD_SHA or claiming an executed image.",
       "evidence": [
         "quality-publisher-source-runtime-unit.log"
+      ]
+    },
+    {
+      "file": "scripts/deploy/publisher_worker.bash",
+      "symbol": "lease decoding and check_container",
+      "site": "exact four-line host bootstrap wire and label projection",
+      "reason": "Host bootstrap runs before the qualified Python image is available. It accepts only a fixed version, full CID, owned nonce and production image reference in a private owned regular lease, and verifies role/nonce/image/root labels before removal. It never sources/evaluates the file or stops an unverified object. This is a bounded shell/Docker interface, not a waiver for application records.",
+      "evidence": [
+        "quality-publisher-launch-unit-4.log"
+      ]
+    },
+    {
+      "file": "tests/publisher_docker_stand.py",
+      "symbol": "DockerState.containers, create.labels, DockerCall.arguments",
+      "site": "typed container-identity collection and raw foreign CLI arguments",
+      "reason": "Container identities are variable keys whose values are strict named mutable stand records; raw command argv/label pairs are the actual Docker boundary observation, immediately projected into required named fields. Unknown flags and missing consumed facts refuse. The stand is not presented as real Docker behavior qualification.",
+      "evidence": [
+        "quality-publisher-launch-unit-4.log"
+      ]
+    },
+    {
+      "file": "tests/publisher_docker_stand.py",
+      "symbol": "ContainerState.process_id, create.cid_file",
+      "site": "required nullable physical child observation; transient absent required argv option",
+      "reason": "Created/completed stand containers may have no child. A running blocked case records its real spawned PID; missing cidfile refuses rather than inventing identity.",
+      "evidence": [
+        "quality-publisher-launch-unit-4.log"
+      ]
+    },
+    {
+      "file": "tests/test_publisher_worker.py",
+      "symbol": "finish_owned_stand_processes",
+      "site": "narrow ProcessLookupError cleanup idempotence",
+      "reason": "Cleanup acts only on the test's actual recorded spawned child, with PID equality against its own marker and running state. An already exited child needs no second signal; permission and other errors are not swallowed.",
+      "evidence": [
+        "quality-publisher-launch-unit-4.log"
       ]
     }
   ],
