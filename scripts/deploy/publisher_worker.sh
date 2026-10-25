@@ -8,7 +8,7 @@ transaction=$4
 action=$5
 host_root=$(readlink -e "$6")
 [[ "$orchestrator" =~ ^[0-9a-f]{40}$ && "$selected" =~ ^[0-9a-f]{40}$ && "$transaction" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid publisher identity" >&2; exit 1; }
-[[ "$image" =~ ^ghcr\.io/[a-z0-9._-]+/[a-z0-9._-]+/tank:[0-9a-f]{40}$ && "$image" = *:"$orchestrator" ]] || { echo "invalid publisher image" >&2; exit 1; }
+[[ "$image" = "ghcr.io/frequensy23-coder/tank/tank:$orchestrator" ]] || { echo "invalid publisher image" >&2; exit 1; }
 case "$action" in
   prepare|activate|commit|finish|rollback|rollback_finish|previous_release|recovery_release) ;;
   *) echo "invalid publisher action" >&2; exit 1 ;;
@@ -49,7 +49,7 @@ if [ -e "$lease" ] || [ -L "$lease" ]; then
   [ ! -L "$lease" ] && [ -f "$lease" ] && [ "$(stat -c '%u:%a' "$lease")" = "$EUID:600" ] || { echo "publisher lease must be private and owned" >&2; exit 1; }
   mapfile -t prior < "$lease"
   [ "${#prior[@]}" -eq 4 ] && [ "${prior[0]}" = tank-publisher-worker-v1 ] || { echo "invalid publisher lease shape" >&2; exit 1; }
-  [[ "${prior[1]}" =~ ^[0-9a-f]{64}$ && "${prior[2]}" =~ ^\.publisher-run\.[A-Za-z0-9]+$ && "${prior[3]}" =~ ^ghcr\.io/[a-z0-9._-]+/[a-z0-9._-]+/tank:[0-9a-f]{40}$ ]] || { echo "invalid publisher lease identity" >&2; exit 1; }
+  [[ "${prior[1]}" =~ ^[0-9a-f]{64}$ && "${prior[2]}" =~ ^\.publisher-run\.[A-Za-z0-9]+$ && "${prior[3]}" =~ ^ghcr\.io/frequensy23-coder/tank/tank:[0-9a-f]{40}$ ]] || { echo "invalid publisher lease identity" >&2; exit 1; }
   drain_container "${prior[1]}" "${prior[2]}" "${prior[3]}" || exit 125
   rm -- "$lease"
 fi

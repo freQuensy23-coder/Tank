@@ -6,7 +6,7 @@ import sys
 import time
 from collections.abc import Iterator
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -37,13 +37,14 @@ class WorkerStand:
     root: Path
     host: Path
     environment: dict[str, str]
+    image: str
 
     def launch(self) -> subprocess.Popen[bytes]:
         return subprocess.Popen(
             [
                 "bash",
                 str(ROOT / "scripts/deploy/publisher_worker.sh"),
-                "ghcr.io/example/project/tank:" + "a" * 40,
+                self.image,
                 "a" * 40,
                 "b" * 40,
                 "b" * 40,
@@ -78,7 +79,7 @@ def worker_stand(tmp_path: Path, fault: Literal["NORMAL", "BLOCK", "DRAIN_FAIL"]
     environment = os.environ.copy()
     environment["PATH"] = str(binaries) + ":" + environment["PATH"]
     environment["TANK_PUBLISHER_DOCKER_STAND"] = str(directory)
-    return WorkerStand(directory, host, environment)
+    return WorkerStand(directory, host, environment, "ghcr.io/frequensy23-coder/tank/tank:" + "a" * 40)
 
 
 def wait_for_effect(stand: WorkerStand) -> None:
@@ -169,7 +170,7 @@ def test_unverified_prior_container_is_preserved_before_any_new_worker_effect(tm
     state_directory = stand.host / "apify-state"
     state_directory.mkdir(mode=0o700)
     lease = state_directory / ".worker-active"
-    image = "ghcr.io/example/project/tank:" + "a" * 40
+    image = stand.image
     identifier = "d" * 64
     lease.write_text(
         "\n".join(("tank-publisher-worker-v1", identifier, ".publisher-run.ownedXYZ", image)) + "\n"
@@ -197,3 +198,16 @@ def test_unverified_prior_container_is_preserved_before_any_new_worker_effect(tm
         assert identifier in observed.containers
         assert [call.command for call in observed.calls] == ["inspect"]
         assert observed.drain_attempts == 0
+
+
+def test_unknown_image_repository_is_refused_before_any_docker_or_host_effect(tmp_path: Path) -> None:
+    stand = worker_stand(tmp_path, "NORMAL")
+    unverified = replace(stand, image="ghcr.io/unverified/other/tank:" + "a" * 40)
+    process = unverified.launch()
+    _, stderr = process.communicate(timeout=4)
+    assert process.returncode == 1
+    assert b"invalid publisher image" in stderr
+    assert not (stand.host / "apify-state").exists()
+    with state(stand.root) as observed:
+        assert observed.calls == []
+        assert observed.containers == {}

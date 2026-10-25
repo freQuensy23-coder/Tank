@@ -75,6 +75,8 @@ def create(root: Path, arguments: list[str]) -> int:
             labels[key] = assigned
         elif flag == "--cidfile":
             cid_file = Path(value)
+        elif flag not in {"--pull", "--user", "--network", "--volume", "--env", "--workdir", "--entrypoint"}:
+            raise ValueError("Unexpected stand create flag")
         index += 2
     if cid_file is None:
         raise ValueError("Stand requires the actual CID file")
