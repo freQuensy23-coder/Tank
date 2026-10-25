@@ -4,7 +4,7 @@ import asyncio
 from decimal import Decimal
 
 import pytest
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 
 from tank.market.funding import FundingObservation
 from tank.market.normalize import funding
@@ -179,3 +179,11 @@ def test_capture_boundaries_require_anchor_timestamp_and_include_mirrored_window
     assert parse_time("2026-06-17T03:00:00Z") in points
     with pytest.raises(KeyError):
         capture_boundary_points("2026-06-17T04:00:00Z", {})
+
+
+@pytest.mark.parametrize("anchor", [{"ts": 1781654400000}, {"ts": False}, {"ts": "1781654400000"}])
+def test_capture_boundary_rejects_undeclared_epoch_anchor(anchor: dict[str, JsonValue]) -> None:
+    from tank.market.capture import capture_boundary_points
+
+    with pytest.raises((TypeError, ValueError)):
+        capture_boundary_points("2026-06-17T04:00:00Z", anchor)
