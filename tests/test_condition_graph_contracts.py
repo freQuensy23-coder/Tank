@@ -9,6 +9,7 @@ from tank.analysis.condition_graph_contracts import (
     AvailableConditionFunding,
     BasicConditionLiquidity,
     BasicConditionSpot,
+    CapturedConditionHoldersRevenue,
     ConditionBookDepthBounds,
     ConditionCadenceScope,
     ConditionCollection,
@@ -3208,4 +3209,96 @@ def test_missing_volatility_reference_does_not_invent_a_venue_for_an_unavailable
                     )
                 }
             )
+        )
+
+
+def holders_revenue() -> CapturedConditionHoldersRevenue:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionHoldersRevenuePeriod,
+        ConditionHoldersRevenueProtocol,
+        SupplyCadenceScope,
+        UnavailableConditionCadence,
+    )
+
+    protocol = ConditionHoldersRevenueProtocol(
+        protocol="example",
+        provider="DefiLlama",
+        unit="USD",
+        source_url=None,
+        periods=(
+            ConditionHoldersRevenuePeriod(provider_period="24h", value_usd=Decimal(0), status="OBSERVED"),
+            ConditionHoldersRevenuePeriod(provider_period="30d", value_usd=None, status="UNAVAILABLE"),
+        ),
+        chart_available=None,
+        latest_chart_point=None,
+        reason=None,
+    )
+    return CapturedConditionHoldersRevenue(
+        token_id="T",
+        status="OBSERVED",
+        protocols=(protocol,),
+        as_of=Timestamp(value="2026-10-17T11:59:00Z", precision=None, precision_reason="NOT_CAPTURED"),
+        visibility=ConditionReceiptVisibility(
+            received_at=Timestamp(value=None, precision=None, precision_reason="NOT_CAPTURED"),
+            assembled_at=Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY"),
+        ),
+        cutoff=AT,
+        cadence=UnavailableConditionCadence(
+            status="UNAVAILABLE",
+            seconds=None,
+            scope=SupplyCadenceScope(
+                kind="SUPPLY", collection="supply", token_id="T", observation_kind="FUNDAMENTALS", chain=None
+            ),
+            origin=None,
+            reason="CADENCE_NOT_CAPTURED",
+        ),
+        identity_evidence=None,
+        identity_reason="IDENTITY_EVIDENCE_NOT_CAPTURED",
+        source_observation_sha256="a" * 64,
+        reason=None,
+    )
+
+
+def test_holders_revenue_preserves_zero_unknown_period_and_capture_provenance_separately() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionUnavailablePredicate
+
+    graph = holders_revenue()
+    assert graph.coverage("24h").complete is True
+    assert graph.coverage("30d").observed == 0
+    assert graph.availability() == "PARTIAL"
+    assert graph.protocols[0].periods[0].value_usd == 0
+    assert graph.protocols[0].chart_available is None
+    assert graph.as_of.precision is None
+    assert isinstance(graph.visibility.eligible(), ConditionUnavailablePredicate)
+    with pytest.raises(ValidationError, match="source cadence"):
+        type(graph).model_validate(graph.model_copy(update={"status": "STALE"}))
+
+
+def test_holders_revenue_provider_seconds_do_not_invent_a_day_period_or_accept_future_points() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionHoldersRevenueChartPoint
+
+    graph = holders_revenue()
+    point = ConditionHoldersRevenueChartPoint(
+        provider_timestamp=str(int((AT - timedelta(days=1)).timestamp())),
+        value_usd=Decimal("1.25"),
+        provider_period="UNSPECIFIED",
+    )
+    protocol = type(graph.protocols[0]).model_validate(
+        graph.protocols[0].model_copy(update={"chart_available": True, "latest_chart_point": point})
+    )
+    actual = type(graph).model_validate(graph.model_copy(update={"protocols": (protocol,)}))
+    assert actual.protocols[0].latest_chart_point == point
+    assert point.observed_at() == AT - timedelta(days=1)
+    future = type(point).model_validate(
+        point.model_copy(update={"provider_timestamp": str(int((AT + timedelta(seconds=1)).timestamp()))})
+    )
+    with pytest.raises(ValidationError, match="future provider"):
+        type(graph).model_validate(
+            graph.model_copy(
+                update={"protocols": (protocol.model_copy(update={"latest_chart_point": future}),)}
+            )
+        )
+    with pytest.raises(ValidationError):
+        ConditionHoldersRevenueChartPoint(
+            provider_timestamp="NaN", value_usd=Decimal(0), provider_period="UNSPECIFIED"
         )

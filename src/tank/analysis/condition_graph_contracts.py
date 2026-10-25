@@ -22,11 +22,12 @@ from tank.analysis.statistics_contracts import (
 )
 from tank.contracts import DomainModel
 from tank.contracts.provenance import ResolvedVersionIdentity
+from tank.contracts.registry import FundamentalsEvidence
 from tank.contracts.scalars import TrueFlag, require_integer, require_number
 from tank.market.book_contracts import BookLevel
 from tank.market.trade_contracts import QuoteUsdValuation
 from tank.time_precision import Timestamp
-from tank.util import parse_iso_time
+from tank.util import parse_epoch, parse_iso_time
 
 type ConditionConfidenceLevel = Literal["LOW", "MEDIUM", "HIGH"]
 
@@ -4888,3 +4889,158 @@ class EnrichedConditionLiquidity(ConditionLiquidityValues):
 
 
 type ConditionLiquidity = BasicConditionLiquidity | EnrichedConditionLiquidity
+
+
+class ConditionHoldersRevenuePeriod(DomainModel):
+    provider_period: Literal["24h", "30d"]
+    value_usd: Decimal | None
+    status: Literal["OBSERVED", "UNAVAILABLE"]
+
+    @model_validator(mode="after")
+    def actual_provider_value(self) -> Self:
+        if (self.value_usd is not None) != (self.status == "OBSERVED"):
+            raise ValueError(
+                "Observed holders revenue requires the actual provider value, including known zero"
+            )
+        return self
+
+
+class ConditionHoldersRevenueChartPoint(DomainModel):
+    provider_timestamp: str = Field(min_length=1, pattern=r"\S")
+    value_usd: Decimal
+    provider_period: Literal["UNSPECIFIED"]
+
+    @field_validator("provider_timestamp")
+    @classmethod
+    def declared_source_seconds(cls, value: str) -> str:
+        parse_epoch(value, unit="s")
+        return value
+
+    def observed_at(self) -> datetime:
+        validated = type(self).model_validate(self)
+        return parse_epoch(validated.provider_timestamp, unit="s")
+
+
+class ConditionHoldersRevenueProtocol(DomainModel):
+    protocol: str = Field(min_length=1, pattern=r"\S")
+    provider: Literal["DefiLlama"]
+    unit: Literal["USD"]
+    source_url: str | None = Field(min_length=1, pattern=r"\S")
+    periods: tuple[ConditionHoldersRevenuePeriod, ConditionHoldersRevenuePeriod]
+    chart_available: bool | None
+    latest_chart_point: ConditionHoldersRevenueChartPoint | None
+    reason: str | None = Field(min_length=1, pattern=r"\S")
+
+    @model_validator(mode="after")
+    def actual_provider_periods(self) -> Self:
+        if tuple(period.provider_period for period in self.periods) != ("24h", "30d"):
+            raise ValueError("Holders revenue preserves the provider's distinct daily and monthly periods")
+        if self.latest_chart_point is not None:
+            self.latest_chart_point.observed_at()
+            if not self.chart_available:
+                raise ValueError("A selected chart point requires an actually captured chart")
+        return self
+
+
+class ConditionHoldersRevenueCoverage(DomainModel):
+    observed: int = Field(ge=0)
+    expected: int = Field(ge=0)
+    complete: bool
+
+    @model_validator(mode="after")
+    def actual_protocol_count(self) -> Self:
+        if self.observed > self.expected or self.complete != (
+            self.expected > 0 and self.observed == self.expected
+        ):
+            raise ValueError("Holders coverage must preserve actual nonempty observed protocol counts")
+        return self
+
+
+class UnavailableConditionHoldersRevenue(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["NO_CAPTURED_FUNDAMENTALS", "ONLY_FUTURE_FUNDAMENTALS"]
+
+
+class CapturedConditionHoldersRevenue(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    status: Literal["OBSERVED", "STALE", "UNAVAILABLE"]
+    protocols: tuple[ConditionHoldersRevenueProtocol, ...]
+    as_of: Timestamp
+    visibility: ConditionReceiptVisibility
+    cutoff: datetime
+    cadence: ConditionCadence
+    identity_evidence: FundamentalsEvidence | None
+    identity_reason: Literal["IDENTITY_EVIDENCE_NOT_CAPTURED"] | None
+    source_observation_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    reason: str | None = Field(min_length=1, pattern=r"\S")
+
+    @field_validator("cutoff")
+    @classmethod
+    def aware_cutoff(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_captured_fundamentals(self) -> Self:
+        _bind_cadence_scope(
+            self.cadence.scope,
+            collection="supply",
+            token_id=self.token_id,
+            instrument_id=None,
+            metric_key=None,
+            observation_kind="FUNDAMENTALS",
+            chain=None,
+        )
+        if (self.identity_evidence is None) != (self.identity_reason is not None):
+            raise ValueError("Absent fundamentals identity evidence requires its actual capture gap")
+        if len({protocol.protocol for protocol in self.protocols}) != len(self.protocols):
+            raise ValueError("Holders revenue cannot duplicate a captured protocol")
+        stamp = self.as_of.value
+        if stamp is None or parse_iso_time(stamp) > self.cutoff:
+            raise ValueError("Captured fundamentals require the actual nonfuture source timestamp")
+        if (
+            self.status == "UNAVAILABLE"
+            and self.protocols
+            or self.status != "UNAVAILABLE"
+            and not self.protocols
+        ):
+            raise ValueError("Captured fundamentals status must preserve actual protocol presence")
+        if self.protocols and isinstance(self.cadence, DeclaredConditionCadence):
+            stale = (self.cutoff - parse_iso_time(stamp)).total_seconds() > self.cadence.seconds
+            if (self.status == "STALE") != stale:
+                raise ValueError("Fundamentals staleness must use actual scoped cadence and source age")
+        elif self.status == "STALE":
+            raise ValueError("Unknown source cadence cannot establish fundamentals staleness")
+        for protocol in self.protocols:
+            if (
+                protocol.latest_chart_point is not None
+                and protocol.latest_chart_point.observed_at() > self.cutoff
+            ):
+                raise ValueError("Holders revenue cannot select a future provider chart point")
+        return self
+
+    def coverage(self, period: Literal["24h", "30d"]) -> ConditionHoldersRevenueCoverage:
+        validated = type(self).model_validate(self)
+        observed = 0
+        for protocol in validated.protocols:
+            for value in protocol.periods:
+                if value.provider_period == period and value.value_usd is not None:
+                    observed += 1
+        expected = len(validated.protocols)
+        return ConditionHoldersRevenueCoverage(
+            observed=observed, expected=expected, complete=expected > 0 and observed == expected
+        )
+
+    def availability(self) -> Literal["COMPLETE", "PARTIAL", "UNAVAILABLE"]:
+        validated = type(self).model_validate(self)
+        if validated.coverage("24h").complete and validated.coverage("30d").complete:
+            return "COMPLETE"
+        if any(
+            protocol.latest_chart_point is not None
+            or any(period.value_usd is not None for period in protocol.periods)
+            for protocol in validated.protocols
+        ):
+            return "PARTIAL"
+        return "UNAVAILABLE"
+
+
+type ConditionHoldersRevenue = CapturedConditionHoldersRevenue | UnavailableConditionHoldersRevenue
