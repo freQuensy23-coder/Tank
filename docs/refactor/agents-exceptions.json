@@ -1886,9 +1886,10 @@
         }
       ],
       "kind": "native resource boundary",
-      "reason": "The request dictionary is confined to the actual HTTP response adapter. A missing resource is an explicit 404 outcome, not a null state or invented termination. archived_at is required nullable because the provider declares unarchived sessions explicitly.",
+      "reason": "The request dictionary is confined to the actual HTTP response adapter. A missing resource is an explicit 404 outcome, not a null state or invented termination. archived_at is required nullable because the provider declares unarchived sessions explicitly. Every reported archive clock validates as an aware timestamp while preserving original text; empty/naive/malformed strings cannot become lifecycle facts.",
       "validation": [
-        "test_http404_is_missing_without_a_fabricated_terminated_status"
+        "test_http404_is_missing_without_a_fabricated_terminated_status",
+        "test_invalid_archive_clock_refuses_actual_followup_before_local_or_input_effects"
       ]
     },
     {

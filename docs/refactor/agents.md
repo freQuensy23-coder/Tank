@@ -741,3 +741,14 @@ observations without importing native transport code. The move changes no
 field, default or lifecycle behavior; 19 reader/tool-confirmation cases pass
 in 2.15 seconds, and the inward contract/adapter/test independent strict gate
 passes.
+
+## Native archive-clock companion
+
+NativeSessionState.actual_archive_clock uses the shared aware timestamp parser
+for each non-null archived_at and returns the original wire string. None retains
+the provider's explicit unarchived fact. Empty, malformed, naive and calendar-only
+strings cannot be persisted or treated as either live or archived observations.
+Z and explicit-offset clocks retain their exact text. The actual continuation
+reader regression proves invalid input refuses before local state mutation or
+native input posting. All 27 reader/tool-boundary cases pass in 4.38 seconds;
+the inward model, HTTP adapter and test pass independent strict mypy.

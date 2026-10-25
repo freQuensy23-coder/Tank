@@ -2783,8 +2783,17 @@
     },
     {
       "path": "src/tank/contracts/native_readback.py",
-      "lines": 28,
-      "functions": []
+      "lines": 36,
+      "functions": [
+        {
+          "symbol": "NativeSessionState.actual_archive_clock",
+          "line": 25,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        }
+      ]
     },
     {
       "path": "src/tank/contracts/openma.py",
