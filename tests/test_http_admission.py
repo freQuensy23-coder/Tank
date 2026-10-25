@@ -14,9 +14,10 @@ from source_support import fixture_versions
 
 import tank.request_budget as budget_module
 from tank.contracts.http_policy import HttpAdmitted, HttpRefused, HttpUnconfigured
-from tank.contracts.sources import SourceApiLimitsConfiguration
+from tank.contracts.sources import HttpFetchPlan, SourceApiLimitsConfiguration
 from tank.http_admission import ConfiguredHttpAdmission
 from tank.request_budget import BudgetConstraint, RequestLedger, SharedRequestBudgets, normalized_constraints
+from tank.sources.http_client import SourceHttpTransport
 
 
 def test_atomic_group_requires_distinct_configured_bucket_identities() -> None:
@@ -165,3 +166,43 @@ async def test_postgres_group_rolls_back_tentative_spend_in_other_window(
             ]
         finally:
             await ledger.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_source_transport_admits_each_actual_redirect_destination() -> None:
+    admission, engine = configured_admission()
+    seen: list[str] = []
+
+    async def admit(feed: HttpFetchPlan, request: httpx.Request) -> None:
+        result = await admission.admit(request)
+        assert isinstance(result, HttpAdmitted)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.host)
+        if request.url.host == "www.sec.gov":
+            return httpx.Response(302, headers={"Location": "https://data.sec.gov/synthetic"})
+        return httpx.Response(200, content=b"retained")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        transport = SourceHttpTransport(client, admit)
+        response = await transport.request(HttpFetchPlan(url="https://www.sec.gov/synthetic"), {}, None)
+    assert response.content == b"retained"
+    assert seen == ["www.sec.gov", "data.sec.gov"]
+    assert len(next(iter(engine.windows.values()))) == 2
+
+
+@pytest.mark.asyncio
+async def test_source_redirect_cannot_restore_python_exchange_transport() -> None:
+    seen: list[str] = []
+
+    async def admit(feed: HttpFetchPlan, request: httpx.Request) -> None:
+        seen.append(request.url.host)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"Location": "https://api.binance.com/api/v3/exchangeInfo"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        transport = SourceHttpTransport(client, admit)
+        with pytest.raises(ValueError, match="exchange capture transport"):
+            await transport.request(HttpFetchPlan(url="https://example.org/feed"), {}, None)
+    assert seen == ["example.org"]

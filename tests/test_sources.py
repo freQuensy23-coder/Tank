@@ -1054,14 +1054,11 @@ async def test_sec_provider_and_source_configured_budgets_are_shared(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import tank.sources as module
+    from tank.request_budget import BudgetBucket, SharedRequestBudgets
     from tank.settings import Settings
 
-    calls = []
-
-    async def acquire(key, capacity, window_s, *, weight=1, host=None) -> None:
-        calls.append((key, capacity, window_s, weight))
-
-    monkeypatch.setattr(module.shared_request_budgets, "acquire", acquire)
+    engine = SharedRequestBudgets()
+    monkeypatch.setattr(module, "shared_request_budgets", engine)
     service = SourceService(Repo(), Settings(data_dir=tmp_path), versions=fixture_versions())
     try:
         await service.acquire_budget(fetch_plan({"url": "https://www.sec.gov/news/pressreleases.rss"}))
@@ -1070,8 +1067,10 @@ async def test_sec_provider_and_source_configured_budgets_are_shared(
                 {"url": "https://www.sec.gov/cgi-bin/browse-edgar", "source_limits": {"rate_per_min": 25}}
             )
         )
-        assert [row for row in calls if row[0] == "sec.gov"] == [("sec.gov", 5, 1, 1), ("sec.gov", 5, 1, 1)]
-        assert ("www.sec.gov", 25, 60, 1) in calls
+        provider = BudgetBucket(key="sec.gov", capacity=5, window_s=1)
+        source = BudgetBucket(key="www.sec.gov", capacity=25, window_s=60)
+        assert len(engine.windows[provider]) == 2
+        assert len(engine.windows[source]) == 1
     finally:
         await service.close()
 
@@ -1942,7 +1941,7 @@ async def test_due_time_uses_actual_request_start_after_budget_admission(
         svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         first = [True]
 
-        async def budget(feed) -> None:
+        async def budget(feed, *, request: httpx.Request | None = None) -> None:
             if first[0]:
                 clock[0] += timedelta(seconds=30)
                 first[0] = False
