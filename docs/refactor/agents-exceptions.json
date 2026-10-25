@@ -6,7 +6,7 @@
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "_entity_record",
-          "line": 260
+          "line": 266
         }
       ],
       "kind": "display-only absence",
@@ -21,12 +21,12 @@
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "validate_registry",
-          "line": 267
+          "line": 273
         },
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "_key",
-          "line": 210
+          "line": 216
         }
       ],
       "kind": "natural identity and immutable model construction",
@@ -41,7 +41,7 @@
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "_routing_aliases",
-          "line": 214
+          "line": 220
         }
       ],
       "kind": "optional qualification",
@@ -56,12 +56,12 @@
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "_document",
-          "line": 404
+          "line": 410
         },
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "_config_timestamp_metadata",
-          "line": 196
+          "line": 202
         }
       ],
       "kind": "JSON serialization boundary",
@@ -76,15 +76,16 @@
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "_sync_rows",
-          "line": 413
+          "line": 455
         }
       ],
       "kind": "persistence absence and unowned extension merge",
-      "reason": "None means no stored row. Only unknown independently discovered fields survive replacement of schema-owned fields; no required identity fallback exists.",
+      "reason": "None means no stored row. Only genuinely unowned discovery fields survive replacement of all closed table-family/provenance-owned fields, including fields of old valid variants; no required identity fallback exists.",
       "validation": [
         "test_sync_removes_configured_tail_and_preserves_discovery",
         "test_removing_configured_qualifier_clears_owned_state_without_erasing_discovery",
-        "test_corrupt_managed_identity_rolls_back_all_preceding_registry_writes"
+        "test_corrupt_managed_identity_rolls_back_all_preceding_registry_writes",
+        "test_metric_family_replacement_removes_all_old_family_fields_and_preserves_discovery"
       ]
     },
     {
@@ -92,7 +93,7 @@
         {
           "path": "src/tank/bootstrap.py",
           "symbol": "RegistrySyncResult.to_wire",
-          "line": 173
+          "line": 179
         }
       ],
       "kind": "report serialization",
@@ -554,6 +555,25 @@
       "validation": [
         "test_actual_configuration_loader_roundtrips_all_declared_fields",
         "test_canonical_registry_bootstrap_and_idempotence"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/bootstrap.py",
+          "symbol": "_schema_fields",
+          "line": 419
+        },
+        {
+          "path": "src/tank/bootstrap.py",
+          "symbol": "_owned_fields",
+          "line": 423
+        }
+      ],
+      "kind": "closed table-family field ownership",
+      "reason": "Only Pydantic schema metadata is reflected; the complete valid family union prevents old variant fields masquerading as opaque discovery extensions. No domain object is treated as a mapping.",
+      "validation": [
+        "test_metric_family_replacement_removes_all_old_family_fields_and_preserves_discovery"
       ]
     }
   ]
