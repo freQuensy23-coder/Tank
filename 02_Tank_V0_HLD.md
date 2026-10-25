@@ -375,14 +375,14 @@ A MAJOR+ class from the agent's `set_assessment` → pre-event windows computed 
 |---|---|---|
 | `reg` | `sources`, `entities`, `entity_aliases`, `tokens`, `instruments`, `sector_baskets`, `dependency_map`, `metric_semantics`, `exchange_addresses` | Versioned with config |
 | `ingest` | `source_items` | Permanent |
-| `evt` | `events`, `event_entities`, `event_observations`, `claims`, `state_changes`, `ems_assessments`, `capture_chains`, `beneficiary_maps`, `beneficiary_edges` | Permanent |
+| `evt` | `events`, `event_observations`, `claims`, `state_changes`, `ems_assessments`, `capture_chains`, `beneficiary_maps`, `beneficiary_edges` | Permanent |
 | `mkt` (PostgreSQL) | `unlocks`, `hot_tokens`, capture coordination (`backfill_runs`, `capture_requests`, `capture_streams`, `capture_gaps`) | Permanent / as declared |
 | `mkt` (ClickHouse) | `klines_1m`, `flow_bars_1m`, `book_summaries`, `oi_obs`, `funding_obs`, `liq_obs`, `tickers_24h`, `trades` | ReplacingMergeTree on the row identity (the last write wins), daily partitions, ZSTD/DoubleDelta codecs; base tier 90 days, `trades` 30 days, `book_summaries` 72 hours (summary fields only, no order-book levels); days overlapping a MAJOR+ event window kept permanently (except book summaries). Agents read it with a read-only user. |
 | `ana` | `market_truth`, `outlooks`, `decisions`, `contradictions`, `watch_conditions`, `calls` | Permanent |
 | `out` | `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints` | Permanent, append-only |
 | `ops` | `jobs`, `agent_sessions`, `tool_calls`, `llm_usage` | Jobs 30 days; LLM usage permanent |
 | `scout` | `expansion_proposals` | Permanent |
-| `qa` | `reviews`, `fixtures`, `replay_runs` | Permanent |
+| `qa` | `reviews` (fixtures and replay runs are files, 03 §2.9) | Permanent |
 | `oma` (OpenMA's own database) | Agents, skills, sessions and their append-only event logs | Permanent |
 
 DDL for the core tables is in 03 §14.

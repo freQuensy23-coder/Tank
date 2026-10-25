@@ -514,7 +514,6 @@ def _projection(collection, record):
         "body": "text",
         "raw_path": "raw_ref",
         "claim_type": "type",
-        "gates": "structural_gates",
         "buy_usd": "buy_notional",
         "sell_usd": "sell_notional",
         "o": "open",
@@ -592,12 +591,6 @@ def _projection(collection, record):
                 values["quote"] = first_evidence.get("quote")
     if collection == "ana.decisions" and not values.get("mta_id"):
         values["mta_id"] = (record.get("provenance") or {}).get("mta_id")
-    if collection == "ana.market_truth":
-        detail = copy.deepcopy(values.get("detail") or {})
-        for key in ("spot", "derivatives", "liquidity", "supply", "relative"):
-            if key in record:
-                detail[key] = record[key]
-        values["detail"] = detail
 
     id_arrays = {
         ("ana.decisions", "conditions"): "cond_id",

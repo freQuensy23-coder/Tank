@@ -557,7 +557,7 @@ Fixture
 |---|---|---|
 | `sources`, `entities`, `entity_aliases`, `tokens`, `instruments`, `sector_baskets`, `metric_semantics` | natural slugs | Loaded from the config repository; version stamped. |
 | `source_items` | `item_id`; unique (`source_id`, `external_id`) | Index `content_hash`, `observed_at`. |
-| `events` | `event_id` | Index `known_to_us_at`, `lifecycle`; GIN on entities. |
+| `events` | `event_id` | Index `known_to_us_at`, `lifecycle`. |
 | `event_observations`, `claims` | `obs_id`, `claim_id` | FK to events/items. |
 | `state_changes` | serial | Append-only. |
 | `ems_assessments`, `capture_chains`, `beneficiary_maps`, `beneficiary_edges` | id + version | Versioned rows. |
@@ -571,7 +571,7 @@ Fixture
 | `jobs` | `job_id`; unique `idem_key` | The service's job queue (§3.8). |
 | `agent_sessions`, `tool_calls` | `session_id`, `call_id` | The OpenMA session of each event, and every tool call with its input, result and timing (§3.2). |
 | `expansion_proposals` | `prp_id` | Only table the scout role may write, together with its own logs. |
-| `fixtures`, `replay_runs` | ids | Sealed outcomes stored outside the DB path the pipeline reads. |
+| `fixtures`, `replay_runs` | — | Files, not tables: fixtures are listed in `tests/fixtures/manifest.json`; a replay run freezes its inputs and outputs in its output directory. Sealed outcomes stay outside anything the pipeline reads. |
 
 Core DDL: §14.
 
@@ -1823,6 +1823,7 @@ Analysis objects of §2.6 are stored as `jsonb` inside the rows below; the colum
 Storage rules:
 
 - **Domain tables** (`reg`, `ingest`, `evt`, `ana`, `out`, `ops`, `scout`, `qa`; tens of thousands of rows a day): each row has the typed columns below plus `document jsonb` with the full §2 record. Code reads the document; every write fills the typed columns from it, so indexes, constraints and the agents' read-only SQL work on columns. All writes go through one function that takes a per-record lock and enforces immutability and idempotency.
+- **Typed columns and indexes.** Typed columns are the scalars, timestamps and id arrays that queries filter, join or order on. Nested §2 objects live only in `document`: EMS `dims`, `structural_gates` and `impact_horizon`; Market Truth `divergence`, `data_confidence` and the per-family detail; the decision `outlook`; the alert `card_struct`; the job `payload`; the tool call `input` and `result`; the event `next_milestone`. A check on `document` requires the ones §2 makes mandatory. Indexes cover only the lookups the code makes: unique domain ids, filter and order columns, and retention cutoffs. A GIN index (`jsonb_path_ops`) exists only where code filters by containment on fields without a typed column: claims by event, agent sessions by item, proposal or replay run, tool calls by event, deliveries by progress card, and reader questions by forwarded message.
 - **Market series** (ClickHouse `mkt.*`; millions of rows a day): typed columns only, no document. tank-capture writes them in batches — one insert per table per flush of the stream or poller — and a late row replaces its bar by a higher `_version`.
 - **Every print** is a row of ClickHouse `mkt.trades`. The 1m flow bars hold everything Market Truth reads (§5.2); replay evidence seals the prints before the cutoff, read from `mkt.trades`, as JSONL files.
 
@@ -1874,21 +1875,12 @@ CREATE TABLE evt.events (
   certainty          text NOT NULL,
   timing_confidence  text NOT NULL,
   best_source_class  text NOT NULL,
-  next_milestone     jsonb,
   lifecycle          text NOT NULL,
   merged_into        text REFERENCES evt.events(event_id),
   current_ems_id     text
 );
 CREATE INDEX ON evt.events (known_to_us_at);
 CREATE INDEX ON evt.events (lifecycle);
-
-CREATE TABLE evt.event_entities (
-  event_id  text NOT NULL REFERENCES evt.events(event_id),
-  entity_id text NOT NULL,
-  role      text NOT NULL,
-  PRIMARY KEY (event_id, entity_id, role)
-);
-CREATE INDEX ON evt.event_entities (entity_id);
 
 CREATE TABLE evt.event_observations (
   obs_id        text PRIMARY KEY,
@@ -1932,12 +1924,9 @@ CREATE TABLE evt.ems_assessments (
   event_id        text NOT NULL REFERENCES evt.events(event_id),
   version         int  NOT NULL,
   cutoff          timestamptz NOT NULL,
-  dims            jsonb NOT NULL,                      -- 7 × DimScore
-  gates           jsonb NOT NULL,
   class           text NOT NULL,
   criterion       text NOT NULL,
   class_reasons   text[] NOT NULL,
-  impact_horizon  jsonb NOT NULL,
   config_version  text NOT NULL,
   model_id        text NOT NULL,
   prompt_version  text NOT NULL,
@@ -1962,12 +1951,9 @@ CREATE TABLE ana.market_truth (
   move_class        text NOT NULL,
   support           int,
   alternatives      text[] NOT NULL,                  -- other eligible move classes (§5.8)
-  divergence        jsonb NOT NULL,
   flags             text[] NOT NULL,
   decisive_facts    text[] NOT NULL,
-  data_confidence   jsonb NOT NULL,
   class_confidence  text NOT NULL,
-  detail            jsonb NOT NULL,                    -- SpotTruth per window, Derivatives, Liquidity, Supply, RelativePrice
   config_version    text NOT NULL,
   code_version      text NOT NULL
 );
@@ -1986,7 +1972,6 @@ CREATE TABLE ana.decisions (
   tactical      boolean NOT NULL,
   investigate   boolean NOT NULL,
   call_id       text,
-  outlook       jsonb NOT NULL,
   conditions    text[] NOT NULL                        -- cond_ids shown on the card (≤ 2)
 );
 
@@ -2011,7 +1996,6 @@ CREATE TABLE out.alerts (                              -- append-only, one row p
   event_id            text NOT NULL REFERENCES evt.events(event_id),
   generated_at        timestamptz NOT NULL,
   card_text           text NOT NULL,
-  card_struct         jsonb NOT NULL,
   decisions           text[] NOT NULL,
   evidence_bundle_id  char(64) NOT NULL,
   supersedes_version  int,
@@ -2052,7 +2036,6 @@ CREATE TABLE ops.jobs (
   type          text NOT NULL,
   priority      smallint NOT NULL,
   idem_key      text NOT NULL UNIQUE,
-  payload       jsonb NOT NULL,
   status        text NOT NULL DEFAULT 'QUEUED'
                 CHECK (status IN ('QUEUED','RUNNING','DONE','FAILED','EXPIRED')),
   attempts      int NOT NULL DEFAULT 0,
@@ -2094,8 +2077,6 @@ CREATE TABLE ops.tool_calls (
   call_id         text PRIMARY KEY,                    -- OpenMA custom tool_use id
   session_id      text NOT NULL REFERENCES ops.agent_sessions(session_id),
   tool            text NOT NULL,
-  input           jsonb NOT NULL,
-  result          jsonb,
   status          text NOT NULL CHECK (status IN ('PENDING','DONE','REFUSED','ERROR')),
   requested_at    timestamptz NOT NULL,
   answered_at     timestamptz
