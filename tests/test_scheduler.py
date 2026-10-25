@@ -401,7 +401,7 @@ async def real_decision_watch_conditions(monkeypatch: pytest.MonkeyPatch, tmp_pa
     await repo.put("evt.beneficiary_maps", "map", {"event_id": "e", "map_version": 1, "analysis_set": ["T"]})
     await repo.put("evt.beneficiary_edges", "edge", beneficiary)
     await repo.put("ana.market_truth", "truth", market)
-    service = EventToolService(repo, settings, None, DecisionEngine(settings))
+    service = EventToolService(repo, settings, None, DecisionEngine(settings), versions=fixture_versions())
     decision = await service.get_decision(
         {"event_id": "e", "token_id": "T"}, {"session_id": "session", "call_id": "decision"}
     )

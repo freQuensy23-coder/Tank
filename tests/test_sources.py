@@ -752,7 +752,7 @@ async def test_milestone_producer_drives_source_cadence_and_cancellation(
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(response))
     service = SourceService(repo, SourceSettings(), http=http, versions=fixture_versions())
-    tools = EventToolService(repo, settings_obj, None, None)
+    tools = EventToolService(repo, settings_obj, None, None, versions=fixture_versions())
     await repo.put("reg.sources", "S15", source)
     await repo.put("evt.events", "cadence-event", {"event_id": "cadence-event"})
     due = clock[0] + timedelta(hours=1)
@@ -914,7 +914,7 @@ async def test_major_assessment_producer_activates_15s_source_reads(
             "implementation",
         ]
     }
-    tools = EventToolService(repo, config, None, None)
+    tools = EventToolService(repo, config, None, None, versions=fixture_versions())
     result = await tools.set_assessment(
         {
             "event_id": event["event_id"],
