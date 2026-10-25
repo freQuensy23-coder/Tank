@@ -12,6 +12,7 @@ ARG TARGETARCH
 ARG GIT_SHA=dev
 RUN --mount=type=cache,id=tank-capture-go-mod,target=/go/pkg/mod \
     --mount=type=cache,id=tank-capture-go-build-${TARGETOS}-${TARGETARCH},target=/root/.cache/go-build \
+    if [ -z "$GIT_SHA" ]; then printf '%s\n' 'GIT_SHA must not be empty; use dev for development' >&2; exit 1; fi; \
     GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
     -ldflags "-s -w -X github.com/freQuensy23-coder/Tank/capture/internal/config.Build=${GIT_SHA}" \
     -o /out/tank-capture ./cmd/tank-capture
