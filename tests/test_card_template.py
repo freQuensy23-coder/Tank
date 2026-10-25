@@ -495,16 +495,22 @@ def test_actual_spot_exclusion_cause_reaches_the_card(source_reason) -> None:
     ],
 )
 async def test_current_full_publication_uses_literal_render_and_excludes_undecided_token(
-    tmp_path: Path, verdict, why
+    tmp_path: Path, verdict: str, why: list[str]
 ) -> None:
     """Actual publication, storage and delivery with a mocked Telegram transport."""
     import json
+    from contextlib import AsyncExitStack
     from types import SimpleNamespace
+    from typing import Never
 
     import httpx
 
+    from tank.analysis.decisions import DecisionEngine
+    from tank.analysis.truth import MarketTruthService
     from tank.delivery import DeliveryService
     from tank.event_tools import EventToolService
+    from tank.market.service import MarketService
+    from tank.scheduler import Scheduler
     from tank.settings import Settings
     from tank.storage import MemoryRepository
     from tank.telegram_rich import rich_message_text
@@ -537,8 +543,26 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
     for index, condition in enumerate(decision["conditions"]):
         condition["cond_id"] = f"current-condition-{index}"
     repo = MemoryRepository()
-    await repo.open()
-    try:
+    market_http_calls = 0
+
+    def unexpected_market_request(request: httpx.Request) -> Never:
+        nonlocal market_http_calls
+        market_http_calls += 1
+        raise AssertionError("Publication must not fetch exchange HTTP")
+
+    async with AsyncExitStack() as resources:
+        await repo.open()
+        resources.push_async_callback(repo.close)
+        market_http = await resources.enter_async_context(
+            httpx.AsyncClient(transport=httpx.MockTransport(unexpected_market_request))
+        )
+        settings = Settings(data_dir=tmp_path, _env_file=None)
+        versions = fixture_versions()
+        market = MarketService(repo, settings, versions=versions, http=market_http)
+        resources.push_async_callback(market.close)
+        truth_service = MarketTruthService(repo, settings, market, versions=versions)
+        scheduler = Scheduler(repo, settings, market, truth_service, versions=versions)
+        resources.push_async_callback(scheduler.close)
         await repo.put("evt.events", eid, event)
         await repo.put("evt.ems_assessments", "current-ems", assessment)
         await repo.put(
@@ -569,7 +593,9 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
                 "source_class": "PRIMARY",
             },
         )
-        service = EventToolService(repo, Settings(data_dir=tmp_path), None, None, versions=fixture_versions())
+        service = EventToolService(
+            repo, settings, truth_service, DecisionEngine(settings), versions=versions, scheduler=scheduler
+        )
 
         await repo.put("ops.agent_sessions", "card-session", {"session_id": "card-session", "event_id": eid})
         result = await service.dispatch(
@@ -610,7 +636,7 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
         assert not any(row.get("status") == "SENT" for row in await repo.list("out.deliveries"))
         sent = []
 
-        def send(request: httpx.Request):
+        def send(request: httpx.Request) -> httpx.Response:
             assert request.url.path.endswith("/sendRichMessage")
             sent.append(json.loads(request.content)["rich_message"])
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
@@ -629,8 +655,9 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
             )
         assert sent == [alert["rich_message"]]
         assert rich_message_text(sent[0]).splitlines()[1] == "WHAT: " + what
-    finally:
-        await repo.close()
+    assert scheduler.closing and not scheduler.background
+    assert market_http.is_closed
+    assert market_http_calls == 0
 
 
 def test_header_preserves_agent_supplied_sentence_and_structured_action() -> None:
