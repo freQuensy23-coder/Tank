@@ -67,13 +67,20 @@ class NativeSession:
         self.fail_update = None
         self.lose_result = False
 
-    def __call__(self, request: pytest.FixtureRequest):
+    def __call__(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content or b"{}")
         self.requests.append((request.method, request.url.path, body))
         if request.method == "GET":
-            return httpx.Response(
-                200, json={"id": "session_legacy", "status": self.status, "agent": {"tools": self.tools}}
+            observed = native_session_record(
+                "session_legacy",
+                agent_id="legacy-agent",
+                environment_id="legacy-environment",
+                metadata={},
+                model_id="test",
+                agent_snapshot={"tools": self.tools},
             )
+            observed["status"] = self.status
+            return httpx.Response(200, json=observed)
         if request.url.path == "/v1/sessions/session_legacy":
             if self.fail_update:
                 return httpx.Response(self.fail_update, json={})

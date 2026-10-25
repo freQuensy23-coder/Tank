@@ -6,6 +6,7 @@ from pydantic import AliasChoices, Field, JsonValue, model_validator
 
 from tank.analysis.watch_contracts import MilestoneSnapshot, WatchCall, WatchCondition
 from tank.contracts import DomainModel
+from tank.contracts.scalars import TrueFlag
 from tank.time_precision import Timestamp, timestamp_owned_fields
 
 type BucketAnchor = Literal["START", "END", "UNSPECIFIED"]
@@ -91,7 +92,7 @@ class RevisedReactionJob(JobPayload):
     event_id: str
     token_id: str
     checkpoint: ReactionCheckpoint
-    automatic_revision: Literal[True]
+    automatic_revision: TrueFlag
     change_id: str
     reason: str = Field(min_length=1)
 
