@@ -613,3 +613,28 @@ dual-failure drain. Tests are strict-mypy clean and the helper emits no errors i
 the full CLI strict check. The wider CLI still has its explicitly inventoried
 untyped command/service boundaries. The permanent OpenMA effort/binding activation
 must be paired by its owner before integrated verification.
+
+
+### Held HTTP cohort: named web-page read provenance
+
+`WebEvidenceItem.page_read_provenance` now imports the closed shared
+`PageReadProvenance` union from contracts.page_evidence. It is genuinely optional
+for historical captured rows that were written without this information. Omission
+remains omission through storage serialization and SourceItemDocument; no current
+clock, input digest or provider authority is backfilled. New page reader producers
+must supply their actual live or verified-recorded provenance.
+
+Verified recorded-body provenance must match the row's actual raw_sha256. The
+field does not admit a speculative reconstruction variant or label reconstructed
+bytes as original captured material. Live receipts preserve their declared
+collection Timestamp. The test wire-writer port is the exact used interface to
+the real historical save_web producer, followed by validation through the full
+WebEvidenceItem schema; it does not fabricate a source row or provider result.
+The producer itself remains analysis-owned and incompletely typed.
+
+Evidence: six page/source scheduling cases pass in 1.72s with zero skips; source
+item and page tests pass strict mypy and Ruff. Historical real producer output,
+live roundtrip, verified-body roundtrip and digest-conflict rejection are covered.
+This additive checkpoint belongs only to the held HTTP cohort descended from
+4041eb68/477d58e. It does not activate HTTP consumers or alter the clean scheduling
+cohort or independent source-state branch.
