@@ -28,8 +28,8 @@ def _text(value: JsonValue | datetime | Decimal, field: str) -> str | None:
 
 
 def _time(value: JsonValue | datetime | Decimal) -> TimeInput:
-    if isinstance(value, bool) or not isinstance(value, (datetime, str, int, float, Decimal)):
-        raise ValueError("Timestamp value must be a declared date or number")
+    if not isinstance(value, (datetime, str)):
+        raise ValueError("Timestamp evidence requires ISO date-time text or an aware datetime")
     return value
 
 
@@ -104,6 +104,16 @@ def _equivalent(left: str | None, right: str | None) -> bool:
     return False
 
 
+def reconcile_precision(
+    declarations: Sequence[str], *, field: str, bucket_size: BucketSize | None = None
+) -> str | None:
+    """Validate metadata declarations independently of whether a field is an instant or calendar date."""
+    normalized = [normalize_precision(value, bucket_size=bucket_size) for value in declarations]
+    if normalized and any(not _equivalent(normalized[0], value) for value in normalized[1:]):
+        raise ValueError(f"Conflicting timestamp precision declarations for {field}")
+    return normalized[0] if normalized else None
+
+
 class Timestamp(DomainModel):
     value: str | None
     precision: str | None
@@ -147,7 +157,13 @@ class Timestamp(DomainModel):
 
     def fields(self, field: str, *, precision_field: str | None = None) -> dict[str, str | int | None]:
         """Emit the original field plus its canonical precision and explicit unknown reason."""
-        sibling = precision_field or CANONICAL_PRECISION_FIELDS.get(field, field + "_prec")
+        if precision_field is not None and not precision_field.strip():
+            raise ValueError("Precision field requires a nonempty name")
+        sibling = (
+            CANONICAL_PRECISION_FIELDS.get(field, field + "_prec")
+            if precision_field is None
+            else precision_field
+        )
         result: dict[str, str | int | None] = {
             field: self.value,
             sibling: self.precision,
@@ -235,25 +251,26 @@ def propagate_timestamp(
             declaration = _text(record[name], name)
             if declaration is not None:
                 declarations.append(declaration)
-        reason = reason or _text(record.get(name + "_reason"), name + "_reason")
-    normalized = [normalize_precision(item, bucket_size=bucket_size) for item in declarations]
-    if normalized and any(not _equivalent(normalized[0], item) for item in normalized[1:]):
-        raise ValueError(f"Conflicting timestamp precision declarations for {field}")
-    precision = normalized[0] if normalized else None
+        if reason is None:
+            reason = _text(record.get(name + "_reason"), name + "_reason")
+    precision = reconcile_precision(declarations, field=field, bucket_size=bucket_size)
     if (
         bucket_anchor is None
-        and precision
+        and precision is not None
         and _BUCKET.fullmatch(precision)
         and (field + "_bucket_anchor" in record or isinstance(raw, Mapping) and "bucket_anchor" in raw)
     ):
         bucket_anchor = "UNSPECIFIED"
     if value is None:
-        reason = reason or _text(record.get(field + "_reason"), field + "_reason") or missing_reason
+        if reason is None:
+            reason = _text(record.get(field + "_reason"), field + "_reason")
+        if reason is None:
+            reason = missing_reason
         return Timestamp(None, "COLLECTION_ONLY" if precision == "COLLECTION_ONLY" else None, reason)
     return Timestamp(
         iso(_time(value)),
         precision,
-        None if precision is not None else reason or missing_reason,
+        None if precision is not None else reason if reason is not None else missing_reason,
         bucket_anchor,
     )
 

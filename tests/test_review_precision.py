@@ -71,7 +71,13 @@ async def test_raw_large_prices_preserve_tiny_return_excursions_and_direction(su
             "ref_venue": "token",
             "entry_ref_price": entry,
             "beta_btc": "1",
-            "normal_ranges": {"W1H": {"value": ["-0.00000000000000000049", "0.00000000000000000049"]}},
+            "beta_flags": {"btc": None, "eth": None},
+            "normal_ranges": {
+                "W1H": {
+                    "value": ["-0.00000000000000000049", "0.00000000000000000049"],
+                    "relative_measure": "R_BTC_ADJ",
+                }
+            },
             "outcome_btc_reference": {"instrument_id": "btc", "entry_ref_price": btc_entry},
         }
     }

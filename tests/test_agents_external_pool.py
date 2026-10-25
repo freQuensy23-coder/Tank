@@ -5,7 +5,7 @@ import json
 
 import httpx
 import pytest
-from agent_source_fixtures import declared_versions_fixture
+from agent_source_fixtures import declared_versions_fixture, native_tool_arguments_fixture
 from test_agents import seed_session, settings
 from test_session_binding_concurrency import fixture_repo, seed
 
@@ -54,7 +54,16 @@ async def exercise_external_tool_burst(repo, tool) -> None:
             asyncio.create_task(
                 controller.process_event(
                     session["session_id"],
-                    {"id": "call", "type": "agent.custom_tool_use", "name": tool, "input": {}},
+                    {
+                        "id": "call",
+                        "type": "agent.custom_tool_use",
+                        "name": tool,
+                        "input": (
+                            {"query": "synthetic"}
+                            if tool == "web_search"
+                            else native_tool_arguments_fixture(tool)
+                        ),
+                    },
                 )
             )
             for session in sessions
@@ -77,7 +86,16 @@ async def exercise_external_tool_burst(repo, tool) -> None:
             assert call["native_turn_call_index"] == 0
             await controller.process_event(
                 session["session_id"],
-                {"id": "call", "type": "agent.custom_tool_use", "name": tool, "input": {}},
+                {
+                    "id": "call",
+                    "type": "agent.custom_tool_use",
+                    "name": tool,
+                    "input": (
+                        {"query": "synthetic"}
+                        if tool == "web_search"
+                        else native_tool_arguments_fixture(tool)
+                    ),
+                },
             )
         assert len(posts) == len(sessions)
 

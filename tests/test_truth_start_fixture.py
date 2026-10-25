@@ -130,7 +130,7 @@ def synthetic_start_snapshot():
                 "open_time": iso(anchor + timedelta(hours=h)),
                 "interval_s": 3600,
                 "o": 100,
-                "c": 100,
+                "c": 100 + 0.02 * sin((h + 1) * 1.7),
                 "quote_volume": 100000,
                 "quote_volume_usd": 100000,
                 "volume_native": 1000,
@@ -400,3 +400,46 @@ def test_latest_durable_beneficiary_role_sets_loser_repricing_direction() -> Non
     assert result["relative"]["repricing_sign"] == -1
     assert result["relative"]["repricing_band"] == "UNPRICED"
     assert compute_market_truth(compact_start_snapshot())["relative"]["repricing_band"] == "EARLY"
+
+
+def test_zero_variance_benchmark_cannot_manufacture_adjusted_move_classification() -> None:
+    snapshot = compact_start_snapshot()
+    anchor = parse_time(snapshot["anchor"]["ts"])
+    for row in snapshot["klines"]:
+        if row["instrument_id"] == "A:spot:BTC" and parse_time(row["open_time"]) < anchor:
+            row["c"] = 100
+    result = compute_market_truth(snapshot)
+    relative = result["relative"]
+    assert relative["beta_btc"] is None
+    assert relative["beta_flags"]["btc"] == "NOT_ESTIMABLE"
+    assert relative["windows"]["EVENT"]["r_raw"] == pytest.approx(0.011)
+    assert relative["windows"]["EVENT"]["r_btc_adj"] is None
+    assert relative["windows"]["EVENT"]["r_btc_adj_reason"] == "NOT_ESTIMABLE"
+    assert relative["normal_ranges"]["W4H"]["value"] is None
+    assert result["move_class"] == "UNKNOWN"
+
+
+def test_sparse_benchmark_gap_does_not_authorize_adjusted_move() -> None:
+    snapshot = synthetic_start_snapshot()
+    end = parse_time(snapshot["cutoff"])
+    anchor = parse_time(snapshot["anchor"]["ts"])
+    selected_open = end - timedelta(minutes=31)
+    snapshot["klines"] = [
+        row
+        for row in snapshot["klines"]
+        if row["instrument_id"] != "A:spot:BTC"
+        or parse_time(row["open_time"]) < anchor
+        or parse_time(row["open_time"]) == selected_open
+    ]
+    result = compute_market_truth(snapshot)
+    relative = result["relative"]
+    event = relative["windows"]["EVENT"]
+    assert relative["beta_flags"]["btc"] is None
+    assert relative["beta_btc"] is not None
+    assert event["r_raw"] == pytest.approx(0.011)
+    assert event["r_btc_adj"] is None
+    assert event["r_btc_adj_reason"] == "NO_FRESH_ENDPOINTS"
+    freshness = event["btc_reference_freshness"]["end_observation"]
+    assert freshness["reason"] == "STALE"
+    assert freshness["age_s"] == 1800.0
+    assert freshness["cadence"] == {"seconds": 60.0, "source": "BAR_INTERVAL"}

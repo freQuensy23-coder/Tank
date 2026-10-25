@@ -9,6 +9,7 @@ from model_fixture import audited_result, model_arguments
 from source_support import fixture_versions
 
 from tank.replay import ReplayError, digest, load_inputs, original_replay_messages
+from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.util import parse_time, sha256
 
@@ -853,13 +854,18 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
     from tank.storage import MemoryRepository
 
     path, p = phased_packet(reference_packet)
-    cfg = {name: {} for name in ["thresholds", "semantics", "dependency_map"]}
-    cfg["registry"] = {"tokens": []}
+    cfg = {
+        "thresholds": Settings(_env_file=None).load_config("thresholds"),
+        "semantics": {},
+        "dependency_map": {},
+    }
+    cfg["registry"] = {"tokens": [], "entities": [], "instruments": []}
+    cfg["sources"] = {"sources": []}
     if publication:
         baseline = Settings(_env_file=None)
         cfg = {
             name: baseline.load_config(name)
-            for name in ("registry", "thresholds", "semantics", "dependency_map")
+            for name in ("registry", "sources", "thresholds", "semantics", "dependency_map")
         }
         p["records"][0]["record"].update(author="@tier10k", author_label="@tier10k")
         p["records"][1]["record"].update(author_organization="Robinhood")
@@ -1258,13 +1264,23 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                 }
 
         reader = EmptyMarket()
+    reaction_truth = MarketTruthService(repo, config, reader, versions=fixture_versions())
+    reaction_scheduler = Scheduler(
+        repo,
+        config,
+        reaction_truth.market,
+        reaction_truth,
+        thresholds=config.thresholds(),
+        versions=fixture_versions(),
+    )
     tools = EventToolService(
         repo,
         config,
-        MarketTruthService(repo, config, reader, versions=fixture_versions()),
+        reaction_truth,
         DecisionEngine(config),
         reference_clock=TrustedFixtureClock(inputs),
         versions=fixture_versions(),
+        scheduler=reaction_scheduler,
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
         if fail_later:

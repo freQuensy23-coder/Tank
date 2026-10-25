@@ -204,3 +204,211 @@ Evidence:14 unit cases pass in2.90s, including independent wrong-match/undefined
 MarketService, MarketTruthService and EventToolService now require an explicit ResolvedVersionIdentity; MarketService passes the identical facet into build_capture_lifecycle. All actual self.settings config/code producer reads in these modules now use self.versions, including persistence stamps, snapshot/dependency identities, assessment configuration, tool provenance and publication metadata. No constructor falls back to raw unversioned Settings. Replay builds this facet from verified captured ReplayInputs and supplies it to its MarketTruth/EventTool/session/scheduler graph. Synthetic owned fixtures declare known fixture identity; they do not turn unresolved Settings into a resolution claim.
 
 The existing actual record_event/publication provenance test now asserts the injected current producer identity while preserving distinct prior-session config/code/model lineage in its evidence bundle; it passes. Initial broad owned units passed655 and exposed only missed module-qualified constructor consumers plus the obsolete raw-Settings provenance expectation. The repaired300-case selection then passed299 with that remaining bundle assertion; its corrected actual publication case passes2.55s. Nonowned runtime/CLI/agent/ingestion/E2E companions are coordinated before combined activation. Pure compute_market_truth's historical config/snapshot/unversioned fallback remains separately open; this constructor change does not claim that large calculation schema migration is complete.
+
+### Strict utility fixture and overlooked provider correction
+
+The strict parser trial exposed two additional real provider paths missed by the earlier source inventory: SupplyCapture.chain_liquidity normalizes DefiLlama stablecoincharts date as declared epoch seconds before propagating its existing precision; supply_truth's dailyHoldersRevenue.totalDataChart likewise decodes seconds. Chart value0 remains observed, future points stay excluded, NaN values remain unavailable, and no24h period is inferred. This corrects the earlier overbroad active-caller attestation; it did not justify restoring a generic epoch guess.
+
+106 zero-argument iso calls in owned synthetic fixtures are now explicit clock_iso observations. docs/refactor/analysis-test-clock-sites.json records every original path/function/line and its fixture clock meaning. These sites create processing/evaluation/lifecycle points in authored tests; none converts a missing captured provider occurrence into now. The optional recorded_at fixture override now distinguishes None from an explicit invalid empty value. Required version-facet migration also found one CANDIDATE.EventToolService fetch fixture missed by the simple-name caller inventory; it now injects the declared fixture identity. Initial broad unit proof passed717 with9 failures only from that omitted constructor; all10 fetch-page unit cases then pass1.52s. Full strict-utility verification follows the exact canonical utility merge; this evidence is not substituted for that run.
+
+### Strict parser follow-through in publication
+
+After merging foundation9baf3c2, the owned selection passed723 with3 failures. Two exposed a further genuine renderer boundary: cards._holders_revenue_text retained DefiLlama's original provider_timestamp seconds string, so its chart display now explicitly decodes seconds before rendering; scalar as_of clocks remain ISO/aware. Its optional clock helper distinguishes None from an invalid empty string. The third was a synthetic nested day-bucket fixture without a timezone: the valid precision-independence case now explicitly declares UTC bucket start, while a separate test rejects the ambiguous date-only value. No frozen date or timestamp was rewritten, and no implicit timezone policy was added. All104 focused card/holders/supply cases now pass in3.43s.
+
+## MarketService operational cache boundary
+
+market/cache_contracts.py now defines strict RequestCounts, SavedDayCounts, SavedKlineDayCounts and DependencyHeadMemo. Service counters update from the current stored immutable counter after awaits, retaining concurrent successes/failures. Day-count persistence validates the entire existing version1 file before mutating the live cache: counts are actual integer complete-minute counts0..1440 per aligned UTCday, keys are unique instrument/day identities, saved clocks are aware, and boolean/negative/overfull/conflicting data is refused. The mutable operational file is not retained evidence and remains untouched on invalid input. A cache miss causes later database reconstruction, not a fabricated market observation.
+
+Service cache map sites are now precise:
+- _reads: host -> RequestCounts; explicit initial0 means no requests observed by this process.
+- _hot_since: token -> validated HotToken.since ISO from CaptureLifecycle.sync_hot_set; only its token keys select active acquisition scope.
+- _kline_day_counts: (instrument,awareUTCday) -> backend-observed complete1m-bar count. _kline_day_counts_saved stores a validated snapshot of that map plus actual monotonic save clock; initial empty map/0clock represents no saved state.
+- _pending_market: collection -> persistence key -> Record is the actual normalized JSON batch write buffer after jsonable/provenance stamping, never a calculator domain payload. Its unknown wire fields are preserved for storage.
+- _condition_heads_memo: exact query-scope key -> DependencyHeadMemo. The three nullable Record heads are persistence-wire metadata projections for availability/latest/earliest fingerprinting; None means no matching stored row. No financial calculation consumes them as generic domain payloads.
+- _last_request: host -> measured monotonic float; _request_locks/_request_pace_locks: host -> typed admission synchronization primitives. Empty maps represent no observed host state.
+
+Retained absence/fallback sites: _load_day_counts.read returnsNone for absent/unreadable/invalid optional optimization files; _load_day_counts returns0 loaded entries, not known-zero market data. Invalid entire files do not partly seed valid-prefix counts. _save_day_counts.force=False preserves bounded flush cadence; explicit force writes the real current snapshot. DependencyHeadMemo.at is always a known assembly clock; caller absence of assembled_at prevents memoization and leaves the backend query authoritative. Existing aggregate query omissions map to mathematical zero only for queried complete-bar counts, not unavailable USD/price evidence. Full MarketService snapshot-domain records remain open separately.
+
+Evidence:56 existing/new service/cache/rate cases pass in4.02s. New regressions verify concurrent two-success/one-failure accounting, actual file reopen without market writes, whole-cache rejection of boolean/negative/overfull counts, and conflicting duplicate counts refusing first-row wins. Default mypy passes service plus cache contracts; strict --follow-imports=silent passes cache contracts. This closes the nine constructor cache-type errors without Any/object payload substitution. Truth's statistical/graph caches and required scheduling port are a separate active tranche.
+
+## Verified retained input scope
+
+Foundation reverified25 application-input artifact hashes from the checked-in acceptance fixture manifest and staged provenance at /srv/tank-refactor-evidence/retained-input-staging.json. Its immutable inventory reports51records:25ingest.source_items and26replay.market_snapshots, with18captured tool results. There are zero directmkt.* records in this verified subset. F-02's hash mismatch is excluded, never treated as an empty fixture.
+
+Replay audit: run_captured_tools excludes replay.market_snapshots before its market batch loop; replay_agent_session.import_prefix likewise excludes that collection before batch admission. ReplayInputs.records returns copies, and ReplayMarketReader.snapshot returns a deepcopy of the selected captured snapshot. Nested snapshot arrays remain read-only calculator evidence and never become ordinary market writes. The actual56integration strict-parser cohort passes with these paths. Thus these25inputs justify no historical writer validation bypass or invented receipt/count enrichment. Foundation's schema comparison and parent artifacts remain independent evidence; deliberately incomplete synthetic rows need honest fault-read projections where they test corrupt stored evidence.
+
+## Beta availability and downstream review correctness
+
+The1.0 fallback in truth.beta had no justified missing-data policy. Insufficient paired history and zero benchmark variance now return no numerical beta with their actual INSUFFICIENT_HISTORY/NOT_ESTIMABLE reason. relative_truth does not manufacture adjusted BTC/ETH returns, adjusted historical samples, adjusted pre-event runup or normal ranges when that regression is unavailable. Raw returns remain measurable. Estimated zero beta is retained as a real value. The configured Blume shrinkage for an actually estimable regression remains unchanged and has an independent2->5/3 slope oracle.
+
+ReviewService.outcome previously used frozen beta_btc without inspecting beta_flags and always subtracted BTC even for benchmark R_RAW measurements. It now requires captured measurement semantics. R_BTC_ADJ additionally requires an explicit successful estimation marker and a finite captured beta; flagged or uncaptured provenance leaves direction unavailable while preserving completed raw return/MFE/MAE. R_RAW compares its actual raw return against the frozen raw normal range and requires no regression. New frozen normal_ranges carry relative_measure explicitly; historical absence is reported as FROZEN_RELATIVE_MEASUREMENT_UNAVAILABLE instead of guessed.
+
+Exact retained None/map sites: beta's unavailable numerical value and relative adjusted-return/range/runup nulls represent unestimable statistics, never a unit coefficient. beta_flags preserves the actual reason. frozen_beta_unavailable_reason uses the persisted relative projection only at the frozen evidence boundary: absent btc flag metadata -> BETA_ESTIMATION_PROVENANCE_NOT_CAPTURED; flagged regression -> its exact known reason; missing/invalid/nonfinite value -> explicit unavailable reason. Numeric-string coefficients remain supported only as finite captured numeric wire values, preserving monetary Decimal calculations. A captured successful zero remains valid. R_RAW's btc_adjusted_return staysNone because the adjustment is inapplicable, not zero. Raw and adjusted direction fields are distinct.
+
+The authored synthetic START positive fixture had constant BTC history and therefore exposed10 positive assertions that had relied on the invalid1.0 assumption. Its positive data generator now supplies nonconstant synthetic benchmark observations; beta is still computed from them. A separate full producer case deliberately flattens those same observations and verifies betaNone/NOT_ESTIMABLE, raw1.1% retained, unavailable adjusted range and UNKNOWN move. No frozen payload or independent positive expected classification was rewritten.
+
+Evidence:212truth/review unit cases pass in11.31s. Direct history/variance/estimable-slope tests and actual stored-price review outcomes cover flagged/uncaptured beta, valid zero beta and explicit raw benchmark direction. Five actual memory/PostgreSQL/ClickHouse review integrations pass in3.72s with zero skips, retaining tiny monetary return precision and immutable frozen-reference behavior. Foundation's replacement UnavailableBeta model is canonical and follows in the typed baseline-cache activation; the old AssumedBeta model is not an approved policy.
+
+### Strict context consumer fixtures
+
+The exposure-anchor fixture now supplies an explicit declared version facet to its EventToolService. The abort-finalization synthetic replay config now declares its actual S01 source display label, required by the typed context registry; this is an authored label-only view for the test, not reconstructed collector provenance. Its failure-case assertions still exercise actual native stream retirement, acceptance loss, timeout/cancellation and durable finalization. All33 exposure/replay-abort cases pass in1.71s; no schema/default fallback was restored.
+
+## Parent95 compatible integration repairs
+
+Authored replay context configs now declare their actual empty entity/instrument namespaces and source label catalogs; the captured CMS feed includes its explicit display name. Reference reconstruction includes the source catalog from its declared baseline when using the full config, and explicit empty label namespaces in its synthetic minimal config. These are authored fixture facts, not production fallbacks or changes to frozen captured registries.
+
+The retained Binance fixture adapters now declare milliseconds for REST openInterestHist timestamps and REST kline array open-time fields, and parse the archive metrics CSV create_time with its proven UTC convention. Original provider bytes are unchanged. Generic parse_time never guesses their unit or timezone.
+
+The current-minute synthetic refresh helper preserves requested minute-bound cutoff/flow observations but moves declared hourly bar open/close fields by whole hours, retaining the actual UTC hourly sample grid. The PostgreSQL positive fixture now declares nonconstant minute BTC observations matching the authored hourly benchmark rather than overwriting it with flat100. Positive paths assert an estimated beta with no unavailable flag; the independent flat-history negative remains intact. No coefficient/default is inserted.
+
+supply_truth now propagates actual fundamentals.ts timestamp provenance into as_of. COLLECTION_ONLY and explicit unknown precision/reasons remain distinct instead of a formatted ISO string becoming an intraday accuracy claim; receipt clocks and cadence are not substituted. A real calculator regression checks both states.
+
+Broad baseline/freshness migration is isolated under immutable stash efc063547cbd58a42aaad677dfc0b6aad0ccf0d1 while this compatible repair is qualified.248 affected unit cases pass4.76s and35 targeted current-minute/holders cases pass2.15s. Actual integration qualification follows on the immutable committed repair.
+
+### Required reaction scheduling capability (activation cohort)
+
+`EventToolService.__init__.scheduler` is now required and implements the narrow
+`ReactionScheduling.ensure_event_reactions(event_id)` command. Successful assessment
+dispatch always issues that command; the former `scheduler is not None` branch
+silently discarded required scheduling work. Runtime composition and operational
+replay must supply the actual Scheduler with captured policy and own its cleanup.
+This activation is held until those constructor companions are integrated.
+
+`AssessmentFreeDiagnosticScheduling` is an explicit restricted capability for a
+verified recorded diagnostic whose complete call catalog contains no assessment.
+`diagnostic_call_catalog` validates required call identities/tools and uniqueness,
+and binds the entire captured catalog (including arguments) to a digest alongside
+its verified input digest. Artifact verification remains the recorded reader's
+responsibility; a caller-supplied digest alone does not establish artifact trust.
+Dispatch refuses `set_assessment` before schema lookup, storage access or mutation
+when this capability is present. It cannot silently absorb a scheduling command.
+No live request, quota admission or clock sleep belongs to this capability.
+
+Three behavior cases prove that declared assessments prohibit this mode, changes
+to captured arguments change the catalog binding, and forbidden assessment cannot
+reach its implementation or change persisted event/assessment state. The named
+contract passes strict mypy; Ruff/format pass. Actual scheduling effects and replay
+reader qualification belong to the companion cohort, not this initial checkpoint.
+
+### Scheduling consumer qualification
+
+`run_operational_replay` constructs the real Scheduler with the packet's validated
+complete `Thresholds`, shares it with EventToolService and closes it in the owning
+finally scope. `replay_agent_session` requires that same concrete Scheduler and
+checks repository/settings/market/truth identity instead of creating a second one.
+The recorded diagnostic runner binds the complete call catalog to the verified
+`ReplayInputs.input_sha256`; assessment-bearing catalogs require captured policy
+and an owned real Scheduler. Assessment-free catalogs use the restricted capability.
+Scheduler's processing clock is patched to the existing deterministic replay clock;
+recorded market snapshots remain the read-only external evidence adapter.
+
+Synthetic operational packets in test_replay, test_fixture_reference,
+test_replay_abort_finalization and test_replay_session_boundaries now explicitly
+capture the complete declared fixture policy instead of `{}` or a lone expiry key.
+Frozen packets are unchanged. Other isolated EventTool fixtures declare the
+observable `RecordingReactionScheduling` adapter at construction; it records every
+intent and never pretends to create jobs. This includes exposure, fetch deadline,
+ownership, certainty, claim context, formula, observation, review, token watch and
+market-refresh fixtures whose independent purpose does not assert scheduling.
+Actual replay/session tests compose the real scheduler from their actual truth
+reader. Operational composition remains a consumer-owner responsibility.
+
+`test_assessment_defers_reaction_ownership_to_scheduler_after_commit` preserves its
+independent transaction/event-lock read oracle and now consumes only the event ID.
+`test_assessment_dispatch_creates_real_reaction_jobs` invokes actual assessment
+through dispatch and the real owned services: it observes ten durable POST jobs
+for the actual BTC/ETH benchmark scope, all five expected checkpoints, and drained
+scheduler tasks/closed HTTP resources. The analysis set is not populated until the
+later beneficiary command in that authored sequence, so no token is fabricated.
+
+Qualification: 339 owned units passed in 12.40s before the additional real-job case;
+the final five capability/post-commit/real-job cases passed in 2.45s. All 56 collected
+actual affected integrations passed in 30.29s with zero skips
+(`/tmp/analysis-scheduling-integration.xml`). Ruff and formatting pass. Default
+mypy reports only the four preexisting Truth cache declarations and the pending
+runtime-composition constructor companion; no generic annotation substitute added.
+
+### Statistical baseline caches and declared reference freshness
+
+The statistical baseline slice now consumes the inward models in
+`analysis.statistics_contracts`: `hourly_values` uses `HourlyReturns`, `beta` returns
+`EstimatedBeta | UnavailableBeta`, OI/funding history uses the concrete range models,
+`relative_truth.hist` stores `RelativeHistory`, BTC context uses
+`BitcoinContextHistory`, native-volume prefix accumulation stores `NativeVolumeIndex`
+and `condition_depth` stores `DepthBaseline`. `MarketTruthService` now declares
+`_condition_baselines: BaselineCaches`, `_assessment_baselines: dict[str, BaselineCaches]`
+and `_assessment_locks: dict[str, asyncio.Lock]`; those maps are actual token-keyed
+collections, not domain payloads. `BaselineCaches.with_capacity(128)` preserves the
+single global FIFO budget across families and original non-refreshing update order.
+The old untyped local StatisticalPopulation and mutable exposed arrays are removed.
+
+Explicit absence sites: `_BASELINE_CACHE` defaults to None only outside an active
+calculation context; full assessments install a fresh or explicitly caller-owned
+cache and restore the inherited context on success/failure. Cache `get` misses mean
+recompute, never a fabricated measurement. `FloatRange/DecimalRange.bounds=None`
+retains the actual empty/degenerate-history reason. `UnavailableBeta.value=None`
+means insufficient pairs or non-estimable variance/arithmetic; measured zero beta
+remains numerical evidence. `UnavailableHistoryDiagnostics.resolution_s=None`
+represents absent actual cadence, with zero observed samples and no invented bounds.
+`NativeVolumeIndex.last/last_open_us=None` means no observed endpoint/prefix cursor;
+segment continuity breaks on unavailable/incomplete/nonfinite/negative quantity.
+An observed zero volume remains valid. `condition_depth` caches actual Decimal USD
+means and never inserts a zero for unavailable book depth.
+
+`analysis.price_reference.ReferencePriceSeries` is a statistical reference-price
+collection keyed by aware observed times, with a separate actual per-observation
+cadence collection. `at` returns named observed/unavailable variants. Its None cases
+are precisely no prior observation, cadence not captured, or measured age exceeding
+that cadence; no prior-gap inference and no 60-second floor. `return_between`
+requires ordered bounds and two fresh endpoints, preserves measured zero return,
+and reports non-estimable arithmetic explicitly. Its published freshness projection
+omits the internal numerical price so it cannot imply an unverified USD unit.
+`relative_truth` consumes required variant attributes for BTC/ETH/peer returns and
+propagates unavailable adjusted returns while retaining the actual raw return.
+
+Cadence resolution sites in `relative_truth.cadence_for`: an explicit series cadence,
+actual scoped collection metric override, matching declared metric semantics,
+collection cadence, or actual bar interval may establish freshness. Missing declared
+cadence stays None. Malformed declarations refuse. Mixed compact statistical series
+can carry the actual `intervals_s` vector; vector/time counts must match. The authored
+compact fixture preserves each source row's interval instead of calling all mixed
+hour/minute observations one-minute bars. `MarketService` sector statistical price
+projection now explicitly records interval_s=60 because its existing query selects
+only interval_s=60 rows. This describes the observed query, not a default cadence.
+`compute_condition_values` selected-node projection copies only present fields;
+it no longer invents [] for absent capture_metadata/anchor/config-like facts.
+
+Behavior evidence: 237 Truth/review/holders units pass in11.89s; seven additional
+freshness/domain/downstream cases pass in2.39s; all16 collected actual Truth,
+condition PostgreSQL, review, capture-refresh and benchmark-coalescing integrations
+pass in19.22s with zero skips (`/tmp/analysis-baseline-freshness-integration.xml`).
+New price-reference source/tests pass independent strict mypy; Ruff/format pass.
+Context tests retain the independent concurrent opposite-direction calculation,
+outer-context restoration and failure-isolation oracles using real typed cache values.
+The sparse benchmark regression retains actual estimable history/raw1.1% move, then
+refuses adjustment from the actual stale minute endpoint despite a large source gap.
+
+Remaining work is explicit: `_condition_cache` still stores entire condition graph
+nodes (spot/relative/derivatives/supply and composite outputs), and requires the full
+named graph/output schema migration. It is not typed as JSON/Any/object to conceal
+that work. Default mypy currently reports that one declaration plus the separate
+pending runtime scheduling constructor companion. Whole Truth snapshots/results,
+calculation input maps, configurable-policy fallbacks and sibling reference-clock
+precision defaults remain on the broad owned migration inventory. This tranche
+completes the statistical baseline/declared-freshness layer, not the full Truth module.
+
+### Exact Decimal interpolation repair
+
+Independent review identified that the statistical typing change constructed the
+Decimal percentile weight directly from a binary float. For financial populations,
+`percentile` now uses `Decimal(str(position - index))`, preserving the established
+decimal-text convention, and calls `exact_context(low, high, fraction)` before
+subtraction/multiplication/addition. It does not mix float observations into Decimal
+populations. This companion is based directly on b123f2f and has no held HTTP ancestry.
+
+Four independently specified exact-equality cases cover USD1.05, a negative funding
+rate, very large native OI and adjacent subunit values under an outer precision of6.
+There are no approximate assertions. Together with beta, condition calculations,
+START fixtures and formula vectors,59 unit cases pass in7.68s; the new regression
+module passes strict mypy and Ruff/format. HTTP work remains preserved separately
+at immutable stash55c26d818e567184ecf101c9b5a1ca2e8ebd6733.

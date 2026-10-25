@@ -1,5 +1,5 @@
 {
-  "scope": "Validated completed bootstrap/registry/historical-source families; this does not approve unfinished session/runtime/context/OpenMA maps or defaults",
+  "scope": "Completed bootstrap/registry/historical-source/context projections/OpenMA families with exact listed retained sites; remaining full session/runtime/context-reference maps/defaults remain work",
   "entries": [
     {
       "sites": [
@@ -590,6 +590,319 @@
         "test_invalid_provenance_fails_before_allocating_owned_http_client",
         "tests/test_agents_execution_barrier.py",
         "tests/test_agents_rest_timeout.py"
+      ]
+    },
+    {
+      "ledger_key": "context-labels",
+      "sites": [
+        {
+          "path": "src/tank/agents/context_registry.py",
+          "symbol": "TokenLabel.display_name",
+          "line": 21
+        },
+        {
+          "path": "src/tank/agents/context_registry.py",
+          "symbol": "EntityLabel",
+          "line": 29
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.source_label",
+          "line": 420
+        }
+      ],
+      "kind": "required nullable display facts and unresolved registry lookups",
+      "reason": "Nullable declared name/project metadata chooses display precedence only, never registry membership. Unknown source labels remain absent; explicit unresolved entity/token/instrument rendering is preserved.",
+      "validation": [
+        "test_label_projection_preserves_explicit_name_and_identity",
+        "tests/test_model_context.py"
+      ]
+    },
+    {
+      "ledger_key": "context-index",
+      "sites": [
+        {
+          "path": "src/tank/agents/context_registry.py",
+          "symbol": "label_rows",
+          "line": 60
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ModelContext.__init__",
+          "line": 380
+        }
+      ],
+      "kind": "JSON configuration adapter and keyed indexes",
+      "reason": "Only the configuration boundary projects serialized rows; core identity indexes hold validated closed models. Empty label indexes legitimately mean an explicitly empty namespace, and registry_pattern None means no substitution terms.",
+      "validation": [
+        "test_missing_required_registry_namespace_fails",
+        "test_duplicate_identity_cannot_silently_replace_registered_label"
+      ]
+    },
+    {
+      "ledger_key": "context-binding",
+      "sites": [
+        {
+          "path": "src/tank/agents/context_binding.py",
+          "symbol": "ContextBinding.from_session",
+          "line": 32
+        },
+        {
+          "path": "src/tank/agents/context_binding.py",
+          "symbol": "ContextBinding.observation_source",
+          "line": 73
+        }
+      ],
+      "kind": "persisted input-owner projection and genuine pre-input/legacy absence",
+      "reason": "A missing journal is valid only with no explicit active pointer (first admission or explicit origin-only legacy state). Any non-null pointer must match exactly one actual journal row. Optional source/event/proposal bindings remain genuinely absent; callbacks do not borrow source origin for mutation. No unmatched-pointer last_payload fallback remains.",
+      "validation": [
+        "test_explicit_active_pointer_never_uses_a_stale_last_payload",
+        "test_corrupt_owner_cannot_post_or_change_terminal_source_state",
+        "test_active_callback_terminal_failure_does_not_fail_the_opening_or_last_source",
+        "test_acknowledged_execution_can_rebind_only_to_its_actual_journal_owner"
+      ]
+    },
+    {
+      "ledger_key": "calendar-review",
+      "sites": [
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "calendar_review_metadata",
+          "line": 40
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "CalendarReviewMetadata",
+          "line": 15
+        },
+        {
+          "path": "src/tank/bootstrap.py",
+          "symbol": "_config_timestamp_metadata",
+          "line": 200
+        }
+      ],
+      "kind": "calendar type discrimination and optional declared precision facets",
+      "reason": "None from calendar_review_metadata means the value is not a date-only label and requires ordinary aware timestamp validation. Optional facet dictionary reads preserve genuinely undeclared metadata; unknown precision has explicit INCOMPLETE reason. No occurrence or timezone is synthesized.",
+      "validation": [
+        "test_calendar_review_label_loader_preserves_date_without_inventing_midnight",
+        "test_calendar_review_loader_rejects_invalid_occurrence_or_metadata"
+      ]
+    },
+    {
+      "ledger_key": "openma-wire",
+      "sites": [
+        {
+          "path": "src/tank/openma_sync.py",
+          "symbol": "_data",
+          "line": 153
+        },
+        {
+          "path": "src/tank/openma_sync.py",
+          "symbol": "OpenMAApi.publish_skill",
+          "line": 402
+        },
+        {
+          "path": "src/tank/openma_sync.py",
+          "symbol": "agent_tools",
+          "line": 203
+        }
+      ],
+      "kind": "SDK serialization boundary",
+      "reason": "JsonValue/object/list helpers describe response JSON only. _data accepts the two observed direct/data-envelope forms. Multipart tuple structure is HTTPX's required API, built from SkillFile records. Tool schema dictionaries are JSON Schema wire data, not application records.",
+      "validation": [
+        "test_first_start_versions_every_skill_and_agent_then_nothing_changes",
+        "test_provider_model_shapes_and_response_extensions_remain_idempotent",
+        "test_skill_upload_holds_exactly_the_baked_files"
+      ]
+    },
+    {
+      "ledger_key": "openma-observation",
+      "sites": [
+        {
+          "path": "src/tank/contracts/openma.py",
+          "symbol": "ManagedAgentObservation",
+          "line": 238
+        },
+        {
+          "path": "src/tank/contracts/openma.py",
+          "symbol": "BuiltinToolObservation",
+          "line": 216
+        },
+        {
+          "path": "src/tank/contracts/openma.py",
+          "symbol": "CustomToolObservation",
+          "line": 223
+        },
+        {
+          "path": "src/tank/contracts/openma.py",
+          "symbol": "EnvironmentNetworkObservation",
+          "line": 251
+        },
+        {
+          "path": "src/tank/contracts/openma.py",
+          "symbol": "EnvironmentPackagesObservation",
+          "line": 258
+        }
+      ],
+      "kind": "required nullable genuine provider observations",
+      "reason": "Uninitialized comparison fields remain unknown and trigger reconciliation; desired values are never fabricated as current. Unreported builtin switches/schema/description remain explicit absence. Environment omissions produce DIFFERS rather than invented networking/packages.",
+      "validation": [
+        "test_uninitialized_provider_agent_is_reconciled_without_fabricated_current_values",
+        "test_unreported_custom_tool_fields_are_reconciled_from_required_manifest",
+        "test_unreported_environment_configuration_is_reported_as_difference",
+        "test_builtin_toolset_drift_in_openma_is_corrected"
+      ]
+    },
+    {
+      "ledger_key": "openma-registration",
+      "sites": [
+        {
+          "path": "src/tank/contracts/openma.py",
+          "symbol": "RegisteredSkill",
+          "line": 112
+        },
+        {
+          "path": "src/tank/openma_sync.py",
+          "symbol": "registered_skills",
+          "line": 433
+        },
+        {
+          "path": "src/tank/openma_sync.py",
+          "symbol": "OpenMASynchronizer.run",
+          "line": 520
+        }
+      ],
+      "kind": "observed unregistered resources and digest absence",
+      "reason": "No model card/skill registration is a genuine create case. A positional provider skill has required identity/version but nullable unknown Tank digest until successful managed publication. Namespace get/next(None) reflects resource existence, not a required-value substitute.",
+      "validation": [
+        "test_first_start_versions_every_skill_and_agent_then_nothing_changes",
+        "test_a_skill_missing_from_its_agent_is_created"
+      ]
+    },
+    {
+      "ledger_key": "openma-namespaces",
+      "sites": [
+        {
+          "path": "src/tank/contracts/openma.py",
+          "symbol": "OpenMAConfiguration.model_prices",
+          "line": 34
+        },
+        {
+          "path": "src/tank/contracts/openma.py",
+          "symbol": "OpenMASyncPlan",
+          "line": 299
+        },
+        {
+          "path": "src/tank/contracts/openma.py",
+          "symbol": "OpenMASyncReport",
+          "line": 283
+        },
+        {
+          "path": "src/tank/openma_sync.py",
+          "symbol": "_tools_key",
+          "line": 469
+        }
+      ],
+      "kind": "typed keyed namespaces and local indexes",
+      "reason": "Maps are managed entity/model/tool identity indexes of strict named records. Plan/report validators require all managed namespaces. Sorting skill identity/version pairs is an ephemeral ordering key, not a domain payload tuple.",
+      "validation": [
+        "test_complete_openma_configuration_loader_preserves_canonical_wire_and_scalar_types",
+        "test_first_start_versions_every_skill_and_agent_then_nothing_changes"
+      ]
+    },
+    {
+      "ledger_key": "openma-provider-metadata",
+      "sites": [
+        {
+          "path": "src/tank/contracts/openma.py",
+          "symbol": "ManagedAgentMetadata",
+          "line": 152
+        },
+        {
+          "path": "src/tank/openma_sync.py",
+          "symbol": "_provider_metadata",
+          "line": 245
+        },
+        {
+          "path": "src/tank/openma_sync.py",
+          "symbol": "_registered_metadata",
+          "line": 257
+        },
+        {
+          "path": "src/tank/openma_sync.py",
+          "symbol": "OpenMAApi.publish_agent",
+          "line": 416
+        }
+      ],
+      "kind": "explicit provider string namespace preservation",
+      "reason": "OpenMA metadata values are strings, including valid empty strings. Unrelated entries survive managed updates through a typed field, omitted from repr/default serialization and explicitly merged at the HTTP boundary. Missing metadata/tank_skills means no managed registration namespace. Known fields cannot be shadowed.",
+      "validation": [
+        "test_provider_metadata_survives_owned_update_and_second_sync_is_current",
+        "test_declared_skill_mount_drift_is_corrected_without_reuploading_skills"
+      ]
+    },
+    {
+      "ledger_key": "openma-client-lifecycle",
+      "sites": [
+        {
+          "path": "src/tank/openma_sync.py",
+          "symbol": "SyncConfiguration",
+          "line": 98
+        },
+        {
+          "path": "src/tank/openma_sync.py",
+          "symbol": "keep_in_sync",
+          "line": 572
+        },
+        {
+          "path": "src/tank/contracts/openma.py",
+          "symbol": "OpenMACredentials",
+          "line": 201
+        }
+      ],
+      "kind": "configuration acquisition absence and SDK transport factory",
+      "reason": "Raw configured credential properties may be genuinely unset; prepare_sync requires nonempty SecretStr credentials before effects. Optional transport_factory delegates production defaults to HTTPX; an injected factory creates a fresh owned transport per retry. keep_in_sync returns None only on required stop-event shutdown.",
+      "validation": [
+        "test_missing_required_credentials_fail_before_remote_effects",
+        "test_retry_clients_own_fresh_transport_instances_and_close_each_once",
+        "test_invalid_provider_document_logs_only_sanitized_error_class"
+      ]
+    },
+    {
+      "ledger_key": "openma-test-wire",
+      "sites": [
+        {
+          "path": "tests/test_openma_sync.py",
+          "symbol": "FakeOpenMA",
+          "line": 68
+        }
+      ],
+      "kind": "external protocol simulator",
+      "reason": "FakeOpenMA's dictionaries retain literal provider JSON so tests can exercise unknown extensions, omitted fields and malformed responses. Protocol observation/request counters use typed records, and all functions/helpers are strictly typed.",
+      "validation": [
+        "test_provider_metadata_survives_owned_update_and_second_sync_is_current",
+        "test_invalid_provider_document_logs_only_sanitized_error_class"
+      ]
+    },
+    {
+      "ledger_key": "session-owned-persistence",
+      "sites": [
+        {
+          "path": "src/tank/agents/session_ownership.py",
+          "symbol": "SessionWriteStore.put",
+          "line": 13
+        },
+        {
+          "path": "src/tank/agents/session_ownership.py",
+          "symbol": "put_owned_session",
+          "line": 18
+        }
+      ],
+      "kind": "explicit persisted-document adapter",
+      "reason": "The storage mapping is the actual document-store JSON wire. It is validated through the closed ownership projection before writing, while unrelated historical/session bytes remain preserved. This is not a BaseModel mapping facade or approval of unfinished internal SessionService domain dictionaries.",
+      "validation": [
+        "test_persistence_guard_refuses_an_unrecorded_pointer_before_store_write",
+        "test_send_writer_revalidates_owner_after_reloading_under_lock"
       ]
     }
   ]

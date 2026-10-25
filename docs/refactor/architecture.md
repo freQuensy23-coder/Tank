@@ -25,3 +25,18 @@ This checkpoint index records the reviewed responsibilities at code commit 1516e
 Remaining responsibility audits include the broad Truth/event-tools/market/replay services, SessionService/context/OpenMA/bootstrap, scheduler/Telegram/delivery/CLI/source HTTP orchestration, Go Store/projection APIs, acceptance scripts and the remaining JavaScript controllers. Absence of import cycles alone does not prove these responsibilities are correctly separated.
 
 Tank-authored active files inside vendor/openma are part of the remaining inventory audit. Actual upstream source, comments, licenses and immutable provenance remain preserved. A blanket vendor-directory exclusion is not a completed first-party audit.
+
+## Additional verified checkpoint and open findings
+
+Code `19c66cf` passes the full local matrix: 2,190 Python units (p90 0.344 s, maximum 4.564 s), 355 actual integrations, 75 Node cases and 251 Go race cases, all with zero skips. The exact pinned Go linter, Go schema checks and current strict families also pass. The coherent trade/flow/native storage cohort and Python/Go declared-build identity policy are now integrated. This does not close the global audit.
+
+The continuing independent review identified these specific open responsibilities:
+
+- Configured provider limits must govern actual admission. Some existing Go planners use hard-coded limits or guessed error fallbacks; Python Etherscan calls need shared rate/day admission. A typed shared-policy and atomic reservation migration is underway. Existing public-host and USDM protective caps are being classified as explicit internal policy, without invented provider documentation.
+- A beta of 1.0 produced when regression is unavailable is not justified by labeling it assumed. The current review consumer can treat it as an estimate. Removal and unavailable-result propagation are being qualified separately, including raw-benchmark behavior.
+- EventToolService's optional, late-assigned scheduler can silently skip reaction scheduling. A required narrow scheduling port and earlier composition are in progress.
+- Live memory market writes must enforce the same required facts as ClickHouse and reject invalid whole batches without partial effects. Synthetic corrupt-reader fixtures are distinct from valid writes. Reverified retained inputs contain 25 source records, 26 read-only replay snapshots and 18 tool results; no direct mkt.* records occur in the 25 verified packets. They do not justify a generic historical write bypass. F-02 differs from its pinned compressed hash and is excluded from that conclusion.
+- Required resolved version identity must replace raw Settings placeholders at every provenance-producing service. The additive captured identity exists; consumer migration remains in progress.
+- Tank-authored code inside the OpenMA vendor tree is first-party audit scope. The pinned upstream comparison identifies 24 Tank-added executable files and 49 modified upstream programs requiring precise first-party portion classification. A blanket vendor exclusion is not acceptable coverage.
+
+The source variants that previously admitted incomplete provider budgets and the bootstrap variant-ownership defect are fixed in this checkpoint. Independent negative cases reject omitted documented capacities and preserve uncaptured documentation honestly; a two-sync depth-to-funding case removes obsolete configuration fields while preserving unrelated discovery data.

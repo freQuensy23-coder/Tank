@@ -25,6 +25,7 @@ from tank.contracts.source_items import (
 )
 from tank.contracts.sources import HttpFetchPlan, SourceDefinition, SourceFeed
 from tank.ops_entry_errors import report_entry_errors
+from tank.sources.fetch import FetchedContent, NotModified
 from tank.util import TimeInput, new_id, parse_time, sha256
 
 log = logging.getLogger(__name__)
@@ -286,8 +287,8 @@ class SourcePoller:
                 rows,
                 kind,
                 {},
-                "page:" + page_state["payload_sha256"] + "|" + str(page_state.get("fetched_at")),
-                page_state.get("fetched_at") or self.stamp(),
+                "page:" + page_state["payload_sha256"] + "|" + str(page_state["fetched_at"]),
+                page_state["fetched_at"],
             )
             await self.save(key, current)
 
@@ -311,16 +312,17 @@ class SourcePoller:
                 history_gap=result.gaps,
             )
             return result.rows, state, kind
-        payload, fetched = await svc.fetch(
+        _http_read = await svc.fetch(
             feed.request_plan(source.limits), key, on_start=lambda: self.mark_request_start(key)
         )
-        state.update(fetched)
-        if payload is None:
+        payload = _http_read.payload
+        if isinstance(_http_read, NotModified):
             return None, state, kind
+        state.update(_http_read.receipt.storage_record())
         state["entry_errors"] = []
         if sid == "S14":
             snapshot = await asyncio.to_thread(parsers.instruments, payload, feed)
-            pages = [(payload, state.get("fetched_at") or self.stamp())]
+            pages = [(payload, state["fetched_at"])]
             found_on = dict.fromkeys(snapshot, 0)
             if feed.venue == "bybit":
                 cursor = json.loads(payload).get("result", {}).get("nextPageCursor")
@@ -338,15 +340,21 @@ class SourcePoller:
                             ),
                         }
                     )
-                    page, page_state = await svc.fetch(
+                    _http_read = await svc.fetch(
                         next_feed.request_plan(source.limits), key + ":cursor:" + sha256(cursor)
                     )
+                    page = _http_read.payload
+                    if isinstance(_http_read, NotModified):
+                        raise ValueError(
+                            "Source detail/history returned 304 without retained content"
+                        ) from None
+                    page_state = _http_read.receipt.storage_record()
                     if page is None:
                         raise ValueError("Unexpected conditional paginated response")
                     page_snapshot = await asyncio.to_thread(parsers.instruments, page, feed)
                     snapshot.update(page_snapshot)
                     found_on.update(dict.fromkeys(page_snapshot, len(pages)))
-                    pages.append((page, page_state.get("fetched_at") or self.stamp()))
+                    pages.append((page, page_state["fetched_at"]))
                     cursor = json.loads(page).get("result", {}).get("nextPageCursor")
 
             snapshot_key = key + ":instruments"
@@ -395,7 +403,7 @@ class SourcePoller:
         found = False
         exhausted = False
         page_number = int(dict(parse_qsl(urlsplit(feed.url).query)).get("pageNo", 1))
-        last_head_check = parse_time(state.get("fetched_at") or self.stamp())
+        last_head_check = parse_time(state["fetched_at"])
         while True:
             parsed = await asyncio.to_thread(parsers.json_items, page, sid)
             entry_errors.extend(
@@ -407,7 +415,7 @@ class SourcePoller:
 
             retained = []
             for row in parsed:
-                row.setdefault("observed_at", page_state.get("fetched_at") or self.stamp())
+                row.setdefault("observed_at", page_state["fetched_at"])
                 row["_payload"] = page
                 if identity(row) == checkpoint:
                     found = True
@@ -477,25 +485,31 @@ class SourcePoller:
 
             escalated = await svc.is_escalated(sid)
             if (self.now() - last_head_check).total_seconds() >= self.interval(source, feed, escalated):
-                head, head_state = await svc.fetch(
+                _http_read = await svc.fetch(
                     feed.request_plan(source.limits), key, on_start=lambda: self.mark_request_start(key)
                 )
+                head = _http_read.payload
                 last_head_check = self.now()
-                if head is not None:
+                if isinstance(_http_read, FetchedContent):
+                    head_state = _http_read.receipt.storage_record()
                     head_rows = await asyncio.to_thread(parsers.json_items, head, sid)
                     entry_errors.extend(
                         {**error, "payload_sha256": head_state["payload_sha256"]}
                         for error in head_rows.errors
                     )
                     for row in head_rows:
-                        row.update(observed_at=head_state.get("fetched_at") or self.stamp(), _payload=head)
+                        row.update(observed_at=head_state["fetched_at"], _payload=head)
                     await self.retain_page(key, source, feed, head_rows, head_state)
-            page, page_state = await svc.fetch(
+            _http_read = await svc.fetch(
                 page_feed.request_plan(source.limits),
                 key
                 + ":history:"
                 + str(page_number if sid == "S09" else offset if sid == "S24" else sha256(page_feed.url)),
             )
+            page = _http_read.payload
+            if isinstance(_http_read, NotModified):
+                raise ValueError("Source detail/history returned 304 without retained content") from None
+            page_state = _http_read.receipt.storage_record()
             if page is None:
                 raise ValueError(f"{sid} history returned 304 without retained page replay")
         state["entry_errors"] = entry_errors
@@ -524,10 +538,14 @@ class SourcePoller:
                     + json.dumps(ids)
                     + "}) { id title body state start end created scores scores_total space { id } } }"
                 )
-                extra, extra_state = await svc.fetch(
+                _http_read = await svc.fetch(
                     feed.model_copy(update={"body": {"query": query}}).request_plan(source.limits),
                     key + ":pending:" + str(start),
                 )
+                extra = _http_read.payload
+                if isinstance(_http_read, NotModified):
+                    raise ValueError("Source detail/history returned 304 without retained content") from None
+                extra_state = _http_read.receipt.storage_record()
                 for proposal_id in ids:
                     pending_evidence[proposal_id] = extra_state
                 if extra:
@@ -540,9 +558,7 @@ class SourcePoller:
                     returned_ids.update(row["proposal_id"] for row in extra_rows)
                     for row in extra_rows:
                         if row["external_id"] not in existing:
-                            row.update(
-                                observed_at=extra_state.get("fetched_at") or self.stamp(), _payload=extra
-                            )
+                            row.update(observed_at=extra_state["fetched_at"], _payload=extra)
                             rows.append(row)
             missing = set(pending) - returned_ids
             state["entry_errors"].extend(
@@ -691,8 +707,8 @@ class SourcePoller:
     def _empty_body(self, url, detail_state):
         return {
             "url": url,
-            "http_status": detail_state.get("http_status"),
-            "payload_sha256": detail_state.get("payload_sha256"),
+            "http_status": detail_state["http_status"],
+            "payload_sha256": detail_state["payload_sha256"],
             "observed_at": self.stamp(),
             "observed_at_precision": "COLLECTION_ONLY",
             "reason": "EMPTY_ARTICLE_BODY",
@@ -724,13 +740,17 @@ class SourcePoller:
                 and fallback != item["url"]
             ):
                 raise
-            article, detail_state = await svc.fetch(
+            _http_read = await svc.fetch(
                 HttpFetchPlan(url=fallback, source_limits=source.limits),
                 key + ":" + sha256(fallback),
             )
+            article = _http_read.payload
+            if isinstance(_http_read, NotModified):
+                raise ValueError("Source detail/history returned 304 without retained content") from None
+            detail_state = _http_read.receipt.storage_record()
             if article is None or binding not in parsers.publisher_cms_entries(article):
                 raise ValueError("Publisher CMS fallback identity/content mismatch") from None
-            if urlsplit(detail_state.get("response_url") or fallback).netloc != origin.netloc:
+            if urlsplit(detail_state["response_url"]).netloc != origin.netloc:
                 raise ValueError("Publisher CMS fallback left official host") from None
             item["publisher_cms_recovery"] = {
                 "status": "VERIFIED_SAME_CMS_ENTRY",
@@ -744,14 +764,14 @@ class SourcePoller:
             }
             item["publisher_url_aliases"] = [item["url"], fallback]
             item["url"] = fallback
-            return article, detail_state
+            return _http_read
 
     async def _item(self, source, feed, key, batch, original):
         svc, sid = self.service, source.source_id
         item = deepcopy(original)
         if self.needs_detail(sid, batch["kind"]):
             if sid == "S09":
-                payload, detail_state = await svc.fetch(
+                _http_read = await svc.fetch(
                     HttpFetchPlan(
                         url="https://www.binance.com/bapi/composite/v1/public/cms/article/detail/query?articleCode="
                         + item["external_id"],
@@ -759,6 +779,10 @@ class SourcePoller:
                     ),
                     key + ":detail:" + item["external_id"],
                 )
+                payload = _http_read.payload
+                if isinstance(_http_read, NotModified):
+                    raise ValueError("Source detail/history returned 304 without retained content") from None
+                detail_state = _http_read.receipt.storage_record()
                 if payload is None:
                     raise ValueError("Binance article returned 304 without a durable source item")
                 detail_object = json.loads(payload)["data"]
@@ -771,7 +795,11 @@ class SourcePoller:
                 if not item["text"].strip():
                     return self._empty_body(item["url"], detail_state)
             else:
-                payload, detail_state = await self._article(source, feed, key, item)
+                _http_read = await self._article(source, feed, key, item)
+                payload = _http_read.payload
+                if isinstance(_http_read, NotModified):
+                    raise ValueError("Source detail/history returned 304 without retained content") from None
+                detail_state = _http_read.receipt.storage_record()
                 if payload is None:
                     raise ValueError("Article returned 304 without a durable source item")
                 detail = await asyncio.to_thread(parsers.article, payload, source_id=sid)

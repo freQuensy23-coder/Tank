@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import zstandard
+from scheduler_support import operational_reaction_services
 from source_support import (
     fetch_plan,
     fixture_versions,
@@ -752,47 +753,59 @@ async def test_milestone_producer_drives_source_cadence_and_cancellation(
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(response))
     service = SourceService(repo, SourceSettings(), http=http, versions=fixture_versions())
-    tools = EventToolService(repo, settings_obj, None, None, versions=fixture_versions())
-    await repo.put("reg.sources", "S15", source)
-    await repo.put("evt.events", "cadence-event", {"event_id": "cadence-event"})
-    due = clock[0] + timedelta(hours=1)
-    await tools.schedule_milestone(
-        {"event_id": "cadence-event", "due_at": iso(due), "source_id": "S15", "milestone": "LAUNCH"}, {}
-    )
-    assert not await service.is_escalated("S15")
-    await service.control_once("S15")
-    assert len(calls) == 1
-    clock[0] += timedelta(seconds=15)
-    await service.control_once("S15")
-    assert len(calls) == 1
-    clock[0] = due - timedelta(minutes=5)
-    await service.control_once("S15")
-    assert len(calls) == 2 and await service.is_escalated("S15")
-    clock[0] += timedelta(seconds=14)
-    await service.control_once("S15")
-    assert len(calls) == 2
-    clock[0] += timedelta(seconds=1)
-    await service.control_once("S15")
-    assert len(calls) == 3
-    rows = await repo.list("ops.source_escalations", filters={"source_id": "S15"})
-    assert rows
-    for row in rows:
-        row["status"] = "CONFIRMED"
-        row["confirmed_at"] = iso(clock[0])
-        await repo.put(
-            "ops.source_escalations",
-            row.get("escalation_id")
-            or row.get("key")
-            or row["source_id"] + ":" + row["event_id"] + ":" + row["trigger"],
-            row,
+    reaction_settings = settings_obj
+    reaction_versions = fixture_versions()
+    async with operational_reaction_services(
+        repo, reaction_settings, versions=reaction_versions
+    ) as reaction_services:
+        tools = EventToolService(
+            repo,
+            reaction_settings,
+            reaction_services.truth,
+            None,
+            versions=reaction_versions,
+            scheduler=reaction_services.scheduler,
         )
-    assert not await service.is_escalated("S15")
-    clock[0] += timedelta(seconds=15)
-    await service.control_once("S15")
-    assert len(calls) == 3
-    clock[0] = due + timedelta(hours=2)
-    assert not await service.is_escalated("S15")
-    await http.aclose()
+        await repo.put("reg.sources", "S15", source)
+        await repo.put("evt.events", "cadence-event", {"event_id": "cadence-event"})
+        due = clock[0] + timedelta(hours=1)
+        await tools.schedule_milestone(
+            {"event_id": "cadence-event", "due_at": iso(due), "source_id": "S15", "milestone": "LAUNCH"}, {}
+        )
+        assert not await service.is_escalated("S15")
+        await service.control_once("S15")
+        assert len(calls) == 1
+        clock[0] += timedelta(seconds=15)
+        await service.control_once("S15")
+        assert len(calls) == 1
+        clock[0] = due - timedelta(minutes=5)
+        await service.control_once("S15")
+        assert len(calls) == 2 and await service.is_escalated("S15")
+        clock[0] += timedelta(seconds=14)
+        await service.control_once("S15")
+        assert len(calls) == 2
+        clock[0] += timedelta(seconds=1)
+        await service.control_once("S15")
+        assert len(calls) == 3
+        rows = await repo.list("ops.source_escalations", filters={"source_id": "S15"})
+        assert rows
+        for row in rows:
+            row["status"] = "CONFIRMED"
+            row["confirmed_at"] = iso(clock[0])
+            await repo.put(
+                "ops.source_escalations",
+                row.get("escalation_id")
+                or row.get("key")
+                or row["source_id"] + ":" + row["event_id"] + ":" + row["trigger"],
+                row,
+            )
+        assert not await service.is_escalated("S15")
+        clock[0] += timedelta(seconds=15)
+        await service.control_once("S15")
+        assert len(calls) == 3
+        clock[0] = due + timedelta(hours=2)
+        assert not await service.is_escalated("S15")
+        await http.aclose()
     await repo.close()
 
 
@@ -914,30 +927,54 @@ async def test_major_assessment_producer_activates_15s_source_reads(
             "implementation",
         ]
     }
-    tools = EventToolService(repo, config, None, None, versions=fixture_versions())
-    result = await tools.set_assessment(
-        {
-            "event_id": event["event_id"],
-            "assessment": {
-                "class": "MAJOR",
-                "criterion": "M1",
-                "criterion_venue_id": "binance",
-                "criterion_claim_id": "major-proof",
-                "dims": dimensions,
+    reaction_settings = config
+    reaction_versions = fixture_versions()
+    async with operational_reaction_services(
+        repo, reaction_settings, versions=reaction_versions
+    ) as reaction_services:
+        tools = EventToolService(
+            repo,
+            reaction_settings,
+            reaction_services.truth,
+            None,
+            versions=reaction_versions,
+            scheduler=reaction_services.scheduler,
+        )
+        result = await tools.dispatch(
+            "set_assessment",
+            {
+                "event_id": event["event_id"],
+                "assessment": {
+                    "class": "MAJOR",
+                    "criterion": "M1",
+                    "criterion_venue_id": "binance",
+                    "criterion_claim_id": "major-proof",
+                    "impact_horizon": {
+                        "impact_start": "UNKNOWN",
+                        "ramp_shape": "STEP",
+                        "dependencies": [],
+                        "time_to_materiality": "Not estimated by this source-cadence fixture",
+                        "timing_confidence": "LOW",
+                    },
+                    "dims": dimensions,
+                },
             },
-        },
-        {},
-    )
-    assert result["class"] == "MAJOR" and await service.is_escalated("S15")
-    clock[0] += timedelta(seconds=14)
-    await service.control_once("S15")
-    assert len(calls) == 1
-    clock[0] += timedelta(seconds=1)
-    await service.control_once("S15")
-    assert len(calls) == 2
-    clock[0] += timedelta(hours=2)
-    assert not await service.is_escalated("S15")
-    await http.aclose()
+            {"role": "system"},
+        )
+        reaction_jobs = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
+        assert len(reaction_jobs) == 10
+        assert all(job["payload"]["event_id"] == event["event_id"] for job in reaction_jobs)
+        assert all(job["payload"]["checkpoint"].startswith("POST_") for job in reaction_jobs)
+        assert result["class"] == "MAJOR" and await service.is_escalated("S15")
+        clock[0] += timedelta(seconds=14)
+        await service.control_once("S15")
+        assert len(calls) == 1
+        clock[0] += timedelta(seconds=1)
+        await service.control_once("S15")
+        assert len(calls) == 2
+        clock[0] += timedelta(hours=2)
+        assert not await service.is_escalated("S15")
+        await http.aclose()
     await repo.close()
 
 
@@ -1054,14 +1091,11 @@ async def test_sec_provider_and_source_configured_budgets_are_shared(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import tank.sources as module
+    from tank.request_budget import BudgetBucket, SharedRequestBudgets
     from tank.settings import Settings
 
-    calls = []
-
-    async def acquire(key, capacity, window_s, *, weight=1, host=None) -> None:
-        calls.append((key, capacity, window_s, weight))
-
-    monkeypatch.setattr(module.shared_request_budgets, "acquire", acquire)
+    engine = SharedRequestBudgets()
+    monkeypatch.setattr(module, "shared_request_budgets", engine)
     service = SourceService(Repo(), Settings(data_dir=tmp_path), versions=fixture_versions())
     try:
         await service.acquire_budget(fetch_plan({"url": "https://www.sec.gov/news/pressreleases.rss"}))
@@ -1070,8 +1104,10 @@ async def test_sec_provider_and_source_configured_budgets_are_shared(
                 {"url": "https://www.sec.gov/cgi-bin/browse-edgar", "source_limits": {"rate_per_min": 25}}
             )
         )
-        assert [row for row in calls if row[0] == "sec.gov"] == [("sec.gov", 5, 1, 1), ("sec.gov", 5, 1, 1)]
-        assert ("www.sec.gov", 25, 60, 1) in calls
+        provider = BudgetBucket(key="sec.gov", capacity=5, window_s=1)
+        source = BudgetBucket(key="www.sec.gov", capacity=25, window_s=60)
+        assert len(engine.windows[provider]) == 2
+        assert len(engine.windows[source]) == 1
     finally:
         await service.close()
 
@@ -1108,7 +1144,7 @@ async def test_shared_weight_budget_large_waiter_does_not_block_fitting_baseline
 ) -> None:
     import asyncio
 
-    import tank.sources.rate_limits as module
+    import tank.request_budget as module
 
     budget = module.SharedRequestBudgets()
     sleep_started = asyncio.Event()
@@ -1119,7 +1155,7 @@ async def test_shared_weight_budget_large_waiter_does_not_block_fitting_baseline
         sleep_started.set()
         await release_sleep.wait()
 
-    monkeypatch.setattr(module.asyncio, "sleep", sleep)
+    monkeypatch.setattr(asyncio, "sleep", sleep)
     await budget.acquire("binance.spot", 100, 60, weight=98)
     optional = asyncio.create_task(budget.acquire("binance.spot", 100, 60, weight=50))
     try:
@@ -1942,7 +1978,7 @@ async def test_due_time_uses_actual_request_start_after_budget_admission(
         svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
         first = [True]
 
-        async def budget(feed) -> None:
+        async def budget(feed, *, request: httpx.Request | None = None) -> None:
             if first[0]:
                 clock[0] += timedelta(seconds=30)
                 first[0] = False

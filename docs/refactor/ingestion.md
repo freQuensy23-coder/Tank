@@ -248,3 +248,198 @@ Scheduler.ensure_event_reactions is the structural implementation of the require
 
 
 USD-M's two existing internal subwindows are explicit required client_protection_limits on SourceBinanceUsdmBudget, separate from its required documented aggregate weight budget: binance.usdm.funding shares250requests/300seconds across exactly fundingRate/fundingInfo; binance.usdm.statistics allows500requests/300seconds for exactly openInterestHist. Each declares CLIENT_PROTECTION/NOT_CAPTURED/null provider documentation/IP/operator basis. No doubled provider documentation or new quota values are inferred. Spot and USD-M now have distinct concrete provider variants so the required USD-M operation windows cannot disappear through an optional list. Missing groups, unknown paths, changed scope and invented numeric documentation fail. Go's verified zero aggregate weight for these operations remains request-planner behavior; the internal count windows still apply.
+
+
+### Configured HTTP admission and atomic quota groups
+
+The shared rolling-window engine now lives inward in `tank.request_budget`.
+`sources.rate_limits` only reexports its exact singleton while peer imports migrate;
+there is no second ledger or domain implementation. `HttpAdmission.admit` accepts
+the actual built `httpx.Request` immediately before Python I/O. A caller that
+queues Go transport never calls this port. Hostnames do not decide transport.
+
+`ConfiguredHttpAdmission._etherscan` admits only HTTPS GET api.etherscan.io/v2/api
+with one nonempty decoded UTF-8 apikey. The exact logical key is SHA-256 hashed,
+without trimming/case changes, into the shared API_KEY scope across chain IDs.
+Its required configured RPS and daily constraints reserve atomically.
+Public explorer hosts return an explicit unconfigured outcome; unsupported API
+routes, duplicate/missing/invalid keys, or missing provider policy return fixed
+refusal codes without credential/query output. `_sec` shares the configured
+sec.gov IP scope across subdomains. Unknown routes have an explicit unconfigured
+outcome, never a fabricated quota.
+
+`BudgetConstraint.host=None` means a primitive quota lacks a provider-block
+association; it does not suppress its quota. `SharedRequestBudgets.acquire`
+retains capacity=None only for existing explicitly unconfigured primitive callers;
+the configured adapter always supplies validated positive capacities. Priority=0
+is the ordinary fairness class; negative priorities receive existing urgent
+precedence. Budget maps are associative indexes by validated complete quota
+identity; deques are rolling weighted admission histories. `RequestLedger.connection`
+is absent before opening/after closing, and a missing SQL row is an explicit
+validation error. The serialized key preserves the existing cross-language
+float window/capacity suffix and never partitions by owner/version.
+
+`RequestLedger.wait_many` sorts the same serialized bucket identities as Go,
+holds all reservations in one PostgreSQL transaction, and rolls back tentative
+spends when any window returns a delay. Memory admission locks the complete
+group in that order and appends every spend at one monotonic instant only when
+all windows are ready. Waiting happens outside locks/transactions.
+
+Evidence: 87 source/admission units pass in 2.01s; the actual PostgreSQL grouped
+rollback test passes in 1.64s with zero skips. It proves the available long window
+is not charged when a later short-window constraint blocks. Memory tests prove
+the same boundary and retry behavior; actual built-client query tests prove
+cross-chain scope and exact key hashing. Strict mypy passes the new engine,
+adapter, contract and test module; Ruff checks/format pass. Consumer injection
+into market/event workflows remains the corresponding owner's next activation;
+this checkpoint alone does not claim all external attempts use the port.
+
+
+The follow-up session fixture now declares the actual repository registry/source
+configuration and reads the real analyst tool schemas. Its mock transport handles
+the actual toolset-update operation separately from user-event submission; the
+failure injection targets the intended event submission. Existing answer/session,
+retry-barrier, attachment and prompt-provenance assertions remain intact.
+Combined Ops/Telegram follow-up cohort: 94 units passed in 2.58s, zero skips.
+This fixes required fixture inputs rather than restoring missing-config defaults.
+Full typing of these large preexisting test modules remains open.
+
+
+### Source request admission activation
+
+`SourceHttpTransport.request` builds the actual client request, admits it, sends
+with automatic redirects disabled, and repeats admission for each HTTPX-generated
+redirect request. Its redirect count uses the client's explicit maximum.
+A redirect into an exchange capture host is refused before Python I/O. Conditional
+headers, body/form selection, client query parameters and HTTPX's redirect/auth
+handling remain on the actual request. Source retry orchestration repeats this
+transport, hence each actual attempt is admitted. The optional request-start
+callback is invoked after the first admission, preserving capture's actual
+request-start clock rather than pre-wait time.
+
+`SourceService.acquire_budget` combines the strictest declared feed/source/host
+minute constraint with configured provider windows into one atomic group.
+Missing minute constraints genuinely mean no separately configured local minute
+policy; they never remove a configured API window. A missing `request` argument
+only means the explicit direct-budget helper must build the actual client request;
+the active transport always supplies its already-built request. The Go queue
+branch bypasses Python provider admission and retains only a separately declared
+source minute policy. Generic unconfigured public HTTP remains allowed under
+source policy; a known API refusal raises a fixed code before I/O.
+
+The old provider-name/hostname comparison missed api.etherscan.io and could not
+charge daily API_KEY quotas; it has been removed. Provider policies now resolve
+inward from the actual destination and logical key. `HttpAdmissionPlan` is a
+strict decision plus concrete immutable quota tuple, permitting the source's
+additional constraints to reserve in the same transaction. It does not store the
+native request or credential query.
+
+Evidence: 89 source/admission units pass in 2.20s, zero skips. The real redirect
+transport test admits both SEC subdomains into the same shared provider history;
+the exchange redirect test proves the second destination never reaches Python
+admission or I/O. Source quota proof now inspects actual rolling histories rather
+than mocking an acquire call echo. Strict mypy passes the transport, policy and
+admission tests; Ruff passes all touched source/tests. Existing source checkpoint
+mapping/workflow and the remaining SourceService methods still require their full
+domain migration and typing; this activation does not claim that work complete.
+
+
+### Filing label projection
+
+`SourceFilingRegistryView.from_document` now validates required token names/symbols
+and entity kinds/names/aliases before the filing decision. Missing namespaces or
+labels cannot quietly produce an incomplete relevance pattern. Its
+`FilingRegistryDocument.tokens/entities` maps exist solely at the named external
+configuration projection boundary; the actual pattern algorithm consumes strict
+`FilingTokenLabel` and `FilingEntityLabel` objects. The entity's secondary
+`name: str | None` is genuinely optional in the canonical registry. It is consulted
+only when the required names list is explicitly empty. Regulators remain excluded
+and ambiguous bare names retain the original context policy. The compiled pattern
+uses a cached property bound to the service's captured immutable configuration;
+the old dynamic getattr tuple/version cache has been removed.
+
+Evidence: 136 source/contract units pass in 2.51s, zero skips, including missing
+required namespaces/token labels/entity names and existing real SEC identity/date
+boundary tests. The contracts module is strict-mypy clean; Ruff passes touched
+source/tests. This narrow projection does not claim to replace the canonical
+aggregate registry schema or resolution algorithms.
+
+
+### Typed HTTP reader and conditional checkpoint boundary
+
+`SourceHttpReader.read` returns the closed `FetchedContent | NotModified` outcome,
+rather than a copied whole checkpoint dictionary. All polling/article/CMS callers
+now consume its explicit payload and immutable receipt; serialization is confined
+to their still-existing checkpoint persistence adapter. `FetchEvidence` contains
+the actual response digest, status, URL and collection clock. `FetchReceipt` adds
+optional HTTP cache validators. Only the evidence projection may be persisted
+before parsing. ETag/Last-Modified commit remains governed by successful acquisition
+and processing, preserving malformed-entry retry/dedup behavior. A 304 is an
+explicit no-new-content outcome and creates no invented response receipt.
+
+`ConditionalCheckpointWire` validates the narrow storage-wire fields before
+projecting `HttpCheckpointProjection`; generic error-record JSON exists only in
+that storage adapter and is reduced to a typed processing-error disposition.
+The reader's application state contains no generic error records or workflow
+checkpoint map. Absent ETag/Last-Modified are genuine optional response headers;
+absent article/entry error collections are the actual fresh/transport-only
+checkpoint phase. Their defaults never fabricate source identity, time or content.
+The core projection's empty defaults represent a fresh conditional-cache state.
+
+`SourceHttpReader.error` is absent until an actual failed attempt; reaching retry
+exhaustion without an error is an explicit invariant failure. The four-attempt
+retry cap and 2/4/8-second backoff remain unchanged. Retry-After can be absent,
+an explicit finite nonnegative duration, or a valid publication-format HTTP date;
+invalid values retain backoff rather than invent a date. Header lookups are
+optional HTTP protocol fields. Request-start callbacks remain genuinely optional
+for detail reads. Fixed HTTP/network failure messages keep query credentials out
+of persisted/logged error text while retaining the actual HTTP response for the
+existing verified 404-only CMS recovery path.
+
+Evidence: 172 source/contract units passed in 4.28s before the final wire/core
+projection split, including real CMS recovery, malformed siblings, conditional
+GET and retry evidence tests. New reader/tests are strict-mypy clean; final scoped
+verification follows this split. The exact pre-reader missing-signature/lookup
+inventory is retained in ingestion-open-inventory.json (snapshot a97bde8); its
+lookup counts are review candidates, not blanket defect classifications.
+Full polling checkpoint/domain migration remains open.
+
+
+Final reader activation proof: 172 source/contract units pass in 3.19s after the
+wire/core split and explicit NotModified branches. Detail/history reads reject
+unexpected 304 outcomes before accessing a required receipt. Initial acquisition
+and optional head-refresh 304 outcomes retain their explicit no-content branch.
+Required receipt digest/status/response URL/fetch clock accesses no longer use
+empty receipt maps or invented current-time fallbacks. Strict reader/test mypy
+and touched Ruff checks pass. Full pinned services verification follows the commit.
+
+
+### Independent clean scheduling companion: operational test composition
+
+`scheduler_support.operational_reaction_services` constructs the real MarketService,
+MarketTruthService and Scheduler with the actual threshold configuration and an
+explicit version facet. Its async exit stack closes scheduler tasks before market
+flush and client cleanup. It supplies a real HTTP client whose transport refuses
+undeclared external requests, rather than a no-op scheduler or fabricated capture
+answer. The small dataclass contains resource handles, not serialized domain
+records.
+
+The helper's actual background-task lifetime proof passes with zero skips, and
+both helper/test modules pass strict mypy and Ruff. Constructor consumer migration
+will be paired with analysis' exact required ReactionScheduling activation.
+This clean branch is based on parent 95ce994 and does not include the held
+admission/7af27d3 cohort or the independent polling-state WIP.
+
+
+The independent required-scheduling caller companion now uses that real async
+composition for all owned EventToolService constructors. It retains the original
+extraction, publication, web evidence, watch-condition and source-cadence assertions.
+The MAJOR source-cadence case now uses actual tool dispatch with a schema-complete,
+explicitly unestimated impact horizon. It verifies ten durable benchmark POST
+reaction jobs for the event and the existing real 15-second source reads.
+Resources drain before repository shutdown.
+
+Scoped proof: 216 owned constructor/helper units pass in 3.84s, and both actual
+source-cadence integration cases pass in 2.45s. No external HTTP is allowed by the
+real composition fixture. Full pinned owned verification is the next gate; these
+results do not assert completed reaction measurement or full scheduler typing.

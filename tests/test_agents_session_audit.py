@@ -4,10 +4,15 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from agent_source_fixtures import declared_versions_fixture, source_record_fixture
+from agent_source_fixtures import (
+    declared_versions_fixture,
+    native_tool_arguments_fixture,
+    source_record_fixture,
+)
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
+from tank.openma_sync import agent_tools
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.util import clock_iso
@@ -24,15 +29,17 @@ def settings(replay=False):
     opts = SimpleNamespace(
         ops_progress_enabled=False,
         thresholds=Settings(_env_file=None).thresholds,
+        read_config_json=Settings(_env_file=None).read_config_json,
         openma_url="http://oma",
         openma_api_key="fake-only",
         openma_model="gpt-6.1-sol",
         config_version="current-config",
         code_version="current-code",
         replay=replay,
-        load_config=lambda name: {"registry": {"tokens": [{"token_id": "T", "symbol": "T"}]}}.get(
-            name, config
-        ),
+        load_config=lambda name: {
+            "registry": {"tokens": [{"token_id": "T", "symbol": "T"}], "entities": [], "instruments": []},
+            "sources": {"sources": []},
+        }.get(name, config),
     )
     opts.configured_secrets = lambda: frozenset(
         value
@@ -59,6 +66,7 @@ async def seed(repo, **changes):
     record.update(changes)
     from tank.util import sha256
 
+    record["tools_sha256"] = sha256(agent_tools(settings(), "tank-event-analyst"))
     record["prompt_label"] = record["prompt_version"]
     record["prompt_version"] = sha256(
         {"system": "Resolved synthetic fixture prompt", "label": record["prompt_label"]}
@@ -84,7 +92,12 @@ async def test_refused_tool_reason_survives_lost_reply_and_does_not_stall() -> N
         posts.append(json.loads(request.content))
         raise httpx.ReadError("lost", request=request)
 
-    event = {"id": "refused", "type": "agent.custom_tool_use", "name": "record_event", "input": {}}
+    event = {
+        "id": "refused",
+        "type": "agent.custom_tool_use",
+        "name": "record_event",
+        "input": native_tool_arguments_fixture("record_event"),
+    }
     async with httpx.AsyncClient(transport=httpx.MockTransport(lost)) as http:
         with pytest.raises(httpx.ReadError):
             await SessionService(
@@ -177,7 +190,13 @@ async def test_replay_runs_verdict_code_and_uses_fresh_remote_session() -> None:
             repo, settings(replay=True), dispatch, http=http, versions=declared_versions_fixture()
         )
         await service.process_event(
-            "s", {"id": "verdict", "type": "agent.custom_tool_use", "name": "get_decision", "input": {}}
+            "s",
+            {
+                "id": "verdict",
+                "type": "agent.custom_tool_use",
+                "name": "get_decision",
+                "input": {"token_id": "T"},
+            },
         )
         replay = await service.resolve({"event_id": "e", "replay_run_id": "run1"})
         assert replay["session_id"] == "fresh"
@@ -462,12 +481,34 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
         service.process_event = process
         service.start_stream("s")
         for number, name in enumerate(names[:3]):
-            await emit({"id": f"call-{number}", "type": "agent.custom_tool_use", "name": name, "input": {}})
+            await emit(
+                {
+                    "id": f"call-{number}",
+                    "type": "agent.custom_tool_use",
+                    "name": name,
+                    "input": {"query": "Synthetic evidence"}
+                    if name == "search_tank_items"
+                    else native_tool_arguments_fixture(name)
+                    if name in {"record_event", "fetch_page"}
+                    else {},
+                }
+            )
         await asyncio.wait_for(first_idle.wait(), timeout=2)
 
         for number, name in enumerate(names[3:], start=3):
             await emit({"id": f"run-{number}", "type": "session.status_running"})
-            await emit({"id": f"call-{number}", "type": "agent.custom_tool_use", "name": name, "input": {}})
+            await emit(
+                {
+                    "id": f"call-{number}",
+                    "type": "agent.custom_tool_use",
+                    "name": name,
+                    "input": {"query": "Synthetic evidence"}
+                    if name == "search_tank_items"
+                    else native_tool_arguments_fixture(name)
+                    if name in {"record_event", "fetch_page"}
+                    else {},
+                }
+            )
             await emit(
                 {"id": f"idle-{number}", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}}
             )

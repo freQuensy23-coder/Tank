@@ -15,14 +15,15 @@ import threading
 from array import array
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextvars import ContextVar
 from copy import deepcopy
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal, getcontext, localcontext
 from functools import wraps
-from math import log
+from math import isfinite, log
 from statistics import mean, median, stdev
+from typing import overload
 
 from pydantic import JsonValue
 
@@ -36,11 +37,41 @@ from tank.analysis.positioning import (
 from tank.analysis.positioning import (
     oi_class as oi_class,
 )
+from tank.analysis.price_reference import (
+    PriceCadence,
+    ReferencePrice,
+    ReferencePriceReturn,
+    ReferencePriceSeries,
+    decode_price_cadence,
+)
+from tank.analysis.statistics_contracts import (
+    BaselineCaches,
+    BetaEstimate,
+    BitcoinContextHistory,
+    DecimalBounds,
+    DecimalRange,
+    DepthBaseline,
+    DurationBounds,
+    EstimatedBeta,
+    FloatBounds,
+    FloatRange,
+    FundingBaseline,
+    HistoryDiagnostic,
+    HistoryDiagnostics,
+    HourlyReturns,
+    NativeVolumeBoundary,
+    NativeVolumeIndex,
+    OpenInterestBaseline,
+    RelativeHistory,
+    UnavailableBeta,
+    UnavailableHistoryDiagnostics,
+)
+from tank.analysis.statistics_contracts import StatisticalPopulation as StatisticalPopulation
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.market.capture import event_anchor
 from tank.time_precision import Timestamp, chosen_boundary, offset_schedule, propagate_timestamp
-from tank.util import iso, jsonable, new_id, parse_time, utcnow
+from tank.util import iso, jsonable, new_id, parse_epoch, parse_time, utcnow
 
 WINDOWS = {"W15M": 900, "W1H": 3600, "W4H": 14400, "W24H": 86400}
 RISK_ORDER = [
@@ -55,7 +86,7 @@ RISK_ORDER = [
     "PRICE_MARKUP_FAKE_OI",
 ]
 
-_BASELINE_CACHE = ContextVar("truth_baseline_cache", default=None)
+_BASELINE_CACHE: ContextVar[BaselineCaches | None] = ContextVar("truth_baseline_cache", default=None)
 _BASELINE_DEPENDENCY = ContextVar("truth_baseline_dependency", default=None)
 
 _TIMES = ContextVar("truth_observation_times", default=None)
@@ -143,33 +174,6 @@ def missing(reason="INCOMPLETE", unit=None):
     }
 
 
-class StatisticalPopulation:
-    """Compact immutable float statistics with one exact ordering, never monetary storage."""
-
-    def __init__(self, values, ordered=None):
-        self.values = array("d", values)
-        self.ordered = array("d", sorted(self.values) if ordered is None else ordered)
-        self._negative = None
-
-    def __len__(self):
-        return len(self.values)
-
-    def __iter__(self):
-        return iter(self.values)
-
-    def __getitem__(self, index):
-        return self.values[index]
-
-    def scaled(self, sign):
-        if sign == 1:
-            return self
-        if self._negative is None:
-            self._negative = StatisticalPopulation(
-                (-v for v in self.values), (-v for v in reversed(self.ordered))
-            )
-        return self._negative
-
-
 def remember(cache, key, build):
     if cache is None:
         return build()
@@ -180,24 +184,109 @@ def remember(cache, key, build):
     return cache[key]
 
 
-def percentile(values, p):
-    s = (
-        values.ordered
-        if isinstance(values, StatisticalPopulation)
-        else sorted(v for v in values if v is not None)
-    )
-    if not s:
+@overload
+def percentile(values: StatisticalPopulation, p: float) -> float | None: ...
+
+
+@overload
+def percentile(values: Iterable[float | Decimal | None], p: float) -> float | Decimal | None: ...
+
+
+def percentile(
+    values: StatisticalPopulation | Iterable[float | Decimal | None], p: float
+) -> float | Decimal | None:
+    if isinstance(p, bool) or not isfinite(p) or not 0 <= p <= 1:
+        raise ValueError("Percentile requires a finite unit probability")
+    if isinstance(values, StatisticalPopulation):
+        if not values:
+            return None
+        position = (len(values) - 1) * p
+        index = int(position)
+        lower = values.ordered_value(index)
+        upper = values.ordered_value(min(index + 1, len(values) - 1))
+        return lower + (upper - lower) * (position - index)
+    ordered = sorted(value for value in values if value is not None)
+    if not ordered:
         return None
-    k = (len(s) - 1) * p
-    i = int(k)
-    return s[i] + (s[min(i + 1, len(s) - 1)] - s[i]) * (
-        decimal(k - i) if isinstance(s[i], Decimal) else k - i
-    )
+    position = (len(ordered) - 1) * p
+    index = int(position)
+    low, high = ordered[index], ordered[min(index + 1, len(ordered) - 1)]
+    if isinstance(low, Decimal):
+        if not isinstance(high, Decimal):
+            raise ValueError("Statistical population cannot mix Decimal and float measures")
+        fraction = Decimal(str(position - index))
+        exact_context(low, high, fraction)
+        return low + (high - low) * fraction
+    if isinstance(high, Decimal):
+        raise ValueError("Statistical population cannot mix Decimal and float measures")
+    return low + (high - low) * (position - index)
 
 
 def normal(values):
     qs = parameter("normal_range_quantiles", [0.025, 0.975])
     return [percentile(values, float(qs[0])), percentile(values, float(qs[1]))] if values else None
+
+
+def baseline_caches() -> BaselineCaches:
+    return BaselineCaches.with_capacity(128)
+
+
+def _float_baseline(values: Sequence[float]) -> FloatRange:
+    measured = normal(values)
+    if measured is None:
+        return FloatRange(bounds=None, reason="INSUFFICIENT_HISTORY")
+    return FloatRange(bounds=FloatBounds(lower=measured[0], upper=measured[1]), reason=None)
+
+
+def _decimal_baseline(values: Sequence[Decimal]) -> DecimalRange:
+    measured = normal(values)
+    if measured is None:
+        return DecimalRange(bounds=None, reason="INCOMPLETE")
+    return DecimalRange(bounds=DecimalBounds(lower=measured[0], upper=measured[1]), reason=None)
+
+
+def _projection_microsecond(value: JsonValue) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("Compact series clocks require integer microseconds")
+    return value
+
+
+def _completion_bit(value: JsonValue) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return value == 1
+    raise ValueError("Compact completion requires an explicit boolean or encoded integer bit")
+
+
+def _history_diagnostic_wire(value: HistoryDiagnostic) -> dict[str, JsonValue]:
+    if isinstance(value, UnavailableHistoryDiagnostics):
+        return {
+            "exact": False,
+            "reason": value.reason,
+            "target_window_duration_s": value.target_window_duration_s,
+        }
+    duration, staleness = value.observed_duration_bounds_s, value.endpoint_staleness_bounds_s
+    return {
+        "target_window_duration_s": value.target_window_duration_s,
+        "observed_duration_bounds_s": None if duration is None else [duration.lower, duration.upper],
+        "endpoint_staleness_bounds_s": None if staleness is None else [staleness.lower, staleness.upper],
+        "exact": value.exact,
+        "resolution_s": value.resolution_s,
+        "alignment": value.alignment,
+        "sample_count": value.sample_count,
+        "latest_observed_at": None if value.latest_observed_at is None else iso(value.latest_observed_at),
+    }
+
+
+def _float_range_values(value: FloatRange) -> list[float] | None:
+    bounds = value.bounds
+    return None if bounds is None else [bounds.lower, bounds.upper]
+
+
+def _decimal_range_values(value: DecimalRange) -> list[Decimal] | None:
+    bounds = value.bounds
+    return None if bounds is None else [bounds.lower, bounds.upper]
 
 
 def float_normal(values):
@@ -228,19 +317,31 @@ def within(v, r):
     return None if b is None else not b
 
 
-def beta(token, benchmark):
-    pairs = [(benchmark[t], token[t]) for t in token.keys() & benchmark.keys()]
-    if len(pairs) < int(parameter("history_min_days", 7)) * 24:
-        return 1.0, "INSUFFICIENT_HISTORY"
-    x, y = zip(*pairs, strict=False)
+def beta(token: Mapping[datetime, float], benchmark: Mapping[datetime, float]) -> BetaEstimate:
+    pairs = [(benchmark[at], token[at]) for at in token.keys() & benchmark.keys()]
+    if any(isinstance(value, bool) or not isfinite(value) for pair in pairs for value in pair):
+        raise ValueError("Beta samples require finite real values")
+    count = len(pairs)
+    if count < 2 or count < int(parameter("history_min_days", 7)) * 24:
+        return UnavailableBeta(
+            kind="UNAVAILABLE", value=None, reason="INSUFFICIENT_HISTORY", paired_sample_count=count
+        )
+    x, y = zip(*pairs, strict=True)
     xm, ym = mean(x), mean(y)
-    den = sum((v - xm) ** 2 for v in x)
+    denominator = sum((value - xm) ** 2 for value in x)
+    if not denominator or not isfinite(denominator):
+        return UnavailableBeta(
+            kind="UNAVAILABLE", value=None, reason="NOT_ESTIMABLE", paired_sample_count=count
+        )
     weight = float(parameter("beta_blume_weight", 2 / 3))
-    return (
-        (weight * sum((a - xm) * (b - ym) for a, b in pairs) / den + (1 - weight), None)
-        if den
-        else (1.0, "NOT_ESTIMABLE")
-    )
+    if not isfinite(weight):
+        raise ValueError("Beta shrinkage weight must be finite")
+    value = weight * sum((a - xm) * (b - ym) for a, b in pairs) / denominator + (1 - weight)
+    if not isfinite(value):
+        return UnavailableBeta(
+            kind="UNAVAILABLE", value=None, reason="NOT_ESTIMABLE", paired_sample_count=count
+        )
+    return EstimatedBeta(kind="ESTIMATED", value=value, paired_sample_count=count)
 
 
 def market_context(r, rv, returns, vols):
@@ -318,9 +419,13 @@ def kline_close_time(row):
     keying prices by it splits hourly archive bars from minute bars closing at hh:00 and
     drops them from every hourly series (F-16: 331 instead of ~2100 BTC 24h samples).
     """
-    if row.get("open_time") is not None:
-        return parse_time(row["open_time"]) + timedelta(seconds=int(row.get("interval_s", 60)))
-    return parse_time(row["close_time"]) if row.get("close_time") else None
+    opened, interval = row.get("open_time"), row.get("interval_s")
+    if opened is not None and interval is not None:
+        if isinstance(interval, bool) or not isinstance(interval, int) or interval <= 0:
+            raise ValueError("Kline close requires declared positive integer interval seconds")
+        return parse_time(opened) + timedelta(seconds=interval)
+    closed = row.get("close_time")
+    return parse_time(closed) if closed is not None else None
 
 
 def _venue(row):
@@ -888,7 +993,7 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
         if cache is not None
         else None
     )
-    ranges = cache.get(history_key) if cache is not None else None
+    ranges = cache.open_interest.get(fingerprint(history_key)) if cache is not None else None
     if ranges is None:
         hn = []
         hu = []
@@ -924,13 +1029,11 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
                 hu = []
             if not native_ends or (max(native_ends) - min(native_ends) + window).total_seconds() < minimum:
                 hn = []
-        ranges = (normal(hn), normal(hu))
+        ranges = OpenInterestBaseline(native=_float_baseline(hn), usd=_float_baseline(hu))
         if cache is not None:
-            cache[history_key] = ranges
-            if len(cache) > 128:
-                cache.pop(next(iter(cache)))
+            cache.open_interest.put(fingerprint(history_key), ranges)
+    nr, ur = _float_range_values(ranges.native), _float_range_values(ranges.usd)
     dn, du = float(n1 / n0 - 1), float(u1 / u0 - 1) if usd_ready else None
-    nr, ur = ranges
     return dict(
         requested_window_duration_s=(end - start).total_seconds(),
         observed_window_duration_s=length.total_seconds(),
@@ -1209,14 +1312,18 @@ def derivatives_truth(snapshot, start, end):
             if baseline_cache is not None
             else None
         )
-        if baseline_cache is not None and funding_key in baseline_cache:
-            fr = baseline_cache[funding_key][0]
-        else:
-            fr = normal(fh) if history_ready else None
+        funding_baseline = (
+            baseline_cache.funding.get(fingerprint(funding_key)) if baseline_cache is not None else None
+        )
+        if funding_baseline is None:
+            funding_baseline = FundingBaseline(
+                equivalent_eight_hour_rate=_decimal_baseline(fh)
+                if history_ready
+                else DecimalRange(bounds=None, reason="INSUFFICIENT_HISTORY")
+            )
             if baseline_cache is not None:
-                baseline_cache[funding_key] = (fr,)
-                if len(baseline_cache) > 128:
-                    baseline_cache.pop(next(iter(baseline_cache)))
+                baseline_cache.funding.put(fingerprint(funding_key), funding_baseline)
+        fr = _decimal_range_values(funding_baseline.equivalent_eight_hour_rate)
         liqs = [r for r in _instrument_rows(snapshot, "liquidations", instrument) if start <= _time(r) < end]
         cov = (rs[-1] if rs else instruments[instrument]).get("liq_coverage") or (
             "COMPLETE" if venue == "bybit" else "SAMPLED" if venue in ("binance", "okx") else "NOT_SUPPORTED"
@@ -1382,7 +1489,9 @@ def _price_groups(snapshot, token=None, *, exact=False, reference_only=False):
             continue
         if token and r.get("token_id") != token and token not in r.get("instrument_id", "").upper():
             continue
-        t = kline_close_time(r) or _time(r) + timedelta(seconds=int(r.get("interval_s", 60)))
+        t = kline_close_time(r)
+        if t is None:
+            continue
         raw = r.get("c", r.get("close"))
         if exact and reference_only:
             raw = raw.get("value") if isinstance(raw, dict) else raw
@@ -1531,18 +1640,28 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         }
 
     def hourly(p):
-        return remember(cache, ("relative_hourly", scope, series_id(p)), lambda: hourly_values(p))
+        key = fingerprint(("relative_hourly", scope, series_id(p)))
 
-    bb, bflag = remember(
-        cache,
-        ("relative_beta", scope, series_id(prices), series_id(btc)),
-        lambda: beta(hourly(prices), hourly(btc)),
+        def build() -> HourlyReturns:
+            return HourlyReturns(by_time=hourly_values(p))
+
+        return (cache.hourly_returns.remember(key, build) if cache is not None else build()).by_time
+
+    btc_beta_key = fingerprint(("relative_beta", scope, series_id(prices), series_id(btc)))
+    eth_beta_key = fingerprint(("relative_beta", scope, series_id(prices), series_id(eth)))
+    btc_beta = (
+        cache.beta.remember(btc_beta_key, lambda: beta(hourly(prices), hourly(btc)))
+        if cache is not None
+        else beta(hourly(prices), hourly(btc))
     )
-    be, eflag = remember(
-        cache,
-        ("relative_beta", scope, series_id(prices), series_id(eth)),
-        lambda: beta(hourly(prices), hourly(eth)),
+    eth_beta = (
+        cache.beta.remember(eth_beta_key, lambda: beta(hourly(prices), hourly(eth)))
+        if cache is not None
+        else beta(hourly(prices), hourly(eth))
     )
+    bb, be = btc_beta.value, eth_beta.value
+    bflag = btc_beta.reason if isinstance(btc_beta, UnavailableBeta) else None
+    eflag = eth_beta.reason if isinstance(eth_beta, UnavailableBeta) else None
     price_times = {}
 
     def price(p, t):
@@ -1554,19 +1673,102 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         pa, pz = price(p, a), price(p, z)
         return pz / pa - 1 if pa and pz else None
 
-    def fresh_price(p, t):
-        """A benchmark/peer price at t only if its last point is within that series' own bar
-        spacing: a base-tier outage must not turn two copies of one old close into a 0 return."""
-        times = price_times.setdefault(id(p), sorted(p)) if id(p) not in price_times else price_times[id(p)]
-        index = bisect_right(times, t) - 1
-        if index < 0:
-            return None
-        step = (times[index] - times[index - 1]).total_seconds() if index > 0 else 60
-        return p[times[index]] if (t - times[index]).total_seconds() <= max(step, 60) else None
+    cadence_by_series: dict[str, dict[datetime, PriceCadence]] = defaultdict(dict)
+    metadata = snapshot.get("capture_metadata")
+    entry = None
+    metric_overrides: dict[str, JsonValue] = {}
+    if metadata is not None:
+        if not isinstance(metadata, dict):
+            raise ValueError("Capture metadata must be an object")
+        collections = metadata.get("collections")
+        if collections is not None:
+            if not isinstance(collections, dict):
+                raise ValueError("Capture collection metadata must be an object")
+            entry = collections.get("klines")
+    if isinstance(entry, dict):
+        collection_cadence = decode_price_cadence(entry.get("cadence_s"), "CAPTURE_METADATA")
+        overrides = entry.get("cadence_s_by_metric")
+        if overrides is not None:
+            if not isinstance(overrides, dict):
+                raise ValueError("Metric cadence overrides must be an object")
+            metric_overrides = overrides
+    else:
+        collection_cadence = decode_price_cadence(entry, "CAPTURE_METADATA")
 
-    def bench_ret(p, a, z):
-        pa, pz = fresh_price(p, a), fresh_price(p, z)
-        return pz / pa - 1 if pa and pz else None
+    def cadence_for(
+        cadence_s: JsonValue, interval_s: JsonValue, metric_key: JsonValue, iid: str
+    ) -> PriceCadence | None:
+        declared = decode_price_cadence(cadence_s, "SERIES_CADENCE")
+        if declared is not None:
+            return declared
+        if metric_key is not None and not isinstance(metric_key, str):
+            raise ValueError("Price metric identity must be text")
+        if isinstance(metric_key, str):
+            if metric_key in metric_overrides:
+                override = decode_price_cadence(metric_overrides[metric_key], "CAPTURE_METADATA")
+                if override is not None:
+                    return override
+            for definition in snapshot.get("semantics", []):
+                if definition.get("metric_key") == metric_key and definition.get("instrument_id") in (
+                    None,
+                    iid,
+                ):
+                    scoped = decode_price_cadence(definition.get("cadence_s"), "METRIC_SEMANTICS")
+                    if scoped is not None:
+                        return scoped
+        if collection_cadence is not None:
+            return collection_cadence
+        return decode_price_cadence(interval_s, "BAR_INTERVAL")
+
+    for row in snapshot.get("klines", []):
+        if row.get("complete") is not True or _market(row) != "SPOT":
+            continue
+        observed = kline_close_time(row)
+        value = number(row.get("c", row.get("close")))
+        iid = row["instrument_id"]
+        if observed is None or value is None or value <= 0 or groups.get(iid, {}).get(observed) != value:
+            continue
+        declared = cadence_for(row.get("cadence_s"), row.get("interval_s"), row.get("metric_key"), iid)
+        cadence_by_series[iid].pop(observed, None)
+        if declared is not None:
+            cadence_by_series[iid][observed] = declared
+
+    epoch = parse_time("1970-01-01T00:00:00Z")
+    for iid, projection in (snapshot.get("stat_price_series") or {}).items():
+        if projection.get("time_basis") != "CLOSE_TIME":
+            continue
+        intervals = projection.get("intervals_s")
+        if intervals is not None and len(intervals) != len(projection["times_us"]):
+            raise ValueError("Price interval vector must match its observation times")
+        for index, (micros, raw) in enumerate(zip(projection["times_us"], projection["values"], strict=True)):
+            declared = cadence_for(
+                projection.get("cadence_s"),
+                projection.get("interval_s") if intervals is None else intervals[index],
+                projection.get("metric_key"),
+                iid,
+            )
+            observed = epoch + timedelta(microseconds=_projection_microsecond(micros))
+            value = number(raw)
+            if value is None or value <= 0 or groups.get(iid, {}).get(observed) != value:
+                continue
+            cadence_by_series[iid].pop(observed, None)
+            if declared is not None:
+                cadence_by_series[iid][observed] = declared
+
+    reference_series: dict[int, ReferencePriceSeries] = {}
+
+    def fresh_price(p: Mapping[datetime, float], t: datetime) -> ReferencePrice:
+        key = id(p)
+        if key not in reference_series:
+            declared: dict[datetime, PriceCadence] = {}
+            for iid in series_id(p):
+                declared.update(cadence_by_series[iid])
+            reference_series[key] = ReferencePriceSeries(p, declared)
+        return reference_series[key].at(t)
+
+    def bench_ret(p: Mapping[datetime, float], a: datetime, z: datetime) -> ReferencePriceReturn:
+        fresh_price(p, a)
+        return reference_series[id(p)].return_between(a, z)
 
     benchmark = token_symbols.get(token_id) == "BTC"
     historical_times = sorted(t for t in prices if t < start)
@@ -1574,9 +1776,11 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         (b - a).total_seconds() for a, b in zip(historical_times, historical_times[1:], strict=False) if b > a
     ]
     history_resolution_s = int(median(deltas)) if deltas else None
-    history_diagnostics = {}
+    history_diagnostics: dict[float, HistoryDiagnostic] = {}
 
     def hist_values(length):
+        if not benchmark and bb is None:
+            return []
         if (
             not historical_times
             or (historical_times[-1] - historical_times[0]).total_seconds()
@@ -1612,31 +1816,50 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             durations.append((t - a).total_seconds())
             stalenesses.append(lag)
             ends.append(t)
-        history_diagnostics[length] = dict(
+        if history_resolution_s is None:
+            raise ValueError("Observed historical windows require a measured resolution")
+        history_diagnostics[length] = HistoryDiagnostics(
             target_window_duration_s=length,
-            observed_duration_bounds_s=[min(durations), max(durations)] if durations else None,
-            endpoint_staleness_bounds_s=[min(stalenesses), max(stalenesses)] if stalenesses else None,
+            observed_duration_bounds_s=DurationBounds(lower=min(durations), upper=max(durations))
+            if durations
+            else None,
+            endpoint_staleness_bounds_s=DurationBounds(lower=min(stalenesses), upper=max(stalenesses))
+            if stalenesses
+            else None,
             exact=bool(stalenesses) and max(stalenesses) == 0,
             resolution_s=history_resolution_s,
             alignment="AS_OF_AT_EXACT_TARGET_BOUNDS",
             sample_count=len(out),
-            latest_observed_at=iso(max(ends)) if ends else None,
+            latest_observed_at=max(ends) if ends else None,
         )
         return out
 
     def hist(length):
-        key = ("relative_hist", scope, ref, series_id(btc), bb, benchmark, length)
+        key = fingerprint(("relative_hist", scope, ref, series_id(btc), bb, benchmark, length))
 
-        def build():
+        def build() -> RelativeHistory:
             values = hist_values(length)
-            return StatisticalPopulation(values) if cache is not None else values, deepcopy(
-                history_diagnostics.get(length, {})
+            diagnostic = history_diagnostics.get(length)
+            if diagnostic is None:
+                diagnostic = UnavailableHistoryDiagnostics(
+                    target_window_duration_s=length,
+                    exact=False,
+                    reason=bflag
+                    if not benchmark and bb is None
+                    else "INSUFFICIENT_HISTORY"
+                    if historical_times
+                    else "INCOMPLETE",
+                    resolution_s=history_resolution_s,
+                    sample_count=0,
+                )
+            return RelativeHistory(
+                samples=StatisticalPopulation(float(value) for value in values),
+                diagnostics=diagnostic,
             )
 
-        values, diagnostic = remember(cache, key, build)
-        if diagnostic:
-            history_diagnostics[length] = diagnostic
-        return values
+        found = cache.relative_history.remember(key, build) if cache is not None else build()
+        history_diagnostics[length] = found.diagnostics
+        return found.samples
 
     windows = {}
     for name, length in dict(WINDOWS, EVENT=(end - start).total_seconds()).items():
@@ -1658,9 +1881,10 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             if name == "EVENT"
             else ret(prices, a, end)
         )
-        rb = bench_ret(btc, a, end)
-        re = bench_ret(eth, a, end)
-        adj = r - bb * rb if r is not None and rb is not None and not benchmark else None
+        btc_reference = bench_ret(btc, a, end)
+        eth_reference = bench_ret(eth, a, end)
+        rb, re = btc_reference.value, eth_reference.value
+        adj = r - bb * rb if r is not None and rb is not None and bb is not None and not benchmark else None
         measure = r if benchmark else adj
         h = hist(length)
         windows[name] = dict(
@@ -1674,23 +1898,30 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             coverage={"reference_venue": ref, "complete_24h": bool(ref)},
             r_raw=r,
             r_btc_adj=adj,
-            r_btc_adj_reason="NOT_APPLICABLE_BENCHMARK" if benchmark else None,
+            r_btc_adj_reason="NOT_APPLICABLE_BENCHMARK"
+            if benchmark
+            else bflag
+            if bb is None
+            else btc_reference.reason
+            if rb is None
+            else None,
             relative_measure="R_RAW" if benchmark else "R_BTC_ADJ",
+            btc_reference_freshness=btc_reference.freshness().model_dump(mode="json"),
+            eth_reference_freshness=eth_reference.freshness().model_dump(mode="json"),
             relative_return=measure,
-            r_eth_adj=r - be * re if r is not None and re is not None else None,
+            r_eth_adj=r - be * re if r is not None and re is not None and be is not None else None,
+            r_eth_adj_reason=eflag if be is None else None,
             r_sector_adj=None,
             sector_reason="NOT_ESTIMABLE",
             pctile=ratio(sum(x <= measure for x in h), len(h)) if measure is not None and h else None,
             normal_range=float_normal(h),
-            normal_range_reason=range_reason(h),
+            normal_range_reason=bflag if not benchmark and bb is None else range_reason(h),
             beyond_normal=beyond(measure, float_normal(h)),
             historical_window_resolution_s=history_resolution_s,
             historical_window_duration_s=length,
             requested_window_duration_s=length,
             historical_alignment="AS_OF_AT_EXACT_TARGET_BOUNDS",
-            historical_measurement=history_diagnostics.get(
-                length, {"exact": False, "reason": "INCOMPLETE", "target_window_duration_s": length}
-            ),
+            historical_measurement=_history_diagnostic_wire(history_diagnostics[length]),
         )
 
     sector_members = defaultdict(list)
@@ -1736,7 +1967,8 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     not_applicable = sector == "IDENTITY_PAYMENTS"
     for name, length in dict(WINDOWS, EVENT=(end - start).total_seconds()).items():
         peer_returns = [
-            bench_ret(peer_series(identity), end - timedelta(seconds=length), end) for identity in tradable
+            bench_ret(peer_series(identity), end - timedelta(seconds=length), end).value
+            for identity in tradable
         ]
         peer_returns = [v for v in peer_returns if v is not None]
         raw = windows[name]["r_raw"]
@@ -1756,7 +1988,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     dh = hist(86400)
     sign = -1 if snapshot.get("expected_direction") in ("BEARISH", "LOSER", -1) else 1
     eventr = windows["EVENT"]["relative_return"]
-    br = bench_ret(btc, end - timedelta(days=1), end)
+    br = bench_ret(btc, end - timedelta(days=1), end).value
     bh = []
     rvhist = []
     rv = None
@@ -1778,11 +2010,16 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             ]
             if len(lr) == 24:
                 rvhist.append(stdev(lr))
-        return StatisticalPopulation(bh) if cache is not None else bh, StatisticalPopulation(
-            rvhist
-        ) if cache is not None else rvhist
+        return BitcoinContextHistory(
+            returns=StatisticalPopulation(float(value) for value in bh),
+            volatility=StatisticalPopulation(float(value) for value in rvhist),
+        )
 
-    bh, rvhist = remember(cache, ("btc_context_history", scope, series_id(btc)), btc_baseline)
+    context_key = fingerprint(("btc_context_history", scope, series_id(btc)))
+    context_history = (
+        cache.bitcoin_context.remember(context_key, btc_baseline) if cache is not None else btc_baseline()
+    )
+    bh, rvhist = context_history.returns, context_history.volatility
     lr = [
         log(btc_hourly[t] / btc_hourly[t - timedelta(hours=1)])
         for t in btc_hourly
@@ -1798,8 +2035,14 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         rvhist = []
     context = market_context(br, rv, bh, rvhist)
     pre = ret(prices, start - timedelta(days=1), start)
-    preb = bench_ret(btc, start - timedelta(days=1), start)
-    ar = pre if benchmark else pre - bb * preb if pre is not None and preb is not None else None
+    preb = bench_ret(btc, start - timedelta(days=1), start).value
+    ar = (
+        pre
+        if benchmark
+        else pre - bb * preb
+        if pre is not None and preb is not None and bb is not None
+        else None
+    )
     horizon_ranges = {}
     for name, length in (
         [
@@ -1814,18 +2057,21 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         else []
     ):
         history = hist(length)
-        diagnostic = history_diagnostics.get(length, {})
+        diagnostic = history_diagnostics[length]
         horizon_ranges[name] = dict(
             value=float_normal(history),
             unit="DECIMAL_RETURN",
+            relative_measure="R_RAW" if benchmark else "R_BTC_ADJ",
             window=name,
             start=iso(start - timedelta(days=lookback_days())),
             cutoff=iso(start),
-            observed_at=diagnostic.get("latest_observed_at"),
+            observed_at=iso(diagnostic.latest_observed_at)
+            if isinstance(diagnostic, HistoryDiagnostics) and diagnostic.latest_observed_at is not None
+            else None,
             precision=f"BUCKET({history_resolution_s}s)" if history_resolution_s else None,
             coverage={"sample_count": len(history)},
-            reason=None if history else "NOT_ESTIMABLE",
-            historical_measurement=diagnostic,
+            reason=bflag if not benchmark and bb is None else None if history else "NOT_ESTIMABLE",
+            historical_measurement=_history_diagnostic_wire(diagnostic),
         )
     btc_ids = {iid: p for iid, p in groups.items() if token_symbols.get(identities.get(iid)) == "BTC"}
     btc_iid = max(btc_ids, key=lambda iid: coverage_counts.get(iid, len(btc_ids[iid]))) if btc_ids else None
@@ -1874,6 +2120,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         beta_btc=bb,
         beta_eth=be,
         beta_flags=dict(btc=bflag, eth=eflag),
+        beta_estimates={"btc": btc_beta.model_dump(mode="json"), "eth": eth_beta.model_dump(mode="json")},
         pre_event_runup=dict(
             window="PRE_EVENT_W24H",
             start=iso(start - timedelta(days=1)),
@@ -3018,7 +3265,7 @@ def supply_truth(snapshot, start, end):
                         if isinstance(stamp, bool) or isinstance(raw_value, bool):
                             continue
                         value = decimal(raw_value)
-                        point_time = parse_time(stamp)
+                        point_time = parse_epoch(stamp, unit="s")
                         if point_time <= end and value is not None and value.is_finite():
                             chart_points.append(
                                 (
@@ -3067,7 +3314,9 @@ def supply_truth(snapshot, start, end):
             ),
             protocols=protocols,
             coverage=coverage,
-            as_of=iso(_time(fundamentals)),
+            **propagate_timestamp(
+                fundamentals, "ts", missing_reason="FUNDAMENTALS_TIME_PROVENANCE_UNAVAILABLE"
+            ).fields("as_of"),
             capture_received_at=fundamentals.get("received_ts"),
             capture_availability="KNOWN" if fundamentals.get("received_ts") is not None else "UNKNOWN",
             age_s=age,
@@ -3541,7 +3790,7 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
                 index_cache = _BASELINE_CACHE.get()
                 previous_head = projection.get("previous_dependency_fingerprint") if projection else None
                 prior = (
-                    index_cache.get(("native-volume-index", iid, previous_head))
+                    index_cache.native_volume.get(fingerprint(("native-volume-index", iid, previous_head)))
                     if index_cache is not None and previous_head
                     else None
                 )
@@ -3550,24 +3799,24 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
                     and projection.get("append_only") is True
                     and prior is not None
                     and projection.get("changed_from_us") is not None
-                    and projection["changed_from_us"] > prior["last_open_us"]
+                    and (prior.last_open_us is None or projection["changed_from_us"] > prior.last_open_us)
                 )
-                bounds = dict(prior["bounds"]) if append else {}
-                running = prior["running"] if append else Decimal(0)
-                segment = prior["segment"] if append else 0
-                last = prior["last"] if append else None
-                last_open_us = prior["last_open_us"] if append else -(2**63)
+                bounds = dict(prior.bounds) if append else {}
+                running = prior.running if append else Decimal(0)
+                segment = prior.segment if append else 0
+                last = prior.last if append else None
+                last_open_us = prior.last_open_us if append else None
                 if projection is not None:
                     epoch = parse_time("1970-01-01T00:00:00Z")
-                    times = projection.get("times_us", ())
+                    times = projection["times_us"]
                     begin = bisect_left(times, projection["changed_from_us"]) if append else 0
                     source = (
                         (
-                            epoch + timedelta(microseconds=int(times[j])),
-                            int(projection.get("interval_s", 60)),
+                            epoch + timedelta(microseconds=_projection_microsecond(times[j])),
+                            int(projection["interval_s"]),
                             projection["values"][j],
-                            bool(projection["complete"][j]),
-                            int(times[j]),
+                            _completion_bit(projection["complete"][j]),
+                            _projection_microsecond(times[j]),
                         )
                         for j in range(begin, len(times))
                     )
@@ -3575,7 +3824,7 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
                     source = (
                         (
                             _time(row),
-                            int(row.get("interval_s", 60)),
+                            int(row["interval_s"]),
                             row.get("volume_native"),
                             row.get("complete") is True,
                             None,
@@ -3589,34 +3838,37 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
                     if micros is not None:
                         last_open_us = micros
                     value = decimal(raw)
-                    if not complete or value is None:
+                    if not complete or value is None or not value.is_finite() or value < 0:
                         segment += 1
                         last = None
                         continue
                     if last != a:
                         segment += 1
-                    bounds[a] = (running, segment)
+                    bounds[a] = NativeVolumeBoundary(cumulative=running, segment=segment)
                     running += value
-                    bounds[z] = (running, segment)
+                    bounds[z] = NativeVolumeBoundary(cumulative=running, segment=segment)
                     last = z
-                return dict(
+                return NativeVolumeIndex(
                     bounds=bounds, running=running, segment=segment, last=last, last_open_us=last_open_us
                 )
 
             head = projection.get("dependency_fingerprint") if projection is not None else None
+            index_cache = _BASELINE_CACHE.get()
             index = (
-                remember(_BASELINE_CACHE.get(), ("native-volume-index", iid, head), build_index)
-                if head is not None and _BASELINE_CACHE.get() is not None
+                index_cache.native_volume.remember(
+                    fingerprint(("native-volume-index", iid, head)), build_index
+                )
+                if head is not None and index_cache is not None
                 else build_index()
             )
-            market_indexes[iid] = index["bounds"]
+            market_indexes[iid] = index.bounds
 
         def total(a, z):
             values = []
             for bounds in market_indexes.values():
-                if a not in bounds or z not in bounds or bounds[a][1] != bounds[z][1]:
+                if a not in bounds or z not in bounds or bounds[a].segment != bounds[z].segment:
                     return None
-                values.append(bounds[z][0] - bounds[a][0])
+                values.append(bounds[z].cumulative - bounds[a].cumulative)
             return sum(values, Decimal(0)) if values else None
 
         current, previous = total(start, end), total(start - length, start)
@@ -4990,7 +5242,7 @@ def _compute_market_truth_slot(snapshot, *, config=None, baseline_cache=None):
     if config.get("market_context_rule", "normal_range") != "normal_range":
         raise ValueError("Only the approved §5.7 normal_range market context rule is supported")
     token = _PARAMETERS.set(config)
-    baselines = _BASELINE_CACHE.set(baseline_cache if baseline_cache is not None else {})
+    baselines = _BASELINE_CACHE.set(baseline_cache if baseline_cache is not None else baseline_caches())
     dependency = _BASELINE_DEPENDENCY.set(None)
     inputs = _ASSESSMENT_INPUTS.set({})
     times = _TIMES.set({})
@@ -5185,15 +5437,12 @@ def condition_depth(snapshot, end):
                     ]
                 ),
             )
-            if baseline is not None and key in baseline:
-                previous.append(baseline[key])
-            else:
-                value = mean(depths)
-                previous.append(value)
+            cached_depth = baseline.depth.get(fingerprint(key)) if baseline is not None else None
+            if cached_depth is None:
+                cached_depth = DepthBaseline(mean_usd=mean(depths))
                 if baseline is not None:
-                    baseline[key] = value
-                    if len(baseline) > 128:
-                        baseline.pop(next(iter(baseline)))
+                    baseline.depth.put(fingerprint(key), cached_depth)
+            previous.append(cached_depth.mean_usd)
         cadence, source = capture_cadence(snapshot, "books", latest)
         observations.append(
             dict(
@@ -5309,7 +5558,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
     """Transient requested-domain graph; no full MTA orchestration or persistence."""
     config = config or {}
     cache = cache if cache is not None else {}
-    baseline_cache = baseline_cache if baseline_cache is not None else {}
+    baseline_cache = baseline_cache if baseline_cache is not None else baseline_caches()
     parameters = _PARAMETERS.set(config)
     baselines = _BASELINE_CACHE.set(baseline_cache)
     try:
@@ -5419,7 +5668,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
             )
             hit = key in cache
             if not hit:
-                selected = {field: snapshot.get(field, []) for field in fields}
+                selected = {field: snapshot[field] for field in fields if field in snapshot}
                 selected.update(
                     token_id=snapshot.get("token_id"),
                     cutoff=iso(end),
@@ -5639,10 +5888,10 @@ class MarketTruthService:
         self.repo, self.settings, self.market = repo, settings, market
         self.versions = versions
         self._condition_cache = {}
-        self._condition_baselines = {}
+        self._condition_baselines = baseline_caches()
 
-        self._assessment_baselines = {}
-        self._assessment_locks = {}
+        self._assessment_baselines: dict[str, BaselineCaches] = {}
+        self._assessment_locks: dict[str, asyncio.Lock] = {}
 
     async def condition_values(self, event_id, token_id, cutoff, requirements):
         event = await self.repo.get("evt.events", event_id) if event_id else None
@@ -5723,7 +5972,7 @@ class MarketTruthService:
                 compute_market_truth,
                 snapshot,
                 config=knobs,
-                baseline_cache=self._assessment_baselines.setdefault(token_id, {}),
+                baseline_cache=self._assessment_baselines.setdefault(token_id, baseline_caches()),
             )
         result["mta_id"] = new_id("MTA")
         await self.repo.put("ana.market_truth", result["mta_id"], result, immutable=True)

@@ -4,10 +4,29 @@ import math
 import re
 from typing import Literal
 
-from pydantic import JsonValue
+from pydantic import Field, JsonValue
+
+from tank.contracts import DomainModel
 
 type JsonType = Literal["object", "array", "string", "boolean", "integer", "number", "null"]
 type Number = int | float
+
+
+class ToolDefinition(DomainModel):
+    name: str = Field(min_length=1)
+    description: str
+    input_schema: dict[str, JsonValue]
+
+
+def parse_tool_definitions(value: JsonValue) -> tuple[ToolDefinition, ...]:
+    if not isinstance(value, list):
+        raise ToolSchemaError("Configured tools must be a JSON array")
+    tools = tuple(ToolDefinition.model_validate(row) for row in value)
+    names = [tool.name for tool in tools]
+    if len(names) != len(set(names)):
+        raise ToolSchemaError("Configured tools contain duplicate names")
+    return tools
+
 
 SCOPED_TOOLS = frozenset(
     {

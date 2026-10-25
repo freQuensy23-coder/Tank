@@ -7,6 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture
+from scheduling_support import RecordingReactionScheduling
 from test_agents_execution_barrier import config, idle
 from test_event_tools import extraction, unknown_assessment
 from test_session_binding_concurrency import fixture_repo, seed
@@ -42,7 +43,14 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
         await repo.put("ops.agent_sessions", "s", session)
         args["token_ids"] = ["world:WLD"]
         args["claims"] = extraction()["claims"]
-        tools = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+        tools = EventToolService(
+            repo,
+            Settings(data_dir=tmp_path),
+            None,
+            None,
+            versions=declared_versions_fixture(),
+            scheduler=RecordingReactionScheduling(),
+        )
         requests, posts, accepted = [], [], []
 
         def handler(request: pytest.FixtureRequest):

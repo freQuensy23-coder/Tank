@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_versions
 
 from tank.analysis.decisions import DecisionEngine
@@ -27,7 +28,14 @@ async def test_scoped_global_and_resolved_fatal_condition_to_actual_decision(
 
     repo = MemoryRepository()
     settings = Settings(data_dir=tmp_path)
-    tools = EventToolService(repo, settings, None, DecisionEngine(settings), versions=fixture_versions())
+    tools = EventToolService(
+        repo,
+        settings,
+        None,
+        DecisionEngine(settings),
+        versions=fixture_versions(),
+        scheduler=RecordingReactionScheduling(),
+    )
     event, ems, beneficiary, market = inputs()
     now = utcnow()
     event.update(current_ems_id="ems", lifecycle="MONITORING")

@@ -18,6 +18,7 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 
 from tank.contracts.configuration import DeliveryConfiguration, Thresholds
 from tank.contracts.json import JsonDocument, decode_json
+from tank.contracts.openma import OpenMAConfiguration
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.registry import (
     DependencyConfiguration,
@@ -200,6 +201,14 @@ class Settings(BaseSettings):
             raise ValueError("Version provenance no longer matches the captured identity")
         return self._version_identity
 
+    def captured_config_paths(self) -> tuple[str, ...]:
+        """List the immutable configuration inventory attached to resolved provenance."""
+        self.require_versions()
+        snapshot = self._config_snapshot
+        if snapshot is None:
+            raise ValueError("Captured configuration is unavailable")
+        return tuple(sorted(snapshot))
+
     def configured_secrets(self) -> frozenset[str]:
         """Return configured credentials without reading any credential files."""
         secrets = {
@@ -271,8 +280,13 @@ class Settings(BaseSettings):
 
     def load_config_as[T: BaseModel](self, name: str, schema: type[T]) -> T:
         relative = name if name.endswith((".yaml", ".yml")) else name + ".yaml"
+        if self._config_snapshot is not None:
+            return schema.model_validate(self.load_config(relative), strict=True)
         payload = yaml.load(self.read_config_bytes(relative), Loader=_YAML_LOADER)
         return schema.model_validate(payload, strict=True)
+
+    def openma(self) -> OpenMAConfiguration:
+        return self.load_config_as("openma", OpenMAConfiguration)
 
     def registry(self) -> RegistryConfiguration:
         return self.load_config_as("registry", RegistryConfiguration)
@@ -340,7 +354,7 @@ def resolve_versions(settings: Settings) -> Settings:
             if not isinstance(yaml.safe_load(content), dict):
                 raise ValueError(f"Configuration must be a mapping: {name}")
         elif name.endswith(".json"):
-            json.loads(content)
+            decode_json(content)
     if _PROCESS_CODE_VERSION is None:
         _PROCESS_CODE_VERSION = _digest(_capture_tree(Path(__file__).parent, {".py", ".sql", ".json"}))
     resolved = settings.model_copy(update={"config_version": version, "code_version": _PROCESS_CODE_VERSION})

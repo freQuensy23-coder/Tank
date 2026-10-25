@@ -8,10 +8,11 @@ from decimal import ROUND_DOWN, Decimal
 from pathlib import Path
 
 import pytest
+from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_versions
 
 from tank.analysis.truth import decomposition, enrich_evidence, oi_class, spot_truth
-from tank.util import iso, parse_time
+from tank.util import clock_iso, iso, parse_time
 
 END = parse_time("2026-10-16T12:00:00Z")
 
@@ -144,11 +145,18 @@ async def service(tmp_path: Path):
 
     repo = MemoryRepository()
     await repo.open()
-    return EventToolService(repo, Settings(data_dir=tmp_path), None, None, versions=fixture_versions())
+    return EventToolService(
+        repo,
+        Settings(data_dir=tmp_path),
+        None,
+        None,
+        versions=fixture_versions(),
+        scheduler=RecordingReactionScheduling(),
+    )
 
 
 async def recorded(service, state):
-    now = iso()
+    now = clock_iso()
     await service.repo.put(
         "ingest.source_items",
         "t7",

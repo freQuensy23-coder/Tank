@@ -4,9 +4,11 @@ from pathlib import Path
 import httpx
 import pytest
 from model_fixture import audited_result, model_arguments
+from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_versions
 
 from tank.replay import ReplayClock, ReplayError, evaluate_frozen, load_inputs, replay_bundle
+from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 
@@ -298,12 +300,13 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
     old_sid = "original-live-session"
     cfg = {
         "registry": {"tokens": [{"token_id": "T", "symbol": "T"}], "entities": [], "instruments": []},
+        "sources": {"sources": [{"source_id": "S01", "name": "Synthetic replay source"}]},
         "openma": {
             "agent_id": "captured-analyst",
             "environment_id": "original-live-env",
             "replay_environment_id": "tank-replay-fixture-env",
         },
-        "thresholds": {},
+        "thresholds": Settings(_env_file=None).load_config("thresholds"),
         "semantics": {},
         "dependency_map": {},
     }
@@ -663,13 +666,23 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
 
     repo = MemoryRepository()
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+        reaction_truth = MarketTruthService(repo, config, CapturedMarket(), versions=fixture_versions())
+        reaction_scheduler = Scheduler(
+            repo,
+            config,
+            reaction_truth.market,
+            reaction_truth,
+            thresholds=config.thresholds(),
+            versions=fixture_versions(),
+        )
         tools = EventToolService(
             repo,
             config,
-            MarketTruthService(repo, config, CapturedMarket(), versions=fixture_versions()),
+            reaction_truth,
             DecisionEngine(config),
             http=http,
             versions=fixture_versions(),
+            scheduler=reaction_scheduler,
         )
         report = await replay_agent_session(
             packet,
@@ -1102,8 +1115,9 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
 
     first_at, second_at = "2026-09-24T11:59:00Z", "2026-09-24T12:00:00Z"
     cfg = {
-        "registry": {"tokens": []},
-        "thresholds": {},
+        "registry": {"tokens": [], "entities": [], "instruments": []},
+        "sources": {"sources": [{"source_id": "S01", "name": "Synthetic replay source"}]},
+        "thresholds": Settings(_env_file=None).load_config("thresholds"),
         "semantics": {},
         "dependency_map": {},
         "openma": {"agent_id": "analyst", "environment_id": "live", "replay_environment_id": "replay"},
@@ -1120,7 +1134,9 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
     retained_path = packet.parent / "legacy-detail.json"
     retained_path.write_bytes(retained)
     feed = {"url": "https://captured.example/binance-cms", "kind": "json"}
-    cfg["sources"] = {"sources": [{"source_id": "S09", "feeds": [feed]}]}
+    cfg["sources"] = {
+        "sources": [{"source_id": "S09", "name": "Synthetic captured CMS source", "feeds": [feed]}]
+    }
     data = json.loads(packet.read_text())
     data["registry"] = cfg["registry"]
     data["config"] = {key: value for key, value in cfg.items() if key != "registry"}
@@ -1399,14 +1415,24 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
         raise AssertionError("Unexpected request")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+        reaction_truth = MarketTruthService(
+            repo, config, ReplayMarketReader(load_inputs(packet, config)), versions=fixture_versions()
+        )
+        reaction_scheduler = Scheduler(
+            repo,
+            config,
+            reaction_truth.market,
+            reaction_truth,
+            thresholds=config.thresholds(),
+            versions=fixture_versions(),
+        )
         tools = EventToolService(
             repo,
             config,
-            MarketTruthService(
-                repo, config, ReplayMarketReader(load_inputs(packet, config)), versions=fixture_versions()
-            ),
+            reaction_truth,
             DecisionEngine(config),
             versions=fixture_versions(),
+            scheduler=reaction_scheduler,
         )
         report = await replay_agent_session(
             packet,
@@ -1712,8 +1738,9 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
     trigger = "2026-09-08T00:00:00Z" if premature_trigger else "2026-09-09T00:00:00Z"
     cutoff = "2026-09-10T00:00:00Z"
     cfg = {
-        "registry": {"tokens": [{"token_id": "T", "symbol": "T"}]},
-        "thresholds": {"call_expiry_days": 7},
+        "registry": {"tokens": [{"token_id": "T", "symbol": "T"}], "entities": [], "instruments": []},
+        "sources": {"sources": [{"source_id": "S01", "name": "Synthetic replay source"}]},
+        "thresholds": {**Settings(_env_file=None).load_config("thresholds"), "call_expiry_days": 7},
         "semantics": {},
         "dependency_map": {},
         "openma": {"agent_id": "analyst", "environment_id": "live", "replay_environment_id": "replay"},
@@ -2023,14 +2050,24 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
 
     repo = MemoryRepository()
     async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
+        reaction_truth = MarketTruthService(
+            repo, config, ReplayMarketReader(load_inputs(packet, config)), versions=fixture_versions()
+        )
+        reaction_scheduler = Scheduler(
+            repo,
+            config,
+            reaction_truth.market,
+            reaction_truth,
+            thresholds=config.thresholds(),
+            versions=fixture_versions(),
+        )
         tools = EventToolService(
             repo,
             config,
-            MarketTruthService(
-                repo, config, ReplayMarketReader(load_inputs(packet, config)), versions=fixture_versions()
-            ),
+            reaction_truth,
             DecisionEngine(config),
             versions=fixture_versions(),
+            scheduler=reaction_scheduler,
         )
         report = await replay_agent_session(
             packet,
@@ -2110,8 +2147,9 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
         "created_by": "old-decision",
     }
     cfg = {
-        "registry": {"tokens": [{"token_id": "T", "symbol": "T"}]},
-        "thresholds": {},
+        "registry": {"tokens": [{"token_id": "T", "symbol": "T"}], "entities": [], "instruments": []},
+        "sources": {"sources": [{"source_id": "S01", "name": "Synthetic replay source"}]},
+        "thresholds": Settings(_env_file=None).load_config("thresholds"),
         "semantics": {},
         "dependency_map": {},
         "openma": {"agent_id": "analyst", "environment_id": "live", "replay_environment_id": "replay"},
@@ -2390,14 +2428,24 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
         raise AssertionError("Unexpected request")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
+        reaction_truth = MarketTruthService(
+            repo, config, ReplayMarketReader(load_inputs(packet, config)), versions=fixture_versions()
+        )
+        reaction_scheduler = Scheduler(
+            repo,
+            config,
+            reaction_truth.market,
+            reaction_truth,
+            thresholds=config.thresholds(),
+            versions=fixture_versions(),
+        )
         tools = EventToolService(
             repo,
             config,
-            MarketTruthService(
-                repo, config, ReplayMarketReader(load_inputs(packet, config)), versions=fixture_versions()
-            ),
+            reaction_truth,
             DecisionEngine(config),
             versions=fixture_versions(),
+            scheduler=reaction_scheduler,
         )
 
         async def fixture_grade(arguments, context):
@@ -2621,7 +2669,8 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
     data["records"][0]["as_of_evidence"].update(raw_sha256=sha256(raw), body_sha256=sha256(body))
     baseline = Settings(data_dir=tmp_path)
     cfg = {
-        name: baseline.load_config(name) for name in ("registry", "thresholds", "semantics", "dependency_map")
+        name: baseline.load_config(name)
+        for name in ("registry", "sources", "thresholds", "semantics", "dependency_map")
     }
     cfg["openma"] = {
         "agent_id": "fixture-agent",
@@ -2877,13 +2926,25 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
         from tank.fixture_reference import TrustedFixtureClock
 
         inputs = load_inputs(path, config)
+        reaction_truth = MarketTruthService(
+            repo, config, ReplayMarketReader(inputs), versions=fixture_versions()
+        )
+        reaction_scheduler = Scheduler(
+            repo,
+            config,
+            reaction_truth.market,
+            reaction_truth,
+            thresholds=config.thresholds(),
+            versions=fixture_versions(),
+        )
         tools = EventToolService(
             repo,
             config,
-            MarketTruthService(repo, config, ReplayMarketReader(inputs), versions=fixture_versions()),
+            reaction_truth,
             DecisionEngine(config),
             reference_clock=TrustedFixtureClock(inputs) if inputs.fixture_reference else None,
             versions=fixture_versions(),
+            scheduler=reaction_scheduler,
         )
         if profile == "ordinary_missing_sent":
             with pytest.raises(ReplayError, match="one captured SENT delivery receipt required"):
@@ -2958,14 +3019,21 @@ async def test_captured_tools_decision_refreshes_fired_market_watch_offline(
     market = ReleasedMarket(shifted_snapshot(end))
     truth = MarketTruthService(source, cfg, market, versions=fixture_versions())
     first = await truth.assess("e", "T", chosen_boundary(earlier, precision="BUCKET(1m)"))
-    tools = EventToolService(source, cfg, truth, DecisionEngine(), versions=fixture_versions())
+    tools = EventToolService(
+        source,
+        cfg,
+        truth,
+        DecisionEngine(),
+        versions=fixture_versions(),
+        scheduler=RecordingReactionScheduling(),
+    )
     initial = await tools.dispatch("get_decision", {"event_id": "e", "token_id": "T"}, {})
     watch = next(row for row in initial["conditions"] if row["role"] == "UPGRADE")
     watch.update(status="FIRED", fired_at=data["cutoff"])
     snapshot = shifted_snapshot(end)
     data["registry"] = {"tokens": [{"token_id": "T", "symbol": "T"}], "instruments": []}
     data["config"] = {
-        "thresholds": {},
+        "thresholds": Settings(_env_file=None).load_config("thresholds"),
         "semantics": {},
         "dependency_map": {},
         "replay_tool_calls": [

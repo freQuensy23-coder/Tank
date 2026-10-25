@@ -7,11 +7,13 @@ from pathlib import Path
 import httpx
 import pytest
 import zstandard
+from scheduling_support import RecordingReactionScheduling
+from source_support import fixture_versions
 
 import tank.event_tools as CANDIDATE
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.util import iso, sha256
+from tank.util import clock_iso, sha256
 
 CLIENT = httpx.AsyncClient
 
@@ -35,7 +37,13 @@ async def setup(tmp_path: Path, handler, owned, monkeypatch: pytest.MonkeyPatch)
     await repo.open()
     client = CLIENT(transport=httpx.MockTransport(handler), timeout=None)
     service = CANDIDATE.EventToolService(
-        repo, Settings(data_dir=tmp_path), None, None, http=None if owned else client
+        repo,
+        Settings(data_dir=tmp_path),
+        None,
+        None,
+        http=None if owned else client,
+        versions=fixture_versions(),
+        scheduler=RecordingReactionScheduling(),
     )
     if owned:
 
@@ -211,7 +219,7 @@ async def test_exchange_page_is_fetched_by_tank_capture(
                 "content_type": "text/html",
                 "body": "<p>listed</p>",
                 "sha256": sha256(b"<p>listed</p>"),
-                "fetched_at": iso(),
+                "fetched_at": clock_iso(),
                 "bytes": len(b"<p>listed</p>"),
                 "source_id": row["request"]["source_id"],
             },
