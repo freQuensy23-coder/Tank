@@ -9,6 +9,7 @@ from tank.analysis.statistics_contracts import (
     BitcoinContextHistory,
     DecimalBounds,
     DecimalRange,
+    EstimatedBeta,
     FloatBounds,
     FloatRange,
     HistoryDiagnostics,
@@ -130,3 +131,10 @@ def test_family_cache_evicts_oldest_only_and_does_not_recompute_hits() -> None:
     assert cache.get("first-fingerprint") is None
     assert cache.get("second-fingerprint") == 2
     assert cache.get("third-fingerprint") == 4
+
+
+def test_measured_zero_beta_remains_estimated_and_finite() -> None:
+    estimate = EstimatedBeta(kind="ESTIMATED", value=0.0, paired_sample_count=200)
+    assert estimate.value == 0.0 and estimate.kind == "ESTIMATED"
+    with pytest.raises(ValidationError):
+        EstimatedBeta(kind="ESTIMATED", value=float("nan"), paired_sample_count=200)
