@@ -15,6 +15,7 @@ from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.contracts.jobs import JobRetryState
 from tank.delivery import DeliveryDeferred, DeliveryService
 from tank.ops_progress import job_failure_progress
+from tank.request_budget import BudgetBackend, RequestBudgetScope, SharedRequestBudgets
 from tank.runtime_contracts import EscalateTokensJob, MarketTruthJob
 from tank.scheduler import Scheduler
 from tank.settings import Settings
@@ -88,6 +89,8 @@ class Runtime:
         scheduler: Scheduler,
         gateway: GatewayPort,
         inbox: "TelegramInbox",
+        budget_scope: RequestBudgetScope,
+        budget_backend: BudgetBackend,
         bootstrap: Callable[[], Awaitable[None]],
         validate: Callable[[], None],
     ) -> None:
@@ -96,6 +99,8 @@ class Runtime:
         self.pipeline, self.sessions = pipeline, sessions
         self.delivery, self.scheduler, self.gateway, self.inbox = delivery, scheduler, gateway, inbox
         self._bootstrap, self._validate = bootstrap, validate
+        self.budget_scope, self.budget_backend = budget_scope, budget_backend
+        self.budget_binding: SharedRequestBudgets | None = None
         self.active_jobs: set[str] = set()
         self.handlers = {
             "FILTER_ITEM": pipeline.filter_item_wire,
@@ -354,8 +359,6 @@ class Runtime:
         await self._bootstrap()
 
     async def run(self, stop: asyncio.Event) -> None:
-        from tank.sources.rate_limits import shared_request_budgets
-
         self.validate()
         await self.bootstrap()
         await self.repo.recover_jobs()
@@ -366,7 +369,7 @@ class Runtime:
             await self.close()
             raise
 
-        self.request_ledger = shared_request_budgets.configure(self.repo, self.settings)
+        self.budget_binding = self.budget_scope.bind(self.budget_backend)
         intake_stop, market_stop, sessions_stop, workers_stop = [asyncio.Event() for _ in range(4)]
         intake_services: tuple[tuple[str, RuntimeService], ...] = (
             ("sources", self.sources),
@@ -472,7 +475,7 @@ class Runtime:
                         )
                 await self.close()
 
-    async def close(self):
+    async def close(self) -> None:
         for service in (
             self.scheduler,
             self.sources,
@@ -487,6 +490,7 @@ class Runtime:
                 await service.close()
             except Exception:
                 log.exception("Resource close failed")
-        from tank.sources.rate_limits import shared_request_budgets
-
-        await shared_request_budgets.release(getattr(self, "request_ledger", None))
+        binding = self.budget_binding
+        if binding is not None:
+            self.budget_binding = None
+            await self.budget_scope.release(binding)

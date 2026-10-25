@@ -10,10 +10,13 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture, source_record_fixture
+from scheduling_support import RecordingReactionScheduling
+from source_support import fixture_http_admission
 from test_agents_execution_barrier import config
 
 from tank.agents.context import CONTEXT_VERSION
 from tank.agents.sessions import SessionService
+from tank.analysis.page_access import LivePageAccess
 from tank.event_tools import EventToolService
 from tank.openma_sync import agent_tools
 from tank.settings import Settings
@@ -141,7 +144,13 @@ async def test_controller_snapshot_cannot_erase_domain_binding(
     async with fixture_repo(backend, postgres_template) as repo:
         session, args = await seed(repo)
         tools = EventToolService(
-            repo, Settings(data_dir=tmp_path), None, None, versions=declared_versions_fixture()
+            repo,
+            Settings(data_dir=tmp_path),
+            None,
+            None,
+            versions=declared_versions_fixture(),
+            scheduler=RecordingReactionScheduling(),
+            pages=LivePageAccess(fixture_http_admission()),
         )
         writer_ready, binding_waiting, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
         original_put, original_lock = repo.put, repo.lock
@@ -211,7 +220,13 @@ async def test_origin_scope_rechecked_after_two_unbound_preflight_snapshots(
     async with fixture_repo(backend, postgres_template) as repo:
         _, args = await seed(repo)
         tools = EventToolService(
-            repo, Settings(data_dir=tmp_path), None, None, versions=declared_versions_fixture()
+            repo,
+            Settings(data_dir=tmp_path),
+            None,
+            None,
+            versions=declared_versions_fixture(),
+            scheduler=RecordingReactionScheduling(),
+            pages=LivePageAccess(fixture_http_admission()),
         )
         original_get = repo.get
         both_read = asyncio.Event()

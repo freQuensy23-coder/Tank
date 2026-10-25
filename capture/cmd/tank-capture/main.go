@@ -79,6 +79,10 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	policies, err := cfg.RequestPolicies()
+	if err != nil {
+		return err
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	log.Info("starting", "config_version", cfg.ConfigVersion,
@@ -111,7 +115,7 @@ func run(log *slog.Logger) error {
 
 	owner := config.Writer
 	clock := capture.NewSystemClock()
-	gate := budget.NewGate(st.Ledger(), owner)
+	gate := budget.NewGate(st.Ledger(), owner, policies)
 	client := rest.NewClient(cfg.UserAgent, gate, clock.Now)
 	writer := store.NewWriter(st)
 	var held atomic.Pointer[store.Lock]

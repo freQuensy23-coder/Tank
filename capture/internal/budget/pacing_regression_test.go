@@ -18,9 +18,9 @@ type pacingResult struct {
 	err     error
 }
 
-func controlledPacingGate() (*Gate, *clock, <-chan pacingWait) {
+func controlledPacingGate(t *testing.T) (*Gate, *clock, <-chan pacingWait) {
 	c := &clock{t: time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)}
-	g := NewGate(NewMemoryLedger(c.now), "pacing-regression")
+	g := NewGate(NewMemoryLedger(c.now), "pacing-regression", fixturePolicies(t))
 	g.now = c.now
 	waits := make(chan pacingWait, HostInFlight)
 	g.sleep = func(ctx context.Context, delay time.Duration) error {
@@ -82,7 +82,7 @@ func pacingStarted(t *testing.T, ctx context.Context, entered <-chan pacingResul
 func TestOverdueStartSpacesTheNextActualAdmission(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	g, c, waits := controlledPacingGate()
+	g, c, waits := controlledPacingGate(t)
 	first, err := g.Enter(ctx, "api.bybit.com", 0)
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +121,7 @@ func TestOverdueStartSpacesTheNextActualAdmission(t *testing.T) {
 func TestCancelledPacingWaitDoesNotReserveTheNextStart(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	g, c, waits := controlledPacingGate()
+	g, c, waits := controlledPacingGate(t)
 	first, err := g.Enter(ctx, "api.bybit.com", 0)
 	if err != nil {
 		t.Fatal(err)
@@ -160,7 +160,7 @@ func TestCancelledPacingWaitDoesNotReserveTheNextStart(t *testing.T) {
 func TestResponseCompletionDoesNotRestartStartSpacing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	g, c, waits := controlledPacingGate()
+	g, c, waits := controlledPacingGate(t)
 	var releases []func()
 	defer func() {
 		for _, release := range releases {

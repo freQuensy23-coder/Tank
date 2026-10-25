@@ -7,9 +7,12 @@ from pathlib import Path
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture
+from scheduling_support import RecordingReactionScheduling
+from source_support import fixture_http_admission
 
 from tank.agents.context import CONTEXT_VERSION, ID_FIELDS, ModelContext, identifier_field
 from tank.agents.sessions import SessionService
+from tank.analysis.page_access import LivePageAccess
 from tank.event_tools import EventToolService, validate_schema
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -153,7 +156,15 @@ async def test_initial_message_is_text_and_the_incoming_item_stays_implicit(cont
 
 async def test_real_record_and_followup_tools_take_ids_and_reply_without_them(context) -> None:
     repo, settings, session, item = context
-    tools = EventToolService(repo, settings, None, None, versions=declared_versions_fixture())
+    tools = EventToolService(
+        repo,
+        settings,
+        None,
+        None,
+        versions=declared_versions_fixture(),
+        scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
+    )
     requests = []
 
     def receive(request: pytest.FixtureRequest):
@@ -345,7 +356,7 @@ async def test_scoped_tools_bind_the_current_event_and_refuse_an_explicit_one(co
         await boundary.arguments("get_decision", {"token_id": "world:WLD"})
     event = await bound_event(repo, session)
     boundary = ModelContext(repo, settings, session)
-    card = {"kind": "FULL", "what": "x", "verdict": "y", "why": []}
+    card = {"kind": "FULL", "what": "x", "verdict": "y", "why": ["First fact.", "Second fact."]}
     assert await boundary.arguments("publish_card", card) == {**card, "event_id": event["event_id"]}
     with pytest.raises(ValueError, match=r"unknown fields \['event_id'\]"):
         await boundary.arguments("publish_card", {**card, "event_id": new_id("evt")})
@@ -398,7 +409,15 @@ async def test_merge_into_by_event_id_works_when_the_session_never_displayed_the
         posts.append(json.loads(request.content))
         return httpx.Response(200, json={"data": []})
 
-    tools = EventToolService(repo, settings, None, None, versions=declared_versions_fixture())
+    tools = EventToolService(
+        repo,
+        settings,
+        None,
+        None,
+        versions=declared_versions_fixture(),
+        scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
+    )
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
         service = SessionService(
             repo, settings, tools.dispatch, http=http, versions=declared_versions_fixture()
@@ -613,7 +632,15 @@ async def test_real_domain_refusal_uses_display_names_and_keeps_raw_audit(contex
         posts.append(json.loads(request.content))
         return httpx.Response(200, json={"data": []})
 
-    tools = EventToolService(repo, settings, None, None, versions=declared_versions_fixture())
+    tools = EventToolService(
+        repo,
+        settings,
+        None,
+        None,
+        versions=declared_versions_fixture(),
+        scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
+    )
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
         service = SessionService(
             repo, settings, tools.dispatch, http=http, versions=declared_versions_fixture()
@@ -667,7 +694,15 @@ async def test_identical_watches_on_different_tokens_are_disarmed_by_cond_id(con
     from tank.analysis.watch_contracts import WatchCondition
     from tank.time_precision import collection_clock, offset_schedule
 
-    service = EventToolService(repo, settings, None, None, versions=declared_versions_fixture())
+    service = EventToolService(
+        repo,
+        settings,
+        None,
+        None,
+        versions=declared_versions_fixture(),
+        scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
+    )
     created = collection_clock()
     expires = offset_schedule(created, timedelta(days=7))
     provenance = service.provenance({"session_id": session["session_id"], "role": "analyst"})
@@ -712,7 +747,13 @@ async def test_identical_watches_on_different_tokens_are_disarmed_by_cond_id(con
     restored = await boundary.arguments("set_watch_condition", args)
     assert restored == {**args, "event_id": event["event_id"]}
     result = await EventToolService(
-        repo, settings, None, None, versions=declared_versions_fixture()
+        repo,
+        settings,
+        None,
+        None,
+        versions=declared_versions_fixture(),
+        scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     ).dispatch("set_watch_condition", restored, {"session_id": session["session_id"], "role": "analyst"})
     assert result["accepted"]
     for row in watches:
@@ -866,7 +907,16 @@ async def test_milestone_callback_confirms_from_the_fetched_official_document_by
         return httpx.Response(200, json={"data": []})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
-        domain = EventToolService(repo, settings, None, None, http=http, versions=declared_versions_fixture())
+        domain = EventToolService(
+            repo,
+            settings,
+            None,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            scheduler=RecordingReactionScheduling(),
+            pages=LivePageAccess(fixture_http_admission()),
+        )
         due = clock_iso()
         await domain.dispatch(
             "schedule_milestone",

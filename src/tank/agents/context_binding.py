@@ -51,6 +51,8 @@ class ContextBinding(ContextScope):
                 if active is not None:
                     raise ValueError("Session input journal repeats the active owner")
                 active = message
+        if scope.active_message_id is not None and active is None:
+            raise ValueError("Active input has no authoritative journal owner")
         payload = active.get("payload") if active is not None else session.get("last_payload")
         if payload is not None and not isinstance(payload, dict):
             raise ValueError("Session input payload must be an object")

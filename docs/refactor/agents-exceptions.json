@@ -654,11 +654,12 @@
         }
       ],
       "kind": "persisted input-owner projection and genuine pre-input/legacy absence",
-      "reason": "Session creation precedes first message_log admission; explicit origin-only legacy rows remain readable. Required nullable scope fields represent real absent bindings. Missing active payload cannot borrow observation origin. from_session is the wire adapter, not a model mapping facade.",
+      "reason": "A missing journal is valid only with no explicit active pointer (first admission or explicit origin-only legacy state). Any non-null pointer must match exactly one actual journal row. Optional source/event/proposal bindings remain genuinely absent; callbacks do not borrow source origin for mutation. No unmatched-pointer last_payload fallback remains.",
       "validation": [
-        "test_callback_without_source_cannot_borrow_session_origin",
-        "test_unaccepted_session_without_input_journal_has_no_active_owner",
-        "test_legacy_source_without_journal_retains_its_explicit_origin"
+        "test_explicit_active_pointer_never_uses_a_stale_last_payload",
+        "test_corrupt_owner_cannot_post_or_change_terminal_source_state",
+        "test_active_callback_terminal_failure_does_not_fail_the_opening_or_last_source",
+        "test_acknowledged_execution_can_rebind_only_to_its_actual_journal_owner"
       ]
     },
     {
@@ -772,10 +773,11 @@
         }
       ],
       "kind": "observed unregistered resources and digest absence",
-      "reason": "No model card/skill registration is a genuine create case. A positional provider skill has required identity/version but nullable unknown Tank digest until successful managed publication. Namespace get/next(None) reflects resource existence, not a required-value substitute.",
+      "reason": "Only explicit validated Tank metadata authorizes existing role resources. Digest None represents unknown content for a declared binding, never ownership. Metadata-free nonempty references refuse; genuinely empty registrations can create resources. Unrelated anthropic/custom references retain actual kind/identity/version.",
       "validation": [
-        "test_first_start_versions_every_skill_and_agent_then_nothing_changes",
-        "test_a_skill_missing_from_its_agent_is_created"
+        "test_metadata_free_skill_references_cannot_authorize_role_updates",
+        "test_explicit_skill_bindings_ignore_provider_order_and_preserve_unrelated_references",
+        "test_unrelated_anthropic_reference_keeps_its_kind_identity_and_version"
       ]
     },
     {
@@ -881,6 +883,70 @@
       "validation": [
         "test_provider_metadata_survives_owned_update_and_second_sync_is_current",
         "test_invalid_provider_document_logs_only_sanitized_error_class"
+      ]
+    },
+    {
+      "ledger_key": "session-owned-persistence",
+      "sites": [
+        {
+          "path": "src/tank/agents/session_ownership.py",
+          "symbol": "SessionWriteStore.put",
+          "line": 13
+        },
+        {
+          "path": "src/tank/agents/session_ownership.py",
+          "symbol": "put_owned_session",
+          "line": 18
+        }
+      ],
+      "kind": "explicit persisted-document adapter",
+      "reason": "The storage mapping is the actual document-store JSON wire. It is validated through the closed ownership projection before writing, while unrelated historical/session bytes remain preserved. This is not a BaseModel mapping facade or approval of unfinished internal SessionService domain dictionaries.",
+      "validation": [
+        "test_persistence_guard_refuses_an_unrecorded_pointer_before_store_write",
+        "test_send_writer_revalidates_owner_after_reloading_under_lock"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/runtime.py",
+          "symbol": "Runtime.__init__",
+          "line": 78
+        },
+        {
+          "path": "src/tank/runtime.py",
+          "symbol": "Runtime.close",
+          "line": 478
+        }
+      ],
+      "kind": "owned runtime resource lifetime absence",
+      "reason": "budget_binding is None before Runtime.run binds the required backend or after close clears and releases its exact owned lease. Scope/backend dependencies remain required; an unbound scope refuses admission.",
+      "validation": [
+        "test_production_composition_binds_the_real_scheduler_and_owns_shutdown",
+        "test_gateway_starts_in_same_runtime_before_sources_and_closes_after_drain",
+        "test_production_budget_backend_uses_explicit_repository_kind_without_connecting"
+      ]
+    },
+    {
+      "ledger_key": "openma-confirmation",
+      "sites": [
+        {
+          "path": "src/tank/contracts/openma.py",
+          "symbol": "ManagedAgentObservation.model_effort",
+          "line": 260
+        },
+        {
+          "path": "src/tank/openma_sync.py",
+          "symbol": "OpenMAApi.publish_agent",
+          "line": 437
+        }
+      ],
+      "kind": "genuine unconfigured observed effort and exact immutable write confirmation",
+      "reason": "Observed effort None is not configured intent; it forces reconciliation and can never confirm an update. A successful write requires exact-version read-back. Unsupported/missing confirmation is permanent, preventing repeated publications. JSON wrappers are parsed only at the adapter.",
+      "validation": [
+        "test_changed_effort_publishes_confirmed_version_and_unchanged_effort_is_current",
+        "test_unconfirmed_readback_stops_without_repeated_publish",
+        "test_readback_is_bound_to_published_version_not_concurrently_changed_latest"
       ]
     }
   ]

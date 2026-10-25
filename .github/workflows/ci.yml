@@ -111,7 +111,7 @@ jobs:
           src/tank/storage.py src/tank/retention.py src/tank/search.py src/tank/market_storage.py
           src/tank/market_codec.py src/tank/clickhouse_market.py src/tank/models.py src/tank/market_schema.py
           src/tank/settings.py src/tank/util.py src/tank/time_precision.py src/tank/logging.py
-          src/tank/backup.py src/tank/contracts
+          src/tank/backup.py src/tank/contracts src/tank/market/flow.py src/tank/market/trade_contracts.py
       - name: Check completed foundation tests strictly
         env:
           MYPYPATH: src:tests
@@ -122,15 +122,15 @@ jobs:
           tests/test_storage_typed_market.py tests/test_clickhouse_market.py tests/test_settings.py
           tests/test_config.py tests/test_config_version.py tests/test_logging.py tests/test_backup_retention.py
           tests/test_time_precision.py tests/test_search.py tests/test_offline_settings_defaults.py
-          tests/test_foundation_contracts.py
+          tests/test_foundation_contracts.py tests/test_flow_contracts.py tests/test_storage_native_flow.py
       - name: Check completed quality module families strictly
         env:
           MYPYPATH: src:tests
         run: >-
           uv run --frozen --extra dev mypy --strict --follow-imports=silent --explicit-package-bases
-          scripts/ci scripts/capture/gen_schema.py scripts/capture/gen_pyvectors.py
+          scripts/ci scripts/capture/gen_schema.py scripts/capture/gen_pyvectors.py scripts/capture/parity.py
           scripts/acceptance/masking_contracts.py deploy/openma_lifecycle/native_network_probe.py
-          tests/test_ci_budget.py tests/test_ci_go_results.py tests/test_capture_parity.py tests/test_native_network_probe.py
+          tests/test_ci_budget.py tests/test_ci_go_results.py tests/test_capture_parity.py tests/test_capture_parity_contracts.py tests/test_native_network_probe.py
           tests/test_acceptance_masking.py
           tests/bootstrap_support.py tests/test_bootstrap_support.py
       - name: Check captured configuration helpers strictly

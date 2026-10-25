@@ -7,11 +7,14 @@ from pathlib import Path
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture, source_record_fixture
+from scheduling_support import RecordingReactionScheduling
+from source_support import fixture_http_admission
 from test_agents_execution_barrier import config, idle
 from test_session_binding_concurrency import fixture_repo, seed
 
 from tank.agents.context import CONTEXT_VERSION
 from tank.agents.sessions import SessionService
+from tank.analysis.page_access import LivePageAccess
 from tank.openma_sync import agent_tools
 from tank.util import sha256
 
@@ -61,7 +64,13 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
         from tank.settings import Settings
 
         domain = EventToolService(
-            repo, Settings(data_dir=tmp_path), None, None, versions=declared_versions_fixture()
+            repo,
+            Settings(data_dir=tmp_path),
+            None,
+            None,
+            versions=declared_versions_fixture(),
+            scheduler=RecordingReactionScheduling(),
+            pages=LivePageAccess(fixture_http_admission()),
         )
         event_id = None
         if bound:
@@ -74,7 +83,13 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
                 ),
             )
             domain = EventToolService(
-                repo, Settings(data_dir=tmp_path), None, None, versions=declared_versions_fixture()
+                repo,
+                Settings(data_dir=tmp_path),
+                None,
+                None,
+                versions=declared_versions_fixture(),
+                scheduler=RecordingReactionScheduling(),
+                pages=LivePageAccess(fixture_http_admission()),
             )
             result = await domain.dispatch(
                 "record_event",
@@ -291,7 +306,13 @@ async def test_ignored_item_keeps_event_and_call_for_next_native_update(
     async with fixture_repo(backend, postgres_template) as repo:
         _session, extraction = await seed(repo)
         domain = EventToolService(
-            repo, Settings(data_dir=tmp_path), None, None, versions=declared_versions_fixture()
+            repo,
+            Settings(data_dir=tmp_path),
+            None,
+            None,
+            versions=declared_versions_fixture(),
+            scheduler=RecordingReactionScheduling(),
+            pages=LivePageAccess(fixture_http_admission()),
         )
         origin = await domain.dispatch("record_event", extraction, {"session_id": "s"})
         eid = origin["event_id"]

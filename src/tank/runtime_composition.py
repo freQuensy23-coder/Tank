@@ -9,14 +9,18 @@ from typing import Protocol
 from tank.agents.pipeline import Pipeline
 from tank.agents.sessions import SessionService
 from tank.analysis.decisions import DecisionEngine
+from tank.analysis.page_access import LivePageAccess
 from tank.analysis.truth import MarketTruthService
 from tank.bootstrap import sync_registry, validate_registry
 from tank.codex_gateway import CodexGateway
+from tank.contracts.sources import SourceApiLimitsConfiguration
 from tank.delivery import DeliveryService
 from tank.event_tools import EventToolService
+from tank.http_admission import ConfiguredHttpAdmission
 from tank.logging import configure_logging
 from tank.market.service import MarketService
 from tank.ops_progress import RepositorySourceProgress
+from tank.request_budget import RequestBudgetScope, build_budget_backend
 from tank.runtime import Runtime
 from tank.scheduler import Scheduler
 from tank.settings import Settings, resolve_versions
@@ -67,18 +71,29 @@ def build_runtime(repo: Repository, settings: Settings) -> Runtime:
     validate_runtime_settings(settings)
     versions = settings.require_versions()
     configure_logging(settings)
-    market = MarketService(repo, settings, versions=versions)
+    budget_backend = build_budget_backend(repo, owner="tank-core")
+    budget_scope = RequestBudgetScope()
+    policy = settings.load_config_as("api_limits", SourceApiLimitsConfiguration)
+    admission = ConfiguredHttpAdmission(policy, versions, budget_scope)
+    market = MarketService(repo, settings, versions=versions, admission=admission)
     truth = MarketTruthService(repo, settings, market, versions=versions)
-    sources = SourceService(repo, settings, versions=versions)
+    sources = SourceService(repo, settings, versions=versions, budgets=budget_scope)
     pipeline = Pipeline(repo, settings, progress=RepositorySourceProgress(repo, settings), versions=versions)
-    tools = EventToolService(repo, settings, truth, DecisionEngine(settings), versions=versions)
+    scheduler = Scheduler(repo, settings, market, truth, thresholds=settings.thresholds(), versions=versions)
+    tools = EventToolService(
+        repo,
+        settings,
+        truth,
+        DecisionEngine(settings),
+        versions=versions,
+        scheduler=scheduler,
+        pages=LivePageAccess(admission),
+    )
     inbox = TelegramInbox(repo, settings)
     sessions = SessionService(repo, settings, tools.dispatch, versions=versions)
     delivery = DeliveryService(repo, settings)
-    scheduler = Scheduler(repo, settings, market, truth, thresholds=settings.thresholds(), versions=versions)
     gateway = CodexGateway(settings)
     sessions.telegram = inbox
-    tools.scheduler = scheduler
 
     async def bootstrap_registry() -> None:
         await sync_registry(repo, settings, versions=versions)
@@ -98,6 +113,8 @@ def build_runtime(repo: Repository, settings: Settings) -> Runtime:
         scheduler=scheduler,
         gateway=gateway,
         inbox=inbox,
+        budget_scope=budget_scope,
+        budget_backend=budget_backend,
         bootstrap=bootstrap_registry,
         validate=validate_generation,
     )

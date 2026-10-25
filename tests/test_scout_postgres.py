@@ -13,9 +13,12 @@ from pathlib import Path
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture
+from scheduling_support import RecordingReactionScheduling
+from source_support import fixture_http_admission
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
+from tank.analysis.page_access import LivePageAccess
 from tank.event_tools import EventToolService
 from tank.settings import Settings
 from tank.util import clock_iso, sha256
@@ -197,7 +200,15 @@ async def seed_event(tools, sessions):
 async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_path: Path) -> None:
     repository, dsn = repo
     settings = scout_settings(tmp_path)
-    tools = EventToolService(repository, settings, None, None, versions=declared_versions_fixture())
+    tools = EventToolService(
+        repository,
+        settings,
+        None,
+        None,
+        versions=declared_versions_fixture(),
+        scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
+    )
     openma = FakeOpenMA()
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma)) as http:
         sessions = SessionService(

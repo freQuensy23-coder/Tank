@@ -20,10 +20,12 @@ from httpx_sse import aconnect_sse
 from pydantic import JsonValue, ValidationError
 
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
+from tank.agents.context_binding import ContextBinding
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.provenance import resolve_agent_provenance
 from tank.agents.security import redact_tool_arguments
 from tank.agents.session_contracts import ExecutionPoll, HistoryPoll
+from tank.agents.session_ownership import put_owned_session
 from tank.agents.tool_contracts import (
     CapturedToolResult,
     FailedToolResponse,
@@ -364,7 +366,7 @@ class SessionService:
         }
         session["agent_version_reason"] = session["missing_fields"].get("agent_version")
         session["last_item_at_reason"] = session["missing_fields"].get("last_item_at")
-        await self.repo.put("ops.agent_sessions", sid, session)
+        await put_owned_session(self.repo, sid, session)
         return session
 
     async def continuable(self, payload):
@@ -392,7 +394,7 @@ class SessionService:
                     "archived_at": remote.get("archived_at"),
                     **self.clock_timestamp().fields("checked_at"),
                 }
-                await self.repo.put("ops.agent_sessions", session["session_id"], current)
+                await put_owned_session(self.repo, session["session_id"], current)
             status, text = closed_reason(current) or ("ARCHIVED", None)
             await record_answer(self.repo, question_id, text, status=status)
             return False
@@ -477,7 +479,7 @@ class SessionService:
                 current["model_context_version"] = CONTEXT_VERSION
                 current.pop("model_catalog", None)
             current.update(self.clock_timestamp().fields("tools_synced_at"))
-            await self.repo.put("ops.agent_sessions", sid, current)
+            await put_owned_session(self.repo, sid, current)
 
     async def transition_note(self, sid):
         """The ID-contract note for a turn that began before its session switched: delivered once, because
@@ -487,7 +489,7 @@ class SessionService:
             if current is None or current.get("context_note_version") == CONTEXT_VERSION:
                 return None
             current["context_note_version"] = CONTEXT_VERSION
-            await self.repo.put("ops.agent_sessions", sid, current)
+            await put_owned_session(self.repo, sid, current)
         return CONTEXT_TRANSITION[bool(current.get("proposal_id"))]
 
     async def prepare_attachments(self, session, question):
@@ -586,6 +588,7 @@ class SessionService:
         )
         async with self.repo.lock("session-mapping:" + str(mapping_identity)):
             session = await self.resolve(payload)
+            ContextBinding.from_session(session)
         sid, key = session["session_id"], sha256(payload)
         migrating = session.get("model_context_version", 0) < CONTEXT_VERSION
         if migrating or payload.get("kind") == "USER_QUESTION":
@@ -648,7 +651,7 @@ class SessionService:
                     session["active_message_id"] = key
                 if session.get("runtime_status") != "RUNNING":
                     session["runtime_status"] = "PENDING"
-                await self.repo.put("ops.agent_sessions", sid, session)
+                await put_owned_session(self.repo, sid, session)
 
             session = await self.post_message_intent(sid, key)
         self.start_stream(sid)
@@ -690,7 +693,7 @@ class SessionService:
                 )
                 session.get("missing_fields", {}).pop("last_item_at", None)
                 session["last_item_at_reason"] = None
-            await self.repo.put("ops.agent_sessions", sid, session)
+            await put_owned_session(self.repo, sid, session)
             await session_progress(self.repo, self.settings, session)
             return session
 
@@ -845,7 +848,7 @@ class SessionService:
                             "message_id": owner["message_id"],
                         }
                 required.difference_update(current.get("superseded_native_inputs", {}))
-                await self.repo.put("ops.agent_sessions", session["session_id"], current)
+                await put_owned_session(self.repo, session["session_id"], current)
             delay = min(poll.delay * 2, 1.0) if poll is not None and poll.signature == signature else 0.05
             self.execution_polls[session["session_id"]] = ExecutionPoll(
                 deadline=time.monotonic() + delay, delay=delay, signature=signature
@@ -994,7 +997,7 @@ class SessionService:
             for row in current.get("message_log", []):
                 if row["message_id"] in recorded:
                     row["answer_recorded"] = True
-            await self.repo.put("ops.agent_sessions", sid, current)
+            await put_owned_session(self.repo, sid, current)
 
     async def abandon_question(self, session_id, question_id):
         """A question job gave up: retire its unsent intent so recovery never posts it later.
@@ -1021,7 +1024,7 @@ class SessionService:
                 session["retired_message_ids"] = sorted(retired)
                 if session.get("active_message_id") in retired:
                     session["active_message_id"] = None
-                await self.repo.put("ops.agent_sessions", session["session_id"], session)
+                await put_owned_session(self.repo, session["session_id"], session)
             return True
 
     async def reconcile_answers(self):
@@ -1120,7 +1123,7 @@ class SessionService:
                         )
             current["verified_source_completion"] = outcomes
             current["verified_native_completion"] = copy.deepcopy(after)
-            await self.repo.put("ops.agent_sessions", sid, current)
+            await put_owned_session(self.repo, sid, current)
             await session_progress(self.repo, self.settings, current)
             return after
 
@@ -1160,7 +1163,7 @@ class SessionService:
             session["runtime_status"] = "IDLE"
             session["active_message_id"] = None
             session["pending_retry_event"] = None
-            await self.repo.put("ops.agent_sessions", sid, session)
+            await put_owned_session(self.repo, sid, session)
             return {"session_id": sid, "finalized": True, "failed_message_ids": unfinished}
 
     def tool_context(self, session, call_id):
@@ -1235,7 +1238,7 @@ class SessionService:
             current["recovered_prompt_descriptor"] = recovered
             if session.get("legacy_prompt_descriptor") and "legacy_prompt_descriptor" not in current:
                 current["legacy_prompt_descriptor"] = copy.deepcopy(session["legacy_prompt_descriptor"])
-            await self.repo.put("ops.agent_sessions", session["session_id"], current)
+            await put_owned_session(self.repo, session["session_id"], current)
 
     async def invoke_tool(
         self,
@@ -1392,7 +1395,7 @@ class SessionService:
                     sequencing = await self.repo.get("ops.agent_sessions", sid)
                     ordinal = int(sequencing.get("next_tool_call_ordinal", 0))
                     sequencing["next_tool_call_ordinal"] = ordinal + 1
-                    await self.repo.put("ops.agent_sessions", sid, sequencing)
+                    await put_owned_session(self.repo, sid, sequencing)
                 stored = {
                     "native_turn_call_index": ordinal,
                     "call_id": call_id,
@@ -1656,7 +1659,7 @@ class SessionService:
                         current["processed_events"].append(event["id"])
                     if seq is not None:
                         current["last_event_seq"] = max(int(current.get("last_event_seq", 0)), int(seq))
-                    await self.repo.put("ops.agent_sessions", sid, current)
+                    await put_owned_session(self.repo, sid, current)
                 return
             duplicate = event["id"] in session.get("processed_events", [])
             if kind == "user.custom_tool_result" and isinstance(event.get("custom_tool_use_id"), str):
@@ -1724,7 +1727,7 @@ class SessionService:
                             current["native_idle_receipt"].update(
                                 session["native_execution_receipts"][event["id"]]
                             )
-                        await self.repo.put("ops.agent_sessions", sid, current)
+                        await put_owned_session(self.repo, sid, current)
                 self.seen_events.setdefault(sid, set()).add(seen_key(event))
                 return
             if kind in {
@@ -1744,6 +1747,7 @@ class SessionService:
                 owner = await self.native_input_owner(session, event["execution_id"])
                 if owner:
                     session["active_message_id"] = owner[0]
+                    ContextBinding.from_session(session)
                     event = dict(event, _host_turn_message_id=owner[0], _host_turn_retry_count=owner[1])
                 elif kind in {
                     "agent.custom_tool_use",
@@ -1751,6 +1755,7 @@ class SessionService:
                     "execution.status_failed",
                 }:
                     raise ValueError("Native execution has no acknowledged accepted-input owner")
+            ContextBinding.from_session(session)
             if kind == "agent.custom_tool_use":
                 await self.tool(session, event)
                 session = await self.repo.get("ops.agent_sessions", sid)
@@ -1818,6 +1823,7 @@ class SessionService:
                     if isinstance(block, dict)
                 )
             ):
+                failure_binding = ContextBinding.from_session(session)
                 active = next(
                     (
                         row
@@ -1838,7 +1844,7 @@ class SessionService:
                             "_host_retry_call_ordinal_cutoff", durable.get("next_tool_call_ordinal", 0)
                         )
                         durable["pending_retry_event"] = copy.deepcopy(event)
-                        await self.repo.put("ops.agent_sessions", sid, durable)
+                        await put_owned_session(self.repo, sid, durable)
                     accepted = await self.request(
                         "POST",
                         f"sessions/{sid}/events",
@@ -1898,8 +1904,7 @@ class SessionService:
                     if active:
                         active["turn_status"] = "FAILED"
                         active["terminal_failure"] = copy.deepcopy(terminal_failure)
-                    failed_payload = (active or {}).get("payload") or session.get("last_payload") or {}
-                    item_id = failed_payload.get("item_id") or session.get("item_id")
+                    item_id = failure_binding.observation_source()
                     if item_id:
                         await self.source_extraction.transition(
                             item_id,
@@ -1946,7 +1951,7 @@ class SessionService:
                 current["last_event_id"] = event["id"]
                 current.update(self.event_timestamp(event).fields("last_event_at"))
                 current.update(propagate_timestamp(event, "processed_at").fields("processed_at"))
-                await self.repo.put("ops.agent_sessions", sid, current)
+                await put_owned_session(self.repo, sid, current)
                 if current.get("status") in {"FAILED", "ENDED"}:
                     await session_progress(self.repo, self.settings, current)
             self.seen_events.setdefault(sid, set()).add(seen_key(event))
@@ -2086,7 +2091,7 @@ class SessionService:
                 archive = False
                 if not session.get("followups_only"):
                     session["followups_only"] = True
-                    await self.repo.put("ops.agent_sessions", sid, session)
+                    await put_owned_session(self.repo, sid, session)
             elif archive and not replay:
                 keep = self.settings.thresholds().session_keep_days
                 last = await self.last_message_at(session)
@@ -2099,7 +2104,7 @@ class SessionService:
                     }
                     if any(session.get(key) != value for key, value in retained.items()):
                         session.update(retained)
-                        await self.repo.put("ops.agent_sessions", sid, session)
+                        await put_owned_session(self.repo, sid, session)
                 else:
                     session.update(
                         archive_reason="RETENTION",
@@ -2109,12 +2114,12 @@ class SessionService:
             elif not archive and session.get("archive_after"):
                 for key in ("archive_after", "archive_after_prec", "archive_after_prec_reason"):
                     session.pop(key, None)
-                await self.repo.put("ops.agent_sessions", sid, session)
+                await put_owned_session(self.repo, sid, session)
             if archive:
                 await self.request("POST", f"sessions/{sid}/archive", json={})
                 session.update(status="ENDED", **self.clock_timestamp().fields("archived_at"))
                 session.setdefault("archive_reason", "REPLAY" if replay else "RETENTION")
-                await self.repo.put("ops.agent_sessions", sid, session)
+                await put_owned_session(self.repo, sid, session)
 
             return True
 
@@ -2180,7 +2185,7 @@ class SessionService:
                                 )
                             ]
                         )
-                    await self.repo.put("ops.agent_sessions", sid, session)
+                    await put_owned_session(self.repo, sid, session)
                 if session.get("status") in ("FAILED", "ENDED") or await self.finish_if_idle(sid):
                     return
                 while not self.closed:

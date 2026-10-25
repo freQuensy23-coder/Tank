@@ -20,7 +20,7 @@ func python(t *testing.T, script string, args ...string) string {
 	t.Helper()
 	out, err := exec.Command("python3", append([]string{"-c", script}, args...)...).Output()
 	if err != nil {
-		t.Skipf("python3 with PyYAML unavailable: %v", err)
+		t.Fatalf("mandatory pinned Python peer with PyYAML unavailable: %v", err)
 	}
 	return string(out)
 }
@@ -123,7 +123,7 @@ print(json.dumps({"ids": ids, "tokens": list({t["token_id"]: t for t in r["token
 	if c.Threshold("base_kline_interval_s", -1) <= 0 || c.Threshold("no_such_threshold", 7) != 7 {
 		t.Error("thresholds")
 	}
-	if len(c.APILimits) == 0 {
+	if len(c.APILimits.Rates) == 0 {
 		t.Error("api limits")
 	}
 	if c.LockKey() != "tank:capture:writer" {
@@ -166,6 +166,11 @@ instruments:
 - {instrument_id: four, token_id: "a:A", venue: okx, market_type: PERP_LINEAR, venue_symbol: A-USDT-SWAP, funding_interval_h: 8}
 `)
 	write(t, dir, "semantics.yaml", "metrics: []\n")
+	policy, err := os.ReadFile(filepath.Join(repoConfig(), "api_limits.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "api_limits.yaml", string(policy))
 	c, err := Load(Settings{ConfigDir: dir, UserAgent: DefaultUserAgent})
 	if err != nil {
 		t.Fatal(err)
