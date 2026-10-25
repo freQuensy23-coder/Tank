@@ -99,7 +99,11 @@ func (m *memStore) Get(_ context.Context, collection, key string) (map[string]an
 func (m *memStore) Range(_ context.Context, collection, field string, start, end time.Time, filters map[string]any) ([]map[string]any, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var out []map[string]any
+	type timedRecord struct {
+		timestamp time.Time
+		row       map[string]any
+	}
+	var selected []timedRecord
 	for _, row := range m.rows[collection] {
 		t, err := pytime.Parse(row[field])
 		if err != nil || (!start.IsZero() && t.Before(start)) || (!end.IsZero() && !t.Before(end)) {
@@ -112,12 +116,14 @@ func (m *memStore) Range(_ context.Context, collection, field string, start, end
 			}
 		}
 		if match {
-			out = append(out, copyRow(row))
+			selected = append(selected, timedRecord{timestamp: t, row: copyRow(row)})
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return pytime.MustParse(out[i][field]).Before(pytime.MustParse(out[j][field]))
-	})
+	sort.Slice(selected, func(i, j int) bool { return selected[i].timestamp.Before(selected[j].timestamp) })
+	var out []map[string]any
+	for _, record := range selected {
+		out = append(out, record.row)
+	}
 	return out, nil
 }
 
