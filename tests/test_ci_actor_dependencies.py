@@ -58,9 +58,11 @@ def test_actor_export_refuses_declaration_lock_drift_without_relocking(tmp_path:
 
 
 def test_actor_export_refuses_wrong_uv_before_project_access(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
     executable = tmp_path / "uv"
     executable.write_text("#!/bin/sh\nprintf 'uv 0.9.5\\n'\n")
     executable.chmod(0o700)
     with pytest.raises(ActorDependencyError, match="requires uv 0.11.7"):
-        frozen_actor_requirements(tmp_path, executable)
-    assert {path.name for path in tmp_path.iterdir()} == {"uv"}
+        frozen_actor_requirements(project, executable)
+    assert list(project.iterdir()) == []
