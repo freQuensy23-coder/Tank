@@ -14,10 +14,10 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, m
 from tank.contracts import DomainModel
 from tank.contracts.http_policy import HttpAdmission, HttpRefused
 from tank.contracts.json import JsonDocument, decode_unique_json
+from tank.contracts.source_errors import XDiagnostics
 from tank.contracts.source_items import DiscoveryEnvelope, DiscoveryObservation, SocialDiscovery
 from tank.contracts.sources import HttpFetchPlan
 from tank.logging import redact_text
-from tank.sources.errors import XDiagnostics
 from tank.sources.http_client import RequestStarted, SourceHttpTransport
 from tank.sources.x_diagnostics import sanitize
 from tank.util import iso
@@ -87,7 +87,7 @@ def diagnostic_projection(value: JsonValue, *, token: str, secrets: Sequence[str
         raw_diagnostics = original["diagnostics"]
         if not isinstance(raw_diagnostics, dict):
             raise ValueError("X response contains credential material")
-        approved = XDiagnostics.model_validate(sanitize(raw_diagnostics, token))
+        approved = sanitize(raw_diagnostics, token)
         wire = JsonDocument.validate_value(approved.model_dump(mode="json"))
         if contains_credential(wire, secrets):
             raise ValueError("X response contains credential material")
@@ -298,9 +298,7 @@ def scan(
         AccountFailure(
             account=account.handle,
             reason=account.error,
-            diagnostics=None
-            if account.diagnostics is None
-            else XDiagnostics.model_validate(sanitize(account.diagnostics, token)),
+            diagnostics=None if account.diagnostics is None else sanitize(account.diagnostics, token),
         )
         for account in run.accounts
         if isinstance(account, ApifyFailedAccount) and account_key(account.handle) in requested
