@@ -60,7 +60,11 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
             ("A:spot:BTC", "BTC", "binance"),
         ):
             for minute in range(8 * 1440, 0, -1):
-                price = "100" if token == "BTC" else str(100 * (1 + 0.02 * sin((1 - minute / 60) / 6)))
+                price = (
+                    str(100 + 0.02 * sin((1 - minute) / 60 * 1.7))
+                    if token == "BTC"
+                    else str(100 * (1 + 0.02 * sin((1 - minute / 60) / 6)))
+                )
                 packet["klines"].append(
                     dict(
                         instrument_id=iid,
@@ -297,6 +301,8 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
                 )
             ]
             composite = await truth.condition_values(event, "T", packet["cutoff"], composite_requirements)
+            assert composite["relative"]["beta_btc"] is not None
+            assert composite["relative"]["beta_flags"]["btc"] is None
             assert composite["move_class"] == "SPOT_LED_ACCUMULATION", str(
                 dict(
                     dc=composite["data_confidence"]["class"],

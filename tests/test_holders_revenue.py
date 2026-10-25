@@ -465,3 +465,17 @@ def test_scalar_clock_is_observation_not_provider_period_end() -> None:
     text = CARDS._holders_revenue_text({"supply": {"holders_revenue": observed}})
     assert "8 USD/24h" in text and "observed 2026-10-19 12:00Z" in text
     assert "as of" not in text and "as-of" not in text and "receipt" not in text
+
+
+def test_fundamentals_as_of_preserves_captured_clock_precision_and_unknown_reason() -> None:
+    row = captured({"a": {"total24h": "5"}})
+    row.update(ts_prec="COLLECTION_ONLY", ts_prec_reason=None)
+    observed = metric([row])
+    assert observed["as_of"] == row["ts"]
+    assert observed["as_of_prec"] == "COLLECTION_ONLY"
+    assert observed["as_of_prec_reason"] is None
+    row.update(ts_prec=None, ts_prec_reason="LEGACY_SOURCE_PRECISION_NOT_CAPTURED")
+    unknown = metric([row])
+    assert unknown["as_of"] == row["ts"]
+    assert unknown["as_of_prec"] is None
+    assert unknown["as_of_prec_reason"] == "LEGACY_SOURCE_PRECISION_NOT_CAPTURED"
