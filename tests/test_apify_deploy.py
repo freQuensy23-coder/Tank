@@ -846,7 +846,8 @@ def test_legacy_build_drift_blocks_bootstrap_and_rollback(apify_stand, release, 
 
 
 def test_apify_error_names_reason_without_token(apify_stand):
-    # The fake rejects tags over Apify's 30-character limit, so every publishing test above also checks the tag length.
+    """The fake rejects tags over Apify's 30-character limit, so every publishing test also checks the tag length."""
+
     api = deploy.Api("synthetic-token", apify_stand.base)
     with pytest.raises(deploy.DeployError) as error:
         api.request("POST", f"/actors/{deploy.ACTOR_ID}/builds?version={deploy.VERSION}&tag={'x' * 31}")
