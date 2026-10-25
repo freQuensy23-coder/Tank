@@ -9,6 +9,7 @@ from pydantic import Field, field_validator, model_validator
 from tank.contracts import DomainModel
 from tank.contracts.json import decode_json
 from tank.contracts.registry import RegistryMarketType, RegistryVenue
+from tank.contracts.scalars import TrueFlag
 from tank.util import parse_iso_time
 
 type TradeSide = Literal["BUY", "SELL"]
@@ -227,7 +228,7 @@ class ActiveFlowSnapshot(FlowSnapshotBase):
 
 
 class EmptyFlowSnapshot(FlowSnapshotBase):
-    zero_trade_minute: Literal[True]
+    zero_trade_minute: TrueFlag
 
     @model_validator(mode="after")
     def no_trade_evidence(self) -> Self:
