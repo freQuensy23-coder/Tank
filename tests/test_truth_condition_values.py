@@ -94,7 +94,7 @@ def test_native_baseline_reused_when_only_current_observation_changes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     packet = snapshot()
-    baseline = {}
+    baseline = module.baseline_caches()
     original = module.normal
     calls = []
 
@@ -191,7 +191,7 @@ def test_completed_close_uses_actual_largest_complete_reference_venue() -> None:
 
 def test_funding_baseline_reused_when_only_current_estimate_changes(monkeypatch: pytest.MonkeyPatch) -> None:
     packet = snapshot()
-    baseline = {}
+    baseline = module.baseline_caches()
     original = module.normal
     calls = []
 
@@ -425,14 +425,14 @@ def test_compact_statistical_projections_preserve_full_catalog_and_exact_prices(
             compact["stat_price_series"][iid] = {
                 "token_id": rows[0].get("token_id"),
                 "coverage_count": len(rows),
+                "intervals_s": array("q", [r["interval_s"] for r in rows]),
                 "time_basis": "CLOSE_TIME",
                 "times_us": array(
                     "q",
                     [
                         int(
                             (
-                                (module._time(r) + module.timedelta(seconds=int(r.get("interval_s", 60))))
-                                - epoch
+                                (module._time(r) + module.timedelta(seconds=r["interval_s"])) - epoch
                             ).total_seconds()
                             * 1_000_000
                         )
@@ -519,7 +519,7 @@ def test_composite_primary_graph_reused_across_requested_windows(
 
     monkeypatch.setattr(module, "derivatives_truth", counted)
     cache = {}
-    baselines = {}
+    baselines = module.baseline_caches()
     for window in ("W1H", "W4H"):
         result = module.compute_condition_values(
             packet,
@@ -699,7 +699,7 @@ def test_compact_native_prefix_extends_only_with_proven_append_and_rebuilds_corr
         return original(raw)
 
     monkeypatch.setattr(module, "decimal", counted)
-    token = module._BASELINE_CACHE.set({})
+    token = module._BASELINE_CACHE.set(module.baseline_caches())
     try:
         module.support_features(packet, start, end, {}, {}, {}, {})
         assert len(converted) == len(stamps)

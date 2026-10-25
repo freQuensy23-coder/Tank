@@ -417,3 +417,29 @@ def test_zero_variance_benchmark_cannot_manufacture_adjusted_move_classification
     assert relative["windows"]["EVENT"]["r_btc_adj_reason"] == "NOT_ESTIMABLE"
     assert relative["normal_ranges"]["W4H"]["value"] is None
     assert result["move_class"] == "UNKNOWN"
+
+
+def test_sparse_benchmark_gap_does_not_authorize_adjusted_move() -> None:
+    snapshot = synthetic_start_snapshot()
+    end = parse_time(snapshot["cutoff"])
+    anchor = parse_time(snapshot["anchor"]["ts"])
+    selected_open = end - timedelta(minutes=31)
+    snapshot["klines"] = [
+        row
+        for row in snapshot["klines"]
+        if row["instrument_id"] != "A:spot:BTC"
+        or parse_time(row["open_time"]) < anchor
+        or parse_time(row["open_time"]) == selected_open
+    ]
+    result = compute_market_truth(snapshot)
+    relative = result["relative"]
+    event = relative["windows"]["EVENT"]
+    assert relative["beta_flags"]["btc"] is None
+    assert relative["beta_btc"] is not None
+    assert event["r_raw"] == pytest.approx(0.011)
+    assert event["r_btc_adj"] is None
+    assert event["r_btc_adj_reason"] == "NO_FRESH_ENDPOINTS"
+    freshness = event["btc_reference_freshness"]["end_observation"]
+    assert freshness["reason"] == "STALE"
+    assert freshness["age_s"] == 1800.0
+    assert freshness["cadence"] == {"seconds": 60.0, "source": "BAR_INTERVAL"}
