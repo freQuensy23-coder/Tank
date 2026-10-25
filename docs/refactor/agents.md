@@ -845,7 +845,19 @@ evidence without discarding known IDs when a concurrent response omits them.
 Private initial/retry bodies are hidden from model representations; the actual
 wire is serialized through the typed JSON codec only at HTTP/storage boundaries.
 
-Owner-wide unit/integration qualification for the complete outbound increment
-is pending. The remaining full-session and runtime-worker annotation inventory
-is recorded separately; this bounded migration does not approve their generic
-maps or remaining fallbacks.
+Owner proof on source/test checkpoint c4e119f9: all 649 unit cases pass in
+42.27 seconds, p90 0.534 seconds and maximum 4.459 seconds; all 78 actual
+integrations pass in 38.35 seconds, zero skips. Logs/XML/metrics are retained
+as agents-outbound-qualified-* in the isolated worktree. Four new/changed
+source targets and two actual HTTP/lineage test targets pass independent strict
+mypy with the official plugin and source/test roots. The retry behavior tests
+that call the legacy process_event boundary remain explicitly open for that
+gate. Configured mypy of all 143 source files has only the existing
+analysis/truth.py:5890 condition-cache annotation error on this ancestry; no
+owned source error remains. Ruff/format/source-comment checks pass.
+
+The inventory records 38 owned source files with 34 SessionService/free-helper
+functions and four Runtime functions still annotation-incomplete. The full
+journal/event stream, tool orchestration, usage, followup presentation layering,
+runtime worker domain and 42 assigned vendor programs remain open. This bounded
+migration does not approve their generic maps or remaining fallbacks.
