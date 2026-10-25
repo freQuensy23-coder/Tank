@@ -683,3 +683,7 @@ identity-map refusals, all zero live effects. These are not acceptance waivers.
 No held decision755/renderer activation, production deployment or global completion
 is claimed. Whole Truth/Market/event-tools typing and the other owned module/fallback
 inventory remain active work after this coherent application boundary.
+
+### Typed decision-watch lifecycle consumer boundary
+
+The additive `decision_watches.DecisionWatchCommand` carries actual decision/event/token identities, generation provenance and allocated watch proposals. It deliberately requires no unrelated financial assessment fields. `reconcile_decision_watches` is a pure calculation with explicit processing clock and lifetime/grace policy; application persistence remains outside it. Matching predicates reuse actual stored creation/expiry clocks; missing required clocks are rejected instead of replaced with now. Rearming requires the actual predecessor firing timestamp. Prepared firing IDs distinguish the explicit all-firings command (`None`) from an explicitly empty set. Agent-authored watches survive engine reconciliation. Dictionaries are keyed final-write and identity indexes, not domain payloads; nullable predecessor/milestone fields mean those actual relationships are absent. Five behavior tests prove reuse, prepared consumption, rearming/cancellation, absent firing-clock refusal and actual call/milestone expiry bounds. Both source and test pass independent strict mypy and Ruff. Application activation remains open in this held card/decision cohort.
