@@ -913,3 +913,34 @@ bytes remain attached to the respective post observations.
 All 20 X adapter cases pass with zero skips, including both new boundary/baseline
 cases; source and tests pass strict typing and Ruff. This is independent of the
 unactivated pending checkpoint/quarantine work.
+
+## Atomic instrument snapshot and pending capture
+
+SourcePoller._fetch_rows now prepares an InstrumentSnapshotUpdate without writing
+the comparison baseline. Raw item bytes are made durable while preparing pending
+rows. SourcePoller.acquire then writes the pending checkpoint and the prepared
+snapshot in the same repository transaction. A raw capture failure leaves the old
+baseline intact; a failure after either actual database put rolls both puts back.
+The independently recorded HTTP receipt remains truthful I/O evidence and does
+not acknowledge instrument coverage.
+
+InstrumentSnapshotUpdate requires the actual S14 owner, checkpoint key, validated
+snapshot/digest and captured version facet. Snapshot writes record those real
+config/code versions. No-change snapshots still avoid redundant writes, and the
+initial snapshot remains a baseline rather than a generated business event.
+
+The real PostgreSQL oracle exposed missing publication precision in S14
+discoveries. The producer now explicitly declares published_at=None and
+COLLECTION_ONLY/INCOMPLETE, retaining its separate actual observed_at collection
+clock. Snapshot comparison establishes when a change was observed, not when it
+happened. No observation is substituted as a publication or transition time.
+
+The bounded proof includes three actual MemoryRepository cases (raw failure and
+failure after either checkpoint put), plus three PostgreSQL cases. Both SQL put
+faults preserve the prior baseline across service restart and then emit the
+Trading-to-Settling change. A separate later-ingest fault proves that an already
+durable pending capture keeps its original item ID, observation clock and raw
+bytes across restart. The source/instrument unit selection passes all 94 cases;
+all three PostgreSQL cases pass, with zero skips. Three focused source/test
+targets pass strict typing. Envelope success-code validation and the unfinished
+quarantine workflow remain separate workstreams.
