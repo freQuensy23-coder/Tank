@@ -795,3 +795,14 @@ The first-head correction correctly refused the old long-history fixture because
 
 Both namespaces are still counted at 1003 records (1001 historical rows plus actual current/future MTA or the two actual indexed decisions). The second producer calculation retains the same financial cutoff and advances the real head from revision1 to2. Exact current MTA/decision bundle references, no heavy whole-history scan, and future-cutoff exclusion remain asserted. The separate headless older/ambiguous-history negative cases continue to refuse. Memory passes4.41s and actual PostgreSQL passes9.30s; diagnostic broad36 evidence (703/56 passing with only this fixture failure) remains untouched.
 
+
+### Canonical native fixture and captured-settings companion
+
+After normal merge of parent1d944947 (f0810e1f; only foundation ledger conflict, both sections preserved), the prompt producer calls NativeSessionResolution.from_wire with explicit ANALYST/live composition. POST responses use created_native_session with actual posted resource bindings; GET returns the same direct complete resource. The intentional unknown-provenance control uses an actual floating skill version, retaining a valid observed model/header while refusing prompt binding and financial writes. A known POST snapshot can already establish provenance, so the obsolete exact GET-count spy was replaced by the meaningful single-creation and actual event/assessment provenance assertions.
+
+Replay abort fixtures now use the actual captured deployment configuration (including required prompt label/effort), direct complete session headers, explicit terminal pagination and canonical parsed sent-event acknowledgments. The acknowledgment body is wrapped in a real HTTP response. Server status changes to running with the actual accepted input. All seven original abort/durability/ownership controls remain, including follower retirement before archival, exactly one owned archive, failed journal finalization, source preservation, lost acceptance and native failure/termination. Two-second replay, 0.3-second timeout and one-second cancellation readiness deadlines remain unchanged.
+
+The three-control immediate-market-access test now resolves/captures its actual settings and binds require_versions before seeding. It uses the existing immutable parsed-config cache; no dynamic settings cache, configuration values or deadline changed. All three actual assessment/trade evidence controls remain.
+
+Fourteen focused units pass4.60s with zero skips (p90 .730s,max1.650s); both actual PostgreSQL prompt cases pass5.13s. Broader merged-native consumer qualification is still required. Original d7 and36 immutable diagnostics remain preserved in .verification.
+

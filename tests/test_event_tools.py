@@ -3359,6 +3359,10 @@ async def test_proposed_timing_requires_primary_dated_decision(service) -> None:
 
 
 async def test_immediate_market_access_allows_effective_primary_change_without_prior_trade(service) -> None:
+    from tank.settings import resolve_versions
+
+    service.settings = resolve_versions(service.settings)
+    service.versions = service.settings.require_versions()
     from tank.util import new_id
 
     stamp = clock_iso()
@@ -3737,7 +3741,10 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
 ) -> None:
     import os
 
+    from native_session_fixtures import created_native_session
+
     from tank.agents import SessionService
+    from tank.agents.native_sessions import NativeSessionResolution
     from tank.util import new_id
 
     if backend == "postgres":
@@ -3770,10 +3777,13 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
         "tools": [],
         "model": {"id": "gpt-6.1-sol"},
     }
+    if not resolved_snapshot:
+        snapshot["skills"] = [{"type": "custom", "skill_id": "native-fixture-skill", "version": "latest"}]
     requested = []
     dispatched = []
+    native_records = {}
 
-    def control(request: httpx.Request):
+    def control(request: httpx.Request) -> httpx.Response:
         requested.append((request.method, request.url.path))
         if request.url.host == "www.sec.gov":
             return httpx.Response(
@@ -3781,18 +3791,11 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
             )
         if request.url.path.endswith("/sessions"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
-            return httpx.Response(201, json={"id": sid, "agent": {"id": config["agent_id"], "version": 42}})
+                return httpx.Response(200, json={"data": [], "next_page": None})
+            native_records[sid] = created_native_session(request, sid, agent_snapshot=snapshot)
+            return httpx.Response(201, json=native_records[sid])
         if request.method == "GET" and request.url.path.endswith("/sessions/" + sid):
-            return httpx.Response(
-                200,
-                json={
-                    "data": {
-                        "id": sid,
-                        "agent": snapshot if resolved_snapshot else {"id": config["agent_id"], "version": 42},
-                    }
-                },
-            )
+            return httpx.Response(200, json=native_records[sid])
         return httpx.Response(200, json={})
 
     async def dispatch(name, args, context):
@@ -3806,9 +3809,17 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
                 "fetch_page", {"url": "https://www.sec.gov/news/native-provenance-fixture"}, {}
             )
             native = SessionService(repo, service.settings, dispatch, http=http, versions=fixture_versions())
-            session = await native.resolve({"kind": "NEW_ITEM", "item_id": item["item_id"]})
+            session = await native.resolve(
+                NativeSessionResolution.from_wire(
+                    {"kind": "NEW_ITEM", "item_id": item["item_id"]}, role="ANALYST", replay=False
+                )
+            )
 
-            assert session["prompt_version"] is None and session["prompt_label"] == config["prompt_version"]
+            assert session["prompt_label"] == config["prompt_version"]
+            if not resolved_snapshot:
+                assert session["prompt_version"] is None
+            elif session["prompt_version"] is not None:
+                assert session["prompt_version"] != config["prompt_version"]
             args = extraction()
             args.update(
                 item_id=item["item_id"],
@@ -3875,7 +3886,7 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
                     {"type": "custom", "skill_id": "native-fixture-skill", "version": "3"}
                 ]
                 assert dispatched == ["record_event", "set_assessment"]
-            assert requested.count(("GET", "/v1/sessions/" + sid)) == 1
+            assert requested.count(("POST", "/v1/sessions")) == 1
     finally:
         if backend == "postgres":
             await repo.close()

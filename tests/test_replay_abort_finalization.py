@@ -6,6 +6,8 @@ from pathlib import Path
 import httpx
 import pytest
 from agent_source_fixtures import source_record_fixture
+from native_input_fixtures import acknowledge_native_input
+from native_session_fixtures import created_native_session
 from source_support import fixture_versions
 
 from tank.agents import SessionService
@@ -47,6 +49,7 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
         "semantics": {},
         "dependency_map": {},
         "openma": {
+            **Settings(_env_file=None).load_config("openma"),
             "agent_id": "synthetic-agent",
             "environment_id": "unused-live",
             "replay_environment_id": "offline",
@@ -132,6 +135,7 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
     retired = asyncio.Event()
     archives = []
     accepted = []
+    native_records = {}
 
     class Stream(httpx.AsyncByteStream):
         async def __aiter__(self):
@@ -150,7 +154,7 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
                 assert current["status"] == "OPEN"
             retired.set()
 
-    async def transport(request: httpx.Request):
+    async def transport(request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if path.endswith("/archive"):
             if failure_kind != "lost_acceptance":
@@ -161,27 +165,23 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
             archives.append(path)
             return httpx.Response(200, json={"id": "owned-session", "archived": True})
         if path.endswith("/sessions"):
-            return (
-                httpx.Response(200, json={"data": []})
-                if request.method == "GET"
-                else httpx.Response(201, json={"id": "owned-session"})
-            )
-        if path.endswith("/owned-session"):
-            return httpx.Response(
-                200,
-                json={
-                    "id": "owned-session",
-                    "status": "running",
-                    "agent": {
-                        "id": "synthetic-agent",
-                        "version": 1,
-                        "system": "Synthetic prompt",
-                        "skills": [],
-                        "tools": [],
-                        "model": {"id": "synthetic-model"},
-                    },
+            if request.method == "GET":
+                return httpx.Response(200, json={"data": [], "next_page": None})
+            native_records["owned-session"] = created_native_session(
+                request,
+                "owned-session",
+                agent_snapshot={
+                    "id": "synthetic-agent",
+                    "version": 1,
+                    "system": "Synthetic prompt",
+                    "skills": [],
+                    "tools": [],
+                    "model": {"id": "synthetic-model"},
                 },
             )
+            return httpx.Response(201, json=native_records["owned-session"])
+        if path.endswith("/owned-session"):
+            return httpx.Response(200, json=native_records["owned-session"])
         if path.endswith("/executions"):
             ids = request.url.params.get_list("ids[]")
             assert set(ids) <= set(accepted)
@@ -199,6 +199,7 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
             identity = "accepted-" + str(len(accepted))
             accepted.append(identity)
             if body["type"] == "user.message":
+                native_records["owned-session"]["status"] = "running"
                 await queue.put(
                     {"id": "running-" + identity, "type": "session.status_running", "execution_id": identity}
                 )
@@ -240,7 +241,7 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
                             "reason": "Explicit synthetic native failure",
                         }
                     )
-            return httpx.Response(200, json={"data": [{"id": identity}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, identity))
         raise AssertionError(str(request.url))
 
     output = tmp_path / "failed.json"
