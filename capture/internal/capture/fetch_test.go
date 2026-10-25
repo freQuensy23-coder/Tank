@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/freQuensy23-coder/Tank/capture/internal/pyjson"
+	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"github.com/freQuensy23-coder/Tank/capture/internal/rest"
 )
 
@@ -37,13 +37,13 @@ func TestFetchRejectsMalformedRequestsBeforeNetworkEffects(t *testing.T) {
 	} {
 		f := &recordedFetch{}
 		s := &Service{opt: Options{Fetcher: f}}
-		var status, reason string
-		s.runFetch(context.Background(), map[string]any{"request": input}, time.Second, func(state string, why, _ any) {
-			status = state
-			reason, _ = why.(string)
-		})
-		if status != "FAILED" || reason != "FETCH_REQUEST_INVALID" || f.calls != 0 {
-			t.Fatalf("malformed request reached network or lost explicit failure: status=%s reason=%s calls=%d input=%v", status, reason, f.calls, input)
+		wire, err := json.Marshal(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		outcome := s.runFetch(context.Background(), wire, time.Second)
+		if outcome.Status() != requeststate.Failed || outcome.Reason() == nil || *outcome.Reason() != requeststate.FetchRequestInvalid || f.calls != 0 {
+			t.Fatalf("Malformed request reached network or lost explicit failure: outcome=%+v calls=%d input=%v", outcome, f.calls, input)
 		}
 	}
 }
@@ -53,23 +53,14 @@ func TestFetchPreservesBinaryAndEmptyTextWireBodies(t *testing.T) {
 		f := &recordedFetch{response: &rest.Fetched{Status: 200, ContentType: "application/octet-stream", Body: data}}
 		s := &Service{opt: Options{Fetcher: f}, clock: &testClock{t: time.Date(2026, 10, 24, 1, 2, 3, 0, time.UTC)}}
 		request := map[string]any{"method": "POST", "url": "https://api.binance.com/data", "source_id": nil, "body": map[string]any{"value": 0}}
-		var status string
-		var result FetchResult
-		s.runFetch(context.Background(), map[string]any{"request": request}, time.Second, func(state string, why, value any) {
-			status = state
-			data, err := pyjson.Dumps(value, false)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := json.Unmarshal(data, &result); err != nil {
-				t.Fatal(err)
-			}
-			if why != nil {
-				t.Fatalf("successful fetch returned failure: %v", why)
-			}
-		})
-		if status != "COMPLETE" || f.calls != 1 || f.method != "POST" || string(f.body) != "{\"value\":0}" {
-			t.Fatalf("request semantics changed: status=%s calls=%d method=%s body=%s", status, f.calls, f.method, f.body)
+		wireRequest, err := json.Marshal(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		outcome := s.runFetch(context.Background(), wireRequest, time.Second)
+		result, ok := outcome.Result().(requeststate.FetchResult)
+		if outcome.Status() != requeststate.Complete || outcome.Reason() != nil || !ok || f.calls != 1 || f.method != "POST" || string(f.body) != `{"value":0}` {
+			t.Fatalf("Request semantics changed: outcome=%+v calls=%d method=%s body=%s", outcome, f.calls, f.method, f.body)
 		}
 		sum := sha256.Sum256(data)
 		if result.SHA256 != hex.EncodeToString(sum[:]) || result.Bytes != int64(len(data)) || result.FetchedAt != "2026-10-24T01:02:03Z" {

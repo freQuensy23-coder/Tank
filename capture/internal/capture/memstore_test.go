@@ -2,7 +2,9 @@ package capture
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"sort"
 	"strings"
 	"sync"
@@ -21,7 +23,7 @@ type memStore struct {
 	writes   map[string]int
 	hot      []map[string]any
 	runs     []map[string]any
-	requests []map[string]any
+	requests []requeststate.Record
 }
 
 func newMemStore() *memStore {
@@ -179,38 +181,67 @@ func (m *memStore) BackfillRuns(_ context.Context, statuses []string) ([]map[str
 	return out, nil
 }
 
-func (m *memStore) ClaimRequest(_ context.Context, writer string, now time.Time) (map[string]any, error) {
+func requestText(value string) *string { return &value }
+
+func pendingRequest(id, token string, start, end, deadline time.Time) requeststate.Record {
+	return requeststate.Record{StorageKey: id, RequestID: id, Kind: requestText("REPAIR_WINDOWS"), TokenID: &token, Start: &start, End: &end, Deadline: &deadline, Status: requestText("PENDING")}
+}
+func (m *memStore) ClaimRequest(_ context.Context, writer string, now time.Time) (*requeststate.Claimed, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, row := range m.requests {
-		if row["status"] != "PENDING" {
-			continue
-		}
-		deadline, err := requestTimestamp(row["deadline"])
-		if err == nil && !deadline.After(now) {
-			row["status"], row["reason"] = "EXPIRED", "REQUEST_DEADLINE_PASSED"
-			pytime.CollectionClock(now).Into(row, "finished_at")
+	for i := range m.requests {
+		row := &m.requests[i]
+		if row.Status != nil && *row.Status == "PENDING" && row.Deadline != nil && !row.Deadline.After(now) {
+			row.Status = requestText("EXPIRED")
+			row.Reason = requestText("REQUEST_DEADLINE_PASSED")
+			row.FinishedAt = &now
+			row.FinishedAtPrec = requestText(pytime.CollectionOnly)
+			row.FinishedAtPrecReason = nil
 		}
 	}
-	for _, row := range m.requests {
-		if row["status"] == "PENDING" {
-			row["status"], row["writer"] = "RUNNING", writer
-			pytime.CollectionClock(now).Into(row, "started_at")
-			return copyRow(row), nil
+	for i := range m.requests {
+		row := &m.requests[i]
+		if row.Status != nil && *row.Status == "PENDING" {
+			row.Status = requestText("RUNNING")
+			row.Writer = &writer
+			row.StartedAt = &now
+			row.StartedAtPrec = requestText(pytime.CollectionOnly)
+			row.StartedAtPrecReason = nil
+			value, err := row.Claimed()
+			return &value, err
 		}
 	}
 	return nil, nil
 }
-
-func (m *memStore) FinishRequest(_ context.Context, row map[string]any) error {
+func (m *memStore) FinishRequest(_ context.Context, completion requeststate.Completion) error {
+	if err := completion.Validate(); err != nil {
+		return err
+	}
+	result, err := completion.Outcome.JSONResult()
+	if err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for i, r := range m.requests {
-		if r["request_id"] == row["request_id"] {
-			m.requests[i] = copyRow(row)
+	for i := range m.requests {
+		row := &m.requests[i]
+		if row.RequestID == completion.ID {
+			row.Status = requestText(string(completion.Outcome.Status()))
+			row.Reason = nil
+			if reason := completion.Outcome.Reason(); reason != nil {
+				row.Reason = requestText(string(*reason))
+			}
+			row.ResultJSON = nil
+			if result != nil {
+				row.ResultJSON = requestText(string(result))
+			}
+			row.FinishedAt = &completion.FinishedAt
+			row.FinishedAtPrec = requestText(pytime.CollectionOnly)
+			row.FinishedAtPrecReason = nil
+			return nil
 		}
 	}
-	return nil
+	return errors.New("capture request does not exist")
 }
 
 func (m *memStore) bars(iid string) map[string]map[string]any {

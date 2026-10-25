@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"net/url"
 	"time"
 	"unicode/utf8"
@@ -42,49 +43,9 @@ type fetchWireRequest struct {
 	Body     json.RawMessage   `json:"body"`
 }
 
-type FetchResult struct {
-	StatusCode  int     `json:"status_code"`
-	ContentType string  `json:"content_type"`
-	SHA256      string  `json:"sha256"`
-	FetchedAt   string  `json:"fetched_at"`
-	Bytes       int64   `json:"bytes"`
-	SourceID    *string `json:"source_id"`
-	Body        *string `json:"body,omitempty"`
-	BodyB64     *string `json:"body_b64,omitempty"`
-}
+type FetchResult = requeststate.FetchResult
 
-func (r FetchResult) storageValue() map[string]any {
-	var sourceID any
-	if r.SourceID != nil {
-		sourceID = *r.SourceID
-	}
-	value := map[string]any{
-		"status_code": int64(r.StatusCode), "content_type": r.ContentType,
-		"sha256": r.SHA256, "fetched_at": r.FetchedAt, "bytes": r.Bytes,
-		"source_id": sourceID,
-	}
-	if r.Body != nil {
-		value["body"] = *r.Body
-	}
-	if r.BodyB64 != nil {
-		value["body_b64"] = *r.BodyB64
-	}
-	return value
-}
-
-func fetchFailure(message string, source *string) map[string]any {
-	var sourceID any
-	if source != nil {
-		sourceID = *source
-	}
-	return map[string]any{"error": message, "source_id": sourceID}
-}
-
-func decodeFetchRequest(value any) (FetchRequest, error) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return FetchRequest{}, err
-	}
+func decodeFetchRequest(data json.RawMessage) (FetchRequest, error) {
 	var wire fetchWireRequest
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -110,24 +71,20 @@ type Fetcher interface {
 
 const fetchPriority = -1
 
-func (s *Service) runFetch(ctx context.Context, row map[string]any, budgetS time.Duration, finish func(string, any, any)) {
-	req, err := decodeFetchRequest(row["request"])
+func (s *Service) runFetch(ctx context.Context, raw json.RawMessage, budgetS time.Duration) requeststate.Outcome {
+	req, err := decodeFetchRequest(raw)
 	if err != nil {
-		finish("FAILED", "FETCH_REQUEST_INVALID", fetchFailure(err.Error(), nil))
-		return
+		return requeststate.Failure(requeststate.FetchRequestInvalid, requeststate.FetchFailure{Error: err.Error()})
 	}
 	u, err := url.Parse(req.URL)
 	if err != nil || u.Scheme != "https" || !FetchHosts[u.Hostname()] {
-		finish("FAILED", "FETCH_HOST_NOT_ALLOWED", map[string]any{"url": req.URL})
-		return
+		return requeststate.Failure(requeststate.FetchHostNotAllowed, requeststate.RejectedURL{URL: req.URL})
 	}
 	if req.Method != "GET" && req.Method != "POST" {
-		finish("FAILED", "FETCH_METHOD_NOT_ALLOWED", map[string]any{"method": req.Method})
-		return
+		return requeststate.Failure(requeststate.FetchMethodNotAllowed, requeststate.RejectedMethod{Method: req.Method})
 	}
 	if s.opt.Fetcher == nil {
-		finish("FAILED", "FETCH_UNAVAILABLE", nil)
-		return
+		return requeststate.Failure(requeststate.FetchUnavailable, nil)
 	}
 	if budgetS > 0 {
 		var cancel context.CancelFunc
@@ -136,22 +93,20 @@ func (s *Service) runFetch(ctx context.Context, row map[string]any, budgetS time
 	}
 	got, err := s.opt.Fetcher.Fetch(ctx, req.Method, req.URL, req.Params, req.Headers, req.Body, fetchPriority)
 	if err != nil {
-		reason := "FETCH_FAILED"
+		reason := requeststate.FetchFailed
 		var banned *budget.BannedError
 		switch {
 		case errors.Is(err, rest.ErrTooLarge):
-			reason = "RESPONSE_TOO_LARGE"
+			reason = requeststate.ResponseTooLarge
 		case errors.As(err, &banned):
-			reason = "HOST_BANNED"
+			reason = requeststate.HostBanned
 		case errors.Is(err, context.DeadlineExceeded):
-			reason = "REQUEST_BUDGET_EXHAUSTED"
+			reason = requeststate.BudgetExhausted
 		}
-		finish("FAILED", reason, fetchFailure(err.Error(), req.SourceID))
-		return
+		return requeststate.Failure(reason, requeststate.FetchFailure{Error: err.Error(), SourceID: req.SourceID})
 	}
 	if got == nil {
-		finish("FAILED", "FETCH_FAILED", fetchFailure("fetcher returned no response", req.SourceID))
-		return
+		return requeststate.Failure(requeststate.FetchFailed, requeststate.FetchFailure{Error: "fetcher returned no response", SourceID: req.SourceID})
 	}
 	sum := sha256.Sum256(got.Body)
 	result := FetchResult{
@@ -165,5 +120,5 @@ func (s *Service) runFetch(ctx context.Context, row map[string]any, budgetS time
 		body := base64.StdEncoding.EncodeToString(got.Body)
 		result.BodyB64 = &body
 	}
-	finish("COMPLETE", nil, result.storageValue())
+	return requeststate.Completed(result)
 }

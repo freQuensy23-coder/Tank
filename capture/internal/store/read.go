@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
+	"github.com/jackc/pgx/v5"
 	"sort"
 	"strconv"
 	"time"
@@ -207,7 +210,7 @@ func (s *Store) BackfillRuns(ctx context.Context, statuses []string) ([]map[stri
 
 const requests = "mkt.capture_requests"
 
-func (s *Store) ClaimRequest(ctx context.Context, writer string, now time.Time) (map[string]any, error) {
+func (s *Store) ClaimRequest(ctx context.Context, writer string, now time.Time) (*requeststate.Claimed, error) {
 	if writer == "" {
 		return nil, fmt.Errorf("capture request requires a writer identity")
 	}
@@ -215,15 +218,12 @@ func (s *Store) ClaimRequest(ctx context.Context, writer string, now time.Time) 
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		_ = tx.Rollback(ctx)
-	}()
-	rows, err := tx.Query(ctx, "SELECT "+selectList(requests, "")+" FROM "+liveTable(requests)+
-		" WHERE status='PENDING' AND deadline <= $1 FOR UPDATE SKIP LOCKED", now)
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	rows, err := tx.Query(ctx, "SELECT "+requestProjection+" FROM "+liveTable(requests)+" request_row WHERE status='PENDING' AND deadline <= $1 FOR UPDATE SKIP LOCKED", now)
 	if err != nil {
 		return nil, err
 	}
-	expired, _, err := collectRows(requests, rows)
+	expired, err := physicalRequests(rows)
 	if err != nil {
 		return nil, err
 	}
@@ -232,37 +232,29 @@ func (s *Store) ClaimRequest(ctx context.Context, writer string, now time.Time) 
 			return nil, err
 		}
 	}
-
-	rows, err = tx.Query(ctx, "SELECT "+selectList(requests, "")+" FROM "+liveTable(requests)+
-		" WHERE status='PENDING' ORDER BY requested_at NULLS LAST,storage_key LIMIT 1 FOR UPDATE SKIP LOCKED")
-	if err != nil {
-		return nil, err
-	}
-	claimed, _, err := collectRows(requests, rows)
-	if err != nil {
-		return nil, err
-	}
-	var row map[string]any
-	if len(claimed) == 1 {
-		row, err = s.applyRequestLifecycle(ctx, tx, claimed[0], requestClaim{writer: writer, started: now})
-		if err != nil {
-			return nil, err
+	candidate, err := decodePhysicalRequest(tx.QueryRow(ctx, "SELECT "+requestProjection+" FROM "+liveTable(requests)+" request_row WHERE status='PENDING' ORDER BY requested_at NULLS LAST,storage_key LIMIT 1 FOR UPDATE SKIP LOCKED"))
+	var claimed *requeststate.Claimed
+	if err == nil {
+		changed, updateErr := s.applyRequestLifecycle(ctx, tx, candidate, requestClaim{writer: writer, started: now})
+		if updateErr != nil {
+			return nil, updateErr
 		}
+		value, decodeErr := changed.Claimed()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		claimed = &value
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
 	}
-
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return row, nil
+	return claimed, nil
 }
 
-func (s *Store) FinishRequest(ctx context.Context, row map[string]any) error {
-	id, err := requestIdentity(row)
-	if err != nil {
-		return err
-	}
-	update, err := decodeRequestCompletion(row)
-	if err != nil {
+func (s *Store) FinishRequest(ctx context.Context, completion requeststate.Completion) error {
+	if err := completion.Validate(); err != nil {
 		return err
 	}
 	tx, err := s.Pool.Begin(ctx)
@@ -270,11 +262,11 @@ func (s *Store) FinishRequest(ctx context.Context, row map[string]any) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	original, err := s.lockRequest(ctx, tx, id)
+	original, err := s.lockRequest(ctx, tx, completion.ID)
 	if err != nil {
 		return err
 	}
-	if _, err := s.applyRequestLifecycle(ctx, tx, original, update); err != nil {
+	if _, err := s.applyRequestLifecycle(ctx, tx, original, requestCompletion{completion: completion}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

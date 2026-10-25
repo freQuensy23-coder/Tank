@@ -203,3 +203,33 @@ func TestPhysicalIdentityColumnsRejectSQLNull(t *testing.T) {
 		}
 	}
 }
+
+func TestPhysicalProjectionRejectsWrongTimestampAndBudgetWireTypes(t *testing.T) {
+	data, err := json.Marshal(physicalFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range []struct {
+		name  string
+		value json.RawMessage
+	}{
+		{"deadline", json.RawMessage(`"not-a-timestamp"`)},
+		{"budget_s", json.RawMessage("true")},
+		{"budget_s", json.RawMessage("0")},
+	} {
+		original := fields[candidate.name]
+		fields[candidate.name] = candidate.value
+		malformed, err := json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fields[candidate.name] = original
+		if _, err := DecodeRecord(malformed); err == nil {
+			t.Fatalf("Wrong physical wire type accepted for %s: %s", candidate.name, candidate.value)
+		}
+	}
+}

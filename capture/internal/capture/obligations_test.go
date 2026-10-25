@@ -2,6 +2,8 @@ package capture
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -54,38 +56,50 @@ func TestObligationRunsCoreRowToTerminalResult(t *testing.T) {
 
 func TestCaptureRequestRepairsWithinBudget(t *testing.T) {
 	r := newRESTRig(t, "coinbase")
+	r.s.opt.Writer = "capture-request-test"
 	r.prints(1, r.base.Add(-2*time.Hour), r.base.Add(40*time.Minute), 30*time.Second)
 	now := r.base.Add(40 * time.Minute)
 	r.clock.set(now)
-	r.mem.requests = []map[string]any{{
-		"request_id": "CR-1", "kind": "REPAIR_WINDOWS", "token_id": r.inst.TokenID,
-		"start": pytime.ISO(r.base), "end": pytime.ISO(r.base.Add(30 * time.Minute)),
-		"deadline": pytime.ISO(now.Add(30 * time.Second)), "status": "PENDING",
-	}, {
-		"request_id": "CR-2", "kind": "REPAIR_WINDOWS", "token_id": r.inst.TokenID,
-		"start": pytime.ISO(r.base), "end": pytime.ISO(r.base.Add(30 * time.Minute)),
-		"deadline": pytime.ISO(now.Add(-time.Second)), "status": "PENDING",
-	}}
+	r.mem.requests = []requeststate.Record{
+		pendingRequest("CR-1", r.inst.TokenID, r.base, r.base.Add(30*time.Minute), now.Add(30*time.Second)),
+		pendingRequest("CR-2", r.inst.TokenID, r.base, r.base.Add(30*time.Minute), now.Add(-time.Second)),
+	}
 
 	r.s.requests(context.Background())
 	r.s.wg.Wait()
-	done := map[string]map[string]any{}
+	done := map[string]requeststate.Record{}
 	for _, row := range r.mem.requests {
-		done[text(row["request_id"])] = row
+		done[row.RequestID] = row
 	}
-	if done["CR-1"]["status"] != "COMPLETE" {
-		t.Fatalf("request finished: %v", done["CR-1"])
+	completed, expired := done["CR-1"], done["CR-2"]
+	if completed.Status == nil || *completed.Status != "COMPLETE" {
+		t.Fatalf("request finished: %+v", completed)
 	}
-	saveProducerEvidence(t, "repair-complete", done["CR-1"])
-	saveProducerEvidence(t, "repair-expired", done["CR-2"])
-	result := pyval.Map(pyval.Map(done["CR-1"]["result"])["instruments"])[r.inst.ID]
-	counts := pyval.Map(result)
-	if counts["incomplete_before"] != int64(30) || counts["incomplete_after"] != int64(0) {
-		t.Fatalf("30 missing minutes repaired: %v", counts)
+	for _, evidence := range []struct {
+		name string
+		row  requeststate.Record
+	}{{"repair-complete", completed}, {"repair-expired", expired}} {
+		document, err := evidence.row.SemanticDocument()
+		if err != nil {
+			t.Fatal(err)
+		}
+		saveProducerJSON(t, evidence.name, document)
 	}
-	if done["CR-2"]["status"] != "EXPIRED" {
-		t.Fatalf("a request past its deadline is expired, not run: %v", done["CR-2"])
+	if completed.ResultJSON == nil {
+		t.Fatal("repair result absent")
 	}
+	var result requeststate.RepairResult
+	if err := json.Unmarshal([]byte(*completed.ResultJSON), &result); err != nil {
+		t.Fatal(err)
+	}
+	counts, present := result.Instruments[r.inst.ID]
+	if !present || counts.IncompleteBefore != 30 || counts.IncompleteAfter != 0 {
+		t.Fatalf("30 missing minutes repaired: %+v", result)
+	}
+	if expired.Status == nil || *expired.Status != "EXPIRED" {
+		t.Fatalf("a request past its deadline is expired, not run: %+v", expired)
+	}
+
 }
 
 func TestKlineAuditsSpreadAcrossTheHour(t *testing.T) {
@@ -125,15 +139,20 @@ func TestKlineAuditWaitsForNoRepairSlot(t *testing.T) {
 
 func saveProducerEvidence(t *testing.T, name string, row map[string]any) {
 	t.Helper()
+	body, err := pyjson.Dumps(row, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveProducerJSON(t, name, body)
+}
+
+func saveProducerJSON(t *testing.T, name string, body []byte) {
+	t.Helper()
 	directory := os.Getenv("TANK_CAPTURE_PRODUCER_EVIDENCE_DIR")
 	if directory == "" {
 		return
 	}
 	if err := os.MkdirAll(directory, 0700); err != nil {
-		t.Fatal(err)
-	}
-	body, err := pyjson.Dumps(row, false)
-	if err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(directory, name+".json")

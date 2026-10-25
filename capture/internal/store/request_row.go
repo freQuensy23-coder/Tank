@@ -18,3 +18,16 @@ func decodePhysicalRequest(row pgx.Row) (requeststate.Record, error) {
 	}
 	return requeststate.DecodeRecord([]byte(document))
 }
+
+func physicalRequests(rows pgx.Rows) ([]requeststate.Record, error) {
+	defer rows.Close()
+	result := make([]requeststate.Record, 0)
+	for rows.Next() {
+		row, err := decodePhysicalRequest(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, row)
+	}
+	return result, rows.Err()
+}

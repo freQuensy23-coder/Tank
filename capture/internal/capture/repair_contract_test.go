@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -12,7 +13,6 @@ import (
 
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyjson"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
-	"github.com/freQuensy23-coder/Tank/capture/internal/pyval"
 )
 
 type unavailableRepairStore struct {
@@ -31,22 +31,28 @@ func (s *unavailableRepairStore) Projection(ctx context.Context, collection stri
 func TestRepairRequestReadFailureCannotInventCompleteCoverage(t *testing.T) {
 	r := newRESTRig(t, "coinbase")
 	r.s.store = &unavailableRepairStore{Store: r.mem, failAt: 1}
-	row := map[string]any{
-		"request_id": "CR-read-failed", "kind": "REPAIR_WINDOWS", "token_id": r.inst.TokenID,
-		"start": pytime.ISO(r.base), "end": pytime.ISO(r.base.Add(30 * time.Minute)),
-		"deadline": pytime.ISO(r.clock.Now().Add(time.Minute)), "status": "RUNNING",
+	row := pendingRequest("CR-read-failed", r.inst.TokenID, r.base, r.base.Add(30*time.Minute), r.clock.Now().Add(time.Minute))
+	r.mem.requests = []requeststate.Record{row}
+	claimed, err := r.mem.ClaimRequest(context.Background(), "repair-test", r.clock.Now())
+	if err != nil || claimed == nil {
+		t.Fatalf("claim failed: %v", err)
 	}
-	r.mem.requests = []map[string]any{row}
-	r.s.runRequest(context.Background(), row)
+	r.s.runRequest(context.Background(), *claimed)
 	stored := r.mem.requests[0]
-	if stored["status"] != "FAILED" || stored["reason"] != "REPAIR_FAILED" || stored["finished_at"] == nil {
-		t.Fatalf("coverage backend failure became a successful repair: %v", stored)
+	if stored.Status == nil || *stored.Status != "FAILED" || stored.Reason == nil || *stored.Reason != "REPAIR_FAILED" || stored.FinishedAt == nil {
+		t.Fatalf("coverage backend failure became successful repair: %+v", stored)
 	}
-	result := pyval.Map(stored["result"])
-	instruments, ok := result["instruments"].(map[string]any)
-	if !ok || len(instruments) != 0 {
-		t.Fatalf("unavailable instrument observations became fabricated counts: %v", stored)
+	if stored.ResultJSON == nil {
+		t.Fatal("partial repair observations absent")
 	}
+	var result requeststate.RepairResult
+	if err := json.Unmarshal([]byte(*stored.ResultJSON), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Instruments == nil || len(result.Instruments) != 0 {
+		t.Fatalf("unavailable observations became fabricated counts: %+v", result)
+	}
+
 }
 
 func TestRepairFinalReadFailureDoesNotReuseInitialCounts(t *testing.T) {
