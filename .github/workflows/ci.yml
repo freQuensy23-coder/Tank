@@ -132,6 +132,14 @@ jobs:
           scripts/acceptance/masking_contracts.py deploy/openma_lifecycle/native_network_probe.py
           tests/test_ci_budget.py tests/test_ci_go_results.py tests/test_capture_parity.py tests/test_native_network_probe.py
           tests/test_acceptance_masking.py
+          tests/bootstrap_support.py tests/test_bootstrap_support.py
+      - name: Check captured configuration helpers strictly
+        env:
+          MYPYPATH: src:tests
+        run: >-
+          uv run --frozen --extra dev mypy --config-file scripts/ci/mypy-foundation-tests.ini
+          tests/configuration_support.py tests/test_configuration_support.py
+
 
   test:
     uses: ./.github/workflows/test-suite.yml
