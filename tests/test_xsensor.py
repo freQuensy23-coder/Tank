@@ -527,3 +527,50 @@ async def test_actor_start_clock_hook_runs_after_actual_admission_wait() -> None
         await sensor.posts(URL, ["ethereum"], {}, on_start=on_start)
     assert started == [9]
     assert len(actor.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_gapped_account_retains_boundary_until_actual_followup_range_is_complete() -> None:
+    actor = Actor(
+        (
+            201,
+            run(
+                [post("110", text="Latest visible post")],
+                [account("ethereum", gap=True)],
+                {"ethereum": "110"},
+                health="degraded",
+            ),
+        ),
+        (
+            201,
+            run(
+                [post("110", text="Latest visible post"), post("105", text="Previously missing post")],
+                [account("ethereum")],
+                {"ethereum": "110"},
+            ),
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(actor)) as http:
+        sensor = XSensor(http, "FAKE-token", admission=fixture_http_admission())
+        partial = await sensor.posts(URL, ["ethereum"], {"ethereum": "100"})
+        assert [row.discovery.external_id for row in partial.rows] == ["110"]
+        assert partial.cursors == {"ethereum": "100"} and partial.gaps == ["ethereum"]
+        recovered = await sensor.posts(URL, ["ethereum"], partial.cursors)
+    assert actor.body(0)["cursors"] == actor.body(1)["cursors"] == {"ethereum": "100"}
+    assert [row.discovery.external_id for row in recovered.rows] == ["110", "105"]
+    assert recovered.cursors == {"ethereum": "110"} and recovered.gaps == []
+    assert partial.rows[0].payload == actor.sent[0]
+    assert recovered.rows[1].payload == actor.sent[1]
+
+
+@pytest.mark.asyncio
+async def test_first_gapped_scan_preserves_explicit_baseline_policy_and_gap_report() -> None:
+    actor = Actor(
+        (201, run([post("110")], [account("ethereum", gap=True)], {"ethereum": "110"}, health="degraded"))
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(actor)) as http:
+        sensor = XSensor(http, "FAKE-token", admission=fixture_http_admission())
+        result = await sensor.posts(URL, ["ethereum"], {})
+    assert result.rows == [] and result.cursors == {"ethereum": "110"}
+    assert result.gaps == ["ethereum"] and not result.failures
+    assert "cursors" not in actor.body(0)
