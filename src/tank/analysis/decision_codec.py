@@ -17,6 +17,7 @@ from tank.analysis.decision_contracts import (
     DecisionIdentity,
     DecisionInputs,
     DecisionLiquidity,
+    DecisionLiquidityInput,
     DecisionMarket,
     DecisionMetadata,
     DecisionMilestone,
@@ -32,8 +33,10 @@ from tank.analysis.decision_contracts import (
     DecisionTracking,
     DecisionTriggers,
     EndedDecisionTracking,
+    UnavailableDecisionLiquidity,
 )
 from tank.analysis.watch_contracts import WatchAll, WatchCall, WatchCondition, WatchLeaf, WatchProposal
+from tank.contracts import DomainModel
 from tank.contracts.json import JsonDocument, decode_json
 from tank.contracts.provenance import GenerationProvenance, ResolvedVersionIdentity
 from tank.time_precision import Timestamp
@@ -164,7 +167,32 @@ def _relative(record: Mapping[str, JsonValue]) -> DecisionRelative:
     )
 
 
-def _liquidity(record: Mapping[str, JsonValue]) -> DecisionLiquidity:
+class _UnavailableLiquidityWire(DomainModel):
+    window: Literal["EVENT"]
+    start: None
+    cutoff: str
+    reason: Literal["INCOMPLETE"]
+
+    @field_validator("cutoff")
+    @classmethod
+    def actual_cutoff(cls, value: str) -> str:
+        parse_iso_time(value)
+        return value
+
+
+def _liquidity(record: Mapping[str, JsonValue], primary_window: str) -> DecisionLiquidityInput:
+    if "liquidity_state" not in record and "vol_compression" not in record:
+        unavailable = _UnavailableLiquidityWire.model_validate(
+            {
+                "window": _required(record, "window"),
+                "start": _required(record, "start"),
+                "cutoff": _required(record, "cutoff"),
+                "reason": _required(record, "reason"),
+            }
+        )
+        if unavailable.window != primary_window:
+            raise ValueError("Unavailable liquidity belongs to a different analysis window")
+        return UnavailableDecisionLiquidity(reason=unavailable.reason)
     compression = _object(_required(record, "vol_compression"), "vol_compression")
     return DecisionLiquidity.model_validate(
         {
@@ -237,7 +265,7 @@ def _market(record: Mapping[str, JsonValue]) -> DecisionMarket:
             "class_confidence": _required(record, "class_confidence"),
             "move": _required(record, "move_class"),
             "relative": _relative(_object(_required(record, "relative"), "relative")),
-            "liquidity": _liquidity(_object(_required(record, "liquidity"), "liquidity")),
+            "liquidity": _liquidity(_object(_required(record, "liquidity"), "liquidity"), primary),
             "spot": _spot(_object(_required(spot, primary), "primary spot")),
             "positioning": _positioning(_object(_required(record, "derivatives"), "derivatives")),
             "divergence": DecisionDivergence.model_validate(

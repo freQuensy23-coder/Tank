@@ -12,6 +12,7 @@ from tank.analysis.decision_contracts import (
     DecisionDraft,
     DecisionEvaluation,
     DecisionInputs,
+    DecisionLiquidity,
     DecisionMaterialization,
     DecisionMilestone,
     DecisionOutlook,
@@ -66,7 +67,7 @@ class DecisionEngine:
         data, move = (market.data_confidence, market.move)
         relative = market.relative
         band, context = (relative.repricing_band, relative.market_context)
-        liquidity = market.liquidity.state
+        liquidity = market.liquidity.state if isinstance(market.liquidity, DecisionLiquidity) else None
         confirmed = market.divergence.absorption_confirmed
         direction, breadth = (market.spot.direction, market.spot.breadth)
         selling = direction == "SELL" and market.spot.selling_majority is True
@@ -165,7 +166,9 @@ class DecisionEngine:
         else:
             bias = "NEUTRAL"
         early = band in {"UNPRICED", "EARLY"}
-        compressed = market.liquidity.compression == "COMPRESSED"
+        compressed = (
+            isinstance(market.liquidity, DecisionLiquidity) and market.liquidity.compression == "COMPRESSED"
+        )
         squeeze = oi_above and any(value == "BELOW" for value in positioning.venue_funding)
         if band == "HEAVY" or crowded:
             potential = "LOW"

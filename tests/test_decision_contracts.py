@@ -30,6 +30,7 @@ from tank.analysis.decision_contracts import (
     DecisionSpot,
     DecisionTriggers,
     EndedDecisionTracking,
+    UnavailableDecisionLiquidity,
 )
 from tank.analysis.decisions import DecisionEngine, finalize_decision, materialize_decision
 from tank.analysis.watch_contracts import WatchCondition
@@ -379,3 +380,42 @@ def test_ended_frozen_tracking_requires_actual_lineage_and_has_no_active_watches
     assert wire["tracking_ended"] is True and wire["actionable"] is False
     assert wire["previous_decision_id"] == "DEC-earlier"
     assert encode_decision(decode_decision(wire)) == wire
+
+
+def test_actual_unanchored_event_liquidity_is_explicitly_unavailable_not_a_filled_object() -> None:
+    event, assessment, beneficiary, market = decision_wire_fixture()
+    market["primary_window"] = "EVENT"
+    market["move_class"] = "UNKNOWN"
+    market["class_confidence"] = "LOW"
+    market["data_confidence"] = {"class": "LOW"}
+    market["spot"] = {
+        "EVENT": {
+            "direction": None,
+            "classification": "INSUFFICIENT_DATA",
+            "exact_majority": {"sell": None},
+            "coverage": {"n_complete": 0},
+        }
+    }
+    market["liquidity"] = {
+        "window": "EVENT",
+        "start": None,
+        "cutoff": "2026-10-25T00:00:00Z",
+        "reason": "INCOMPLETE",
+    }
+    projected = decision_inputs_from_records(
+        event, assessment, beneficiary, market, open_call=None, conditions=()
+    )
+    assert isinstance(projected.market.liquidity, UnavailableDecisionLiquidity)
+    assert DecisionEngine().evaluate(projected).action == "WAIT"
+    complete = decision_inputs_fixture()
+    unknown = complete.model_copy(
+        update={
+            "market": complete.market.model_copy(
+                update={"liquidity": UnavailableDecisionLiquidity(reason="INCOMPLETE")}
+            )
+        }
+    )
+    assert DecisionEngine().evaluate(unknown).trade_grade == "B"
+    market["liquidity"] = {"reason": "INCOMPLETE"}
+    with pytest.raises(ValueError, match="required"):
+        decision_inputs_from_records(event, assessment, beneficiary, market, open_call=None, conditions=())

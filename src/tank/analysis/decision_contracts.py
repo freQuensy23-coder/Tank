@@ -61,7 +61,7 @@ type MoveClass = Literal[
 type RepricingBand = Literal["NEGATIVE", "UNPRICED", "EARLY", "SUBSTANTIAL", "HEAVY", "UNKNOWN"]
 type NormalPosition = Literal["ABOVE", "BELOW", "WITHIN"]
 type Direction = Literal["BUY", "SELL", "NEUTRAL", "UNKNOWN"]
-type Breadth = Literal["BROAD", "CONCENTRATED", "DIVERGENT", "NARROW", "UNKNOWN"]
+type Breadth = Literal["BROAD", "CONCENTRATED", "DIVERGENT", "NARROW", "INSUFFICIENT_DATA", "UNKNOWN"]
 type Bias = Literal["UNKNOWN", "TWO_SIDED", "BEARISH", "BULLISH", "NEUTRAL"]
 type Potential = Literal["LOW", "MEDIUM", "HIGH", "EXPLOSIVE"]
 type Horizon = Literal["H1", "H4", "H12", "H24", "D3", "D7"]
@@ -113,6 +113,13 @@ class DecisionLiquidity(DomainModel):
     compression: Literal["COMPRESSED", "NORMAL", "EXPANDED", "UNKNOWN"] | None
 
 
+class UnavailableDecisionLiquidity(DomainModel):
+    reason: Literal["INCOMPLETE"]
+
+
+type DecisionLiquidityInput = DecisionLiquidity | UnavailableDecisionLiquidity
+
+
 class DecisionSpot(DomainModel):
     direction: Direction | None
     breadth: Breadth | None
@@ -141,7 +148,7 @@ class DecisionMarket(DomainModel):
     class_confidence: Confidence
     move: MoveClass
     relative: DecisionRelative
-    liquidity: DecisionLiquidity
+    liquidity: DecisionLiquidityInput
     spot: DecisionSpot
     positioning: DecisionPositioning
     divergence: DecisionDivergence
