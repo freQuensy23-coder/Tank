@@ -1,9 +1,9 @@
 {
-  "checkout_commit": "85e361fb3a4344b236d5496f52c543208a906d04",
+  "checkout_commit": "54a7fbea603b6d9d9f3fab8b31b726fa3155780c",
   "upstream_commit": "85d5361f535c7221de975838dc48444e468cc02e",
   "archive_sha256": "a1bca52a11dd2e621b9a451e204abe5055b70fc45a8db017fd00587ebce618e9",
   "scanner_sha256": {
-    "scripts/ci/openma_inventory.py": "f47dd3d253207e1bdc355512e798db4a82d9a7bf43285ec1b669e0ed2d356588",
+    "scripts/ci/openma_inventory.py": "a1da119eda811086c95411278dac571a9c3c927cb45e7e602da4b1a95298b738",
     "scripts/ci/refactor_inventory.py": "2f80f9182a2b7b7d22ce2800ae21bc130aba2c19b6f36cfed10fdf2072f79697",
     "scripts/typescript/inventory.mts": "2b3d212952e30ecd3577ef272cfefb841bbacd3daeb0e72b75b5384068e4fc45"
   },
@@ -15,7 +15,7 @@
     "Ownership and semantic caller evidence explicit where assigned; remaining ownership/caller review stays open",
     "Syntax observations do not prove strict typing or behavior; unchanged upstream source is preserved"
   ],
-  "tracked_programs": 2619,
+  "tracked_programs": 2620,
   "unchanged_upstream_programs": 2546,
   "programs": [
     {
@@ -40641,456 +40641,354 @@
     {
       "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
       "classification": "TANK_ADDED",
-      "sha256": "7d2ab11c42f827bae6b8cc78fc0d2c1280fabfe84faf3f5cbf5777b383c5ded8",
+      "sha256": "fb97968b094f68b8bc92a1e845387ff01baf8e1334f2780e5a759594fa7f79a3",
       "upstream_sha256": null,
       "authored_ranges": [
         {
           "start": 1,
-          "end": 91
+          "end": 3
         }
       ],
       "removed_upstream_lines": 0,
       "owner": "quality",
-      "caller_ledger": null,
+      "caller_ledger": "docs/refactor/quality.md:Typed OpenMA deployment entrypoint",
+      "authored_findings": [],
+      "preserved_upstream_findings": [],
+      "embedded_python": []
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "classification": "TANK_ADDED",
+      "sha256": "163f2a37d7a57f2da65bbdcf573896f9766eccba24df6349a393ae4e8bf61112",
+      "upstream_sha256": null,
+      "authored_ranges": [
+        {
+          "start": 1,
+          "end": 277
+        }
+      ],
+      "removed_upstream_lines": 0,
+      "owner": "quality",
+      "caller_ledger": "docs/refactor/quality.md:Typed OpenMA deployment entrypoint",
       "authored_findings": [
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 8,
-          "symbol": "verifyNativePlatform",
-          "kind": "untyped_parameter",
-          "expression": "shim",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 8,
-          "symbol": "verifyNativePlatform",
-          "kind": "untyped_parameter",
-          "expression": "metadata",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 8,
-          "symbol": "verifyNativePlatform",
-          "kind": "untyped_parameter",
-          "expression": "system = { platform: process.platform, arch: process.arch }",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 8,
-          "symbol": "verifyNativePlatform",
-          "kind": "optional",
-          "expression": "system = { platform: process.platform, arch: process.arch }",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 8,
-          "symbol": "verifyNativePlatform",
-          "kind": "untyped_return",
-          "expression": "export function verifyNativePlatform(shim, metadata, system = { platform: process.platform, arch: process.arch }) {\n  const architecture = { x64: 'amd64', arm64: 'arm64' }[system.arch];\n  if (system.platform !== 'linux' || !architecture) th",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 8,
-          "symbol": "verifyNativePlatform",
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 45,
+          "symbol": "SECRET_KEYS",
           "kind": "object",
-          "expression": "{ platform: process.platform, arch: process.arch }",
+          "expression": "{\n  oma_db_password: \"OMA_DB_PASSWORD\",\n  oma_api_key: \"OMA_API_KEY\",\n  oma_root_secret: \"OMA_ROOT_SECRET\",\n  oma_auth_secret: \"OMA_AUTH_SECRET\",\n  tank_agent_db_password: \"TANK_AGENT_DB_PASSWORD\",\n  tank_replay_agent_db_password: \"TANK_REP",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 9,
-          "symbol": "verifyNativePlatform.architecture",
-          "kind": "object",
-          "expression": "{ x64: 'amd64', arm64: 'arm64' }",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 10,
-          "symbol": "verifyNativePlatform",
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 100,
+          "symbol": "provenanceCoordinates",
           "kind": "fallback",
-          "expression": "system.platform !== 'linux' || !architecture",
+          "expression": "typeof metadata.boxlite_version !== \"string\" || metadata.boxlite_version.length === 0",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 11,
-          "symbol": "verifyNativePlatform.machine",
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 109,
+          "symbol": "provenanceCoordinates",
+          "kind": "fallback",
+          "expression": "typeof source.version !== \"string\" || source.version.length === 0",
+          "embedded_line": null
+        },
+        {
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 116,
+          "symbol": "provenanceCoordinates",
           "kind": "object",
-          "expression": "{ amd64: 62, arm64: 183 }",
+          "expression": "{ architecture: declared, version }",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 12,
-          "symbol": "verifyNativePlatform",
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 129,
+          "symbol": "verifyPlatform",
           "kind": "fallback",
           "expression": "shim.length < 64 || !shim.subarray(0, 6).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1])) || shim.readUInt16LE(18) !== machine",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 12,
-          "symbol": "verifyNativePlatform",
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 129,
+          "symbol": "verifyPlatform",
           "kind": "fallback",
           "expression": "shim.length < 64 || !shim.subarray(0, 6).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1]))",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 15,
-          "symbol": "verifyNativePlatform.declared",
-          "kind": "fallback",
-          "expression": "metadata.architecture ?? { aarch64: 'arm64', x86_64: 'amd64' }[metadata.elf?.architecture]",
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 139,
+          "symbol": "verifyNativePlatform",
+          "kind": "optional",
+          "expression": "system: NativeSystem = { platform: process.platform, arch: process.arch }",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 15,
-          "symbol": "verifyNativePlatform.declared",
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 139,
+          "symbol": "verifyNativePlatform",
           "kind": "object",
-          "expression": "{ aarch64: 'arm64', x86_64: 'amd64' }",
+          "expression": "{ platform: process.platform, arch: process.arch }",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 20,
-          "symbol": "verifyNativeQualification",
-          "kind": "untyped_parameter",
-          "expression": "shim",
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 150,
+          "symbol": "receipt",
+          "kind": "fallback",
+          "expression": "selected.schema !== \"tank.boxlite-native-qualification.v1\" || selected.status !== \"PASS\" ||\n        selected.architecture !== target || checks.kvm !== \"PASS\" || checks.state_persistence !== \"PASS\" ||\n        checks.dns !== \"PASS\" || checks.",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 20,
-          "symbol": "verifyNativeQualification",
-          "kind": "untyped_parameter",
-          "expression": "provenance",
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 150,
+          "symbol": "receipt",
+          "kind": "fallback",
+          "expression": "selected.schema !== \"tank.boxlite-native-qualification.v1\" || selected.status !== \"PASS\" ||\n        selected.architecture !== target || checks.kvm !== \"PASS\" || checks.state_persistence !== \"PASS\" ||\n        checks.dns !== \"PASS\"",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 20,
-          "symbol": "verifyNativeQualification",
-          "kind": "untyped_parameter",
-          "expression": "qualifications",
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 150,
+          "symbol": "receipt",
+          "kind": "fallback",
+          "expression": "selected.schema !== \"tank.boxlite-native-qualification.v1\" || selected.status !== \"PASS\" ||\n        selected.architecture !== target || checks.kvm !== \"PASS\" || checks.state_persistence !== \"PASS\"",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 20,
-          "symbol": "verifyNativeQualification",
-          "kind": "untyped_parameter",
-          "expression": "system = { platform: process.platform, arch: process.arch }",
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 150,
+          "symbol": "receipt",
+          "kind": "fallback",
+          "expression": "selected.schema !== \"tank.boxlite-native-qualification.v1\" || selected.status !== \"PASS\" ||\n        selected.architecture !== target || checks.kvm !== \"PASS\"",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 20,
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 150,
+          "symbol": "receipt",
+          "kind": "fallback",
+          "expression": "selected.schema !== \"tank.boxlite-native-qualification.v1\" || selected.status !== \"PASS\" ||\n        selected.architecture !== target",
+          "embedded_line": null
+        },
+        {
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 150,
+          "symbol": "receipt",
+          "kind": "fallback",
+          "expression": "selected.schema !== \"tank.boxlite-native-qualification.v1\" || selected.status !== \"PASS\"",
+          "embedded_line": null
+        },
+        {
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 157,
+          "symbol": "receipt",
+          "kind": "fallback",
+          "expression": "selected.schema !== \"tank.boxlite-qualified-replay-dns-artifact.v1\" ||\n        selected.status !== \"QUALIFIED_NATIVE_REPLAY_NETWORK\" || qualification.status !== \"PASS\" ||\n        source.version !== \"0.10.6\" || files[\"boxlite-shim\"] !== shim",
+          "embedded_line": null
+        },
+        {
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 157,
+          "symbol": "receipt",
+          "kind": "fallback",
+          "expression": "selected.schema !== \"tank.boxlite-qualified-replay-dns-artifact.v1\" ||\n        selected.status !== \"QUALIFIED_NATIVE_REPLAY_NETWORK\" || qualification.status !== \"PASS\" ||\n        source.version !== \"0.10.6\"",
+          "embedded_line": null
+        },
+        {
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 157,
+          "symbol": "receipt",
+          "kind": "fallback",
+          "expression": "selected.schema !== \"tank.boxlite-qualified-replay-dns-artifact.v1\" ||\n        selected.status !== \"QUALIFIED_NATIVE_REPLAY_NETWORK\" || qualification.status !== \"PASS\"",
+          "embedded_line": null
+        },
+        {
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 157,
+          "symbol": "receipt",
+          "kind": "fallback",
+          "expression": "selected.schema !== \"tank.boxlite-qualified-replay-dns-artifact.v1\" ||\n        selected.status !== \"QUALIFIED_NATIVE_REPLAY_NETWORK\"",
+          "embedded_line": null
+        },
+        {
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 161,
+          "symbol": "receipt",
+          "kind": "fallback",
+          "expression": "typeof selected.shim_sha256 !== \"string\" || !/^[0-9a-f]{64}$/.test(selected.shim_sha256) ||\n      typeof selected.provenance_sha256 !== \"string\" || !/^[0-9a-f]{64}$/.test(selected.provenance_sha256)",
+          "embedded_line": null
+        },
+        {
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 161,
+          "symbol": "receipt",
+          "kind": "fallback",
+          "expression": "typeof selected.shim_sha256 !== \"string\" || !/^[0-9a-f]{64}$/.test(selected.shim_sha256) ||\n      typeof selected.provenance_sha256 !== \"string\"",
+          "embedded_line": null
+        },
+        {
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 161,
+          "symbol": "receipt",
+          "kind": "fallback",
+          "expression": "typeof selected.shim_sha256 !== \"string\" || !/^[0-9a-f]{64}$/.test(selected.shim_sha256)",
+          "embedded_line": null
+        },
+        {
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 163,
+          "symbol": "receipt",
+          "kind": "object",
+          "expression": "{ architecture: target, shimSha256: selected.shim_sha256, provenanceSha256: selected.provenance_sha256 }",
+          "embedded_line": null
+        },
+        {
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 170,
           "symbol": "verifyNativeQualification",
           "kind": "optional",
-          "expression": "system = { platform: process.platform, arch: process.arch }",
+          "expression": "system: NativeSystem = { platform: process.platform, arch: process.arch }",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 20,
-          "symbol": "verifyNativeQualification",
-          "kind": "untyped_return",
-          "expression": "export function verifyNativeQualification(shim, provenance, qualifications, system = { platform: process.platform, arch: process.arch }) {\n  const metadata = JSON.parse(provenance.toString('utf8'));\n  const architecture = verifyNativePlatfo",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 20,
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 170,
           "symbol": "verifyNativeQualification",
           "kind": "object",
           "expression": "{ platform: process.platform, arch: process.arch }",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 26,
-          "symbol": "verifyNativeQualification.version",
-          "kind": "fallback",
-          "expression": "metadata.boxlite_version ?? metadata.source?.version",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 30,
-          "symbol": "verifyNativeQualification.qualified",
-          "kind": "untyped_parameter",
-          "expression": "check",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 30,
-          "symbol": "verifyNativeQualification.qualified",
-          "kind": "untyped_return",
-          "expression": "check => receipt.checks?.[check] === 'PASS'",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 34,
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 177,
           "symbol": "verifyNativeQualification",
           "kind": "fallback",
-          "expression": "version !== '0.10.6' || !qualified || receipt.shim_sha256 !== shimHash || receipt.provenance_sha256 !== provenanceHash",
+          "expression": "qualified.shimSha256 !== shimHash || qualified.provenanceSha256 !== provenanceHash",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 34,
-          "symbol": "verifyNativeQualification",
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 186,
+          "symbol": "readSecret",
           "kind": "fallback",
-          "expression": "version !== '0.10.6' || !qualified || receipt.shim_sha256 !== shimHash",
+          "expression": "supplied === undefined || supplied.trim().length === 0",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 34,
-          "symbol": "verifyNativeQualification",
-          "kind": "fallback",
-          "expression": "version !== '0.10.6' || !qualified",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 42,
-          "symbol": "secret",
-          "kind": "untyped_parameter",
-          "expression": "name",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 42,
-          "symbol": "secret",
-          "kind": "untyped_return",
-          "expression": "name => {\n  const variable = name.toUpperCase();\n  const value = (process.env[variable] ?? '').trim();\n  if (!value) throw Error(`Empty required secret: ${variable}`);\n  return value;\n}",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 44,
-          "symbol": "secret.value",
-          "kind": "fallback",
-          "expression": "process.env[variable] ?? ''",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 49,
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 194,
           "symbol": "sandboxDatabaseRoute",
-          "kind": "untyped_parameter",
-          "expression": "env",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 49,
-          "symbol": "sandboxDatabaseRoute",
-          "kind": "untyped_parameter",
-          "expression": "readSecret",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 49,
-          "symbol": "sandboxDatabaseRoute",
-          "kind": "untyped_return",
-          "expression": "export function sandboxDatabaseRoute(env, readSecret) {\n  const database = env.TANK_SANDBOX_DATABASE_NAME ?? 'tank';\n  const role = env.TANK_SANDBOX_DATABASE_ROLE ?? 'tank_agent';\n  for (const [name, value] of Object.entries({ database, rol",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 50,
-          "symbol": "sandboxDatabaseRoute.database",
           "kind": "fallback",
-          "expression": "env.TANK_SANDBOX_DATABASE_NAME ?? 'tank'",
+          "expression": "typeof value !== \"string\" || !/^[a-z_][a-z0-9_]{0,62}$/.test(value)",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 51,
-          "symbol": "sandboxDatabaseRoute.role",
-          "kind": "fallback",
-          "expression": "env.TANK_SANDBOX_DATABASE_ROLE ?? 'tank_agent'",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 52,
-          "symbol": "sandboxDatabaseRoute",
-          "kind": "object",
-          "expression": "{ database, role }",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 60,
-          "symbol": "replayDatabaseRoute",
-          "kind": "untyped_parameter",
-          "expression": "readSecret",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 60,
-          "symbol": "replayDatabaseRoute",
-          "kind": "untyped_parameter",
-          "expression": "resolve = lookup",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 60,
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 201,
           "symbol": "replayDatabaseRoute",
           "kind": "optional",
-          "expression": "resolve = lookup",
+          "expression": "resolve: DatabaseResolver = lookup",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 60,
-          "symbol": "replayDatabaseRoute",
-          "kind": "untyped_return",
-          "expression": "export async function replayDatabaseRoute(readSecret, resolve = lookup) {\n  const { address } = await resolve('postgres', { family: 4 });\n  const octets = address.split('.').map(Number);\n  if (isIP(address) !== 4 || !(octets[0] === 10 || (o",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 61,
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 202,
           "symbol": "replayDatabaseRoute.{ address }",
           "kind": "object",
           "expression": "{ family: 4 }",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 63,
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 204,
           "symbol": "replayDatabaseRoute",
           "kind": "fallback",
           "expression": "isIP(address) !== 4 || !(octets[0] === 10 || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) || (octets[0] === 192 && octets[1] === 168))",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 63,
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 204,
           "symbol": "replayDatabaseRoute",
           "kind": "fallback",
           "expression": "octets[0] === 10 || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) || (octets[0] === 192 && octets[1] === 168)",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 63,
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 204,
           "symbol": "replayDatabaseRoute",
           "kind": "fallback",
           "expression": "octets[0] === 10 || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 66,
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 207,
           "symbol": "replayDatabaseRoute",
           "kind": "object",
-          "expression": "{ address, url: `postgresql://tank_replay_agent:${encodeURIComponent(readSecret('tank_replay_agent_db_password'))}@${address}:5432/tank_replay` }",
+          "expression": "{ address, url: \"postgresql://tank_replay_agent:\" + encodeURIComponent(secret(\"tank_replay_agent_db_password\")) + \"@\" + address + \":5432/tank_replay\" }",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 69,
-          "symbol": "main",
-          "kind": "untyped_return",
-          "expression": "export async function main() {\n  const nativeRoot = process.env.BOXLITE_RUNTIME_DIR ?? '/opt/tank-boxlite-runtime';\n  verifyNativeQualification(\n    readFileSync(`${nativeRoot}/boxlite-shim`), readFileSync(`${nativeRoot}/provenance.json`),\n",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 70,
-          "symbol": "main.nativeRoot",
-          "kind": "fallback",
-          "expression": "process.env.BOXLITE_RUNTIME_DIR ?? '/opt/tank-boxlite-runtime'",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 83,
-          "symbol": "main",
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 211,
+          "symbol": "productionDependencies",
           "kind": "object",
-          "expression": "{ openrouter_api_key: 'TANK_SANDBOX_OPENROUTER_API_KEY', etherscan_api_key: 'TANK_SANDBOX_ETHERSCAN_API_KEY' }",
+          "expression": "{\n    environment: process.env,\n    system: { platform: process.platform, arch: process.arch },\n    readBinary(path: string | URL): Buffer { return readFileSync(path); },\n    resolve: lookup,\n    launch(command: \"pnpm\", args: readonly [\"sta",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 86,
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 213,
+          "symbol": "productionDependencies",
+          "kind": "object",
+          "expression": "{ platform: process.platform, arch: process.arch }",
+          "embedded_line": null
+        },
+        {
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 218,
+          "symbol": "productionDependencies.launch",
+          "kind": "object",
+          "expression": "{\n        kill(signal: ForwardedSignal): void { child.kill(signal); },\n        onExit(listener: (code: number | null, signal: NodeJS.Signals | null) => void): void { child.on(\"exit\", listener); },\n        onError(listener: (error: Error) =>",
+          "embedded_line": null
+        },
+        {
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 230,
+          "symbol": "main",
+          "kind": "optional",
+          "expression": "dependencies: EntrypointDependencies = productionDependencies()",
+          "embedded_line": null
+        },
+        {
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 253,
           "symbol": "main.child",
           "kind": "object",
-          "expression": "{ stdio: 'inherit', env: process.env }",
+          "expression": "{ stdio: \"inherit\", env }",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 87,
-          "symbol": "main",
-          "kind": "untyped_return",
-          "expression": "() => child.kill(signal)",
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 269,
+          "symbol": "runEntrypoint",
+          "kind": "optional",
+          "expression": "dependencies: EntrypointDependencies = productionDependencies()",
           "embedded_line": null
         },
         {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 88,
-          "symbol": "main",
-          "kind": "untyped_parameter",
-          "expression": "code",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 88,
-          "symbol": "main",
-          "kind": "untyped_parameter",
-          "expression": "signal",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 88,
-          "symbol": "main",
-          "kind": "untyped_return",
-          "expression": "(code, signal) => process.exit(code ?? (signal ? 1 : 0))",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 88,
-          "symbol": "main",
+          "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+          "line": 270,
+          "symbol": "runEntrypoint",
           "kind": "fallback",
-          "expression": "code ?? (signal ? 1 : 0)",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 91,
-          "symbol": "",
-          "kind": "untyped_parameter",
-          "expression": "error",
-          "embedded_line": null
-        },
-        {
-          "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
-          "line": 91,
-          "symbol": "",
-          "kind": "untyped_return",
-          "expression": "error => { console.error(error.message); process.exit(1); }",
+          "expression": "process.argv[1] === undefined || url !== pathToFileURL(process.argv[1]).href",
           "embedded_line": null
         }
       ],
@@ -41103,11 +41001,11 @@
     "dictionary": 12,
     "embedded_python": 1,
     "embedded_python_command": 12,
-    "fallback": 320,
-    "object": 623,
-    "optional": 44,
-    "untyped_parameter": 297,
-    "untyped_return": 594
+    "fallback": 328,
+    "object": 624,
+    "optional": 46,
+    "untyped_parameter": 281,
+    "untyped_return": 584
   },
   "preserved_upstream_counts": {
     "any": 34,
