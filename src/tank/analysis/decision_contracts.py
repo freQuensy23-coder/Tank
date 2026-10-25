@@ -13,6 +13,38 @@ from tank.time_precision import Timestamp
 type Confidence = Literal["LOW", "MEDIUM", "HIGH"]
 type Grade = Literal["A", "B", "C", "D"]
 type Action = Literal["START", "WATCH_TO_START", "ADD", "HOLD", "WAIT", "DONT_CHASE", "EXIT", "REDUCE"]
+type ActionRule = Literal[
+    "A0",
+    "A1",
+    "A2",
+    "A3",
+    "A5",
+    "A6",
+    "A7",
+    "A8",
+    "A9",
+    "A10",
+    "A11",
+    "A12",
+    "B1",
+    "B2",
+    "B3",
+    "B4",
+    "WATCH_ANCHOR_LOST",
+    "WATCH_SELL_DOWNGRADE",
+    "START_HIGH_DATA_GUARD",
+    "START_UNRESOLVED_GUARD",
+]
+type TradeReason = Literal[
+    "TRADE_BASE_A",
+    "TRADE_BASE_B",
+    "TRADE_BASE_C",
+    "TRADE_BASE_D",
+    "CONTEXT_HEADWIND",
+    "CONTEXT_STRESS",
+]
+
+
 type MoveClass = Literal[
     "SPOT_LED_ACCUMULATION",
     "ORGANIC_MIXED",
@@ -29,7 +61,7 @@ type MoveClass = Literal[
 type RepricingBand = Literal["NEGATIVE", "UNPRICED", "EARLY", "SUBSTANTIAL", "HEAVY", "UNKNOWN"]
 type NormalPosition = Literal["ABOVE", "BELOW", "WITHIN"]
 type Direction = Literal["BUY", "SELL", "NEUTRAL", "UNKNOWN"]
-type Breadth = Literal["BROAD", "CONCENTRATED", "FRAGMENTED", "NARROW", "UNKNOWN"]
+type Breadth = Literal["BROAD", "CONCENTRATED", "DIVERGENT", "NARROW", "INSUFFICIENT_DATA", "UNKNOWN"]
 type Bias = Literal["UNKNOWN", "TWO_SIDED", "BEARISH", "BULLISH", "NEUTRAL"]
 type Potential = Literal["LOW", "MEDIUM", "HIGH", "EXPLOSIVE"]
 type Horizon = Literal["H1", "H4", "H12", "H24", "D3", "D7"]
@@ -40,7 +72,7 @@ type ConfidenceInput = Literal["data", "certainty", "class"]
 
 
 class DecisionMilestone(DomainModel):
-    reference: str | None
+    reference: str | None = Field(min_length=1)
 
 
 class DecisionEvent(DomainModel):
@@ -78,7 +110,14 @@ class DecisionRelative(DomainModel):
 
 class DecisionLiquidity(DomainModel):
     state: Literal["NORMAL", "THIN", "VACUUM", "UNKNOWN"] | None
-    compression: Literal["COMPRESSED", "NORMAL", "ELEVATED", "UNKNOWN"] | None
+    compression: Literal["COMPRESSED", "NORMAL", "EXPANDED", "UNKNOWN"] | None
+
+
+class UnavailableDecisionLiquidity(DomainModel):
+    reason: Literal["INCOMPLETE"]
+
+
+type DecisionLiquidityInput = DecisionLiquidity | UnavailableDecisionLiquidity
 
 
 class DecisionSpot(DomainModel):
@@ -109,7 +148,7 @@ class DecisionMarket(DomainModel):
     class_confidence: Confidence
     move: MoveClass
     relative: DecisionRelative
-    liquidity: DecisionLiquidity
+    liquidity: DecisionLiquidityInput
     spot: DecisionSpot
     positioning: DecisionPositioning
     divergence: DecisionDivergence
@@ -183,9 +222,9 @@ class DecisionCore(DomainModel):
     thesis_rule: Grade
     trade_grade: Grade
     trade_rule: Grade
-    trade_reasons: list[str]
+    trade_reasons: list[TradeReason]
     action: Action
-    action_rule: str = Field(min_length=1)
+    action_rule: ActionRule
     tactical: bool
     investigate: bool
     confidence_limiting: ConfidenceLimitation
@@ -214,6 +253,18 @@ class DecisionIdentity(DomainModel):
 
     @model_validator(mode="after")
     def actual_provenance(self) -> Self:
+        if any(
+            not value.strip()
+            for value in (
+                self.decision_id,
+                self.event_id,
+                self.token_id,
+                self.assessment_id,
+                self.market_truth_id,
+                self.thresholds_version,
+            )
+        ):
+            raise ValueError("Decision identities and declared threshold version must be nonempty")
         if self.cutoff.value is None:
             raise ValueError("A produced decision requires its actual market cutoff")
         if (
@@ -263,6 +314,13 @@ class DecisionMetadata(DomainModel):
     def actual_calculation(self) -> Self:
         if self.calculated_at.value is None:
             raise ValueError("A produced decision requires its actual calculation clock")
+        if any(not value.strip() for value in self.contradiction_ids):
+            raise ValueError("Decision contradiction identities must be nonempty")
+        if isinstance(self.tracking, EndedDecisionTracking):
+            if self.tracking.previous_decision_id == self.identity.decision_id:
+                raise ValueError("Ended tracking cannot reference itself as predecessor")
+            if any(not value.strip() for value in self.tracking.expired_call_ids):
+                raise ValueError("Expired call identities must be nonempty")
         return self
 
 
@@ -284,6 +342,12 @@ class DecisionDraft(DomainModel):
     metadata: DecisionMetadata
     proposals: list[WatchProposal]
 
+    @model_validator(mode="after")
+    def ended_watches(self) -> Self:
+        if isinstance(self.metadata.tracking, EndedDecisionTracking) and self.proposals:
+            raise ValueError("Ended tracking cannot propose active watch conditions")
+        return self
+
 
 class DecisionRecord(DomainModel):
     calculation: DecisionCore
@@ -294,6 +358,12 @@ class DecisionRecord(DomainModel):
 
     @model_validator(mode="after")
     def reconciled_watches(self) -> Self:
+        identity = self.metadata.identity
+        for condition in self.conditions:
+            if condition.event_id != identity.event_id or condition.token_id != identity.token_id:
+                raise ValueError("Decision watch belongs to a different event or token")
+            if condition.status != "ARMED":
+                raise ValueError("Reconciled decision watches must actually be armed")
         ids = [condition.cond_id for condition in self.conditions]
         if len(ids) != len(set(ids)) or len(self.conditions_shown) != len(set(self.conditions_shown)):
             raise ValueError("Decision watch identities must be unique")
