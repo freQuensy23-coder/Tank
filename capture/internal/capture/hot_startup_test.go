@@ -242,3 +242,47 @@ func waitStartupCleared(t *testing.T, s *Service, ctx context.Context) {
 		}
 	}
 }
+
+func TestUnobservedConflictingStartRefusesEffectsUntilOrderingObserved(t *testing.T) {
+	r := newRESTRig(t, "coinbase")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	r.s.ctx = ctx
+	r.s.dial = pendingStartupDial
+	bound := r.base.Add(3 * time.Minute)
+	missing := r.base.Add(time.Minute)
+	rows := map[string]map[string]any{}
+	for at := r.base.Add(-WindowBefore); at.Before(bound); at = at.Add(time.Minute) {
+		if !at.Equal(missing) {
+			rows[r.inst.ID+":"+pytime.ISO(at)] = map[string]any{"instrument_id": r.inst.ID, "minute_start": pytime.ISO(at), "complete": true}
+		}
+	}
+	r.mem.rows["mkt.flow_bars_1m"] = rows
+	r.prints(1, r.base.Add(-time.Minute), r.base.Add(5*time.Minute), 30*time.Second)
+	r.mem.rows["mkt.backfill_runs"] = map[string]map[string]any{
+		"observed":   {"backfill_id": "observed", "token_id": r.inst.TokenID, "event_id": "ordering", "anchor": pytime.ISO(r.base), "anchor_prec": "EXACT", "started_at": pytime.ISO(r.base.Add(time.Hour)), "status": "COMPLETE"},
+		"unobserved": {"backfill_id": "unobserved", "token_id": r.inst.TokenID, "event_id": "ordering", "anchor": pytime.ISO(r.base.Add(time.Hour)), "anchor_prec": "EXACT", "started_at": nil, "started_at_prec_reason": "PENDING", "status": "COMPLETE"},
+	}
+	hot := []hotstate.Record{{StorageKey: "ordering-hot", TokenID: r.inst.TokenID, EventID: "ordering", Since: &r.base}}
+	r.s.startStartupRepairs(ctx, hot, bound)
+	r.s.mu.Lock()
+	queued := r.s.startupRetry != nil
+	r.s.mu.Unlock()
+	if !queued || r.v.calls != 0 || r.bar(missing) != nil {
+		t.Fatal("Unordered conflicting origin performed repair effects")
+	}
+	r.mem.mu.Lock()
+	r.mem.rows["mkt.backfill_runs"]["unobserved"]["started_at"] = pytime.ISO(r.base.Add(-time.Hour))
+	r.mem.rows["mkt.backfill_runs"]["unobserved"]["started_at_prec_reason"] = nil
+	r.mem.mu.Unlock()
+	r.s.retryStartupRepairs(ctx, hot)
+	waitStartupCleared(t, r.s, ctx)
+	cancel()
+	r.s.wg.Wait()
+	if r.v.calls == 0 || r.bar(missing) == nil || r.bar(missing)["complete"] != true {
+		t.Fatal("Actual recorded start ordering did not permit bounded repair")
+	}
+	if r.bar(r.base.Add(4*time.Minute)) != nil {
+		t.Fatal("Recovered repair expanded the original bound")
+	}
+}

@@ -91,8 +91,7 @@ func TestLatestRecordedBackfillStartPreservesAnchorClockEvidence(t *testing.T) {
 	first := anchor(hot, "first", hot.Since.Add(-time.Hour), &earlier)
 	latest := anchor(hot, "latest", hot.Since.Add(time.Minute), &later)
 	latest.StartedAtReason = text("RETAINED_START_PRECISION_UNREPORTED")
-	unstarted := anchor(hot, "unstarted", hot.Since.Add(2*time.Minute), nil)
-	for _, rows := range [][]AnchorRecord{{first, unstarted, latest}, {latest, first, unstarted}} {
+	for _, rows := range [][]AnchorRecord{{first, latest}, {latest, first}} {
 		origin, ok := resolved(t, hot, rows).Origin()
 		if !ok || origin.Kind != RecordedBackfillAnchor || !origin.Clock.Value.Equal(*latest.Anchor) ||
 			origin.Clock.Precision == nil || *origin.Clock.Precision != "BUCKET" || origin.BackfillID == nil || *origin.BackfillID != "latest" ||
@@ -144,8 +143,10 @@ func TestConflictingUnorderedAnchorsRefuseInsteadOfGuessing(t *testing.T) {
 	}
 	later := hot.Since.Add(time.Minute)
 	rows = append(rows, anchor(hot, "started", *hot.Since, &later))
-	if origin, ok := resolved(t, hot, rows).Origin(); !ok || origin.BackfillID == nil || *origin.BackfillID != "started" {
-		t.Fatal("An unambiguous later actual start was blocked by older unstarted candidates")
+	selection = resolved(t, hot, rows)
+	refused, ok = selection.Refusal()
+	if _, usable := selection.Origin(); usable || !ok || refused.Reason != BackfillAmbiguous {
+		t.Fatal("An observed start incorrectly ordered conflicting unobserved starts")
 	}
 }
 
@@ -215,6 +216,30 @@ func TestAnchorProjectionRequiresAllKeysAndPreservesUnobservedStart(t *testing.T
 		fields[name] = value
 		if _, err := DecodeAnchorRecord(invalid); err == nil {
 			t.Fatalf("Nonnullable anchor identity accepted NULL: %s", name)
+		}
+	}
+}
+
+func TestMixedObservedAndUnobservedStartsRequireEquivalentOrigins(t *testing.T) {
+	hot := fixture()
+	started := hot.Since.Add(time.Minute)
+	observed := anchor(hot, "observed", *hot.Since, &started)
+	unknown := anchor(hot, "unobserved", hot.Since.Add(time.Hour), nil)
+	unknown.StartedAtReason = text("PENDING")
+	for _, rows := range [][]AnchorRecord{{observed, unknown}, {unknown, observed}} {
+		selection := resolved(t, hot, rows)
+		refusal, ok := selection.Refusal()
+		if _, usable := selection.Origin(); usable || !ok || refusal.Reason != BackfillAmbiguous {
+			t.Fatal("Complete backfill with unobserved start was assumed older")
+		}
+	}
+	unknown.Anchor = observed.Anchor
+	for _, rows := range [][]AnchorRecord{{observed, unknown}, {unknown, observed}} {
+		origin, ok := resolved(t, hot, rows).Origin()
+		if !ok || origin.BackfillID == nil || *origin.BackfillID != "unobserved" || origin.StartedClock == nil ||
+			origin.StartedClock.Value != nil || origin.StartedClock.Precision != nil ||
+			origin.StartedClock.Reason == nil || *origin.StartedClock.Reason != "PENDING" {
+			t.Fatalf("Equivalent origin lost its recorded missing-start evidence: %+v", origin)
 		}
 	}
 }

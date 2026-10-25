@@ -88,6 +88,30 @@ func TestHotPhysicalProjectionAndPairScopedAnchorLookup(t *testing.T) {
 	if ids := selections[first].UnavailableBackfillIDs(); len(ids) != 1 || ids[0] != prefix+"-rejected" {
 		t.Fatal("Actual failed-without-anchor evidence was discarded")
 	}
+	_, err = s.Pool.Exec(ctx, "INSERT INTO "+liveTable("mkt.backfill_runs")+
+		" (storage_key,backfill_id,token_id,event_id,anchor,anchor_prec,started_at,status) VALUES($1,$1,$2,$3,$4,'BUCKET',NULL,'COMPLETE')",
+		prefix+"-unobserved", first.TokenID, first.EventID, since.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates, err = s.BackfillAnchors(ctx, []hotstate.Scope{first})
+	if err != nil {
+		t.Fatal(err)
+	}
+	selections = nil
+	for _, record := range owned {
+		if record.TokenID == first.TokenID {
+			selections, err = hotstate.ResolveOrigins([]hotstate.Record{record}, candidates)
+			break
+		}
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused, ok = selections[first].Refusal()
+	if _, usable := selections[first].Origin(); usable || !ok || refused.Reason != hotstate.BackfillAmbiguous {
+		t.Fatal("SQL NULL worker start was treated as an older conflicting origin")
+	}
 	if _, err := s.BackfillAnchors(ctx, []hotstate.Scope{{TokenID: first.TokenID}}); err == nil {
 		t.Fatal("Unscoped anchor lookup was accepted")
 	}

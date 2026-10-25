@@ -93,7 +93,7 @@ func choose(records []AnchorRecord) Selection {
 	}
 	var ordered []AnchorRecord
 	for _, record := range valid {
-		if latest == nil || (record.StartedAt != nil && record.StartedAt.Equal(*latest)) {
+		if record.StartedAt == nil || latest == nil || record.StartedAt.Equal(*latest) {
 			ordered = append(ordered, record)
 		}
 	}
