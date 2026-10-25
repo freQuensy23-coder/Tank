@@ -47,7 +47,12 @@ class Program(Contract):
     upstream_sha256: str | None
     authored_ranges: list[AuthoredRange]
     removed_upstream_lines: int
-    owner: Literal["agents", "quality", "UNASSIGNED"]
+    owner: Literal["agents", "quality", "foundation", "UNASSIGNED"]
+    assignment_status: str | None
+    reviewed_input_sha256: str | None
+    assignment_source_matches: bool
+    completion_review: Literal["OPEN"]
+    caller_review: Literal["OPEN"]
     caller_ledger: str | None
     authored_findings: list[SourceFinding]
     preserved_upstream_findings: list[SourceFinding]
@@ -60,18 +65,46 @@ class JavascriptView(BaseModel):
     embedded: list[EmbeddedPython]
 
 
-class OwnershipRecord(BaseModel):
+class SemanticCallerRecord(BaseModel):
     model_config = ConfigDict(strict=True, extra="ignore")
     path: str
 
 
-class OwnershipLedger(BaseModel):
+class SemanticCallerLedger(BaseModel):
     model_config = ConfigDict(strict=True, extra="ignore")
-    records: list[OwnershipRecord]
+    records: list[SemanticCallerRecord]
+
+
+class OwnershipAssignment(Contract):
+    path: str
+    owner: Literal["agents", "quality", "foundation"]
+    classification: Literal["TANK_ADDED", "MODIFIED_UPSTREAM"]
+    reviewed_input_sha256: str
+    scope: str
+    status: str
+
+
+class OwnershipCounts(Contract):
+    quality: int
+    agents: int
+    foundation: int
+
+
+class OwnershipManifest(Contract):
+    source_coverage_sha256: str
+    coverage_checkout_commit: str
+    upstream_commit: str
+    archive_sha256: str
+    priority: str
+    assignments: list[OwnershipAssignment]
+    counts: OwnershipCounts
 
 
 class VendorInventory(Contract):
+    schema_version: Literal["tank.openma-authored-inventory.v2"]
     checkout_commit: str
+    ownership_manifest: str
+    ownership_sha256: str
     upstream_commit: str
     archive_sha256: str
     scanner_sha256: dict[str, str]
@@ -123,11 +156,31 @@ def authored(program: Program, line: int) -> bool:
     return any(span.start <= line <= span.end for span in program.authored_ranges)
 
 
+def load_ownership(path: Path) -> OwnershipManifest:
+    ownership = OwnershipManifest.model_validate_json(path.read_bytes())
+    if ownership.upstream_commit != UPSTREAM_COMMIT or ownership.archive_sha256 != ARCHIVE_SHA256:
+        raise ValueError("Ownership manifest refers to a different upstream baseline")
+    assignments = {assignment.path: assignment for assignment in ownership.assignments}
+    if len(assignments) != len(ownership.assignments):
+        raise ValueError("Ownership manifest contains duplicate program assignments")
+    owner_counts = Counter(assignment.owner for assignment in ownership.assignments)
+    if (owner_counts["quality"], owner_counts["agents"], owner_counts["foundation"]) != (
+        ownership.counts.quality,
+        ownership.counts.agents,
+        ownership.counts.foundation,
+    ):
+        raise ValueError("Ownership counts do not describe the actual assignments")
+    return ownership
+
+
 def program_inventory(root: Path, archive: Path, node: Path) -> VendorInventory:
     baseline = archive_sources(archive)
     ledger_path = root / "docs/refactor/agents-openma-provenance.json"
-    owners = OwnershipLedger.model_validate_json(ledger_path.read_bytes())
-    agents = {record.path for record in owners.records}
+    callers = SemanticCallerLedger.model_validate_json(ledger_path.read_bytes())
+    agents = {record.path for record in callers.records}
+    ownership_path = root / "docs/refactor/openma-ownership.json"
+    ownership = load_ownership(ownership_path)
+    assignments = {assignment.path: assignment for assignment in ownership.assignments}
     tracked = (
         subprocess.check_output(["git", "-C", str(root), "ls-files", "-z", "--", "vendor/openma"])
         .decode()
@@ -155,15 +208,19 @@ def program_inventory(root: Path, archive: Path, node: Path) -> VendorInventory:
         else:
             ranges, removed = changed_ranges(original.decode(), current.decode())
             classification = "MODIFIED_UPSTREAM"
-        owner: Literal["agents", "quality", "UNASSIGNED"] = "UNASSIGNED"
+        assignment = assignments.get(name)
+        owner: Literal["agents", "quality", "foundation", "UNASSIGNED"] = "UNASSIGNED"
+        if assignment is not None:
+            if assignment.classification != classification:
+                raise ValueError("Ownership classification differs for " + name)
+            owner = assignment.owner
         caller_ledger: str | None = None
         if name in agents:
-            owner, caller_ledger = "agents", "docs/refactor/agents-openma-provenance.json:" + name
+            caller_ledger = "docs/refactor/agents-openma-provenance.json:" + name
         elif name in {
             "vendor/openma/tank-deploy/openma_entrypoint.mjs",
             "vendor/openma/tank-deploy/openma_entrypoint.mts",
         }:
-            owner = "quality"
             caller_ledger = "docs/refactor/quality.md:Typed OpenMA deployment entrypoint"
         programs.append(
             Program(
@@ -174,6 +231,12 @@ def program_inventory(root: Path, archive: Path, node: Path) -> VendorInventory:
                 authored_ranges=ranges,
                 removed_upstream_lines=removed,
                 owner=owner,
+                assignment_status=None if assignment is None else assignment.status,
+                reviewed_input_sha256=None if assignment is None else assignment.reviewed_input_sha256,
+                assignment_source_matches=assignment is not None
+                and assignment.reviewed_input_sha256 == hashlib.sha256(current).hexdigest(),
+                completion_review="OPEN",
+                caller_review="OPEN",
                 caller_ledger=caller_ledger,
                 authored_findings=[],
                 preserved_upstream_findings=[],
@@ -243,6 +306,9 @@ def program_inventory(root: Path, archive: Path, node: Path) -> VendorInventory:
         )
         destination.append(finding)
     return VendorInventory(
+        schema_version="tank.openma-authored-inventory.v2",
+        ownership_manifest="docs/refactor/openma-ownership.json",
+        ownership_sha256=hashlib.sha256(ownership_path.read_bytes()).hexdigest(),
         checkout_commit=subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"])
         .decode()
         .strip(),

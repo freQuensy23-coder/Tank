@@ -492,7 +492,7 @@ def resolved_settings(config_dir):
 
 def runtime_config(config_dir):
     settings = resolved_settings(config_dir)
-    return {name: settings.load_config(name) for name in SECTIONS}, settings.code_version
+    return {name: settings.load_config(name) for name in SECTIONS}, settings.require_versions().code_version
 
 
 def write_overlay(
@@ -851,7 +851,7 @@ def assemble(fixture, args, sections, code_version, out_root):
         venues,
         exceptions,
     )
-    config_version = args.config_version or resolved_settings(overlay).config_version
+    config_version = args.config_version or resolved_settings(overlay).require_versions().config_version
     parent = {k: v for k, v in parent.items() if k != "input_sha256"}
     parent["config"] = {
         **{k: v for k, v in parent["config"].items() if k not in SECTIONS},
@@ -1164,7 +1164,7 @@ def verify(fixture, rel, out, reused):
     if replay_settings.load_config("registry") != packet["registry"]:
         mismatched.append("registry")
     result["replay_config_matches_packet"] = mismatched if mismatched else True
-    result["replay_config_version_on_host"] = replay_settings.config_version
+    result["replay_config_version_on_host"] = replay_settings.require_versions().config_version
     result["pins"] = {"code_version": packet["code_version"], "config_version": packet["config_version"]}
     private_paths = sorted(
         {

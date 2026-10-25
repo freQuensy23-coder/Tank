@@ -17,7 +17,7 @@ import httpx
 from pydantic import JsonValue
 
 import tank.sources.parsers as parsers
-from tank.contracts.source_checkpoints import InstrumentSnapshot
+from tank.contracts.source_checkpoints import InstrumentSnapshot, InstrumentSnapshotUpdate
 from tank.contracts.source_items import (
     DiscoveryEnvelope,
     PendingSourceItem,
@@ -35,6 +35,7 @@ from tank.contracts.sources import (
 )
 from tank.ops_entry_errors import report_entry_errors
 from tank.sources.fetch import FetchedContent, NotModified
+from tank.sources.instrument_adapters import parse_instrument_page
 from tank.sources.instruments import InstrumentPage, instrument_changes
 from tank.util import TimeInput, new_id, parse_time, sha256
 
@@ -132,7 +133,6 @@ class SourcePoller:
         rows: Sequence[DiscoveryEnvelope | Mapping[str, JsonValue | bytes]],
         kind: str,
         coverage,
-        token: str,
         acquired_at: str,
     ) -> None:
         """Validate discoveries before binding first-seen identity and durable raw evidence."""
@@ -182,7 +182,7 @@ class SourcePoller:
             fresh.append(row.storage_record())
         current.setdefault("pending_batches", []).append(
             {
-                "batch_id": sha256(key + "|" + token),
+                "batch_id": new_id("batch"),
                 "acquired_at": acquired_at,
                 "acquired_at_precision": "COLLECTION_ONLY",
                 "kind": kind,
@@ -203,7 +203,6 @@ class SourcePoller:
                 rows,
                 kind,
                 {},
-                "page:" + page_state["payload_sha256"] + "|" + str(page_state["fetched_at"]),
                 page_state["fetched_at"],
             )
             await self.save(source, key, current)
@@ -218,6 +217,7 @@ class SourcePoller:
         svc = self.service
         sid = source.source_id
         kind = feed.kind
+        snapshot_update: InstrumentSnapshotUpdate | None = None
         if sid == "S29":
             accounts = [account.handle.lstrip("@") for account in svc.accounts.values()]
             result = await svc.xsensor.posts(
@@ -232,7 +232,7 @@ class SourcePoller:
                 entry_errors=[failure.model_dump(mode="json") for failure in result.failures],
                 history_gap=result.gaps,
             )
-            return result.rows, state, kind
+            return result.rows, state, kind, None
         _http_read = await svc.fetch(
             source,
             feed.request_plan(source.limits),
@@ -242,17 +242,16 @@ class SourcePoller:
         )
         payload = _http_read.payload
         if isinstance(_http_read, NotModified):
-            return None, state, kind
+            return None, state, kind, None
         state.update(_http_read.receipt.storage_record())
         state["entry_errors"] = []
         if sid == "S14":
-            snapshot = InstrumentSnapshot.model_validate(
-                await asyncio.to_thread(parsers.instruments, payload, feed)
-            )
+            parsed_page = await asyncio.to_thread(parse_instrument_page, payload, feed)
+            snapshot = parsed_page.snapshot
             pages = [InstrumentPage(payload=payload, observed_at=state["fetched_at"])]
             found_on = dict.fromkeys(snapshot.root, 0)
             if feed.venue == "bybit":
-                cursor = json.loads(payload).get("result", {}).get("nextPageCursor")
+                cursor = parsed_page.next_cursor
                 cursors = set()
                 while cursor:
                     if cursor in cursors:
@@ -281,13 +280,12 @@ class SourcePoller:
                     page_state = _http_read.receipt.storage_record()
                     if page is None:
                         raise ValueError("Unexpected conditional paginated response")
-                    page_snapshot = InstrumentSnapshot.model_validate(
-                        await asyncio.to_thread(parsers.instruments, page, feed)
-                    )
+                    parsed_page = await asyncio.to_thread(parse_instrument_page, page, feed)
+                    page_snapshot = parsed_page.snapshot
                     snapshot = InstrumentSnapshot(root={**snapshot.root, **page_snapshot.root})
                     found_on.update(dict.fromkeys(page_snapshot.root, len(pages)))
                     pages.append(InstrumentPage(payload=page, observed_at=page_state["fetched_at"]))
-                    cursor = json.loads(page).get("result", {}).get("nextPageCursor")
+                    cursor = parsed_page.next_cursor
 
             snapshot_key = key + ":instruments"
             stored = await self.state(snapshot_key)
@@ -308,8 +306,12 @@ class SourcePoller:
                 self.stamp(),
             )
             if stored.get("sha256") != digest:
-                await self.save(
-                    source, snapshot_key, {"sha256": digest, "instruments": snapshot.storage_record()}
+                snapshot_update = InstrumentSnapshotUpdate(
+                    source_id="S14",
+                    checkpoint_key=snapshot_key,
+                    snapshot=snapshot,
+                    sha256=digest,
+                    versions=svc.versions,
                 )
         elif kind in {"rss", "atom", "feed"}:
             rows = await asyncio.to_thread(parsers.feeds, payload, sid, feed)
@@ -322,7 +324,7 @@ class SourcePoller:
             rows = await asyncio.to_thread(parsers.article_links, payload, feed)
         else:
             rows, state = await self._json_history(source, feed, key, payload, state)
-        return rows, state, kind
+        return rows, state, kind, snapshot_update
 
     async def _json_history(self, source, feed, key, payload, state):
         """Read newest-first windows back to the last completed identity.
@@ -540,7 +542,7 @@ class SourcePoller:
                 current["last_attempt_at"] = attempted
                 await self.save(source, key, current)
             try:
-                rows, acquired, kind = await self._fetch_rows(source, feed, key, state)
+                rows, acquired, kind, snapshot_update = await self._fetch_rows(source, feed, key, state)
                 async with self.lock(self.state_locks, key):
                     current = await self.state(key)
                     if rows is not None:
@@ -573,7 +575,6 @@ class SourcePoller:
                             rows,
                             kind,
                             coverage,
-                            attempted,
                             acquired.get("fetched_at") or self.stamp(),
                         )
                     for field in (
@@ -604,7 +605,16 @@ class SourcePoller:
                         current["last_success_at"] = self.stamp()
                     elif not current.get("last_success_at") and current["status"] == "HEALTHY":
                         current["status"] = "PENDING"
-                    await self.save(source, key, current)
+                    async with self.service.repo.transaction():
+                        await self.save(source, key, current)
+                        if snapshot_update is not None:
+                            if snapshot_update.source_id != source.source_id:
+                                raise ValueError(
+                                    "Prepared snapshot conflicts with its actual source operation"
+                                )
+                            await self.save(
+                                source, snapshot_update.checkpoint_key, snapshot_update.storage_record()
+                            )
             except Exception as exc:
                 async with self.lock(self.state_locks, key):
                     current = await self.state(key)

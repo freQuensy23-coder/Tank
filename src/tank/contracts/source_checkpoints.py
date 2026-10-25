@@ -5,6 +5,8 @@ from typing import Literal, Self
 from pydantic import ConfigDict, Field, JsonValue, RootModel, model_validator
 
 from tank.contracts import DomainModel
+from tank.contracts.provenance import ResolvedVersionIdentity
+from tank.util import sha256
 
 
 class ReadCounter(DomainModel):
@@ -78,4 +80,26 @@ class InstrumentSnapshot(RootModel[dict[str, InstrumentRecord]]):
     def storage_record(self) -> dict[str, JsonValue]:
         return {
             symbol: record.model_dump(mode="json", exclude_unset=True) for symbol, record in self.root.items()
+        }
+
+
+class InstrumentSnapshotUpdate(DomainModel):
+    source_id: Literal["S14"]
+    checkpoint_key: str = Field(min_length=1)
+    snapshot: InstrumentSnapshot
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    versions: ResolvedVersionIdentity
+
+    @model_validator(mode="after")
+    def actual_snapshot_digest(self) -> Self:
+        if sha256(self.snapshot.storage_record()) != self.sha256:
+            raise ValueError("Prepared instrument snapshot digest does not match its observations")
+        return self
+
+    def storage_record(self) -> dict[str, JsonValue]:
+        return {
+            "source_id": self.source_id,
+            "sha256": self.sha256,
+            "instruments": self.snapshot.storage_record(),
+            **self.versions.model_dump(mode="json"),
         }

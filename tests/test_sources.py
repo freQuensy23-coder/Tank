@@ -2027,7 +2027,6 @@ async def test_conditional_304_does_not_starve_durable_pending_detail(tmp_path: 
             ],
             "html",
             {},
-            "captured-before-restart",
             state["fetched_at"],
         )
         await repo.put("ops.source_checkpoints", "S20:0", state)

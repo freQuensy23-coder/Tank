@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"sort"
 	"sync"
 	"time"
@@ -211,72 +212,49 @@ func (s *Service) requests(ctx context.Context) {
 		if row == nil {
 			return
 		}
-		s.spawn(func(ctx context.Context) { s.runRequest(ctx, row) })
+		s.spawn(func(ctx context.Context) { s.runRequest(ctx, *row) })
 	}
 }
 
-func (s *Service) runRequest(ctx context.Context, row map[string]any) {
-	row = copyRow(row)
-	finish := func(status string, reason any, result any) {
-		row["status"], row["reason"], row["result"] = status, reason, result
-		for k, v := range pytime.Fields("finished_at", pytime.ISO(s.clock.Now()), pytime.CollectionOnly) {
-			row[k] = v
-		}
-		if err := s.store.FinishRequest(context.WithoutCancel(ctx), row); err != nil {
-			s.log.Warn("capture request not finished", "request_id", row["request_id"], "error", err)
+func (s *Service) runRequest(ctx context.Context, row requeststate.Claimed) {
+	finish := func(outcome requeststate.Outcome) {
+		completion := requeststate.Completion{ID: row.ID, Outcome: outcome, FinishedAt: s.clock.Now()}
+		if err := s.store.FinishRequest(context.WithoutCancel(ctx), completion); err != nil {
+			s.log.Warn("capture request not finished", "request_id", row.ID, "error", err)
 		}
 	}
-	limits, invalid := decodeRequestLimits(row, s.clock.Now())
+	limits, invalid := requeststate.DecodeLimits(row.Deadline, row.BudgetS, s.clock.Now())
 	if invalid != nil {
-		finish("FAILED", string(invalid.reason), nil)
+		finish(requeststate.Failure(invalid.Reason, nil))
 		return
 	}
-	if limits.budget <= 0 || !limits.deadline.After(s.clock.Now()) {
-		finish("EXPIRED", "REQUEST_DEADLINE_PASSED", nil)
+	if limits.Budget <= 0 || !limits.Deadline.After(s.clock.Now()) {
+		finish(requeststate.Expiry())
 		return
 	}
-	budget := limits.budget
-
-	switch text(row["kind"]) {
-	case "HTTP_FETCH":
-		s.runFetch(ctx, row, budget, finish)
+	if row.Kind != nil && *row.Kind == "HTTP_FETCH" {
+		finish(s.runFetch(ctx, row.Request, limits.Budget))
 		return
 	}
-	start, err1 := requestTimestamp(row["start"])
-	end, err2 := requestTimestamp(row["end"])
-	if err1 != nil || err2 != nil || !end.After(start) || text(row["kind"]) != "REPAIR_WINDOWS" {
-		finish("FAILED", "UNSUPPORTED_CAPTURE_REQUEST", nil)
+	if row.Start == nil || row.End == nil || !row.End.After(*row.Start) || row.Kind == nil || *row.Kind != "REPAIR_WINDOWS" {
+		finish(requeststate.Failure(requeststate.Unsupported, nil))
 		return
 	}
-	tokenID, validToken := row["token_id"].(string)
-	if !validToken || tokenID == "" {
-		finish("FAILED", string(invalidRequestToken), nil)
+	if row.TokenID == nil || *row.TokenID == "" {
+		finish(requeststate.Failure(requeststate.TokenInvalid, nil))
 		return
 	}
-	results, repairErr := s.repairWindows(ctx, tokenID, start, end, budget)
-	out := map[string]any{}
-	for iid, result := range results {
-		out[iid] = result.storageValue()
-	}
-	if repairErr != nil {
-		s.log.Warn("capture request repair coverage unavailable", "request_id", row["request_id"], "error", repairErr)
-		finish("FAILED", "REPAIR_FAILED", map[string]any{"instruments": out})
+	results, err := s.repairWindows(ctx, *row.TokenID, *row.Start, *row.End, limits.Budget)
+	result := requeststate.RepairResult{Instruments: results}
+	if err != nil {
+		s.log.Warn("capture request repair coverage unavailable", "request_id", row.ID, "error", err)
+		finish(requeststate.Failure(requeststate.RepairFailed, result))
 		return
 	}
-	finish("COMPLETE", nil, map[string]any{"instruments": out})
+	finish(requeststate.Completed(result))
 }
 
-type RepairCoverage struct {
-	IncompleteBefore int64 `json:"incomplete_before"`
-	IncompleteAfter  int64 `json:"incomplete_after"`
-}
-
-func (r RepairCoverage) storageValue() map[string]any {
-	return map[string]any{
-		"incomplete_before": r.IncompleteBefore,
-		"incomplete_after":  r.IncompleteAfter,
-	}
-}
+type RepairCoverage = requeststate.RepairCoverage
 
 func (s *Service) repairWindows(ctx context.Context, token string, start, end time.Time, budget time.Duration) (map[string]RepairCoverage, error) {
 	if budget > 0 {

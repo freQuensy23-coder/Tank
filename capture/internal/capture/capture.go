@@ -3,6 +3,7 @@ package capture
 import (
 	"context"
 	"errors"
+	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"log/slog"
 	"time"
 
@@ -21,9 +22,9 @@ type Store interface {
 	LatestRecords(ctx context.Context, collection string, groupBy []string, timeField string, ids []string) ([]map[string]any, error)
 	HotTokens(ctx context.Context) ([]map[string]any, error)
 	BackfillRuns(ctx context.Context, statuses []string) ([]map[string]any, error)
-	ClaimRequest(ctx context.Context, writer string, now time.Time) (map[string]any, error)
+	ClaimRequest(ctx context.Context, writer string, now time.Time) (*requeststate.Claimed, error)
 	PruneFetches(ctx context.Context, before time.Time) (int64, error)
-	FinishRequest(ctx context.Context, row map[string]any) error
+	FinishRequest(ctx context.Context, completion requeststate.Completion) error
 }
 
 type Writer interface {

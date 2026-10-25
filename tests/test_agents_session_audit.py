@@ -1,9 +1,9 @@
 import asyncio
 import json
-from types import SimpleNamespace
 
 import httpx
 import pytest
+from agent_configuration_fixtures import AgentFixtureSettings, FixtureConfigurations
 from agent_source_fixtures import (
     declared_versions_fixture,
     native_tool_arguments_fixture,
@@ -18,35 +18,36 @@ from tank.storage import MemoryRepository
 from tank.util import clock_iso
 
 
-def settings(replay=False):
-    config = {
-        "agent_id": "agent",
-        "environment_id": "live",
-        "replay_environment_id": "replay",
-        "prompt_version": "prompt",
-        "reasoning_effort": "medium",
+def settings(replay: bool = False) -> AgentFixtureSettings:
+    config: FixtureConfigurations = {
+        "openma": {
+            "agent_id": "agent",
+            "environment_id": "live",
+            "replay_environment_id": "replay",
+            "prompt_version": "prompt",
+            "reasoning_effort": "medium",
+            "max_running_sessions": 2,
+        },
+        "registry": {"tokens": [{"token_id": "T", "symbol": "T"}], "entities": [], "instruments": []},
+        "sources": {"sources": []},
+        "thresholds": Settings(_env_file=None).thresholds().model_dump(mode="json"),
     }
-    opts = SimpleNamespace(
+    return AgentFixtureSettings(
+        documents=config,
+        tool_reader=Settings(_env_file=None).read_config_json,
+        openrouter_api_key=None,
+        opencode_api_key=None,
+        replay=replay,
         ops_progress_enabled=False,
-        thresholds=Settings(_env_file=None).thresholds,
-        read_config_json=Settings(_env_file=None).read_config_json,
-        openma_url="http://oma",
         openma_api_key="fake-only",
+        openma_url="http://oma",
         openma_model="gpt-6.1-sol",
         config_version="current-config",
         code_version="current-code",
-        replay=replay,
-        load_config=lambda name: {
-            "registry": {"tokens": [{"token_id": "T", "symbol": "T"}], "entities": [], "instruments": []},
-            "sources": {"sources": []},
-        }.get(name, config),
+        telegram_token=None,
+        codex_gateway_key=None,
+        database_url=None,
     )
-    opts.configured_secrets = lambda: frozenset(
-        value
-        for name, value in vars(opts).items()
-        if isinstance(value, str) and name.endswith(("_key", "_token", "_password"))
-    )
-    return opts
 
 
 async def seed(repo, **changes):

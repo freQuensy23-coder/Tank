@@ -48,6 +48,28 @@ _FACTORS = {
 }
 
 
+def _precision_fields(field: str, aliases: Sequence[str]) -> tuple[str, ...]:
+    if not field.strip() or any(not alias.strip() for alias in aliases):
+        raise ValueError("Timestamp field names and aliases must be nonempty")
+    canonical = CANONICAL_PRECISION_FIELDS.get(field, field + "_prec")
+    return tuple(dict.fromkeys((canonical, field + "_prec", field + "_precision", *aliases)))
+
+
+def timestamp_owned_fields(field: str, *, precision_aliases: Sequence[str] = ()) -> frozenset[str]:
+    """Name one timestamp's complete flat wire family for atomic sparse replacement."""
+    precision_fields = _precision_fields(field, precision_aliases)
+    return frozenset(
+        (
+            field,
+            field + "_reason",
+            field + "_bucket_size_s",
+            field + "_bucket_anchor",
+            *precision_fields,
+            *(name + "_reason" for name in precision_fields),
+        )
+    )
+
+
 def _size(value: BucketSize) -> str:
     if isinstance(value, timedelta):
         value = (
@@ -244,8 +266,7 @@ def propagate_timestamp(
     if anchors and any(anchor != anchors[0] for anchor in anchors[1:]):
         raise ValueError(f"Conflicting timestamp bucket anchors for {field}")
     bucket_anchor = anchors[0] if anchors else None
-    canonical = CANONICAL_PRECISION_FIELDS.get(field, field + "_prec")
-    names = dict.fromkeys((canonical, field + "_prec", field + "_precision", *precision_aliases))
+    names = _precision_fields(field, precision_aliases)
     for name in names:
         if record.get(name) is not None:
             declaration = _text(record[name], name)
