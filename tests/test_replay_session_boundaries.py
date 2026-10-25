@@ -14,6 +14,7 @@ from tank.analysis.decisions import DecisionEngine
 from tank.analysis.truth import MarketTruthService
 from tank.event_tools import EventToolService
 from tank.replay import ReplayMarketReader, load_inputs, replay_agent_session
+from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 
@@ -24,7 +25,7 @@ async def test_explicit_replay_session_boundaries(
 ) -> None:
     cfg = {
         "registry": {"tokens": []},
-        "thresholds": {},
+        "thresholds": Settings(_env_file=None).load_config("thresholds"),
         "semantics": {},
         "dependency_map": {},
         "openma": {"agent_id": "analyst", "replay_environment_id": "offline"},
@@ -67,14 +68,24 @@ async def test_explicit_replay_session_boundaries(
         )
     )
     repo = MemoryRepository()
+    reaction_truth = MarketTruthService(
+        repo, settings, ReplayMarketReader(load_inputs(path, settings)), versions=fixture_versions()
+    )
+    reaction_scheduler = Scheduler(
+        repo,
+        settings,
+        reaction_truth.market,
+        reaction_truth,
+        thresholds=settings.thresholds(),
+        versions=fixture_versions(),
+    )
     tools = EventToolService(
         repo,
         settings,
-        MarketTruthService(
-            repo, settings, ReplayMarketReader(load_inputs(path, settings)), versions=fixture_versions()
-        ),
+        reaction_truth,
         DecisionEngine(settings),
         versions=fixture_versions(),
+        scheduler=reaction_scheduler,
     )
     sent, archived = [], []
 
