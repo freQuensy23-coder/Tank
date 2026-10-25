@@ -231,7 +231,7 @@ def within(v, r):
 def beta(token, benchmark):
     pairs = [(benchmark[t], token[t]) for t in token.keys() & benchmark.keys()]
     if len(pairs) < int(parameter("history_min_days", 7)) * 24:
-        return 1.0, "INSUFFICIENT_HISTORY"
+        return None, "INSUFFICIENT_HISTORY"
     x, y = zip(*pairs, strict=False)
     xm, ym = mean(x), mean(y)
     den = sum((v - xm) ** 2 for v in x)
@@ -239,7 +239,7 @@ def beta(token, benchmark):
     return (
         (weight * sum((a - xm) * (b - ym) for a, b in pairs) / den + (1 - weight), None)
         if den
-        else (1.0, "NOT_ESTIMABLE")
+        else (None, "NOT_ESTIMABLE")
     )
 
 
@@ -1577,6 +1577,8 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     history_diagnostics = {}
 
     def hist_values(length):
+        if not benchmark and bb is None:
+            return []
         if (
             not historical_times
             or (historical_times[-1] - historical_times[0]).total_seconds()
@@ -1660,7 +1662,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         )
         rb = bench_ret(btc, a, end)
         re = bench_ret(eth, a, end)
-        adj = r - bb * rb if r is not None and rb is not None and not benchmark else None
+        adj = r - bb * rb if r is not None and rb is not None and bb is not None and not benchmark else None
         measure = r if benchmark else adj
         h = hist(length)
         windows[name] = dict(
@@ -1674,15 +1676,16 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             coverage={"reference_venue": ref, "complete_24h": bool(ref)},
             r_raw=r,
             r_btc_adj=adj,
-            r_btc_adj_reason="NOT_APPLICABLE_BENCHMARK" if benchmark else None,
+            r_btc_adj_reason="NOT_APPLICABLE_BENCHMARK" if benchmark else bflag if bb is None else None,
             relative_measure="R_RAW" if benchmark else "R_BTC_ADJ",
             relative_return=measure,
-            r_eth_adj=r - be * re if r is not None and re is not None else None,
+            r_eth_adj=r - be * re if r is not None and re is not None and be is not None else None,
+            r_eth_adj_reason=eflag if be is None else None,
             r_sector_adj=None,
             sector_reason="NOT_ESTIMABLE",
             pctile=ratio(sum(x <= measure for x in h), len(h)) if measure is not None and h else None,
             normal_range=float_normal(h),
-            normal_range_reason=range_reason(h),
+            normal_range_reason=bflag if not benchmark and bb is None else range_reason(h),
             beyond_normal=beyond(measure, float_normal(h)),
             historical_window_resolution_s=history_resolution_s,
             historical_window_duration_s=length,
@@ -1799,7 +1802,13 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     context = market_context(br, rv, bh, rvhist)
     pre = ret(prices, start - timedelta(days=1), start)
     preb = bench_ret(btc, start - timedelta(days=1), start)
-    ar = pre if benchmark else pre - bb * preb if pre is not None and preb is not None else None
+    ar = (
+        pre
+        if benchmark
+        else pre - bb * preb
+        if pre is not None and preb is not None and bb is not None
+        else None
+    )
     horizon_ranges = {}
     for name, length in (
         [
@@ -1818,13 +1827,14 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         horizon_ranges[name] = dict(
             value=float_normal(history),
             unit="DECIMAL_RETURN",
+            relative_measure="R_RAW" if benchmark else "R_BTC_ADJ",
             window=name,
             start=iso(start - timedelta(days=lookback_days())),
             cutoff=iso(start),
             observed_at=diagnostic.get("latest_observed_at"),
             precision=f"BUCKET({history_resolution_s}s)" if history_resolution_s else None,
             coverage={"sample_count": len(history)},
-            reason=None if history else "NOT_ESTIMABLE",
+            reason=bflag if not benchmark and bb is None else None if history else "NOT_ESTIMABLE",
             historical_measurement=diagnostic,
         )
     btc_ids = {iid: p for iid, p in groups.items() if token_symbols.get(identities.get(iid)) == "BTC"}

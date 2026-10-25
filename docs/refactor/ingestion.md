@@ -303,3 +303,42 @@ retry-barrier, attachment and prompt-provenance assertions remain intact.
 Combined Ops/Telegram follow-up cohort: 94 units passed in 2.58s, zero skips.
 This fixes required fixture inputs rather than restoring missing-config defaults.
 Full typing of these large preexisting test modules remains open.
+
+
+### Source request admission activation
+
+`SourceHttpTransport.request` builds the actual client request, admits it, sends
+with automatic redirects disabled, and repeats admission for each HTTPX-generated
+redirect request. Its redirect count uses the client's explicit maximum.
+A redirect into an exchange capture host is refused before Python I/O. Conditional
+headers, body/form selection, client query parameters and HTTPX's redirect/auth
+handling remain on the actual request. Source retry orchestration repeats this
+transport, hence each actual attempt is admitted. The optional request-start
+callback is invoked after the first admission, preserving capture's actual
+request-start clock rather than pre-wait time.
+
+`SourceService.acquire_budget` combines the strictest declared feed/source/host
+minute constraint with configured provider windows into one atomic group.
+Missing minute constraints genuinely mean no separately configured local minute
+policy; they never remove a configured API window. A missing `request` argument
+only means the explicit direct-budget helper must build the actual client request;
+the active transport always supplies its already-built request. The Go queue
+branch bypasses Python provider admission and retains only a separately declared
+source minute policy. Generic unconfigured public HTTP remains allowed under
+source policy; a known API refusal raises a fixed code before I/O.
+
+The old provider-name/hostname comparison missed api.etherscan.io and could not
+charge daily API_KEY quotas; it has been removed. Provider policies now resolve
+inward from the actual destination and logical key. `HttpAdmissionPlan` is a
+strict decision plus concrete immutable quota tuple, permitting the source's
+additional constraints to reserve in the same transaction. It does not store the
+native request or credential query.
+
+Evidence: 89 source/admission units pass in 2.20s, zero skips. The real redirect
+transport test admits both SEC subdomains into the same shared provider history;
+the exchange redirect test proves the second destination never reaches Python
+admission or I/O. Source quota proof now inspects actual rolling histories rather
+than mocking an acquire call echo. Strict mypy passes the transport, policy and
+admission tests; Ruff passes all touched source/tests. Existing source checkpoint
+mapping/workflow and the remaining SourceService methods still require their full
+domain migration and typing; this activation does not claim that work complete.

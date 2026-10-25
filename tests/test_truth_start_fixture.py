@@ -130,7 +130,7 @@ def synthetic_start_snapshot():
                 "open_time": iso(anchor + timedelta(hours=h)),
                 "interval_s": 3600,
                 "o": 100,
-                "c": 100,
+                "c": 100 + 0.02 * sin((h + 1) * 1.7),
                 "quote_volume": 100000,
                 "quote_volume_usd": 100000,
                 "volume_native": 1000,
@@ -400,3 +400,20 @@ def test_latest_durable_beneficiary_role_sets_loser_repricing_direction() -> Non
     assert result["relative"]["repricing_sign"] == -1
     assert result["relative"]["repricing_band"] == "UNPRICED"
     assert compute_market_truth(compact_start_snapshot())["relative"]["repricing_band"] == "EARLY"
+
+
+def test_zero_variance_benchmark_cannot_manufacture_adjusted_move_classification() -> None:
+    snapshot = compact_start_snapshot()
+    anchor = parse_time(snapshot["anchor"]["ts"])
+    for row in snapshot["klines"]:
+        if row["instrument_id"] == "A:spot:BTC" and parse_time(row["open_time"]) < anchor:
+            row["c"] = 100
+    result = compute_market_truth(snapshot)
+    relative = result["relative"]
+    assert relative["beta_btc"] is None
+    assert relative["beta_flags"]["btc"] == "NOT_ESTIMABLE"
+    assert relative["windows"]["EVENT"]["r_raw"] == pytest.approx(0.011)
+    assert relative["windows"]["EVENT"]["r_btc_adj"] is None
+    assert relative["windows"]["EVENT"]["r_btc_adj_reason"] == "NOT_ESTIMABLE"
+    assert relative["normal_ranges"]["W4H"]["value"] is None
+    assert result["move_class"] == "UNKNOWN"
