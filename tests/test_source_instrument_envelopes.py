@@ -92,9 +92,15 @@ def test_declared_boolean_flags_must_be_actual_booleans(value: JsonValue) -> Non
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("venue", ["bybit", "okx"])
-async def test_missing_success_code_cannot_remove_catalog_or_advance_snapshot(
-    tmp_path: Path, venue: Literal["bybit", "okx"]
+@pytest.mark.parametrize(
+    ("venue", "market_type", "missing_fact"),
+    [("bybit", "SPOT", "CODE"), ("okx", "SPOT", "CODE"), ("bybit", "PERP_LINEAR", "CURSOR")],
+)
+async def test_missing_protocol_fact_cannot_remove_catalog_or_advance_snapshot(
+    tmp_path: Path,
+    venue: Literal["bybit", "okx"],
+    market_type: Literal["SPOT", "PERP_LINEAR"],
+    missing_fact: Literal["CODE", "CURSOR"],
 ) -> None:
     invalid = False
     valid_empty = False
@@ -110,8 +116,12 @@ async def test_missing_success_code_cannot_remove_catalog_or_advance_snapshot(
                     else [{"symbol": "BTCUSDT", "baseCoin": "BTC", "quoteCoin": "USDT", "status": "Trading"}]
                 }
             }
-            if not invalid:
+            if not invalid or missing_fact != "CODE":
                 payload["retCode"] = 0
+            result = payload["result"]
+            assert isinstance(result, dict)
+            if not invalid or missing_fact != "CURSOR":
+                result["nextPageCursor"] = ""
         else:
             payload = {
                 "data": []
@@ -135,7 +145,7 @@ async def test_missing_success_code_cannot_remove_catalog_or_advance_snapshot(
                     "kind": "instruments",
                     "url": "https://synthetic.example/catalog",
                     "venue": venue,
-                    "market_type": "SPOT",
+                    "market_type": market_type,
                 }
             ],
         }
@@ -191,3 +201,17 @@ def test_protocol_validation_does_not_expose_raw_provider_payload() -> None:
             feed("bybit"),
         )
     assert "provider-payload-private" not in str(failure.value)
+
+
+def test_bybit_perpetual_cursor_is_required_even_for_an_empty_successful_page() -> None:
+    perpetual = FeedParsingSpec(
+        url="https://synthetic.example/catalog", venue="bybit", market_type="PERP_LINEAR"
+    )
+    with pytest.raises(ValidationError):
+        parse_instrument_page({"retCode": 0, "result": {"list": []}}, perpetual)
+    assert (
+        parse_instrument_page(
+            {"retCode": 0, "result": {"list": [], "nextPageCursor": ""}}, perpetual
+        ).next_cursor
+        is None
+    )
