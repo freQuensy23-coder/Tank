@@ -31,6 +31,7 @@ from tank.agents.native_inputs import (
     observe_native_input,
     parse_native_input,
 )
+from tank.agents.native_readback import NativeSessionMissing, NativeSessionReader
 from tank.agents.native_sessions import (
     NativeOpeningSource,
     NativeSessionCreate,
@@ -64,6 +65,12 @@ from tank.agents.tool_contracts import (
 from tank.agents.wire import tool_wire_result
 from tank.agents.workflow import SOURCE_COMPLETION_VERSION
 from tank.contracts.json import decode_json
+from tank.contracts.openma import (
+    ManagedAgentName,
+    ManagedToolManifest,
+    NativeSessionToolOverride,
+    NativeSessionToolUpdate,
+)
 from tank.contracts.provenance import AgentProvenance, ResolvedVersionIdentity
 from tank.contracts.session_admission import (
     BUSY_RUNTIME_STATES,
@@ -74,10 +81,9 @@ from tank.contracts.source_items import (
 )
 from tank.contracts.source_repository import SourceExtractionRepository
 from tank.delivery import DeliveryDeferred
-from tank.openma_sync import agent_tools
 from tank.ops_progress import session_progress
-from tank.runtime_contracts import ScoutMessage, ScoutReviewJob
-from tank.telegram_inbox import DOCUMENT_LIMIT, closed_reason, question_message, record_answer
+from tank.runtime_contracts import ScoutMessage, ScoutReviewJob, UserQuestionMessage
+from tank.telegram_inbox import DOCUMENT_LIMIT, GONE_TEXT, closed_reason, question_message, record_answer
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, parse_time, sha256, utcnow
 
@@ -355,34 +361,37 @@ class SessionService:
         await put_owned_session(self.repo, sid, session)
         return session
 
-    async def continuable(self, payload):
-        """A follow-up continues only a live session; otherwise the reader gets just the reason."""
-        question_id = payload["question_id"]
-        session = await self.repo.get("ops.agent_sessions", payload.get("session_id") or "")
-        if getattr(self.settings, "replay", False):
+    async def continuable(self, request: UserQuestionMessage) -> bool:
+        session = await self.repo.get("ops.agent_sessions", request.session_id)
+        if self.settings.replay:
             session = None
         closed = closed_reason(session)
         if closed is not None:
-            await record_answer(self.repo, question_id, closed[1], status=closed[0])
+            await record_answer(self.repo, request.question_id, closed[1], status=closed[0])
             return False
-        try:
-            remote = await self.request("GET", f"sessions/{session['session_id']}")
-        except httpx.HTTPStatusError as error:
-            if error.response.status_code != 404:
-                raise
-            remote = {"status": "terminated", "missing": True}
-        remote = remote.get("data", remote)
-        if remote.get("status") == "terminated" or remote.get("archived_at"):
-            async with self.repo.lock("session:" + session["session_id"]):
-                current = await self.repo.get("ops.agent_sessions", session["session_id"])
-                current["remote_state"] = {
-                    "status": remote.get("status"),
-                    "archived_at": remote.get("archived_at"),
-                    **self.clock_timestamp().fields("checked_at"),
-                }
-                await put_owned_session(self.repo, session["session_id"], current)
-            status, text = closed_reason(current) or ("ARCHIVED", None)
-            await record_answer(self.repo, question_id, text, status=status)
+        observed = await NativeSessionReader(self).state(request.session_id)
+        if isinstance(observed, NativeSessionMissing) or (
+            observed.status == "terminated" or observed.archived_at is not None
+        ):
+            async with self.repo.lock("session:" + request.session_id):
+                current = await self.repo.get("ops.agent_sessions", request.session_id)
+                if current is not None:
+                    current["remote_state"] = {
+                        **observed.model_dump(mode="json"),
+                        **self.clock_timestamp().fields("checked_at"),
+                    }
+                    await put_owned_session(self.repo, request.session_id, current)
+            if current is None:
+                await record_answer(self.repo, request.question_id, GONE_TEXT, status="NO_SESSION")
+                return False
+            if isinstance(observed, NativeSessionMissing):
+                status, text = "NO_SESSION", GONE_TEXT
+            else:
+                closure = closed_reason(current)
+                if closure is None:
+                    raise ValueError("Observed closed native session has no follow-up closure")
+                status, text = closure
+            await record_answer(self.repo, request.question_id, text, status=status)
             return False
         return True
 
@@ -410,12 +419,11 @@ class SessionService:
         if retired or "retired_message_ids" in session:
             session["retired_message_ids"] = sorted(retired)
 
-    def analyst_tools(self, *, scout=False):
-        """The current analyst toolset: built-ins plus the custom tools of config/skills."""
-        reader = getattr(self.settings, "read_config_json", None)
-        if reader is None:
-            return None
-        return agent_tools(self.settings, "tank-scout-reviewer" if scout else "tank-event-analyst")
+    def analyst_tools(self, *, scout: bool) -> ManagedToolManifest:
+        name: ManagedAgentName = "tank-scout-reviewer" if scout else "tank-event-analyst"
+        return ManagedToolManifest.from_definitions(
+            name, self.settings.read_config_json(f"skills/{name}/tools.json")
+        )
 
     @staticmethod
     def legacy_contract(session):
@@ -430,9 +438,10 @@ class SessionService:
         session = await self.repo.get("ops.agent_sessions", sid)
         if session is None:
             return None
-        tools = self.analyst_tools(scout=bool(session.get("proposal_id")))
+        manifest = self.analyst_tools(scout=bool(session.get("proposal_id")))
+        tools_sha256 = sha256(manifest.tools)
         migrating = session.get("model_context_version", 0) < CONTEXT_VERSION
-        if not tools or (not migrating and session.get("tools_sha256") == sha256(tools)):
+        if not migrating and session.get("tools_sha256") == tools_sha256:
             return None
         if not resume and (
             session.get("active_message_id") or session.get("runtime_status") in BUSY_RUNTIME_STATES
@@ -443,7 +452,8 @@ class SessionService:
                 remote = await self.request("GET", f"sessions/{sid}")
                 if remote.get("data", remote).get("status") != "idle":
                     raise ValueError("Wait for the native tool boundary before updating its tools")
-            await self.request("POST", f"sessions/{sid}", json={"agent": {"tools": tools}})
+            request = NativeSessionToolUpdate(agent=NativeSessionToolOverride(tools=manifest.tools))
+            await self.request("POST", f"sessions/{sid}", json=request.model_dump(mode="json"))
             remote = await self.request("GET", f"sessions/{sid}")
         except httpx.HTTPStatusError as error:
             if migrating or error.response.status_code == 429 or error.response.status_code >= 500:
@@ -455,7 +465,7 @@ class SessionService:
             current = await self.repo.get("ops.agent_sessions", sid)
             if descriptor.prompt_version:
                 current.update(descriptor.model_dump(mode="json", exclude={"agent_id", "prompt_label"}))
-            current["tools_sha256"] = sha256(tools)
+            current["tools_sha256"] = tools_sha256
             if migrating:
                 current["legacy_model_message_ids"] = [
                     row["message_id"]
@@ -561,7 +571,9 @@ class SessionService:
         )
 
     async def send_message(self, payload):
-        if payload.get("kind") == "USER_QUESTION" and not await self.continuable(payload):
+        if payload.get("kind") == "USER_QUESTION" and not await self.continuable(
+            UserQuestionMessage.model_validate(payload)
+        ):
             return None
         item = (
             await self.repo.get("ingest.source_items", payload["item_id"]) if payload.get("item_id") else None
