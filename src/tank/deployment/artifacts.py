@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
+from tank.contracts.json import decode_unique_json
 from tank.contracts.scalars import OneInt
 from tank.deployment.api_contracts import ApifyProjection, SourcePath
 from tank.deployment.contracts import HistoricalRelease, Release, ReleaseDocument, SourceRelease
@@ -76,7 +77,9 @@ def validate_source(bundle: SourceBundle) -> None:
         raise ArtifactError("Worker source incomplete")
     if "tank-release.json" in bundle.files:
         raise ArtifactError("Reserved release marker in worker source")
-    ActorDefinition.model_validate_json(bundle.files[".actor/actor.json"])
+    definition = bundle.files[".actor/actor.json"]
+    decode_unique_json(definition)
+    ActorDefinition.model_validate_json(definition)
 
 
 def source_files(root: Path) -> SourceBundle:
@@ -180,7 +183,9 @@ def load_release(root: Path, *, selected_sha: str) -> Release:
     manifest = root / "manifest.json"
     if manifest.is_symlink() or not manifest.is_file():
         raise ArtifactError("Release manifest must be a regular file")
-    release = ReleaseDocument.model_validate_json(manifest.read_bytes()).root
+    document = manifest.read_bytes()
+    decode_unique_json(document)
+    release = ReleaseDocument.model_validate_json(document).root
     if release.release_sha != selected_sha:
         raise ArtifactError("Release artifact identity mismatch")
     if isinstance(release, SourceRelease) and source_files(root / "worker").digest() != release.source_digest:

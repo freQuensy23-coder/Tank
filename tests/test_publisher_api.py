@@ -1,3 +1,4 @@
+import json
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -212,3 +213,42 @@ def test_actual_snapshot_refuses_malformed_file_facts_before_digesting(entries: 
         with pytest.raises(ValueError):
             client(peer).completed_build("A" * 17).actVersion.decoded()
         assert len(peer.received) == 1
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        b'{"data":{"id":"BBBBBBBBBBBBBBBBB","id":"rbf5CQKQgKNVl4SfO","taggedBuilds":{"direct":{"buildId":"AAAAAAAAAAAAAAAAA"}},"versions":[]}}',
+        b'{"data":{"id":"rbf5CQKQgKNVl4SfO","taggedBuilds":{"direct":{"buildId":"BBBBBBBBBBBBBBBBB","buildId":"AAAAAAAAAAAAAAAAA"}},"versions":[]}}',
+    ],
+)
+def test_duplicate_peer_identity_facts_refuse_before_projection(document: bytes) -> None:
+    with api_peer(document, status=200, location=None) as peer:
+        with pytest.raises(ApifyAPIError, match="invalid JSON response envelope"):
+            client(peer).actor()
+        assert len(peer.received) == 1
+
+
+def test_duplicate_error_detail_keeps_http_failure_and_never_echoes_token() -> None:
+    document = b'{"error":{"message":"synthetic-publisher-token","message":"hidden contradiction"}}'
+    with api_peer(document, status=400, location=None) as peer:
+        with pytest.raises(ApifyHTTPFailure) as caught:
+            client(peer).actor()
+        assert caught.value.status_code == 400
+        assert isinstance(caught.value.diagnostic, UnreportedAPIReason)
+        assert caught.value.diagnostic.reason == "INVALID_JSON_OR_FIELDS"
+        assert "synthetic-publisher-token" not in str(caught.value)
+        assert "hidden contradiction" not in str(caught.value)
+
+
+def test_opaque_source_file_json_is_not_recursively_decoded() -> None:
+    opaque = b'{"a":1,"a":2}'
+    document = (
+        b'{"data":{"id":"AAAAAAAAAAAAAAAAA","actId":"rbf5CQKQgKNVl4SfO","status":"SUCCEEDED",'
+        b'"actVersion":{"sourceType":"SOURCE_FILES","sourceFiles":['
+        b'{"name":"opaque.json","format":"TEXT","content":'
+        + json.dumps(opaque.decode("utf-8")).encode("utf-8")
+        + b"}]}}}"
+    )
+    with api_peer(document, status=200, location=None) as peer:
+        assert client(peer).completed_build("A" * 17).actVersion.decoded()["opaque.json"] == opaque

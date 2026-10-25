@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, JsonValue, SecretStr, model_validator
 
 from tank.contracts import DomainModel
+from tank.contracts.json import decode_unique_json
 from tank.deployment.api_contracts import (
     ActorSnapshot,
     ActorTagUpdate,
@@ -101,6 +102,7 @@ class ApifyAPI:
         if not document:
             return UnreportedAPIReason(state="UNREPORTED", reason="EMPTY_OR_MISSING")
         try:
+            decode_unique_json(document)
             envelope = ProviderErrorEnvelope.model_validate_json(document)
         except ValueError:
             return UnreportedAPIReason(state="UNREPORTED", reason="INVALID_JSON_OR_FIELDS")
@@ -141,6 +143,7 @@ class ApifyAPI:
         except OSError:
             raise ApifyAPIError(f"Apify {method} transport failure") from None
         try:
+            decode_unique_json(document)
             return ApiEnvelope.model_validate_json(document)
         except ValueError:
             raise ApifyAPIError(f"Apify {method} invalid JSON response envelope") from None

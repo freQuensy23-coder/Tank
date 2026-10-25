@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from tank.contracts import DomainModel
+from tank.contracts.json import decode_unique_json
 from tank.deployment.contracts import (
     ActiveRelease,
     BuildDocument,
@@ -64,7 +65,9 @@ class PublisherJournal:
                 return None
             with os.fdopen(descriptor, "rb") as stream:
                 private_identity(os.fstat(stream.fileno()), directory=False)
-                return stream.read()
+                document = stream.read()
+            decode_unique_json(document)
+            return document
 
     def _write(self, name: str, value: JournalValue) -> None:
         document = json.dumps(value.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode()

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from tank.contracts.json import DuplicateJsonKeyError
 from tank.deployment.artifacts import (
     ArtifactError,
     PackageRequest,
@@ -157,3 +158,30 @@ def test_current_actor_package_carries_standalone_contract_and_hashed_runtime_cl
     module.write_bytes(module.read_bytes() + b"unexpected = True\n")
     with pytest.raises(ArtifactError, match="source digest mismatch"):
         load_release(request.destination, selected_sha=release.release_sha)
+
+
+def test_duplicate_manifest_digest_is_refused_without_rewriting_artifact(
+    actor_repository: Path, tmp_path: Path
+) -> None:
+    request = package_request(actor_repository, tmp_path / "release")
+    release = package_release(request)
+    path = request.destination / "manifest.json"
+    malformed = path.read_bytes().replace(
+        b'"source_digest":', b'"source_digest":"' + b"d" * 64 + b'","source_digest":'
+    )
+    path.write_bytes(malformed)
+    with pytest.raises(DuplicateJsonKeyError):
+        load_release(request.destination, selected_sha=release.release_sha)
+    assert path.read_bytes() == malformed
+
+
+def test_duplicate_actor_specification_refuses_before_packaging_effects(
+    actor_repository: Path, tmp_path: Path
+) -> None:
+    definition = actor_repository / "apify/x-reader/.actor/actor.json"
+    definition.write_bytes(b'{"actorSpecification":true,"actorSpecification":1,"name":"tank-x-notifier"}')
+    commit(actor_repository)
+    request = package_request(actor_repository, tmp_path / "release")
+    with pytest.raises(DuplicateJsonKeyError):
+        package_release(request)
+    assert not request.destination.exists()

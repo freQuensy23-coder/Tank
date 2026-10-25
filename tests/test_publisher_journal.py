@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from tank.contracts.json import DuplicateJsonKeyError
 from tank.deployment.contracts import (
     ActiveRelease,
     DeploymentTransaction,
@@ -145,3 +146,33 @@ def test_legacy_baseline_keeps_its_actual_nonrelease_provenance(tmp_path: Path) 
     document = (journal.state / "active.json").read_bytes()
     assert b'"build_number":"0.2.2"' in document
     assert document.count(b'"release_sha"') == 1
+
+
+def test_duplicate_activation_fact_cannot_hide_an_attempted_transaction(tmp_path: Path) -> None:
+    journal = PublisherJournal(tmp_path / "state")
+    journal.write_transaction(transaction())
+    path = journal.state / "pending.json"
+    path.write_bytes(
+        path.read_bytes().replace(
+            b'"activation_attempted":false',
+            b'"activation_attempted":true,"activation_attempted":false',
+        )
+    )
+    with pytest.raises(DuplicateJsonKeyError):
+        journal.read_transaction()
+    assert b'"activation_attempted":true,"activation_attempted":false' in path.read_bytes()
+
+
+def test_duplicate_cache_digest_is_refused_before_provenance_projection(tmp_path: Path) -> None:
+    journal = PublisherJournal(tmp_path / "state")
+    candidate = build()
+    journal.write_cached_build(candidate)
+    path = journal.state / (candidate.source_digest + ".json")
+    path.write_bytes(
+        path.read_bytes().replace(
+            b'"source_digest":',
+            b'"source_digest":"' + b"d" * 64 + b'","source_digest":',
+        )
+    )
+    with pytest.raises(DuplicateJsonKeyError):
+        journal.read_cached_build(BuildCacheKey(source_digest=candidate.source_digest))
