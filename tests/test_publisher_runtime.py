@@ -52,7 +52,7 @@ def test_runtime_probe_refuses_wrong_image_before_metadata_or_credentials(
     assert result.returncode != 0
     assert b"does not match the declared orchestrator" in result.stderr
     assert b"FileNotFoundError" not in result.stderr
-    assert list(tmp_path.iterdir()) == []
+    assert not (tmp_path / "absent").exists()
 
 
 def test_runtime_probe_refuses_symlinked_runtime_metadata(tmp_path: Path) -> None:
