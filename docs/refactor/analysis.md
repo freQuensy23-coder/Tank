@@ -538,3 +538,148 @@ SOURCE_HTTP/SOURCE_TRANSPORT protocol instead of relabeling them tool execution 
 Twelve page/admission boundary cases pass in1.73s; three tightened source/test modules
 pass strict mypy. Backend quota-history identity changes remain a separate held team
 prerequisite; these results do not claim the current backend is final.
+
+### Owned required-admission consumer checkpoint
+
+Owned MarketService fixtures now inject the real configured admission resolver and
+explicit memory budget backend; owned EventTool fixtures declare live page access
+or, for operational replay, recorded_page_access of the actual validated packet.
+SourceService fixture construction supplies its explicit budget port. None of these
+helpers returns a fabricated ADMITTED result. The replay cases retain their actual
+shared Scheduler and verified input-bound recorded capability.
+
+The former generic0.08s timing assertions are replaced with actual configured
+Etherscan admission oracles: overdue starts do not create a future burst, cancelling
+a wait reserves no future request, and freeing a saturated in-flight slot does not
+restart the provider window. The generic-site case independently verifies overlap
+with zero invented quota wait. Negative-priority budget admission now uses an explicit
+real memory backend. The former FakeLedger/Instant/optional-global-ledger fixture is
+removed: actual injected memory host blocks observe starts at0,120,720 seconds for
+real418/429 feedback, preserving120s/600s without clamps. PostgreSQL cross-process
+and host-isolation checks use explicit RequestLedger-backed engines and shutdown;
+the binding regression now proves unbound/closed refusal rather than implicit memory.
+
+The owned broad selection passes769 units in34.93s, p90 .85s and max3.35s, zero skips
+(/tmp/analysis-http-owned-unit-2.xml). Twenty targeted rate/deadline/source-field/real-
+scheduling cases pass in2.74s, and twelve explicit external ownership/rate cases pass
+in4.36s. The final HTTPX-category/header refinements have their additional focused
+proof. These are held-cohort results; the shared budget identity correction and
+combined actual integration/retained-artifact qualification remain required.
+
+Actual retained-input validation was attempted with all live admission/scope/block/
+provider-sleep/client-creation traps. It correctly stopped before exposing captures
+when fixture_reference required a referenced immutable raw source body absent from
+the25 staged input-only artifacts. No hash/derivation check was bypassed and no
+production data was read. The scratch verifier is retained at
+ data/qa/verify-retained-http-effects.py; no success artifact is claimed. Verified raw
+bodies and an explicit historical-path reader are needed for that full loader proof.
+
+The requested exact raw-body inventory is analysis-retained-raw-inputs.json:38 named
+source-body path/hash pairs at80 originating sites across all25 hash-reverified
+acceptance inputs. It records only source raw/detail/discovery/original-projection
+body references and their recorded decompressed-payload SHA256, with checked-in
+fixture ID, originating packet path/compressed SHA and exact field site. No raw body,
+private map, sealed outcome or credential was read. F02 remains excluded for its
+manifest mismatch. The generation scratch script is data/qa/inventory-retained-http-raw.py.
+An explicit resolver must accept only these verified staged originals; no global
+/data alias or production path access is proposed.
+
+### Exact retained-body and captured-code resource boundaries
+
+fixture_reference_sources owns a precise RetainedSourceReader port. The stateless
+filesystem reader preserves ordinary saved-capture behavior. VerifiedRetainedSources
+accepts the owned required-reference inventory plus the parent's staging manifest;
+it validates the inventory binding and exact reference set, then checks root
+containment, transport bytes/hash and decompressed payload bytes/hash on every read.
+Unlisted paths refuse before filesystem access; no historical /data alias is created.
+Zstd/gzip magic denotes actual retained wire formats; bare bytes remain bare bytes.
+Zstd streaming also preserves frames whose header omits decoded-size metadata.
+Source_candidate is audit metadata only and is never opened by this reader.
+
+load_inputs passes its explicit raw_sources and projection_code through normal
+fixture_reference validation. The original body, time, derivation and host-mask checks
+remain. CurrentProjectionCode retains the normal exact-current-file check; the
+explicit ArchivedProjectionCodes path only accepts an allowlisted recorded SHA with
+actual fixed-path Git evidence. It rechecks archive length/SHA256/Git object identity,
+commit→src/tank/fixture_reference.py→blob binding and actual Git blob bytes. It never
+executes/imports archived code. Unknown digests refuse. Infrastructure resource handles
+remain outside Pydantic; manifests and all structured origin records use strict models.
+
+analysis-captured-projection-code.json inventories5 recorded module hashes at14sites.
+One has exact archived bytes at Git e5a1cef / blob28e8928, independently verified by the
+parent; four remain unresolved. The immutable .source archive under docs/verification
+is evidence, not a restored implementation. Neither its Git origin nor a recorded
+module hash claims that code was deployed. Parent independently showed that main's
+fixture_reference bytes match none of the five hashes, so these are pre-existing
+availability limits rather than a refactor hash regression.
+
+Actual retained proof (analysis-recorded-http-evidence.json) rechecks25 frozen input
+hashes, all38 staged raw bodies and the known code artifact. Eight packets pass all
+normal loader checks and five actual captured results are selected through the
+production reader; all admission/acquisition/block/provider-sleep traps remain zero,
+and no live client is created. Eleven packets authentically refuse unavailable
+captured code, and six require the deliberately unsupplied host-only identity map.
+No validation check is skipped, no private map/sealed outcome is opened, no frozen
+bytes change and F02 remains excluded. This is an eligible-reader/no-live-effect
+proof, not a claim of full agent acceptance for the refused fixtures.
+
+Eight independent resource cases pass in1.48s, proving unknown-path/hash refusal,
+post-construction transport tampering, payload tampering despite matching transport
+metadata, root escape, owner-inventory binding, actual Git provenance and non-execution.
+Together with replay/reference behavior,134 units pass in1.90s. Four resource source/
+test targets pass strict mypy; default source mypy again reports only the independently
+reserved whole condition cache. Required preserved cutoff literals now explicitly
+reject absent/nontext values; day/exact/minute parser locals remain distinct types,
+and publication interval checks require both genuine bounds. Declared UTC and every
+frozen literal remain unchanged. The remaining legacy fixture_reference domain-map
+migration is still open; these resource ports do not claim to complete that module.
+### Clean authored PARTIAL narrative fixture
+
+The native replay publication fixture now supplies two actual factual WHY bullets
+for every kind, matching the strengthened public skill/schema. It authors the captured
+World-approval text and the fact that that publication does not quantify price or
+liquidity effects. It does not synthesize prose from a renderer fallback or claim an
+unmeasured economic effect. The first-reference QUEUED/unsent intent and ordinary
+missing-SENT refusal oracles remain unchanged. Both actual integration profiles pass
+in2.89s with zero skips. This companion is clean3e26558b + exact485 schema ancestry;
+held HTTP and decision/card renderer activation are excluded.
+
+### Final paired HTTP qualification repairs
+
+The first full owned selection at e773ee78 executed779 units and83 actual integrations.
+Its remaining failures were nine authored publication fixtures with empty/undersized
+WHY under the new public schema and two assertions for retired capacity-bearing SQL
+bucket text. Seven named positive/publication-purpose fixtures now author their actual
+World-approval/product-announcement facts plus the publication's absence of quantified
+price/liquidity effects. Vague test headlines are replaced with the actual product
+announcement where that was the seed. The overlength-WHY test retains a valid second
+bullet so it reaches the intended221-character refusal. Lifecycle, model provenance,
+metadata fidelity, durability, generation-clock and bounded-read oracles are unchanged.
+SQL ledger assertions now decode the actual two-field stable key/window identity;
+capacity is deliberately not part of that identity. Cross-process waits, host isolation,
+actual persisted owner rows and unbound/closed refusal remain independently asserted.
+All115 targeted units pass in12.07s and all3 actual ledger/ownership cases pass in7.12s,
+zero skips. A fresh complete owned selection is run on the resulting immutable head;
+previous logs/XML remain preserved separately. No production-policy waiver is involved.
+
+### Qualified complete owned HTTP cohort
+
+The complete owned cohort at immutable c17512bfd10f1bf3d96954288ac332eee85e9697
+passes all779 units in30.72s (p90 .845s, max3.04s) and every one of83 collected
+actual integrations in83.50s, zero skips. This includes PostgreSQL cross-process
+budget sharing/stable identity/host isolation, memory behavior, real20-second fetch
+deadlines, replay/reference, publication, reaction and source evidence consumers.
+All27 required caller files are present; this is not the earlier API-only a783 head.
+The actual shared-budget operational helper is explicitly owned/drained. Paired
+canonical Go/backend/SQL/E2E and clean native narrative companions are included.
+CI-target Ruff/format (src tests scripts deploy,392 files) and all9 new strict
+HTTP/page/retained-resource source/test targets pass. Default mypy has only the
+separately assigned whole condition graph cache error; it remains visible.
+
+analysis-http-qualification.json records exact targets, counts and evidence paths.
+The known historical artifact limits remain explicit:8normal loader admissions,
+5actual captured result selections,11unavailable captured-code refusals and6host-only
+identity-map refusals, all zero live effects. These are not acceptance waivers.
+No held decision755/renderer activation, production deployment or global completion
+is claimed. Whole Truth/Market/event-tools typing and the other owned module/fallback
+inventory remain active work after this coherent application boundary.

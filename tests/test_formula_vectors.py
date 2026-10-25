@@ -9,8 +9,9 @@ from pathlib import Path
 
 import pytest
 from scheduling_support import RecordingReactionScheduling
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_versions
 
+from tank.analysis.page_access import LivePageAccess
 from tank.analysis.truth import decomposition, enrich_evidence, oi_class, spot_truth
 from tank.util import clock_iso, iso, parse_time
 
@@ -152,6 +153,7 @@ async def service(tmp_path: Path):
         None,
         versions=fixture_versions(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
 
 

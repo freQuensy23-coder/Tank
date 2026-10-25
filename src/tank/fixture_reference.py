@@ -1,32 +1,35 @@
 """Explicit first fixture reconstruction, never a historical live-run claim."""
 
 import base64
-import gzip
 import json
 import re
 from datetime import UTC, date, datetime, timedelta
 from importlib.resources import files
 from pathlib import Path
 
-import zstandard
-
+from tank.fixture_reference_code import CURRENT_PROJECTION_CODE, ProjectionCodeEvidence
+from tank.fixture_reference_sources import FILESYSTEM_RETAINED_SOURCES, RetainedSourceReader
 from tank.time_precision import Timestamp, interval_bounds, propagate_timestamp
 from tank.util import canonical_json, parse_time, sha256
 
 MODE = "FIXTURE_REFERENCE_RECONSTRUCTION"
 
 
-def retained_source_payload(raw_ref):
-    """Read retained transport bytes exactly; frozen fixture evidence predates the zstd-only raw store."""
-    data = Path(raw_ref).read_bytes()
-    if data.startswith(b"\x28\xb5\x2f\xfd"):
-        return zstandard.ZstdDecompressor().decompress(data)
-    if data.startswith(b"\x1f\x8b"):
-        return gzip.decompress(data)
-    return data
+def retained_source_payload(
+    raw_ref: str | Path, *, raw_sources: RetainedSourceReader = FILESYSTEM_RETAINED_SOURCES
+) -> bytes:
+    return raw_sources.read_payload(str(raw_ref))
 
 
-def validate(packet, market_record, *, private_mask_path=None, input_path=None):
+def validate(
+    packet,
+    market_record,
+    *,
+    private_mask_path=None,
+    input_path=None,
+    raw_sources: RetainedSourceReader = FILESYSTEM_RETAINED_SOURCES,
+    projection_code: ProjectionCodeEvidence = CURRENT_PROJECTION_CODE,
+):
     """Validate integrity of frozen authored evidence; source derivation is independently reviewed.
 
     Hash agreement alone does not prove text was extracted from raw bytes or a
@@ -82,64 +85,66 @@ def validate(packet, market_record, *, private_mask_path=None, input_path=None):
         ):
             raise ValueError("Reference phases must retain the initial boundary and ordered final horizon")
     spec = reference.get("cutoff_spec")
+    if not isinstance(spec, str) or not spec:
+        raise ValueError("Fixture requires its preserved cutoff literal")
     if reference.get("cutoff_timezone") != "UTC":
         raise ValueError("Fixture cutoff timezone must explicitly retain the specified UTC domain")
     if reference.get("cutoff_policy") == "UTC_DAY_END_EXCLUSIVE":
         day = date.fromisoformat(reference["cutoff_day"])
-        parsed = None
+        parsed_day = None
         for pattern in ("%Y-%m-%d", "%d %b %Y"):
             try:
-                parsed = datetime.strptime(spec, pattern).date()
+                parsed_day = datetime.strptime(spec, pattern).date()
                 break
             except ValueError:
                 continue
-        if parsed != day:
+        if parsed_day != day:
             raise ValueError("Canonical cutoff_day differs from original fixture literal")
-        expected = (day + timedelta(days=1)).isoformat() + "T00:00:00Z"
-        if packet["cutoff"] != expected:
+        expected_day = (day + timedelta(days=1)).isoformat() + "T00:00:00Z"
+        if packet["cutoff"] != expected_day:
             raise ValueError(
                 "Day fixture boundary must be the whole named UTC day ending next midnight exclusive"
             )
     elif reference.get("cutoff_policy") == "EXACT":
         exact = reference.get("cutoff_instant")
-        parsed = None
+        parsed_exact = None
         try:
             if "T" in spec and re.search(r"T[0-9]{2}:[0-9]{2}:[0-9]{2}", spec):
-                parsed = parse_time(spec)
+                parsed_exact = parse_time(spec)
         except (ValueError, TypeError):
             pass
-        if parsed is None:
+        if parsed_exact is None:
             for pattern in ("%d %b %Y %H:%M:%S", "%d %b%Y %H:%M:%S"):
                 try:
-                    parsed = datetime.strptime(spec, pattern).replace(tzinfo=UTC)
+                    parsed_exact = datetime.strptime(spec, pattern).replace(tzinfo=UTC)
                     break
                 except ValueError:
                     continue
-        if parsed is None:
+        if parsed_exact is None:
             raise ValueError(
                 "Minute-only fixture cutoff is insufficient without an explicit documented interval interpretation"
             )
-        if packet["cutoff"] != exact or parse_time(exact) != parsed:
+        if packet["cutoff"] != exact or parse_time(exact) != parsed_exact:
             raise ValueError("Exact fixture canonical instant must match the preserved original UTC literal")
     elif reference.get("cutoff_policy") in {"MINUTE_START", "UTC_MINUTE_END_EXCLUSIVE"}:
-        parsed = None
+        parsed_minute = None
         minute_spec = spec.removesuffix(" UTC") if isinstance(spec, str) else spec
         for pattern in ("%d %b %Y %H:%M", "%d %b%Y %H:%M", "%Y-%m-%dT%H:%MZ"):
             try:
-                parsed = datetime.strptime(minute_spec, pattern).replace(tzinfo=UTC)
+                parsed_minute = datetime.strptime(minute_spec, pattern).replace(tzinfo=UTC)
                 break
             except ValueError:
                 continue
         end_exclusive = reference["cutoff_policy"] == "UTC_MINUTE_END_EXCLUSIVE"
-        expected = (
-            interval_bounds(Timestamp(parsed.isoformat(), "BUCKET(1m)", bucket_anchor="START"))[1]
-            if parsed is not None and end_exclusive
-            else parsed
+        expected_minute = (
+            interval_bounds(Timestamp(parsed_minute.isoformat(), "BUCKET(1m)", bucket_anchor="START"))[1]
+            if parsed_minute is not None and end_exclusive
+            else parsed_minute
         )
         basis = "WHOLE_NAMED_MINUTE_END_EXCLUSIVE" if end_exclusive else "CALLER_SELECTED_INTERVAL_START"
         if (
-            parsed is None
-            or cutoff != expected
+            parsed_minute is None
+            or cutoff != expected_minute
             or reference.get("cutoff_instant") != packet["cutoff"]
             or reference.get("original_call_precision") != "BUCKET(1m)"
             or reference.get("chosen_boundary_basis") != basis
@@ -194,7 +199,7 @@ def validate(packet, market_record, *, private_mask_path=None, input_path=None):
         ):
             raise ValueError("F24 requires an initial source then a distinct later confirmation item")
     mask_proof = (
-        _host_identity_mask(packet, private_mask_path, input_path)
+        _host_identity_mask(packet, private_mask_path, input_path, raw_sources=raw_sources)
         if packet.get("masking", {}).get("applied")
         and (
             reference["fixture_id"] in {"F-24", "F-25", "F-26", "F-27"}
@@ -273,20 +278,19 @@ def validate(packet, market_record, *, private_mask_path=None, input_path=None):
             ]
             if not all(pair) or pair not in declared:
                 raise ValueError("Fixture as-of raw evidence must be declared by its source record")
-            if sha256(retained_source_payload(pair[0])) != pair[1]:
+            if sha256(retained_source_payload(pair[0], raw_sources=raw_sources)) != pair[1]:
                 raise ValueError("Fixture retained original raw evidence checksum mismatch")
             if not isinstance(record.get("text"), str) or not record["text"]:
                 raise ValueError("Fixture requires original source body, not a semantic event seed")
             if sha256(record["text"].encode()) != proof.get("body_sha256"):
                 raise ValueError("Fixture original body checksum mismatch")
-            raw_view = retained_source_payload(pair[0])
+            raw_view = retained_source_payload(pair[0], raw_sources=raw_sources)
             projection = proof.get("projection_provenance")
             if projection:
-                original = retained_source_payload(projection["original_raw_ref"])
+                original = retained_source_payload(projection["original_raw_ref"], raw_sources=raw_sources)
                 if sha256(original) != projection["original_raw_sha256"]:
                     raise ValueError("Fixture host-only original projection checksum mismatch")
-                if projection["projection_module_sha256"] != sha256(Path(__file__).read_bytes()):
-                    raise ValueError("Fixture original projection module bytes differ")
+                projection_code.verify(projection["projection_module_sha256"])
                 descriptor = proof.get("derivation") or {}
                 if descriptor.get("kind") != "SOURCE_ORIGINAL_FIELD_PROJECTION_V1":
                     raise ValueError("Fixture projection requires a declared original-field selector")
@@ -306,7 +310,7 @@ def validate(packet, market_record, *, private_mask_path=None, input_path=None):
                 signed_original=mask_proof["signed_originals"].get(row["key"]) if mask_proof else None,
             )
             public_lower, public_upper = interval_bounds(propagate_timestamp(record, "published_at"))
-            if public_upper is None:
+            if public_lower is None or public_upper is None:
                 raise ValueError("Fixture original publication requires explicit occurrence bounds")
             simulated = parse_time(row["simulated_available_at"])
             retrospective_schedule = (
@@ -939,7 +943,9 @@ class TrustedFixtureClock:
         }
 
 
-def _host_identity_mask(packet, private_path, input_path):
+def _host_identity_mask(
+    packet, private_path, input_path, *, raw_sources: RetainedSourceReader = FILESYSTEM_RETAINED_SOURCES
+):
     """Validate a private identity derivative; never export the map or originals."""
     if not (packet.get("masking") or {}).get("applied"):
         return None
@@ -1070,7 +1076,7 @@ def _host_identity_mask(packet, private_path, input_path):
     if not isinstance(sensitive, list) or any(k not in replacements for k in sensitive):
         raise ValueError("Invalid case-sensitive identity declaration")
 
-    groups = {}
+    groups: dict[str, list[str]] = {}
     for key in keys:
         groups.setdefault(key.casefold(), []).append(key)
     if any(len(group) > 1 and any(k not in sensitive for k in group) for group in groups.values()) or len(
@@ -1146,8 +1152,8 @@ def _host_identity_mask(packet, private_path, input_path):
         ).resolve(strict=True)
         if original_raw_path.is_relative_to(input_root):
             raise ValueError("Unmasked raw binding must remain outside replay inputs")
-        raw = retained_source_payload(original_raw_path)
-        masked_raw = retained_source_payload(masked_proof["raw_ref"])
+        raw = retained_source_payload(original_raw_path, raw_sources=raw_sources)
+        masked_raw = retained_source_payload(masked_proof["raw_ref"], raw_sources=raw_sources)
         if sha256(raw) != proof.get("raw_sha256") or sha256(masked_raw) != masked_proof.get("raw_sha256"):
             raise ValueError("Identity derivative raw checksum mismatch")
         if signed:

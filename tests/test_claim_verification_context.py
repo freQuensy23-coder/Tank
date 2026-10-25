@@ -4,10 +4,11 @@ from pathlib import Path
 
 import pytest
 from scheduling_support import RecordingReactionScheduling
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_versions
 from test_card_template import card_inputs, render
 from test_event_tools import seed
 
+from tank.analysis.page_access import LivePageAccess
 from tank.event_tools import EventToolService
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -24,6 +25,7 @@ async def test_agent_verification_gap_reaches_card_through_public_tool(tmp_path:
         None,
         versions=fixture_versions(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
     args = await seed(service)
     gap = "No announcement from the named venue; the reporter supplies no primary quote."

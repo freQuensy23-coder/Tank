@@ -4,9 +4,10 @@ from pathlib import Path
 
 import pytest
 from scheduling_support import RecordingReactionScheduling
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_versions
 from test_session_binding_concurrency import fixture_repo
 
+from tank.analysis.page_access import LivePageAccess
 from tank.event_tools import EventToolService
 from tank.settings import Settings
 from tank.util import clock_iso, new_id, sha256
@@ -27,6 +28,7 @@ async def test_observation_and_source_completion_are_atomic(
             None,
             versions=fixture_versions(),
             scheduler=RecordingReactionScheduling(),
+            pages=LivePageAccess(fixture_http_admission()),
         )
         first, second, stamp = new_id("item"), new_id("item"), clock_iso()
         quote = "Product announced"

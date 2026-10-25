@@ -1,0 +1,36 @@
+{
+  "card_decision_activation_755_included": false,
+  "cohort": "Required admitted Python HTTP, explicit recorded page access, exact retained body/code evidence, owned consumers",
+  "default_mypy_remaining": [
+    "src/tank/analysis/truth.py:_condition_cache (separately assigned full graph schema/activation)"
+  ],
+  "integration": {
+    "collected": 83,
+    "duration_s": 83.5,
+    "passed": 83,
+    "skipped": 0,
+    "xml": "/tmp/analysis-http-qualified-integration.xml"
+  },
+  "production_deployed": false,
+  "recorded_reader_evidence": "docs/refactor/analysis-recorded-http-evidence.json",
+  "ruff_check": "PASS",
+  "ruff_format_check": "PASS_392_FILES",
+  "ruff_targets": [
+    "src",
+    "tests",
+    "scripts",
+    "deploy"
+  ],
+  "strict_result": "PASS",
+  "strict_targets": 9,
+  "tested_head": "c17512bfd10f1bf3d96954288ac332eee85e9697",
+  "unit": {
+    "cases": 779,
+    "duration_s": 30.72,
+    "max_case_s": 3.04,
+    "p90_case_s": 0.845,
+    "passed": 779,
+    "skipped": 0,
+    "xml": "/tmp/analysis-http-qualified-unit.xml"
+  }
+}

@@ -7,8 +7,9 @@ import pytest
 from review_typed_fixtures import put_boundary, put_flow
 from scheduling_support import RecordingReactionScheduling
 from score_fixtures import unassessed_score_dimensions
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_versions
 
+from tank.analysis.page_access import LivePageAccess
 from tank.review import ReviewService, validate_checks
 from tank.storage import MemoryRepository
 from tank.util import iso, parse_time, sha256
@@ -235,6 +236,7 @@ async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_pa
         DecisionEngine(),
         versions=fixture_versions(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
     now = iso(utcnow())
     eid = "actual-review-event"

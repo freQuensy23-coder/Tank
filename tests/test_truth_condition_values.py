@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_versions
 from test_truth_start_fixture import compact_start_snapshot
 
 import tank.analysis.truth as module
@@ -304,7 +304,9 @@ async def test_actual_market_loader_selective_sql_footprint_and_no_assessment_wr
     (config / "thresholds.yaml").write_bytes(Settings().read_config_bytes("thresholds.yaml"))
     settings = Settings(_env_file=None, config_dir=config, data_dir=tmp_path)
     async with httpx.AsyncClient() as http:
-        market = MarketService(repo, settings, http=http, versions=fixture_versions())
+        market = MarketService(
+            repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+        )
         monkeypatch.setattr(market, "snapshot", forbidden)
         monkeypatch.setattr(market, "_put", forbidden)
         monkeypatch.setattr(market, "flush_market", forbidden)

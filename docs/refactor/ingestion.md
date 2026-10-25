@@ -880,6 +880,36 @@ claimed complete by this instrument slice.
 The actual source workflow regression additionally admits a valid mocked provider
 response, stores its baseline, then observes a response missing required status.
 The result is DEGRADED with no new source item; the prior instrument checkpoint
-is byte-for-byte equal as a stored document, and the validation report omits an
+is exactly equal as a decoded stored document, and the validation report omits an
 unrelated private raw field. Twelve focused instrument cases now cover this
 workflow alongside identity/parity, required fields, and actual page ownership.
+
+
+At canonical source-state checkpoint 29195f2d the full owned selection passed
+533 unit cases in 6.86 seconds and 38 actual integration cases in 7.60 seconds,
+with zero skips. Quality's two typed-outcome E2E caller changes preserved the
+four actual workflows and passed all four cases in 10.85 seconds; the exact
+consumer was merged normally into 10c7b8aa. These checks qualify the explicit
+owner/outcome and instrument tranche, not the remaining full checkpoint/parser
+migration. The ready quota/HTTP checkpoint remains separately preserved.
+
+## X range boundary preservation
+
+XSensor.scan now retains a previously checkpointed account cursor when that
+account reports history_gap=True, even if the response offers a higher cursor.
+Returned posts and their exact run bytes are retained; the next actual request
+still asks from the prior boundary. Only a complete successful account report
+can advance that existing range. Cursor-regression and missing-account/error
+validation continue to run.
+
+The no-prior-cursor branch retains the explicit baseline policy: it establishes
+the first observed head, emits no historical posts, and still reports the actor's
+gap. It does not claim a completed historical range before monitoring began.
+The new regression performs two real MockTransport requests: the partial run
+offers cursor 110 over checkpoint 100, the follow-up still requests 100 and
+returns the previously missing 105, and only then commits 110. Exact response
+bytes remain attached to the respective post observations.
+
+All 20 X adapter cases pass with zero skips, including both new boundary/baseline
+cases; source and tests pass strict typing and Ruff. This is independent of the
+unactivated pending checkpoint/quarantine work.
