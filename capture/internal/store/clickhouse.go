@@ -343,6 +343,32 @@ func (s *Store) chSelect(ctx context.Context, collection, where string, params m
 func (s *Store) chGet(ctx context.Context, collection, key string) (map[string]any, error) {
 	q := newCHQuery()
 	q.where("storage_key = " + q.param(key, "String"))
+	day := chColumn(chDay[collection])
+	found, err := s.CH.rows(ctx, "SELECT instrument_id, toString(min("+day+")) AS lo, toString(max("+day+")) AS hi FROM "+
+		collection+" WHERE "+q.predicate()+" GROUP BY instrument_id", q.params)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", collection, err)
+	}
+	if len(found) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, 0, len(found))
+	low, high := "", ""
+	for _, r := range found {
+		iid, _ := r["instrument_id"].(string)
+		lo, _ := r["lo"].(string)
+		hi, _ := r["hi"].(string)
+		ids = append(ids, iid)
+		if low == "" || lo < low {
+			low = lo
+		}
+		if hi > high {
+			high = hi
+		}
+	}
+	q.where("instrument_id IN " + q.param(chArray(ids), "Array(String)"))
+	q.where(day + " >= " + q.param(low, chTime))
+	q.where(day + " <= " + q.param(high, chTime))
 	out, _, err := s.chSelect(ctx, collection, q.predicate(), q.params, "LIMIT 1")
 	if err != nil || len(out) == 0 {
 		return nil, err

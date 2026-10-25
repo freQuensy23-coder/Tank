@@ -2108,7 +2108,7 @@ UPDATE ops.jobs
 RETURNING *;
 ```
 
-ClickHouse DDL (database `mkt`; `tank db clickhouse` applies it). Every series is a `ReplacingMergeTree` on its row identity: a later `_version` replaces the row, reads use `FINAL`, and a day's rows sit in that day's partition, so retention drops whole partitions. Numbers keep their exact decimal text.
+ClickHouse DDL (database `mkt`; `tank db clickhouse` applies it). Every series is a `ReplacingMergeTree` on its row identity: a later `_version` replaces the row, reads use `FINAL`, and a day's rows sit in that day's partition, so retention drops whole partitions. `FINAL` turns the skip indexes off, so a read that selects by `storage_key` or by `recorded_at` first finds the matching instruments and times without `FINAL` (bloom filter on `storage_key`, minmax on `recorded_at`) and then reads the rows with `FINAL` inside those bounds, pruned by partition and sort key; a read that only asks which instrument days were recorded since a time skips `FINAL`, since every version of a row lies in the same day. Numbers keep their exact decimal text.
 
 ```sql
 CREATE TABLE mkt.flow_bars_1m (
