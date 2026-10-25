@@ -2097,6 +2097,134 @@
         "test_retained_unused_cutoff_and_index_metadata_are_preserved_without_authorizing_retry",
         "test_retry_cannot_reassign_the_original_native_input_to_a_new_attempt"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_transport.py",
+          "symbol": "NativeFrameIdentity"
+        },
+        {
+          "path": "src/tank/agents/native_transport.py",
+          "symbol": "NativeRefusalKey"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "seen_key"
+        }
+      ],
+      "kind": "actual observed native identity",
+      "reason": "Execution correlation can genuinely be unreported. Event IDs are required and never synthesized. Cache/storage keys hash the actual session/event/execution identity; they are not replacement native IDs. Delimiter collisions and absent-versus-empty execution aliases cannot establish ownership.",
+      "validation": [
+        "test_refused_old_frame_does_not_starve_fresh_owned_input"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_transport.py",
+          "symbol": "NativeRetryRefusalLedger.entries"
+        },
+        {
+          "path": "src/tank/agents/native_transport.py",
+          "symbol": "NativeRetryRefusalLedger.from_record"
+        }
+      ],
+      "kind": "identifier-indexed host refusal namespace",
+      "reason": "The dictionary is a real dynamic digest-to-closed-receipt index. Namespace absence means no host refusal has been recorded and initializes an empty index; explicit null or malformed entries reject. Keys validate against exact session/frame identities, and an unrelated execution with the same event ID is not skipped.",
+      "validation": [
+        "test_refused_old_frame_does_not_starve_fresh_owned_input",
+        "test_refusal_controller_provenance_does_not_relabel_unknown_producer_or_replay_receipt"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_transport.py",
+          "symbol": "NativeRetryRefusal"
+        },
+        {
+          "path": "src/tank/agents/native_transport.py",
+          "symbol": "NativeRetryRefusalJournal.record"
+        }
+      ],
+      "kind": "controller observation separate from producer facts",
+      "reason": "A cursor can genuinely be unavailable for cursor-free managed frames. The receipt clock and controller version facet are required actual current observations; no historical producer fields or budgets are invented. Receipt plus known cursor commits atomically before cache advances. A write failure leaves the frame unhandled; a committed-write acknowledgment loss is recovered through the same stored receipt.",
+      "validation": [
+        "test_refusal_persistence_failure_never_advances_memory_and_restart_keeps_chronology",
+        "test_actual_postgres_refusal_is_atomic_and_restarts_without_starving_fresh_input",
+        "test_refusal_controller_provenance_does_not_relabel_unknown_producer_or_replay_receipt"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_transport.py",
+          "symbol": "NativeWireEvent"
+        },
+        {
+          "path": "src/tank/agents/native_transport.py",
+          "symbol": "NativeInboundFrame"
+        },
+        {
+          "path": "src/tank/agents/native_transport.py",
+          "symbol": "ManagedEventPage"
+        },
+        {
+          "path": "src/tank/agents/native_transport.py",
+          "symbol": "NodeEventPage"
+        }
+      ],
+      "kind": "actual native wire envelopes only",
+      "reason": "Native payload dictionaries remain at the HTTP/SSE adapter boundary while the legacy full event worker is still open. Outer page and stream facts have explicit source-backed models; host refusal records contain only typed identity/provenance, not an opaque domain-record facade. Opaque textual tool/file content is never reparsed. This is not an approval of remaining process_event internal maps.",
+      "validation": [
+        "test_native_stream_keeps_json_looking_tool_text_opaque",
+        "test_native_stream_duplicate_frame_never_reaches_refusal_or_budget_state",
+        "test_actual_native_http_duplicate_ownership_cannot_commit_acceptance"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_transport.py",
+          "symbol": "next_native_cursor"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.catch_up"
+        }
+      ],
+      "kind": "real traversal state and reported completion",
+      "reason": "None is only initial no-cursor state or an actual reported terminal managed/Node page. Node after_seq derives from reported event seq values, never count/list position/time. Mixed, missing, repeated and non-progressing paging claims reject before guessing. Query parameter dictionaries are only HTTP serialization.",
+      "validation": [
+        "test_node_has_more_uses_actual_sequence_for_the_next_request",
+        "test_invalid_native_paging_refuses_before_any_frame_effect",
+        "test_repeating_native_cursor_refuses_instead_of_guessing_progress"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_transport.py",
+          "symbol": "decode_native_stream"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.stream"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.request"
+        }
+      ],
+      "kind": "raw JSON admission and source-backed cursor absence",
+      "reason": "Actual raw native HTTP/SSE documents opt into unique-key decoding before any projection. Trusted model roundtrips retain their existing codec. Flat cursor-free managed events remain cursor-free; Node seq and any reported numeric SSE identity must agree. Comment/ping heartbeats are not event documents. No wrapped-data/event fallback or cursor from an inherited empty frame is admitted.",
+      "validation": [
+        "test_actual_native_http_duplicate_ownership_cannot_commit_acceptance",
+        "test_native_stream_duplicate_keys_are_refused_before_ownership_projection",
+        "test_native_stream_keeps_json_looking_tool_text_opaque",
+        "test_refused_old_frame_does_not_starve_fresh_owned_input"
+      ]
     }
   ]
 }

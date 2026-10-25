@@ -904,3 +904,20 @@ now declare terminal next_page=None. Frozen payloads, budgets, deadlines and
 behavior assertions were not changed. The 75 affected transport/workflow cases
 pass in 19.11 seconds after that correction. Full combined qualification is
 still pending.
+
+Final transport owner proof on source/test checkpoint 5b09c8ec: all 671 unit
+cases pass in 37.44 seconds, p90 0.484 seconds and maximum 4.382
+seconds; all 80 actual integrations pass in 38.20 seconds, zero skips. Logs,
+XML and metrics use agents-native-transport-final-* in the isolated worktree.
+Eight source/test targets pass the independent strict gate with both source
+and test roots and the official Pydantic plugin. Ruff/format/source-comment
+checks pass. Configured mypy checks 145 source files with only the existing
+analysis/truth.py:5890 condition-cache annotation error on this ancestry; no
+owned source error remains. Peer E2E/followup fixture qualification is pending.
+
+The transport adapter's dictionaries are actual native HTTP/SSE wire objects,
+not a permissive application record model. Full native process_event/tool/
+history execution domain migration remains open. The refreshed inventory lists
+30 SessionService/free-helper functions and four Runtime functions still
+annotation-incomplete, plus the separate assigned vendor backlog. The Telegram
+eligibility/presentation policy dependency is still explicitly open.
