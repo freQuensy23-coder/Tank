@@ -433,7 +433,9 @@ class SupplyCapture:
                     continue
                 values.append(
                     {
-                        **propagate_timestamp(row, "date").fields("ts"),
+                        **propagate_timestamp(
+                            {**row, "date": iso(parse_epoch(row["date"], unit="s"))}, "date"
+                        ).fields("ts"),
                         "supply_usd": str(sum((D(str(v)) for v in circulating.values()), D(0))),
                     }
                 )

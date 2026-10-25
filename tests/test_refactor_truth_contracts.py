@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from pydantic import JsonValue, ValidationError
+from source_support import fixture_versions
 
 from tank.analysis.truth import MarketTruthService
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
@@ -45,7 +46,9 @@ async def test_assessment_job_returns_reference_to_actual_persisted_full_record(
         "event-1",
         {"event_id": "event-1", "known_to_us_at": "2026-06-17T00:00:00Z", "known_to_us_at_prec": "EXACT"},
     )
-    service = MarketTruthService(repo, Settings(data_dir=tmp_path, _env_file=None), Market())
+    service = MarketTruthService(
+        repo, Settings(data_dir=tmp_path, _env_file=None), Market(), versions=fixture_versions()
+    )
     reference = await service.assess_for_job(
         "event-1", "bitcoin:BTC", Timestamp("2026-06-17T04:00:00Z", "EXACT")
     )

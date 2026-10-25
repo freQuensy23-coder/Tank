@@ -4,8 +4,10 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+from source_support import fixture_versions
 
 from tank.analysis.cards import compose_card
+from tank.util import clock_iso
 
 
 def card_inputs():
@@ -506,14 +508,13 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
     from tank.settings import Settings
     from tank.storage import MemoryRepository
     from tank.telegram_rich import rich_message_text
-    from tank.util import iso
 
     event, assessment, beneficiary, decision, truth = deepcopy(card_inputs())
     eid, token = "current-card-contract", "world:WLD"
     what = (
         "World approved access to its product. Approval permits the next step; availability is not confirmed."
     )
-    now = iso()
+    now = clock_iso()
     event.update(
         event_id=eid,
         lifecycle="MONITORING",
@@ -568,7 +569,7 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
                 "source_class": "PRIMARY",
             },
         )
-        service = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+        service = EventToolService(repo, Settings(data_dir=tmp_path), None, None, versions=fixture_versions())
 
         await repo.put("ops.agent_sessions", "card-session", {"session_id": "card-session", "event_id": eid})
         result = await service.dispatch(
@@ -690,7 +691,7 @@ def test_end_labelled_bucket_and_unknown_edge_are_not_reinterpreted() -> None:
 def test_nested_precision_and_known_collection_clock_are_preserved_independently() -> None:
     inputs = card_inputs()
     inputs[0].pop("public_at_prec")
-    inputs[0]["public_at"] = {"value": "2026-09-24", "precision": "BUCKET_1D"}
+    inputs[0]["public_at"] = {"value": "2026-09-24T00:00:00Z", "precision": "BUCKET_1D"}
     inputs[0].update(known_to_us_at="2026-09-24T20:15:00Z", known_to_us_at_prec="COLLECTION_ONLY")
     assert "public 2026-09-24 (day precision) · known 20:15Z (collection)" in render(inputs)
 
@@ -1013,3 +1014,11 @@ def test_what_counts_toward_card_limit_without_truncation() -> None:
     rich_limit = len(rich_message_text(card_rich_message(original, assessment)))
     with pytest.raises(ValueError, match="CARD_LENGTH"):
         card_rich_message(compose_card(*args, what=what), assessment, max_chars=rich_limit)
+
+
+def test_nested_day_bucket_refuses_uncaptured_timezone() -> None:
+    inputs = card_inputs()
+    inputs[0].pop("public_at_prec")
+    inputs[0]["public_at"] = {"value": "2026-09-24", "precision": "BUCKET_1D"}
+    with pytest.raises(ValueError, match="timezone"):
+        render(inputs)

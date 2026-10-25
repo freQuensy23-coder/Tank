@@ -5,6 +5,7 @@ from datetime import timedelta
 
 import pytest
 import yaml
+from source_support import fixture_versions
 
 from tank.analysis.truth import relative_truth
 from tank.market.service import MarketService
@@ -92,7 +93,7 @@ async def test_comparator_projection_matches_dense_reader_with_sparse_boundaries
         for m in range(1, 1441)
     ]
     await repo.put_market_batch("mkt.flow_bars_1m", flow)
-    service = MarketService(repo, settings)
+    service = MarketService(repo, settings, versions=fixture_versions())
     try:
         current = await service.snapshot(target["token_id"], end, anchor={"type": "T1", "ts": iso(start)})
         if long_event:

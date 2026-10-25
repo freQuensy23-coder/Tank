@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from source_support import fixture_versions
 
 from tank.market.rate_gate import PriorityGate
 from tank.market.service import MarketService
@@ -46,7 +47,7 @@ async def test_concurrent_requests_overlap_but_start_one_interval_apart(setup) -
         return httpx.Response(200, json={"ok": True})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = MarketService(repo, settings, http=http)
+        service = MarketService(repo, settings, http=http, versions=fixture_versions())
         await asyncio.gather(
             *(service._request("GET", "https://api.llama.fi/summary/fees/abc") for _ in range(4))
         )
@@ -135,7 +136,7 @@ async def test_overdue_request_starts_are_spaced_from_actual_admission(
         return httpx.Response(200, json={"ok": True})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = MarketService(repo, settings, http=http)
+        service = MarketService(repo, settings, http=http, versions=fixture_versions())
         requests = [
             asyncio.create_task(service._request("GET", "https://api.llama.fi/summary/fees/abc"))
             for _ in range(4)
@@ -172,7 +173,7 @@ async def test_cancelled_pacing_wait_does_not_reserve_a_future_start(
         return httpx.Response(200, json={"ok": True})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = MarketService(repo, settings, http=http)
+        service = MarketService(repo, settings, http=http, versions=fixture_versions())
         first = asyncio.create_task(service._request("GET", "https://api.llama.fi/summary/fees/abc"))
         waiting = following = None
         try:
@@ -216,7 +217,7 @@ async def test_delayed_response_frees_saturated_slot_without_restarting_pacer(
         return httpx.Response(200, json={"ok": True})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = MarketService(repo, settings, http=http)
+        service = MarketService(repo, settings, http=http, versions=fixture_versions())
         requests, observers = [], []
         try:
             for index in range(4):

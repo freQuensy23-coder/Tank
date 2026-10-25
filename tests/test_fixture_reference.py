@@ -6,6 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 from model_fixture import audited_result, model_arguments
+from source_support import fixture_versions
 
 from tank.replay import ReplayError, digest, load_inputs, original_replay_messages
 from tank.settings import Settings
@@ -1260,9 +1261,10 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
     tools = EventToolService(
         repo,
         config,
-        MarketTruthService(repo, config, reader),
+        MarketTruthService(repo, config, reader, versions=fixture_versions()),
         DecisionEngine(config),
         reference_clock=TrustedFixtureClock(inputs),
+        versions=fixture_versions(),
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
         if fail_later:
