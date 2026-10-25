@@ -32,6 +32,7 @@ from tank.contracts.sources import (
     SourceDefinition,
     SourceEscalationControlView,
     SourceFilingRegistryView,
+    SourcePollOutcome,
 )
 from tank.http_admission import ConfiguredHttpAdmission
 from tank.ops_progress import RepositorySourceProgress
@@ -219,7 +220,9 @@ class SourceService:
         stored = await self._ingestion().ingest(source, captured)
         return stored.storage_record()
 
-    async def poll_once(self, source_id, *, due_only=False, escalated=False):
+    async def poll_once(
+        self, source_id: str, *, due_only: bool = False, escalated: bool = False
+    ) -> SourcePollOutcome:
         return await self.poller.poll_once(source_id, due_only=due_only, escalated=escalated)
 
     @cached_property
@@ -338,7 +341,7 @@ class SourceService:
             raise ValueError("Source escalation identity conflicts with its requested source")
         return any(control.active_at(moment) for control in controls)
 
-    async def control_once(self, source_id):
+    async def control_once(self, source_id: str) -> SourcePollOutcome:
         """Re-read durable controls independently of the normal HTTP poll cadence."""
         return await self.poll_once(source_id, due_only=True, escalated=await self.is_escalated(source_id))
 

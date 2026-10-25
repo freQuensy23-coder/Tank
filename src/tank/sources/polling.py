@@ -23,7 +23,15 @@ from tank.contracts.source_items import (
     RawSourceReference,
     discovered_item,
 )
-from tank.contracts.sources import HttpFetchPlan, SourceDefinition, SourceFeed
+from tank.contracts.sources import (
+    FeedPollOutcome,
+    HttpFetchPlan,
+    PolledSource,
+    SourceDefinition,
+    SourceFeed,
+    SourcePollOutcome,
+    UnconfiguredSource,
+)
 from tank.ops_entry_errors import report_entry_errors
 from tank.sources.fetch import FetchedContent, NotModified
 from tank.util import TimeInput, new_id, parse_time, sha256
@@ -574,7 +582,7 @@ class SourcePoller:
             )
         return rows, state
 
-    async def acquire(self, source, index, *, due_only=False, escalated=False):
+    async def acquire(self, source, index, *, due_only=False, escalated=False) -> FeedPollOutcome:
         sid = source.source_id
         key, feed = f"{sid}:{index}", self.feed(source, index)
         async with self.lock(self.acquisition_locks, key):
@@ -585,7 +593,7 @@ class SourcePoller:
                 and last
                 and (self.now() - parse_time(last)).total_seconds() < self.interval(source, feed, escalated)
             ):
-                return {"items": 0, "errors": []}
+                return FeedPollOutcome(items=0, errors=[])
             attempted = self.stamp()
             async with self.lock(self.state_locks, key):
                 current = await self.state(key)
@@ -670,11 +678,11 @@ class SourcePoller:
                         last_failure_at=self.stamp(),
                     )
                     await self.save(key, current)
-                return {"items": 0, "errors": [str(exc)]}
+                return FeedPollOutcome(items=0, errors=[str(exc)])
             await self.report_entry_errors(
                 key, source, feed, acquired.get("entry_errors") or [], acquired.get("fetched_at") or attempted
             )
-            return {"items": 0, "errors": []}
+            return FeedPollOutcome(items=0, errors=[])
 
     async def report_entry_errors(self, key, source, feed, errors, seen_at):
         """Report this poll's entry errors and earlier polls whose report failed.
@@ -825,7 +833,7 @@ class SourcePoller:
 
         return "DUPLICATE" if stored["item_id"] != item["item_id"] else None
 
-    async def drain(self, source, index, *, force=False, escalated=False):
+    async def drain(self, source, index, *, force=False, escalated=False) -> FeedPollOutcome:
         sid = source.source_id
         key, feed = f"{sid}:{index}", self.feed(source, index)
         async with self.lock(self.processing_locks, key):
@@ -837,7 +845,7 @@ class SourcePoller:
                 + timedelta(seconds=self.interval(source, feed, escalated))
                 > self.now()
             ):
-                return {"items": 0, "errors": []}
+                return FeedPollOutcome(items=0, errors=[])
             if any(
                 "item_id" not in row for batch in state.get("pending_batches", []) for row in batch["rows"]
             ):
@@ -860,7 +868,7 @@ class SourcePoller:
                         current.update(status="HEALTHY", error=None)
                     await self.save(key, current)
             if not batches:
-                return {"items": 0, "errors": []}
+                return FeedPollOutcome(items=0, errors=[])
             errors, completed, count, duplicates = [], {}, 0, []
             article_errors = {}
             for batch in batches:
@@ -943,27 +951,35 @@ class SourcePoller:
                         last_success_at=self.stamp(),
                     )
                 await self.save(key, current)
-            return {"items": count, "errors": errors}
+            return FeedPollOutcome(items=count, errors=errors)
 
-    async def poll_once(self, source_id, *, due_only=False, escalated=False):
+    async def poll_once(
+        self,
+        source_id: str,
+        *,
+        due_only: bool = False,
+        escalated: bool = False,
+    ) -> SourcePollOutcome:
         source = self.service.sources[source_id]
+        if not source.feeds:
+            return UnconfiguredSource(source_id=source_id, items=0, errors=[])
 
-        async def one_feed(index):
+        async def one_feed(index: int) -> FeedPollOutcome:
             acquired = await self.acquire(source, index, due_only=due_only, escalated=escalated)
             processed = await self.drain(source, index, force=not due_only, escalated=escalated)
-            return {"items": processed["items"], "errors": acquired["errors"] + processed["errors"]}
+            return FeedPollOutcome(items=processed.items, errors=acquired.errors + processed.errors)
 
         processed = await asyncio.gather(*(one_feed(i) for i in range(len(source.feeds))))
-        errors = [e for result in processed for e in result["errors"]]
+        errors = [error for result in processed for error in result.errors]
         states = [await self.state(f"{source_id}:{i}") for i in range(len(source.feeds))]
-        return {
-            "source_id": source_id,
-            "items": sum(result["items"] for result in processed),
-            "status": "DEGRADED"
-            if errors or any(s.get("status") == "DEGRADED" for s in states)
+        return PolledSource(
+            source_id=source_id,
+            items=sum(result.items for result in processed),
+            status="DEGRADED"
+            if errors or any(state.get("status") == "DEGRADED" for state in states)
             else "HEALTHY",
-            "errors": errors,
-        }
+            errors=errors,
+        )
 
     async def loop(self, source, stop):
         sid = source.source_id

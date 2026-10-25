@@ -262,12 +262,12 @@ async def test_s29_poll_stores_new_posts_and_moves_cursors_only_after_them(tmp_p
         return row
 
     result = await svc.poll_once("S29")
-    assert result["status"] == "HEALTHY" and result["items"] == 0 and not await items()
+    assert result.status == "HEALTHY" and result.items == 0 and not await items()
     assert (await checkpoint())["account_cursors"] == {"official_org": "100", "other_account": "99"}
     assert actor.body(0) == {"handles": ["Official_Org", "other_account"]}
 
     result = await svc.poll_once("S29")
-    assert result["status"] == "HEALTHY" and result["items"] == 2 and sorted(await items()) == ["102", "105"]
+    assert result.status == "HEALTHY" and result.items == 2 and sorted(await items()) == ["102", "105"]
     stored = await items()
     official, other = stored["105"], stored["102"]
     assert official.author_role == "ORGANIZATION" and official.monitored_accounts == ["Official_Org"]
@@ -286,7 +286,7 @@ async def test_s29_poll_stores_new_posts_and_moves_cursors_only_after_them(tmp_p
     state = await checkpoint()
     error = state["acquisition_error"]
     assert isinstance(error, str)
-    assert result["status"] == "DEGRADED" and "PUBLIC_SOURCE_UNAVAILABLE" in error
+    assert result.status == "DEGRADED" and "PUBLIC_SOURCE_UNAVAILABLE" in error
     assert state["account_cursors"] == {"official_org": "105", "other_account": "102"}
 
 
@@ -401,8 +401,8 @@ async def test_configured_founder_role_survives_real_source_capture_and_domain_d
             "openai",
         }
         service.accounts = {"sama": declared_account}
-        assert (await service.poll_once("S29"))["items"] == 0
-        assert (await service.poll_once("S29"))["items"] == 1
+        assert (await service.poll_once("S29")).items == 0
+        assert (await service.poll_once("S29")).items == 1
     [record] = await repo.list("ingest.source_items")
     item = SourceItemDocument.model_validate(record).root
     assert isinstance(item, SocialSourceItem)

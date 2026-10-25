@@ -598,3 +598,25 @@ dual-failure drain. Tests are strict-mypy clean and the helper emits no errors i
 the full CLI strict check. The wider CLI still has its explicitly inventoried
 untyped command/service boundaries. The permanent OpenMA effort/binding activation
 must be paired by its owner before integrated verification.
+
+
+### Independent next branch: source workflow outcomes (not activated)
+
+The independent source-state branch replaces actual acquire/drain count records
+with `FeedPollOutcome`, and the aggregate with `PolledSource | UnconfiguredSource`.
+Producers and aggregation use model attributes; no model implements dictionary
+access. An explicitly empty feed configuration returns UNCONFIGURED rather than
+claiming a healthy read. Required item counts/errors remain supplied by the actual
+workflow, and a nonempty error list cannot validate as healthy.
+
+Owned callers now consume attributes, retaining their original raw evidence,
+restart, malformed sibling, concurrency and queue assertions. The existing
+disabled/retired Binance-source regression now expects the honest unconfigured
+outcome and still verifies no reconstruction or I/O. Source configuration and
+the X tests pass strict mypy; the previous five untyped poll-call dependencies
+in that test module are closed. 209 source/admission units pass in 3.24s.
+
+This is deliberately not part of held head 477d58e. Two quality-owned E2E map
+subscriptions still need a later paired attribute migration; full integration
+is not claimed. Checkpoint ownership/state schemas and unknown prior Coinbase
+flags remain the next work inside this independent branch.
