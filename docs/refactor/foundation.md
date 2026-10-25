@@ -225,3 +225,6 @@ All owned unit modules pass **193 cases, zero skips, 2.36 s** with `-n auto`; ex
 
 
 Configuration capture admission uses the shared finite JSON codec for every captured `.json` file, replacing permissive `json.loads` validation that accepted nonstandard numeric NaN/Infinity. The exact captured bytes remain the hash/snapshot evidence; validation does not reserialize them. Three candidate-replacement tests prove invalid numeric JSON cannot create a new configuration generation or replace a valid captured snapshot. Raw textual evidence such as the string "NaN" remains valid JSON and is distinct from a numeric nonfinite quantity.
+
+
+Statistical cache retention preserves the original **single total** FIFO capacity across all eight typed families. `BaselineRetention` indexes only `(family, fingerprint)` eviction callbacks; financial/statistical values stay in their own `BaselineCache[T]`, without Any or value erasure. `BaselineCaches.with_capacity(required_capacity)` creates one shared ledger; the analysis composition supplies the existing 128-entry policy explicitly. Updating an existing key does not refresh FIFO order. Cross-family eviction tests prove the total budget remains two in a two-entry example, rather than multiplying by family count. Nullable cache lookup still denotes a genuine miss and cannot erase a stored unavailable-range model.
