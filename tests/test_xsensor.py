@@ -331,7 +331,7 @@ def test_failed_and_regressing_accounts_never_advance_their_cursor() -> None:
     observed = scan(
         partial, ["ethereum", "other"], {"ethereum": "100", "other": "200"}, b"retained partial response"
     )
-    assert [row.discovery.external_id for row in observed.rows] == ["105", "205"]
+    assert [row.discovery.external_id for row in observed.rows] == ["205"]
     assert observed.cursors == {"ethereum": "100", "other": "205"}
     assert observed.failures == [AccountFailure(account="ethereum", reason="PUBLIC_PROFILE_HTTP_404")]
     regressed = scan(
