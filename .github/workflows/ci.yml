@@ -143,7 +143,7 @@ jobs:
           scripts/acceptance/masking_contracts.py deploy/openma_lifecycle/native_network_probe.py
           tests/test_ci_budget.py tests/test_ci_go_results.py tests/test_capture_parity.py tests/test_capture_parity_contracts.py tests/test_native_network_probe.py
           tests/test_acceptance_masking.py
-          tests/bootstrap_support.py tests/test_bootstrap_support.py
+          tests/bootstrap_support.py tests/test_bootstrap_support.py tests/test_refactor_inventory.py
       - name: Check captured configuration helpers strictly
         env:
           MYPYPATH: src:tests
