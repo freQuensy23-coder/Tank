@@ -84,7 +84,7 @@ def build_runtime(repo: Repository, settings: Settings) -> Runtime:
         repo,
         settings,
         truth,
-        DecisionEngine(settings),
+        DecisionEngine(),
         versions=versions,
         scheduler=scheduler,
         pages=LivePageAccess(admission),
