@@ -28,8 +28,8 @@ def _text(value: JsonValue | datetime | Decimal, field: str) -> str | None:
 
 
 def _time(value: JsonValue | datetime | Decimal) -> TimeInput:
-    if isinstance(value, bool) or not isinstance(value, (datetime, str, int, float, Decimal)):
-        raise ValueError("Timestamp value must be a declared date or number")
+    if not isinstance(value, (datetime, str)):
+        raise ValueError("Timestamp evidence requires ISO date-time text or an aware datetime")
     return value
 
 
@@ -102,6 +102,16 @@ def _equivalent(left: str | None, right: str | None) -> bool:
     if left_match and right_match:
         return _duration(left_match[1]) == _duration(right_match[1])
     return False
+
+
+def reconcile_precision(
+    declarations: Sequence[str], *, field: str, bucket_size: BucketSize | None = None
+) -> str | None:
+    """Validate metadata declarations independently of whether a field is an instant or calendar date."""
+    normalized = [normalize_precision(value, bucket_size=bucket_size) for value in declarations]
+    if normalized and any(not _equivalent(normalized[0], value) for value in normalized[1:]):
+        raise ValueError(f"Conflicting timestamp precision declarations for {field}")
+    return normalized[0] if normalized else None
 
 
 class Timestamp(DomainModel):
@@ -236,10 +246,7 @@ def propagate_timestamp(
             if declaration is not None:
                 declarations.append(declaration)
         reason = reason or _text(record.get(name + "_reason"), name + "_reason")
-    normalized = [normalize_precision(item, bucket_size=bucket_size) for item in declarations]
-    if normalized and any(not _equivalent(normalized[0], item) for item in normalized[1:]):
-        raise ValueError(f"Conflicting timestamp precision declarations for {field}")
-    precision = normalized[0] if normalized else None
+    precision = reconcile_precision(declarations, field=field, bucket_size=bucket_size)
     if (
         bucket_anchor is None
         and precision
