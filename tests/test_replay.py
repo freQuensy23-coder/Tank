@@ -4,6 +4,8 @@ from pathlib import Path
 import httpx
 import pytest
 from model_fixture import audited_result, model_arguments
+from native_input_fixtures import acknowledge_native_input
+from native_session_fixtures import created_native_session, native_session_record
 from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_http_admission, fixture_versions
 
@@ -310,6 +312,8 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
         "registry": {"tokens": [{"token_id": "T", "symbol": "T"}], "entities": [], "instruments": []},
         "sources": {"sources": [{"source_id": "S01", "name": "Synthetic replay source"}]},
         "openma": {
+            "prompt_version": "synthetic-replay-prompt",
+            "reasoning_effort": "medium",
             "agent_id": "captured-analyst",
             "environment_id": "original-live-env",
             "replay_environment_id": "tank-replay-fixture-env",
@@ -361,6 +365,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                 "known_to_us_at": earlier,
                 "public_at": earlier,
                 "tokens_mentioned": ["T"],
+                "next_milestone": None,
                 "current_ems_id": ems_id,
             },
         ),
@@ -391,6 +396,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                 "credible": False,
                 "map_version": 1,
                 "capture_class": "UNKNOWN",
+                "exposure_score": None,
             },
         ),
         (
@@ -501,7 +507,16 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
     accepted_inputs = []
     decision_ack_bodies = []
 
-    async def transport(request: httpx.Request):
+    native_records = {}
+    native_snapshot = {
+        "version": 1,
+        "system": "Fixture analyst prompt",
+        "skills": [],
+        "tools": [],
+        "model": {"id": "fixture-model"},
+    }
+
+    async def transport(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/executions"):
             assert request.method == "GET"
             ids = request.url.params.get_list("ids[]")
@@ -517,24 +532,22 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
             )
         path = request.url.path
         if request.method == "GET" and path.rsplit("/", 1)[-1] in {"fresh-session", "fresh-replay-session"}:
-            return httpx.Response(
-                200,
-                json={
-                    "agent": {
-                        "id": "captured-analyst",
-                        "version": 1,
-                        "system": "Fixture analyst prompt",
-                        "skills": [],
-                        "tools": [],
-                        "model": {"id": "fixture-model"},
-                    }
-                },
-            )
+            return httpx.Response(200, json=native_records[path.rsplit("/", 1)[-1]])
         if path.endswith("/sessions"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": [{"id": old_sid, "metadata": {}}]})
+                foreign = native_session_record(
+                    old_sid,
+                    agent_id="captured-analyst",
+                    environment_id="original-live-env",
+                    metadata={},
+                    model_id="fixture-model",
+                )
+                return httpx.Response(200, json={"data": [foreign], "next_page": None})
             requests.append(json.loads(request.content))
-            return httpx.Response(201, json={"id": "fresh-replay-session"})
+            native_records["fresh-replay-session"] = created_native_session(
+                request, "fresh-replay-session", agent_snapshot=native_snapshot
+            )
+            return httpx.Response(201, json=native_records["fresh-replay-session"])
         if path.endswith("/events/stream"):
             return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=Stream())
         if path.endswith("/events"):
@@ -651,7 +664,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                             },
                         )
                     )
-            return httpx.Response(200, json={"data": [{"id": accepted_id}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, accepted_id))
         raise AssertionError("Unexpected control-plane request")
 
     class CapturedMarket:
@@ -687,7 +700,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
             repo,
             config,
             reaction_truth,
-            DecisionEngine(config),
+            DecisionEngine(),
             http=http,
             versions=fixture_versions(),
             scheduler=reaction_scheduler,
@@ -712,6 +725,11 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
     assert requests[0]["environment_id"] == "tank-replay-fixture-env"
     assert report["session_id"] != old_sid
     assert report["mode"] == "FRESH_OPENMA_SESSION"
+    assert report["output"]["decisions"], [
+        {"tool": row["tool"], "status": row["status"], "result": row.get("result")}
+        for row in await repo.list("ops.tool_calls")
+        if row["status"] in {"REFUSED", "ERROR"}
+    ]
     assert report["output"]["decisions"][0]["action"] == "WAIT"
     assert results[-1]["action"] == "WAIT"
     assert results[0]["market_truth"][0]["move_class"] == "UNKNOWN"
@@ -1193,7 +1211,13 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
         "thresholds": Settings(_env_file=None).load_config("thresholds"),
         "semantics": {},
         "dependency_map": {},
-        "openma": {"agent_id": "analyst", "environment_id": "live", "replay_environment_id": "replay"},
+        "openma": {
+            "prompt_version": "synthetic-replay-prompt",
+            "reasoning_effort": "medium",
+            "agent_id": "analyst",
+            "environment_id": "live",
+            "replay_environment_id": "replay",
+        },
     }
 
     class Config(Settings):
@@ -1329,7 +1353,16 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
     actor_item = None
     fresh_event_id = None
 
-    async def transport(request: httpx.Request):
+    native_records = {}
+    native_snapshot = {
+        "version": 1,
+        "system": "Synthetic projection actor",
+        "skills": [],
+        "tools": [],
+        "model": {"id": "fixture-model"},
+    }
+
+    async def transport(request: httpx.Request) -> httpx.Response:
         nonlocal actor_stage, actor_item, fresh_event_id
         if request.url.path.endswith("/executions"):
             assert request.method == "GET"
@@ -1345,24 +1378,15 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
                 },
             )
         if request.method == "GET" and request.url.path.endswith("/sessions/new-session"):
-            return httpx.Response(
-                200,
-                json={
-                    "agent": {
-                        "id": "analyst",
-                        "version": 1,
-                        "system": "Synthetic projection actor",
-                        "skills": [],
-                        "tools": [],
-                        "model": {"id": "fixture-model"},
-                    }
-                },
-            )
+            return httpx.Response(200, json=native_records["new-session"])
         if request.url.path.endswith("/sessions"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "next_page": None})
             assert json.loads(request.content)["environment_id"] == "replay"
-            return httpx.Response(201, json={"id": "new-session"})
+            native_records["new-session"] = created_native_session(
+                request, "new-session", agent_snapshot=native_snapshot
+            )
+            return httpx.Response(201, json=native_records["new-session"])
         if request.url.path.endswith("/events/stream"):
             return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
         if request.url.path.endswith("/archive"):
@@ -1484,7 +1508,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
                             "stop_reason": {"type": "end_turn"},
                         }
                     )
-            return httpx.Response(200, json={"data": [{"id": accepted_id}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, accepted_id))
         raise AssertionError("Unexpected request")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
@@ -1503,7 +1527,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
             repo,
             config,
             reaction_truth,
-            DecisionEngine(config),
+            DecisionEngine(),
             versions=fixture_versions(),
             scheduler=reaction_scheduler,
             pages=recorded_page_access(load_inputs(packet, config)),
@@ -1801,8 +1825,10 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
         complete_decision_fixture,
         complete_event_fixture,
         complete_truth_fixture,
+        primary_only_map_fixture,
     )
 
+    from tank.analysis.decision_codec import decode_decision, encode_outlook
     from tank.analysis.decisions import DecisionEngine
     from tank.analysis.truth import MarketTruthService
     from tank.event_tools import EventToolService
@@ -1817,7 +1843,13 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
         "thresholds": {**Settings(_env_file=None).load_config("thresholds"), "call_expiry_days": 7},
         "semantics": {},
         "dependency_map": {},
-        "openma": {"agent_id": "analyst", "environment_id": "live", "replay_environment_id": "replay"},
+        "openma": {
+            "prompt_version": "synthetic-replay-prompt",
+            "reasoning_effort": "medium",
+            "agent_id": "analyst",
+            "environment_id": "live",
+            "replay_environment_id": "replay",
+        },
     }
 
     class Config(Settings):
@@ -1858,7 +1890,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
     complete_decision = complete_decision_fixture("original-dec", "event", "T", initial_at, "fixture-truth")
     complete_decision.update(decision, cutoff=initial_at)
     decision = complete_decision
-    alert["card_struct"] = {"event": dict(canonical_event), "assessment": canonical_ems}
+    alert["card_struct"] = {"event": dict(canonical_event, contradictions=[]), "assessment": canonical_ems}
     old_call = {
         "call_id": "original-call",
         "event_id": "event",
@@ -1925,10 +1957,11 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
         [
             ("evt.ems_assessments", "fixture-ems", canonical_ems, initial_at),
             ("ana.market_truth", "fixture-truth", canonical_truth, initial_at),
+            ("ana.outlooks", decision["outlook_id"], encode_outlook(decode_decision(decision)), initial_at),
             (
                 "evt.beneficiary_maps",
                 "event:1",
-                {"event_id": "event", "map_version": 1, "analysis_set": ["T"]},
+                primary_only_map_fixture("event", "T"),
                 initial_at,
             ),
             (
@@ -1940,6 +1973,10 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
                     "map_version": 1,
                     "token_id": "T",
                     "role": "PRIMARY",
+                    "tradable": False,
+                    "layer": "ISSUER_PRODUCT",
+                    "evidence": [],
+                    "causal_chain": "The authored primary event is monitored without a capture estimate.",
                     "credible": False,
                     "capture_class": "UNKNOWN",
                     "exposure_score": 0,
@@ -2002,7 +2039,16 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
     accepted_inputs = []
     actor_stage = None
 
-    async def control(request: httpx.Request):
+    native_records = {}
+    native_snapshot = {
+        "version": 1,
+        "system": "Fixture analyst prompt",
+        "skills": [],
+        "tools": [],
+        "model": {"id": "fixture-model"},
+    }
+
+    async def control(request: httpx.Request) -> httpx.Response:
         nonlocal actor_stage
         if request.url.path.endswith("/executions"):
             assert request.method == "GET"
@@ -2022,25 +2068,14 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
         )
         path = request.url.path
         if request.method == "GET" and path.rsplit("/", 1)[-1] in {"fresh-session", "fresh-replay-session"}:
-            return httpx.Response(
-                200,
-                json={
-                    "agent": {
-                        "id": "captured-analyst",
-                        "version": 1,
-                        "system": "Fixture analyst prompt",
-                        "skills": [],
-                        "tools": [],
-                        "model": {"id": "fixture-model"},
-                    }
-                },
-            )
+            return httpx.Response(200, json=native_records[path.rsplit("/", 1)[-1]])
         if path.endswith("/sessions"):
-            return (
-                httpx.Response(200, json={"data": []})
-                if request.method == "GET"
-                else httpx.Response(201, json={"id": "fresh-session"})
+            if request.method == "GET":
+                return httpx.Response(200, json={"data": [], "next_page": None})
+            native_records["fresh-session"] = created_native_session(
+                request, "fresh-session", agent_snapshot=native_snapshot
             )
+            return httpx.Response(201, json=native_records["fresh-session"])
         if path.endswith("/events/stream"):
             return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
         if path.endswith("/archive"):
@@ -2119,7 +2154,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
                             "stop_reason": {"type": "end_turn"},
                         }
                     )
-            return httpx.Response(200, json={"data": [{"id": accepted_id}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, accepted_id))
         raise AssertionError("Unexpected control-plane request")
 
     repo = MemoryRepository()
@@ -2139,28 +2174,51 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
             repo,
             config,
             reaction_truth,
-            DecisionEngine(config),
+            DecisionEngine(),
             versions=fixture_versions(),
             scheduler=reaction_scheduler,
             pages=recorded_page_access(load_inputs(packet, config)),
         )
-        report = await replay_agent_session(
-            packet,
-            repo,
-            config,
-            tools,
-            http=http,
-            initial_message={
-                "kind": "ITEM_ADDED",
-                "item_id": "source",
-                "event_id": "event",
-                "replay_at": initial_at,
-            },
-            subsequent_messages=[
-                {"kind": "CALL_EXPIRED", "event_id": "event", "call": old_call, "replay_at": trigger}
-            ],
-            timeout=3,
-        )
+        from pydantic import ValidationError
+
+        schema_errors: list[str] = []
+        publish = tools.publish_card
+
+        async def inspected_publication(arguments, context):
+            try:
+                return await publish(arguments, context)
+            except ValidationError as error:
+                schema_errors.append(str(error))
+                raise
+
+        tools.publish_card = inspected_publication
+        try:
+            report = await replay_agent_session(
+                packet,
+                repo,
+                config,
+                tools,
+                http=http,
+                initial_message={
+                    "kind": "ITEM_ADDED",
+                    "item_id": "source",
+                    "event_id": "event",
+                    "replay_at": initial_at,
+                },
+                subsequent_messages=[
+                    {"kind": "CALL_EXPIRED", "event_id": "event", "call": old_call, "replay_at": trigger}
+                ],
+                timeout=3,
+            )
+        except TimeoutError:
+            failures = [
+                {"tool": row["tool"], "status": row["status"], "result": row.get("result")}
+                for row in await repo.list("ops.tool_calls")
+                if row["status"] in {"REFUSED", "ERROR"}
+            ]
+            assert not schema_errors, schema_errors
+            assert not failures, failures
+            raise
     calls = await repo.list("ana.calls")
     assert len(calls) == 1 and calls[0]["call_id"] != "original-call"
     assert calls[0]["opened_at"] == sent_at
@@ -2227,7 +2285,13 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
         "thresholds": Settings(_env_file=None).load_config("thresholds"),
         "semantics": {},
         "dependency_map": {},
-        "openma": {"agent_id": "analyst", "environment_id": "live", "replay_environment_id": "replay"},
+        "openma": {
+            "prompt_version": "synthetic-replay-prompt",
+            "reasoning_effort": "medium",
+            "agent_id": "analyst",
+            "environment_id": "live",
+            "replay_environment_id": "replay",
+        },
     }
 
     class Config(Settings):
@@ -2246,7 +2310,15 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
     canonical_ems = complete_assessment_fixture("fixture-ems", "event", cutoff=start, **{"class": "MAJOR"})
     canonical_truth = complete_truth_fixture("fixture-truth", "event", "T", start)
     baseline_decision = complete_decision_fixture("baseline-decision", "event", "T", start, "fixture-truth")
-    baseline_decision.update(cutoff=start, conditions=[], conditions_shown=[])
+    from tank.analysis.decision_codec import decode_decision, encode_decision
+    from tank.analysis.decision_contracts import DecisionRecord
+
+    baseline_record = decode_decision(baseline_decision)
+    baseline_decision = encode_decision(
+        DecisionRecord.model_validate(
+            baseline_record.model_copy(update={"conditions": [], "conditions_shown": ()})
+        )
+    )
     rows = [
         (
             "ingest.source_items",
@@ -2320,7 +2392,10 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
                     "card_text": "Synthetic baseline",
                     "decisions": ["baseline-decision"],
                     "shown_tokens": ["T"],
-                    "card_struct": {"event": canonical_event, "assessment": canonical_ems},
+                    "card_struct": {
+                        "event": dict(canonical_event, contradictions=[]),
+                        "assessment": canonical_ems,
+                    },
                 },
                 start,
             ),
@@ -2357,7 +2432,16 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
     settled_inputs = set()
     actor_stage = None
 
-    async def control(request: httpx.Request):
+    native_records = {}
+    native_snapshot = {
+        "version": 1,
+        "system": "Fixture analyst prompt",
+        "skills": [],
+        "tools": [],
+        "model": {"id": "fixture-model"},
+    }
+
+    async def control(request: httpx.Request) -> httpx.Response:
         nonlocal actor_stage
         if request.url.path.endswith("/executions"):
             assert request.method == "GET"
@@ -2378,25 +2462,14 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
             )
         path = request.url.path
         if request.method == "GET" and path.rsplit("/", 1)[-1] in {"fresh-session", "fresh-replay-session"}:
-            return httpx.Response(
-                200,
-                json={
-                    "agent": {
-                        "id": "captured-analyst",
-                        "version": 1,
-                        "system": "Fixture analyst prompt",
-                        "skills": [],
-                        "tools": [],
-                        "model": {"id": "fixture-model"},
-                    }
-                },
-            )
+            return httpx.Response(200, json=native_records[path.rsplit("/", 1)[-1]])
         if path.endswith("/sessions"):
-            return (
-                httpx.Response(200, json={"data": []})
-                if request.method == "GET"
-                else httpx.Response(201, json={"id": "fresh-session"})
+            if request.method == "GET":
+                return httpx.Response(200, json={"data": [], "next_page": None})
+            native_records["fresh-session"] = created_native_session(
+                request, "fresh-session", agent_snapshot=native_snapshot
             )
+            return httpx.Response(201, json=native_records["fresh-session"])
         if path.endswith("/events/stream"):
             return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
         if path.endswith("/archive"):
@@ -2499,7 +2572,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
                             "stop_reason": {"type": "end_turn"},
                         }
                     )
-            return httpx.Response(200, json={"data": [{"id": accepted_id}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, accepted_id))
         raise AssertionError("Unexpected request")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
@@ -2518,7 +2591,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
             repo,
             config,
             reaction_truth,
-            DecisionEngine(config),
+            DecisionEngine(),
             versions=fixture_versions(),
             scheduler=reaction_scheduler,
             pages=recorded_page_access(load_inputs(packet, config)),
@@ -2546,36 +2619,113 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
                 truths = await repo.list("ana.market_truth")
                 latest = max(truths, key=lambda row: row["cutoff"])
                 result.update(mta_id=latest["mta_id"], market_truth_id=latest["mta_id"])
-            await tools.reconcile_conditions(
-                result, await repo.list("ana.watch_conditions") if len(messages) > 1 else [], [], context
+            from tank.analysis.decision_watches import DecisionWatchCommand
+            from tank.analysis.watch_contracts import WatchCondition, WatchProposal
+            from tank.contracts.provenance import GenerationProvenance
+            from tank.util import new_id
+
+            proposals = [
+                WatchProposal.model_validate({**value, "cond_id": new_id("cond")})
+                for value in result["conditions"]
+            ]
+            prepared = context.get("_decision_prepared_condition_ids")
+            reconciliation = tools._plan_conditions(
+                DecisionWatchCommand(
+                    decision_id=result["dec_id"],
+                    event_id=result["event_id"],
+                    token_id=result["token_id"],
+                    generation=GenerationProvenance.model_validate(tools.provenance(context)),
+                    proposals=proposals,
+                ),
+                [WatchCondition.model_validate(value) for value in await repo.list("ana.watch_conditions")]
+                if len(messages) > 1
+                else [],
+                [],
+                prepared_condition_ids=None if prepared is None else frozenset(prepared),
             )
-            await repo.put("ana.decisions", result["dec_id"], result)
-            return result
+            result["conditions"] = [
+                value.model_dump(mode="json", exclude_unset=True) for value in reconciliation.active
+            ]
+            result["conditions_shown"] = list(reconciliation.shown)
+            from tank.analysis.decision_codec import decode_decision, encode_decision
+            from tank.analysis.decision_contracts import DecisionRecord
+            from tank.analysis.decision_state import DecisionScope, DecisionStateRepository
+            from tank.time_precision import collection_clock, propagate_timestamp
+
+            baseline = decode_decision(baseline_decision)
+            identity = baseline.metadata.identity.model_copy(
+                update={
+                    "decision_id": result["dec_id"],
+                    "market_truth_id": result["mta_id"],
+                    "cutoff": propagate_timestamp(result, "cutoff"),
+                    "versions": tools.versions,
+                    "generation": GenerationProvenance.model_validate(tools.provenance(context)),
+                }
+            )
+            candidate = DecisionRecord(
+                calculation=baseline.calculation,
+                metadata=baseline.metadata.model_copy(
+                    update={"identity": identity, "calculated_at": collection_clock()}
+                ),
+                conditions=reconciliation.active,
+                conditions_shown=reconciliation.shown,
+                outlook_id=result["dec_id"] + ":outlook",
+            )
+            states = DecisionStateRepository(repo)
+            scope = DecisionScope(event_id="event", token_id="T")
+            current = await states.current(scope)
+
+            async def effects() -> None:
+                await tools._persist_condition_writes(reconciliation)
+
+            await states.advance(
+                scope,
+                expected=None if current is None else current[0],
+                candidate=candidate,
+                recorded_at=collection_clock(),
+                effects=effects,
+            )
+            return encode_decision(candidate)
 
         tools.get_decision = fixture_grade
-        report = await replay_agent_session(
-            packet,
-            repo,
-            config,
-            tools,
-            http=http,
-            initial_message={
-                "kind": "ITEM_ADDED",
-                "item_id": "source",
-                "event_id": "event",
-                "replay_at": start,
-            },
-            subsequent_messages=[
-                {
-                    "kind": "CONDITION_FIRED",
+        try:
+            report = await replay_agent_session(
+                packet,
+                repo,
+                config,
+                tools,
+                http=http,
+                initial_message={
+                    "kind": "ITEM_ADDED",
+                    "item_id": "source",
                     "event_id": "event",
-                    "condition": old,
-                    "token_id": "T",
-                    "replay_at": trigger,
+                    "replay_at": start,
+                },
+                subsequent_messages=[
+                    {
+                        "kind": "CONDITION_FIRED",
+                        "event_id": "event",
+                        "condition": old,
+                        "token_id": "T",
+                        "replay_at": trigger,
+                    }
+                ],
+                timeout=3,
+            )
+        except TimeoutError:
+            failures = [
+                {
+                    "tool": row["tool"],
+                    "status": row["status"],
+                    "result": row.get("result"),
+                    "error": row.get("error"),
                 }
-            ],
-            timeout=3,
-        )
+                for row in await repo.list("ops.tool_calls")
+                if row["status"] in {"REFUSED", "ERROR"}
+            ]
+            assert not failures, failures
+            raise
+
     all_conditions = await repo.list("ana.watch_conditions")
 
     conditions = [c for c in all_conditions if not c.get("rearmed_from")]
@@ -2749,6 +2899,8 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
         for name in ("registry", "sources", "thresholds", "semantics", "dependency_map")
     }
     cfg["openma"] = {
+        "prompt_version": "synthetic-replay-prompt",
+        "reasoning_effort": "medium",
         "agent_id": "fixture-agent",
         "environment_id": "analysis",
         "replay_environment_id": "replay",
@@ -2840,7 +2992,16 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
             }
         )
 
-    async def transport(request: httpx.Request):
+    native_records = {}
+    native_snapshot = {
+        "version": 1,
+        "system": "Synthetic publication producer",
+        "skills": [],
+        "tools": [],
+        "model": {"id": "fixture-model"},
+    }
+
+    async def transport(request: httpx.Request) -> httpx.Response:
         nonlocal stage, event_id, publication, partial_card, partial_intent
         endpoint = request.url.path
         if endpoint.endswith("/executions"):
@@ -2860,25 +3021,14 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
                 },
             )
         if endpoint.endswith("/sessions"):
-            return (
-                httpx.Response(200, json={"data": []})
-                if request.method == "GET"
-                else httpx.Response(201, json={"id": "reference-session"})
+            if request.method == "GET":
+                return httpx.Response(200, json={"data": [], "next_page": None})
+            native_records["reference-session"] = created_native_session(
+                request, "reference-session", agent_snapshot=native_snapshot
             )
+            return httpx.Response(201, json=native_records["reference-session"])
         if request.method == "GET" and endpoint.endswith("/reference-session"):
-            return httpx.Response(
-                200,
-                json={
-                    "agent": {
-                        "id": "fixture-agent",
-                        "version": 1,
-                        "system": "Synthetic publication producer",
-                        "skills": [],
-                        "tools": [],
-                        "model": {"id": "fixture-model"},
-                    }
-                },
-            )
+            return httpx.Response(200, json=native_records["reference-session"])
         if endpoint.endswith("/events/stream"):
             return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
         if endpoint.endswith("/archive"):
@@ -3001,7 +3151,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
                             "stop_reason": {"type": "end_turn"},
                         }
                     )
-            return httpx.Response(200, json={"data": [{"id": identity}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, identity))
         raise AssertionError("Unexpected native control-plane request")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
@@ -3023,7 +3173,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
             repo,
             config,
             reaction_truth,
-            DecisionEngine(config),
+            DecisionEngine(),
             reference_clock=TrustedFixtureClock(inputs) if inputs.fixture_reference else None,
             versions=fixture_versions(),
             scheduler=reaction_scheduler,

@@ -1,6 +1,8 @@
 from collections.abc import Mapping
+from contextlib import AsyncExitStack
 from datetime import timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 import httpx
 import pytest
@@ -17,6 +19,9 @@ from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.telegram_rich import score_summary
 from tank.util import JsonInput, canonical_json, clock_iso, iso, utcnow
+
+if TYPE_CHECKING:
+    from postgres_helpers import PostgresTemplate
 
 
 @pytest.fixture
@@ -182,8 +187,9 @@ async def test_publication_freezes_reproducible_bundle_and_queues_only(
     import tank.analysis.cards as cards
     from tank.util import sha256
 
-    monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
-    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[1]))
+    monkeypatch.setattr(
+        cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[0].assessment.scores)
+    )
     x = await seed(service)
     result = await service.dispatch("record_event", x, {})
     eid = result["event_id"]
@@ -198,6 +204,7 @@ async def test_publication_freezes_reproducible_bundle_and_queues_only(
             "ems_id": "ems",
             "event_id": eid,
             "class": "STRUCTURAL_SHOCK",
+            "criterion": "G5",
         },
     )
     result = await service.dispatch(
@@ -325,12 +332,16 @@ async def test_numeric_map_version_ten_removes_old_token(
 
 
 async def test_real_decision_condition_reuse_expiry_and_consumption(service) -> None:
+    from test_decision_contracts import decision_wire_fixture
+
     from tank.analysis.decisions import DecisionEngine
 
     service.engine = DecisionEngine()
+    authored_event, authored_assessment, authored_edge, authored_truth = decision_wire_fixture()
     eid = "condition-event"
-    token = "T"
+    token = "world:WLD"
     event = {
+        **authored_event,
         "event_id": eid,
         "current_ems_id": "condition-ems",
         "event_state": "APPROVED",
@@ -338,6 +349,7 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service) -> 
         "freshness": "FRESH",
     }
     assessment = {
+        **authored_assessment,
         "dims": unassessed_score_dimensions(),
         "ems_id": "condition-ems",
         "event_id": eid,
@@ -346,6 +358,7 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service) -> 
         "impact_horizon": {"impact_start": "NOW"},
     }
     edge = {
+        **authored_edge,
         "edge_id": "condition-edge",
         "event_id": eid,
         "map_version": 1,
@@ -354,19 +367,14 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service) -> 
         "credible": True,
         "capture_class": "DIRECT",
     }
-    truth = {
-        "mta_id": "condition-truth",
-        "event_id": eid,
-        "token_id": token,
-        "cutoff": clock_iso(),
-        "cutoff_prec": "BUCKET(1m)",
-        "move_class": "SPOT_LED_ACCUMULATION",
-        "data_confidence": {"class": "HIGH", "critical_semantics_verified": True},
-        "relative": {"repricing_band": "EARLY", "market_context": "NEUTRAL", "anchor": {"ref_price": "10"}},
-        "liquidity": {"liquidity_state": "NORMAL"},
-        "spot": {},
-        "derivatives": {},
-    }
+    truth = dict(
+        authored_truth,
+        mta_id="condition-truth",
+        event_id=eid,
+        token_id=token,
+        cutoff=clock_iso(),
+        cutoff_prec="BUCKET(1m)",
+    )
     for table, key, row in [
         ("evt.events", eid, event),
         ("evt.ems_assessments", "condition-ems", assessment),
@@ -453,19 +461,29 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service) -> 
 async def test_start_condition_is_rearmed_for_the_open_call(service) -> None:
     """W1: the upgrade that led to START is spent; once the call is open the
     same expression is armed again, so ADD stays reachable."""
+    from test_decision_contracts import decision_wire_fixture
+
     from tank.analysis.decisions import DecisionEngine
 
     service.engine = DecisionEngine()
-    eid, token = "start-event", "T"
+    authored_event, authored_assessment, authored_edge, authored_truth = decision_wire_fixture()
+    eid, token = "start-event", "world:WLD"
     await service.repo.put(
         "evt.events",
         eid,
-        {"event_id": eid, "current_ems_id": "start-ems", "event_state": "APPROVED", "state_verified": True},
+        {
+            **authored_event,
+            "event_id": eid,
+            "current_ems_id": "start-ems",
+            "event_state": "APPROVED",
+            "state_verified": True,
+        },
     )
     await service.repo.put(
         "evt.ems_assessments",
         "start-ems",
         {
+            **authored_assessment,
             "dims": unassessed_score_dimensions(),
             "ems_id": "start-ems",
             "event_id": eid,
@@ -480,6 +498,7 @@ async def test_start_condition_is_rearmed_for_the_open_call(service) -> None:
         "evt.beneficiary_edges",
         "start-edge",
         {
+            **authored_edge,
             "edge_id": "start-edge",
             "event_id": eid,
             "map_version": 1,
@@ -489,16 +508,15 @@ async def test_start_condition_is_rearmed_for_the_open_call(service) -> None:
             "capture_class": "DIRECT",
         },
     )
-    truth = {
-        "mta_id": "start-truth",
-        "event_id": eid,
-        "token_id": token,
-        "cutoff": clock_iso(),
-        "move_class": "ORGANIC_MIXED",
-        "data_confidence": {"class": "MEDIUM"},
-        "relative": {"repricing_band": "EARLY", "market_context": "NEUTRAL", "anchor": {"ref_price": "10"}},
-        "liquidity": {"liquidity_state": "NORMAL"},
-    }
+    truth = dict(
+        authored_truth,
+        mta_id="start-truth",
+        event_id=eid,
+        token_id=token,
+        cutoff=clock_iso(),
+        move_class="ORGANIC_MIXED",
+        data_confidence={"class": "MEDIUM"},
+    )
     await service.repo.put("ana.market_truth", "start-truth", truth)
     watch = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
     assert watch["action"] == "WATCH_TO_START"
@@ -912,34 +930,62 @@ async def test_future_wording_does_not_override_agent_stage(service) -> None:
     assert event["state_verified"]
 
 
+@pytest.mark.parametrize("least_exposure", [None, 0, 6])
 async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(
-    service, monkeypatch: pytest.MonkeyPatch
+    service, least_exposure: int | None
 ) -> None:
-    import tank.analysis.cards as cards
+    from tank.analysis.decision_codec import decode_decision, encode_outlook
+    from tank.event_tools import LAYERS
 
-    monkeypatch.setattr(cards, "alert_gate", lambda *a, **kw: (True, "TEST"))
-    monkeypatch.setattr(
-        cards, "compose_card", lambda *a, **kw: "Validated full card" + "\n" + score_summary(a[1])
-    )
-    x = await seed(service)
-    result = await service.dispatch("record_event", x, {})
-    eid = result["event_id"]
+    extracted = await seed(service)
+    created = await service.dispatch("record_event", extracted, {})
+    eid = created["event_id"]
+    claim_id = created["accepted_claims"][0]["claim_id"]
     event = await service.repo.get("evt.events", eid)
     event["current_ems_id"] = "full-ems"
     await service.repo.put("evt.events", eid, event)
     await service.repo.put(
         "evt.ems_assessments",
         "full-ems",
-        {"dims": unassessed_score_dimensions(), "ems_id": "full-ems", "event_id": eid, "class": "MAJOR"},
+        complete_assessment_fixture("full-ems", eid, **{"class": "MAJOR", "criterion": "M2"}),
     )
-    tokens = ["P1", "P2", "P3", "S1", "S2", "S3", "L1"]
+    named = {
+        "P1": "world:WLD",
+        "P2": "ethereum:ETH",
+        "P3": "bitcoin:BTC",
+        "S1": "uniswap:UNI",
+        "S2": "cow:COW",
+        "S3": "lighter:LIT",
+        "L1": "curve:CRV",
+    }
+    tokens = list(named.values())
+    layers = {layer: {"note": "No additional role is asserted by this synthetic map."} for layer in LAYERS}
     await service.repo.put(
         "evt.beneficiary_maps",
         "full-map",
-        {"event_id": eid, "map_version": 1, "analysis_set": tokens, "least_repriced_edge": "edge-S2"},
+        {
+            "event_id": eid,
+            "map_version": 1,
+            "analysis_set": tokens,
+            "least_repriced_edge": "edge-" + named["S2"],
+            "no_credible_secondary_reason": None,
+            "layers": layers,
+        },
     )
-    for index, token in enumerate(tokens):
-        role = "PRIMARY" if token.startswith("P") else "SECONDARY" if token.startswith("S") else "LOSER"
+
+    async def store_calculation(token: str) -> None:
+        cutoff = clock_iso()
+        truth_id, decision_id = "truth-" + token, "dec-" + token
+        await service.repo.put(
+            "ana.market_truth", truth_id, complete_truth_fixture(truth_id, eid, token, cutoff)
+        )
+        row = complete_decision_fixture(decision_id, eid, token, cutoff, truth_id)
+        record = decode_decision(row)
+        await service.repo.put("ana.outlooks", record.outlook_id, encode_outlook(record))
+        await service.repo.put("ana.decisions", decision_id, row)
+
+    for index, (label, token) in enumerate(named.items()):
+        role = "PRIMARY" if label.startswith("P") else "SECONDARY" if label.startswith("S") else "LOSER"
         await service.repo.put(
             "evt.beneficiary_edges",
             "edge-" + token,
@@ -951,33 +997,19 @@ async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(
                 "role": role,
                 "tradable": True,
                 "credible": True,
-                "exposure_score": 10 - index,
+                "exposure_score": least_exposure if label == "S2" else 10 - index,
+                "capture_class": "DIRECT",
+                "causal_chain": "Authored synthetic token exposure to the approved product.",
+                "layer": "LIQUIDITY_EXECUTION" if role == "SECONDARY" else "ISSUER_PRODUCT",
+                "entity_id": None,
+                "entity_name": None,
+                "evidence": [claim_id],
+                "integration_state": None,
+                "integration_state_evidence": [],
             },
         )
-        if token == "L1":
-            continue
-        await service.repo.put(
-            "ana.market_truth",
-            "truth-" + token,
-            {
-                "mta_id": "truth-" + token,
-                "event_id": eid,
-                "token_id": token,
-                "cutoff": clock_iso(),
-                "data_confidence": {"class": "LOW"},
-            },
-        )
-        await service.repo.put(
-            "ana.decisions",
-            "dec-" + token,
-            {
-                "dec_id": "dec-" + token,
-                "event_id": eid,
-                "token_id": token,
-                "cutoff": clock_iso(),
-                "action": "WAIT",
-            },
-        )
+        if label != "L1":
+            await store_calculation(token)
     args = {
         "event_id": eid,
         "kind": "FULL",
@@ -987,55 +1019,47 @@ async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(
     }
     refusal = await service.dispatch("publish_card", args, {})
     assert refusal["reason"] == "ANALYSIS_INCOMPLETE"
-    assert refusal["missing_market_truth"] == ["L1"]
+    assert refusal["missing_market_truth"] == [named["L1"]]
+    assert refusal["missing_decisions"] == [named["L1"]]
     assert not await service.repo.list("out.alerts")
-    await service.repo.put(
-        "ana.market_truth",
-        "truth-L1",
-        {
-            "mta_id": "truth-L1",
-            "event_id": eid,
-            "token_id": "L1",
-            "cutoff": clock_iso(),
-            "data_confidence": {"class": "LOW"},
-        },
-    )
-    await service.repo.put(
-        "ana.decisions",
-        "dec-L1",
-        {"dec_id": "dec-L1", "event_id": eid, "token_id": "L1", "cutoff": clock_iso(), "action": "WAIT"},
-    )
+    await store_calculation(named["L1"])
     first = await service.dispatch("publish_card", args, {})
     alert = await service.repo.get("out.alerts", first["alert_id"] + ":1")
-    assert alert["shown_tokens"] == ["P1", "S2", "S1"]
-    assert set(alert["decisions"]) == {"dec-P1", "dec-S1", "dec-S2"}
+    expected = [named["P1"], named["S2"], named["S1"]]
+    assert alert["shown_tokens"] == expected
+    assert set(alert["decisions"]) == {"dec-" + token for token in expected}
     frozen = await service.repo.get("out.evidence_bundles", alert["evidence_bundle_id"])
     assert len(frozen["payload"]["decisions"]) == 7
     await service.repo.put(
         "evt.beneficiary_maps",
         "new-map",
-        {"event_id": eid, "map_version": 2, "analysis_set": ["P2"], "least_repriced_edge": None},
+        {
+            "event_id": eid,
+            "map_version": 2,
+            "analysis_set": [named["P2"]],
+            "least_repriced_edge": None,
+            "no_credible_secondary_reason": "Current map has only the primary; prior card participants stay pinned.",
+            "layers": layers,
+        },
     )
+    old_edge = await service.repo.get("evt.beneficiary_edges", "edge-" + named["P2"])
     await service.repo.put(
         "evt.beneficiary_edges",
         "new-P2",
-        {
-            "edge_id": "new-P2",
-            "event_id": eid,
-            "map_version": 2,
-            "token_id": "P2",
-            "role": "PRIMARY",
-            "tradable": True,
-            "credible": True,
-            "exposure_score": 10,
-        },
+        {**old_edge, "edge_id": "new-P2", "map_version": 2, "exposure_score": 10},
     )
+    current_event = await service.repo.get("evt.events", eid)
+    await service.repo.put(
+        "evt.events", eid, {**current_event, "event_state": "MONEY_FLOWING", "state_verified": True}
+    )
+    assert current_event["event_state"] == "LIVE"
     args["kind"] = "UPDATE"
     update = await service.dispatch("publish_card", args, {})
+    assert update["published"], update
     second = await service.repo.get("out.alerts", update["alert_id"] + ":2")
-    assert second["shown_tokens"] == alert["shown_tokens"]
-    assert "P2" not in second["shown_tokens"]
-    assert {"P1", "S1", "S2"} <= await service.managed_tokens(eid)
+    assert second["shown_tokens"] == expected
+    assert named["P2"] not in second["shown_tokens"]
+    assert set(expected) <= await service.managed_tokens(eid)
 
 
 @pytest.mark.integration
@@ -1050,11 +1074,15 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(
 
     service.engine = DecisionEngine()
     eid = "expiry-event"
-    token = "T"
-    now = utcnow()
+    token = "world:WLD"
+    now = utcnow().replace(minute=0, second=0, microsecond=0)
+    clock = [now]
+    for module in ("tank.util", "tank.event_tools", "tank.delivery", "tank.scheduler", "tank.storage"):
+        monkeypatch.setattr(module + ".utcnow", lambda: clock[0])
     event = {
         "event_id": eid,
         "statement": "Access approved",
+        "next_milestone": None,
         "current_ems_id": "expiry-ems",
         "event_state": "APPROVED",
         "state_verified": True,
@@ -1084,33 +1112,27 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(
         "tradable": True,
         "credible": True,
         "capture_class": "DIRECT",
+        "layer": "ISSUER_PRODUCT",
+        "evidence": [],
+        "causal_chain": "Authored approval grants the primary issuer access.",
         "exposure_score": 8,
     }
-    truth = {
-        "mta_id": "expiry-truth",
-        "event_id": eid,
-        "token_id": token,
-        "cutoff": iso(now),
-        "move_class": "SPOT_LED_ACCUMULATION",
-        "data_confidence": {"class": "HIGH", "critical_semantics_verified": True},
-        "relative": {"repricing_band": "EARLY", "market_context": "NEUTRAL", "anchor": {"ref_price": "10"}},
-        "liquidity": {"liquidity_state": "NORMAL"},
-        "spot": {},
-        "derivatives": {},
-    }
+    truth = positive_truth_fixture("expiry-truth", eid, token, iso(now))
     call = {
         "call_id": "expiry-call",
         "event_id": eid,
         "token_id": token,
         "status": "OPEN",
-        "opened_at": iso(now - timedelta(days=8)),
+        "opened_at": iso(
+            now - timedelta(days=service.settings.thresholds().call_expiry_days) + timedelta(seconds=30)
+        ),
         "invalidation_price": "9",
         "entry_ref_price": "10",
     }
     for table, key, row in [
         ("evt.events", eid, event),
         ("evt.ems_assessments", "expiry-ems", assessment),
-        ("evt.beneficiary_maps", "expiry-map", {"event_id": eid, "map_version": 1, "analysis_set": [token]}),
+        ("evt.beneficiary_maps", "expiry-map", primary_only_map_fixture(eid, token)),
         ("evt.beneficiary_edges", "expiry-edge", edge),
         ("ana.market_truth", "expiry-truth", truth),
         ("ana.calls", "expiry-call", call),
@@ -1146,7 +1168,8 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(
         stale_event["freshness"] = freshness
         await service.repo.put("evt.events", eid, stale_event)
         scheduler = Scheduler(service.repo, service.settings, None, None, versions=fixture_versions())
-        await scheduler.expire_calls(now)
+        clock[0] += timedelta(minutes=1)
+        await scheduler.expire_calls(clock[0])
         assert (await service.repo.get("evt.events", eid))["call_expired"]
         lifecycle = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
         assert lifecycle["tracking_ended"] and lifecycle["actionable"] is False
@@ -1172,7 +1195,7 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(
         assert correction["published"] and correction["reason"] == "QUEUED_RATE_LIMIT"
         assert len(await service.repo.list("out.alerts")) == 2
         later = now + timedelta(minutes=16)
-        for module in ("tank.analysis.cards", "tank.event_tools", "tank.delivery"):
+        for module in ("tank.event_tools", "tank.delivery"):
             monkeypatch.setattr(module + ".utcnow", lambda: later)
         assert correction["published"] and correction["version"] == 2
         alert = await service.repo.get("out.alerts", correction["alert_id"] + ":2")
@@ -1203,8 +1226,11 @@ async def test_material_update_is_queued_once_and_delivered_after_window(
 
     service.engine = DecisionEngine()
     eid = "material-event"
-    token = "T"
-    now = utcnow()
+    token = "world:WLD"
+    now = utcnow().replace(minute=0, second=0, microsecond=0)
+    clock = [now]
+    for module in ("tank.util", "tank.event_tools", "tank.delivery", "tank.scheduler", "tank.storage"):
+        monkeypatch.setattr(module + ".utcnow", lambda: clock[0])
     records = [
         (
             "evt.events",
@@ -1212,6 +1238,7 @@ async def test_material_update_is_queued_once_and_delivered_after_window(
             {
                 "event_id": eid,
                 "statement": "Access approved",
+                "next_milestone": None,
                 "current_ems_id": "material-ems",
                 "event_state": "APPROVED",
                 "state_verified": True,
@@ -1238,7 +1265,7 @@ async def test_material_update_is_queued_once_and_delivered_after_window(
         (
             "evt.beneficiary_maps",
             "material-map",
-            {"event_id": eid, "map_version": 1, "analysis_set": [token]},
+            primary_only_map_fixture(eid, token),
         ),
         (
             "evt.beneficiary_edges",
@@ -1253,6 +1280,9 @@ async def test_material_update_is_queued_once_and_delivered_after_window(
                 "tradable": True,
                 "credible": True,
                 "capture_class": "DIRECT",
+                "layer": "ISSUER_PRODUCT",
+                "evidence": [],
+                "causal_chain": "Authored approval grants the primary issuer access.",
                 "exposure_score": 8,
             },
         ),
@@ -1270,18 +1300,7 @@ async def test_material_update_is_queued_once_and_delivered_after_window(
             },
         ),
     ]
-    truth = {
-        "mta_id": "material-truth",
-        "event_id": eid,
-        "token_id": token,
-        "cutoff": iso(now),
-        "move_class": "SPOT_LED_ACCUMULATION",
-        "data_confidence": {"class": "HIGH", "critical_semantics_verified": True},
-        "relative": {"repricing_band": "EARLY", "market_context": "NEUTRAL", "anchor": {"ref_price": "10"}},
-        "liquidity": {"liquidity_state": "NORMAL"},
-        "spot": {},
-        "derivatives": {},
-    }
+    truth = positive_truth_fixture("material-truth", eid, token, iso(now))
     records.append(("ana.market_truth", "material-truth", truth))
     for table, key, row in records:
         await service.repo.put(table, key, row)
@@ -1311,12 +1330,8 @@ async def test_material_update_is_queued_once_and_delivered_after_window(
     async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
         delivery = DeliveryService(service.repo, service.settings, http=http)
         await delivery.deliver({"channel": "telegram:alerts", "alert_id": full["alert_id"], "version": 1})
-        low = dict(
-            truth,
-            mta_id="material-low",
-            cutoff=clock_iso(),
-            data_confidence={"class": "LOW", "critical_semantics_verified": False},
-        )
+        clock[0] += timedelta(minutes=1)
+        low = complete_truth_fixture("material-low", eid, token, iso(clock[0]))
         await service.repo.put("ana.market_truth", "material-low", low)
         reduced = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
         assert reduced["action"] == "REDUCE"
@@ -1344,7 +1359,7 @@ async def test_material_update_is_queued_once_and_delivered_after_window(
             == 2
         )
         later = now + timedelta(minutes=16)
-        for module in ("tank.analysis.cards", "tank.event_tools", "tank.delivery"):
+        for module in ("tank.event_tools", "tank.delivery"):
             monkeypatch.setattr(module + ".utcnow", lambda: later)
 
         await delivery.deliver(
@@ -1478,7 +1493,15 @@ async def test_market_truth_domain_result_and_evidence_bundle_keep_full_metadata
         },
     )
     await service.repo.put(
-        "evt.beneficiary_maps", "metadata-map", {"event_id": eid, "map_version": 1, "analysis_set": ["T"]}
+        "evt.beneficiary_maps",
+        "metadata-map",
+        {
+            "event_id": eid,
+            "map_version": 1,
+            "analysis_set": ["T"],
+            "layers": {},
+            "no_credible_secondary_reason": "No beneficiary is asserted in this isolated capture fixture.",
+        },
     )
     future = {
         "instrument_id": "binance:spot:T",
@@ -1544,6 +1567,7 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
     import os
 
     from tank.analysis.decisions import DecisionEngine
+    from tank.event_tools import LAYERS
     from tank.storage import TABLE_COLUMNS
     from tank.util import new_id
 
@@ -1587,7 +1611,7 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
     service.repo = guarded
     service.engine = DecisionEngine()
     eid = new_id("bounded")
-    token = "T"
+    token = "world:WLD"
     now = utcnow()
     ems = eid + "-ems"
     current = eid + "-current"
@@ -1595,7 +1619,19 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
         await base.put("evt.events", eid, complete_event_fixture(eid, current_ems_id=ems))
         await base.put("evt.ems_assessments", ems, complete_assessment_fixture(ems, eid))
         await base.put(
-            "evt.beneficiary_maps", eid + "-map", {"event_id": eid, "map_version": 1, "analysis_set": [token]}
+            "evt.beneficiary_maps",
+            eid + "-map",
+            {
+                "event_id": eid,
+                "map_version": 1,
+                "analysis_set": [token],
+                "least_repriced_edge": None,
+                "no_credible_secondary_reason": "Only the authored primary is supported in this fixture.",
+                "layers": {
+                    layer: {"note": "No additional role is asserted by this synthetic map."}
+                    for layer in LAYERS
+                },
+            },
         )
         await base.put(
             "evt.beneficiary_edges",
@@ -1611,8 +1647,25 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
                 "credible": True,
                 "capture_class": "DIRECT",
                 "exposure_score": 8,
+                "causal_chain": "Authored synthetic current-map primary link.",
+                "layer": "ISSUER_PRODUCT",
+                "evidence": [],
+                "entity_name": None,
+                "integration_state": None,
+                "integration_state_evidence": [],
             },
         )
+        truth = complete_truth_fixture(current, eid, token, iso(now))
+        await base.put("ana.market_truth", current, truth)
+        established = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
+        from tank.analysis.decision_state import DecisionScope, DecisionStateRepository
+
+        states = DecisionStateRepository(base)
+        indexed = await states.current(DecisionScope(event_id=eid, token_id=token))
+        assert indexed is not None and indexed[0].revision == 1
+        assert indexed[0].dec_id == established["dec_id"]
+        guarded.latest.clear()
+        guarded.exact.clear()
         historic_truth = complete_truth_fixture(eid + "-history", eid, token, iso(now - timedelta(days=2)))
         historic_decision = complete_decision_fixture(
             eid + "-history", eid, token, iso(now - timedelta(days=2)), eid + "-history"
@@ -1644,25 +1697,8 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
                         market_truth_id=key,
                         cutoff=iso(now - timedelta(days=2, seconds=index)),
                     ),
+                    immutable=True,
                 )
-        truth = {
-            "mta_id": current,
-            "event_id": eid,
-            "token_id": token,
-            "cutoff": iso(now),
-            "move_class": "SPOT_LED_ACCUMULATION",
-            "data_confidence": {"class": "HIGH", "critical_semantics_verified": True},
-            "relative": {
-                "repricing_band": "EARLY",
-                "market_context": "NEUTRAL",
-                "anchor": {"ref_price": "10"},
-            },
-            "liquidity": {"liquidity_state": "NORMAL"},
-            "spot": {},
-            "derivatives": {},
-        }
-        truth = dict(complete_truth_fixture(current, eid, token, iso(now)), **truth)
-        await base.put("ana.market_truth", current, truth)
         await base.put(
             "ana.market_truth",
             eid + "-future",
@@ -1672,6 +1708,17 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
         )
         decision = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
         assert decision["market_truth_id"] == current
+        assert decision["cutoff"] == established["cutoff"]
+        indexed = await states.current(DecisionScope(event_id=eid, token_id=token))
+        assert indexed is not None and indexed[0].revision == 2
+        assert indexed[0].dec_id == decision["dec_id"]
+        for table, identity_field in (("ana.market_truth", "mta_id"), ("ana.decisions", "dec_id")):
+            stored_count = 0
+            async for _ in base.iter_metadata(
+                table, (identity_field,), filters={"event_id": eid, "token_id": token}
+            ):
+                stored_count += 1
+            assert stored_count == 1003
         published = await service.dispatch(
             "publish_card",
             {
@@ -2101,6 +2148,7 @@ def complete_event_fixture(event_id, **changes):
         "public_at_basis": "Synthetic fixture primary publication",
         "known_to_us_at": now,
         "event_state": "APPROVED",
+        "next_milestone": None,
         "state_verified": True,
         "certainty": "HIGH",
         "timing_confidence": "HIGH",
@@ -2139,23 +2187,132 @@ def complete_truth_fixture(mta_id, event_id, token_id, cutoff, **changes):
     return dict(row, **changes)
 
 
-def complete_decision_fixture(dec_id, event_id, token_id, cutoff, mta_id):
-    from tank.analysis.decisions import DecisionEngine
+def primary_only_map_fixture(event_id, token_id):
+    """Declare an authored primary-only analysis with secondary dependencies unassessed."""
+    from tank.event_tools import LAYERS
 
-    event = complete_event_fixture(event_id)
-    assessment = complete_assessment_fixture("fixture-ems", event_id)
-    truth = complete_truth_fixture(mta_id, event_id, token_id, cutoff)
-    edge = {"token_id": token_id, "role": "PRIMARY", "credible": False, "capture_class": "UNKNOWN"}
-    row = DecisionEngine().evaluate(event, assessment, edge, truth)
-    row.update(
-        dec_id=dec_id,
-        mta_id=mta_id,
-        market_truth_id=mta_id,
-        trade_reasons=[row["trade_rule"]],
-        config_version="fixture",
-        code_version="fixture",
-    )
+    note = "Secondary dependencies are not assessed in this authored primary-only fixture."
+    return {
+        "event_id": event_id,
+        "map_version": 1,
+        "analysis_set": [token_id],
+        "no_credible_secondary_reason": note,
+        "layers": {layer: {"note": note} for layer in LAYERS},
+    }
+
+
+def positive_truth_fixture(mta_id, event_id, token_id, cutoff, *, event_window_h=4):
+    """Compute the declared hourly positive corpus at an explicitly authored clock."""
+    from test_truth_start_fixture import synthetic_start_snapshot
+
+    from tank.analysis.truth import compute_market_truth
+    from tank.util import parse_time
+
+    end = parse_time(cutoff)
+    if end.minute or end.second or end.microsecond:
+        raise ValueError("The positive hourly corpus requires an authored UTC-hour clock")
+    snapshot = synthetic_start_snapshot(end=end, event_window_h=event_window_h)
+    snapshot["event_id"] = event_id
+    snapshot["token_id"] = token_id
+    for family in ("instruments", "flow_bars", "klines", "books", "oi", "funding"):
+        for observation in snapshot[family]:
+            if "token_id" in observation and observation["token_id"] == "T":
+                observation["token_id"] = token_id
+    row = compute_market_truth(snapshot)
+    assert row["move_class"] == "SPOT_LED_ACCUMULATION"
+    assert row["relative"]["ref_venue"] is not None
+    row.update(mta_id=mta_id, config_version="fixture", code_version="fixture")
     return row
+
+
+def complete_decision_fixture(dec_id, event_id, token_id, cutoff, mta_id, *, assessment_id="fixture-ems"):
+    from tank.analysis.decision_codec import decision_inputs_from_records, encode_decision
+    from tank.analysis.decision_contracts import (
+        ActiveDecisionTracking,
+        DecisionIdentity,
+        DecisionMaterialization,
+        DecisionMetadata,
+    )
+    from tank.analysis.decision_watches import (
+        DecisionWatchCommand,
+        DecisionWatchPolicy,
+        reconcile_decision_watches,
+    )
+    from tank.analysis.decisions import DecisionEngine, finalize_decision, materialize_decision
+    from tank.contracts.provenance import GenerationProvenance
+    from tank.time_precision import collection_clock, propagate_timestamp
+    from tank.util import parse_time
+
+    event = complete_event_fixture(event_id, contradictions=[], next_milestone=None)
+    assessment = complete_assessment_fixture(assessment_id, event_id)
+    truth = complete_truth_fixture(mta_id, event_id, token_id, cutoff)
+    edge = {
+        "event_id": event_id,
+        "token_id": token_id,
+        "role": "PRIMARY",
+        "credible": False,
+        "capture_class": "UNKNOWN",
+        "exposure_score": None,
+    }
+    evaluated = DecisionEngine().evaluate(
+        decision_inputs_from_records(event, assessment, edge, truth, open_call=None, conditions=())
+    )
+    versions = fixture_versions()
+    generation = GenerationProvenance(
+        config_version=versions.config_version,
+        code_version=versions.code_version,
+        session_config_version=None,
+        session_code_version=None,
+        model_id=None,
+        model_id_basis=None,
+        model_id_reason=None,
+        prompt_version=None,
+        prompt_version_basis=None,
+        prompt_version_reason=None,
+        prompt_label=None,
+        prompt_binding=None,
+        agent_version=None,
+        agent_version_basis=None,
+        agent_version_reason=None,
+        session_id=None,
+    )
+    draft = materialize_decision(
+        evaluated,
+        DecisionMaterialization(
+            metadata=DecisionMetadata(
+                identity=DecisionIdentity(
+                    decision_id=dec_id,
+                    event_id=event_id,
+                    token_id=token_id,
+                    cutoff=propagate_timestamp(truth, "cutoff"),
+                    thresholds_version=Settings().thresholds().version,
+                    versions=versions,
+                    generation=generation,
+                    assessment_id=assessment["ems_id"],
+                    market_truth_id=mta_id,
+                ),
+                calculated_at=collection_clock(cutoff),
+                management="NORMAL",
+                contradiction_ids=(),
+                prices=None,
+                tracking=ActiveDecisionTracking(kind="ACTIVE"),
+            ),
+            condition_ids=tuple(f"{dec_id}:watch:{index}" for index in range(len(evaluated.conditions))),
+        ),
+    )
+    watches = reconcile_decision_watches(
+        DecisionWatchCommand.from_draft(draft),
+        [],
+        [],
+        now=parse_time(cutoff),
+        policy=DecisionWatchPolicy(lifetime=timedelta(days=7), milestone_grace=timedelta(hours=1)),
+        prepared_condition_ids=None,
+    )
+    return encode_decision(
+        finalize_decision(
+            draft, conditions=watches.active, conditions_shown=watches.shown, outlook_id=f"{dec_id}:outlook"
+        )
+    )
 
 
 @pytest.mark.integration
@@ -2265,6 +2422,8 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
             },
             context,
         )
+        mappings = await repo.list("evt.beneficiary_maps", filters={"event_id": eid})
+        assert len(mappings) == 1 and "least_repriced_edge" not in mappings[0]
         truth = compute_market_truth({"event_id": eid, "token_id": "world:WLD", "cutoff": clock_iso()})
         truth["mta_id"] = new_id("mta")
         await repo.put("ana.market_truth", truth["mta_id"], truth)
@@ -2282,7 +2441,9 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
             context,
         )
         assert published["published"], published
-        assert (await repo.get("out.alerts", published["alert_id"] + ":1"))["shown_tokens"] == ["world:WLD"]
+        alert = await repo.get("out.alerts", published["alert_id"] + ":1")
+        assert "least-repriced" not in alert["card_text"]
+        assert alert["shown_tokens"] == ["world:WLD"]
         assert (await repo.get("evt.events", eid))[
             "public_at_basis"
         ] == "Synthetic primary fixture publication"
@@ -2582,73 +2743,56 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(
     """Use real publication gate, frozen snapshots and delivery; isolate card layout."""
 
     import tank.analysis.cards as cards
+    from tank.analysis.decisions import DecisionEngine
     from tank.delivery import DeliveryService
+    from tank.time_precision import collection_clock
 
     monkeypatch.setattr(
         cards,
         "compose_card",
-        lambda *args, **kwargs: "Synthetic safety update" + "\n" + score_summary(args[1]),
+        lambda *args, **kwargs: "Synthetic safety update" + "\n" + score_summary(args[0].assessment.scores),
     )
-    eid = "repeat-safety"
-    await service.repo.put(
-        "evt.events",
+    service.engine = DecisionEngine()
+    final_hour = utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    clock = [final_hour - timedelta(hours=1)]
+    for module in ("tank.util", "tank.event_tools", "tank.delivery", "tank.storage"):
+        monkeypatch.setattr(module + ".utcnow", lambda: clock[0])
+    eid, token = "repeat-safety", "world:WLD"
+    event = complete_event_fixture(
         eid,
-        {
-            "event_id": eid,
-            "current_ems_id": "repeat-ems",
-            "event_state": "APPROVED",
-            "state_verified": True,
-            "freshness": "FRESH",
-            "certainty": "HIGH",
-            "lifecycle": "MONITORING",
-            "known_to_us_at": clock_iso(),
-            "tokens_mentioned": ["T"],
-        },
+        current_ems_id="repeat-ems",
+        freshness="NORMAL",
+        public_at=iso(final_hour - timedelta(hours=5)),
     )
-    await service.repo.put(
-        "evt.ems_assessments",
-        "repeat-ems",
-        {
-            "dims": unassessed_score_dimensions(),
-            "ems_id": "repeat-ems",
-            "event_id": eid,
-            "class": "MAJOR",
-            "certainty": "HIGH",
-        },
-    )
-    await service.repo.put(
-        "evt.beneficiary_maps", "repeat-map", {"event_id": eid, "map_version": 1, "analysis_set": ["T"]}
-    )
-    await service.repo.put(
-        "evt.beneficiary_edges",
-        "repeat-edge",
-        {
-            "edge_id": "repeat-edge",
-            "event_id": eid,
-            "map_version": 1,
-            "token_id": "T",
-            "role": "PRIMARY",
-            "tradable": True,
-            "credible": True,
-            "exposure_score": 8,
-        },
-    )
-    await service.repo.put(
-        "ana.market_truth",
-        "repeat-truth",
-        {
-            "mta_id": "repeat-truth",
-            "event_id": eid,
-            "token_id": "T",
-            "cutoff": clock_iso(),
-            "data_confidence": {"class": "LOW"},
-        },
-    )
-    await service.repo.put(
-        "ana.decisions",
-        "repeat-wait",
-        {"dec_id": "repeat-wait", "event_id": eid, "token_id": "T", "action": "WAIT", "cutoff": clock_iso()},
-    )
+    edge = {
+        "edge_id": "repeat-edge",
+        "event_id": eid,
+        "map_version": 1,
+        "entity_id": "world",
+        "token_id": token,
+        "role": "PRIMARY",
+        "tradable": True,
+        "credible": True,
+        "exposure_score": 8,
+        "capture_class": "DIRECT",
+        "layer": "ISSUER_PRODUCT",
+        "evidence": [],
+        "causal_chain": "Authored approval grants the primary issuer access.",
+    }
+    for table, key, value in (
+        ("evt.events", eid, event),
+        (
+            "evt.ems_assessments",
+            "repeat-ems",
+            complete_assessment_fixture("repeat-ems", eid, impact_horizon={"impact_start": "NOW"}),
+        ),
+        ("evt.beneficiary_maps", "repeat-map", primary_only_map_fixture(eid, token)),
+        ("evt.beneficiary_edges", "repeat-edge", edge),
+        ("ana.market_truth", "repeat-truth", positive_truth_fixture("repeat-truth", eid, token, clock_iso())),
+    ):
+        await service.repo.put(table, key, value)
+    first_decision = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
+    assert first_decision["action"] == "START"
     args = {
         "event_id": eid,
         "kind": "FULL",
@@ -2670,6 +2814,8 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(
     async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
         delivery = DeliveryService(service.repo, service.settings, http=http)
         await delivery.deliver({"channel": "telegram:alerts", "alert_id": first["alert_id"], "version": 1})
+        clock[0] = final_hour - timedelta(minutes=4)
+        assert len(await service.repo.list("ana.calls", filters={"event_id": eid, "status": "OPEN"})) == 1
         event = await service.repo.get("evt.events", eid)
         await service.repo.put("evt.events", eid, {**event, "freshness": "FRESH", "lifecycle": "INVALIDATED"})
         await service.repo.put(
@@ -2682,17 +2828,8 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(
                 "description": "Synthetic official denial",
             },
         )
-        await service.repo.put(
-            "ana.decisions",
-            "repeat-exit",
-            {
-                "dec_id": "repeat-exit",
-                "event_id": eid,
-                "token_id": "T",
-                "action": "EXIT",
-                "cutoff": clock_iso(),
-            },
-        )
+        exited = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
+        assert exited["action"] == "EXIT"
         args["kind"] = "UPDATE"
         correction = await service.dispatch("publish_card", args, {})
         assert correction["published"], correction
@@ -2707,35 +2844,31 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(
 
         event = await service.repo.get("evt.events", eid)
         await service.repo.put("evt.events", eid, {**event, "freshness": "FRESH", "lifecycle": "MONITORING"})
+        clock[0] = final_hour - timedelta(minutes=3)
         await service.repo.put(
             "evt.ems_assessments",
             "repeat-ems",
-            {
-                "dims": unassessed_score_dimensions(),
-                "ems_id": "repeat-ems",
-                "event_id": eid,
-                "class": "STRUCTURAL_SHOCK",
-                "certainty": "HIGH",
-            },
+            complete_assessment_fixture(
+                "repeat-ems",
+                eid,
+                **{"class": "STRUCTURAL_SHOCK"},
+                criterion="G5",
+                impact_horizon={"impact_start": "NOW"},
+            ),
         )
         queued = await service.dispatch("publish_card", args, {})
         assert queued["published"] and queued["reason"] == "QUEUED_RATE_LIMIT"
         assert queued["version"] == 3
         assert len(await service.repo.list("out.alerts", filters={"event_id": eid})) == 3
         assert len(sent) == 2
-        await service.repo.put(
-            "ana.decisions",
-            "repeat-start",
-            {
-                "dec_id": "repeat-start",
-                "event_id": eid,
-                "token_id": "T",
-                "action": "START",
-                "cutoff": clock_iso(),
-                "entry_ref_price": "10",
-                "invalidation_price": "9",
-            },
-        )
+        clock[0] = final_hour
+        contradiction = await service.repo.get("ana.contradictions", "repeat-fatal")
+        contradiction.update(collection_clock().fields("resolved_at"))
+        await service.repo.put("ana.contradictions", "repeat-fatal", contradiction)
+        truth = positive_truth_fixture("repeat-positive", eid, token, clock_iso(), event_window_h=5)
+        await service.repo.put("ana.market_truth", "repeat-positive", truth)
+        resumed = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
+        assert resumed["action"] == "START"
         started = await service.dispatch("publish_card", args, {})
         assert started["published"], started
         assert started["version"] == 4
@@ -3226,6 +3359,10 @@ async def test_proposed_timing_requires_primary_dated_decision(service) -> None:
 
 
 async def test_immediate_market_access_allows_effective_primary_change_without_prior_trade(service) -> None:
+    from tank.settings import resolve_versions
+
+    service.settings = resolve_versions(service.settings)
+    service.versions = service.settings.require_versions()
     from tank.util import new_id
 
     stamp = clock_iso()
@@ -3480,7 +3617,7 @@ async def test_assessment_dispatch_creates_real_reaction_jobs(tmp_path: Path) ->
             repo,
             settings,
             services.truth,
-            DecisionEngine(settings),
+            DecisionEngine(),
             versions=fixture_versions(),
             scheduler=services.scheduler,
             pages=LivePageAccess(services.admission),
@@ -3503,70 +3640,6 @@ async def test_assessment_dispatch_creates_real_reaction_jobs(tmp_path: Path) ->
     assert services.market.http.is_closed
     assert budgets.backend.closed
     await repo.close()
-
-
-async def test_full_card_blocks_only_analysis_tokens_with_decisions(
-    service, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from tank.analysis import cards
-
-    created, _, _ = await seed_economic_event(service, negative_relation=False)
-    eid = created["event_id"]
-    token = "world:WLD"
-    await service.repo.put(
-        "evt.beneficiary_maps", "block-map", {"event_id": eid, "map_version": 1, "analysis_set": [token]}
-    )
-    for edge_id, edge_token, exposure in [("selected", token, 7), ("not-in-analysis", "ethereum:ETH", 10)]:
-        await service.repo.put(
-            "evt.beneficiary_edges",
-            edge_id,
-            {
-                "edge_id": edge_id,
-                "event_id": eid,
-                "map_version": 1,
-                "token_id": edge_token,
-                "role": "PRIMARY",
-                "tradable": True,
-                "credible": True,
-                "exposure_score": exposure,
-            },
-        )
-    truth = complete_truth_fixture("block-truth", eid, token, clock_iso())
-    await service.repo.put("ana.market_truth", "block-truth", truth)
-    await service.repo.put(
-        "ana.decisions",
-        "block-decision",
-        {
-            "dec_id": "block-decision",
-            "event_id": eid,
-            "token_id": token,
-            "action": "WAIT",
-            "cutoff": clock_iso(),
-            "market_truth_id": "block-truth",
-        },
-    )
-    captured = {}
-
-    def compose(event, assessment, beneficiaries, *args, **kwargs):
-        captured["blocks"] = [edge["token_id"] for edge in beneficiaries]
-        captured["who"] = [edge["token_id"] for edge in event["beneficiary_edges"]]
-        return "Isolated token selection fixture\n" + score_summary(assessment)
-
-    monkeypatch.setattr(cards, "compose_card", compose)
-    result = await service.dispatch(
-        "publish_card",
-        {
-            "event_id": eid,
-            "kind": "FULL",
-            "what": "World approved access",
-            "verdict": "World approved access",
-            "why": ["Quoted approval", "Supported capture"],
-        },
-        {},
-    )
-    assert result["published"], result
-    assert captured["blocks"] == [token]
-    assert set(captured["who"]) == {token, "ethereum:ETH"}
 
 
 async def test_web_raw_canonical_file_exists_even_when_parser_fails(
@@ -3607,9 +3680,10 @@ async def test_bundle_directory_sync_failure_never_creates_database_reference(
 
     from tank.analysis import cards
 
-    monkeypatch.setattr(cards, "alert_gate", lambda *args, **kwargs: (True, "INITIAL"))
     monkeypatch.setattr(
-        cards, "compose_card", lambda *args, **kwargs: "Durability fixture" + "\n" + score_summary(args[1])
+        cards,
+        "compose_card",
+        lambda *args, **kwargs: "Durability fixture" + "\n" + score_summary(args[0].assessment.scores),
     )
     extraction_args = await seed(service)
     made = await service.dispatch("record_event", extraction_args, {})
@@ -3625,6 +3699,7 @@ async def test_bundle_directory_sync_failure_never_creates_database_reference(
             "ems_id": "durability-ems",
             "event_id": eid,
             "class": "STRUCTURAL_SHOCK",
+            "criterion": "G5",
         },
     )
     original_sync = os.fsync
@@ -3666,7 +3741,10 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
 ) -> None:
     import os
 
+    from native_session_fixtures import created_native_session
+
     from tank.agents import SessionService
+    from tank.agents.native_sessions import NativeSessionResolution
     from tank.util import new_id
 
     if backend == "postgres":
@@ -3699,10 +3777,13 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
         "tools": [],
         "model": {"id": "gpt-6.1-sol"},
     }
+    if not resolved_snapshot:
+        snapshot["skills"] = [{"type": "custom", "skill_id": "native-fixture-skill", "version": "latest"}]
     requested = []
     dispatched = []
+    native_records = {}
 
-    def control(request: httpx.Request):
+    def control(request: httpx.Request) -> httpx.Response:
         requested.append((request.method, request.url.path))
         if request.url.host == "www.sec.gov":
             return httpx.Response(
@@ -3710,18 +3791,11 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
             )
         if request.url.path.endswith("/sessions"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
-            return httpx.Response(201, json={"id": sid, "agent": {"id": config["agent_id"], "version": 42}})
+                return httpx.Response(200, json={"data": [], "next_page": None})
+            native_records[sid] = created_native_session(request, sid, agent_snapshot=snapshot)
+            return httpx.Response(201, json=native_records[sid])
         if request.method == "GET" and request.url.path.endswith("/sessions/" + sid):
-            return httpx.Response(
-                200,
-                json={
-                    "data": {
-                        "id": sid,
-                        "agent": snapshot if resolved_snapshot else {"id": config["agent_id"], "version": 42},
-                    }
-                },
-            )
+            return httpx.Response(200, json=native_records[sid])
         return httpx.Response(200, json={})
 
     async def dispatch(name, args, context):
@@ -3735,9 +3809,17 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
                 "fetch_page", {"url": "https://www.sec.gov/news/native-provenance-fixture"}, {}
             )
             native = SessionService(repo, service.settings, dispatch, http=http, versions=fixture_versions())
-            session = await native.resolve({"kind": "NEW_ITEM", "item_id": item["item_id"]})
+            session = await native.resolve(
+                NativeSessionResolution.from_wire(
+                    {"kind": "NEW_ITEM", "item_id": item["item_id"]}, role="ANALYST", replay=False
+                )
+            )
 
-            assert session["prompt_version"] is None and session["prompt_label"] == config["prompt_version"]
+            assert session["prompt_label"] == config["prompt_version"]
+            if not resolved_snapshot:
+                assert session["prompt_version"] is None
+            elif session["prompt_version"] is not None:
+                assert session["prompt_version"] != config["prompt_version"]
             args = extraction()
             args.update(
                 item_id=item["item_id"],
@@ -3804,7 +3886,7 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
                     {"type": "custom", "skill_id": "native-fixture-skill", "version": "3"}
                 ]
                 assert dispatched == ["record_event", "set_assessment"]
-            assert requested.count(("GET", "/v1/sessions/" + sid)) == 1
+            assert requested.count(("POST", "/v1/sessions")) == 1
     finally:
         if backend == "postgres":
             await repo.close()
@@ -3818,6 +3900,9 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
 ) -> None:
     import asyncio
     import json
+
+    from native_input_fixtures import acknowledge_native_input
+    from native_session_fixtures import created_native_session
 
     from tank.agents import SessionService
     from tank.analysis.decisions import DecisionEngine
@@ -3848,18 +3933,32 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
     native_posts = []
     replay_posts = []
     lose_reply = True
+    native_records = {}
 
-    def control(request: httpx.Request):
+    def control(request: httpx.Request) -> httpx.Response:
         nonlocal lose_reply
         if request.url.host == "evidence.invalid":
             fetched.append(str(request.url))
             return httpx.Response(http_status, text="Synthetic unavailable source")
         if request.url.path.endswith("/sessions"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "next_page": None})
             body = json.loads(request.content)
-            target = replay_sid if body.get("metadata", {}).get("tank_replay_run_id") else sid
-            return httpx.Response(201, json=resolved_native_domain_fixture(target))
+            target = replay_sid if body["metadata"].get("tank_replay_run_id") is not None else sid
+            native_records[target] = created_native_session(
+                request,
+                target,
+                agent_snapshot={
+                    "version": 1,
+                    "system": "Actual resolved synthetic domain integration instructions",
+                    "skills": [],
+                    "tools": [],
+                    "model": {"id": "gpt-6.1-sol"},
+                },
+            )
+            return httpx.Response(201, json=native_records[target])
+        if request.method == "GET" and request.url.path.rsplit("/", 1)[-1] in {sid, replay_sid}:
+            return httpx.Response(200, json=native_records[request.url.path.rsplit("/", 1)[-1]])
         if request.method == "POST" and request.url.path.endswith("/events"):
             payload = json.loads(request.content)
             (native_posts if "/sessions/" + sid + "/" in request.url.path else replay_posts).append(payload)
@@ -3871,6 +3970,12 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
             ):
                 lose_reply = False
                 raise httpx.ConnectError("Synthetic lost acknowledgement", request=request)
+            return httpx.Response(
+                200,
+                json=acknowledge_native_input(
+                    request, "native-ack-" + str(len(native_posts) + len(replay_posts))
+                ),
+            )
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
@@ -4782,6 +4887,7 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
     import copy
     import json
 
+    from tank.analysis.decision_codec import decode_decision, encode_outlook
     from tank.delivery import DeliveryError, DeliveryService
     from tank.storage import PostgresRepository
     from tank.util import new_id, parse_time
@@ -4794,12 +4900,14 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
 
     base = utcnow() - timedelta(minutes=15, seconds=3)
     clock = [base]
-    for module in ("tank.util", "tank.event_tools", "tank.analysis.cards", "tank.delivery", "tank.storage"):
+    for module in ("tank.util", "tank.event_tools", "tank.delivery", "tank.storage"):
         monkeypatch.setattr(module + ".utcnow", lambda: clock[0])
     eid = new_id("event")
     token = "world:WLD"
     ems = eid + "-ems"
-    decision = complete_decision_fixture(eid + "-wait", eid, token, iso(base), eid + "-truth")
+    decision = complete_decision_fixture(
+        eid + "-wait", eid, token, iso(base), eid + "-truth", assessment_id=ems
+    )
     assert decision["action"] == "WAIT"
     for table, key, value in [
         (
@@ -4810,7 +4918,7 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
             ),
         ),
         ("evt.ems_assessments", ems, complete_assessment_fixture(ems, eid)),
-        ("evt.beneficiary_maps", eid + ":1", {"event_id": eid, "map_version": 1, "analysis_set": [token]}),
+        ("evt.beneficiary_maps", eid + ":1", primary_only_map_fixture(eid, token)),
         (
             "evt.beneficiary_edges",
             eid + "-edge",
@@ -4820,12 +4928,17 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
                 "map_version": 1,
                 "token_id": token,
                 "role": "PRIMARY",
+                "layer": "ISSUER_PRODUCT",
+                "evidence": [],
+                "capture_class": "UNKNOWN",
+                "causal_chain": "Authored approval grants the primary issuer access.",
                 "tradable": True,
                 "credible": True,
                 "exposure_score": 8,
             },
         ),
         ("ana.market_truth", eid + "-truth", complete_truth_fixture(eid + "-truth", eid, token, iso(base))),
+        ("ana.outlooks", decision["outlook_id"], encode_outlook(decode_decision(decision))),
         ("ana.decisions", decision["dec_id"], decision),
     ]:
         await repo.put(table, key, value)
@@ -4929,7 +5042,9 @@ async def test_old_trigger_updates_stage_but_does_not_publish_or_resurface_on_ti
     import tank.analysis.cards as cards
 
     monkeypatch.setattr(
-        cards, "compose_card", lambda *args, **kwargs: "Stored stage update" + "\n" + score_summary(args[1])
+        cards,
+        "compose_card",
+        lambda *args, **kwargs: "Stored stage update" + "\n" + score_summary(args[0].assessment.scores),
     )
     extracted = await seed(service)
     extracted["claims"][0]["state_claim"] = "APPROVED"
@@ -4939,8 +5054,18 @@ async def test_old_trigger_updates_stage_but_does_not_publish_or_resurface_on_ti
     event = await service.repo.get("evt.events", eid)
     await service.repo.put("evt.events", eid, {**event, "current_ems_id": ems})
     await service.repo.put("evt.ems_assessments", ems, complete_assessment_fixture(ems, eid))
-    await service.repo.put(
-        "evt.beneficiary_maps", eid + ":1", {"event_id": eid, "map_version": 1, "analysis_set": []}
+    from tank.event_tools import LAYERS
+
+    await service.dispatch(
+        "set_beneficiaries",
+        {
+            "event_id": eid,
+            "edges": [],
+            "layer_reasons": {
+                layer: "No supported token link is asserted by this fixture." for layer in LAYERS
+            },
+        },
+        {},
     )
     args = {
         "event_id": eid,
@@ -5489,8 +5614,9 @@ async def test_card_generated_at_is_the_version_write_and_deliver_is_runnable_th
     import tank.event_tools as event_tools
     from tank.util import parse_time
 
-    monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
-    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[1]))
+    monkeypatch.setattr(
+        cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[0].assessment.scores)
+    )
     written = {}
     original = event_tools.write_evidence_bundle
 
@@ -5513,6 +5639,7 @@ async def test_card_generated_at_is_the_version_write_and_deliver_is_runnable_th
             "ems_id": "ems",
             "event_id": eid,
             "class": "STRUCTURAL_SHOCK",
+            "criterion": "G5",
         },
     )
     result = await service.dispatch(
@@ -5628,8 +5755,9 @@ async def test_publish_card_keeps_market_truth_once_and_bounds_evidence_and_ops_
     assert deduped[0]["result"]["market_truth"][1] == {"mta_id": "other", "v": 1}
     assert deduped[1] == calls[1] and calls[0]["result"]["market_truth"][0] is truth
 
-    monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
-    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[1]))
+    monkeypatch.setattr(
+        cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[0].assessment.scores)
+    )
     x = await seed(service)
     eid = (await service.dispatch("record_event", x, {}))["event_id"]
     event = await service.repo.get("evt.events", eid)
@@ -5643,6 +5771,7 @@ async def test_publish_card_keeps_market_truth_once_and_bounds_evidence_and_ops_
             "ems_id": "ems",
             "event_id": eid,
             "class": "STRUCTURAL_SHOCK",
+            "criterion": "G5",
         },
     )
     reads = []
@@ -5835,3 +5964,360 @@ async def test_accepted_completion_and_native_failure_preserve_done_without_dead
                     task.cancel()
             await asyncio.gather(accepted, failed, return_exceptions=True)
             await native.close()
+
+
+@pytest.mark.parametrize(
+    "backend",
+    ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])],
+)
+async def test_expired_tracking_status_preserves_the_frozen_financial_calculation(
+    service, backend, postgres_template, repository_lifetime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from copy import deepcopy
+
+    from foundation_helpers import object_field
+
+    from tank.analysis.decision_codec import decode_decision, encode_decision, encode_outlook
+    from tank.util import parse_time
+
+    if backend == "postgres":
+        import os
+
+        url = os.getenv("TANK_TEST_DATABASE_URL")
+        if not url:
+            pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
+        service.repo = await repository_lifetime.enter_async_context(postgres_template.repository(url))
+
+    fixed = parse_time("2026-10-29T00:00:00Z")
+    for module in ("tank.util", "tank.event_tools"):
+        monkeypatch.setattr(module + ".utcnow", lambda: fixed)
+    frozen = decode_decision(
+        complete_decision_fixture(
+            "DEC-historical", "EVT-historical", "T", "2026-10-25T00:00:00Z", "MTA-historical"
+        )
+    )
+    identity = frozen.metadata.identity
+    original_outlook = encode_outlook(frozen)
+    original_wire = encode_decision(frozen)
+    object_field(original_wire, "outlook")["scenarios"] = {
+        "base": None,
+        "upside": None,
+        "failure": "The captured failure scenario remains available.",
+    }
+    object_field(original_wire, "outlook")["scenario_reasons"] = {"upside": "ORIGINAL_CAUSE_AS_CAPTURED"}
+    original_outlook["scenarios"] = object_field(original_wire, "outlook")["scenarios"]
+    original_outlook["scenario_reasons"] = {"upside": "ORIGINAL_CAUSE_AS_CAPTURED"}
+    literal_historical = deepcopy(original_wire)
+    literal_outlook = deepcopy(original_outlook)
+    expected = decode_decision(original_wire)
+    prior_truth = complete_truth_fixture(
+        identity.market_truth_id,
+        identity.event_id,
+        identity.token_id,
+        identity.cutoff.value,
+    )
+    eid, token = identity.event_id, identity.token_id
+    closed_at = "2026-10-28T00:00:00Z"
+    for table, key, value in (
+        (
+            "evt.events",
+            eid,
+            complete_event_fixture(eid, current_ems_id=identity.assessment_id),
+        ),
+        (
+            "evt.ems_assessments",
+            identity.assessment_id,
+            complete_assessment_fixture(identity.assessment_id, eid),
+        ),
+        (
+            "evt.beneficiary_maps",
+            "expired-map",
+            {"event_id": eid, "map_version": 1, "analysis_set": [token]},
+        ),
+        (
+            "evt.beneficiary_edges",
+            "expired-edge",
+            {
+                "event_id": eid,
+                "token_id": token,
+                "edge_id": "expired-edge",
+                "map_version": 1,
+                "role": "PRIMARY",
+                "credible": False,
+                "exposure_score": None,
+            },
+        ),
+        (
+            "ana.market_truth",
+            "newer-truth",
+            complete_truth_fixture("newer-truth", eid, token, clock_iso()),
+        ),
+        ("ana.market_truth", identity.market_truth_id, prior_truth),
+        ("ana.outlooks", frozen.outlook_id, original_outlook),
+        ("ana.decisions", identity.decision_id, original_wire),
+        (
+            "ana.calls",
+            "expired-call",
+            {
+                "call_id": "expired-call",
+                "event_id": eid,
+                "token_id": token,
+                "status": "CLOSED",
+                "opened_by_alert": "ALERT-historical-position",
+                "opened_by_version": 1,
+                "opened_at": "2026-10-25T00:00:00Z",
+                "opened_at_prec": "EXACT",
+                "opened_at_prec_reason": None,
+                "entry_ref_price": "1",
+                "invalidation_price": "0.9",
+                "closed_by": "EXPIRED",
+                "closed_at": closed_at,
+                "closed_at_prec": "COLLECTION_ONLY",
+                "closed_at_prec_reason": None,
+            },
+        ),
+    ):
+        await service.repo.put(table, key, value)
+    wire = await service.get_decision({"event_id": eid, "token_id": token}, {})
+    ended = decode_decision(wire)
+    assert ended.calculation == expected.calculation
+    assert ended.metadata.identity.cutoff == frozen.metadata.identity.cutoff
+    assert ended.metadata.calculated_at == frozen.metadata.calculated_at
+    assert ended.metadata.identity.generation == frozen.metadata.identity.generation
+    assert ended.metadata.identity.assessment_id == identity.assessment_id
+    assert ended.metadata.identity.market_truth_id == identity.market_truth_id
+    assert ended.metadata.identity.thresholds_version == identity.thresholds_version
+    assert wire["previous_decision_id"] == identity.decision_id
+    assert wire["outlook_id"] == frozen.outlook_id and wire["conditions"] == []
+    assert wire["tracking_recorded_at"] is not None
+    assert wire["tracking_writer"]["versions"] == service.versions.model_dump(mode="json")
+    assert object_field(wire, "outlook")["scenario_reasons"] == {"upside": "ORIGINAL_CAUSE_AS_CAPTURED"}
+    assert ended.calculation.outlook.scenario_explanations.base.state == "EXPLANATION_NOT_CAPTURED"
+    assert await service.repo.get("ana.decisions", identity.decision_id) == literal_historical
+    assert await service.repo.get("ana.outlooks", frozen.outlook_id) == literal_outlook
+
+    from tank.analysis.decision_state import DecisionScope, DecisionStateConflict, DecisionStateRepository
+
+    states = DecisionStateRepository(service.repo)
+    scope = DecisionScope(event_id=eid, token_id=token)
+    current = await states.current(scope)
+    assert current is not None and current[1] == ended and current[0].revision == 1
+    conflicting = ended.model_copy(
+        update={
+            "metadata": ended.metadata.model_copy(
+                update={"contradiction_ids": ("different-captured-evidence",)}
+            )
+        }
+    )
+    attempted_effects: list[str] = []
+
+    async def effects() -> None:
+        attempted_effects.append("must not run")
+
+    with pytest.raises(DecisionStateConflict, match="conflicting content"):
+        await states.advance(
+            scope,
+            expected=current[0],
+            candidate=conflicting,
+            recorded_at=current[0].recorded_at,
+            effects=effects,
+        )
+    assert attempted_effects == []
+    assert (await states.current(scope)) == current
+    assert await service.repo.get("ana.decisions", ended.metadata.identity.decision_id) == wire
+
+    fresh = decode_decision(
+        complete_decision_fixture("DEC-new-active", eid, token, clock_iso(), "newer-truth")
+    )
+
+    async def no_writes() -> None:
+        """This authored calculation has no separate watch write set."""
+
+    fresh_head = await states.advance(
+        scope,
+        expected=current[0],
+        candidate=fresh,
+        recorded_at=current[0].recorded_at,
+        effects=no_writes,
+    )
+    assert fresh_head.revision == 2
+    assert fresh_head.previous_head_dec_id == ended.metadata.identity.decision_id
+    assert fresh_head.recorded_at == current[0].recorded_at
+    assert (await service.latest_record("ana.decisions", eid, token))["dec_id"] == "DEC-new-active"
+
+    rollback_candidate = decode_decision(
+        complete_decision_fixture("DEC-rollback", eid, token, clock_iso(), "newer-truth")
+    )
+    assert rollback_candidate.conditions
+    watch = rollback_candidate.conditions[0]
+    original_put = service.repo.put
+
+    async def fail_head(collection, key, document, *, immutable=False):
+        if collection == "ana.decision_state_heads":
+            raise RuntimeError("injected final head failure")
+        return await original_put(collection, key, document, immutable=immutable)
+
+    async def write_watch() -> None:
+        await service.repo.put(
+            "ana.watch_conditions",
+            watch.cond_id,
+            watch.model_dump(mode="json", exclude_unset=True),
+        )
+
+    monkeypatch.setattr(service.repo, "put", fail_head)
+    try:
+        with pytest.raises(RuntimeError, match="injected final head failure"):
+            await states.advance(
+                scope,
+                expected=fresh_head,
+                candidate=rollback_candidate,
+                recorded_at=fresh_head.recorded_at,
+                effects=write_watch,
+            )
+    finally:
+        monkeypatch.setattr(service.repo, "put", original_put)
+    assert await service.repo.get("ana.watch_conditions", watch.cond_id) is None
+    assert await service.repo.get("ana.decisions", "DEC-rollback") is None
+    assert await service.repo.get("ana.outlooks", rollback_candidate.outlook_id) is None
+    final = await states.current(scope)
+    assert final is not None and final[0] == fresh_head and final[1] == fresh
+    assert await service.repo.get("ana.decisions", identity.decision_id) == literal_historical
+    assert await service.repo.get("ana.outlooks", frozen.outlook_id) == literal_outlook
+
+
+@pytest.mark.parametrize(
+    "backend",
+    ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])],
+)
+@pytest.mark.parametrize("history_case", ["older_cutoff", "ambiguous"])
+async def test_first_active_decision_validates_legacy_state_before_persisting(
+    service: EventToolService,
+    backend: Literal["memory", "postgres"],
+    history_case: Literal["older_cutoff", "ambiguous"],
+    postgres_template: "PostgresTemplate",
+    repository_lifetime: AsyncExitStack,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An actual as-of producer cannot install a first head over newer or ambiguous history."""
+    import os
+
+    from tank.analysis.decision_codec import decode_decision, encode_outlook
+    from tank.analysis.decision_state import DecisionStateConflict
+    from tank.analysis.decision_watches import DecisionWatchReconciliation
+    from tank.analysis.decisions import DecisionEngine
+    from tank.storage import PostgresRepository
+    from tank.util import parse_time
+
+    repo: MemoryRepository | PostgresRepository
+    if backend == "postgres":
+        url = os.getenv("TANK_TEST_DATABASE_URL")
+        if not url:
+            pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
+        repo = await repository_lifetime.enter_async_context(postgres_template.repository(url))
+    else:
+        candidate_repo = service.repo
+        assert isinstance(candidate_repo, MemoryRepository)
+        repo = candidate_repo
+    service.repo = repo
+    service.engine = DecisionEngine()
+    processing = "2026-10-25T01:00:00Z" if history_case == "older_cutoff" else "2026-10-27T01:00:00Z"
+    legacy_cutoff, incoming_cutoff = (
+        ("2026-10-26T00:00:00Z", "2026-10-25T00:00:00Z")
+        if history_case == "older_cutoff"
+        else ("2026-10-25T00:00:00Z", "2026-10-26T00:00:00Z")
+    )
+    observed_at = parse_time(processing)
+    for module in ("tank.util", "tank.event_tools"):
+        monkeypatch.setattr(module + ".utcnow", lambda: observed_at)
+    eid, token, ems_id = "legacy-guard-event", "world:WLD", "legacy-guard-ems"
+    legacy = decode_decision(
+        complete_decision_fixture(
+            "legacy-guard-a",
+            eid,
+            token,
+            legacy_cutoff,
+            "legacy-guard-source",
+            assessment_id=ems_id,
+        )
+    )
+    rows = [
+        ("evt.events", eid, complete_event_fixture(eid, current_ems_id=ems_id)),
+        ("evt.ems_assessments", ems_id, complete_assessment_fixture(ems_id, eid)),
+        ("evt.beneficiary_maps", "legacy-map", primary_only_map_fixture(eid, token)),
+        (
+            "evt.beneficiary_edges",
+            "legacy-edge",
+            {
+                "edge_id": "legacy-edge",
+                "event_id": eid,
+                "token_id": token,
+                "map_version": 1,
+                "role": "PRIMARY",
+                "credible": False,
+                "capture_class": "UNKNOWN",
+                "exposure_score": None,
+            },
+        ),
+        (
+            "ana.market_truth",
+            "legacy-guard-source",
+            complete_truth_fixture("legacy-guard-source", eid, token, legacy_cutoff),
+        ),
+        (
+            "ana.market_truth",
+            "legacy-guard-incoming",
+            complete_truth_fixture("legacy-guard-incoming", eid, token, incoming_cutoff),
+        ),
+        ("ana.outlooks", legacy.outlook_id, encode_outlook(legacy)),
+    ]
+    from tank.analysis.decision_codec import encode_decision
+
+    rows.append(("ana.decisions", legacy.metadata.identity.decision_id, encode_decision(legacy)))
+    if history_case == "ambiguous":
+        sibling = decode_decision(
+            complete_decision_fixture(
+                "legacy-guard-b",
+                eid,
+                token,
+                legacy_cutoff,
+                "legacy-guard-source",
+                assessment_id=ems_id,
+            )
+        )
+        rows.extend(
+            [
+                ("ana.outlooks", sibling.outlook_id, encode_outlook(sibling)),
+                ("ana.decisions", sibling.metadata.identity.decision_id, encode_decision(sibling)),
+            ]
+        )
+    for table, key, value in rows:
+        await repo.put(table, key, value)
+    selected_truth = await service.latest_record("ana.market_truth", eid, token)
+    assert selected_truth["mta_id"] == "legacy-guard-incoming"
+    protected = ("ana.watch_conditions", "ana.outlooks", "ana.decisions", "ana.decision_state_heads")
+    before = {table: await repo.list(table) for table in protected}
+    attempted_writes: list[str] = []
+    attempted_reconciliation: list[str] = []
+    original_put = repo.put
+    original_reconcile = service._persist_condition_writes
+
+    async def observed_put(
+        collection: str, key: str, document: Mapping[str, JsonInput], *, immutable: bool = False
+    ) -> dict[str, JsonValue]:
+        if collection in protected:
+            attempted_writes.append(collection)
+        return await original_put(collection, key, document, immutable=immutable)
+
+    async def observed_reconciliation(result: DecisionWatchReconciliation) -> None:
+        attempted_reconciliation.append("watch reconciliation")
+        await original_reconcile(result)
+
+    monkeypatch.setattr(repo, "put", observed_put)
+    monkeypatch.setattr(service, "_persist_condition_writes", observed_reconciliation)
+    reason = (
+        "older financial input cutoff" if history_case == "older_cutoff" else "equal-clock order is ambiguous"
+    )
+    with pytest.raises(DecisionStateConflict, match=reason):
+        await service.get_decision({"event_id": eid, "token_id": token}, {})
+    assert attempted_reconciliation == [] and attempted_writes == []
+    assert {table: await repo.list(table) for table in protected} == before

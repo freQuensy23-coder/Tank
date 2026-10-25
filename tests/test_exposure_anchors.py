@@ -217,24 +217,37 @@ async def test_proposed_sole_rail_rating_has_no_invented_stage_gate_and_cannot_s
     edge = (await service.repo.list("evt.beneficiary_edges"))[0]
     assert edge["exposure_score"] == 10
     assert edge["credible"] is False
-    event = {"event_id": "e", "event_state": "PROPOSED", "state_verified": True, "freshness": "FRESH"}
-    assessment = {"class": "MAJOR", "certainty": "HIGH", "impact_horizon": {"impact_start": "NOW"}}
-    market = {
-        "token_id": "world:WLD",
-        "move_class": "SPOT_LED_ACCUMULATION",
-        "data_confidence": {"class": "HIGH", "critical_semantics_verified": True},
-        "relative": {"repricing_band": "EARLY", "market_context": "NEUTRAL", "anchor": {"ref_price": "10"}},
-        "liquidity": {"liquidity_state": "NORMAL"},
-        "spot": {},
-        "derivatives": {},
-    }
+    from test_decisions import inputs
+
+    from tank.analysis.decision_codec import decision_inputs_from_records
+
+    event, assessment, _, market = inputs()
+    event.update(event_id=edge["event_id"], event_state="PROPOSED")
+    assessment["event_id"] = edge["event_id"]
+    market.update(event_id=edge["event_id"], token_id=edge["token_id"])
     beneficiary = dict(edge, capture_class="DIRECT")
     engine = DecisionEngine()
 
     positive = engine.evaluate(
-        dict(event, event_state="LIVE"), assessment, dict(beneficiary, credible=True), market
+        decision_inputs_from_records(
+            dict(event, event_state="LIVE"),
+            assessment,
+            dict(beneficiary, credible=True),
+            market,
+            open_call=None,
+            conditions=(),
+        )
     )
-    assert positive["action"] == "START"
-    decision = engine.evaluate(event, assessment, beneficiary, market)
-    assert decision["thesis_grade"] == "D"
-    assert decision["action"] == "WAIT"
+    assert positive.action == "START"
+    decision = engine.evaluate(
+        decision_inputs_from_records(
+            event,
+            assessment,
+            beneficiary,
+            market,
+            open_call=None,
+            conditions=(),
+        )
+    )
+    assert decision.thesis_grade == "D"
+    assert decision.action == "WAIT"
