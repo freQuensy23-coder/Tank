@@ -52,6 +52,7 @@ from tank.analysis.page_access import (
     RecordedPageAccess,
     read_live_page,
 )
+from tank.analysis.publication_ordering import exposure_priority_from_record
 from tank.analysis.reaction_scheduling import AssessmentFreeDiagnosticScheduling, ReactionScheduling
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.analysis.watch_contracts import WatchCondition
@@ -2857,11 +2858,11 @@ class EventToolService:
         else:
             primaries = sorted(
                 [edge for edge in beneficiaries if edge["role"] == "PRIMARY" and edge.get("tradable")],
-                key=lambda row: -row.get("exposure_score", 0),
+                key=exposure_priority_from_record,
             )
             secondaries = sorted(
                 [edge for edge in beneficiaries if edge["role"] == "SECONDARY" and edge.get("credible")],
-                key=lambda row: (row["edge_id"] != least, -row.get("exposure_score", 0)),
+                key=lambda row: (row["edge_id"] != least, exposure_priority_from_record(row)),
             )
             remaining = sorted(
                 [
@@ -2871,7 +2872,7 @@ class EventToolService:
                     and edge.get("tradable")
                     and (edge["role"] == "LOSER" or edge.get("credible"))
                 ],
-                key=lambda row: -row.get("exposure_score", 0),
+                key=exposure_priority_from_record,
             )
             selected = primaries[:1] + secondaries[:1]
             used = {edge.get("token_id") for edge in selected}

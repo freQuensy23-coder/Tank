@@ -925,7 +925,10 @@ async def test_future_wording_does_not_override_agent_stage(service) -> None:
     assert event["state_verified"]
 
 
-async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(service) -> None:
+@pytest.mark.parametrize("least_exposure", [None, 0, 6])
+async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(
+    service, least_exposure: int | None
+) -> None:
     from tank.analysis.decision_codec import decode_decision, encode_outlook
     from tank.event_tools import LAYERS
 
@@ -989,7 +992,7 @@ async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(serv
                 "role": role,
                 "tradable": True,
                 "credible": True,
-                "exposure_score": 10 - index,
+                "exposure_score": least_exposure if label == "S2" else 10 - index,
                 "capture_class": "DIRECT",
                 "causal_chain": "Authored synthetic token exposure to the approved product.",
                 "layer": "LIQUIDITY_EXECUTION" if role == "SECONDARY" else "ISSUER_PRODUCT",
