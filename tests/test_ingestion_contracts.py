@@ -871,3 +871,47 @@ def test_calendar_verification_label_does_not_gain_an_assumed_clock() -> None:
     assert EndpointVerification.model_validate(day).model_dump(mode="json", exclude_unset=True) == day
     with pytest.raises(ValidationError, match="day-bucket"):
         EndpointVerification.model_validate({**unrecorded, "checked_at_precision": "EXACT"})
+
+
+def test_usdm_operation_protection_keeps_required_exact_shared_windows() -> None:
+    from tank.contracts.sources import SourceApiLimitsConfiguration, SourceBinanceUsdmBudget
+    from tank.settings import Settings
+
+    policy = SourceApiLimitsConfiguration.model_validate(Settings().load_config("api_limits"))
+    usdm = next(row for row in policy.limits if isinstance(row, SourceBinanceUsdmBudget))
+    actual = {
+        row.bucket: (row.paths, row.period_s, row.tank_request_budget)
+        for row in usdm.client_protection_limits
+    }
+    assert actual == {
+        "binance.usdm.funding": (["/fapi/v1/fundingRate", "/fapi/v1/fundingInfo"], 300, 250),
+        "binance.usdm.statistics": (["/futures/data/openInterestHist"], 300, 500),
+    }
+    assert all(row.documented_requests is None for row in usdm.client_protection_limits)
+    assert usdm.documented_weight_per_min > 0 and usdm.tank_max_weight_per_min > 0
+
+
+@pytest.mark.parametrize(
+    "change", ["missing_list", "missing_group", "wrong_path", "wrong_scope", "invented_docs"]
+)
+def test_usdm_protection_cannot_be_dropped_or_reused_for_other_routes(change: str) -> None:
+    from tank.contracts.sources import SourceApiLimitsConfiguration, SourceBinanceUsdmBudget
+    from tank.settings import Settings
+
+    policy = SourceApiLimitsConfiguration.model_validate(Settings().load_config("api_limits"))
+    usdm = next(row for row in policy.limits if isinstance(row, SourceBinanceUsdmBudget))
+    raw = usdm.model_dump(mode="json", exclude_unset=True)
+    rules = raw["client_protection_limits"]
+    assert isinstance(rules, list) and isinstance(rules[0], dict)
+    if change == "missing_list":
+        del raw["client_protection_limits"]
+    elif change == "missing_group":
+        rules.pop()
+    elif change == "wrong_path":
+        rules[0]["paths"] = ["/fapi/v1/unknown"]
+    elif change == "wrong_scope":
+        rules[0]["scope"] = "API_KEY"
+    else:
+        rules[0]["documented_requests"] = 500
+    with pytest.raises(ValidationError):
+        SourceBinanceUsdmBudget.model_validate(raw)
