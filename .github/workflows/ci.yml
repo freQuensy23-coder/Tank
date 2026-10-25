@@ -165,6 +165,7 @@ jobs:
           tests/agent_configuration_fixtures.py tests/test_agents_classification.py
           tests/test_agents_required_versions.py tests/test_agents_scalar_flags.py
           tests/test_agents_jev_contracts.py
+          tests/test_pipeline_postgres.py
       - name: Check completed native readback contracts strictly
         env:
           MYPYPATH: src:tests
