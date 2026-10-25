@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Annotated, Literal, Self
 
 from pydantic import (
+    BeforeValidator,
     ConfigDict,
     Field,
     JsonValue,
@@ -17,6 +18,7 @@ from tank.contracts import DomainModel
 from tank.contracts.page_evidence import PageReadProvenance, RecordedBodyProvenance
 from tank.contracts.provenance import GenerationProvenance, ResolvedVersionIdentity
 from tank.contracts.repository import Collection
+from tank.contracts.scalars import require_integer
 from tank.contracts.sources import SourceAuthorRole
 from tank.time_precision import Timestamp, collection_clock, propagate_timestamp
 from tank.util import parse_iso_time
@@ -36,7 +38,7 @@ class PublisherCMSRecovery(DomainModel):
     status: Literal["VERIFIED_SAME_CMS_ENTRY"]
     canonical_url: str
     resolved_url: str
-    original_http_status: Literal[404]
+    original_http_status: Annotated[Literal[404], BeforeValidator(require_integer)]
     original_response_url: str
     original_payload_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     observed_at: str

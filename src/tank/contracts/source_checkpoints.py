@@ -2,13 +2,14 @@
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
-from pydantic import ConfigDict, Field, JsonValue, RootModel, model_validator
+from pydantic import BeforeValidator, ConfigDict, Field, JsonValue, RootModel, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.repository import Collection
+from tank.contracts.scalars import require_integer
 from tank.contracts.source_items import (
     CapturedItem,
     PendingSourceItem,
@@ -252,7 +253,7 @@ class GovernanceCoverage(DomainModel):
 
 
 class InstrumentCoverage(HttpCoverage):
-    instrument_snapshot_schema_version: Literal[2]
+    instrument_snapshot_schema_version: Annotated[Literal[2], BeforeValidator(require_integer)]
     cache_scope: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
 
@@ -260,7 +261,9 @@ class CapturedInstrumentCoverage(DomainModel):
     instruments: InstrumentSnapshot
     etag: str | None = None
     last_modified: str | None = None
-    instrument_snapshot_schema_version: Literal[1, 2] | None = None
+    instrument_snapshot_schema_version: Annotated[Literal[1, 2], BeforeValidator(require_integer)] | None = (
+        None
+    )
 
 
 class SocialCoverage(DomainModel):
