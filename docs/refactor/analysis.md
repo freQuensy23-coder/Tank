@@ -573,3 +573,13 @@ the25 staged input-only artifacts. No hash/derivation check was bypassed and no
 production data was read. The scratch verifier is retained at
  data/qa/verify-retained-http-effects.py; no success artifact is claimed. Verified raw
 bodies and an explicit historical-path reader are needed for that full loader proof.
+
+The requested exact raw-body inventory is analysis-retained-raw-inputs.json:38 named
+source-body path/hash pairs at80 originating sites across all25 hash-reverified
+acceptance inputs. It records only source raw/detail/discovery/original-projection
+body references and their recorded decompressed-payload SHA256, with checked-in
+fixture ID, originating packet path/compressed SHA and exact field site. No raw body,
+private map, sealed outcome or credential was read. F02 remains excluded for its
+manifest mismatch. The generation scratch script is data/qa/inventory-retained-http-raw.py.
+An explicit resolver must accept only these verified staged originals; no global
+/data alias or production path access is proposed.
