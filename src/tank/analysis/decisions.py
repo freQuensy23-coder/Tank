@@ -11,15 +11,19 @@ from tank.analysis.decision_contracts import (
     DecisionCore,
     DecisionDraft,
     DecisionEvaluation,
+    DecisionIdentity,
     DecisionInputs,
     DecisionLiquidity,
     DecisionMaterialization,
+    DecisionMetadata,
     DecisionMilestone,
     DecisionOutlook,
     DecisionRecord,
     DecisionScenarioReasons,
     DecisionScenarios,
+    DecisionStatusWriter,
     DecisionWatch,
+    EndedDecisionTracking,
     Grade,
     Horizon,
     Potential,
@@ -33,6 +37,7 @@ from tank.analysis.watch_contracts import (
     WatchRule,
 )
 from tank.analysis.watch_policy import build_watch_conditions, watch_leaf, watch_rule
+from tank.time_precision import Timestamp
 from tank.util import canonical_json
 
 POSITIVE_ACTIONS = frozenset({"START", "WATCH_TO_START", "ADD", "HOLD"})
@@ -498,4 +503,49 @@ def finalize_decision(
         conditions=conditions,
         conditions_shown=conditions_shown,
         outlook_id=outlook_id,
+    )
+
+
+def end_decision_tracking(
+    frozen: DecisionRecord,
+    *,
+    decision_id: str,
+    expired_call_ids: tuple[str, ...],
+    status_recorded_at: Timestamp,
+    writer: DecisionStatusWriter,
+) -> DecisionRecord:
+    """Record an inactive status without recalculating or relabeling frozen financial evidence."""
+    frozen = DecisionRecord.model_validate(frozen)
+    prior = frozen.metadata
+    identity = prior.identity
+    metadata = DecisionMetadata(
+        identity=DecisionIdentity(
+            decision_id=decision_id,
+            event_id=identity.event_id,
+            token_id=identity.token_id,
+            cutoff=identity.cutoff,
+            thresholds_version=identity.thresholds_version,
+            versions=identity.versions,
+            generation=identity.generation,
+            assessment_id=identity.assessment_id,
+            market_truth_id=identity.market_truth_id,
+        ),
+        calculated_at=prior.calculated_at,
+        management=prior.management,
+        contradiction_ids=prior.contradiction_ids,
+        prices=prior.prices,
+        tracking=EndedDecisionTracking(
+            kind="ENDED",
+            previous_decision_id=identity.decision_id,
+            expired_call_ids=expired_call_ids,
+            status_recorded_at=status_recorded_at,
+            writer=writer,
+        ),
+    )
+    return DecisionRecord(
+        calculation=frozen.calculation,
+        metadata=metadata,
+        conditions=[],
+        conditions_shown=(),
+        outlook_id=frozen.outlook_id,
     )

@@ -293,10 +293,34 @@ class ActiveDecisionTracking(DomainModel):
     kind: Literal["ACTIVE"]
 
 
+class DecisionStatusWriter(DomainModel):
+    versions: ResolvedVersionIdentity
+    generation: GenerationProvenance
+
+    @model_validator(mode="after")
+    def actual_writer_identity(self) -> Self:
+        if (
+            self.generation.config_version != self.versions.config_version
+            or self.generation.code_version != self.versions.code_version
+        ):
+            raise ValueError("Decision status generation does not match its resolved writer identity")
+        return self
+
+
 class EndedDecisionTracking(DomainModel):
     kind: Literal["ENDED"]
     previous_decision_id: str = Field(min_length=1)
     expired_call_ids: tuple[str, ...] = Field(min_length=1)
+    status_recorded_at: Timestamp
+    writer: DecisionStatusWriter
+
+    @model_validator(mode="after")
+    def actual_status_recording(self) -> Self:
+        if self.status_recorded_at.value is None or self.status_recorded_at.precision != "COLLECTION_ONLY":
+            raise ValueError("Ended decision tracking requires its actual local status-recording clock")
+        if len(self.expired_call_ids) != len(set(self.expired_call_ids)):
+            raise ValueError("Expired decision call identities must be unique")
+        return self
 
 
 type DecisionTracking = ActiveDecisionTracking | EndedDecisionTracking
