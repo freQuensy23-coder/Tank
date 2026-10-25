@@ -420,3 +420,95 @@ def test_prior_gate_projection_does_not_require_unused_current_state_facts() -> 
     baseline = publication_baseline_from_records(alert, [], sent_delivery=None)
     assert baseline.event.state == "APPROVED" and baseline.event.state_verified
     assert baseline.acknowledged_send is None
+
+
+def test_duplicate_selected_token_cannot_repeat_a_financial_action_block() -> None:
+    inputs = rendering_inputs()
+    repeated = inputs.model_copy(update={"beneficiaries": inputs.beneficiaries * 2})
+    with pytest.raises(ValidationError, match="repeat a selected beneficiary token"):
+        compose_card(repeated)
+
+
+def test_primary_alias_cannot_mask_missing_secondary_layer_evidence() -> None:
+    inputs = rendering_inputs()
+    duplicate = inputs.beneficiaries[0].subject.model_copy(update={"role": "SECONDARY"})
+    mapping = inputs.mapping.model_copy(update={"layer_explanations": {}})
+    invalid = inputs.model_copy(update={"other_subjects": (duplicate,), "mapping": mapping})
+    with pytest.raises(ValidationError, match="actual eight layer assessments"):
+        compose_card(invalid)
+
+
+def test_duplicate_claim_identity_is_refused_without_picking_an_authority() -> None:
+    from tank.analysis.card_codec import card_inputs_from_records
+    from tank.analysis.card_contracts import PublicationNarrative, PublicationPolicy
+
+    event, assessment = publication_wire()
+    claim: dict[str, JsonValue] = {
+        "claim_id": "same",
+        "subject": "World",
+        "predicate": "proposed",
+        "object": "the product",
+        "accepted": True,
+        "verified": False,
+        "evidence": [],
+    }
+    event["claims"] = [claim, dict(claim, object="a different product")]
+    narrative = PublicationNarrative(
+        kind="PARTIAL",
+        what="The proposal is recorded.",
+        verdict="The product was proposed.",
+        why=("The proposal changes intended access.", "Deployment remains unverified."),
+    )
+    with pytest.raises(ValueError, match="Duplicate displayed claim identity"):
+        card_inputs_from_records(
+            event,
+            assessment,
+            [],
+            [],
+            [],
+            narrative=narrative,
+            policy=PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900),
+        )
+
+
+def test_outside_subject_evidence_requires_a_current_accepted_claim() -> None:
+    from tank.analysis.card_codec import card_inputs_from_records
+    from tank.analysis.card_contracts import PublicationNarrative, PublicationPolicy
+
+    event, assessment = publication_wire()
+    claim: dict[str, JsonValue] = {
+        "claim_id": "outside-proof",
+        "subject": "Outside",
+        "predicate": "proposed",
+        "object": "a connection",
+        "accepted": False,
+        "verified": False,
+        "evidence": [],
+    }
+    event["claims"] = [claim]
+    event["beneficiary_edges"] = [
+        {
+            "token_id": "outside:EXT",
+            "entity_id": "outside",
+            "entity_name": None,
+            "role": "SECONDARY",
+            "credible": False,
+            "tradable": False,
+            "layer": "INTEROPERABILITY",
+            "evidence": ["outside-proof"],
+            "integration_state": "COMPATIBLE",
+        }
+    ]
+    narrative = PublicationNarrative(
+        kind="PARTIAL",
+        what="The proposal is recorded.",
+        verdict="The product was proposed.",
+        why=("The proposal changes intended access.", "Deployment remains unverified."),
+    )
+    policy = PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900)
+    rejected = card_inputs_from_records(event, assessment, [], [], [], narrative=narrative, policy=policy)
+    assert rejected.other_subjects[0].outside_scope is None
+    claim["accepted"] = True
+    accepted = card_inputs_from_records(event, assessment, [], [], [], narrative=narrative, policy=policy)
+    assert accepted.other_subjects[0].outside_scope == "UNREGISTERED_TOKEN"
+    assert not accepted.other_subjects[0].integration_verified

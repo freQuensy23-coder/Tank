@@ -342,27 +342,9 @@ def _subject_name(subject: CardSubject, labels: Mapping[str, str]) -> str:
 
 
 def _who(inputs: CardInputs) -> list[str]:
-    named = tuple(value.subject for value in inputs.beneficiaries) + inputs.other_subjects
-    primary_ids = {edge.identity_key() for edge in named if edge.role == "PRIMARY"}
-    primary_entities = {
-        edge.entity_id for edge in named if edge.role == "PRIMARY" and edge.entity_id is not None
-    }
-    edges = tuple(
-        edge
-        for edge in named
-        if edge.role in {"PRIMARY", "LOSER"}
-        or edge.role == "SECONDARY"
-        and (edge.credible or edge.outside_scope is not None)
-        and edge.identity_key() not in primary_ids
-        and edge.entity_id not in primary_entities
-    )
-    shown: set[tuple[str, str]] = set()
+    edges = inputs.display_subjects()
     who: list[str] = []
     for edge in edges:
-        identity = edge.identity_key()
-        if identity in shown:
-            continue
-        shown.add(identity)
         item = edge.role.lower() + " " + _subject_name(edge, inputs.event.token_labels)
         if edge.role == "SECONDARY":
             item += (

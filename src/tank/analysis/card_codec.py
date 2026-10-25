@@ -127,6 +127,9 @@ def _labels(value: JsonValue, field: str) -> dict[str, str]:
 
 def _claims(event: Mapping[str, JsonValue]) -> tuple[CardClaim, ...]:
     rows = _records(_field(event, "claims"), "claims")
+    ids = [_text(_field(row, "claim_id"), "claim_id") for row in rows]
+    if len(ids) != len(set(ids)):
+        raise ValueError("Duplicate displayed claim identity")
     superseded: set[str] = set()
     for row in rows:
         if _boolean(_field(row, "accepted"), "accepted"):
@@ -555,7 +558,8 @@ def _subject(row: Mapping[str, JsonValue], event: CardEvent) -> CardSubject:
     outside: Literal["UNREGISTERED_TOKEN", "NO_MAPPED_TOKEN"] | None = None
     evidence = _texts(_field(row, "evidence"), "beneficiary.evidence")
     current_verified = {claim.claim_id for claim in event.claims if claim.verified}
-    if evidence and row.get("dependency_ref") is None:
+    accepted_ids = {claim.claim_id for claim in event.claims}
+    if any(reference in accepted_ids for reference in evidence) and row.get("dependency_ref") is None:
         if token is not None and token not in event.token_labels:
             outside = "UNREGISTERED_TOKEN"
         elif token is None:

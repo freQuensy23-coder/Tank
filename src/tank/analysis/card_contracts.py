@@ -524,12 +524,16 @@ class CardInputs(DomainModel):
             raise ValueError("Card decision index disagrees with its token identities")
         if any(key != value.token_id for key, value in self.market_by_token.items()):
             raise ValueError("Card market index disagrees with its token identities")
+        tokens = [value.token_id for value in self.beneficiaries]
+        if len(tokens) != len(set(tokens)):
+            raise ValueError("A card cannot repeat a selected beneficiary token")
         if self.narrative.kind != "PARTIAL":
-            subjects = tuple(value.subject for value in self.beneficiaries) + self.other_subjects
-            if not any(
-                value.role == "SECONDARY" and (value.credible or value.outside_scope is not None)
-                for value in subjects
-            ):
+            subjects = self.display_subjects()
+            if not any(value.role == "SECONDARY" and value.credible for value in subjects):
+                reason = self.mapping.no_credible_secondary_reason
+                if reason is None or not reason.strip():
+                    raise ValueError("A card without a credible secondary requires its recorded reason")
+            if not any(value.role == "SECONDARY" for value in subjects):
                 layers = {
                     "ISSUER_PRODUCT",
                     "VENUE_DEX",
@@ -544,11 +548,6 @@ class CardInputs(DomainModel):
                     not text.strip() for text in self.mapping.layer_explanations.values()
                 ):
                     raise ValueError("A card without a secondary requires the actual eight layer assessments")
-                if (
-                    self.mapping.no_credible_secondary_reason is None
-                    or not self.mapping.no_credible_secondary_reason.strip()
-                ):
-                    raise ValueError("A card without a credible secondary requires its recorded reason")
             for beneficiary in self.beneficiaries:
                 token = beneficiary.token_id
                 if token not in self.decisions_by_token:
@@ -559,6 +558,27 @@ class CardInputs(DomainModel):
                 ):
                     raise ValueError("MISSING_MARKET_TRUTH: " + token)
         return self
+
+    def display_subjects(self) -> tuple[CardSubject, ...]:
+        named = tuple(value.subject for value in self.beneficiaries) + self.other_subjects
+        primary_ids = {edge.identity_key() for edge in named if edge.role == "PRIMARY"}
+        primary_entities = {
+            edge.entity_id for edge in named if edge.role == "PRIMARY" and edge.entity_id is not None
+        }
+        shown: set[IdentityKey] = set()
+        subjects: list[CardSubject] = []
+        for edge in named:
+            identity = edge.identity_key()
+            if edge.role == "SECONDARY" and (
+                not (edge.credible or edge.outside_scope is not None)
+                or identity in primary_ids
+                or edge.entity_id in primary_entities
+            ):
+                continue
+            if identity not in shown:
+                shown.add(identity)
+                subjects.append(edge)
+        return tuple(subjects)
 
 
 class CardLengthSection(DomainModel):
