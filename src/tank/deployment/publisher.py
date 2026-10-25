@@ -304,7 +304,10 @@ class Publisher:
         return None if previous == "" else previous
 
     def recovery_release(self) -> CommitSHA:
-        return self.pending().release_sha
+        transaction = self.state.read_transaction()
+        if transaction is None:
+            raise PublisherStateError("Interrupted worker transaction is missing")
+        return transaction.release_sha
 
     def rollback_finish(self) -> None:
         if self.state.read_transaction() is None:

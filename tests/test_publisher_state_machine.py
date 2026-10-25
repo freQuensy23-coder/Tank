@@ -250,3 +250,29 @@ def test_present_empty_tank_marker_is_not_treated_as_absence(tmp_path: Path) -> 
     assert fixture.api.lookups == []
     assert fixture.api.started == []
     assert fixture.journal.read_transaction() is None
+
+
+def test_new_selected_release_discovers_actual_interrupted_older_transaction(tmp_path: Path) -> None:
+    fixture = rig(tmp_path, fault="NONE")
+    fixture.publisher.prepare()
+    interrupted = fixture.journal.read_transaction()
+    assert interrupted is not None
+    replacement = Publisher(
+        fixture.api,
+        FixedArtifacts(fixture.selected),
+        fixture.journal,
+        fixture.marker,
+        "c" * 40,
+        clock=lambda: 0.0,
+        policy=PublisherPolicy(build_timeout_s=600.0),
+    )
+    before = list(fixture.api.lookups)
+    assert replacement.recovery_release() == interrupted.release_sha
+    assert fixture.api.lookups == before
+    with pytest.raises(PublisherStateError, match="release mismatch"):
+        replacement.previous_release()
+    assert fixture.journal.read_transaction() == interrupted
+    fixture.publisher.rollback()
+    fixture.publisher.rollback_finish()
+    with pytest.raises(PublisherStateError, match="transaction is missing"):
+        replacement.recovery_release()

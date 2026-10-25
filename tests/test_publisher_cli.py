@@ -77,3 +77,24 @@ def test_worker_arguments_cannot_select_ambient_paths_or_timeout(action: str) ->
     assert result.returncode == 2
     for required in [b"--package", b"--state", b"--credential-file", b"--tank-marker", b"--build-timeout-s"]:
         assert required in result.stderr
+
+
+def test_forward_worker_refuses_old_transaction_identity_before_host_state(tmp_path: Path) -> None:
+    from tank.deployment.cli import Arguments, run
+    from tank.deployment.publisher import PublisherStateError
+
+    arguments = Arguments()
+    arguments.action = "activate"
+    arguments.orchestrator_sha = "a" * 40
+    arguments.selected_release_sha = "b" * 40
+    arguments.transaction_release_sha = "c" * 40
+    arguments.runtime_root = ROOT
+    arguments.package = tmp_path / "absent-package"
+    arguments.state = tmp_path / "absent-state"
+    arguments.credential_file = tmp_path / "absent-env"
+    arguments.tank_marker = tmp_path / "absent-marker"
+    arguments.build_timeout_s = 600.0
+    with pytest.raises(PublisherStateError, match="selected release identity"):
+        run(arguments)
+    assert not arguments.state.exists()
+    assert not arguments.package.exists()

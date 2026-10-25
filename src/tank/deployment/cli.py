@@ -26,6 +26,7 @@ class Arguments(argparse.Namespace):
     action: str
     orchestrator_sha: str
     selected_release_sha: str
+    transaction_release_sha: str
     runtime_root: Path
     package: Path
     state: Path
@@ -43,6 +44,7 @@ def parse_arguments() -> Arguments:
     common.add_argument("--selected-release-sha", required=True)
     common.add_argument("--runtime-root", required=True, type=Path)
     worker = argparse.ArgumentParser(add_help=False, parents=[common])
+    worker.add_argument("--transaction-release-sha", required=True)
     worker.add_argument("--package", required=True, type=Path)
     worker.add_argument("--state", required=True, type=Path)
     worker.add_argument("--credential-file", required=True, type=Path)
@@ -87,8 +89,13 @@ def run(arguments: Arguments) -> None:
         print(release.model_dump_json())
         return
     command = PublisherCommand.model_validate(
-        {"action": arguments.action, "release_sha": arguments.selected_release_sha}
+        {"action": arguments.action, "release_sha": arguments.transaction_release_sha}
     )
+    if (
+        command.action in {"prepare", "activate", "commit", "finish"}
+        and command.release_sha != invocation.selected_release_sha
+    ):
+        raise PublisherStateError("Forward publication requires the selected release identity")
     policy = PublisherPolicy(build_timeout_s=arguments.build_timeout_s)
     if os.geteuid() != 0:
         raise PublisherStateError("Production publisher must run as root")
