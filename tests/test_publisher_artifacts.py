@@ -8,7 +8,7 @@ from tank.contracts.json import DuplicateJsonKeyError
 from tank.deployment.artifact_contracts import PackageRequest, PublisherArtifactRuntime
 from tank.deployment.artifacts import ArtifactError, load_release, package_release
 from tank.deployment.contracts import SourceRelease
-from tank.deployment.runtime_contracts import RuntimeEvidence
+from tank.deployment.runtime_contracts import RuntimeDescriptor
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -64,7 +64,7 @@ def package_request(repository: Path, destination: Path) -> PackageRequest:
         publisher=PublisherArtifactRuntime(
             contract="tank-publisher-runtime-v1",
             image_repository="ghcr.io/frequensy23-coder/tank/tank",
-            runtime=RuntimeEvidence(
+            runtime=RuntimeDescriptor(
                 orchestrator_sha=orchestrator,
                 selected_release_sha=selected,
                 python_version="3.13.13",

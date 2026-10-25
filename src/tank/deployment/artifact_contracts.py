@@ -12,7 +12,7 @@ from tank.contracts.json import decode_unique_json
 from tank.contracts.scalars import OneInt
 from tank.deployment.api_contracts import ApifyProjection, SourcePath
 from tank.deployment.contracts import HistoricalRelease, SourceRelease
-from tank.deployment.runtime_contracts import RuntimeEvidence
+from tank.deployment.runtime_contracts import RuntimeDescriptor
 
 type ImageRepository = Annotated[
     str,
@@ -46,7 +46,7 @@ class SourceBundle(DomainModel):
 class PublisherArtifactRuntime(DomainModel):
     contract: Literal["tank-publisher-runtime-v1"]
     image_repository: ImageRepository
-    runtime: RuntimeEvidence
+    runtime: RuntimeDescriptor
 
     @property
     def image_reference(self) -> str:

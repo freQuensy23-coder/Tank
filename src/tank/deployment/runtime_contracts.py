@@ -11,10 +11,20 @@ class RuntimeInvocation(DomainModel):
     selected_release_sha: CommitSHA
 
 
-class RuntimeEvidence(DomainModel):
+class RuntimeDescriptor(DomainModel):
     orchestrator_sha: CommitSHA
     selected_release_sha: CommitSHA
     python_version: Literal["3.13.13"]
     uv_version: Literal["0.11.7"]
     lock_sha256: SHA256
     project_sha256: SHA256
+
+
+class RuntimeEvidence(DomainModel):
+    origin: Literal["IMAGE_RUNTIME"]
+    runtime: RuntimeDescriptor
+
+
+class SourceArchiveEvidence(DomainModel):
+    origin: Literal["SOURCE_ARCHIVE"]
+    runtime: RuntimeDescriptor

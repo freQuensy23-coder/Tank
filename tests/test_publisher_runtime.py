@@ -36,12 +36,14 @@ def test_runtime_probe_reports_actual_artifacts_without_cloud_state() -> None:
     result = runtime_probe(ROOT, "a" * 40, "a" * 40)
     assert result.returncode == 0, result.stderr.decode()
     evidence = RuntimeEvidence.model_validate_json(result.stdout)
-    assert evidence.orchestrator_sha == "a" * 40
-    assert evidence.selected_release_sha == "b" * 40
-    assert evidence.python_version == "3.13.13"
-    assert evidence.uv_version == "0.11.7"
-    assert evidence.lock_sha256 == hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
-    assert evidence.project_sha256 == hashlib.sha256((ROOT / "pyproject.toml").read_bytes()).hexdigest()
+    assert evidence.runtime.orchestrator_sha == "a" * 40
+    assert evidence.runtime.selected_release_sha == "b" * 40
+    assert evidence.runtime.python_version == "3.13.13"
+    assert evidence.runtime.uv_version == "0.11.7"
+    assert evidence.runtime.lock_sha256 == hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest()
+    assert (
+        evidence.runtime.project_sha256 == hashlib.sha256((ROOT / "pyproject.toml").read_bytes()).hexdigest()
+    )
 
 
 @pytest.mark.parametrize("image_sha", ["", "dev", "b" * 40])

@@ -33,6 +33,6 @@ def verify_package_runtime(
     if image != (declared.image_reference + "\n").encode("utf-8"):
         raise PublisherRuntimeError("Publisher image bootstrap does not match runtime artifact")
     actual = verify_runtime(invocation, runtime_root)
-    if actual != declared.runtime:
+    if actual.runtime != declared.runtime:
         raise PublisherRuntimeError("Publisher image metadata does not match runtime artifact")
     return declared

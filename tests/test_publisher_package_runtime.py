@@ -8,7 +8,7 @@ from tank.contracts.json import DuplicateJsonKeyError
 from tank.deployment.artifact_contracts import PublisherArtifactRuntime
 from tank.deployment.package_runtime import verify_package_runtime
 from tank.deployment.runtime import PublisherRuntimeError
-from tank.deployment.runtime_contracts import RuntimeEvidence, RuntimeInvocation
+from tank.deployment.runtime_contracts import RuntimeDescriptor, RuntimeInvocation
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,7 +17,7 @@ def declared_package(root: Path) -> PublisherArtifactRuntime:
     declared = PublisherArtifactRuntime(
         contract="tank-publisher-runtime-v1",
         image_repository="ghcr.io/example/project/tank",
-        runtime=RuntimeEvidence(
+        runtime=RuntimeDescriptor(
             orchestrator_sha="a" * 40,
             selected_release_sha="b" * 40,
             python_version="3.13.13",

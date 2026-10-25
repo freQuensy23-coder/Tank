@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from tank.deployment.runtime_contracts import RuntimeEvidence, RuntimeInvocation
+from tank.deployment.runtime_contracts import RuntimeDescriptor, RuntimeEvidence, RuntimeInvocation
 
 
 class PublisherRuntimeError(RuntimeError):
@@ -25,6 +25,10 @@ def verify_runtime(invocation: RuntimeInvocation, root: Path) -> RuntimeEvidence
     actual_identity = os.environ.get("TANK_BUILD_SHA")
     if actual_identity != invocation.orchestrator_sha:
         raise PublisherRuntimeError("Publisher image does not match the declared orchestrator")
+    return RuntimeEvidence(origin="IMAGE_RUNTIME", runtime=observe_runtime(invocation, root))
+
+
+def observe_runtime(invocation: RuntimeInvocation, root: Path) -> RuntimeDescriptor:
     python_version = platform.python_version()
     if python_version != "3.13.13":
         raise PublisherRuntimeError("Publisher runtime requires Python 3.13.13")
@@ -37,7 +41,7 @@ def verify_runtime(invocation: RuntimeInvocation, root: Path) -> RuntimeEvidence
     fields = result.stdout.decode("utf-8").split()
     if fields[:2] != ["uv", "0.11.7"]:
         raise PublisherRuntimeError("Publisher runtime requires uv 0.11.7")
-    return RuntimeEvidence(
+    return RuntimeDescriptor(
         orchestrator_sha=invocation.orchestrator_sha,
         selected_release_sha=invocation.selected_release_sha,
         python_version="3.13.13",
