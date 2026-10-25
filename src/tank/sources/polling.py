@@ -35,6 +35,7 @@ from tank.contracts.sources import (
 )
 from tank.ops_entry_errors import report_entry_errors
 from tank.sources.fetch import FetchedContent, NotModified
+from tank.sources.instrument_adapters import parse_instrument_page
 from tank.sources.instruments import InstrumentPage, instrument_changes
 from tank.util import TimeInput, new_id, parse_time, sha256
 
@@ -247,13 +248,12 @@ class SourcePoller:
         state.update(_http_read.receipt.storage_record())
         state["entry_errors"] = []
         if sid == "S14":
-            snapshot = InstrumentSnapshot.model_validate(
-                await asyncio.to_thread(parsers.instruments, payload, feed)
-            )
+            parsed_page = await asyncio.to_thread(parse_instrument_page, payload, feed)
+            snapshot = parsed_page.snapshot
             pages = [InstrumentPage(payload=payload, observed_at=state["fetched_at"])]
             found_on = dict.fromkeys(snapshot.root, 0)
             if feed.venue == "bybit":
-                cursor = json.loads(payload).get("result", {}).get("nextPageCursor")
+                cursor = parsed_page.next_cursor
                 cursors = set()
                 while cursor:
                     if cursor in cursors:
@@ -282,13 +282,12 @@ class SourcePoller:
                     page_state = _http_read.receipt.storage_record()
                     if page is None:
                         raise ValueError("Unexpected conditional paginated response")
-                    page_snapshot = InstrumentSnapshot.model_validate(
-                        await asyncio.to_thread(parsers.instruments, page, feed)
-                    )
+                    parsed_page = await asyncio.to_thread(parse_instrument_page, page, feed)
+                    page_snapshot = parsed_page.snapshot
                     snapshot = InstrumentSnapshot(root={**snapshot.root, **page_snapshot.root})
                     found_on.update(dict.fromkeys(page_snapshot.root, len(pages)))
                     pages.append(InstrumentPage(payload=page, observed_at=page_state["fetched_at"]))
-                    cursor = json.loads(page).get("result", {}).get("nextPageCursor")
+                    cursor = parsed_page.next_cursor
 
             snapshot_key = key + ":instruments"
             stored = await self.state(snapshot_key)
