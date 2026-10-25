@@ -20,7 +20,6 @@ from tank.sources.errors import (
     EntryIdentity,
     SourceEntryError,
     SourceErrorIdentity,
-    XDiagnostics,
     parse_entry_error,
 )
 from tank.sources.x_diagnostics import documents, sanitize
@@ -182,20 +181,14 @@ async def report_entry_errors(
                 diagnostics = wire["diagnostics"]
                 if not isinstance(diagnostics, dict):
                     raise ValueError("X diagnostics require a recorded object")
-                wire["diagnostics"] = XDiagnostics.model_validate(
-                    sanitize(diagnostics, settings.apify_api_token)
-                ).model_dump(mode="json")
+                wire["diagnostics"] = sanitize(diagnostics, settings.apify_api_token).model_dump(mode="json")
             parsed = parse_entry_error(wire)
         else:
             parsed = parse_entry_error(error)
             if isinstance(parsed, AccountEntryError) and parsed.diagnostics is not None:
                 parsed = AccountEntryError.model_validate(
                     parsed.model_copy(
-                        update={
-                            "diagnostics": XDiagnostics.model_validate(
-                                sanitize(parsed.diagnostics.model_dump(mode="json"), settings.apify_api_token)
-                            )
-                        }
+                        update={"diagnostics": sanitize(parsed.diagnostics, settings.apify_api_token)}
                     )
                 )
         pending.setdefault(error_key(source_id, feed_url, parsed), parsed)

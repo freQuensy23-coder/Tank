@@ -22,6 +22,7 @@ from tank.settings import Settings
 from tank.sources import SourceService
 from tank.sources.xsensor import XSensor
 from tank.storage import MemoryRepository
+from tank.util import sha256
 
 TOKEN = "synthetic-private-apify-key-Aa19"
 URL = "https://api.apify.com/v2/acts/test~reader/run-sync-get-dataset-items"
@@ -127,6 +128,9 @@ async def test_tainted_reply_with_diagnostics_keeps_only_sanitized_failure_evide
                             "status": 503,
                             "headers": {"content-type": "text/plain"},
                             "body": "before " + TOKEN + " after",
+                            "bodyBytes": len(("before " + TOKEN + " after").encode()),
+                            "bodySha256": sha256(("before " + TOKEN + " after").encode()),
+                            "redacted": False,
                             "bodyEncoding": "utf-8",
                             "bodyTruncated": False,
                         },

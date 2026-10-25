@@ -87,7 +87,7 @@ def diagnostic_projection(value: JsonValue, *, token: str, secrets: Sequence[str
         raw_diagnostics = original["diagnostics"]
         if not isinstance(raw_diagnostics, dict):
             raise ValueError("X response contains credential material")
-        approved = XDiagnostics.model_validate(sanitize(raw_diagnostics, token))
+        approved = sanitize(raw_diagnostics, token)
         wire = JsonDocument.validate_value(approved.model_dump(mode="json"))
         if contains_credential(wire, secrets):
             raise ValueError("X response contains credential material")
@@ -298,9 +298,7 @@ def scan(
         AccountFailure(
             account=account.handle,
             reason=account.error,
-            diagnostics=None
-            if account.diagnostics is None
-            else XDiagnostics.model_validate(sanitize(account.diagnostics, token)),
+            diagnostics=None if account.diagnostics is None else sanitize(account.diagnostics, token),
         )
         for account in run.accounts
         if isinstance(account, ApifyFailedAccount) and account_key(account.handle) in requested

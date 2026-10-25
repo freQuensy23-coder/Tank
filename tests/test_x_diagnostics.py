@@ -52,6 +52,9 @@ def diagnostics(
                     "body": body,
                     "bodyEncoding": encoding,
                     "bodyTruncated": False,
+                    "bodyBytes": len(base64.b64decode(body) if encoding == "base64" else body.encode()),
+                    "bodySha256": sha256(base64.b64decode(body) if encoding == "base64" else body.encode()),
+                    "redacted": False,
                 },
             }
             for index in range(1, 4)
@@ -169,13 +172,17 @@ def test_sanitization_removes_echoed_token_cookies_and_auth_headers(encoding):
         {"Authorization": "forbidden-auth", "Set-Cookie": "forbidden-cookie"}
     )
     clean = sanitize(evidence, "apify-secret")
-    serialized = json.dumps(clean)
-    payloads = b"".join(row["content"] for row in documents([{"account": "alice", "diagnostics": clean}]))
+    serialized = clean.model_dump_json()
+    payloads = b"".join(
+        row["content"]
+        for row in documents([{"account": "alice", "diagnostics": clean.model_dump(mode="json")}])
+    )
     assert all(
         secret.encode() not in payloads and secret not in serialized
         for secret in ("apify-secret", "forbidden-cookie", "forbidden-auth")
     )
-    assert clean["attempts"][0]["response"]["headers"] == {
+    assert clean.attempts[0].response is not None
+    assert clean.attempts[0].response.headers == {
         "content-type": "text/plain",
         "x-request-id": "one",
     }
@@ -301,6 +308,7 @@ async def test_oversized_response_uploads_bounded_prefix_and_explicit_truncation
     raw = b"a" * 2000050
     evidence = diagnostics(raw.decode())
     evidence["attempts"] = evidence["attempts"][:1]
+    evidence["attemptCount"] = 1
     evidence["attempts"][0]["response"].update(bodyTruncated=True, omittedWireBytes=50, wireBytes=2000000)
     notice = await notice_for(repo, evidence, tmp_path)
     captured = []
@@ -392,11 +400,12 @@ def test_sanitization_preserves_adjacent_nonsecret_bytes(encoding, raw, expected
     evidence = sanitize(
         diagnostics(base64.b64encode(raw).decode() if prefix else raw.decode(), encoding=encoding)
     )
-    response = evidence["attempts"][0]["response"]
-    content = base64.b64decode(response["body"]) if prefix else response["body"].encode()
+    response = evidence.attempts[0].response
+    assert response is not None
+    content = base64.b64decode(response.body) if prefix else response.body.encode()
     assert content == prefix + expected
-    assert response["bodySha256"] == sha256(prefix + expected)
-    assert response["redacted"]
+    assert response.bodySha256 == sha256(prefix + expected)
+    assert response.redacted
 
 
 @pytest.mark.parametrize("encoding", ["utf-8", "base64"])
