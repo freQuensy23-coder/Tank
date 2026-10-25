@@ -42,6 +42,8 @@ class Event(GitHubRecord):
 
 class Run(GitHubRecord):
     created_at: str
+    run_attempt: int = Field(ge=1)
+    run_started_at: str | None = None
 
 
 class Job(GitHubRecord):
@@ -75,6 +77,10 @@ def timestamp(value: str) -> float:
 
 
 def origin(event: Event, run: Run) -> float:
+    if run.run_attempt > 1:
+        if run.run_started_at is None:
+            raise ValueError("a rerun has no run-start timestamp")
+        return min(timestamp(run.created_at), timestamp(run.run_started_at))
     if event.action == "opened" and event.pull_request is not None:
         return timestamp(event.pull_request.created_at)
     return timestamp(run.created_at)
@@ -110,13 +116,21 @@ def watch(
     event: Event, api: Api, now: Callable[[], float] = time.time, sleep: Callable[[float], None] = time.sleep
 ) -> Outcome:
     run = Run.model_validate(api("", "GET", None))
+    attempt = run.run_attempt
+    attempt_path = f"/attempts/{attempt}" if attempt > 1 else ""
+    if attempt_path:
+        run = Run.model_validate(api(attempt_path, "GET", None))
+        if run.run_attempt != attempt:
+            raise ValueError("GitHub returned a different run attempt")
     start = origin(event, run)
     deadline = start + BUDGET_SECONDS
     while now() < deadline - FINISH_RESERVE_SECONDS:
         jobs: list[Job] = []
         page = 1
         while True:
-            response = JobPage.model_validate(api(f"/jobs?per_page=100&page={page}", "GET", deadline))
+            response = JobPage.model_validate(
+                api(f"{attempt_path}/jobs?per_page=100&page={page}", "GET", deadline)
+            )
             jobs.extend(response.jobs)
             if len(jobs) >= response.total_count:
                 break

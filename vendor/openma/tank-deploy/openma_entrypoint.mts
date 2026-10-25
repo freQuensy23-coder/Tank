@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
@@ -29,7 +29,7 @@ export interface EntrypointDependencies {
   system: NativeSystem;
   readBinary(path: string | URL): Buffer;
   resolve: DatabaseResolver;
-  launch(command: "pnpm", args: readonly ["start"], options: { stdio: "inherit"; env: NodeJS.ProcessEnv }): ChildPort;
+  launch(command: string, args: readonly [string, "src/index.ts"], options: { stdio: "inherit"; env: NodeJS.ProcessEnv; cwd?: string }): ChildPort;
   onSignal(signal: ForwardedSignal, listener: () => void): void;
   exit(code: number): void;
   reportError(message: string): void;
@@ -213,7 +213,7 @@ function productionDependencies(): EntrypointDependencies {
     system: { platform: process.platform, arch: process.arch },
     readBinary(path: string | URL): Buffer { return readFileSync(path); },
     resolve: lookup,
-    launch(command: "pnpm", args: readonly ["start"], options: { stdio: "inherit"; env: NodeJS.ProcessEnv }): ChildPort {
+    launch(command: string, args: readonly [string, "src/index.ts"], options: { stdio: "inherit"; env: NodeJS.ProcessEnv; cwd?: string }): ChildPort {
       const child = spawn(command, [...args], options);
       return {
         kill(signal: ForwardedSignal): void { child.kill(signal); },
@@ -250,7 +250,11 @@ export async function main(dependencies: EntrypointDependencies = productionDepe
   env.TANK_SANDBOX_ETHERSCAN_API_KEY = secret("etherscan_api_key");
   env.TANK_SANDBOX_JEV_PROVIDER = "openrouter";
   for (const variable of Object.values(SECRET_KEYS)) delete env[variable];
-  const child = dependencies.launch("pnpm", ["start"], { stdio: "inherit", env });
+  const child = dependencies.launch(
+    process.execPath,
+    [fileURLToPath(new URL("../apps/main-node/node_modules/tsx/dist/cli.mjs", import.meta.url)), "src/index.ts"],
+    { stdio: "inherit", env },
+  );
   for (const signal of SIGNALS) dependencies.onSignal(signal, (): void => child.kill(signal));
   child.onExit((code: number | null, signal: NodeJS.Signals | null): void => {
     if (code !== null) dependencies.exit(code);
