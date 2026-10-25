@@ -5,13 +5,14 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 
 import httpx
-from source_support import fixture_http_admission
 
 from tank.analysis.truth import MarketTruthService
 from tank.contracts.http_policy import HttpAdmission
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.sources import SourceApiLimitsConfiguration
+from tank.http_admission import ConfiguredHttpAdmission
 from tank.market.service import MarketService
+from tank.request_budget import RequestBudgets
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import Repository
@@ -31,6 +32,7 @@ async def operational_reaction_services(
     settings: Settings,
     *,
     versions: ResolvedVersionIdentity,
+    budgets: RequestBudgets,
 ) -> AsyncIterator[OperationalReactionServices]:
     """Provide actual dependencies; undeclared external HTTP is a fixture failure."""
     requests = 0
@@ -45,9 +47,10 @@ async def operational_reaction_services(
             http = await resources.enter_async_context(
                 httpx.AsyncClient(transport=httpx.MockTransport(refuse))
             )
-            admission = fixture_http_admission(
+            admission = ConfiguredHttpAdmission(
                 policy=SourceApiLimitsConfiguration.model_validate(settings.load_config("api_limits")),
                 versions=versions,
+                budgets=budgets,
             )
             market = MarketService(repo, settings, versions=versions, http=http, admission=admission)
             resources.push_async_callback(market.close)
