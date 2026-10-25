@@ -452,3 +452,49 @@ There are no approximate assertions. Together with beta, condition calculations,
 START fixtures and formula vectors,59 unit cases pass in7.68s; the new regression
 module passes strict mypy and Ruff/format. HTTP work remains preserved separately
 at immutable stash55c26d818e567184ecf101c9b5a1ca2e8ebd6733.
+
+### Required Python HTTP/page activation API (held for caller cohort)
+
+MarketService now requires admission: HttpAdmission. Every actual built request,
+redirect and retry passes that port through send_admitted, and provider feedback
+calls the same injected port.block with the actual request and actual Retry-After
+deadline. The old shared-global backend inspection and undocumented generic0.08s/
+Etherscan0.35s local pacing are removed. The existing priority/in-flight gate remains
+an operational concurrency bound. Go-owned exchange URLs still refuse Python I/O,
+including redirects; Go transport is never inferred merely from a host label.
+A missing/invalid Retry-After refuses the retry instead of inventing60s; an actual
+120s instruction is retained without a60s clamp. Generic418 does not invent an
+exchange ban classification; its actual instruction can block the host and its
+status remains an error.
+
+EventToolService now requires pages: LivePageAccess | RecordedPageAccess. A live
+composition requires actual admission; a recorded composition requires its explicit
+reader. Recorded fetch refusal happens before any Go enqueue or Python client
+creation. FetchPageRequest validates URL and the actual published optional20s
+budget default with positive/max20 constraints; explicit invalid zero is not replaced
+by20. The retired untyped borrowed-client facade is removed. Actual outgoing client
+query credentials participate in admission but never replace the safe persisted
+incoming evidence URL. Live errors expose host/status/type, not credential URLs.
+The live page receipt requires a real COLLECTION_ONLY instant. Unknown Content-Type
+remains None at the read boundary; application/octet-stream is only the explicit
+storage format for absent header metadata. Go capture remains its existing separate
+queue/result provenance path and does not claim a Python live-page receipt.
+
+New Python page rows retain typed page_read_provenance; source model historical
+omission remains omitted. Recorded original-body provenance must match both actual
+read bytes and stored raw_sha256. Search results and the separate Go path legitimately
+lack this Python-page provenance. No missing source header or occurrence clock is
+reconstructed. Complete external captured tool results remain the existing offline
+replay input: recorded_page_access binds verified input/result-catalog identity and
+refuses unavailable original page bytes. The unused diagnostic JSON-response callback
+and its HTTP client are removed; native replay verifies the supplied results-only
+reader matches its actual input before proceeding.
+
+Twelve admitted-transport/page/actual-caller cases pass in1.62s, including actual
+Market120s feedback wait, missing-instruction refusal, actual EventTool Etherscan
+client credential admission and safe stored URL, recorded raw-byte refusal with
+live admission/block/wait/client traps, actual binary digest/lifetime and credential-
+safe HTTP error behavior. Five new helper/domain/test modules remain independently
+strict-clean. Existing constructor consumers and actual retained-reader proof are
+still being migrated/qualified; parent must hold this activation until companions.
+The clean b123/1459 scheduling/statistical boundary remains independently mergeable.

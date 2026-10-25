@@ -1,5 +1,6 @@
 """Explicit live HTTP and verified recorded-evidence page composition."""
 
+import asyncio
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Never, Protocol
@@ -48,21 +49,28 @@ async def read_live_page(
     user_agent: str,
     guard: RequestGuard,
 ) -> PageRead:
-    async with AsyncExitStack() as resources:
+    async with asyncio.timeout(timeout_s), AsyncExitStack() as resources:
         actual = client
         if actual is None:
             actual = await resources.enter_async_context(
                 httpx.AsyncClient(timeout=timeout_s, follow_redirects=False)
             )
         request = actual.build_request("GET", url, headers={"User-Agent": user_agent})
-        response = await send_admitted(actual, access.admission, request, guard, stream=True)
+        try:
+            response = await send_admitted(actual, access.admission, request, guard, stream=True)
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"{request.url.host}: {type(exc).__name__}") from None
         resources.push_async_callback(response.aclose)
-        response.raise_for_status()
+        if response.is_error:
+            raise RuntimeError(f"{response.request.url.host}: HTTP {response.status_code}")
         body = bytearray()
-        async for chunk in response.aiter_bytes():
-            body.extend(chunk)
-            if len(body) > 2 * 1024 * 1024:
-                raise ValueError("Page exceeds 2 MB")
+        try:
+            async for chunk in response.aiter_bytes():
+                body.extend(chunk)
+                if len(body) > 2 * 1024 * 1024:
+                    raise ValueError("Page exceeds 2 MB")
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"{response.request.url.host}: {type(exc).__name__}") from None
         content = bytes(body)
         return PageRead(
             body=content,

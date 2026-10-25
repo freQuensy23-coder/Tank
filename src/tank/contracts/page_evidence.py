@@ -11,9 +11,20 @@ from tank.util import sha256
 type PageDigest = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
 
 
+class FetchPageRequest(DomainModel):
+    url: str = Field(min_length=1)
+    timeout_s: float = Field(default=20.0, gt=0, le=20)
+
+
 class LivePageProvenance(DomainModel):
     mode: Literal["LIVE_RESPONSE"]
     received_at: Timestamp
+
+    @model_validator(mode="after")
+    def actual_receipt(self) -> Self:
+        if self.received_at.value is None or self.received_at.precision != "COLLECTION_ONLY":
+            raise ValueError("Live page receipt requires its actual collection instant")
+        return self
 
 
 class RecordedBodyProvenance(DomainModel):
