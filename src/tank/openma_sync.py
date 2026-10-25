@@ -13,8 +13,11 @@ from tank.contracts import DomainModel
 from tank.contracts.json import decode_json
 from tank.contracts.openma import (
     AgentModelSelection,
+    AgentSkillReference,
     AgentSyncResult,
-    AgentVersion,
+    AgentUpdateReceipt,
+    AgentVersionIdentity,
+    AnthropicSkillVersion,
     BuiltinToolObservation,
     CustomToolObservation,
     EnvironmentNetworkObservation,
@@ -39,6 +42,7 @@ from tank.contracts.openma import (
     ModelCardIdentity,
     ModelCardPiConfiguration,
     OpenMAConfiguration,
+    OpenMAContractViolation,
     OpenMACredentials,
     OpenMAOperations,
     OpenMASyncPlan,
@@ -47,6 +51,7 @@ from tank.contracts.openma import (
     PublishedSkill,
     RegisteredSkill,
     SkillFile,
+    SkillResourceIdentity,
     ToolEnablement,
     ToolObservation,
     ToolSwitch,
@@ -259,6 +264,8 @@ def _registered_metadata(agent: dict[str, JsonValue]) -> dict[ManagedSkillName, 
     if value is None:
         return {}
     records = _object(decode_json(_text(value)))
+    if set(records).difference(SKILLS):
+        raise OpenMAContractViolation("OpenMA managed skill metadata contains an unsupported role")
     result: dict[ManagedSkillName, RegisteredSkill] = {}
     for name in SKILLS:
         if name in records:
@@ -266,7 +273,7 @@ def _registered_metadata(agent: dict[str, JsonValue]) -> dict[ManagedSkillName, 
             result[name] = RegisteredSkill.model_validate(
                 {
                     "skill_id": record["skill_id"],
-                    "version": _version(record["version"]),
+                    "version": _text(record["version"]),
                     "sha256": record.get("sha256"),
                 }
             )
@@ -309,28 +316,42 @@ def _agent_observation(value: JsonValue) -> ManagedAgentObservation:
     row = _object(value)
     model = row.get("model")
     model_id = _object(model).get("id") if isinstance(model, dict) else model
+    effort = model.get("effort") if isinstance(model, dict) else None
+    observed_effort = _optional_text(effort.get("type") if isinstance(effort, dict) else effort)
     tools = row.get("tools")
     skills = row.get("skills")
-    references: list[ManagedSkillVersion] | None = None
+    references: list[AgentSkillReference] | None = None
     if skills is not None:
         references = []
         for raw in _array(skills):
             skill = _object(raw)
-            references.append(
-                ManagedSkillVersion(
-                    type="custom", skill_id=_text(skill["skill_id"]), version=_version(skill["version"])
+            kind = _text(skill["type"])
+            if kind == "custom":
+                references.append(
+                    ManagedSkillVersion(
+                        type="custom", skill_id=_text(skill["skill_id"]), version=_text(skill["version"])
+                    )
                 )
-            )
+            elif kind == "anthropic":
+                references.append(
+                    AnthropicSkillVersion(
+                        type="anthropic", skill_id=_text(skill["skill_id"]), version=_text(skill["version"])
+                    )
+                )
+            else:
+                raise OpenMAContractViolation("OpenMA returned an unsupported skill reference type")
     return ManagedAgentObservation.model_validate(
         {
             "id": row["id"],
             "version": row["version"],
             "name": row.get("name"),
             "model_id": model_id,
+            "model_effort": observed_effort,
             "system": row.get("system"),
             "tools": None if tools is None else [_tool_observation(tool) for tool in _array(tools)],
             "skills": references,
             "registered_skills": _registered_metadata(row),
+            "registrations_declared": "tank_skills" in _provider_metadata(row),
             "skill_mount": _provider_metadata(row).get("skill_mount"),
             "retained_metadata": {
                 key: entry
@@ -415,13 +436,28 @@ class OpenMAApi:
 
     async def publish_agent(
         self, identity: str, version: int, wanted: ManagedAgentDefinition
-    ) -> AgentVersion:
+    ) -> AgentUpdateReceipt:
         payload = _wire(wanted)
         payload["metadata"] = {**wanted.metadata.retained_entries, **_wire(wanted.metadata)}
-        response = _object(
-            _data(await self.client.post("/v1/agents/" + identity, json={**payload, "version": version}))
-        )
-        return AgentVersion.model_validate({"version": response["version"]})
+        response = await self.client.post("/v1/agents/" + identity, json={**payload, "version": version})
+        response.raise_for_status()
+        try:
+            body = _object(_data(response))
+            published = AgentVersionIdentity.model_validate({"id": body["id"], "version": body["version"]})
+            if published.id != identity or published.version <= version:
+                raise OpenMAContractViolation("OpenMA did not identify the requested new agent version")
+            read_back = await self.client.get("/v1/agents/" + identity, params={"version": published.version})
+            observed = _agent_observation(_data(read_back))
+            if observed.id != published.id or observed.version != published.version:
+                raise OpenMAContractViolation("OpenMA read-back differs from the published agent version")
+            if observed.model_id is None or observed.model_effort is None:
+                raise OpenMAContractViolation("OpenMA did not report the resulting model binding")
+            selection = AgentModelSelection.model_validate(
+                {"id": observed.model_id, "effort": observed.model_effort}
+            )
+            return AgentUpdateReceipt(id=observed.id, version=observed.version, model=selection)
+        except (httpx.HTTPError, KeyError, ValueError):
+            raise OpenMAContractViolation("OpenMA did not provide a typed update confirmation") from None
 
     async def environment(self, identity: str) -> ManagedEnvironmentObservation:
         observed = _environment_observation(_data(await self.client.get("/v1/environments/" + identity)))
@@ -434,13 +470,24 @@ def registered_skills(
     agents: dict[ManagedAgentName, ManagedAgentObservation],
 ) -> dict[ManagedSkillName, RegisteredSkill]:
     known: dict[ManagedSkillName, RegisteredSkill] = {}
+    owners: dict[str, ManagedSkillName] = {}
     for name, agent in agents.items():
         if agent.skills is not None:
-            for skill, entry in zip(AGENTS[name].skills, agent.skills, strict=False):
-                known[skill] = RegisteredSkill(skill_id=entry.skill_id, version=entry.version, sha256=None)
-        for skill in AGENTS[name].skills:
-            if skill in agent.registered_skills:
-                known[skill] = agent.registered_skills[skill]
+            identities = [
+                SkillResourceIdentity(type=reference.type, skill_id=reference.skill_id)
+                for reference in agent.skills
+            ]
+            if len(identities) != len(set(identities)):
+                raise OpenMAContractViolation("OpenMA agent repeats a skill resource identity")
+            if identities and not agent.registrations_declared:
+                raise OpenMAContractViolation("OpenMA skill role ownership is not explicitly declared")
+        if set(agent.registered_skills).difference(AGENTS[name].skills):
+            raise OpenMAContractViolation("OpenMA managed skill metadata belongs to another agent role")
+        for skill, entry in agent.registered_skills.items():
+            if entry.skill_id in owners and owners[entry.skill_id] != skill:
+                raise OpenMAContractViolation("OpenMA skill resource is bound to multiple managed roles")
+            owners[entry.skill_id] = skill
+            known[skill] = entry
     return known
 
 
@@ -449,6 +496,7 @@ def agent_payload(
     name: ManagedAgentName,
     skills: dict[ManagedSkillName, RegisteredSkill],
     retained_metadata: dict[str, str],
+    retained_skills: list[AgentSkillReference],
 ) -> ManagedAgentDefinition:
     selected = {skill: skills[skill] for skill in AGENTS[name].skills}
     return ManagedAgentDefinition(
@@ -457,7 +505,7 @@ def agent_payload(
         oma=PiHarness(harness="pi"),
         system=SYSTEM,
         tools=plan.agent_tools[name],
-        skills=[skills[skill].reference() for skill in AGENTS[name].skills],
+        skills=[*retained_skills, *(skills[skill].reference() for skill in AGENTS[name].skills)],
         metadata=ManagedAgentMetadata(
             skill_mount="inline",
             tank_skills=canonical_json({str(skill): _wire(record) for skill, record in selected.items()}),
@@ -487,11 +535,12 @@ def _agent_current(
     return (
         observed.name == wanted.name
         and observed.model_id == wanted.model.id
+        and observed.model_effort == wanted.model.effort
         and observed.system == wanted.system
         and observed.skill_mount == wanted.metadata.skill_mount
         and _tools_key(observed.tools) == _tools_key(desired_tools)
-        and sorted(observed.skills, key=lambda skill: (skill.skill_id, skill.version))
-        == sorted(wanted.skills, key=lambda skill: (skill.skill_id, skill.version))
+        and sorted(observed.skills, key=lambda skill: (skill.type, skill.skill_id, skill.version))
+        == sorted(wanted.skills, key=lambda skill: (skill.type, skill.skill_id, skill.version))
         and observed.registered_skills == expected_skills
     )
 
@@ -521,9 +570,9 @@ class OpenMASynchronizer:
         configuration = self.plan.configuration
         cards = await self.api.cards()
         existing = next((card for card in cards if card.model_id == configuration.model_id), None)
-        await self.api.publish_card(model_card(configuration), None if existing is None else existing.id)
         agents = {name: await self.api.agent(configuration.agent_id_for(name)) for name in AGENTS}
         skills = registered_skills(agents)
+        await self.api.publish_card(model_card(configuration), None if existing is None else existing.id)
         skill_report: dict[ManagedSkillName, Literal["CURRENT", "NEW_VERSION", "CREATED"]] = {}
         for name in SKILLS:
             files = self.plan.skill_files[name]
@@ -539,7 +588,18 @@ class OpenMASynchronizer:
             skill_report[name] = "CREATED" if current is None else "NEW_VERSION"
         agent_report: dict[ManagedAgentName, AgentSyncResult] = {}
         for name, binding in AGENTS.items():
-            wanted = agent_payload(self.plan, name, skills, agents[name].retained_metadata)
+            owned_ids = {entry.skill_id for entry in agents[name].registered_skills.values()}
+            references = agents[name].skills
+            retained = (
+                [
+                    reference
+                    for reference in references
+                    if reference.type != "custom" or reference.skill_id not in owned_ids
+                ]
+                if references is not None
+                else []
+            )
+            wanted = agent_payload(self.plan, name, skills, agents[name].retained_metadata, retained)
             expected = {skill: skills[skill] for skill in binding.skills}
             if _agent_current(agents[name], wanted, expected):
                 agent_report[name] = AgentSyncResult(status="CURRENT", version=agents[name].version)
@@ -547,6 +607,12 @@ class OpenMASynchronizer:
             updated = await self.api.publish_agent(
                 configuration.agent_id_for(name), agents[name].version, wanted
             )
+            if (
+                updated.id != configuration.agent_id_for(name)
+                or updated.version <= agents[name].version
+                or updated.model != wanted.model
+            ):
+                raise OpenMAContractViolation("OpenMA did not confirm the requested new agent binding")
             agent_report[name] = AgentSyncResult(status="UPDATED", version=updated.version)
         environment_report: dict[ManagedEnvironmentName, Literal["CURRENT", "DIFFERS"]] = {}
         for environment_name, environment_binding in ENVIRONMENTS.items():

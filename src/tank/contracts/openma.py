@@ -12,6 +12,7 @@ from tank.contracts.tool_schema import ToolDefinition
 type ManagedSkillName = Literal["tank-event-analyst", "tank-data", "tank-scout-reviewer"]
 type ManagedAgentName = Literal["tank-event-analyst", "tank-scout-reviewer"]
 type ManagedEnvironmentName = Literal["tank-analysis", "tank-replay"]
+type ManagedAgentEffort = Literal["low", "medium", "high", "xhigh", "max"]
 
 
 class OpenMAModelPrices(DomainModel):
@@ -30,7 +31,7 @@ class OpenMAConfiguration(DomainModel):
     release: str = Field(pattern=r"^[a-f0-9]{40}$")
     prompt_version: str = Field(min_length=1)
     model_id: str = Field(min_length=1)
-    reasoning_effort: str = Field(min_length=1)
+    reasoning_effort: ManagedAgentEffort
     model_prices: dict[str, OpenMAModelPrices]
     pricing_basis: str = Field(min_length=1)
     model_access: Literal["CHATGPT_SUBSCRIPTION_CODEX_OAUTH"]
@@ -103,10 +104,26 @@ class ManagedCustomTool(ToolDefinition):
 type ManagedTool = ManagedBuiltinToolset | ManagedCustomTool
 
 
-class ManagedSkillVersion(ResolvedSkillVersion):
-    type: Literal["custom"]
+class ProviderSkillVersion(ResolvedSkillVersion):
+    type: Literal["custom", "anthropic"]
     skill_id: str = Field(min_length=1)
     version: str = Field(min_length=1)
+
+
+class ManagedSkillVersion(ProviderSkillVersion):
+    type: Literal["custom"]
+
+
+class AnthropicSkillVersion(ProviderSkillVersion):
+    type: Literal["anthropic"]
+
+
+type AgentSkillReference = ManagedSkillVersion | AnthropicSkillVersion
+
+
+class SkillResourceIdentity(DomainModel):
+    type: Literal["custom", "anthropic"]
+    skill_id: str = Field(min_length=1)
 
 
 class RegisteredSkill(DomainModel):
@@ -142,7 +159,7 @@ class ManagedEnvironmentBinding(DomainModel):
 
 class AgentModelSelection(DomainModel):
     id: str = Field(min_length=1)
-    effort: str = Field(min_length=1)
+    effort: ManagedAgentEffort
 
 
 class PiHarness(DomainModel):
@@ -167,7 +184,7 @@ class ManagedAgentDefinition(DomainModel):
     oma: PiHarness = Field(serialization_alias="_oma")
     system: str = Field(min_length=1)
     tools: list[ManagedTool]
-    skills: list[ManagedSkillVersion]
+    skills: list[AgentSkillReference]
     metadata: ManagedAgentMetadata
 
 
@@ -240,10 +257,12 @@ class ManagedAgentObservation(DomainModel):
     version: int = Field(ge=1)
     name: str | None
     model_id: str | None = Field(min_length=1)
+    model_effort: str | None
     system: str | None
     tools: list[ToolObservation] | None
-    skills: list[ManagedSkillVersion] | None
+    skills: list[AgentSkillReference] | None
     registered_skills: dict[ManagedSkillName, RegisteredSkill]
+    registrations_declared: bool
     retained_metadata: dict[str, str] = Field(repr=False)
     skill_mount: str | None
 
@@ -271,8 +290,17 @@ class PublishedSkill(DomainModel):
     version: str = Field(min_length=1)
 
 
-class AgentVersion(DomainModel):
+class OpenMAContractViolation(RuntimeError):
+    """A successful remote write did not confirm the declared immutable agent binding."""
+
+
+class AgentVersionIdentity(DomainModel):
+    id: str = Field(min_length=1)
     version: int = Field(ge=1)
+
+
+class AgentUpdateReceipt(AgentVersionIdentity):
+    model: AgentModelSelection
 
 
 class AgentSyncResult(DomainModel):
@@ -327,5 +355,5 @@ class OpenMAOperations(Protocol):
     ) -> PublishedSkill: ...
     async def publish_agent(
         self, identity: str, version: int, wanted: ManagedAgentDefinition
-    ) -> AgentVersion: ...
+    ) -> AgentUpdateReceipt: ...
     async def environment(self, identity: str) -> ManagedEnvironmentObservation: ...
