@@ -355,7 +355,7 @@ Inside `market`, one task per WebSocket connection: messages → per-venue parse
 
 ### 6.3 Re-evaluation
 
-A new item about the event reaches its session as ITEM_ADDED; a fired metric condition, a milestone outcome or an expiring call reaches it as CONDITION_FIRED, MILESTONE or CALL_EXPIRED. The ordinary analysis refreshes Market Truth and decisions as needed. UPDATE requires an ordinary original: after a PRELIMINARY-only history, the first ordinary publication is still FULL or STRUCTURAL_SHOCK PARTIAL in the same Telegram thread.
+A new item about the event reaches its session as ITEM_ADDED; a fired metric condition, a milestone outcome or an expiring call reaches it as CONDITION_FIRED, MILESTONE or CALL_EXPIRED. The ordinary analysis refreshes Market Truth and decisions as needed. UPDATE requires an ordinary original: after a PRELIMINARY-only history, the first ordinary publication is still FULL or STRUCTURAL_SHOCK PARTIAL in the same Telegram thread. An official denial of a PRELIMINARY-only event is published as a PRELIMINARY denial correction in that thread; the session is archived only after it is delivered.
 
 A timed review also uses CONDITION_FIRED, carrying review_at and review_question instead of a token prerequisite. The analyst investigates that question, records new evidence and reassesses the same event before deciding whether to publish. The scheduler uses the existing ana.watch_conditions rows and AGENT_MESSAGE jobs; no lead table, new scheduler or automatic recurring research loop is added. Each review fires once or ends by cancellation/expiry.
 

@@ -115,7 +115,9 @@ def alert_gate(event, assessment, *, previous=None, decisions=None, now=None):
     return True, "INITIAL"
 
 
-def preliminary_gate(event, assessment):
+def preliminary_gate(event, assessment, previous=None):
+    if event.get("lifecycle") == "INVALIDATED" and previous and _new_fatal(event, assessment, previous):
+        return True, "PRELIMINARY_CORRECTION"
     if assessment.get("class", assessment.get("ems_class")) != "MATERIAL":
         return False, "PRELIMINARY_REQUIRES_MATERIAL"
     if event.get("lifecycle") in {"CLOSED", "MERGED", "INVALIDATED"}:
@@ -426,7 +428,9 @@ def compose_card(
         "WHY IT MATTERS",
     ]
     if kind == "PRELIMINARY":
-        lines[0] = "PRELIMINARY · " + lines[0]
+        lines[0] = (
+            "PRELIMINARY · DENIED · " if event.get("lifecycle") == "INVALIDATED" else "PRELIMINARY · "
+        ) + lines[0]
     why = list(why or [])
     changed = _why_content(why[0], "What changed") if why else "n/a (change description unavailable)"
     economic = _why_content(why[1], "Economic effect") if len(why) > 1 else "not estimable"

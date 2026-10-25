@@ -2022,11 +2022,14 @@ class SessionService:
             ):
                 return False
         ordinary_alerts = [alert for alert in alerts if alert.get("kind") != "PRELIMINARY"]
-        if state == "INVALIDATED" and ordinary_alerts:
+        chain = ordinary_alerts or alerts
+        if state == "INVALIDATED" and chain:
             if not event.get("session_finalized_at"):
                 return False
-            latest = max(ordinary_alerts, key=lambda alert: alert.get("version", 0))
-            if latest.get("kind") != "UPDATE":
+            latest = max(chain, key=lambda alert: alert.get("version", 0))
+            if latest.get("kind") != ("UPDATE" if ordinary_alerts else "PRELIMINARY") or (
+                not ordinary_alerts and not latest.get("terminal_correction")
+            ):
                 return False
             deliveries = [
                 row

@@ -638,6 +638,13 @@ class DeliveryService:
                         key=subject,
                     )
                     if record.get("kind") == "PRELIMINARY":
+                        event = await self.repo.get("evt.events", record["event_id"])
+                        if (
+                            event
+                            and event.get("lifecycle") == "INVALIDATED"
+                            and record.get("terminal_correction")
+                        ):
+                            await self._finalize_invalidated(event, record)
                         return None
                     await self._activate_calls(record, sent_at)
                     event = await self.repo.get("evt.events", record["event_id"])
@@ -686,16 +693,7 @@ class DeliveryService:
                             "ana.calls", filters={"event_id": event["event_id"], "status": "OPEN"}
                         )
                         if not open_calls:
-                            await self.repo.put(
-                                "evt.events",
-                                event["event_id"],
-                                {
-                                    **event,
-                                    **collection_clock(utcnow()).fields("session_finalized_at"),
-                                    "terminal_alert_id": record["alert_id"],
-                                    "terminal_alert_version": record["version"],
-                                },
-                            )
+                            await self._finalize_invalidated(event, record)
                 if not notice and record.get("milestone_resolution_id"):
                     event = await self.repo.get("evt.events", record["event_id"])
                     if event and event.get("milestone_resolution_id") == record["milestone_resolution_id"]:
@@ -725,6 +723,19 @@ class DeliveryService:
                                 **collection_clock(utcnow()).fields("last_expiry_notice_at"),
                             },
                         )
+
+    async def _finalize_invalidated(self, event, record):
+        """The delivered denial correction lets the invalidated event's session finish."""
+        await self.repo.put(
+            "evt.events",
+            event["event_id"],
+            {
+                **event,
+                **collection_clock(utcnow()).fields("session_finalized_at"),
+                "terminal_alert_id": record["alert_id"],
+                "terminal_alert_version": record["version"],
+            },
+        )
 
     async def _activate_calls(self, alert, sent_at=None):
         sent_at = sent_at or collection_clock(utcnow())

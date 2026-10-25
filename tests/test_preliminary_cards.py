@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from test_event_tools import seed
+from test_event_tools import extraction, seed
 
 from tank.analysis.cards import preliminary_gate
 from tank.delivery import DeliveryService
@@ -411,35 +411,94 @@ async def test_fired_review_keeps_old_event_open_for_queued_analysis(service, st
     ] == "FIRED"
 
 
-async def test_invalidated_preliminary_only_event_can_archive_after_delivery_settles(service):
+async def deny(service, eid):
+    await service.repo.put(
+        "ingest.source_items",
+        "denial",
+        dict(
+            item_id="denial",
+            source_id="S01",
+            text="The partner denies any integration",
+            source_class="PRIMARY",
+            observed_at=iso(utcnow() + timedelta(seconds=2)),
+        ),
+    )
+    x = extraction()
+    x["claims"][0].update(verified=True, quote="The partner denies any integration")
+    await service.dispatch(
+        "add_observation",
+        dict(
+            event_id=eid,
+            item_id="denial",
+            link="DENIAL",
+            certainty="HIGH",
+            certainty_reason="Official statement of the named partner",
+            claims=x["claims"],
+            public_at=x["public_at"],
+            freshness="FRESH",
+        ),
+        {},
+    )
+    return await service.repo.get("evt.events", eid)
+
+
+async def test_denied_preliminary_gets_one_immediate_correction_in_its_thread(service):
     from test_agents import settings
 
     from tank.agents.sessions import SessionService
 
     args = await lead(service)
-    result = await service.dispatch("publish_card", args, {})
-    event = await service.repo.get("evt.events", args["event_id"])
-    event["lifecycle"] = "INVALIDATED"
-    session = {"session_id": "s", "event_id": args["event_id"], "runtime_status": "IDLE"}
+    eid = args["event_id"]
+    first = await service.dispatch("publish_card", args, {})
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 40 + len(requests)}})
+
     opts, _ = settings()
-    async with httpx.AsyncClient() as http:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        await deliver(service.repo, http, first)
+        event = await deny(service, eid)
+        assert event["lifecycle"] == "INVALIDATED"
+        session = {"session_id": "s", "event_id": eid, "runtime_status": "IDLE"}
         sessions = SessionService(service.repo, opts, None, http=http)
+        for job in await service.repo.list("ops.jobs"):
+            await service.repo.put("ops.jobs", job["job_id"], {**job, "status": "DONE"})
         assert not await sessions.can_archive(session, event)
+        update = await service.dispatch("publish_card", {**args, "kind": "UPDATE"}, {})
+        assert update["reason"] == "BELOW_MAJOR"
+        correction = {
+            **{key: value for key, value in args.items() if key != "unconfirmed"},
+            "verdict": "The partner denied the integration",
+            "why": ["The partner officially denied any integration."],
+        }
+        result = await service.dispatch("publish_card", correction, {})
+        assert result["published"]
+        assert (result["alert_id"], result["version"]) == (first["alert_id"], 2)
+        row = await service.repo.get("out.alerts", f"{first['alert_id']}:2")
+        assert row["card_text"].startswith("PRELIMINARY · DENIED · MATERIAL")
+        assert row["terminal_correction"]
+        assert row["delivery_immediate"]
+        again = await service.dispatch("publish_card", correction, {})
+        assert again["reason"] == "TERMINAL_EVENT"
+        await deliver(service.repo, http, result)
+        event = await service.repo.get("evt.events", eid)
+        assert event["session_finalized_at"]
         for job in await service.repo.list("ops.jobs"):
             await service.repo.put("ops.jobs", job["job_id"], {**job, "status": "DONE"})
         assert await sessions.can_archive(session, event)
-        await service.repo.put(
-            "out.alerts",
-            f"{result['alert_id']}:2",
-            {
-                "alert_id": result["alert_id"],
-                "version": 2,
-                "event_id": args["event_id"],
-                "kind": "FULL",
-            },
-            immutable=True,
-        )
-        assert not await sessions.can_archive(session, event)
+    assert len(requests) == 2
+    assert requests[1]["reply_parameters"]["message_id"] == 41
+
+
+async def test_invalidated_event_without_preliminary_card_refuses_correction(service):
+    args = await lead(service)
+    await deny(service, args["event_id"])
+    args.pop("unconfirmed")
+    result = await service.dispatch("publish_card", args, {})
+    assert result["reason"] == "TERMINAL_EVENT"
+    assert not await service.repo.list("out.alerts")
 
 
 @pytest.mark.integration

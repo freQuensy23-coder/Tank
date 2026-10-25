@@ -38,7 +38,7 @@
       "minLength": 1,
       "maxLength": 500,
       "pattern": "\\S",
-      "description": "PRELIMINARY only: explicitly state what remains unconfirmed. Required for a preliminary card."
+      "description": "PRELIMINARY only: explicitly state what remains unconfirmed. Required for a preliminary card, except the denial correction of an invalidated event."
     }
   },
   "required": [
@@ -47,5 +47,5 @@
     "verdict",
     "why"
   ],
-  "description": "Request publication using the canonical template. Supply a plain-language WHAT explanation, a neutral factual headline verdict and 2\u20133 WHY bullets, following skill wording rules L1\u2013L12. Tank applies lifecycle, alert eligibility and update policy, composes structured values from authoritative MarketTruth/Decision outputs, stores immutable evidence and queues delivery. Tank does not lint or repair prose and does not require a fixed tool-call order. Returns publication status or refusal for the deterministic publication gate. An accepted ordinary UPDATE during cooldown is persisted and queued until delivery_not_before; published=true with delivery_status=QUEUED is not a transport acknowledgment. STALE state-change updates are not published. Delivery sends the accepted immutable payload without a second semantic eligibility judgment. PRELIMINARY is a sourced MATERIAL lead, including LOW certainty, without MarketTruth or decisions. Supply what, at least one why bullet, and unconfirmed. It is stored and delivered in the event thread but does not satisfy ordinary publication requirements."
+  "description": "Request publication using the canonical template. Supply a plain-language WHAT explanation, a neutral factual headline verdict and 2\u20133 WHY bullets, following skill wording rules L1\u2013L12. Tank applies lifecycle, alert eligibility and update policy, composes structured values from authoritative MarketTruth/Decision outputs, stores immutable evidence and queues delivery. Tank does not lint or repair prose and does not require a fixed tool-call order. Returns publication status or refusal for the deterministic publication gate. An accepted ordinary UPDATE during cooldown is persisted and queued until delivery_not_before; published=true with delivery_status=QUEUED is not a transport acknowledgment. STALE state-change updates are not published. Delivery sends the accepted immutable payload without a second semantic eligibility judgment. PRELIMINARY is a sourced MATERIAL lead, including LOW certainty, without MarketTruth or decisions. Supply what, at least one why bullet, and unconfirmed. It is stored and delivered in the event thread but does not satisfy ordinary publication requirements. After an official denial invalidates an event that has only PRELIMINARY cards, one PRELIMINARY denial correction is accepted at once, without unconfirmed, and is marked DENIED."
 }

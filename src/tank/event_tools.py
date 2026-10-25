@@ -2743,7 +2743,7 @@ class EventToolService:
             return publication_outcome({"published": False, "reason": "ORDINARY_CARD_EXISTS"})
         if preliminary and (
             not str(a.get("what") or "").strip()
-            or not str(a.get("unconfirmed") or "").strip()
+            or (event["lifecycle"] != "INVALIDATED" and not str(a.get("unconfirmed") or "").strip())
             or not any(str(line).strip() for line in a.get("why", []))
         ):
             raise ValueError("PRELIMINARY requires what, why and unconfirmed")
@@ -2861,8 +2861,8 @@ class EventToolService:
             )
         )
         if preliminary:
-            ok, reason = preliminary_gate(event, assessment)
-            if ok and previous:
+            ok, reason = preliminary_gate(event, assessment, previous)
+            if ok and previous and reason == "PRELIMINARY":
                 prior = previous["card_struct"]
                 current = {key: a.get(key) for key in ("what", "verdict", "why", "unconfirmed")}
                 prior_text = prior.get("preliminary_text")
@@ -2902,8 +2902,9 @@ class EventToolService:
                 await self.repo.put("evt.events", eid, stored)
                 publication_state["lifecycle"] = stored["lifecycle"]
             return publication_outcome({"published": False, "reason": reason})
-        immediate = not preliminary and publication_immediate(
-            event, assessment, previous=gate_previous, decisions=gate_decisions
+        immediate = reason == "PRELIMINARY_CORRECTION" or (
+            not preliminary
+            and publication_immediate(event, assessment, previous=gate_previous, decisions=gate_decisions)
         )
         delivery_stamp = collection_clock()
         if rate_limited:
@@ -3227,7 +3228,7 @@ class EventToolService:
             milestone_resolution_id=event.get("milestone_resolution_id")
             if event.get("milestone_resolved")
             else None,
-            terminal_correction=kind == "UPDATE"
+            terminal_correction=kind in {"UPDATE", "PRELIMINARY"}
             and event["lifecycle"] == "INVALIDATED"
             and any(r["type"] == "FATAL" for r in event["contradictions"]),
             event_id=eid,
