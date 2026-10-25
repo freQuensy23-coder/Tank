@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from decimal import Decimal, localcontext
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 
@@ -542,3 +542,616 @@ class SelectiveConditionConfidence(ConditionConfidenceBase):
 
 
 type ConditionConfidence = FullConditionConfidence | SelectiveConditionConfidence
+
+
+class ObservedConditionTradeCounts(DomainModel):
+    status: Literal["OBSERVED"]
+    n_buy: int = Field(ge=0)
+    n_sell: int = Field(ge=0)
+
+    def total(self) -> int:
+        values = type(self).model_validate(self)
+        return values.n_buy + values.n_sell
+
+
+class IncompleteConditionTradeCounts(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    n_buy: int | None = Field(ge=0)
+    n_sell: int | None = Field(ge=0)
+    reason: Literal["INCOMPLETE"]
+
+    @model_validator(mode="after")
+    def actual_missing_count(self) -> Self:
+        if self.n_buy is not None and self.n_sell is not None:
+            raise ValueError("Incomplete trade counts require an actually missing side count")
+        return self
+
+    def total(self) -> None:
+        type(self).model_validate(self)
+        return None
+
+
+type ConditionTradeCounts = ObservedConditionTradeCounts | IncompleteConditionTradeCounts
+
+
+class FlowAggregateEvidenceRef(DomainModel):
+    projection_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ConditionFlowAggregate(DomainModel):
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    start: datetime
+    end: datetime
+    complete: Literal[True]
+    buy_qty: Decimal = Field(ge=0)
+    sell_qty: Decimal = Field(ge=0)
+    sum_sq_qty: Decimal = Field(ge=0)
+    buy_notional: Decimal | None = Field(ge=0)
+    sell_notional: Decimal | None = Field(ge=0)
+    notional_reason: Literal["INCOMPLETE"] | None
+    low: Decimal | None = Field(gt=0)
+    low_reason: Literal["INCOMPLETE", "EMPTY_INTERVAL"] | None
+    counts: ConditionTradeCounts
+    evidence: FlowAggregateEvidenceRef
+
+    @field_validator("start", "end")
+    @classmethod
+    def aware_bounds(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_calculation_facets(self) -> Self:
+        if self.start >= self.end:
+            raise ValueError("A selected aggregate requires its actual positive interval")
+        missing_usd = self.buy_notional is None or self.sell_notional is None
+        if missing_usd != (self.notional_reason == "INCOMPLETE"):
+            raise ValueError("Flow notional absence requires its actual incomplete declaration")
+        if (self.low is None) != (self.low_reason is not None):
+            raise ValueError("Missing boundary price requires its explicit reason")
+        if self.low_reason == "EMPTY_INTERVAL" and not (
+            isinstance(self.counts, ObservedConditionTradeCounts) and self.counts.total() == 0
+        ):
+            raise ValueError("An empty-interval price reason requires observed zero trade counts")
+        for count, quantity in ((self.counts.n_buy, self.buy_qty), (self.counts.n_sell, self.sell_qty)):
+            if count is not None and (count == 0) != (quantity == 0):
+                raise ValueError("Observed side counts disagree with their actual native quantity")
+        volume = self.buy_qty + self.sell_qty
+        if (volume == 0) != (self.sum_sq_qty == 0):
+            raise ValueError("Flow squared quantity cannot invent or erase observed native flow")
+        return self
+
+
+class KnownConditionTradeCount(DomainModel):
+    status: Literal["OBSERVED"]
+    value: int = Field(ge=0)
+
+
+class UnavailableConditionTradeCount(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    value: None
+    reason: Literal["INCOMPLETE"]
+
+
+type ConditionTradeCount = KnownConditionTradeCount | UnavailableConditionTradeCount
+
+
+class ConditionBoundaryGroup(DomainModel):
+    start: datetime
+    cutoff: datetime
+    aggregates: tuple[ConditionFlowAggregate, ...] = Field(min_length=1)
+
+    @field_validator("start", "cutoff")
+    @classmethod
+    def aware_bounds(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def contained_pieces(self) -> Self:
+        if self.start >= self.cutoff:
+            raise ValueError("A boundary proof requires its actual positive interval")
+        for aggregate in self.aggregates:
+            if not self.start <= aggregate.start < aggregate.end <= self.cutoff:
+                raise ValueError("A boundary aggregate falls outside its declared proof interval")
+        return self
+
+    def trade_count(self) -> ConditionTradeCount:
+        group = type(self).model_validate(self)
+        counts = [aggregate.counts.total() for aggregate in group.aggregates]
+        if any(count is None for count in counts):
+            return UnavailableConditionTradeCount(status="UNAVAILABLE", value=None, reason="INCOMPLETE")
+        total = 0
+        for count in counts:
+            if count is None:
+                raise ValueError("Unknown trade counts cannot become zero")
+            total += count
+        return KnownConditionTradeCount(status="OBSERVED", value=total)
+
+
+class ObservedConditionComposite(DomainModel):
+    status: Literal["OBSERVED"]
+    cvd: Decimal
+    volume: Decimal = Field(ge=0)
+    buy_share: float | None = Field(ge=0, le=1)
+    bs_ratio: float | None = Field(ge=0)
+    venues: tuple[str, ...] = Field(min_length=1)
+    sign: Literal[-1, 0, 1]
+
+    null_reasons: dict[Literal["buy_share", "bs_ratio"], Literal["ZERO_TOTAL_VOLUME", "ZERO_SELL_QUANTITY"]]
+
+    @model_validator(mode="after")
+    def actual_native_direction(self) -> Self:
+        _statistical_nulls(
+            (("buy_share", self.buy_share), ("bs_ratio", self.bs_ratio)), tuple(self.null_reasons.items())
+        )
+        if len(self.venues) != len(set(self.venues)) or any(not venue.strip() for venue in self.venues):
+            raise ValueError("A composite requires distinct actual venue identities")
+        if self.cvd.copy_abs() > self.volume:
+            raise ValueError("Native net flow cannot exceed total observed native volume")
+        if self.volume == 0 and (self.buy_share is not None or self.bs_ratio is not None):
+            raise ValueError("Zero-volume flow ratios are undefined, not observed zero fractions")
+        if self.volume > 0 and self.buy_share is None:
+            raise ValueError("Observed positive volume requires its actual buy share")
+        if self.sign == 1 and self.cvd <= 0 or self.sign == -1 and self.cvd >= 0:
+            raise ValueError("Significant flow direction contradicts the actual net native quantity")
+        return self
+
+
+class UnavailableConditionComposite(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    cvd: None
+    volume: None
+    buy_share: None
+    bs_ratio: None
+    venues: tuple[()]
+    sign: Literal[0]
+    reason: Literal["INCOMPLETE"]
+
+
+type ConditionComposite = ObservedConditionComposite | UnavailableConditionComposite
+
+
+type ConditionStatisticalNullReason = Literal[
+    "INCOMPLETE",
+    "NO_COMPLETE_VENUES",
+    "ZERO_TOTAL_VOLUME",
+    "ZERO_SELL_QUANTITY",
+    "ZERO_DIRECTIONAL_CONTRIBUTION",
+    "ZERO_OTHER_VOLUME",
+    "NOT_ESTIMABLE",
+]
+
+
+def _statistical_nulls(
+    values: tuple[tuple[str, Decimal | float | int | bool | str | None], ...],
+    reasons: tuple[tuple[str, ConditionStatisticalNullReason], ...],
+) -> None:
+    missing = {name for name, value in values if value is None}
+    declared = {name for name, _ in reasons}
+    if missing != declared:
+        raise ValueError("Statistical absence reasons must match exactly the unavailable fields")
+
+
+class ConditionSpotBreadth(DomainModel):
+    n_pos: int = Field(ge=0)
+    n_neg: int = Field(ge=0)
+    n_neutral: int = Field(ge=0)
+    pct_pos: float | None = Field(ge=0, le=1)
+    pct_neg: float | None = Field(ge=0, le=1)
+    null_reasons: dict[Literal["pct_pos", "pct_neg"], ConditionStatisticalNullReason]
+
+    @model_validator(mode="after")
+    def defined_counts(self) -> Self:
+        _statistical_nulls(
+            (("pct_pos", self.pct_pos), ("pct_neg", self.pct_neg)), tuple(self.null_reasons.items())
+        )
+        total = self.n_pos + self.n_neg + self.n_neutral
+        if (total == 0) != (self.pct_pos is None and self.pct_neg is None):
+            raise ValueError("Venue breadth percentages must preserve their actual denominator")
+        return self
+
+
+class ConditionWeightedBreadth(DomainModel):
+    buy: float | None = Field(ge=0, le=1)
+    sell: float | None = Field(ge=0, le=1)
+    neutral: float | None = Field(ge=0, le=1)
+    null_reasons: dict[Literal["buy", "sell", "neutral"], ConditionStatisticalNullReason]
+
+    @model_validator(mode="after")
+    def common_denominator(self) -> Self:
+        _statistical_nulls(
+            (("buy", self.buy), ("sell", self.sell), ("neutral", self.neutral)),
+            tuple(self.null_reasons.items()),
+        )
+        missing = (self.buy is None, self.sell is None, self.neutral is None)
+        if any(missing) and not all(missing):
+            raise ValueError("Weighted breadth sides must share the same actual volume denominator")
+        return self
+
+
+class ConditionSpotMajority(DomainModel):
+    buy: bool | None
+    sell: bool | None
+    neutral: bool | None
+    covered: bool | None
+    null_reasons: dict[Literal["buy", "sell", "neutral", "covered"], ConditionStatisticalNullReason]
+
+    @model_validator(mode="after")
+    def explicit_unknown_predicates(self) -> Self:
+        _statistical_nulls(
+            (("buy", self.buy), ("sell", self.sell), ("neutral", self.neutral), ("covered", self.covered)),
+            tuple(self.null_reasons.items()),
+        )
+        return self
+
+
+class ConditionSpotTopN(DomainModel):
+    n: int = Field(ge=0)
+    venues: tuple[str, ...]
+    agreement: float | None = Field(ge=0, le=1)
+    agreement_reason: Literal["NO_COMPLETE_VENUES"] | None
+
+    @model_validator(mode="after")
+    def real_top_set(self) -> Self:
+        if self.n != len(self.venues) or len(self.venues) != len(set(self.venues)):
+            raise ValueError("Top-venue count must match its actual distinct venue set")
+        if (self.agreement is None) != (self.agreement_reason is not None):
+            raise ValueError("Missing top-venue agreement requires its actual absence reason")
+        if (self.n == 0) != (self.agreement is None):
+            raise ValueError("Top-venue agreement must preserve its actual count denominator")
+        return self
+
+
+class ConditionSpotConcentration(DomainModel):
+    hhi: float | None = Field(ge=0, le=1)
+    top_volume_venue: str | None = Field(min_length=1, pattern=r"\S")
+    top_volume_share: float | None = Field(ge=0, le=1)
+    top_contrib_venue: str | None = Field(min_length=1, pattern=r"\S")
+    top_contrib_share: float | None = Field(ge=0, le=1)
+    others_cwb_dir: float | None = Field(ge=0, le=1)
+    null_reasons: dict[
+        Literal[
+            "hhi",
+            "top_volume_venue",
+            "top_volume_share",
+            "top_contrib_venue",
+            "top_contrib_share",
+            "others_cwb_dir",
+        ],
+        ConditionStatisticalNullReason,
+    ]
+
+    @model_validator(mode="after")
+    def known_concentration_facets(self) -> Self:
+        _statistical_nulls(
+            (
+                ("hhi", self.hhi),
+                ("top_volume_venue", self.top_volume_venue),
+                ("top_volume_share", self.top_volume_share),
+                ("top_contrib_venue", self.top_contrib_venue),
+                ("top_contrib_share", self.top_contrib_share),
+                ("others_cwb_dir", self.others_cwb_dir),
+            ),
+            tuple(self.null_reasons.items()),
+        )
+        return self
+
+
+class ConditionIncompleteMinuteCoverage(DomainModel):
+    venue: str = Field(min_length=1, pattern=r"\S")
+    reason: Literal["INCOMPLETE"]
+    detail: Literal["FULL_MINUTE_COVERAGE_INCOMPLETE"]
+    source_reasons: tuple[str, ...]
+
+
+class ConditionUnavailableBoundaryCoverage(DomainModel):
+    venue: str = Field(min_length=1, pattern=r"\S")
+    reason: Literal["INCOMPLETE"]
+    detail: Literal["BOUNDARY_AGGREGATE_UNAVAILABLE"]
+    source_reasons: tuple[str, ...]
+
+
+class ConditionMissingFlowMetrics(DomainModel):
+    venue: str = Field(min_length=1, pattern=r"\S")
+    reason: Literal["INCOMPLETE"]
+    detail: Literal["FLOW_AGGREGATE_FIELDS_MISSING"]
+    missing_metrics: tuple[Literal["buy_qty", "sell_qty", "sum_sq_qty"], ...] = Field(min_length=1)
+
+
+type ConditionSpotExclusion = (
+    ConditionIncompleteMinuteCoverage | ConditionUnavailableBoundaryCoverage | ConditionMissingFlowMetrics
+)
+
+
+class ConditionSpotCoverage(DomainModel):
+    covered_share_est: float | None = Field(ge=0, le=1)
+    exact_majority: bool | None
+    n_complete: int = Field(ge=0)
+    excluded: tuple[ConditionSpotExclusion, ...]
+    null_reasons: dict[Literal["covered_share_est", "exact_majority"], ConditionStatisticalNullReason]
+
+    @model_validator(mode="after")
+    def real_coverage(self) -> Self:
+        _statistical_nulls(
+            (("covered_share_est", self.covered_share_est), ("exact_majority", self.exact_majority)),
+            tuple(self.null_reasons.items()),
+        )
+        venues = [row.venue for row in self.excluded]
+        if len(venues) != len(set(venues)):
+            raise ValueError("Excluded spot venues must be distinct")
+        return self
+
+
+class ConditionSpotVenue(DomainModel):
+    venue: str = Field(min_length=1, pattern=r"\S")
+    complete: Literal[True]
+    volume_native: Decimal = Field(ge=0)
+    buy_qty: Decimal = Field(ge=0)
+    sell_qty: Decimal = Field(ge=0)
+    cvd: Decimal
+    buy_share: float | None = Field(ge=0, le=1)
+    bs_ratio: float | None = Field(ge=0)
+    sign: Literal[-1, 0, 1]
+    sum_sq_qty: Decimal = Field(ge=0)
+    boundary_segments: tuple[ConditionBoundaryGroup, ...]
+    volume_share: float | None = Field(ge=0, le=1)
+    null_reasons: dict[Literal["buy_share", "bs_ratio", "volume_share"], ConditionStatisticalNullReason]
+
+    @model_validator(mode="after")
+    def actual_native_totals(self) -> Self:
+        _statistical_nulls(
+            (("buy_share", self.buy_share), ("bs_ratio", self.bs_ratio), ("volume_share", self.volume_share)),
+            tuple(self.null_reasons.items()),
+        )
+        if self.volume_native != _sum_native(self.buy_qty, self.sell_qty) or self.cvd != _sum_native(
+            self.buy_qty, self.sell_qty.copy_negate()
+        ):
+            raise ValueError("Spot totals must preserve the actual native buy and sell quantities")
+        if (self.volume_native == 0) != (self.sum_sq_qty == 0):
+            raise ValueError("Spot squared quantity cannot erase or invent observed native flow")
+        if self.sign == 1 and self.cvd <= 0 or self.sign == -1 and self.cvd >= 0:
+            raise ValueError("Spot direction contradicts its actual native net flow")
+        return self
+
+
+def _sum_native(left: Decimal, right: Decimal) -> Decimal:
+    exponents: list[int] = []
+    for value in (left, right):
+        exponent = value.as_tuple().exponent
+        if not isinstance(exponent, int):
+            raise ValueError("Native arithmetic requires finite Decimal inputs")
+        exponents.append(exponent)
+    span = max(left.adjusted(), right.adjusted()) - min(exponents) + 1
+    with localcontext() as context:
+        context.prec = max(128, 2 * span + 32)
+        return left + right
+
+
+class ConditionSpotValues(DomainModel):
+    venues: tuple[ConditionSpotVenue, ...]
+    composite_max: ConditionComposite
+    breadth: ConditionSpotBreadth
+    cw_breadth: ConditionWeightedBreadth
+    exact_majority: ConditionSpotMajority
+    topn: ConditionSpotTopN
+    concentration: ConditionSpotConcentration
+    direction: Literal["BUY", "SELL", "NEUTRAL"] | None
+    direction_reason: Literal["NO_COMPLETE_VENUES"] | None
+    classification: Literal["INSUFFICIENT_DATA", "CONCENTRATED", "BROAD", "DIVERGENT"]
+    coverage: ConditionSpotCoverage
+
+    @model_validator(mode="after")
+    def actual_spot_cohort(self) -> Self:
+        names = tuple(venue.venue for venue in self.venues)
+        if len(names) != len(set(names)):
+            raise ValueError("A spot graph cannot repeat an observed venue")
+        if self.coverage.n_complete != len(names):
+            raise ValueError("Complete spot coverage count must match its actual venue observations")
+        if set(names) & {venue.venue for venue in self.coverage.excluded}:
+            raise ValueError("A spot venue cannot be both complete and excluded")
+        if (
+            self.breadth.n_pos != sum(venue.sign == 1 for venue in self.venues)
+            or self.breadth.n_neg != sum(venue.sign == -1 for venue in self.venues)
+            or self.breadth.n_neutral != sum(venue.sign == 0 for venue in self.venues)
+        ):
+            raise ValueError("Spot breadth counts must match the actual venue directions")
+        composite = self.composite_max
+        if isinstance(composite, ObservedConditionComposite):
+            if composite.venues != names:
+                raise ValueError("Spot composite identities must match its actual constituent venues")
+            volume, cvd = Decimal(0), Decimal(0)
+            for venue in self.venues:
+                volume = _sum_native(volume, venue.volume_native)
+                cvd = _sum_native(cvd, venue.cvd)
+            if composite.volume != volume or composite.cvd != cvd:
+                raise ValueError("Spot composite must preserve its exact native constituent totals")
+            direction = {1: "BUY", -1: "SELL", 0: "NEUTRAL"}[composite.sign]
+            if self.direction != direction or self.direction_reason is not None:
+                raise ValueError("Observed spot direction must match its actual composite sign")
+        elif names or self.direction is not None or self.direction_reason != "NO_COMPLETE_VENUES":
+            raise ValueError("Unavailable spot flow cannot invent observed venue or direction facts")
+        return self
+
+
+class BasicConditionSpot(ConditionSpotValues):
+    kind: Literal["BASIC"]
+
+
+class ObservedConditionCohort(ObservedConditionComposite):
+    cohort: tuple[str, ...] = Field(min_length=1)
+    share_of_max: float = Field(ge=0, le=1)
+    share_majority: Literal[True]
+    velocity: float | None = Field(ge=0)
+    velocity_reason: Literal["INCOMPLETE", "ZERO_BASELINE", "NOT_ESTIMABLE"] | None
+
+    @model_validator(mode="after")
+    def actual_common_venues(self) -> Self:
+        if self.cohort != self.venues:
+            raise ValueError("A common-cohort composite must preserve its actual venue set")
+        if (self.velocity is None) != (self.velocity_reason is not None):
+            raise ValueError("Missing prior-cohort velocity requires its actual absence reason")
+        return self
+
+
+class UnavailableConditionCohort(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["NOT_COHORT_CONSISTENT"]
+
+
+type ConditionCohort = ObservedConditionCohort | UnavailableConditionCohort
+
+
+class ScopedConditionSpot(ConditionSpotValues):
+    interval: ConditionInterval
+    coverage_through: Timestamp
+    composite_cohort: ConditionCohort
+    cohort_consistent: dict[ConditionWindow, bool]
+
+    @model_validator(mode="after")
+    def actual_window_scope(self) -> Self:
+        stamp = self.coverage_through.value
+        if self.venues:
+            if stamp is None or parse_iso_time(stamp) != self.interval.cutoff:
+                raise ValueError("Window coverage must preserve its actual requested cutoff")
+        elif stamp is not None:
+            raise ValueError("No complete spot venues cannot assert observed window coverage")
+        if self.interval.window in self.cohort_consistent:
+            raise ValueError("A spot consistency index compares distinct windows only")
+        return self
+
+
+class WindowedConditionSpot(ScopedConditionSpot):
+    kind: Literal["WINDOWED"]
+
+
+class ObservedConditionCohortComparison(DomainModel):
+    status: Literal["OBSERVED"]
+    cohort: tuple[str, ...] = Field(min_length=1)
+    current: ObservedConditionComposite
+    other: ObservedConditionComposite
+    share_of_max: float = Field(ge=0, le=1)
+    share_majority: Literal[True]
+
+    @model_validator(mode="after")
+    def common_comparison_scope(self) -> Self:
+        if (
+            len(self.cohort) != len(set(self.cohort))
+            or set(self.current.venues) != set(self.cohort)
+            or set(self.other.venues) != set(self.cohort)
+        ):
+            raise ValueError("Window comparisons require their actual shared venue cohort")
+        return self
+
+
+class UnavailableConditionCohortComparison(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    cohort: tuple[str, ...]
+    share_of_max: float | None = Field(ge=0, le=1)
+    share_majority: bool | None
+    reason: Literal["NOT_COHORT_CONSISTENT"]
+
+
+type ConditionCohortComparison = ObservedConditionCohortComparison | UnavailableConditionCohortComparison
+
+
+class ObservedConditionSizeProfile(DomainModel):
+    status: Literal["OBSERVED"]
+    large_ticket_buy_share: float | None = Field(ge=0, le=1)
+    large_ticket_sell_share: float | None = Field(ge=0, le=1)
+    large_ticket_buy_majority: bool | None
+    large_tickets_minority: bool | None
+    large_ticket_buy_notional: Decimal = Field(ge=0)
+    large_ticket_sell_notional: Decimal = Field(ge=0)
+    sell_share_rising: bool | None
+    compatible_venues: tuple[str, ...] = Field(min_length=1)
+    null_reasons: dict[
+        Literal[
+            "large_ticket_buy_share",
+            "large_ticket_sell_share",
+            "large_ticket_buy_majority",
+            "large_tickets_minority",
+            "sell_share_rising",
+        ],
+        ConditionStatisticalNullReason,
+    ]
+
+    @model_validator(mode="after")
+    def actual_large_ticket_evidence(self) -> Self:
+        _statistical_nulls(
+            (
+                ("large_ticket_buy_share", self.large_ticket_buy_share),
+                ("large_ticket_sell_share", self.large_ticket_sell_share),
+                ("large_ticket_buy_majority", self.large_ticket_buy_majority),
+                ("large_tickets_minority", self.large_tickets_minority),
+                ("sell_share_rising", self.sell_share_rising),
+            ),
+            tuple(self.null_reasons.items()),
+        )
+        if len(self.compatible_venues) != len(set(self.compatible_venues)):
+            raise ValueError("A size profile requires its actual distinct compatible venues")
+        return self
+
+
+class UnavailableConditionSizeProfile(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["INCOMPLETE", "NOT_SUPPORTED", "NOT_ESTIMABLE"]
+
+
+class UnrequestedConditionSizeProfile(DomainModel):
+    status: Literal["NOT_REQUESTED"]
+
+
+type ConditionSizeProfile = (
+    ObservedConditionSizeProfile | UnavailableConditionSizeProfile | UnrequestedConditionSizeProfile
+)
+
+
+class EnrichedConditionSpot(ScopedConditionSpot):
+    kind: Literal["ENRICHED"]
+    enrichment_role: Literal["PRIMARY", "OTHER_WINDOW"]
+    cohort_comparisons: dict[ConditionWindow, ConditionCohortComparison]
+    size_profile: ConditionSizeProfile
+
+    @model_validator(mode="after")
+    def requested_enrichment(self) -> Self:
+        if self.interval.window in self.cohort_comparisons:
+            raise ValueError("A spot comparison index cannot compare a window with itself")
+        if set(self.cohort_comparisons) != set(self.cohort_consistent):
+            raise ValueError("Enriched spot consistency must preserve its actual comparison index")
+        for name, comparison in self.cohort_comparisons.items():
+            if self.cohort_consistent[name] != isinstance(comparison, ObservedConditionCohortComparison):
+                raise ValueError("Spot consistency must agree with the actual shared-cohort evidence")
+        if self.enrichment_role == "PRIMARY" and isinstance(
+            self.size_profile, UnrequestedConditionSizeProfile
+        ):
+            raise ValueError("Missing requested size-profile evidence is unavailable, not unrequested")
+        if self.enrichment_role == "OTHER_WINDOW" and not isinstance(
+            self.size_profile, UnrequestedConditionSizeProfile
+        ):
+            raise ValueError("Only the primary window computes the requested large-ticket profile")
+        return self
+
+
+type ConditionSpot = BasicConditionSpot | WindowedConditionSpot | EnrichedConditionSpot
+
+
+class ConditionSpotWindowGraph(DomainModel):
+    spots: dict[ConditionWindow, WindowedConditionSpot]
+    durations_s: dict[ConditionWindow, Annotated[float, Field(gt=0)]]
+    primary: ConditionWindow
+
+    @model_validator(mode="after")
+    def complete_window_index(self) -> Self:
+        windows = {"W15M", "W1H", "W4H", "W24H", "EVENT"}
+        if set(self.spots) != windows or set(self.durations_s) != windows:
+            raise ValueError("A spot window graph requires the actual five named windows")
+        for name, spot in self.spots.items():
+            if set(spot.cohort_consistent) != windows - {name}:
+                raise ValueError("A spot consistency index requires the actual other windows")
+            consistent = isinstance(spot.composite_cohort, ObservedConditionCohort)
+            if any(value != consistent for value in spot.cohort_consistent.values()):
+                raise ValueError("Windowed spot consistency must preserve its common-cohort evidence")
+            if spot.interval.window != name:
+                raise ValueError("A spot window index disagrees with its interval identity")
+            if (spot.interval.cutoff - spot.interval.start).total_seconds() != self.durations_s[name]:
+                raise ValueError("A spot duration must preserve its actual interval bounds")
+        return self

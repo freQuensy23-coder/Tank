@@ -6,15 +6,18 @@ import pytest
 from pydantic import ValidationError
 
 from tank.analysis.condition_graph_contracts import (
+    BasicConditionSpot,
     ConditionCadenceScope,
     ConditionCollection,
     ConditionDepthValues,
     ConditionFieldObservation,
+    ConditionFlowAggregate,
     ConditionInterval,
     DeclaredConditionCadence,
     NonForwardConditionInterval,
     ObservedConditionClose,
     UnavailableConditionClose,
+    WindowedConditionSpot,
 )
 from tank.time_precision import Timestamp
 
@@ -434,3 +437,290 @@ def test_depth_observation_binds_actual_identity_instead_of_copying_cadence_scop
         ConditionDepthObservation.model_validate(
             observation.model_copy(update={"instrument_id": "other:spot:T"})
         )
+
+
+def legacy_boundary_calculation() -> ConditionFlowAggregate:
+    from tank.analysis.condition_graph_contracts import (
+        FlowAggregateEvidenceRef,
+        IncompleteConditionTradeCounts,
+    )
+
+    return ConditionFlowAggregate(
+        instrument_id="venue:spot:T",
+        start=AT - timedelta(seconds=30),
+        end=AT,
+        complete=True,
+        buy_qty=Decimal(10),
+        sell_qty=Decimal(5),
+        sum_sq_qty=Decimal(125),
+        buy_notional=None,
+        sell_notional=None,
+        notional_reason="INCOMPLETE",
+        low=None,
+        low_reason="INCOMPLETE",
+        counts=IncompleteConditionTradeCounts(
+            status="UNAVAILABLE", n_buy=None, n_sell=None, reason="INCOMPLETE"
+        ),
+        evidence=FlowAggregateEvidenceRef(projection_sha256="e" * 64),
+    )
+
+
+def test_legacy_boundary_calculation_does_not_require_or_invent_writer_metadata() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionBoundaryGroup
+
+    aggregate = legacy_boundary_calculation()
+    group = ConditionBoundaryGroup(start=aggregate.start, cutoff=aggregate.end, aggregates=(aggregate,))
+    count = group.trade_count()
+    assert count.status == "UNAVAILABLE" and count.value is None and count.reason == "INCOMPLETE"
+    assert aggregate.buy_qty == Decimal(10) and aggregate.sell_qty == Decimal(5)
+    assert aggregate.low is None and aggregate.buy_notional is None
+
+
+def test_partial_counts_stay_unknown_until_both_real_side_counts_are_known() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionBoundaryGroup,
+        IncompleteConditionTradeCounts,
+        ObservedConditionTradeCounts,
+    )
+
+    aggregate = legacy_boundary_calculation()
+    partial = IncompleteConditionTradeCounts(status="UNAVAILABLE", n_buy=1, n_sell=None, reason="INCOMPLETE")
+    aggregate = aggregate.model_copy(update={"counts": partial})
+    group = ConditionBoundaryGroup(start=aggregate.start, cutoff=aggregate.end, aggregates=(aggregate,))
+    assert group.trade_count().value is None and aggregate.counts.n_buy == 1
+    observed = ObservedConditionTradeCounts(status="OBSERVED", n_buy=1, n_sell=1)
+    complete = aggregate.model_copy(update={"counts": observed})
+    group = group.model_copy(update={"aggregates": (complete,)})
+    count = group.trade_count()
+    assert count.status == "OBSERVED" and count.value == 2
+    bad = observed.model_copy(update={"n_buy": 0})
+    with pytest.raises(ValidationError, match="side counts disagree"):
+        ConditionBoundaryGroup.model_validate(
+            group.model_copy(update={"aggregates": (complete.model_copy(update={"counts": bad}),)})
+        )
+
+
+def test_missing_squared_quantity_cannot_authorize_significant_positive_flow() -> None:
+    aggregate = legacy_boundary_calculation().model_copy(update={"sum_sq_qty": Decimal(0)})
+    with pytest.raises(ValidationError, match="cannot invent or erase"):
+        ConditionFlowAggregate.model_validate(aggregate)
+
+
+def test_observed_zero_volume_is_distinct_from_an_unavailable_composite() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ObservedConditionComposite,
+        UnavailableConditionComposite,
+    )
+
+    observed = ObservedConditionComposite(
+        status="OBSERVED",
+        cvd=Decimal(0),
+        volume=Decimal(0),
+        buy_share=None,
+        bs_ratio=None,
+        venues=("venue",),
+        sign=0,
+        null_reasons={"buy_share": "ZERO_TOTAL_VOLUME", "bs_ratio": "ZERO_TOTAL_VOLUME"},
+    )
+    unavailable = UnavailableConditionComposite(
+        status="UNAVAILABLE",
+        cvd=None,
+        volume=None,
+        buy_share=None,
+        bs_ratio=None,
+        venues=(),
+        sign=0,
+        reason="INCOMPLETE",
+    )
+    assert observed.volume == 0 and unavailable.volume is None
+    assert observed.venues == ("venue",) and unavailable.venues == ()
+    with pytest.raises(ValidationError, match="ratios are undefined"):
+        ObservedConditionComposite.model_validate(
+            observed.model_copy(update={"buy_share": 0.0, "null_reasons": {"bs_ratio": "ZERO_TOTAL_VOLUME"}})
+        )
+
+
+def basic_spot_graph() -> BasicConditionSpot:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionSpotBreadth,
+        ConditionSpotConcentration,
+        ConditionSpotCoverage,
+        ConditionSpotMajority,
+        ConditionSpotTopN,
+        ConditionSpotVenue,
+        ConditionWeightedBreadth,
+        ObservedConditionComposite,
+    )
+
+    left = ConditionSpotVenue(
+        venue="A",
+        complete=True,
+        volume_native=Decimal(15),
+        buy_qty=Decimal(15),
+        sell_qty=Decimal(0),
+        cvd=Decimal(15),
+        buy_share=1.0,
+        bs_ratio=None,
+        sign=1,
+        sum_sq_qty=Decimal(15),
+        boundary_segments=(),
+        volume_share=0.5,
+        null_reasons={"bs_ratio": "ZERO_SELL_QUANTITY"},
+    )
+    right = left.model_copy(update={"venue": "B"})
+    return BasicConditionSpot(
+        kind="BASIC",
+        venues=(left, right),
+        composite_max=ObservedConditionComposite(
+            status="OBSERVED",
+            cvd=Decimal(30),
+            volume=Decimal(30),
+            buy_share=1.0,
+            bs_ratio=None,
+            venues=("A", "B"),
+            sign=1,
+            null_reasons={"bs_ratio": "ZERO_SELL_QUANTITY"},
+        ),
+        breadth=ConditionSpotBreadth(
+            n_pos=2, n_neg=0, n_neutral=0, pct_pos=1.0, pct_neg=0.0, null_reasons={}
+        ),
+        cw_breadth=ConditionWeightedBreadth(buy=1.0, sell=0.0, neutral=0.0, null_reasons={}),
+        exact_majority=ConditionSpotMajority(
+            buy=True, sell=False, neutral=False, covered=True, null_reasons={}
+        ),
+        topn=ConditionSpotTopN(n=2, venues=("A", "B"), agreement=1.0, agreement_reason=None),
+        concentration=ConditionSpotConcentration(
+            hhi=0.5,
+            top_volume_venue="A",
+            top_volume_share=0.5,
+            top_contrib_venue="A",
+            top_contrib_share=0.5,
+            others_cwb_dir=1.0,
+            null_reasons={},
+        ),
+        direction="BUY",
+        direction_reason=None,
+        classification="BROAD",
+        coverage=ConditionSpotCoverage(
+            covered_share_est=1.0, exact_majority=True, n_complete=2, excluded=(), null_reasons={}
+        ),
+    )
+
+
+def windowed_spot_graph() -> WindowedConditionSpot:
+    from tank.analysis.condition_graph_contracts import UnavailableConditionCohort
+
+    base = basic_spot_graph()
+    return WindowedConditionSpot(
+        kind="WINDOWED",
+        venues=base.venues,
+        composite_max=base.composite_max,
+        breadth=base.breadth,
+        cw_breadth=base.cw_breadth,
+        exact_majority=base.exact_majority,
+        topn=base.topn,
+        concentration=base.concentration,
+        direction=base.direction,
+        direction_reason=base.direction_reason,
+        classification=base.classification,
+        coverage=base.coverage,
+        interval=ConditionInterval(window="W1H", start=AT - timedelta(hours=1), cutoff=AT),
+        coverage_through=Timestamp(
+            value="2026-10-17T12:00:00Z", precision="BUCKET(60s)", bucket_anchor="END"
+        ),
+        composite_cohort=UnavailableConditionCohort(status="UNAVAILABLE", reason="NOT_COHORT_CONSISTENT"),
+        cohort_consistent={"W15M": False, "W4H": False, "W24H": False, "EVENT": False},
+    )
+
+
+def test_spot_graph_preserves_known_zero_sides_and_exact_native_totals() -> None:
+    graph = basic_spot_graph()
+    assert graph.cw_breadth.sell == 0.0 and graph.exact_majority.sell is False
+    assert graph.composite_max.status == "OBSERVED" and graph.composite_max.volume == Decimal(30)
+    bad = graph.coverage.model_copy(update={"n_complete": 1})
+    with pytest.raises(ValidationError, match="actual venue observations"):
+        BasicConditionSpot.model_validate(graph.model_copy(update={"coverage": bad}))
+    with pytest.raises(ValidationError, match="actual composite sign"):
+        BasicConditionSpot.model_validate(graph.model_copy(update={"direction": "SELL"}))
+    stale_reason = graph.cw_breadth.model_copy(update={"null_reasons": {"sell": "INCOMPLETE"}})
+    with pytest.raises(ValidationError, match="exactly the unavailable fields"):
+        BasicConditionSpot.model_validate(graph.model_copy(update={"cw_breadth": stale_reason}))
+
+
+def test_requested_primary_size_evidence_is_unavailable_rather_than_unrequested() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionCohortComparison,
+        ConditionWindow,
+        EnrichedConditionSpot,
+        UnavailableConditionCohortComparison,
+        UnavailableConditionSizeProfile,
+        UnrequestedConditionSizeProfile,
+    )
+
+    base = windowed_spot_graph()
+    comparison = UnavailableConditionCohortComparison(
+        status="UNAVAILABLE",
+        cohort=(),
+        share_of_max=None,
+        share_majority=None,
+        reason="NOT_COHORT_CONSISTENT",
+    )
+    comparisons: dict[ConditionWindow, ConditionCohortComparison] = {
+        name: comparison for name in base.cohort_consistent
+    }
+    enriched = EnrichedConditionSpot(
+        kind="ENRICHED",
+        venues=base.venues,
+        composite_max=base.composite_max,
+        breadth=base.breadth,
+        cw_breadth=base.cw_breadth,
+        exact_majority=base.exact_majority,
+        topn=base.topn,
+        concentration=base.concentration,
+        direction=base.direction,
+        direction_reason=base.direction_reason,
+        classification=base.classification,
+        coverage=base.coverage,
+        interval=base.interval,
+        coverage_through=base.coverage_through,
+        composite_cohort=base.composite_cohort,
+        cohort_consistent=base.cohort_consistent,
+        enrichment_role="PRIMARY",
+        cohort_comparisons=comparisons,
+        size_profile=UnavailableConditionSizeProfile(status="UNAVAILABLE", reason="INCOMPLETE"),
+    )
+    assert enriched.size_profile.status == "UNAVAILABLE"
+    unrequested = UnrequestedConditionSizeProfile(status="NOT_REQUESTED")
+    with pytest.raises(ValidationError, match="unavailable, not unrequested"):
+        EnrichedConditionSpot.model_validate(enriched.model_copy(update={"size_profile": unrequested}))
+    other = EnrichedConditionSpot.model_validate(
+        enriched.model_copy(update={"enrichment_role": "OTHER_WINDOW", "size_profile": unrequested})
+    )
+    assert other.size_profile.status == "NOT_REQUESTED"
+
+
+def test_spot_native_validation_does_not_round_away_a_wide_precision_unit() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionSpotVenue
+
+    buy = Decimal("1e100")
+    total = Decimal("1" + "0" * 99 + "1")
+    cvd = Decimal("9" * 100)
+    squared = Decimal("1" + "0" * 197 + "1")
+    venue = ConditionSpotVenue(
+        venue="wide",
+        complete=True,
+        volume_native=total,
+        buy_qty=buy,
+        sell_qty=Decimal(1),
+        cvd=cvd,
+        buy_share=1.0,
+        bs_ratio=1e100,
+        sign=1,
+        sum_sq_qty=squared,
+        boundary_segments=(),
+        volume_share=1.0,
+        null_reasons={},
+    )
+    assert venue.volume_native == total and venue.cvd == cvd
+    with pytest.raises(ValidationError, match="actual native buy and sell"):
+        ConditionSpotVenue.model_validate(venue.model_copy(update={"volume_native": buy}))
