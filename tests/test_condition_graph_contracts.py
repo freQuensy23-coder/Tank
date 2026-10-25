@@ -16,6 +16,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionFlowAggregate,
     ConditionFundingObservation,
     ConditionInterval,
+    ConditionRelativeGraph,
     ConditionRelativeWindow,
     DeclaredConditionCadence,
     NonForwardConditionInterval,
@@ -1388,3 +1389,238 @@ def test_degenerate_event_history_retains_observed_quartiles_without_a_false_ban
     result = evidence.band()
     assert evidence.event_upper_quartile == 0 and result.status == "UNAVAILABLE"
     assert result.reason == "DEGENERATE_HISTORY"
+
+
+def relative_graph_without_event() -> ConditionRelativeGraph:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionAnalysisWindowStart,
+        ConditionMarketContextInputs,
+        ConditionPreEventRunup,
+        ConditionPriceReferenceCoverage,
+        ConditionRelativeAnchor,
+        ConditionRelativeReturn,
+        ConditionUnavailablePredicate,
+        ObservedConditionReferencePrice,
+        UnavailableConditionEventRepricing,
+        UnavailableConditionReferencePrice,
+        UnrequestedConditionOutcomeRanges,
+    )
+    from tank.analysis.statistics_contracts import UnavailableHistoryDiagnostics
+
+    sample = relative_without_beta()
+    windows: dict[Literal["W15M", "W1H", "W4H", "W24H", "EVENT"], ConditionRelativeWindow] = {}
+    durations: tuple[tuple[Literal["W15M", "W1H", "W4H", "W24H", "EVENT"], int], ...] = (
+        ("W15M", 900),
+        ("W1H", 3600),
+        ("W4H", 14400),
+        ("W24H", 86400),
+        ("EVENT", 14400),
+    )
+    for name, duration in durations:
+        window = sample.model_copy(
+            update={
+                "interval": ConditionInterval(window=name, start=AT - timedelta(seconds=duration), cutoff=AT),
+                "history": UnavailableHistoryDiagnostics(
+                    target_window_duration_s=float(duration),
+                    exact=False,
+                    reason="INSUFFICIENT_HISTORY",
+                    resolution_s=None,
+                    sample_count=0,
+                ),
+            }
+        )
+        if name == "EVENT":
+            window = window.model_copy(
+                update={"raw": ConditionRelativeReturn(value=None, reason="INCOMPLETE")}
+            )
+        windows[name] = ConditionRelativeWindow.model_validate(window)
+    absent = Timestamp(value=None, precision=None, precision_reason="INCOMPLETE")
+    missing_price = UnavailableConditionReferencePrice(
+        status="UNAVAILABLE",
+        instrument_id="spot:i",
+        value=None,
+        source=None,
+        observed_at=absent,
+        reason="INCOMPLETE",
+    )
+    anchor_at = AT - timedelta(hours=4)
+    return ConditionRelativeGraph(
+        reference_instrument_id="spot:i",
+        reference_reason=None,
+        reference_coverage={
+            "spot:i": ConditionPriceReferenceCoverage(
+                complete=True,
+                expected_duration_s=86400,
+                boundary_segments=(),
+                excluded=(),
+                volume_unit="NATIVE_TOKEN",
+                covered_volume_native=Decimal(10),
+            )
+        },
+        entry=ObservedConditionReferencePrice(
+            status="OBSERVED",
+            instrument_id="spot:i",
+            value=Decimal(10),
+            source="KLINE_CLOSE",
+            observed_at=Timestamp(
+                value="2026-10-17T12:00:00Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+            ),
+        ),
+        close_1h=ObservedConditionClose(
+            status="OBSERVED",
+            reference_instrument_id="spot:i",
+            price=Decimal(10),
+            observed_at=Timestamp(
+                value="2026-10-17T12:00:00Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+            ),
+        ),
+        anchor=ConditionRelativeAnchor(
+            origin=ConditionAnalysisWindowStart(kind="ANALYSIS_WINDOW_START", at=anchor_at),
+            price=missing_price,
+            trade_evidence_ref=None,
+        ),
+        windows=windows,
+        pre_event_runup=ConditionPreEventRunup(
+            window="PRE_EVENT_W24H",
+            start=anchor_at - timedelta(days=1),
+            cutoff=anchor_at,
+            value=ConditionRelativeReturn(value=None, reason="INSUFFICIENT_HISTORY"),
+            percentile=None,
+            percentile_reason="NOT_ESTIMABLE",
+            beyond_normal=ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INSUFFICIENT_HISTORY"),
+        ),
+        repricing=UnavailableConditionEventRepricing(status="UNAVAILABLE", reason="NO_EVENT_ANCHOR"),
+        context=ConditionMarketContextInputs(
+            btc_return_24h=None,
+            rv24=None,
+            rv24_bound=AT,
+            rv24_resolution_s=3600,
+            return_normal_range=FloatRange(bounds=None, reason="INSUFFICIENT_HISTORY"),
+            return_lower_quartile=None,
+            rv_normal_range=FloatRange(bounds=None, reason="INSUFFICIENT_HISTORY"),
+            rule="normal_range",
+        ),
+        outcome_btc_reference=UnavailableConditionReferencePrice(
+            status="UNAVAILABLE",
+            instrument_id=None,
+            value=None,
+            source=None,
+            observed_at=absent,
+            reason="INCOMPLETE",
+        ),
+        outcome_ranges=UnrequestedConditionOutcomeRanges(status="NOT_REQUESTED"),
+    )
+
+
+def test_relative_graph_preserves_analysis_boundary_without_fabricating_event_anchor() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionDeclaredEventAnchor,
+        UndeclaredConditionRepricingDirection,
+    )
+
+    graph = relative_graph_without_event()
+    assert graph.windows["W1H"].raw.value == 0.05
+    assert graph.repricing.band().value is None and graph.anchor.origin.kind == "ANALYSIS_WINDOW_START"
+    with pytest.raises(ValidationError, match="Missing event anchor must remain"):
+        ConditionRelativeGraph.model_validate(
+            graph.model_copy(
+                update={
+                    "repricing": UndeclaredConditionRepricingDirection(
+                        status="UNAVAILABLE", reason="DIRECTION_NOT_DECLARED"
+                    )
+                }
+            )
+        )
+    with pytest.raises(ValidationError, match="real captured event anchor"):
+        ConditionRelativeGraph.model_validate(
+            graph.model_copy(
+                update={
+                    "anchor": graph.anchor.model_copy(
+                        update={
+                            "origin": ConditionDeclaredEventAnchor(
+                                kind="EVENT",
+                                source="KNOWN_TO_US_AT",
+                                at=Timestamp(
+                                    value="2026-10-17T08:00:00Z",
+                                    precision=None,
+                                    precision_reason="PRECISION_NOT_CAPTURED",
+                                ),
+                            )
+                        }
+                    )
+                }
+            )
+        )
+
+
+def test_relative_graph_selection_uses_actual_complete_native_volume_and_shared_references() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionPriceReferenceCoverage
+
+    graph = relative_graph_without_event()
+    better = ConditionPriceReferenceCoverage(
+        complete=True,
+        expected_duration_s=86400,
+        boundary_segments=(),
+        excluded=(),
+        volume_unit="NATIVE_TOKEN",
+        covered_volume_native=Decimal(20),
+    )
+    with pytest.raises(ValidationError, match="greatest covered native volume"):
+        ConditionRelativeGraph.model_validate(
+            graph.model_copy(
+                update={
+                    "reference_coverage": {"spot:i": graph.reference_coverage["spot:i"], "better": better}
+                }
+            )
+        )
+    with pytest.raises(ValidationError, match="actual selected reference instrument"):
+        ConditionRelativeGraph.model_validate(
+            graph.model_copy(update={"entry": graph.entry.model_copy(update={"instrument_id": "other"})})
+        )
+    mutated = dict(graph.windows)
+    mutated["W1H"] = mutated["W1H"].model_copy(update={"reference_instrument_id": "other"})
+    with pytest.raises(ValidationError, match="actual selected price reference"):
+        ConditionRelativeGraph.model_validate(graph.model_copy(update={"windows": mutated}))
+
+
+def test_outcome_baseline_request_is_not_an_empty_unrequested_map_or_a_fabricated_clock() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionComputedOutcomeRanges,
+        ConditionOutcomeRange,
+        ConditionRelativeNormalRange,
+    )
+    from tank.analysis.statistics_contracts import UnavailableHistoryDiagnostics
+
+    baseline = ConditionOutcomeRange(
+        window="W1H",
+        unit="DECIMAL_RETURN",
+        measure="R_BTC_ADJ",
+        start=AT - timedelta(days=30),
+        cutoff=AT,
+        observed_at=Timestamp(value=None, precision=None, precision_reason="INCOMPLETE"),
+        normal_range=ConditionRelativeNormalRange(bounds=None, reason="INSUFFICIENT_HISTORY"),
+        history=UnavailableHistoryDiagnostics(
+            target_window_duration_s=3600.0,
+            exact=False,
+            reason="INSUFFICIENT_HISTORY",
+            resolution_s=None,
+            sample_count=0,
+        ),
+    )
+    assert baseline.history.sample_count == 0 and baseline.observed_at.value is None
+    with pytest.raises(ValidationError, match="actual six requested horizons"):
+        ConditionComputedOutcomeRanges(status="COMPUTED", by_horizon={"W1H": baseline})
+    with pytest.raises(ValidationError, match="normal bounds or an observed source clock"):
+        ConditionOutcomeRange.model_validate(
+            baseline.model_copy(
+                update={
+                    "observed_at": Timestamp(
+                        value="2026-10-17T11:00:00Z",
+                        precision=None,
+                        precision_reason="PRECISION_NOT_CAPTURED",
+                    )
+                }
+            )
+        )
+    with pytest.raises(ValidationError, match="actual horizon duration"):
+        ConditionOutcomeRange.model_validate(baseline.model_copy(update={"window": "W4H"}))

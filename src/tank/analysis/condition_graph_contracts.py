@@ -14,6 +14,7 @@ from tank.analysis.statistics_contracts import (
     FloatBounds,
     FloatRange,
     HistoryDiagnostic,
+    HistoryDiagnostics,
     UnavailableBeta,
 )
 from tank.contracts import DomainModel
@@ -2201,3 +2202,323 @@ class UnavailableConditionEventRepricing(DomainModel):
 type ConditionRepricing = (
     DeclaredConditionRepricing | UndeclaredConditionRepricingDirection | UnavailableConditionEventRepricing
 )
+
+
+class ObservedConditionReferencePrice(DomainModel):
+    status: Literal["OBSERVED"]
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    value: Decimal = Field(gt=0)
+    source: Literal["LAST_TRADE", "KLINE_CLOSE"]
+    observed_at: Timestamp
+
+    @model_validator(mode="after")
+    def actual_source_clock(self) -> Self:
+        if self.observed_at.value is None:
+            raise ValueError("An observed reference price requires its actual source observation clock")
+        return self
+
+
+class UnavailableConditionReferencePrice(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    instrument_id: str | None = Field(min_length=1, pattern=r"\S")
+    value: None
+    source: Literal["LAST_TRADE", "KLINE_CLOSE"] | None
+    observed_at: Timestamp
+    reason: Literal["INCOMPLETE"]
+
+
+type ConditionReferencePrice = ObservedConditionReferencePrice | UnavailableConditionReferencePrice
+
+
+class ConditionReferenceTradeEvidenceRef(DomainModel):
+    projection_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ConditionDeclaredEventAnchor(DomainModel):
+    kind: Literal["EVENT"]
+    source: Literal["T0", "T1", "KNOWN_TO_US_AT"]
+    at: Timestamp
+
+    @model_validator(mode="after")
+    def actual_event_clock(self) -> Self:
+        if self.at.value is None:
+            raise ValueError("An actual event anchor requires its captured clock value")
+        return self
+
+
+class ConditionAnalysisWindowStart(DomainModel):
+    kind: Literal["ANALYSIS_WINDOW_START"]
+    at: datetime
+
+    @field_validator("at")
+    @classmethod
+    def aware_boundary(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+
+class ConditionRelativeAnchor(DomainModel):
+    origin: ConditionDeclaredEventAnchor | ConditionAnalysisWindowStart
+    price: ConditionReferencePrice
+    trade_evidence_ref: ConditionReferenceTradeEvidenceRef | None
+
+    @model_validator(mode="after")
+    def actual_anchor_trade(self) -> Self:
+        if isinstance(self.price, ObservedConditionReferencePrice):
+            if self.price.source != "LAST_TRADE" or self.trade_evidence_ref is None:
+                raise ValueError("An observed anchor price requires its actual predecessor trade evidence")
+        elif self.trade_evidence_ref is not None:
+            raise ValueError("A missing anchor trade cannot invent original trade evidence")
+        return self
+
+    def instant(self) -> datetime:
+        validated = type(self).model_validate(self)
+        if isinstance(validated.origin, ConditionAnalysisWindowStart):
+            return validated.origin.at
+        if validated.origin.at.value is None:
+            raise ValueError("An event anchor requires its actual captured clock")
+        return parse_iso_time(validated.origin.at.value)
+
+
+class ConditionPriceReferenceCoverage(DomainModel):
+    complete: bool
+    expected_duration_s: Literal[86400]
+    boundary_segments: tuple[ConditionBoundaryGroup, ...]
+    excluded: tuple[ConditionSpotExclusion, ...]
+    volume_unit: Literal["NATIVE_TOKEN"]
+    covered_volume_native: Decimal | None = Field(ge=0)
+
+    @model_validator(mode="after")
+    def actual_native_volume_coverage(self) -> Self:
+        if self.complete != (self.covered_volume_native is not None):
+            raise ValueError("Reference selection requires actual complete native-volume coverage")
+        if self.complete and self.excluded:
+            raise ValueError("Complete reference coverage cannot also exclude its instrument")
+        return self
+
+
+class ConditionPreEventRunup(DomainModel):
+    window: Literal["PRE_EVENT_W24H"]
+    start: datetime
+    cutoff: datetime
+    value: ConditionRelativeReturn
+    percentile: float | None = Field(ge=0, le=1)
+    percentile_reason: Literal["INCOMPLETE", "NOT_ESTIMABLE"] | None
+    beyond_normal: ConditionPredicate
+
+    @field_validator("start", "cutoff")
+    @classmethod
+    def aware_boundary(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_prior_day(self) -> Self:
+        if (self.cutoff - self.start).total_seconds() != 86400:
+            raise ValueError("Pre-event runup requires the actual preceding 24-hour interval")
+        if (self.percentile is None) != (self.percentile_reason is not None):
+            raise ValueError("Missing runup percentile requires its actual missing-input reason")
+        return self
+
+
+type ConditionOutcomeHorizon = Literal["W1H", "W4H", "W12H", "W24H", "W3D", "W7D"]
+
+
+class ConditionOutcomeRange(DomainModel):
+    window: ConditionOutcomeHorizon
+    unit: Literal["DECIMAL_RETURN"]
+    measure: Literal["R_RAW", "R_BTC_ADJ"]
+    start: datetime
+    cutoff: datetime
+    observed_at: Timestamp
+    normal_range: ConditionRelativeNormalRange
+    history: HistoryDiagnostic
+
+    @field_validator("start", "cutoff")
+    @classmethod
+    def aware_boundary(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_horizon_history(self) -> Self:
+        if self.start >= self.cutoff:
+            raise ValueError("An outcome history requires its actual positive lookback interval")
+        durations = {"W1H": 3600, "W4H": 14400, "W12H": 43200, "W24H": 86400, "W3D": 259200, "W7D": 604800}
+        if self.history.target_window_duration_s != durations[self.window]:
+            raise ValueError("An outcome baseline must preserve the actual horizon duration")
+        if self.history.sample_count == 0:
+            if self.normal_range.bounds is not None or self.observed_at.value is not None:
+                raise ValueError(
+                    "No outcome history cannot establish normal bounds or an observed source clock"
+                )
+        elif isinstance(self.history, HistoryDiagnostics):
+            last = self.history.latest_observed_at
+            if (
+                last is None
+                or self.observed_at.value is None
+                or parse_iso_time(self.observed_at.value) != last
+            ):
+                raise ValueError(
+                    "Outcome observation clocks must preserve the actual last historical endpoint"
+                )
+        if self.observed_at.value is not None and parse_iso_time(self.observed_at.value) >= self.cutoff:
+            raise ValueError("An outcome baseline cannot use future or current event observations")
+        return self
+
+
+class ConditionComputedOutcomeRanges(DomainModel):
+    status: Literal["COMPUTED"]
+    by_horizon: dict[ConditionOutcomeHorizon, ConditionOutcomeRange]
+
+    @model_validator(mode="after")
+    def actual_horizon_index(self) -> Self:
+        if set(self.by_horizon) != {"W1H", "W4H", "W12H", "W24H", "W3D", "W7D"}:
+            raise ValueError("Computed outcome ranges require the actual six requested horizons")
+        if any(name != value.window for name, value in self.by_horizon.items()):
+            raise ValueError("An outcome-range index must preserve actual horizon identities")
+        return self
+
+
+class UnrequestedConditionOutcomeRanges(DomainModel):
+    status: Literal["NOT_REQUESTED"]
+
+
+class ConditionRelativeGraph(DomainModel):
+    reference_instrument_id: str | None = Field(min_length=1, pattern=r"\S")
+    reference_coverage: dict[
+        Annotated[str, Field(min_length=1, pattern=r"\S")], ConditionPriceReferenceCoverage
+    ]
+    reference_reason: Literal["INCOMPLETE"] | None
+    entry: ConditionReferencePrice
+    close_1h: ConditionClose
+    anchor: ConditionRelativeAnchor
+    windows: dict[ConditionWindow, ConditionRelativeWindow]
+    pre_event_runup: ConditionPreEventRunup
+    repricing: ConditionRepricing
+    context: ConditionMarketContextInputs
+    outcome_btc_reference: ConditionReferencePrice
+    outcome_ranges: ConditionComputedOutcomeRanges | UnrequestedConditionOutcomeRanges
+
+    @model_validator(mode="after")
+    def actual_reference_and_window_scope(self) -> Self:
+        if (self.reference_instrument_id is None) != (self.reference_reason is not None):
+            raise ValueError("Missing relative reference selection requires its actual coverage gap")
+        eligible = {
+            iid: coverage.covered_volume_native
+            for iid, coverage in self.reference_coverage.items()
+            if coverage.complete
+        }
+        if self.reference_instrument_id is None:
+            if eligible:
+                raise ValueError("Known complete reference candidates cannot be discarded as missing")
+        else:
+            if self.reference_instrument_id not in eligible:
+                raise ValueError("A selected reference requires actual complete native-volume coverage")
+            chosen = eligible[self.reference_instrument_id]
+            if chosen is None or any(volume is not None and volume > chosen for volume in eligible.values()):
+                raise ValueError(
+                    "Reference selection must preserve the actual greatest covered native volume"
+                )
+        if set(self.windows) != {"W15M", "W1H", "W4H", "W24H", "EVENT"}:
+            raise ValueError("Relative graphs require the actual five computed windows")
+        cutoff = self.windows["EVENT"].interval.cutoff
+        for name, window in self.windows.items():
+            if name != window.interval.window or window.interval.cutoff != cutoff:
+                raise ValueError("Relative windows must preserve their actual shared cutoff and identity")
+            if window.reference_instrument_id != self.reference_instrument_id:
+                raise ValueError("Relative windows must preserve their actual selected price reference")
+        durations = {"W15M": 900, "W1H": 3600, "W4H": 14400, "W24H": 86400}
+        event_window = self.windows["EVENT"]
+        for name, window in self.windows.items():
+            if (
+                name != "EVENT"
+                and (window.interval.cutoff - window.interval.start).total_seconds() != durations[name]
+            ):
+                raise ValueError("A named relative window must preserve its actual fixed duration")
+            if (
+                window.measure != event_window.measure
+                or window.btc_beta != event_window.btc_beta
+                or window.eth_beta != event_window.eth_beta
+            ):
+                raise ValueError(
+                    "Relative windows must preserve their shared actual benchmark and beta estimates"
+                )
+        if self.entry.instrument_id != self.reference_instrument_id:
+            raise ValueError("Entry price must preserve the actual selected reference instrument")
+        if self.close_1h.reference_instrument_id != self.reference_instrument_id:
+            raise ValueError("Hourly close must preserve the actual selected reference instrument")
+        if isinstance(self.entry, ObservedConditionReferencePrice):
+            if self.entry.observed_at.value is None:
+                raise ValueError("Observed entry price requires its actual observation clock")
+            entry_at = parse_iso_time(self.entry.observed_at.value)
+            if entry_at > cutoff or self.entry.source == "LAST_TRADE" and entry_at == cutoff:
+                raise ValueError(
+                    "Entry reference must preserve its actual eligible predecessor or candle close"
+                )
+        if isinstance(self.close_1h, ObservedConditionClose):
+            if self.close_1h.observed_at.value is None:
+                raise ValueError("Hourly close requires its actual observation clock")
+            close_at = parse_iso_time(self.close_1h.observed_at.value)
+            if close_at > cutoff or close_at.minute != 0 or close_at.second != 0 or close_at.microsecond != 0:
+                raise ValueError("Hourly close requires an actual completed hour boundary")
+        if self.context.rv24_bound != cutoff.replace(minute=0, second=0, microsecond=0):
+            raise ValueError("Market context must preserve its actual completed-hour calculation bound")
+        if self.anchor.price.instrument_id != self.reference_instrument_id:
+            raise ValueError("Anchor price must preserve the actual selected reference instrument")
+        anchor = self.anchor.instant()
+        if event_window.raw.value is not None and (
+            not isinstance(self.anchor.price, ObservedConditionReferencePrice)
+            or not isinstance(self.entry, ObservedConditionReferencePrice)
+        ):
+            raise ValueError("An observed event return requires actual anchor and cutoff reference prices")
+        if self.windows["EVENT"].interval.start != anchor or self.pre_event_runup.cutoff != anchor:
+            raise ValueError(
+                "Event-relative calculations must preserve the actual anchor or analysis boundary"
+            )
+        if isinstance(self.anchor.price, ObservedConditionReferencePrice) and (
+            self.anchor.price.observed_at.value is None
+            or parse_iso_time(self.anchor.price.observed_at.value) >= anchor
+        ):
+            raise ValueError("Anchor reference trade must strictly precede the actual anchor boundary")
+        day_window = self.windows["W24H"]
+        runup = self.pre_event_runup
+        expected_percentile = runup.value.value is not None and day_window.history.sample_count > 0
+        if (runup.percentile is not None) != expected_percentile:
+            raise ValueError("Runup percentile requires its actual return and preceding historical samples")
+        bounds = day_window.normal_range.bounds
+        value = runup.value.value
+        _condition_predicate_matches(
+            runup.beyond_normal,
+            None if bounds is None or value is None else value < bounds.lower or value > bounds.upper,
+        )
+        if isinstance(self.outcome_ranges, ConditionComputedOutcomeRanges):
+            for baseline in self.outcome_ranges.by_horizon.values():
+                if baseline.cutoff != anchor or baseline.measure != event_window.measure:
+                    raise ValueError(
+                        "Outcome baselines must preserve their actual pre-event history and measure"
+                    )
+        for iid, coverage in self.reference_coverage.items():
+            for group in coverage.boundary_segments:
+                if any(aggregate.instrument_id != iid for aggregate in group.aggregates):
+                    raise ValueError(
+                        "Reference coverage cannot borrow another instrument's boundary evidence"
+                    )
+        if isinstance(self.repricing, DeclaredConditionRepricing):
+            if not isinstance(self.anchor.origin, ConditionDeclaredEventAnchor):
+                raise ValueError("Directional event repricing requires a real declared event anchor")
+            event, day = self.windows["EVENT"], self.windows["W24H"]
+            if (
+                self.repricing.event_return.value != event.relative_return()
+                or self.repricing.event_range != event.normal_range
+                or self.repricing.day_range != day.normal_range
+            ):
+                raise ValueError(
+                    "Repricing inputs must preserve the actual selected relative returns and baselines"
+                )
+        elif isinstance(self.anchor.origin, ConditionAnalysisWindowStart) and not isinstance(
+            self.repricing, UnavailableConditionEventRepricing
+        ):
+            raise ValueError("Missing event anchor must remain explicitly unavailable for event repricing")
+        elif isinstance(self.anchor.origin, ConditionDeclaredEventAnchor) and isinstance(
+            self.repricing, UnavailableConditionEventRepricing
+        ):
+            raise ValueError("A real captured event anchor cannot be relabelled as missing")
+        return self
