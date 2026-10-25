@@ -77,7 +77,7 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
                     },
                 )
             if request.url.path.endswith("/events"):
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "next_page": None})
             raise AssertionError(request.url)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
