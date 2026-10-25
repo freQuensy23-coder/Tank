@@ -686,36 +686,6 @@ func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrum
 	return result, nil
 }
 
-func (s *Service) startupRepairs(ctx context.Context, hot []map[string]any, started time.Time) {
-	anchors := s.hotAnchors(ctx, hot)
-	type window struct{ start, end time.Time }
-	spans := map[string]*window{}
-	var order []string
-	for _, row := range hot {
-		token := text(row["token_id"])
-		at, ok := anchors[token+"|"+text(row["event_id"])]
-		if !ok {
-			continue
-		}
-		w := spans[token]
-		if w == nil {
-			w = &window{at.Add(-WindowBefore), at.Add(WindowAfter)}
-			spans[token] = w
-			order = append(order, token)
-		}
-		w.start = minTime(w.start, at.Add(-WindowBefore))
-		w.end = maxTime(w.end, at.Add(WindowAfter))
-	}
-	for _, token := range order {
-		w := spans[token]
-		if ctx.Err() != nil {
-			return
-		}
-		s.log.Info("startup repair", "token", token, "start", pytime.ISO(w.start), "end", pytime.ISO(minTime(started, w.end)))
-		s.repairUnrepaired(ctx, token, w.start, pytime.MinuteFloor(minTime(started, w.end)), false)
-	}
-}
-
 func (s *Service) unrepaired(ctx context.Context, iid string, lo, hi time.Time) []span {
 	if !hi.After(lo) {
 		return nil
@@ -808,32 +778,4 @@ func (s *Service) sweep(ctx context.Context) {
 		}(token)
 	}
 	wg.Wait()
-}
-
-func (s *Service) hotAnchors(ctx context.Context, hot []map[string]any) map[string]time.Time {
-	out := map[string]time.Time{}
-	runs, err := s.store.BackfillRuns(ctx, []string{"PENDING", "RUNNING", "COMPLETE", "PARTIAL", "FAILED"})
-	newest := map[string]time.Time{}
-	if err == nil {
-		for _, r := range runs {
-			k := text(r["token_id"]) + "|" + text(r["event_id"])
-			at, err1 := pytime.Parse(r["anchor"])
-			started, err2 := pytime.Parse(r["started_at"])
-			if err1 == nil && (err2 != nil || started.After(newest[k]) || newest[k].IsZero()) {
-				out[k] = at
-				if err2 == nil {
-					newest[k] = started
-				}
-			}
-		}
-	}
-	for _, row := range hot {
-		k := text(row["token_id"]) + "|" + text(row["event_id"])
-		if _, ok := out[k]; !ok {
-			if at, err := pytime.Parse(row["since"]); err == nil {
-				out[k] = at
-			}
-		}
-	}
-	return out
 }

@@ -147,7 +147,7 @@ func TestListenHotTokens(t *testing.T) {
 	}
 	found := false
 	for _, r := range rows {
-		found = found || r["token_id"] == token && r["priority"] == int64(2)
+		found = found || r.TokenID == token && r.Priority != nil && *r.Priority == int64(2)
 	}
 	if !found {
 		t.Fatal("HotTokens misses the row")

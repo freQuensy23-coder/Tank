@@ -189,15 +189,6 @@ func (s *Store) LatestRecords(ctx context.Context, collection string, groupBy []
 	return s.chLatestRecords(ctx, collection, groupBy, timeField, instrumentIDs)
 }
 
-func (s *Store) HotTokens(ctx context.Context) ([]map[string]any, error) {
-	rows, err := s.Pool.Query(ctx, "SELECT "+selectList("mkt.hot_tokens", "")+" FROM "+liveTable("mkt.hot_tokens")+" ORDER BY storage_key")
-	if err != nil {
-		return nil, err
-	}
-	out, _, err := collectRows("mkt.hot_tokens", rows)
-	return out, err
-}
-
 func (s *Store) BackfillRuns(ctx context.Context, statuses []string) ([]map[string]any, error) {
 	rows, err := s.Pool.Query(ctx, "SELECT "+selectList("mkt.backfill_runs", "")+" FROM "+liveTable("mkt.backfill_runs")+
 		" WHERE status = ANY($1::text[]) ORDER BY started_at NULLS FIRST,storage_key", statuses)
