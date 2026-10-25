@@ -224,8 +224,8 @@ export function pinnedBoxLiteProvider(input: {
         if (await input.isCurrent?.(fence)) {
           for (const runtime of [source, replacement]) if (runtime) {
             try {
-              await assertCurrent();
-              const cleanup = new RetainedBoxOperations(async operation => { await assertCurrent(); return operation(runtime); });
+              await current(fence);
+              const cleanup = new RetainedBoxOperations(async operation => { await current(fence); return operation(runtime); });
               await cleanup.exec('rm', ['-f', guestArchive, guestArchive + '.part'], undefined, { cwd: '/' });
             } catch {}
           }
