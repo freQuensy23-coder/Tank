@@ -130,7 +130,15 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
                     "aliases": [],
                 },
             ],
-            "instruments": [],
+            "instruments": [
+                {
+                    "instrument_id": "mock:spot:T",
+                    "token_id": "T",
+                    "venue": "mock",
+                    "market_type": "SPOT",
+                    "venue_symbol": "TUSDT",
+                }
+            ],
             "x_accounts": [],
         },
         "thresholds": _fixture_thresholds(),
@@ -210,7 +218,10 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
     ):
         source = SourceService(repo, settings, versions=versions, budgets=admission.budgets, http=http)
         item_id, seen = "item-e2e-one", "2026-10-17T00:00:01Z"
-        approval_text = "Synthetic Binance listing approval for T announced at 2026-10-17T00:00:00Z."
+        approval_text = (
+            "Synthetic Binance listing approval for T announced at 2026-10-17T00:00:00Z. "
+            "The synthetic venue actively burns T from trading fees."
+        )
         raw, sha = source.raw(
             approval_text.encode("utf-8"), source_id="S30", item_id=item_id, observed_at=seen
         )
@@ -294,7 +305,16 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
                             "verified": True,
                             "quote": approval_text,
                             "evidence": [{"item_id": item["item_id"], "quote": approval_text}],
-                        }
+                        },
+                        {
+                            "type": "MECHANISM",
+                            "subject": "Synthetic venue",
+                            "predicate": "actively burns fees denominated in",
+                            "object": "T",
+                            "verified": True,
+                            "quote": approval_text,
+                            "evidence": [{"item_id": item["item_id"], "quote": approval_text}],
+                        },
                     ],
                     "next_milestone": None,
                     "checked_sources": [],
@@ -304,6 +324,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
         )
         eid = extracted["event_id"]
         claim_id = extracted["accepted_claims"][0]["claim_id"]
+        mechanism_claim_id = extracted["accepted_claims"][1]["claim_id"]
         session_row = await repo.get("ops.agent_sessions", "s1")
         assert session_row is not None
         context = session.tool_context(session_row, "source-e2e-produced-decision")
@@ -316,6 +337,21 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
                     "criterion_venue_id": "binance",
                     "criterion_claim_id": claim_id,
                     "dims": unassessed_score_dimensions(),
+                    "capture_chains": [
+                        {
+                            "token_id": "T",
+                            "capture_score": 7,
+                            "headline_activity": None,
+                            "eligible_activity": None,
+                            "effective_fees": None,
+                            "protocol_capture": None,
+                            "token_mechanism": {
+                                "type": "BURN",
+                                "active": True,
+                                "evidence": [mechanism_claim_id],
+                            },
+                        }
+                    ],
                     "impact_horizon": {
                         "impact_start": "UNKNOWN",
                         "ramp_shape": "STEP",
