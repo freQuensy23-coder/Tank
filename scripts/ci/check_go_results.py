@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from tank.contracts.scalars import ZeroInt
+
 
 class TestEvent(BaseModel):
     """Project Go 1.25 test2json fields used by the completeness gate."""
@@ -20,10 +22,12 @@ class TestEvent(BaseModel):
 
 
 class TestSummary(BaseModel):
+    """Aggregate output; verify rejects every test skip before using the zero default."""
+
     model_config = ConfigDict(strict=True, extra="forbid")
     cases: int
     passed: int
-    skipped: Literal[0] = 0
+    skipped: ZeroInt = 0
 
 
 def verify(report: Path) -> TestSummary:
