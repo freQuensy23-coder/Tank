@@ -94,13 +94,18 @@ def test_declared_boolean_flags_must_be_actual_booleans(value: JsonValue) -> Non
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("venue", "market_type", "missing_fact"),
-    [("bybit", "SPOT", "CODE"), ("okx", "SPOT", "CODE"), ("bybit", "PERP_LINEAR", "CURSOR")],
+    [
+        ("bybit", "SPOT", "CODE"),
+        ("okx", "SPOT", "CODE"),
+        ("bybit", "PERP_LINEAR", "CURSOR"),
+        ("bybit", "SPOT", "CONTRADICTORY_CURSOR"),
+    ],
 )
 async def test_missing_protocol_fact_cannot_remove_catalog_or_advance_snapshot(
     tmp_path: Path,
     venue: Literal["bybit", "okx"],
     market_type: Literal["SPOT", "PERP_LINEAR"],
-    missing_fact: Literal["CODE", "CURSOR"],
+    missing_fact: Literal["CODE", "CURSOR", "CONTRADICTORY_CURSOR"],
 ) -> None:
     invalid = False
     valid_empty = False
@@ -108,6 +113,7 @@ async def test_missing_protocol_fact_cannot_remove_catalog_or_advance_snapshot(
 
     def respond(request: httpx.Request) -> httpx.Response:
         assert request.url.host == "synthetic.example"
+        assert "cursor" not in request.url.params
         if venue == "bybit":
             payload: dict[str, JsonValue] = {
                 "result": {
@@ -121,7 +127,9 @@ async def test_missing_protocol_fact_cannot_remove_catalog_or_advance_snapshot(
             result = payload["result"]
             assert isinstance(result, dict)
             if not invalid or missing_fact != "CURSOR":
-                result["nextPageCursor"] = ""
+                result["nextPageCursor"] = (
+                    "unexpected-spot-page" if invalid and missing_fact == "CONTRADICTORY_CURSOR" else ""
+                )
         else:
             payload = {
                 "data": []
@@ -179,7 +187,9 @@ async def test_missing_protocol_fact_cannot_remove_catalog_or_advance_snapshot(
 
 
 def test_bybit_cursor_is_preserved_and_empty_or_absent_means_no_next_page() -> None:
-    declared = feed("bybit")
+    declared = FeedParsingSpec(
+        url="https://synthetic.example/catalog", venue="bybit", market_type="PERP_LINEAR"
+    )
     assert (
         parse_instrument_page(
             {"retCode": 0, "result": {"list": [], "nextPageCursor": "next"}}, declared
@@ -215,3 +225,17 @@ def test_bybit_perpetual_cursor_is_required_even_for_an_empty_successful_page() 
         ).next_cursor
         is None
     )
+
+
+def test_spot_cursor_is_absent_or_explicitly_empty_never_a_followup_page() -> None:
+    terminal_results: tuple[dict[str, JsonValue], ...] = (
+        {"list": []},
+        {"list": [], "nextPageCursor": ""},
+    )
+    for result in terminal_results:
+        assert parse_instrument_page({"retCode": 0, "result": result}, feed("bybit")).next_cursor is None
+    with pytest.raises(ValidationError):
+        parse_instrument_page(
+            {"retCode": 0, "result": {"list": [], "nextPageCursor": "unexpected"}},
+            feed("bybit"),
+        )

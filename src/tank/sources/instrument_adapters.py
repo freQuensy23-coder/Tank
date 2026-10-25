@@ -1,6 +1,6 @@
 """Validate exchange catalog envelopes before making instrument observations."""
 
-from pydantic import ConfigDict, JsonValue, TypeAdapter
+from pydantic import ConfigDict, JsonValue, TypeAdapter, field_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.json import JsonDocument, decode_json
@@ -11,6 +11,13 @@ from tank.contracts.sources import FeedParsingSpec
 class BybitSpotResult(DomainModel):
     list: list[JsonValue]
     nextPageCursor: str = ""
+
+    @field_validator("nextPageCursor")
+    @classmethod
+    def no_spot_pagination(cls, value: str) -> str:
+        if value != "":
+            raise ValueError("Bybit spot instruments do not support pagination")
+        return value
 
 
 class BybitPerpetualResult(DomainModel):
