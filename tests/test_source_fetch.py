@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -117,3 +118,66 @@ async def test_each_retry_retains_response_evidence_without_exposing_query_in_fa
 def test_conditional_cache_projection_rejects_malformed_processing_evidence() -> None:
     with pytest.raises(ValidationError):
         HttpCheckpointProjection.from_document({"entry_errors": "malformed"})
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_owner_is_the_explicit_operation_not_key_or_source_count(tmp_path: Path) -> None:
+    from source_support import fixture_request_budgets, fixture_versions
+    from test_sources import settings
+
+    from tank.sources import SourceService
+    from tank.storage import MemoryRepository
+
+    repo = MemoryRepository()
+    async with httpx.AsyncClient() as http:
+        service = SourceService(
+            repo,
+            settings(
+                tmp_path,
+                [
+                    {"source_id": "S30", "feeds": []},
+                    {"source_id": "S31", "feeds": []},
+                ],
+            ),
+            http=http,
+            versions=fixture_versions(),
+            budgets=fixture_request_budgets(),
+        )
+        source = service.sources["S31"]
+        await service.poller.save(source, "opaque:S30:legacy-address", {})
+        stored = await repo.get("ops.source_checkpoints", "opaque:S30:legacy-address")
+        assert stored is not None and stored["source_id"] == "S31"
+        with pytest.raises(ValueError, match="actual source operation"):
+            await service.poller.save(source, "other-address", {"source_id": "S30"})
+        assert await repo.get("ops.source_checkpoints", "other-address") is None
+
+
+@pytest.mark.asyncio
+async def test_detail_reader_requires_an_explicit_evidence_hook_instead_of_key_convention() -> None:
+    recorded: list[str] = []
+
+    async def record(key: str, receipt: FetchEvidence) -> None:
+        recorded.append(key)
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b"evidence"))
+    ) as client:
+
+        async def send(
+            feed: HttpFetchPlan,
+            headers: Mapping[str, str],
+            key: str,
+            start: RequestStarted | None,
+        ) -> httpx.Response:
+            return await client.request(feed.method, feed.url)
+
+        def clock() -> datetime:
+            return datetime(2026, 10, 25, tzinfo=UTC)
+
+        plan = HttpFetchPlan(url="https://publisher.invalid/entry")
+        observed = SourceHttpReader(send, record, clock)
+        await observed.read(plan, "opaque-feed-address", HttpCheckpointProjection(), None)
+        detail = SourceHttpReader(send, None, clock)
+        outcome = await detail.read(plan, "S30:0", HttpCheckpointProjection(), None)
+        assert isinstance(outcome, FetchedContent)
+    assert recorded == ["opaque-feed-address"]

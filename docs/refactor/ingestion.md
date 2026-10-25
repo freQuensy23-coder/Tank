@@ -620,3 +620,30 @@ This is deliberately not part of held head 477d58e. Two quality-owned E2E map
 subscriptions still need a later paired attribute migration; full integration
 is not claimed. Checkpoint ownership/state schemas and unknown prior Coinbase
 flags remain the next work inside this independent branch.
+
+
+### Independent next branch: explicit checkpoint operation ownership
+
+Every checkpoint write now receives the actual `SourceDefinition` operation.
+`SourcePoller.save` never derives source identity from key text or the number of
+configured sources. Existing contradictory ownership rejects before persistence;
+new checkpoint ownership comes from the required operation object. Opaque storage
+addresses are addresses, not evidence of a publisher identity.
+
+HTTP reads also receive that source context. The Go request's source_id and the
+receipt callback use the actual definition, not key.split(). The application
+must explicitly select whether a read persists feed HTTP evidence. The generic
+reader accepts a required nullable evidence hook: None means a detail/history
+read returns its typed receipt to its owning backlog instead of mutating the
+feed checkpoint. Primary versus detail behavior no longer depends on matching a
+generic key regex. The actor's request-start callback now marks the owning feed
+after admission and before actual I/O, preserving cadence when a provider block
+delays the paid run.
+
+Evidence before final start-hook assertion: 211 source/admission units pass in
+3.05s. The opaque/misleading-key test uses two configured sources and proves
+ownership follows the explicit definition; contradictory rows refuse with no
+write. Reader tests prove an opaque feed address persists evidence when explicitly
+selected, while a feed-looking detail address does not. Reader/X adapter strict
+checks pass. Full checkpoint record schemas and generic clock annotation remain
+open in this independent branch; these changes do not imply that migration is done.

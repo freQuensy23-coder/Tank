@@ -164,7 +164,7 @@ class SourcePoller:
 
         return await self.service.repo.get("ops.source_checkpoints", key) or {}
 
-    async def save(self, key, state):
+    async def save(self, source: SourceDefinition, key: str, state):
         from tank.time_precision import collection_clock
 
         def annotate(value):
@@ -188,15 +188,9 @@ class SourcePoller:
                 for child in value:
                     annotate(child)
 
-        source_match = re.search(r"(?:^|:)(S\d{2})(?=:|$)", key)
-        declared_source = source_match.group(1) if source_match else state.get("source_id")
-        if declared_source is None and len(self.service.sources) == 1:
-            declared_source = next(iter(self.service.sources))
-        if declared_source is None:
-            raise ValueError("Checkpoint requires its declared source identity")
-        if state.get("source_id") not in {None, declared_source}:
-            raise ValueError("Checkpoint source identity conflicts with its feed key")
-        state["source_id"] = declared_source
+        if "source_id" in state and state["source_id"] != source.source_id:
+            raise ValueError("Checkpoint owner conflicts with the actual source operation")
+        state["source_id"] = source.source_id
         state.update(collection_clock(self.stamp()).fields("updated_at"))
         annotate(state)
         for field in (
@@ -298,13 +292,13 @@ class SourcePoller:
                 "page:" + page_state["payload_sha256"] + "|" + str(page_state["fetched_at"]),
                 page_state["fetched_at"],
             )
-            await self.save(key, current)
+            await self.save(source, key, current)
 
-    async def mark_request_start(self, key):
+    async def mark_request_start(self, source: SourceDefinition, key: str) -> None:
         async with self.lock(self.state_locks, key):
             current = await self.state(key)
             current["last_attempt_at"] = self.stamp()
-            await self.save(key, current)
+            await self.save(source, key, current)
 
     async def _fetch_rows(self, source, feed, key, state):
         svc = self.service
@@ -312,7 +306,12 @@ class SourcePoller:
         kind = feed.kind
         if sid == "S29":
             accounts = [account.handle.lstrip("@") for account in svc.accounts.values()]
-            result = await svc.xsensor.posts(feed.url, accounts, state.get("account_cursors", {}))
+            result = await svc.xsensor.posts(
+                feed.url,
+                accounts,
+                state.get("account_cursors", {}),
+                on_start=lambda: self.mark_request_start(source, key),
+            )
             state.update(
                 fetched_at=self.stamp(),
                 account_cursors=result.cursors,
@@ -321,7 +320,11 @@ class SourcePoller:
             )
             return result.rows, state, kind
         _http_read = await svc.fetch(
-            feed.request_plan(source.limits), key, on_start=lambda: self.mark_request_start(key)
+            source,
+            feed.request_plan(source.limits),
+            key,
+            persist_http_evidence=True,
+            on_start=lambda: self.mark_request_start(source, key),
         )
         payload = _http_read.payload
         if isinstance(_http_read, NotModified):
@@ -349,7 +352,10 @@ class SourcePoller:
                         }
                     )
                     _http_read = await svc.fetch(
-                        next_feed.request_plan(source.limits), key + ":cursor:" + sha256(cursor)
+                        source,
+                        next_feed.request_plan(source.limits),
+                        key + ":cursor:" + sha256(cursor),
+                        persist_http_evidence=False,
                     )
                     page = _http_read.payload
                     if isinstance(_http_read, NotModified):
@@ -378,7 +384,7 @@ class SourcePoller:
                 instrument_changes, snapshot, previous, feed, pages, found_on, self.stamp()
             )
             if stored.get("sha256") != digest:
-                await self.save(snapshot_key, {"sha256": digest, "instruments": snapshot})
+                await self.save(source, snapshot_key, {"sha256": digest, "instruments": snapshot})
         elif kind in {"rss", "atom", "feed"}:
             rows = await asyncio.to_thread(parsers.feeds, payload, sid, feed)
             state["entry_errors"] = [
@@ -494,7 +500,11 @@ class SourcePoller:
             escalated = await svc.is_escalated(sid)
             if (self.now() - last_head_check).total_seconds() >= self.interval(source, feed, escalated):
                 _http_read = await svc.fetch(
-                    feed.request_plan(source.limits), key, on_start=lambda: self.mark_request_start(key)
+                    source,
+                    feed.request_plan(source.limits),
+                    key,
+                    persist_http_evidence=True,
+                    on_start=lambda: self.mark_request_start(source, key),
                 )
                 head = _http_read.payload
                 last_head_check = self.now()
@@ -509,10 +519,12 @@ class SourcePoller:
                         row.update(observed_at=head_state["fetched_at"], _payload=head)
                     await self.retain_page(key, source, feed, head_rows, head_state)
             _http_read = await svc.fetch(
+                source,
                 page_feed.request_plan(source.limits),
                 key
                 + ":history:"
                 + str(page_number if sid == "S09" else offset if sid == "S24" else sha256(page_feed.url)),
+                persist_http_evidence=False,
             )
             page = _http_read.payload
             if isinstance(_http_read, NotModified):
@@ -547,8 +559,10 @@ class SourcePoller:
                     + "}) { id title body state start end created scores scores_total space { id } } }"
                 )
                 _http_read = await svc.fetch(
+                    source,
                     feed.model_copy(update={"body": {"query": query}}).request_plan(source.limits),
                     key + ":pending:" + str(start),
+                    persist_http_evidence=False,
                 )
                 extra = _http_read.payload
                 if isinstance(_http_read, NotModified):
@@ -598,7 +612,7 @@ class SourcePoller:
             async with self.lock(self.state_locks, key):
                 current = await self.state(key)
                 current["last_attempt_at"] = attempted
-                await self.save(key, current)
+                await self.save(source, key, current)
             try:
                 rows, acquired, kind = await self._fetch_rows(source, feed, key, state)
                 async with self.lock(self.state_locks, key):
@@ -664,7 +678,7 @@ class SourcePoller:
                         current["last_success_at"] = self.stamp()
                     elif not current.get("last_success_at") and current["status"] == "HEALTHY":
                         current["status"] = "PENDING"
-                    await self.save(key, current)
+                    await self.save(source, key, current)
             except Exception as exc:
                 async with self.lock(self.state_locks, key):
                     current = await self.state(key)
@@ -677,7 +691,7 @@ class SourcePoller:
                         error=str(exc),
                         last_failure_at=self.stamp(),
                     )
-                    await self.save(key, current)
+                    await self.save(source, key, current)
                 return FeedPollOutcome(items=0, errors=[str(exc)])
             await self.report_entry_errors(
                 key, source, feed, acquired.get("entry_errors") or [], acquired.get("fetched_at") or attempted
@@ -708,7 +722,7 @@ class SourcePoller:
                 async with self.lock(self.state_locks, key):
                     current = await self.state(key)
                     current["entry_error_reports"] = failed
-                    await self.save(key, current)
+                    await self.save(source, key, current)
         except Exception:
             log.exception("Entry error report backlog for %s could not be saved", key)
 
@@ -727,8 +741,10 @@ class SourcePoller:
         svc, sid = self.service, source.source_id
         try:
             return await svc.fetch(
+                source,
                 HttpFetchPlan(url=item["url"], source_limits=source.limits),
                 key + ":" + sha256(item["url"]),
+                persist_http_evidence=False,
             )
         except httpx.HTTPStatusError as exc:
             binding = item.get("publisher_cms_identity")
@@ -749,8 +765,10 @@ class SourcePoller:
             ):
                 raise
             _http_read = await svc.fetch(
+                source,
                 HttpFetchPlan(url=fallback, source_limits=source.limits),
                 key + ":" + sha256(fallback),
+                persist_http_evidence=False,
             )
             article = _http_read.payload
             if isinstance(_http_read, NotModified):
@@ -780,12 +798,14 @@ class SourcePoller:
         if self.needs_detail(sid, batch["kind"]):
             if sid == "S09":
                 _http_read = await svc.fetch(
+                    source,
                     HttpFetchPlan(
                         url="https://www.binance.com/bapi/composite/v1/public/cms/article/detail/query?articleCode="
                         + item["external_id"],
                         source_limits=source.limits,
                     ),
                     key + ":detail:" + item["external_id"],
+                    persist_http_evidence=False,
                 )
                 payload = _http_read.payload
                 if isinstance(_http_read, NotModified):
@@ -853,7 +873,7 @@ class SourcePoller:
                     current = await self.state(key)
                     for batch in current.get("pending_batches", []):
                         batch["rows"] = [row for row in batch["rows"] if "item_id" in row]
-                    await self.save(key, current)
+                    await self.save(source, key, current)
                 state = await self.state(key)
             batches = deepcopy(state.get("pending_batches", []))
             if not any(batch["rows"] for batch in batches) and state.get("article_errors"):
@@ -866,7 +886,7 @@ class SourcePoller:
                         or current.get("acquisition_error")
                     ):
                         current.update(status="HEALTHY", error=None)
-                    await self.save(key, current)
+                    await self.save(source, key, current)
             if not batches:
                 return FeedPollOutcome(items=0, errors=[])
             errors, completed, count, duplicates = [], {}, 0, []
@@ -950,7 +970,7 @@ class SourcePoller:
                         error="X_HISTORY_GAP_LIMIT" if current.get("scan_status") == "GAP_LIMIT" else None,
                         last_success_at=self.stamp(),
                     )
-                await self.save(key, current)
+                await self.save(source, key, current)
             return FeedPollOutcome(items=count, errors=errors)
 
     async def poll_once(
