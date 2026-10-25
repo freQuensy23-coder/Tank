@@ -1,0 +1,72 @@
+{
+  "scope": "Verified checkpoint only; global migration incomplete",
+  "code_head": "1516ef6dc6a95eaa129c0ecaf04d2827b9cbe085",
+  "verified_at": "2026-10-24T23:47:11.254089+00:00",
+  "head_unchanged": true,
+  "tracked_worktree_clean": true,
+  "commands": {
+    "comments": 0,
+    "ruff": 0,
+    "format": 0,
+    "mypy-3": 0,
+    "mypy-4": 0,
+    "mypy-5": 0,
+    "mypy-6": 0,
+    "typescript": 0,
+    "node-unit": 0,
+    "node-contract": 0,
+    "unit": 0,
+    "unit-timing": 0,
+    "collection": 0,
+    "integration": 0,
+    "integration-gate": 0,
+    "prepare-clickhouse": 0,
+    "prepare-postgres": 0,
+    "go-vet": 0,
+    "go-race": 0,
+    "go-gate": 0,
+    "go-schema": 0
+  },
+  "unit": {
+    "passed": 2120,
+    "failed": 0,
+    "skipped": 0,
+    "p90_seconds": 0.325,
+    "max_seconds": 4.06
+  },
+  "integration": {
+    "cases": 355,
+    "passed": 355,
+    "skipped": 0
+  },
+  "go": {
+    "cases": 240,
+    "passed": 240,
+    "skipped": 0
+  },
+  "node": {
+    "unit_passed": 50,
+    "contract_passed": 25,
+    "skipped": 0
+  },
+  "strict_families": {
+    "foundation_source_and_contracts": 27,
+    "foundation_tests_helpers": 17,
+    "quality_modules": 17
+  },
+  "configured_mypy_modules": 103,
+  "source_trees": {
+    "src": "5bea6ba68c95419722bcd3350154162c9baec0c6",
+    "tests": "ab912edd51a80983b5b0d1c80de93fae760dc959",
+    "scripts": "0ff69c59b8b344e90d9424827645a56ebd0a2a4c",
+    "deploy": "9b96b47c867516792e10ff078e61a6c988d6d157",
+    "capture": "0682b947dd124c737a70c9b4a3271ac2fd6039ca",
+    "vendor": "c35b0052d99fa51c72a82c918da8830340db1ccf"
+  },
+  "limits": [
+    "Static typing gates cover completed families; thousands of active annotations and mapping/default classifications remain.",
+    "Known inventory gap: Tank-authored code within vendor/openma and embedded Node programs is being classified separately from preserved third-party source.",
+    "No production deployment or credential access."
+  ],
+  "evidence_prefix": "/srv/tank-refactor-evidence/integrated-8-"
+}

@@ -76,6 +76,8 @@ TypeScript files without modifying vendor source. The runner checks that every d
 test path exists and requires a complete nonempty result with zero failures, skips,
 cancellations or todos. It uses normal Node test concurrency.
 
+The current contract lane includes four additional process-evidence regressions and passes 25 cases with zero skips. These use owned temporary process files; they do not qualify native VMs.
+
 At the 2026-10-24 typed-runner checkpoint, the local unit lane passed 50 cases and the
 contract lane passed 21, all with zero skips. The unit lane includes six inventory/result
 gate regressions. The full current file lists are declared in

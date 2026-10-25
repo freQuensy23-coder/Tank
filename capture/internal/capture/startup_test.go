@@ -52,7 +52,9 @@ func TestRepairRecordsReasonOnFullStoredBar(t *testing.T) {
 	r.mem.rows["mkt.flow_bars_1m"] = map[string]map[string]any{key: {
 		"instrument_id": r.inst.ID, "minute_start": pytime.ISO(minute), "complete": false, "buy_qty": "1",
 	}}
-	r.s.repairInstrument(context.Background(), r.inst, minute, minute.Add(time.Minute), true)
+	if _, err := r.s.repairInstrument(context.Background(), r.inst, minute, minute.Add(time.Minute), true); err != nil {
+		t.Fatal(err)
+	}
 	if err := r.mem.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}

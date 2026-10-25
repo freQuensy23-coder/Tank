@@ -2986,3 +2986,23 @@ async def test_captured_tools_decision_refreshes_fired_market_watch_offline(
     assert (await repo.get("ana.watch_conditions", watch["cond_id"]))["consumed_by"] == result["dec_id"]
     jobs = [row for row in await repo.list("ops.jobs") if row["type"] == "RUN_MARKET_TRUTH"]
     assert len(jobs) == 1 and jobs[0]["status"] == "DONE"
+
+
+def test_uncaptured_source_policy_remains_explicitly_unknown() -> None:
+    from tank.contracts.source_items import PendingRelevance
+    from tank.replay import ReplaySourcePolicy
+
+    policy = ReplaySourcePolicy.from_captured({"item_id": "legacy-item"})
+    relevance = policy.initial_relevance()
+    assert isinstance(relevance, PendingRelevance)
+    assert relevance.decision is None
+    assert relevance.pending_reason == "SOURCE_INGESTION_POLICY_NOT_CAPTURED"
+
+
+def test_malformed_captured_policy_is_not_treated_as_uncaptured() -> None:
+    from pydantic import ValidationError
+
+    from tank.replay import ReplaySourcePolicy
+
+    with pytest.raises(ValidationError):
+        ReplaySourcePolicy.from_captured({"source_id": ["S01"]})
