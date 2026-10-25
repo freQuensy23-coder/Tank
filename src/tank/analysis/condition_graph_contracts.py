@@ -1592,10 +1592,9 @@ class UnrequestedConditionFundingDispersion(DomainModel):
     status: Literal["NOT_REQUESTED"]
 
 
-class BasicConditionDerivatives(DomainModel):
-    kind: Literal["BASIC"]
+class ConditionDerivativeWindow[Venue: ConditionDerivativeVenue](DomainModel):
     interval: ConditionInterval
-    per_venue: tuple[ConditionDerivativeVenue, ...]
+    per_venue: tuple[Venue, ...]
     synchronized: (
         ConditionSynchronizedOpenInterest
         | UnavailableConditionSynchronizedOpenInterest
@@ -1690,3 +1689,237 @@ class BasicConditionDerivatives(DomainModel):
             or parse_iso_time(observation.end_observed_at.value) > self.interval.cutoff
         ):
             raise ValueError("OI window endpoints cannot claim observations after the actual cutoff")
+
+
+class BasicConditionDerivatives(ConditionDerivativeWindow[ConditionDerivativeVenue]):
+    kind: Literal["BASIC"]
+
+
+class ConditionObservedPredicate(DomainModel):
+    status: Literal["OBSERVED"]
+    value: bool
+
+
+class ConditionUnavailablePredicate(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal[
+        "INCOMPLETE", "INSUFFICIENT_HISTORY", "NOT_ESTIMABLE", "NOT_SUPPORTED", "ZERO_TOTAL_VOLUME"
+    ]
+
+
+type ConditionPredicate = ConditionObservedPredicate | ConditionUnavailablePredicate
+
+
+class ConditionNativeVolumeSupport(DomainModel):
+    value: Decimal | None = Field(ge=0)
+    previous: Decimal | None = Field(ge=0)
+    normal_range: DecimalRange
+    unit: Literal["NATIVE_TOKEN"]
+    window: ConditionWindow
+    reason: Literal["NOT_ESTIMABLE"] | None
+
+    @model_validator(mode="after")
+    def actual_comparison_basis(self) -> Self:
+        estimable = self.value is not None and self.normal_range.bounds is not None
+        if estimable != (self.reason is None):
+            raise ValueError("Native-volume support requires an actual current amount and available baseline")
+        return self
+
+
+class ConditionDerivativeVenueSupport(DomainModel):
+    status: Literal["COMPUTED"]
+    perp_taker_buy_share: float | None = Field(ge=0, le=1)
+    perp_taker_buy_share_reason: Literal["INCOMPLETE", "ZERO_TOTAL_VOLUME", "NOT_SUPPORTED"] | None
+    perp_volume_usd: Decimal | None = Field(ge=0)
+    perp_volume_reason: Literal["INCOMPLETE"] | None
+    basis_normal_range: DecimalRange
+    basis_vs_normal: Literal["WITHIN", "ABOVE", "BELOW"] | None
+    basis_widening: ConditionPredicate
+    funding_rising: ConditionPredicate
+
+    @model_validator(mode="after")
+    def absent_quantities(self) -> Self:
+        if (self.perp_taker_buy_share is None) != (self.perp_taker_buy_share_reason is not None):
+            raise ValueError("Missing taker share requires its actual coverage or zero-denominator reason")
+        if (self.perp_volume_usd is None) != (self.perp_volume_reason is not None):
+            raise ValueError("Missing perp USD volume requires its actual coverage gap")
+        if self.basis_normal_range.bounds is None and self.basis_vs_normal is not None:
+            raise ValueError("An unavailable basis baseline cannot establish a normal-range comparison")
+        return self
+
+
+class ConditionDerivativeSupportFeatures(DomainModel):
+    spot_volume_up_beyond_normal: ConditionPredicate
+    spot_volume_within_normal: ConditionPredicate
+    spot_volume: ConditionNativeVolumeSupport
+    perp_volume_up_beyond_normal: ConditionPredicate
+    perp_volume_within_normal: ConditionPredicate
+    perp_volume: ConditionNativeVolumeSupport
+    perp_taker_flow_buy: ConditionPredicate
+    basis_within_normal: ConditionPredicate
+    basis_widening: ConditionPredicate
+    funding_rising: ConditionPredicate
+    liquidations_first_half_majority: ConditionPredicate
+    large_ticket_buy_majority: ConditionPredicate
+    large_tickets_minority: ConditionPredicate
+    large_ticket_sell_share_rising: ConditionPredicate
+    exchange_inflows: ConditionPredicate
+    localized_inventory_transfer: ConditionPredicate
+    ask_depth_building: ConditionPredicate
+    ask_replenishment: ConditionPredicate
+
+    @model_validator(mode="after")
+    def actual_volume_predicates(self) -> Self:
+        for volume, within, up in (
+            (self.spot_volume, self.spot_volume_within_normal, self.spot_volume_up_beyond_normal),
+            (self.perp_volume, self.perp_volume_within_normal, self.perp_volume_up_beyond_normal),
+        ):
+            bounds = volume.normal_range.bounds
+            value = volume.value
+            previous = volume.previous
+            expected_within = (
+                None if bounds is None or value is None else bounds.lower <= value <= bounds.upper
+            )
+            expected_up = (
+                None
+                if bounds is None or value is None or previous is None
+                else value > previous and value > bounds.upper
+            )
+            _condition_predicate_matches(within, expected_within)
+            _condition_predicate_matches(up, expected_up)
+        return self
+
+
+def _condition_predicate_matches(predicate: ConditionPredicate, expected: bool | None) -> None:
+    if expected is None:
+        if not isinstance(predicate, ConditionUnavailablePredicate):
+            raise ValueError("A support predicate cannot replace unavailable inputs with a known boolean")
+    elif not isinstance(predicate, ConditionObservedPredicate) or predicate.value != expected:
+        raise ValueError("A support predicate must preserve its actual known calculation")
+
+
+class ConditionLeadLagPoint(DomainModel):
+    venue: str = Field(min_length=1, pattern=r"\S")
+    market: Literal["SPOT", "PERP"]
+    first_observed_at: Timestamp
+
+    @model_validator(mode="after")
+    def actual_detection_clock(self) -> Self:
+        if self.first_observed_at.value is None:
+            raise ValueError("A detected first move requires its actual observation clock")
+        return self
+
+
+class ConditionLeadLagEvidence(DomainModel):
+    interval: ConditionInterval
+    evaluated_markets: tuple[Literal["SPOT", "PERP"], ...]
+    spot_confirmation: ConditionPredicate
+    sequence: tuple[ConditionLeadLagPoint, ...]
+
+    @model_validator(mode="after")
+    def actual_detection_scope(self) -> Self:
+        if len(self.evaluated_markets) != len(set(self.evaluated_markets)):
+            raise ValueError("Lead/lag market evaluation cannot duplicate a market")
+        for point in self.sequence:
+            if point.market not in self.evaluated_markets:
+                raise ValueError("A lead/lag detection requires its actual evaluated market")
+            if point.first_observed_at.value is None:
+                raise ValueError("A lead/lag detection requires its actual observation clock")
+            at = parse_iso_time(point.first_observed_at.value)
+            if not self.interval.start <= at < self.interval.cutoff:
+                raise ValueError("A first-move observation must belong to the actual requested interval")
+        return self
+
+
+class ObservedConditionLeadLag(ConditionLeadLagEvidence):
+    status: Literal["OBSERVED"]
+    first_mover: Literal["SPOT", "PERP", "SIMULTANEOUS"]
+
+    @model_validator(mode="after")
+    def observed_market_order(self) -> Self:
+        if set(self.evaluated_markets) != {"SPOT", "PERP"}:
+            raise ValueError("First-mover classification requires actual evaluation of both markets")
+        spot = [
+            parse_iso_time(point.first_observed_at.value)
+            for point in self.sequence
+            if point.market == "SPOT" and point.first_observed_at.value is not None
+        ]
+        perp = [
+            parse_iso_time(point.first_observed_at.value)
+            for point in self.sequence
+            if point.market == "PERP" and point.first_observed_at.value is not None
+        ]
+        if not spot and not perp:
+            raise ValueError("An observed first mover requires a detected market move")
+        if spot and perp:
+            lag = (min(perp) - min(spot)).total_seconds()
+            expected = "SPOT" if lag >= 60 else "PERP" if lag <= -60 else "SIMULTANEOUS"
+        else:
+            expected = "SPOT" if spot else "PERP"
+        if self.first_mover != expected:
+            raise ValueError("First-mover classification must preserve actual detection order")
+        return self
+
+
+class UnavailableConditionLeadLag(ConditionLeadLagEvidence):
+    status: Literal["UNAVAILABLE"]
+    first_mover: Literal["UNKNOWN"]
+    reason: Literal["INCOMPLETE", "INSUFFICIENT_HISTORY", "NOT_ESTIMABLE"]
+
+
+class EnrichedConditionDerivativeVenue(ConditionDerivativeVenue):
+    support: ConditionDerivativeVenueSupport
+
+    @model_validator(mode="after")
+    def actual_basis_comparison(self) -> Self:
+        bounds = self.support.basis_normal_range.bounds
+        value = self.basis_bps
+        expected = (
+            None
+            if bounds is None or value is None
+            else "BELOW"
+            if value < bounds.lower
+            else "ABOVE"
+            if value > bounds.upper
+            else "WITHIN"
+        )
+        if self.support.basis_vs_normal != expected:
+            raise ValueError("Enriched basis comparison requires the actual mark/index basis and baseline")
+        return self
+
+
+class EnrichedConditionDerivatives(ConditionDerivativeWindow[EnrichedConditionDerivativeVenue]):
+    kind: Literal["ENRICHED"]
+    lead_lag: ObservedConditionLeadLag | UnavailableConditionLeadLag
+    support_features: ConditionDerivativeSupportFeatures
+
+    @model_validator(mode="after")
+    def actual_enrichment_inputs(self) -> Self:
+        if (
+            self.support_features.spot_volume.window != self.interval.window
+            or self.support_features.perp_volume.window != self.interval.window
+        ):
+            raise ValueError("Derivative support volume must preserve its actual analysis window")
+        basis_values = [venue.support.basis_vs_normal for venue in self.per_venue]
+        within = (
+            None
+            if not basis_values or any(value is None for value in basis_values)
+            else all(value == "WITHIN" for value in basis_values)
+        )
+        _condition_predicate_matches(self.support_features.basis_within_normal, within)
+        for aggregate, members in (
+            (
+                self.support_features.basis_widening,
+                tuple(venue.support.basis_widening for venue in self.per_venue),
+            ),
+            (
+                self.support_features.funding_rising,
+                tuple(venue.support.funding_rising for venue in self.per_venue),
+            ),
+        ):
+            known = [member.value for member in members if isinstance(member, ConditionObservedPredicate)]
+            _condition_predicate_matches(aggregate, any(known) if known else None)
+        return self
+
+
+type ConditionDerivatives = BasicConditionDerivatives | EnrichedConditionDerivatives

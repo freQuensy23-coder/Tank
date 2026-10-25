@@ -11,6 +11,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionCadenceScope,
     ConditionCollection,
     ConditionDepthValues,
+    ConditionDerivativeSupportFeatures,
     ConditionFieldObservation,
     ConditionFlowAggregate,
     ConditionFundingObservation,
@@ -24,7 +25,7 @@ from tank.analysis.condition_graph_contracts import (
     WindowedConditionSpot,
 )
 from tank.analysis.positioning import MissingOIDecomposition
-from tank.analysis.statistics_contracts import DecimalRange, FloatBounds, FloatRange
+from tank.analysis.statistics_contracts import DecimalBounds, DecimalRange, FloatBounds, FloatRange
 from tank.time_precision import Timestamp
 
 AT = datetime(2026, 10, 17, 12, tzinfo=UTC)
@@ -1012,6 +1013,175 @@ def test_derivative_window_refuses_invented_funding_dispersion_and_absent_sync_v
                 update={
                     "synchronized": ConditionSynchronizedOpenInterest(
                         status="OBSERVED", venues=("unobserved",), values=observed_oi_without_usd()
+                    )
+                }
+            )
+        )
+
+
+def test_lead_lag_uses_actual_market_detection_clocks_and_explicit_scope() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionLeadLagPoint,
+        ConditionUnavailablePredicate,
+        ObservedConditionLeadLag,
+    )
+
+    interval = ConditionInterval(window="W1H", start=AT - timedelta(hours=1), cutoff=AT)
+    spot = ConditionLeadLagPoint(
+        venue="spot",
+        market="SPOT",
+        first_observed_at=Timestamp(
+            value="2026-10-17T11:10:00Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+        ),
+    )
+    perp = ConditionLeadLagPoint(
+        venue="perp",
+        market="PERP",
+        first_observed_at=Timestamp(
+            value="2026-10-17T11:11:00Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+        ),
+    )
+    lag = ObservedConditionLeadLag(
+        status="OBSERVED",
+        interval=interval,
+        evaluated_markets=("SPOT", "PERP"),
+        first_mover="SPOT",
+        spot_confirmation=ConditionUnavailablePredicate(status="UNAVAILABLE", reason="NOT_ESTIMABLE"),
+        sequence=(perp, spot),
+    )
+    assert lag.first_mover == "SPOT" and lag.spot_confirmation.status == "UNAVAILABLE"
+    with pytest.raises(ValidationError, match="actual detection order"):
+        ObservedConditionLeadLag.model_validate(lag.model_copy(update={"first_mover": "SIMULTANEOUS"}))
+    with pytest.raises(ValidationError, match="actual evaluated market"):
+        ObservedConditionLeadLag.model_validate(lag.model_copy(update={"evaluated_markets": ("SPOT",)}))
+    later = perp.model_copy(
+        update={
+            "first_observed_at": Timestamp(
+                value="2026-10-17T12:00:00Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+            )
+        }
+    )
+    with pytest.raises(ValidationError, match="actual requested interval"):
+        ObservedConditionLeadLag.model_validate(lag.model_copy(update={"sequence": (spot, later)}))
+
+
+def unknown_derivative_support() -> ConditionDerivativeSupportFeatures:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionDerivativeSupportFeatures,
+        ConditionNativeVolumeSupport,
+        ConditionUnavailablePredicate,
+    )
+
+    absent = ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+    volume = ConditionNativeVolumeSupport(
+        value=None,
+        previous=None,
+        normal_range=DecimalRange(bounds=None, reason="INSUFFICIENT_HISTORY"),
+        unit="NATIVE_TOKEN",
+        window="W1H",
+        reason="NOT_ESTIMABLE",
+    )
+    return ConditionDerivativeSupportFeatures(
+        spot_volume_up_beyond_normal=absent,
+        spot_volume_within_normal=absent,
+        spot_volume=volume,
+        perp_volume_up_beyond_normal=absent,
+        perp_volume_within_normal=absent,
+        perp_volume=volume,
+        perp_taker_flow_buy=absent,
+        basis_within_normal=absent,
+        basis_widening=absent,
+        funding_rising=absent,
+        liquidations_first_half_majority=absent,
+        large_ticket_buy_majority=absent,
+        large_tickets_minority=absent,
+        large_ticket_sell_share_rising=absent,
+        exchange_inflows=absent,
+        localized_inventory_transfer=absent,
+        ask_depth_building=absent,
+        ask_replenishment=absent,
+    )
+
+
+def test_volume_support_keeps_known_zero_within_range_and_unknown_prior_distinct() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionDerivativeSupportFeatures,
+        ConditionNativeVolumeSupport,
+        ConditionObservedPredicate,
+    )
+
+    unknown = unknown_derivative_support()
+    zero = ConditionNativeVolumeSupport(
+        value=Decimal(0),
+        previous=None,
+        normal_range=DecimalRange(bounds=DecimalBounds(lower=Decimal(0), upper=Decimal(0)), reason=None),
+        unit="NATIVE_TOKEN",
+        window="W1H",
+        reason=None,
+    )
+    support = ConditionDerivativeSupportFeatures.model_validate(
+        unknown.model_copy(
+            update={
+                "spot_volume": zero,
+                "spot_volume_within_normal": ConditionObservedPredicate(status="OBSERVED", value=True),
+            }
+        )
+    )
+    assert support.spot_volume.value == 0 and support.spot_volume.previous is None
+    with pytest.raises(ValidationError, match="replace unavailable inputs"):
+        ConditionDerivativeSupportFeatures.model_validate(
+            support.model_copy(
+                update={
+                    "spot_volume_up_beyond_normal": ConditionObservedPredicate(status="OBSERVED", value=False)
+                }
+            )
+        )
+
+
+def test_enriched_empty_derivative_venues_cannot_create_a_negative_basis_predicate() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionObservedPredicate,
+        ConditionUnavailableFundingDispersion,
+        ConditionUnavailablePredicate,
+        EnrichedConditionDerivatives,
+        UnavailableConditionLeadLag,
+        UnavailableConditionSynchronizedOpenInterest,
+        UnrequestedConditionIncrementalVolumes,
+        UnrequestedConditionLiquidations,
+    )
+
+    interval = ConditionInterval(window="W1H", start=AT - timedelta(hours=1), cutoff=AT)
+    support = unknown_derivative_support()
+    graph = EnrichedConditionDerivatives(
+        kind="ENRICHED",
+        interval=interval,
+        per_venue=(),
+        synchronized=UnavailableConditionSynchronizedOpenInterest(status="UNAVAILABLE", reason="INCOMPLETE"),
+        funding_dispersion=ConditionUnavailableFundingDispersion(
+            status="UNAVAILABLE", reason="INSUFFICIENT_OBSERVATIONS", observation_count=0
+        ),
+        liquidations=UnrequestedConditionLiquidations(status="NOT_REQUESTED"),
+        incremental_volume=UnrequestedConditionIncrementalVolumes(status="NOT_REQUESTED"),
+        lead_lag=UnavailableConditionLeadLag(
+            status="UNAVAILABLE",
+            first_mover="UNKNOWN",
+            reason="INCOMPLETE",
+            interval=interval,
+            evaluated_markets=(),
+            sequence=(),
+            spot_confirmation=ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE"),
+        ),
+        support_features=support,
+    )
+    assert graph.support_features.basis_within_normal.status == "UNAVAILABLE"
+    with pytest.raises(ValidationError, match="replace unavailable inputs"):
+        EnrichedConditionDerivatives.model_validate(
+            graph.model_copy(
+                update={
+                    "support_features": support.model_copy(
+                        update={
+                            "basis_within_normal": ConditionObservedPredicate(status="OBSERVED", value=False)
+                        }
                     )
                 }
             )
