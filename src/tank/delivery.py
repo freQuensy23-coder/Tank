@@ -208,14 +208,13 @@ class DeliveryService:
         parent = messages[0]["message_ref"]
         attachments = documents(notice["entry_errors"])
         manifest = [
-            {"filename": row["filename"], "sha256": row["sha256"], "bytes": len(row["content"])}
-            for row in attachments
+            {"filename": row.filename, "sha256": row.sha256, "bytes": len(row.content)} for row in attachments
         ]
         if manifest != notice["document_manifest"]:
             raise DeliveryError("Ops diagnostic document manifest mismatch")
         terminal_failure = None
         for document in attachments:
-            document_id = sha256({"filename": document["filename"], "sha256": document["sha256"]})
+            document_id = sha256({"filename": document.filename, "sha256": document.sha256})
             history = [row for row in ledger if row.get("document_id") == document_id]
             if any(row["status"] == "SENT" for row in history):
                 continue
@@ -231,9 +230,9 @@ class DeliveryService:
                 "channel": "telegram:ops",
                 "method": "sendDocument",
                 "document_id": document_id,
-                "document_sha256": document["sha256"],
-                "document_bytes": len(document["content"]),
-                "filename": document["filename"],
+                "document_sha256": document.sha256,
+                "document_bytes": len(document.content),
+                "filename": document.filename,
                 "attempt": attempt,
                 "request_reply_to_message_ref": parent,
                 **collection_clock(utcnow()).fields("at"),
@@ -247,12 +246,10 @@ class DeliveryService:
                     data={
                         "chat_id": chat,
                         "reply_parameters": json.dumps({"message_id": int(parent)}),
-                        "caption": f"{notice['notice_id']} · {document['filename']}\nsha256={document['sha256']} · {len(document['content'])} bytes",
+                        "caption": f"{notice['notice_id']} · {document.filename}\nsha256={document.sha256} · {len(document.content)} bytes",
                         "disable_content_type_detection": "true",
                     },
-                    files={
-                        "document": (document["filename"], document["content"], "application/octet-stream")
-                    },
+                    files={"document": (document.filename, document.content, "application/octet-stream")},
                 )
                 data = response.json()
                 if response.status_code != 200 or not data.get("ok"):

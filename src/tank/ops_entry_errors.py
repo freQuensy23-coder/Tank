@@ -231,22 +231,9 @@ async def report_entry_errors(
             text="",
         )
         notice = notice.model_copy(update={"text": render(notice)})
-        if attachments := documents(
-            [error.model_dump(mode="json", exclude_unset=True) for error in notice.entry_errors]
-        ):
+        if attachments := documents(notice.entry_errors):
             notice = EntryErrorNotice.model_validate(
-                notice.model_copy(
-                    update={
-                        "document_manifest": [
-                            {
-                                "filename": row["filename"],
-                                "sha256": row["sha256"],
-                                "bytes": len(row["content"]),
-                            }
-                            for row in attachments
-                        ]
-                    }
-                )
+                notice.model_copy(update={"document_manifest": [row.reference() for row in attachments]})
             )
         await repo.put("out.ops_notices", notice_id, notice.storage_record(), immutable=True)
         await repo.enqueue(

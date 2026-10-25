@@ -174,8 +174,16 @@ def test_sanitization_removes_echoed_token_cookies_and_auth_headers(encoding):
     clean = sanitize(evidence, "apify-secret")
     serialized = clean.model_dump_json()
     payloads = b"".join(
-        row["content"]
-        for row in documents([{"account": "alice", "diagnostics": clean.model_dump(mode="json")}])
+        row.content
+        for row in documents(
+            [
+                {
+                    "account": "alice",
+                    "reason": "PUBLIC_PROFILE_HTTP_503",
+                    "diagnostics": clean.model_dump(mode="json"),
+                }
+            ]
+        )
     )
     assert all(
         secret.encode() not in payloads and secret not in serialized
@@ -423,8 +431,8 @@ async def test_changed_json_detail_survives_redaction_and_creates_distinct_ops_n
     assert notices[0]["notice_id"] != notices[1]["notice_id"]
     for index, detail in enumerate((b"A", b"B")):
         attachments = documents(notices[index]["entry_errors"])
-        assert b"session" not in attachments[0]["content"]
-        assert b'"detail":"upstream ' + detail + b'"}' in attachments[0]["content"]
+        assert b"session" not in attachments[0].content
+        assert b'"detail":"upstream ' + detail + b'"}' in attachments[0].content
     assert len(await repo.list("ops.jobs", filters={"type": "DELIVER"})) == 2
 
 

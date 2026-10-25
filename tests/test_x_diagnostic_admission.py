@@ -1,5 +1,6 @@
 """Strict recorded diagnostic facts precede sanitization and source acknowledgement."""
 
+import json
 from pathlib import Path
 
 import httpx
@@ -10,8 +11,14 @@ from test_xsensor_wire_privacy import TOKEN, URL, PrivacyFixtureSettings, health
 
 from tank.contracts.sources import SourceAccount
 from tank.sources import SourceService
-from tank.sources.errors import XDiagnosticAttempt, XDiagnosticRequest, XDiagnosticResponse, XDiagnostics
-from tank.sources.x_diagnostics import sanitize
+from tank.sources.errors import (
+    AccountEntryError,
+    XDiagnosticAttempt,
+    XDiagnosticRequest,
+    XDiagnosticResponse,
+    XDiagnostics,
+)
+from tank.sources.x_diagnostics import documents, sanitize
 from tank.storage import MemoryRepository
 from tank.util import sha256
 
@@ -115,3 +122,43 @@ async def test_invalid_diagnostic_facts_refuse_before_raw_or_cursor_advance(
         finally:
             await service.close()
     await budgets.shutdown()
+
+
+def test_document_projection_preserves_historical_bytes_and_does_not_mutate_evidence() -> None:
+    diagnostic = recorded_diagnostics()
+    original = diagnostic.model_dump_json(exclude_unset=True)
+    error = AccountEntryError(account="alice", reason="PUBLIC_PROFILE_HTTP_503", diagnostics=diagnostic)
+    attachments = documents([error])
+    assert len(attachments) == 1
+    expected = {
+        "request": {"method": "GET", "url": "https://x.com/alice", "body": None},
+        "outcome": "exhausted",
+        "attemptCount": 1,
+        "attempts": [
+            {
+                "attempt": 1,
+                "at": "2026-10-25T12:00:00Z",
+                "status": 503,
+                "retryable": True,
+                "error": "PUBLIC_PROFILE_HTTP_503",
+                "response": {
+                    "status": 503,
+                    "headers": {"content-type": "text/plain"},
+                    "bodyEncoding": "utf-8",
+                    "bodyBytes": 0,
+                    "bodySha256": sha256(b""),
+                    "bodyTruncated": False,
+                    "redacted": False,
+                    "body": "",
+                    "bodyDocument": None,
+                },
+            }
+        ],
+    }
+    assert attachments[0].content == json.dumps(expected, ensure_ascii=False, indent=2).encode()
+    assert attachments[0].filename == "x-alice-1-diagnostics.json"
+    reference = attachments[0].reference()
+    assert reference.bytes == len(attachments[0].content)
+    assert reference.sha256 == sha256(attachments[0].content)
+    assert documents([error]) == attachments
+    assert diagnostic.model_dump_json(exclude_unset=True) == original
