@@ -67,7 +67,7 @@ cleanup() {
     rm -f -- "$lease"
   fi
   if [ -n "$work" ]; then
-    rm -f -- "$work/cid" "$work/lease"
+    rm -f -- "$work/cid" "$work/lease" "$work/stdout" "$work/stderr"
     rmdir -- "$work"
   fi
   exit "$result"
@@ -99,7 +99,7 @@ cid=${created[0]}
 check_container "$cid" "$nonce" "$image" || { echo "publisher create ownership is unverified" >&2; exit 125; }
 printf '%s\n' tank-publisher-worker-v1 "$cid" "$nonce" "$image" > "$work/lease"
 mv -- "$work/lease" "$lease"
-docker start --attach "$cid" 8>&- &
+docker start --attach "$cid" >"$work/stdout" 2>"$work/stderr" 8>&- &
 client=$!
 if wait "$client"; then
   client_status=0
@@ -107,6 +107,8 @@ else
   client_status=1
 fi
 client=""
+cat -- "$work/stdout"
+cat -- "$work/stderr" >&2
 [ "$client_status" -eq 0 ] || exit 1
 container_status=$(docker inspect --format '{{.State.Status}}|{{.State.ExitCode}}' "$cid" 8>&-)
 [ "$container_status" = 'exited|0' ] || { echo "publisher process did not finish successfully" >&2; exit 1; }
