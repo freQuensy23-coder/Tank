@@ -26,8 +26,13 @@ from tank.contracts.sources import (
     HttpFetchPlan,
     SourceAccountRegistryView,
     SourceApiLimitsConfiguration,
+    SourceBinanceBudget,
     SourceConfiguration,
     SourceDefinition,
+    SourceEtherscanBudget,
+    SourceHyperliquidBudget,
+    SourceSecBudget,
+    SourceUncapturedRpsBudget,
 )
 from tank.ops_progress import RepositorySourceProgress
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
@@ -119,9 +124,9 @@ class SourceService:
         for rule in self.api_limits:
             if rule.provider != provider or is_exchange_url(feed.url):
                 continue
-            if rule.tank_max_requests_per_s is not None:
+            if isinstance(rule, (SourceSecBudget, SourceUncapturedRpsBudget, SourceEtherscanBudget)):
                 await shared_request_budgets.acquire(provider, rule.tank_max_requests_per_s, 1, host=host)
-            if rule.tank_max_weight_per_min is not None:
+            elif isinstance(rule, (SourceBinanceBudget, SourceHyperliquidBudget)):
                 await shared_request_budgets.acquire(
                     provider, rule.tank_max_weight_per_min, 60, weight=weight, host=host
                 )
