@@ -146,7 +146,19 @@ async def seed(repo) -> None:
                 "prompt_version_basis": "RESOLVED_SESSION_AGENT_SNAPSHOT",
                 "model_id": "gpt-6.1-sol",
                 "messages": [],
-                "message_log": [],
+                "message_log": [
+                    {
+                        "message_id": "m",
+                        "remote_event_id": "prior-" + sid,
+                        "model_context_version": CONTEXT_VERSION,
+                        "payload": {"kind": "NEW_ITEM", "item_id": "i_" + eid},
+                        "turn_status": "RUNNING",
+                        "retry_count": 0,
+                        "body": {"type": "user.message", "content": []},
+                    }
+                ]
+                if state == "RUNNING"
+                else [],
             },
         )
 
