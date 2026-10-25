@@ -1,5 +1,6 @@
 import json
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -757,52 +758,83 @@ async def test_idle_session_receives_the_current_tools_once() -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_watch_rules_arm_disarm_and_survive_decision_reconciliation() -> None:
+async def test_agent_watch_rules_arm_disarm_and_survive_decision_reconciliation(tmp_path: Path) -> None:
+    from scheduler_support import operational_reaction_services
+    from source_support import fixture_request_budgets
+
+    from tank.analysis.decision_watches import DecisionWatchCommand
+    from tank.analysis.page_access import LivePageAccess
+    from tank.analysis.watch_contracts import WatchCondition, WatchLeaf
+    from tank.contracts.provenance import GenerationProvenance
     from tank.event_tools import EventToolService
 
     repo = MemoryRepository()
     await repo.put("evt.events", "evt_1", {"event_id": "evt_1", "lifecycle": "MONITORING"})
-    tools = object.__new__(EventToolService)
-    tools.versions = fixture_versions()
-    tools.repo = repo
-    tools.settings = SimpleNamespace(
-        config_version="c", code_version="v", ops_progress_enabled=False, replay=False
-    )
-    armed = await tools.set_watch_condition(
-        {
-            "event_id": "evt_1",
-            "action": "ARM",
-            "token_id": "bitcoin:BTC",
-            "text": "Wake me if OI jumps",
-            "conditions": [{"metric": "deriv.native_oi_chg_pct", "op": ">", "value": 5, "persist_count": 2}],
-            "expires_in_hours": 24,
-        },
-        {"session_id": "ses_1"},
-    )
-    condition = armed["condition"]
-    assert condition["role"] == "AGENT" and condition["expr"]["persist"]["count"] == 2
-    await tools.reconcile_conditions(
-        {"dec_id": "dec_1", "event_id": "evt_1", "token_id": "bitcoin:BTC", "conditions": []},
-        [await repo.get("ana.watch_conditions", condition["cond_id"])],
-        [],
-        {},
-    )
-    assert (await repo.get("ana.watch_conditions", condition["cond_id"]))["status"] == "ARMED"
-    with pytest.raises(ValueError, match="not evaluated"):
-        await tools.set_watch_condition(
+    settings = Settings(data_dir=tmp_path, ops_progress_enabled=False)
+    versions = fixture_versions()
+    async with operational_reaction_services(
+        repo, settings, versions=versions, budgets=fixture_request_budgets()
+    ) as services:
+        tools = EventToolService(
+            repo,
+            settings,
+            services.truth,
+            None,
+            versions=versions,
+            scheduler=services.scheduler,
+            pages=LivePageAccess(services.admission),
+        )
+        armed = await tools.set_watch_condition(
             {
                 "event_id": "evt_1",
                 "action": "ARM",
                 "token_id": "bitcoin:BTC",
-                "conditions": [{"metric": "DROP TABLE", "op": ">", "value": 1}],
+                "text": "Wake me if OI jumps",
+                "conditions": [
+                    {"metric": "deriv.native_oi_chg_pct", "op": ">", "value": 5, "persist_count": 2}
+                ],
+                "expires_in_hours": 24,
             },
-            {},
+            {"session_id": "ses_1"},
         )
-    disarmed = await tools.set_watch_condition(
-        {"event_id": "evt_1", "action": "DISARM", "cond_id": condition["cond_id"]}, {}
-    )
-    assert disarmed["status"] == "CANCELLED"
-    assert (await repo.get("ana.watch_conditions", condition["cond_id"]))["cancelled_by"] == "AGENT"
+        condition = WatchCondition.model_validate(armed["condition"])
+        assert condition.role == "AGENT"
+        assert isinstance(condition.expr, WatchLeaf) and condition.expr.persist.count == 2
+        existing = WatchCondition.model_validate(await repo.get("ana.watch_conditions", condition.cond_id))
+        generation = GenerationProvenance.model_validate(
+            existing.model_dump(mode="json", include=set(GenerationProvenance.model_fields))
+        )
+        reconciliation = await tools.reconcile_conditions(
+            DecisionWatchCommand(
+                decision_id="dec_1",
+                event_id="evt_1",
+                token_id="bitcoin:BTC",
+                generation=generation,
+                proposals=[],
+            ),
+            [existing],
+            [],
+            prepared_condition_ids=None,
+        )
+        assert reconciliation.active == [] and reconciliation.shown == ()
+        retained = WatchCondition.model_validate(await repo.get("ana.watch_conditions", condition.cond_id))
+        assert retained.status == "ARMED"
+        with pytest.raises(ValueError, match="not evaluated"):
+            await tools.set_watch_condition(
+                {
+                    "event_id": "evt_1",
+                    "action": "ARM",
+                    "token_id": "bitcoin:BTC",
+                    "conditions": [{"metric": "DROP TABLE", "op": ">", "value": 1}],
+                },
+                {},
+            )
+        disarmed = await tools.set_watch_condition(
+            {"event_id": "evt_1", "action": "DISARM", "cond_id": condition.cond_id}, {}
+        )
+        assert disarmed["status"] == "CANCELLED"
+        cancelled = WatchCondition.model_validate(await repo.get("ana.watch_conditions", condition.cond_id))
+        assert cancelled.cancelled_by == "AGENT"
 
 
 async def asked(repo, telegram, message_id=20, text="Почему не шорт?"):

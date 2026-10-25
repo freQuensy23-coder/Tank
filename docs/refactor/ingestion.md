@@ -913,3 +913,19 @@ bytes remain attached to the respective post observations.
 All 20 X adapter cases pass with zero skips, including both new boundary/baseline
 cases; source and tests pass strict typing and Ruff. This is independent of the
 unactivated pending checkpoint/quarantine work.
+## Reserved decision-watch caller companion
+
+The Telegram followup watch lifecycle test now calls the typed
+DecisionWatchCommand API with a validated WatchCondition and the actual arming
+producer's GenerationProvenance projection. It no longer constructs EventToolService
+through object.__new__ or supplies a fake settings bag. The fixture owns real
+market/truth/scheduler services, a configured budget engine and live page-access
+port, and drains them on exit. No financial assessment or MTA record is invented.
+
+prepared_condition_ids=None is explicit because this standalone agent-owned
+monitor has no rendered decision-card subset. The test verifies that a command
+with no new decision proposals does not cancel the existing AGENT rule, that
+invalid metrics still refuse, and that explicit disarm persists cancellation.
+All 81 Telegram followup unit cases pass with zero skips. This companion is based
+on the held card/decision activation 3a3d077a and must be integrated with that
+cohort rather than independently activating its breaking interface.
