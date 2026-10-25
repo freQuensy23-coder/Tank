@@ -290,3 +290,112 @@ async def test_unrelated_legacy_equal_clock_siblings_remain_ambiguous() -> None:
     await store.put("ana.decisions", "sibling", encode_decision(sibling))
     with pytest.raises(DecisionStateConflict, match="equal-clock order is ambiguous"):
         await DecisionStateRepository(store).legacy_current(scope(record))
+
+
+async def persisted_financial_state(store: MemoryRepository) -> dict[str, list[dict[str, JsonValue]]]:
+    return {
+        table: await store.list(table)
+        for table in ("ana.watch_conditions", "ana.outlooks", "ana.decisions", "ana.decision_state_heads")
+    }
+
+
+@pytest.mark.parametrize("supply_witness", [False, True])
+async def test_first_active_head_cannot_bypass_newer_legacy_financial_state(
+    supply_witness: bool,
+) -> None:
+    store = MemoryRepository()
+    legacy = frozen_decision_fixture()
+    await store.put("ana.decisions", legacy.metadata.identity.decision_id, encode_decision(legacy))
+    states = DecisionStateRepository(store)
+    witness = await states.legacy_current(scope(legacy))
+    assert witness is not None
+    candidate = renamed(legacy, "older-first-head")
+    identity = candidate.metadata.identity.model_copy(
+        update={"cutoff": collection_clock("2026-10-24T00:00:00Z")}
+    )
+    candidate = DecisionRecord.model_validate(
+        candidate.model_copy(
+            update={
+                "metadata": candidate.metadata.model_copy(update={"identity": identity}),
+                "outlook_id": "older-first-head:outlook",
+            }
+        )
+    )
+    before = await persisted_financial_state(store)
+    effects_seen: list[str] = []
+
+    async def effects() -> None:
+        effects_seen.append("must not run")
+        watch = legacy.conditions[0]
+        await store.put("ana.watch_conditions", watch.cond_id, watch.model_dump(mode="json"))
+
+    with pytest.raises(DecisionStateConflict, match="older financial input cutoff"):
+        if supply_witness:
+            await states.advance(
+                scope(legacy),
+                expected=None,
+                candidate=candidate,
+                recorded_at=collection_clock("2026-10-27T00:00:00Z"),
+                effects=effects,
+                legacy_source=witness,
+            )
+        else:
+            await states.advance(
+                scope(legacy),
+                expected=None,
+                candidate=candidate,
+                recorded_at=collection_clock("2026-10-27T00:00:00Z"),
+                effects=effects,
+            )
+    assert effects_seen == []
+    assert await persisted_financial_state(store) == before
+    assert await states.current(scope(legacy)) is None
+
+
+async def test_first_active_head_cannot_omit_an_ambiguous_legacy_predecessor() -> None:
+    store = MemoryRepository()
+    legacy = frozen_decision_fixture()
+    sibling = renamed(legacy, "legacy-sibling")
+    await store.put("ana.decisions", legacy.metadata.identity.decision_id, encode_decision(legacy))
+    await store.put("ana.decisions", sibling.metadata.identity.decision_id, encode_decision(sibling))
+    before = await persisted_financial_state(store)
+    effects_seen: list[str] = []
+
+    async def effects() -> None:
+        effects_seen.append("must not run")
+
+    with pytest.raises(DecisionStateConflict, match="equal-clock order is ambiguous"):
+        await DecisionStateRepository(store).advance(
+            scope(legacy),
+            expected=None,
+            candidate=renamed(legacy, "new-first-head"),
+            recorded_at=collection_clock("2026-10-27T00:00:00Z"),
+            effects=effects,
+        )
+    assert effects_seen == []
+    assert await persisted_financial_state(store) == before
+
+
+async def test_legacy_witness_binds_the_actual_full_document_even_when_identity_is_unchanged() -> None:
+    store = MemoryRepository()
+    legacy = frozen_decision_fixture()
+    identity = legacy.metadata.identity.decision_id
+    wire = encode_decision(legacy)
+    await store.put("ana.decisions", identity, wire)
+    states = DecisionStateRepository(store)
+    witness = await states.legacy_current(scope(legacy))
+    assert witness is not None
+    wire["historical_extra_evidence"] = "changed after input observation"
+    await store.put("ana.decisions", identity, wire)
+    before = await persisted_financial_state(store)
+
+    with pytest.raises(DecisionStateConflict, match="Legacy financial source changed"):
+        await states.advance(
+            scope(legacy),
+            expected=None,
+            candidate=renamed(legacy, "new-first-head"),
+            recorded_at=collection_clock("2026-10-27T00:00:00Z"),
+            effects=no_effects,
+            legacy_source=witness,
+        )
+    assert await persisted_financial_state(store) == before

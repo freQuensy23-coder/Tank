@@ -97,6 +97,7 @@ class _LegacyProjection(DecisionScope):
 class LegacyDecisionSelection(DomainModel):
     basis: Literal["SOLE_LEGACY_RECORD", "REPORTED_WRITE_CLOCK", "EXPLICIT_STATUS_LINEAGE"]
     decision_id: str = Field(min_length=1)
+    dec_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 def _equivalent(left: JsonValue, right: JsonValue) -> bool:
@@ -270,7 +271,7 @@ class DecisionStateRepository:
             or wire["dec_id"] != selected.dec_id
         ):
             raise ValueError("Legacy decision scope does not match its actual record")
-        return LegacyDecisionSelection(basis=basis, decision_id=selected.dec_id)
+        return LegacyDecisionSelection(basis=basis, decision_id=selected.dec_id, dec_sha256=_digest(wire))
 
     async def advance(
         self,
@@ -298,15 +299,14 @@ class DecisionStateRepository:
                 if actual is not None and actual.dec_id == identity:
                     return actual
                 raise DecisionStateConflict("An existing financial identity cannot be revived as a new state")
-            if legacy_source is not None and (
-                current is not None or await self.legacy_current(scope) != legacy_source
-            ):
+            actual_legacy = await self.legacy_current(scope) if current is None else None
+            if legacy_source is not None and actual_legacy != legacy_source:
                 raise DecisionStateConflict("Legacy financial source changed before adoption")
             financial_source: DecisionRecord | None
-            if legacy_source is not None:
-                legacy_wire = await self._store.get("ana.decisions", legacy_source.decision_id)
-                if legacy_wire is None:
-                    raise DecisionStateConflict("Legacy financial source disappeared before adoption")
+            if actual_legacy is not None:
+                legacy_wire = await self._store.get("ana.decisions", actual_legacy.decision_id)
+                if legacy_wire is None or _digest(legacy_wire) != actual_legacy.dec_sha256:
+                    raise DecisionStateConflict("Legacy financial source changed before adoption")
                 financial_source = decode_decision(legacy_wire)
             else:
                 financial_source = None if current is None else current[1]

@@ -1,6 +1,8 @@
 from collections.abc import Mapping
+from contextlib import AsyncExitStack
 from datetime import timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 import httpx
 import pytest
@@ -17,6 +19,9 @@ from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.telegram_rich import score_summary
 from tank.util import JsonInput, canonical_json, clock_iso, iso, utcnow
+
+if TYPE_CHECKING:
+    from postgres_helpers import PostgresTemplate
 
 
 @pytest.fixture
@@ -6123,3 +6128,141 @@ async def test_expired_tracking_status_preserves_the_frozen_financial_calculatio
     assert final is not None and final[0] == fresh_head and final[1] == fresh
     assert await service.repo.get("ana.decisions", identity.decision_id) == literal_historical
     assert await service.repo.get("ana.outlooks", frozen.outlook_id) == literal_outlook
+
+
+@pytest.mark.parametrize(
+    "backend",
+    ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])],
+)
+@pytest.mark.parametrize("history_case", ["older_cutoff", "ambiguous"])
+async def test_first_active_decision_validates_legacy_state_before_persisting(
+    service: EventToolService,
+    backend: Literal["memory", "postgres"],
+    history_case: Literal["older_cutoff", "ambiguous"],
+    postgres_template: "PostgresTemplate",
+    repository_lifetime: AsyncExitStack,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An actual as-of producer cannot install a first head over newer or ambiguous history."""
+    import os
+
+    from tank.analysis.decision_codec import decode_decision, encode_outlook
+    from tank.analysis.decision_state import DecisionStateConflict
+    from tank.analysis.decision_watches import DecisionWatchReconciliation
+    from tank.analysis.decisions import DecisionEngine
+    from tank.storage import PostgresRepository
+    from tank.util import parse_time
+
+    repo: MemoryRepository | PostgresRepository
+    if backend == "postgres":
+        url = os.getenv("TANK_TEST_DATABASE_URL")
+        if not url:
+            pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
+        repo = await repository_lifetime.enter_async_context(postgres_template.repository(url))
+    else:
+        candidate_repo = service.repo
+        assert isinstance(candidate_repo, MemoryRepository)
+        repo = candidate_repo
+    service.repo = repo
+    service.engine = DecisionEngine()
+    processing = "2026-10-25T01:00:00Z" if history_case == "older_cutoff" else "2026-10-27T01:00:00Z"
+    legacy_cutoff, incoming_cutoff = (
+        ("2026-10-26T00:00:00Z", "2026-10-25T00:00:00Z")
+        if history_case == "older_cutoff"
+        else ("2026-10-25T00:00:00Z", "2026-10-26T00:00:00Z")
+    )
+    observed_at = parse_time(processing)
+    for module in ("tank.util", "tank.event_tools"):
+        monkeypatch.setattr(module + ".utcnow", lambda: observed_at)
+    eid, token, ems_id = "legacy-guard-event", "world:WLD", "legacy-guard-ems"
+    legacy = decode_decision(
+        complete_decision_fixture(
+            "legacy-guard-a",
+            eid,
+            token,
+            legacy_cutoff,
+            "legacy-guard-source",
+            assessment_id=ems_id,
+        )
+    )
+    rows = [
+        ("evt.events", eid, complete_event_fixture(eid, current_ems_id=ems_id)),
+        ("evt.ems_assessments", ems_id, complete_assessment_fixture(ems_id, eid)),
+        ("evt.beneficiary_maps", "legacy-map", primary_only_map_fixture(eid, token)),
+        (
+            "evt.beneficiary_edges",
+            "legacy-edge",
+            {
+                "edge_id": "legacy-edge",
+                "event_id": eid,
+                "token_id": token,
+                "map_version": 1,
+                "role": "PRIMARY",
+                "credible": False,
+                "capture_class": "UNKNOWN",
+                "exposure_score": None,
+            },
+        ),
+        (
+            "ana.market_truth",
+            "legacy-guard-source",
+            complete_truth_fixture("legacy-guard-source", eid, token, legacy_cutoff),
+        ),
+        (
+            "ana.market_truth",
+            "legacy-guard-incoming",
+            complete_truth_fixture("legacy-guard-incoming", eid, token, incoming_cutoff),
+        ),
+        ("ana.outlooks", legacy.outlook_id, encode_outlook(legacy)),
+    ]
+    from tank.analysis.decision_codec import encode_decision
+
+    rows.append(("ana.decisions", legacy.metadata.identity.decision_id, encode_decision(legacy)))
+    if history_case == "ambiguous":
+        sibling = decode_decision(
+            complete_decision_fixture(
+                "legacy-guard-b",
+                eid,
+                token,
+                legacy_cutoff,
+                "legacy-guard-source",
+                assessment_id=ems_id,
+            )
+        )
+        rows.extend(
+            [
+                ("ana.outlooks", sibling.outlook_id, encode_outlook(sibling)),
+                ("ana.decisions", sibling.metadata.identity.decision_id, encode_decision(sibling)),
+            ]
+        )
+    for table, key, value in rows:
+        await repo.put(table, key, value)
+    selected_truth = await service.latest_record("ana.market_truth", eid, token)
+    assert selected_truth["mta_id"] == "legacy-guard-incoming"
+    protected = ("ana.watch_conditions", "ana.outlooks", "ana.decisions", "ana.decision_state_heads")
+    before = {table: await repo.list(table) for table in protected}
+    attempted_writes: list[str] = []
+    attempted_reconciliation: list[str] = []
+    original_put = repo.put
+    original_reconcile = service._persist_condition_writes
+
+    async def observed_put(
+        collection: str, key: str, document: Mapping[str, JsonInput], *, immutable: bool = False
+    ) -> dict[str, JsonValue]:
+        if collection in protected:
+            attempted_writes.append(collection)
+        return await original_put(collection, key, document, immutable=immutable)
+
+    async def observed_reconciliation(result: DecisionWatchReconciliation) -> None:
+        attempted_reconciliation.append("watch reconciliation")
+        await original_reconcile(result)
+
+    monkeypatch.setattr(repo, "put", observed_put)
+    monkeypatch.setattr(service, "_persist_condition_writes", observed_reconciliation)
+    reason = (
+        "older financial input cutoff" if history_case == "older_cutoff" else "equal-clock order is ambiguous"
+    )
+    with pytest.raises(DecisionStateConflict, match=reason):
+        await service.get_decision({"event_id": eid, "token_id": token}, {})
+    assert attempted_reconciliation == [] and attempted_writes == []
+    assert {table: await repo.list(table) for table in protected} == before

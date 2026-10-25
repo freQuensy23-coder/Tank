@@ -779,3 +779,12 @@ Restart and captured-delivery fixtures persist the actual validated outlook refe
 
 Focused repaired groups pass: nine fresh replay cases; six positive delivery/review/restart cases (17.44s); real fatal/EXIT/START publication; and both captured delivery/expiry paths (2.79s). Whole-cohort immutable qualification follows this checkpoint. Whole EventTools request/context typing and full Market Truth/Snapshot/condition graph migration remain open; these active test fixtures do not claim those upstream functions are already strict.
 
+
+### First active head legacy precondition correction
+
+Parent review found that the first active calculation passed no legacy witness, and the original repository implementation only loaded legacy state when a caller supplied one. That permitted an older first active cutoff to bypass predecessor eligibility. DecisionStateRepository.advance now always resolves the actual legacy selection whenever there is no current head. The optional legacy_source argument is only an additional expected-document witness; omission cannot disable the mandatory read, ambiguity handling or financial eligibility checks. A supplied witness carries the hash of the actual stored document, so unchanged identity cannot conceal changed historical content.
+
+EventToolService.get_decision observes legacy state under the same scoped lock/transaction before reading the calculation inputs and passes the witness for both active and expiry writes. The repository independently reloads it before effects. Unknown/ambiguous equal-clock history refuses; a known newer financial cutoff cannot be replaced by an older incoming cutoff. No historical revision or write clock is invented.
+
+Fifteen strict repository cases plus two actual producer memory cases pass (17/17,3.20s). Two actual PostgreSQL producer cases pass7.40s. The older-input producer case deliberately uses an earlier as-of processing clock, so the real latest-before market query selects the older incoming MTA while a valid newer legacy financial row remains stored. The equal-clock case supplies two independent valid legacy decisions with no status lineage. Both prove no reconciliation invocation and no attempted watch/outlook/decision/head writes, and preserve complete pre-call table snapshots. Repository cases separately prove an omitted witness cannot bypass either predecessor and an unchanged ID cannot bypass a changed full-document hash. The original immutable d7 698-unit/55-integration evidence remains preserved; broader correction qualification follows.
+

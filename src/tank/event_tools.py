@@ -28,7 +28,12 @@ from tank.analysis.decision_contracts import (
     DecisionStatusWriter,
     EndedDecisionTracking,
 )
-from tank.analysis.decision_state import DecisionScope, DecisionStateHead, DecisionStateRepository
+from tank.analysis.decision_state import (
+    DecisionScope,
+    DecisionStateHead,
+    DecisionStateRepository,
+    LegacyDecisionSelection,
+)
 from tank.analysis.decision_watches import (
     DecisionWatchCommand,
     DecisionWatchPolicy,
@@ -2354,12 +2359,19 @@ class EventToolService:
         async with self.repo.lock("decision-state:" + scope.key()), self.repo.transaction():
             states = DecisionStateRepository(self.repo)
             current = await states.current(scope)
+            legacy = await states.legacy_current(scope) if current is None else None
             return await self._get_decision(
-                a, c, states=states, expected=None if current is None else current[0]
+                a, c, states=states, expected=None if current is None else current[0], legacy=legacy
             )
 
     async def _get_decision(
-        self, a, c, *, states: DecisionStateRepository, expected: DecisionStateHead | None
+        self,
+        a,
+        c,
+        *,
+        states: DecisionStateRepository,
+        expected: DecisionStateHead | None,
+        legacy: LegacyDecisionSelection | None,
     ):
         eid = a["event_id"]
         token = a["token_id"]
@@ -2418,7 +2430,6 @@ class EventToolService:
         prepared_ids = None if prepared is None else frozenset(prepared)
         if expired_calls and not calls and not new_fact_after_expiry:
             scope = DecisionScope(event_id=eid, token_id=token)
-            legacy = await states.legacy_current(scope) if expected is None else None
             if expected is None:
                 if legacy is None:
                     raise ValueError("Expired call requires its frozen decision")
@@ -2541,6 +2552,7 @@ class EventToolService:
             candidate=decision,
             recorded_at=collection_clock(),
             effects=effects,
+            legacy_source=legacy,
         )
         return await self.require("ana.decisions", decision.metadata.identity.decision_id)
 
