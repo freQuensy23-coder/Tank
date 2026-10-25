@@ -278,11 +278,11 @@ def test_credential_value_redaction_preserves_adjacent_response_evidence(reader,
 @pytest.mark.parametrize("count", [86, 200])
 @pytest.mark.parametrize("kind", ["json_escaped", "binary"])
 async def test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes(
-    reader, monkeypatch, clock, count, kind
+    reader, monkeypatch, clock, count, kind, tmp_path: Path
 ):
     import tracemalloc
 
-    from test_x_diagnostics import multipart, notice_for, telegram_settings
+    from test_x_diagnostics import multipart, notice_for, telegram_settings, telegram_transport
 
     from tank.delivery import DeliveryService
     from tank.storage import MemoryRepository
@@ -331,7 +331,7 @@ async def test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefi
     assert total <= reader.RUN_EVIDENCE_LIMIT
     evidence = output["accounts"][0]["diagnostics"]
     repo = MemoryRepository()
-    notice = await notice_for(repo, evidence)
+    notice = await notice_for(repo, evidence, tmp_path)
     sent = []
 
     def send(request):
@@ -339,9 +339,9 @@ async def test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefi
             sent.append(multipart(request)["document"][1])
         return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent) + 1}})
 
-    async with HTTP_CLIENT(transport=httpx.MockTransport(send)) as http:
-        await DeliveryService(repo, telegram_settings(), http=http).deliver(
-            {"notice_id": notice["notice_id"]}
+    async with HTTP_CLIENT(transport=telegram_transport(send)) as http:
+        await DeliveryService(repo, telegram_settings(tmp_path), http=http).deliver(
+            {"notice_id": notice["notice_id"], "channel": "telegram:ops"}
         )
     expected = evidence["attempts"][0]["response"]
     prefix = (
