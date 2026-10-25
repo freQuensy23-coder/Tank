@@ -35,6 +35,7 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
 ) -> None:
     cfg = {
         "registry": {"tokens": [{"token_id": "T", "symbol": "T"}], "entities": [], "instruments": []},
+        "sources": {"sources": [{"source_id": "S01", "name": "Synthetic replay abort source"}]},
         "thresholds": {},
         "semantics": {},
         "dependency_map": {},

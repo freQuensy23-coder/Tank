@@ -357,7 +357,9 @@ async def test_real_web_evidence_record_roundtrips_without_feed_source_assumptio
     from tank.settings import Settings
 
     repo = MemoryRepository()
-    service = EventToolService(repo, Settings(data_dir=tmp_path, ops_progress_enabled=False), None, None)
+    service = EventToolService(
+        repo, Settings(data_dir=tmp_path, ops_progress_enabled=False), None, None, versions=fixture_versions()
+    )
     record = await service.save_web(
         "https://example.org/evidence",
         "Verified public document text",
@@ -437,7 +439,7 @@ async def test_feed_duplicate_of_web_evidence_counts_feeds_without_replacing_ori
 
     repo = MemoryRepository()
     settings = Settings(data_dir=tmp_path, ops_progress_enabled=False)
-    tools = EventToolService(repo, settings, None, None)
+    tools = EventToolService(repo, settings, None, None, versions=fixture_versions())
     original = await tools.save_web(
         "https://example.org/original",
         "Shared independently observed facts",
@@ -780,3 +782,170 @@ async def test_source_ingestion_persists_explicit_version_facet_not_raw_settings
     assert item.code_version == versions.code_version
     assert item.discovery_config_version == versions.config_version
     assert item.discovery_code_version == versions.code_version
+
+
+def test_public_host_client_protection_is_explicit_and_preserves_windows() -> None:
+    from tank.contracts.sources import SourceApiLimitsConfiguration, SourceClientProtectionBudget
+    from tank.settings import Settings
+    from tank.util import canonical_json
+
+    raw = Settings().load_config("api_limits")
+    configured = SourceApiLimitsConfiguration.model_validate(raw)
+    protection = {
+        row.provider: row for row in configured.limits if isinstance(row, SourceClientProtectionBudget)
+    }
+    assert {key: (row.host, row.period_s, row.tank_request_budget) for key, row in protection.items()} == {
+        "binance.www": ("www.binance.com", 60, 60),
+        "binance.vision": ("data.binance.vision", 1, 10),
+    }
+    assert all(row.documented_requests is None for row in protection.values())
+    assert all(row.documentation_status == "NOT_CAPTURED" for row in protection.values())
+    assert canonical_json(configured.model_dump(mode="json", exclude_unset=True)) == canonical_json(raw)
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "host",
+        "policy_kind",
+        "documentation_status",
+        "documented_requests",
+        "tank_request_budget",
+        "period_s",
+        "scope",
+        "basis",
+    ],
+)
+def test_client_protection_cannot_omit_its_explicit_policy(missing: str) -> None:
+    from tank.contracts.sources import SourceApiLimitsConfiguration
+    from tank.settings import Settings
+
+    raw = Settings().load_config("api_limits")
+    rules = raw["limits"]
+    assert isinstance(rules, list)
+    row = next(item for item in rules if isinstance(item, dict) and item["provider"] == "binance.www")
+    assert isinstance(row, dict)
+    del row[missing]
+    with pytest.raises(ValidationError):
+        SourceApiLimitsConfiguration.model_validate(raw)
+
+
+def test_client_protection_cannot_replace_a_documented_api_quota_or_another_host() -> None:
+    from tank.contracts.sources import SourceClientProtectionBudget
+
+    declared: dict[str, JsonValue] = {
+        "provider": "binance.www",
+        "host": "www.binance.com",
+        "policy_kind": "CLIENT_PROTECTION",
+        "documentation_status": "NOT_CAPTURED",
+        "documented_requests": None,
+        "tank_request_budget": 60,
+        "period_s": 60,
+        "scope": "IP",
+        "basis": "Existing internal client protection, not provider quota documentation",
+    }
+    for changed in (
+        {"host": "api.binance.com"},
+        {"provider": "binance.spot"},
+        {"documented_requests": 120},
+        {"scope": "API_KEY"},
+    ):
+        with pytest.raises(ValidationError):
+            SourceClientProtectionBudget.model_validate({**declared, **changed})
+
+
+def test_calendar_verification_label_does_not_gain_an_assumed_clock() -> None:
+    from tank.contracts.sources import EndpointVerification
+
+    unrecorded: dict[str, JsonValue] = {
+        "checked_at": "2026-10-20",
+        "status": "VERIFIED",
+        "basis": "Calendar audit label",
+        "checked_at_prec": None,
+        "checked_at_precision": None,
+        "checked_at_prec_reason": None,
+    }
+    value = EndpointVerification.model_validate(unrecorded)
+    assert value.model_dump(mode="json", exclude_unset=True) == unrecorded
+    day = {**unrecorded, "checked_at_precision": "BUCKET(1d)"}
+    assert EndpointVerification.model_validate(day).model_dump(mode="json", exclude_unset=True) == day
+    with pytest.raises(ValidationError, match="day-bucket"):
+        EndpointVerification.model_validate({**unrecorded, "checked_at_precision": "EXACT"})
+
+
+def test_usdm_operation_protection_keeps_required_exact_shared_windows() -> None:
+    from tank.contracts.sources import SourceApiLimitsConfiguration, SourceBinanceUsdmBudget
+    from tank.settings import Settings
+
+    policy = SourceApiLimitsConfiguration.model_validate(Settings().load_config("api_limits"))
+    usdm = next(row for row in policy.limits if isinstance(row, SourceBinanceUsdmBudget))
+    actual = {
+        row.bucket: (row.paths, row.period_s, row.tank_request_budget)
+        for row in usdm.client_protection_limits
+    }
+    assert actual == {
+        "binance.usdm.funding": (["/fapi/v1/fundingRate", "/fapi/v1/fundingInfo"], 300, 250),
+        "binance.usdm.statistics": (["/futures/data/openInterestHist"], 300, 500),
+    }
+    assert all(row.documented_requests is None for row in usdm.client_protection_limits)
+    assert usdm.documented_weight_per_min > 0 and usdm.tank_max_weight_per_min > 0
+
+
+@pytest.mark.parametrize(
+    "change", ["missing_list", "missing_group", "wrong_path", "wrong_scope", "invented_docs"]
+)
+def test_usdm_protection_cannot_be_dropped_or_reused_for_other_routes(change: str) -> None:
+    from tank.contracts.sources import SourceApiLimitsConfiguration, SourceBinanceUsdmBudget
+    from tank.settings import Settings
+
+    policy = SourceApiLimitsConfiguration.model_validate(Settings().load_config("api_limits"))
+    usdm = next(row for row in policy.limits if isinstance(row, SourceBinanceUsdmBudget))
+    raw = usdm.model_dump(mode="json", exclude_unset=True)
+    rules = raw["client_protection_limits"]
+    assert isinstance(rules, list) and isinstance(rules[0], dict)
+    if change == "missing_list":
+        del raw["client_protection_limits"]
+    elif change == "missing_group":
+        rules.pop()
+    elif change == "wrong_path":
+        rules[0]["paths"] = ["/fapi/v1/unknown"]
+    elif change == "wrong_scope":
+        rules[0]["scope"] = "API_KEY"
+    else:
+        rules[0]["documented_requests"] = 500
+    with pytest.raises(ValidationError):
+        SourceBinanceUsdmBudget.model_validate(raw)
+
+
+def test_filing_registry_projection_rejects_missing_authority_labels() -> None:
+    from pydantic import ValidationError
+
+    from tank.contracts.sources import SourceFilingRegistryView
+
+    with pytest.raises(ValidationError):
+        SourceFilingRegistryView.from_document({"entities": []})
+    with pytest.raises(ValidationError):
+        SourceFilingRegistryView.from_document({"tokens": [{"symbol": "BTC"}], "entities": []})
+    with pytest.raises(ValidationError):
+        SourceFilingRegistryView.from_document(
+            {
+                "tokens": [],
+                "entities": [{"kind": "PROTOCOL", "aliases": []}],
+            }
+        )
+
+
+def test_filing_registry_projection_keeps_genuine_optional_secondary_name() -> None:
+    from tank.contracts.sources import SourceFilingRegistryView
+
+    labels = SourceFilingRegistryView.from_document(
+        {
+            "tokens": [
+                {"name": "Example Protocol", "symbol": "EX", "unrelated_metadata": "ignored by projection"}
+            ],
+            "entities": [{"kind": "PROTOCOL", "names": ["Example Protocol"], "aliases": ["Example"]}],
+        }
+    )
+    assert labels.tokens[0].name == "Example Protocol"
+    assert labels.entities[0].names == ["Example Protocol"]
+    assert labels.entities[0].name is None

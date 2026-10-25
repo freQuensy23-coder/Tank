@@ -280,6 +280,8 @@ class Settings(BaseSettings):
 
     def load_config_as[T: BaseModel](self, name: str, schema: type[T]) -> T:
         relative = name if name.endswith((".yaml", ".yml")) else name + ".yaml"
+        if self._config_snapshot is not None:
+            return schema.model_validate(self.load_config(relative), strict=True)
         payload = yaml.load(self.read_config_bytes(relative), Loader=_YAML_LOADER)
         return schema.model_validate(payload, strict=True)
 
@@ -352,7 +354,7 @@ def resolve_versions(settings: Settings) -> Settings:
             if not isinstance(yaml.safe_load(content), dict):
                 raise ValueError(f"Configuration must be a mapping: {name}")
         elif name.endswith(".json"):
-            json.loads(content)
+            decode_json(content)
     if _PROCESS_CODE_VERSION is None:
         _PROCESS_CODE_VERSION = _digest(_capture_tree(Path(__file__).parent, {".py", ".sql", ".json"}))
     resolved = settings.model_copy(update={"config_version": version, "code_version": _PROCESS_CODE_VERSION})

@@ -109,7 +109,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         },
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(external)) as http:
-        market = MarketService(repo, settings, http=http)
+        market = MarketService(repo, settings, http=http, versions=fixture_versions())
         scheduler = Scheduler(
             repo,
             settings,

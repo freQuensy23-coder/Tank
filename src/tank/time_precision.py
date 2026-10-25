@@ -157,7 +157,13 @@ class Timestamp(DomainModel):
 
     def fields(self, field: str, *, precision_field: str | None = None) -> dict[str, str | int | None]:
         """Emit the original field plus its canonical precision and explicit unknown reason."""
-        sibling = precision_field or CANONICAL_PRECISION_FIELDS.get(field, field + "_prec")
+        if precision_field is not None and not precision_field.strip():
+            raise ValueError("Precision field requires a nonempty name")
+        sibling = (
+            CANONICAL_PRECISION_FIELDS.get(field, field + "_prec")
+            if precision_field is None
+            else precision_field
+        )
         result: dict[str, str | int | None] = {
             field: self.value,
             sibling: self.precision,
@@ -245,22 +251,26 @@ def propagate_timestamp(
             declaration = _text(record[name], name)
             if declaration is not None:
                 declarations.append(declaration)
-        reason = reason or _text(record.get(name + "_reason"), name + "_reason")
+        if reason is None:
+            reason = _text(record.get(name + "_reason"), name + "_reason")
     precision = reconcile_precision(declarations, field=field, bucket_size=bucket_size)
     if (
         bucket_anchor is None
-        and precision
+        and precision is not None
         and _BUCKET.fullmatch(precision)
         and (field + "_bucket_anchor" in record or isinstance(raw, Mapping) and "bucket_anchor" in raw)
     ):
         bucket_anchor = "UNSPECIFIED"
     if value is None:
-        reason = reason or _text(record.get(field + "_reason"), field + "_reason") or missing_reason
+        if reason is None:
+            reason = _text(record.get(field + "_reason"), field + "_reason")
+        if reason is None:
+            reason = missing_reason
         return Timestamp(None, "COLLECTION_ONLY" if precision == "COLLECTION_ONLY" else None, reason)
     return Timestamp(
         iso(_time(value)),
         precision,
-        None if precision is not None else reason or missing_reason,
+        None if precision is not None else reason if reason is not None else missing_reason,
         bucket_anchor,
     )
 

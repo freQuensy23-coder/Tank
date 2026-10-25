@@ -7,7 +7,8 @@ from urllib.parse import urlsplit
 from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
-from tank.time_precision import propagate_timestamp
+from tank.time_precision import normalize_precision, propagate_timestamp
+from tank.util import iso, parse_iso_time, parse_utc_time
 
 type SourceAuthorRole = Literal["ORGANIZATION", "FOUNDER_C_LEVEL", "PERSON", "OTHER"]
 
@@ -36,8 +37,33 @@ class EndpointVerification(DomainModel):
 
     @model_validator(mode="after")
     def declared_clock_facets(self) -> Self:
-        if any(name.startswith("checked_at_") for name in self.model_fields_set):
-            propagate_timestamp(self.model_dump(mode="json", exclude_unset=True), "checked_at")
+        facets = (
+            self.checked_at_prec,
+            self.checked_at_precision,
+            self.checked_at_prec_reason,
+            self.checked_at_precision_reason,
+            self.checked_at_reason,
+            self.checked_at_bucket_size_s,
+            self.checked_at_bucket_anchor,
+        )
+        if not any(value is not None for value in facets):
+            return self
+        declared = self.model_dump(mode="json", exclude_unset=True)
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", self.checked_at):
+            precisions = [
+                value for value in (self.checked_at_prec, self.checked_at_precision) if value is not None
+            ]
+            if not precisions:
+                if self.checked_at_bucket_size_s is not None or self.checked_at_bucket_anchor is not None:
+                    raise ValueError("Verification bucket metadata requires declared precision")
+                return self
+            size = (self.checked_at_bucket_size_s, "s") if self.checked_at_bucket_size_s is not None else None
+            if any(normalize_precision(value, bucket_size=size) != "BUCKET(1d)" for value in precisions):
+                raise ValueError("Calendar verification date requires a day-bucket declaration")
+            declared["checked_at"] = iso(parse_utc_time(self.checked_at))
+        else:
+            parse_iso_time(self.checked_at)
+        propagate_timestamp(declared, "checked_at")
         return self
 
 
@@ -262,10 +288,52 @@ class SourceUncapturedRpsBudget(SourceBudgetEvidence):
         return self
 
 
-class SourceBinanceBudget(SourceBudgetEvidence, DocumentedWeightBudget):
-    provider: Literal["binance.spot", "binance.usdm"]
+class SourceClientProtectionLimit(DomainModel):
+    bucket: Literal["binance.usdm.funding", "binance.usdm.statistics"]
+    paths: list[Literal["/fapi/v1/fundingRate", "/fapi/v1/fundingInfo", "/futures/data/openInterestHist"]] = (
+        Field(min_length=1)
+    )
+    policy_kind: Literal["CLIENT_PROTECTION"]
+    documentation_status: Literal["NOT_CAPTURED"]
+    documented_requests: None
+    period_s: int = Field(gt=0)
+    tank_request_budget: int = Field(gt=0)
+    scope: Literal["IP"]
     basis: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def exact_operation_group(self) -> Self:
+        expected = (
+            {"/fapi/v1/fundingRate", "/fapi/v1/fundingInfo"}
+            if self.bucket == "binance.usdm.funding"
+            else {"/futures/data/openInterestHist"}
+        )
+        if set(self.paths) != expected or len(self.paths) != len(expected):
+            raise ValueError("Client protection bucket must retain its exact operation group")
+        return self
+
+
+class SourceBinanceBudget(SourceBudgetEvidence, DocumentedWeightBudget):
+    basis: str = Field(min_length=1)
+
+
+class SourceBinanceSpotBudget(SourceBinanceBudget):
+    provider: Literal["binance.spot"]
     observed_header: str | None = Field(default=None, min_length=1)
+
+
+class SourceBinanceUsdmBudget(SourceBinanceBudget):
+    provider: Literal["binance.usdm"]
+    client_protection_limits: list[SourceClientProtectionLimit] = Field(min_length=2, max_length=2)
+
+    @model_validator(mode="after")
+    def required_operation_protection(self) -> Self:
+        if {rule.bucket for rule in self.client_protection_limits} != {
+            "binance.usdm.funding",
+            "binance.usdm.statistics",
+        }:
+            raise ValueError("USD-M requires both existing operation-protection windows")
+        return self
 
 
 class SourceOkxBudget(SourceBudgetEvidence):
@@ -348,15 +416,36 @@ class SourceEtherscanBudget(SourceBudgetEvidence, DocumentedRequestBudget):
         return self
 
 
+class SourceClientProtectionBudget(SourceBudgetEvidence):
+    provider: Literal["binance.www", "binance.vision"]
+    host: Literal["www.binance.com", "data.binance.vision"]
+    policy_kind: Literal["CLIENT_PROTECTION"]
+    documentation_status: Literal["NOT_CAPTURED"]
+    documented_requests: None
+    basis: str = Field(min_length=1)
+    scope: Literal["IP"]
+    period_s: int = Field(gt=0)
+    tank_request_budget: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def exact_public_host(self) -> Self:
+        expected = "www.binance.com" if self.provider == "binance.www" else "data.binance.vision"
+        if self.host != expected:
+            raise ValueError("Client protection provider must match its declared public host")
+        return self
+
+
 type SourceProviderBudget = Annotated[
     SourceSecBudget
     | SourceUncapturedRpsBudget
-    | SourceBinanceBudget
+    | SourceBinanceSpotBudget
+    | SourceBinanceUsdmBudget
     | SourceOkxBudget
     | SourceBybitBudget
     | SourceHyperliquidBudget
     | SourceDuckDuckGoBudget
-    | SourceEtherscanBudget,
+    | SourceEtherscanBudget
+    | SourceClientProtectionBudget,
     Field(discriminator="provider"),
 ]
 
@@ -372,3 +461,47 @@ class SourceApiLimitsConfiguration(DomainModel):
         if len(providers) != len(set(providers)):
             raise ValueError("API limit configuration requires distinct provider rules")
         return self
+
+
+class FilingTokenLabel(DomainModel):
+    name: str
+    symbol: str = Field(min_length=1)
+
+
+class FilingEntityLabel(DomainModel):
+    kind: Literal["PROTOCOL", "OTHER", "EXCHANGE", "COMPANY", "REGULATOR"]
+    names: list[str]
+    aliases: list[str]
+    name: str | None
+
+
+class FilingRegistryDocument(DomainModel):
+    """Only the two external JSON namespaces needed to project filing labels."""
+
+    tokens: list[dict[str, JsonValue]]
+    entities: list[dict[str, JsonValue]]
+
+
+class SourceFilingRegistryView(DomainModel):
+    tokens: list[FilingTokenLabel]
+    entities: list[FilingEntityLabel]
+
+    @classmethod
+    def from_document(cls, document: dict[str, JsonValue]) -> Self:
+        wire = FilingRegistryDocument.model_validate(
+            {key: document[key] for key in ("tokens", "entities") if key in document}
+        )
+        token_labels = [
+            FilingTokenLabel.model_validate({key: token[key] for key in ("name", "symbol") if key in token})
+            for token in wire.tokens
+        ]
+        entity_labels = [
+            FilingEntityLabel.model_validate(
+                {
+                    **{key: entity[key] for key in ("kind", "names", "aliases") if key in entity},
+                    "name": entity.get("name"),
+                }
+            )
+            for entity in wire.entities
+        ]
+        return cls(tokens=token_labels, entities=entity_labels)

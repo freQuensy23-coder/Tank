@@ -1,3 +1,4 @@
+from copy import deepcopy
 from datetime import timedelta
 from pathlib import Path
 
@@ -82,7 +83,8 @@ async def test_outcome_immutable_revision_and_frozen_beta() -> None:
             "ref_venue": "i",
             "entry_ref_price": 10,
             "beta_btc": 2,
-            "windows": {"W1H": {"normal_range": [-0.01, 0.01]}},
+            "beta_flags": {"btc": None, "eth": None},
+            "windows": {"W1H": {"normal_range": [-0.01, 0.01], "relative_measure": "R_BTC_ADJ"}},
             "outcome_btc_reference": {"instrument_id": "btc", "entry_ref_price": 100},
         }
     }
@@ -120,6 +122,37 @@ async def test_outcome_immutable_revision_and_frozen_beta() -> None:
     assert a["realized_return"] == pytest.approx(0.2)
     assert a["btc_adjusted_return"] == pytest.approx(0.18) and a["direction_correct"] is True
     assert a["mfe"] == pytest.approx(0.3) and a["mae"] == pytest.approx(-0.1)
+
+    for reason in ("INSUFFICIENT_HISTORY", "NOT_ESTIMABLE", "NOT_CAPTURED"):
+        unavailable = deepcopy(truth)
+        unavailable["relative"]["beta_btc"] = 1.0
+        if reason == "NOT_CAPTURED":
+            unavailable["relative"].pop("beta_flags")
+        else:
+            unavailable["relative"]["beta_flags"]["btc"] = reason
+        unknown = await service.outcome(alert, decision, unavailable, now=END)
+        assert unknown["status"] == "COMPLETED"
+        assert unknown["realized_return"] == pytest.approx(0.2)
+        assert unknown["btc_adjusted_return"] is None
+        assert unknown["direction_correct"] is None
+        assert unknown["direction_reason"] == "FROZEN_BETA_UNAVAILABLE"
+
+    zero = deepcopy(truth)
+    zero["relative"]["beta_btc"] = 0.0
+    zero_result = await service.outcome(alert, decision, zero, now=END)
+    assert zero_result["btc_adjusted_return"] == pytest.approx(0.2)
+    assert zero_result["direction_correct"] is True
+
+    raw = deepcopy(truth)
+    raw["relative"]["beta_btc"] = None
+    raw["relative"]["beta_flags"]["btc"] = "INSUFFICIENT_HISTORY"
+    raw["relative"]["windows"]["W1H"]["relative_measure"] = "R_RAW"
+    raw["relative"]["outcome_btc_reference"] = {}
+    measured = await service.outcome(alert, decision, raw, now=END)
+    assert measured["direction_correct"] is True
+    assert measured["direction_return"] == pytest.approx(0.2)
+    assert measured["btc_adjusted_return"] is None
+    assert "btc_coverage" not in measured
     corrected = await repo.get("mkt.flow_bars_1m", "59")
     await put_flow(repo, "59", dict(corrected, c=11))
     c = await service.outcome(alert, decision, truth, now=END)
