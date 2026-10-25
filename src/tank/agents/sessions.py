@@ -35,6 +35,7 @@ from tank.agents.native_inputs import (
 from tank.agents.native_readback import NativeSessionMissing, NativeSessionReader
 from tank.agents.native_retry import (
     PendingNativeRetry,
+    ReadyRetryState,
     UnknownNativeRetryState,
     UnknownRetryState,
     retry_state,
@@ -1968,7 +1969,7 @@ class SessionService:
                 if isinstance(state, UnknownRetryState):
                     raise UnknownNativeRetryState(state.reason)
                 retry = state.attempt
-                if retry == 0:
+                if isinstance(state, ReadyRetryState):
                     if state.body is None:
                         raise UnknownNativeRetryState("RETRY_BODY_NOT_RETAINED")
                     async with self.repo.lock("session:" + sid):

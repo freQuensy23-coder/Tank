@@ -16,6 +16,7 @@ from tank import ops_entry_errors
 from tank.delivery import DeliveryService
 from tank.ops_entry_errors import MESSAGE_LIMIT, report_entry_errors, units
 from tank.sources import SourceService
+from tank.sources.x_diagnostics import admit_source_errors
 from tank.storage import MemoryRepository
 
 FEED_URL = "https://example.org/rss"
@@ -126,14 +127,24 @@ async def test_restart_and_concurrent_reports_are_idempotent(tmp_path: Path) -> 
     with pytest.raises(ValueError, match="rollback"):
         async with repo.transaction():
             await report_entry_errors(
-                repo, settings, source_definition(source), source_feed(feed), errors, "2026-10-24T12:00:00Z"
+                repo,
+                settings,
+                source_definition(source),
+                source_feed(feed),
+                admit_source_errors(errors, None),
+                "2026-10-24T12:00:00Z",
             )
             raise ValueError("rollback")
     assert len(await entry_notices(repo)) == 1
     ids = await asyncio.gather(
         *(
             report_entry_errors(
-                repo, settings, source_definition(source), source_feed(feed), errors, "2026-10-24T12:00:00Z"
+                repo,
+                settings,
+                source_definition(source),
+                source_feed(feed),
+                admit_source_errors(errors, None),
+                "2026-10-24T12:00:00Z",
             )
             for _ in range(4)
         )
@@ -203,7 +214,12 @@ async def test_x_account_failures_are_keyed_by_account() -> None:
         {"account": None, "reason": "RUN_DEGRADED"},
     ]
     await report_entry_errors(
-        repo, settings, source_definition(source), source_feed(feed), first, "2026-10-24T12:00:00Z"
+        repo,
+        settings,
+        source_definition(source),
+        source_feed(feed),
+        admit_source_errors(first, None),
+        "2026-10-24T12:00:00Z",
     )
     [notice] = await entry_notices(repo)
     assert len(notice["entry_errors"]) == 3
@@ -211,7 +227,12 @@ async def test_x_account_failures_are_keyed_by_account() -> None:
     assert "весь запуск сбора X" in notice["text"]
     again = first + [{"account": "carol", "reason": "MISSING_FROM_RUN"}]
     await report_entry_errors(
-        repo, settings, source_definition(source), source_feed(feed), again, "2026-10-24T12:05:00Z"
+        repo,
+        settings,
+        source_definition(source),
+        source_feed(feed),
+        admit_source_errors(again, None),
+        "2026-10-24T12:05:00Z",
     )
     latest = [row for row in await entry_notices(repo) if row["notice_id"] != notice["notice_id"]]
     assert [row["entry_errors"] for row in latest] == [[{"account": "carol", "reason": "MISSING_FROM_RUN"}]]
@@ -258,7 +279,7 @@ async def test_entry_error_notices_persist_and_deduplicate_in_storage(backend, p
                     settings,
                     source_definition(source),
                     source_feed({"url": FEED_URL}),
-                    errors,
+                    admit_source_errors(errors, None),
                     "2026-10-24T12:00:00Z",
                 )
                 for _ in range(3)

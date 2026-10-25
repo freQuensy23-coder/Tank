@@ -34,6 +34,7 @@ from tank.contracts.source_checkpoints import (
     ScopedInstrumentBaseline,
     SourcePendingBatch,
 )
+from tank.contracts.source_errors import SourceEntryError, parse_entry_error
 from tank.contracts.source_items import (
     DiscoveryEnvelope,
     PendingSourceItem,
@@ -68,7 +69,6 @@ from tank.sources.checkpoints import (
     decode_pending_checkpoint,
     pending_coverage,
 )
-from tank.sources.errors import SourceEntryError, parse_entry_error
 from tank.sources.fetch import FetchedContent, FetchResult, NotModified
 from tank.sources.http_client import RequestStarted
 from tank.sources.instrument_adapters import parse_instrument_page

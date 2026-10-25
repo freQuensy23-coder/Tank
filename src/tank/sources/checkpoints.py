@@ -28,9 +28,9 @@ from tank.contracts.source_checkpoints import (
 from tank.contracts.source_checkpoints import (
     observed_identifier as declaration,
 )
+from tank.contracts.source_errors import SourceEntryError
 from tank.contracts.source_items import PendingSourceItem, SourceContextId, pending_source_item
 from tank.contracts.sources import SourceDefinition
-from tank.sources.errors import SourceEntryError
 from tank.util import iso, parse_iso_time, sha256
 
 
