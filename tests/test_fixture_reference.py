@@ -854,12 +854,13 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
 
     path, p = phased_packet(reference_packet)
     cfg = {name: {} for name in ["thresholds", "semantics", "dependency_map"]}
-    cfg["registry"] = {"tokens": []}
+    cfg["registry"] = {"tokens": [], "entities": [], "instruments": []}
+    cfg["sources"] = {"sources": []}
     if publication:
         baseline = Settings(_env_file=None)
         cfg = {
             name: baseline.load_config(name)
-            for name in ("registry", "thresholds", "semantics", "dependency_map")
+            for name in ("registry", "sources", "thresholds", "semantics", "dependency_map")
         }
         p["records"][0]["record"].update(author="@tier10k", author_label="@tier10k")
         p["records"][1]["record"].update(author_organization="Robinhood")
