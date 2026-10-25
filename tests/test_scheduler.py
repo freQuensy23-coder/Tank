@@ -2121,3 +2121,17 @@ async def test_scout_write_uses_required_version_facet_with_a_custom_fixture_roo
     assert stored["config_version"] == versions.config_version
     assert stored["code_version"] == versions.code_version
     assert len(await repo.list("ops.jobs", filters={"type": "SCOUT_REVIEW"})) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored_identity", [None, "another-event"])
+async def test_reaction_scheduling_port_requires_the_actual_event_identity(
+    stored_identity: str | None,
+) -> None:
+    repo = MemoryRepository()
+    scheduler = Scheduler(repo, Settings(), None, None, versions=fixture_versions())
+    if stored_identity is not None:
+        await repo.put("evt.events", "requested-event", {"event_id": stored_identity})
+    with pytest.raises(ValueError, match="does not exist|differs from its lookup"):
+        await scheduler.ensure_event_reactions("requested-event")
+    assert await repo.list("ops.jobs") == []

@@ -36,9 +36,9 @@ from tank.contracts.sources import (
     SourceUncapturedRpsBudget,
 )
 from tank.ops_progress import RepositorySourceProgress
+from tank.request_budget import shared_request_budgets
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.sources.ingestion import SourceIngestion
-from tank.sources.rate_limits import shared_request_budgets
 from tank.sources.raw_store import RawItemStorage
 from tank.sources.xsensor import XSensor
 from tank.util import iso, parse_iso_time, parse_time, sha256, utcnow

@@ -288,10 +288,52 @@ class SourceUncapturedRpsBudget(SourceBudgetEvidence):
         return self
 
 
-class SourceBinanceBudget(SourceBudgetEvidence, DocumentedWeightBudget):
-    provider: Literal["binance.spot", "binance.usdm"]
+class SourceClientProtectionLimit(DomainModel):
+    bucket: Literal["binance.usdm.funding", "binance.usdm.statistics"]
+    paths: list[Literal["/fapi/v1/fundingRate", "/fapi/v1/fundingInfo", "/futures/data/openInterestHist"]] = (
+        Field(min_length=1)
+    )
+    policy_kind: Literal["CLIENT_PROTECTION"]
+    documentation_status: Literal["NOT_CAPTURED"]
+    documented_requests: None
+    period_s: int = Field(gt=0)
+    tank_request_budget: int = Field(gt=0)
+    scope: Literal["IP"]
     basis: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def exact_operation_group(self) -> Self:
+        expected = (
+            {"/fapi/v1/fundingRate", "/fapi/v1/fundingInfo"}
+            if self.bucket == "binance.usdm.funding"
+            else {"/futures/data/openInterestHist"}
+        )
+        if set(self.paths) != expected or len(self.paths) != len(expected):
+            raise ValueError("Client protection bucket must retain its exact operation group")
+        return self
+
+
+class SourceBinanceBudget(SourceBudgetEvidence, DocumentedWeightBudget):
+    basis: str = Field(min_length=1)
+
+
+class SourceBinanceSpotBudget(SourceBinanceBudget):
+    provider: Literal["binance.spot"]
     observed_header: str | None = Field(default=None, min_length=1)
+
+
+class SourceBinanceUsdmBudget(SourceBinanceBudget):
+    provider: Literal["binance.usdm"]
+    client_protection_limits: list[SourceClientProtectionLimit] = Field(min_length=2, max_length=2)
+
+    @model_validator(mode="after")
+    def required_operation_protection(self) -> Self:
+        if {rule.bucket for rule in self.client_protection_limits} != {
+            "binance.usdm.funding",
+            "binance.usdm.statistics",
+        }:
+            raise ValueError("USD-M requires both existing operation-protection windows")
+        return self
 
 
 class SourceOkxBudget(SourceBudgetEvidence):
@@ -396,7 +438,8 @@ class SourceClientProtectionBudget(SourceBudgetEvidence):
 type SourceProviderBudget = Annotated[
     SourceSecBudget
     | SourceUncapturedRpsBudget
-    | SourceBinanceBudget
+    | SourceBinanceSpotBudget
+    | SourceBinanceUsdmBudget
     | SourceOkxBudget
     | SourceBybitBudget
     | SourceHyperliquidBudget

@@ -40,6 +40,8 @@ def session_settings():
     config = {
         "openma": {"agent_id": "agt_1", "environment_id": "env_1", "prompt_version": "test"},
         "thresholds": {"session_keep_days": 7},
+        "registry": Settings().load_config("registry"),
+        "sources": Settings().load_config("sources"),
     }
     return SimpleNamespace(
         openma_api_key="secret",
@@ -48,6 +50,7 @@ def session_settings():
         config_version="test",
         code_version="test",
         load_config=lambda name: config[name],
+        read_config_json=Settings().read_config_json,
         ops_progress_enabled=False,
         replay=False,
     )
@@ -297,6 +300,9 @@ async def ask(repo, session_status="OPEN"):
 
 def openma(posts, history):
     def handler(request: httpx.Request):
+        if request.method == "POST" and not request.url.path.endswith("/events"):
+            assert "tools" in json.loads(request.content)["agent"]
+            return httpx.Response(200, json={"id": "ses_1", "status": "idle"})
         if request.method == "POST":
             body = json.loads(request.content)
             posts.append((request.url.path, body))
@@ -437,7 +443,7 @@ async def test_retried_question_is_never_retired_by_a_concurrent_failure() -> No
     outage = {"left": 1}
 
     def handler(request: httpx.Request):
-        if request.method == "POST" and outage["left"]:
+        if request.method == "POST" and request.url.path.endswith("/events") and outage["left"]:
             outage["left"] -= 1
             return httpx.Response(503, json={})
         return healthy(request)
@@ -562,6 +568,9 @@ async def test_first_question_is_answered_while_a_second_is_still_running() -> N
     ]
 
     def handler(request: httpx.Request):
+        if request.method == "POST" and not request.url.path.endswith("/events"):
+            assert "tools" in json.loads(request.content)["agent"]
+            return httpx.Response(200, json={"id": "ses_1", "status": "idle"})
         if request.method == "POST":
             posts.append(json.loads(request.content))
             return httpx.Response(200, json={"data": [{"id": next(ids)}]})

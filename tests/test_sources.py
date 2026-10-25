@@ -1108,7 +1108,7 @@ async def test_shared_weight_budget_large_waiter_does_not_block_fitting_baseline
 ) -> None:
     import asyncio
 
-    import tank.sources.rate_limits as module
+    import tank.request_budget as module
 
     budget = module.SharedRequestBudgets()
     sleep_started = asyncio.Event()
@@ -1119,7 +1119,7 @@ async def test_shared_weight_budget_large_waiter_does_not_block_fitting_baseline
         sleep_started.set()
         await release_sleep.wait()
 
-    monkeypatch.setattr(module.asyncio, "sleep", sleep)
+    monkeypatch.setattr(asyncio, "sleep", sleep)
     await budget.acquire("binance.spot", 100, 60, weight=98)
     optional = asyncio.create_task(budget.acquire("binance.spot", 100, 60, weight=50))
     try:
