@@ -9,7 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, JsonValue
 
 from tank.contracts import DomainModel
-from tank.contracts.tool_schema import SCOPED_TOOLS, validate_schema
+from tank.contracts.tool_schema import SCOPED_TOOLS, parse_tool_definitions, validate_schema
 from tank.util import JsonInput
 
 type RecordKind = Literal["item", "event", "claim", "condition", "proposal"]
@@ -625,23 +625,17 @@ class ModelContext:
             )
         return f"Look it up with read-only SQL: {ID_LOOKUP[self.scout]}, «{QUERIES[kind]}»."
 
-    def public_schema(self, tool):
-        reader = getattr(self.settings, "read_config_json", None)
-        if reader is None:
-            return None
-        try:
-            tools = reader(f"skills/{AGENT_SKILLS[self.scout]}/tools.json")
-        except (OSError, ValueError, KeyError):
-            return None
-        for row in tools:
-            if row.get("name") == tool:
-                return row["input_schema"]
+    def public_schema(self, tool: str) -> dict[str, JsonValue]:
+        tools = parse_tool_definitions(
+            self.settings.read_config_json(f"skills/{AGENT_SKILLS[self.scout]}/tools.json")
+        )
+        for definition in tools:
+            if definition.name == tool:
+                return definition.input_schema
         raise ValueError(f"{tool} is not a tool of this agent")
 
-    def validate_shape(self, tool, arguments):
+    def validate_shape(self, tool: str, arguments: dict[str, JsonValue]) -> None:
         schema = self.public_schema(tool)
-        if schema is None:
-            return
         if tool == "set_beneficiaries":
             schema = novel_layers_allowed(schema)
         legacy = legacy_reference(arguments, schema)

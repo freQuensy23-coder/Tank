@@ -5,7 +5,11 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from agent_source_fixtures import declared_versions_fixture, source_record_fixture
+from agent_source_fixtures import (
+    declared_versions_fixture,
+    native_tool_arguments_fixture,
+    source_record_fixture,
+)
 
 from tank.agents import ConfigurationError, Pipeline, SessionService
 from tank.agents.context import CONTEXT_VERSION
@@ -45,6 +49,7 @@ def settings(**overrides):
     }
     from tank.settings import Settings
 
+    values["read_config_json"] = Settings(_env_file=None).read_config_json
     values["thresholds"] = lambda: (
         Settings(_env_file=None)
         .thresholds()
@@ -62,9 +67,13 @@ def settings(**overrides):
 
 
 async def seed_session(repo, **changes):
+    from tank.openma_sync import agent_tools
+    from tank.util import sha256
+
     row = {
         "session_id": "ses_1",
         "model_context_version": CONTEXT_VERSION,
+        "tools_sha256": sha256(agent_tools(settings()[0], "tank-event-analyst")),
         "event_id": "evt_1",
         "item_id": "itm_1",
         "status": "OPEN",
@@ -224,7 +233,12 @@ async def test_tool_result_lost_reply_restart_reuses_completed_result() -> None:
         posts.append(req)
         raise httpx.ReadError("lost response", request=req)
 
-    event = {"id": "call_1", "type": "agent.custom_tool_use", "name": "record_event", "input": {"x": 1}}
+    event = {
+        "id": "call_1",
+        "type": "agent.custom_tool_use",
+        "name": "record_event",
+        "input": native_tool_arguments_fixture("record_event"),
+    }
     async with httpx.AsyncClient(transport=httpx.MockTransport(broken)) as http:
         service = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
         with pytest.raises(httpx.ReadError):
@@ -273,7 +287,13 @@ async def test_failed_dispatch_rolls_back_and_replays() -> None:
     ) as http:
         service = SessionService(repo, opts, bad, http=http, versions=declared_versions_fixture())
         await service.process_event(
-            "ses_1", {"id": "c", "type": "agent.custom_tool_use", "name": "record_event", "input": {}}
+            "ses_1",
+            {
+                "id": "c",
+                "type": "agent.custom_tool_use",
+                "name": "record_event",
+                "input": native_tool_arguments_fixture("record_event"),
+            },
         )
     assert await repo.get("evt.events", "oops") is None
     assert (await repo.get("ops.agent_sessions", "ses_1"))["processed_events"] == ["c"]
@@ -819,7 +839,13 @@ async def test_live_slow_and_recovered_tool_context_keep_session_provenance() ->
             "ses_1", {"id": "live", "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
         )
         await live.process_event(
-            "ses_1", {"id": "slow", "type": "agent.custom_tool_use", "name": "get_market_truth", "input": {}}
+            "ses_1",
+            {
+                "id": "slow",
+                "type": "agent.custom_tool_use",
+                "name": "get_market_truth",
+                "input": native_tool_arguments_fixture("get_market_truth"),
+            },
         )
         await repo.put(
             "ops.tool_calls",
@@ -879,7 +905,7 @@ async def test_market_truth_wire_omits_internal_metadata_full_result_survives_re
         "id": "mt_call",
         "type": "agent.custom_tool_use",
         "name": "get_market_truth",
-        "input": {},
+        "input": native_tool_arguments_fixture("get_market_truth"),
     }
     async with httpx.AsyncClient(transport=httpx.MockTransport(lost)) as http:
         first = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
@@ -1129,7 +1155,12 @@ async def test_tool_execution_error_is_durable_returned_and_never_redispatched_a
             raise httpx.ConnectError("Lost tool response acknowledgement", request=request)
         return httpx.Response(200, json={})
 
-    event = {"id": "failure", "type": "agent.custom_tool_use", "name": tool_name, "input": {}}
+    event = {
+        "id": "failure",
+        "type": "agent.custom_tool_use",
+        "name": tool_name,
+        "input": native_tool_arguments_fixture(tool_name),
+    }
     async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
         first = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
         with pytest.raises(httpx.ConnectError):

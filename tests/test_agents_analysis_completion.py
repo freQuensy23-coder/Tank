@@ -10,7 +10,9 @@ from agent_source_fixtures import declared_versions_fixture, source_record_fixtu
 from test_agents_execution_barrier import config, idle
 from test_session_binding_concurrency import fixture_repo, seed
 
+from tank.agents.context import CONTEXT_VERSION
 from tank.agents.sessions import SessionService
+from tank.openma_sync import agent_tools
 from tank.util import sha256
 
 
@@ -100,6 +102,8 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
             "s",
             {
                 "session_id": "s",
+                "model_context_version": CONTEXT_VERSION,
+                "tools_sha256": sha256(agent_tools(config(), "tank-event-analyst")),
                 "event_id": event_id,
                 "status": "OPEN",
                 "runtime_status": "RUNNING",
