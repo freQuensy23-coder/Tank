@@ -214,7 +214,9 @@ def percentile(
     if isinstance(low, Decimal):
         if not isinstance(high, Decimal):
             raise ValueError("Statistical population cannot mix Decimal and float measures")
-        return low + (high - low) * Decimal(position - index)
+        fraction = Decimal(str(position - index))
+        exact_context(low, high, fraction)
+        return low + (high - low) * fraction
     if isinstance(high, Decimal):
         raise ValueError("Statistical population cannot mix Decimal and float measures")
     return low + (high - low) * (position - index)

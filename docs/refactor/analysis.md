@@ -437,3 +437,18 @@ RecordedResultsOnlyPageReader binds the verified packet/result catalog and refus
 raw-page requests because this input format retains complete tool results rather
 than original response bytes. This refusal occurs before admission/client creation.
 No speculative reconstruction model/reader is retained.
+### Exact Decimal interpolation repair
+
+Independent review identified that the statistical typing change constructed the
+Decimal percentile weight directly from a binary float. For financial populations,
+`percentile` now uses `Decimal(str(position - index))`, preserving the established
+decimal-text convention, and calls `exact_context(low, high, fraction)` before
+subtraction/multiplication/addition. It does not mix float observations into Decimal
+populations. This companion is based directly on b123f2f and has no held HTTP ancestry.
+
+Four independently specified exact-equality cases cover USD1.05, a negative funding
+rate, very large native OI and adjacent subunit values under an outer precision of6.
+There are no approximate assertions. Together with beta, condition calculations,
+START fixtures and formula vectors,59 unit cases pass in7.68s; the new regression
+module passes strict mypy and Ruff/format. HTTP work remains preserved separately
+at immutable stash55c26d818e567184ecf101c9b5a1ca2e8ebd6733.
