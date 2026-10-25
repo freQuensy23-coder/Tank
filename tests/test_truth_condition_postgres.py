@@ -1,5 +1,6 @@
 """Disposable QA PostgreSQL proof: selective market loader → truth, bounded SQL and no MTA writes."""
 
+import json
 import os
 from copy import deepcopy
 from datetime import timedelta
@@ -7,13 +8,14 @@ from decimal import Decimal
 from math import sin
 from pathlib import Path
 from runpy import run_path
-from types import SimpleNamespace
 
 import httpx
 import pytest
 
 from tank.analysis.truth import MarketTruthService, compute_market_truth
+from tank.market.cadences import supply_cadences
 from tank.market.service import MarketService
+from tank.settings import Settings
 from tank.util import iso, parse_time
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres]
@@ -185,28 +187,27 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
                 tier="BASE",
                 effective_at=iso(parse_time(packet["anchor"]["ts"]) - timedelta(days=1)),
                 effective_at_prec="COLLECTION_ONLY",
+                effective_at_prec_reason=None,
                 reason="SYNTHETIC_TEST",
                 event_ids=[],
-                capture_cadences={"oi_funding_s": 300, "kline_s": 60, "book_s": 10, "supply_by_kind": {}},
+                capture_cadences={
+                    "oi_funding_s": 300,
+                    "kline_s": 60,
+                    "book_s": 10,
+                    "supply_by_kind": supply_cadences(False),
+                },
             ),
         )
         registry = {
             "instruments": packet["instruments"],
             "tokens": [{"token_id": "T", "symbol": "T"}, {"token_id": "BTC", "symbol": "BTC"}],
         }
-        settings = SimpleNamespace(
-            config_version="test",
-            code_version="test",
-            data_dir=tmp_path,
-            user_agent="test",
-            load_config=lambda key: (
-                registry
-                if key == "registry"
-                else {"metrics": packet["semantics"]}
-                if key == "semantics"
-                else {}
-            ),
-        )
+        config = tmp_path / "config"
+        config.mkdir()
+        (config / "registry.yaml").write_text(json.dumps(registry))
+        (config / "semantics.yaml").write_text(json.dumps({"metrics": packet["semantics"]}))
+        (config / "thresholds.yaml").write_bytes(Settings().read_config_bytes("thresholds.yaml"))
+        settings = Settings(config_dir=config, data_dir=tmp_path, config_version="test", code_version="test")
         reads = []
         statements = []
         original_range = repo.iter_range

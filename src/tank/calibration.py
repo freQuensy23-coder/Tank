@@ -13,12 +13,22 @@ import hashlib
 import json
 from collections.abc import Mapping
 from datetime import timedelta
-from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 import yaml
-from pydantic import JsonValue
+from pydantic import JsonValue, field_validator
 
+from tank.agents.classification import JEV_PROMPT_VERSION, JevClassifier
+from tank.agents.jev import JevState
+from tank.agents.pipeline_contracts import (
+    ClassificationName,
+    JevScoreRecord,
+    RoutingCandidate,
+    RoutingRegistry,
+    RoutingSession,
+)
+from tank.agents.routing import RoutingItem, RoutingSelector, item_state
 from tank.contracts.source_items import PendingRelevance
 from tank.sources.policy import initial_relevance
 from tank.util import iso, parse_time, sha256
@@ -233,34 +243,65 @@ def report(packet, rows, generation):
 
 
 class _Ledger:
-    """Content-addressed, immutable Jev usage rows: an exact request is paid for once."""
+    """Content-addressed immutable classification records at the filesystem boundary."""
 
-    def __init__(self, root):
+    def __init__(self, root: Path) -> None:
         self.root = root
         root.mkdir(parents=True, exist_ok=True)
 
-    async def get(self, collection, key):
-        path = self.root / (key + ".json")
-        return json.loads(path.read_text()) if path.exists() else None
-
-    async def put(self, collection, key, value, *, immutable=False):
+    async def get(self, key: str) -> JevScoreRecord | None:
         path = self.root / (key + ".json")
         if not path.exists():
-            temporary = path.with_suffix(".tmp")
-            temporary.write_text(json.dumps(value, sort_keys=True))
-            temporary.rename(path)
-        return json.loads(path.read_text())
+            return None
+        record = JevScoreRecord.model_validate_json(path.read_bytes(), strict=True)
+        if record.usage_id != key:
+            raise CalibrationError("Cached classification identity differs from its durable filename")
+        return record
+
+    async def put(self, key: str, value: JevScoreRecord, *, immutable: bool = False) -> JevScoreRecord:
+        if not immutable:
+            raise CalibrationError("Calibration classification records require immutable writes")
+        if value.usage_id != key:
+            raise CalibrationError("Classification identity differs from its durable filename")
+        existing = await self.get(key)
+        if existing is not None:
+            return existing
+        path = self.root / (key + ".json")
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(value.model_dump_json())
+        temporary.rename(path)
+        stored = await self.get(key)
+        if stored is None:
+            raise CalibrationError("Classification ledger write has no durable record")
+        return stored
 
 
-class _CachedConfig:
-    """Settings proxy that parses each config file once for the whole pass."""
+class _CalibrationSession(RoutingSession):
+    event_id: str
+    status: Literal["OPEN"]
+    last_item_at: str
 
-    def __init__(self, settings):
-        self._settings = settings
-        self.load_config = lru_cache(maxsize=None)(settings.load_config)
+    @field_validator("last_item_at")
+    @classmethod
+    def valid_clock(cls, value: str) -> str:
+        parse_time(value)
+        return value
 
-    def __getattr__(self, name):
-        return getattr(self._settings, name)
+
+def _routing_item(record: Mapping[str, JsonValue]) -> RoutingItem:
+    return RoutingItem.model_validate(
+        {
+            "item_id": record["item_id"],
+            "source": record["source"],
+            "author": record["author"],
+            "title": record["title"],
+            "text": record["text"],
+            "quoted": record.get("quoted"),
+            "author_organization": record.get("author_organization"),
+            "identity_hints": record.get("identity_hints"),
+            "monitored_author": record.get("monitored_author"),
+        }
+    )
 
 
 async def acquire(input_path, output_dir, *, settings=None, http=None):
@@ -268,18 +309,17 @@ async def acquire(input_path, output_dir, *, settings=None, http=None):
     import httpx
 
     from tank.agents.jev import binding
-    from tank.agents.pipeline import JEV_PROMPT_VERSION, Pipeline
     from tank.settings import Settings, resolve_versions
     from tank.storage import MemoryRepository
 
     raw = Path(input_path).read_bytes()
     packet = json.loads(raw)
     rows, events, window = load_packet(packet)
-    settings = _CachedConfig(settings or resolve_versions(Settings()))
-    if settings.load_config("thresholds").get("routing_window_days", 3) != window.days:
+    settings = resolve_versions(Settings()) if settings is None else settings
+    if settings.load_config("thresholds")["routing_window_days"] != window.days:
         raise CalibrationError("Packet routing window differs from config routing_window_days")
     output = Path(output_dir)
-    pinned = binding(getattr(settings, "opencode_api_key", None))
+    pinned = binding(settings.opencode_api_key)
     generation = {
         "packet_sha256": hashlib.sha256(raw).hexdigest(),
         "code_version": settings.code_version,
@@ -292,29 +332,32 @@ async def acquire(input_path, output_dir, *, settings=None, http=None):
         "jev_resolved_models": list(pinned.resolved_models),
     }
     owned = http is None
-    http = http or httpx.AsyncClient(timeout=30)
-    scorer = Pipeline(_Ledger(output / "usage"), settings, http=http)
+    http = httpx.AsyncClient(timeout=30) if http is None else http
+    scorer = JevClassifier(_Ledger(output / "usage"), settings, http)
+    repository = MemoryRepository()
+    selector = RoutingSelector(repository, RoutingRegistry.from_wire(settings.load_config("registry")))
     capacity = asyncio.Semaphore(CONCURRENCY)
 
-    async def score(row, name, state):
+    async def score(item: RoutingItem, name: ClassificationName, state: JevState) -> float:
         async with capacity:
-            return (await scorer._score_record(row["source_item"], name, state))["score"]
+            return await scorer.score(item, name, state)
 
     async def candidates(row, sessions):
-        repository = MemoryRepository()
         for event_id, last_at in sessions.items():
             if last_at >= row["at"] - window:
-                await repository.put("evt.events", event_id, {**events[event_id], "lifecycle": "OPEN"})
+                candidate = RoutingCandidate.from_wire({**events[event_id], "lifecycle": "DETECTED"})
+                await repository.put("evt.events", event_id, candidate.model_dump(mode="json"))
                 await repository.put(
                     "ops.agent_sessions",
                     event_id,
-                    {"session_id": event_id, "event_id": event_id, "last_item_at": iso(last_at)},
+                    _CalibrationSession(
+                        event_id=event_id, status="OPEN", last_item_at=iso(last_at)
+                    ).model_dump(mode="json"),
                 )
-        selector = Pipeline(repository, settings, http=http)
-        found = await selector._candidate_events(
-            selector.identities(row["source_item"]), iso(row["at"] - window), row["at"]
+        found = await selector.candidate_events(
+            selector.identities(_routing_item(row["source_item"])), iso(row["at"] - window), row["at"]
         )
-        return [event["event_id"] for event in found]
+        return [event.event_id for event in found]
 
     try:
         sessions = {}
@@ -324,11 +367,17 @@ async def acquire(input_path, output_dir, *, settings=None, http=None):
                 sessions[row["event_id"]] = row["at"]
 
         async def score_row(row):
-            item = row["source_item"]
-            row["filter_score"] = await score(row, "relevant", Pipeline.state(item))
+            item = _routing_item(row["source_item"])
+            row["filter_score"] = await score(item, "relevant", item_state(item))
             scores = await asyncio.gather(
                 *(
-                    score(row, "same_event", scorer.routing_state(item, events[event_id]))
+                    score(
+                        item,
+                        "same_event",
+                        selector.routing_state(
+                            item, RoutingCandidate.from_wire({**events[event_id], "lifecycle": "DETECTED"})
+                        ),
+                    )
                     for event_id in row["candidate_ids"]
                 )
             )

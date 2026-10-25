@@ -136,7 +136,7 @@ async def test_acquire_scores_the_service_inputs_at_the_historical_clock(tmp_pat
         )
 
     settings = SimpleNamespace(
-        openrouter_api_key="FAKE",
+        opencode_api_key=None,
         replay=False,
         config_version="cfg",
         code_version="code",
@@ -158,3 +158,14 @@ async def test_acquire_scores_the_service_inputs_at_the_historical_clock(tmp_pat
 
     assert report["status"] == "FAIL" and report["rejection_reasons"] == ["sample_minimums"]
     assert "routing_cutoff" not in (tmp_path / "out" / "thresholds.proposed.yaml").read_text()
+
+    from pydantic import ValidationError
+
+    from tank.calibration import _Ledger
+
+    usage_path = next((tmp_path / "out" / "usage").glob("*.json"))
+    invalid_usage = json.loads(usage_path.read_text())
+    invalid_usage["score"] = 1.5
+    usage_path.write_text(json.dumps(invalid_usage))
+    with pytest.raises(ValidationError):
+        await _Ledger(usage_path.parent).get(usage_path.stem)

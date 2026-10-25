@@ -5,6 +5,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from agent_source_fixtures import source_record_fixture
 
 from tank.agents import SessionService
 from tank.analysis.decisions import DecisionEngine
@@ -55,13 +56,15 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
         openma_url="http://127.0.0.1:9999",
         _env_file=None,
     )
-    source = {
-        "item_id": new_id("item"),
-        "source_id": "S01",
-        "text": "Explicit synthetic abort fixture",
-        "observed_at": "2026-09-24T11:59:00Z",
-        "observed_at_prec": "EXACT",
-    }
+    source = source_record_fixture(
+        {
+            "item_id": new_id("item"),
+            "source_id": "S01",
+            "text": "Explicit synthetic abort fixture",
+            "observed_at": "2026-09-24T11:59:00Z",
+            "observed_at_prec": "COLLECTION_ONLY",
+        }
+    )
     packet = tmp_path / "packet.json"
     packet.write_text(
         json.dumps(
@@ -337,13 +340,19 @@ async def test_replay_abort_preserves_completed_state_and_refuses_other_ownershi
 
 async def test_native_terminal_failure_clears_runtime_but_preserves_done_messages_and_source() -> None:
     repo = MemoryRepository()
-    done = {"message_id": "done", "turn_status": "DONE", "immutable_completion": "retained"}
+    done = {
+        "message_id": "done",
+        "turn_status": "DONE",
+        "retry_count": 0,
+        "payload": {"kind": "NEW_ITEM", "item_id": "source-done"},
+        "immutable_completion": "retained",
+    }
     active = {
         "message_id": "active",
         "turn_status": "RUNNING",
         "retry_count": 1,
         "body": {"type": "user.message"},
-        "payload": {"item_id": "source-done"},
+        "payload": {"kind": "NEW_ITEM", "item_id": "source-done"},
         "remote_event_id": "accepted-retry",
     }
     session = {
@@ -353,7 +362,14 @@ async def test_native_terminal_failure_clears_runtime_but_preserves_done_message
         "active_message_id": "active",
         "message_log": [done, active],
     }
-    source = {"item_id": "source-done", "extraction_status": "DONE", "accepted_fact": "preserved"}
+    source = source_record_fixture(
+        {
+            "item_id": "source-done",
+            "source_id": "S01",
+            "extraction_status": "DONE",
+            "text": "Preserved accepted synthetic fact",
+        }
+    )
     await repo.put("ops.agent_sessions", "native", copy.deepcopy(session))
     await repo.put("ingest.source_items", "source-done", copy.deepcopy(source))
     async with httpx.AsyncClient(
@@ -390,7 +406,12 @@ async def test_native_terminal_failure_clears_runtime_but_preserves_done_message
 @pytest.mark.parametrize("turn_status", ["RUNNING", "DONE"])
 async def test_native_termination_clears_runtime_without_manufacturing_completion(turn_status) -> None:
     repo = MemoryRepository()
-    message = {"message_id": "turn", "turn_status": turn_status, "payload": {"item_id": "done-source"}}
+    message = {
+        "message_id": "turn",
+        "turn_status": turn_status,
+        "retry_count": 0,
+        "payload": {"kind": "NEW_ITEM", "item_id": "done-source"},
+    }
     if turn_status == "DONE":
         message["workflow_completion_verified"] = {"version": 1, "immutable": "proof"}
     session = {
@@ -400,7 +421,14 @@ async def test_native_termination_clears_runtime_without_manufacturing_completio
         "active_message_id": "turn",
         "message_log": [copy.deepcopy(message)],
     }
-    source = {"item_id": "done-source", "extraction_status": "DONE"}
+    source = source_record_fixture(
+        {
+            "item_id": "done-source",
+            "source_id": "S01",
+            "extraction_status": "DONE",
+            "text": "Already completed synthetic source",
+        }
+    )
     await repo.put("ops.agent_sessions", "terminated", session)
     await repo.put("ingest.source_items", "done-source", source)
     async with httpx.AsyncClient(

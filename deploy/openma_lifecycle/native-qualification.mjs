@@ -4,6 +4,7 @@
  * This exercises actual production bridge/provider/fences/browser; no model/API
  * credential, external network request or OpenMA session/history row is used. */
 import assert from 'node:assert/strict';
+import { processEvidence, terminatedProcess } from './process-evidence.mts';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { writeFileSync } from 'node:fs';
@@ -16,22 +17,14 @@ import { hash, quote, configuration, phaseWallSeconds, PREPARATION_TIMEOUT_EXIT,
 export { configuration, phaseWallSeconds, PREPARATION_TIMEOUT_EXIT,
   preparationWatchdog, mountedOutputNonce, browserEvidence } from './qualification-contracts.mts';
 async function json(path, value) { await writeFile(path, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 }); }
-async function proc(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
-  try {
-    const fields = (await readFile(`/proc/${pid}/stat`, 'utf8')).split(')').slice(1).join(')').trim().split(/\s+/);
-    const status = await readFile(`/proc/${pid}/status`, 'utf8');
-    return { pid, state: fields[0], startTime: fields[19], rssKiB: Number(status.match(/^VmRSS:\s+(\d+)/m)?.[1] ?? 0) };
-  } catch (error) { if (error.code === 'ENOENT' || error.code === 'ESRCH') return null; throw error; }
-}
 async function stopped(client, id, before) {
   const info = await client.getInfo(id);
   assert.ok(info, 'retained native resource disappeared');
   assert.equal(info.state.running, false);
   assert.equal(info.autoDelete, 0);
-  const after = await proc(before.pid);
-  assert.ok(!after || after.startTime !== before.startTime || after.state === 'Z', 'owned native VM process remains alive after idle stop');
-  const released = !after || after.startTime !== before.startTime || after.rssKiB === 0;
+  const after = await processEvidence(before.pid, '/proc');
+  assert.ok(!after || after.startTime !== before.startTime || terminatedProcess(after.state), 'owned native VM process remains alive after idle stop');
+  const released = !after || after.startTime !== before.startTime || terminatedProcess(after.state) || after.rssKiB === 0;
   assert.ok(released, 'owned VM process memory remains after stop');
   const metrics = await client.metrics();assert.equal(metrics.numRunningBoxes, 0, 'dedicated runtime still reports running VMs');
   return { id, state: info.state, autoDelete: info.autoDelete, oldProcess: before, oldProcessAfter: after,
@@ -172,8 +165,8 @@ async function phase(name, config) {
   const info = await client.getInfo(expectedName);
   assert.ok(info);assert.equal(info.autoDelete, 0);assert.equal(info.cpus, 1);assert.equal(info.memoryMib, config.memoryMib);
   if (first) assert.equal(info.id, first.id);
-  const activeProcess = await proc(info.state.pid);
-  assert.ok(activeProcess && activeProcess.state !== 'Z' && activeProcess.rssKiB > 0, 'active VM process/RSS evidence missing');
+  const activeProcess = await processEvidence(info.state.pid, '/proc');
+  assert.ok(activeProcess && !terminatedProcess(activeProcess.state) && activeProcess.rssKiB !== null && activeProcess.rssKiB > 0, 'active VM process/RSS evidence missing');
   if (name === 'first') {
     const rival = controller(), rivalSandbox = await sandbox(), rivalContext = context(rivalSandbox);
     await rival.bind(rivalContext);await assert.rejects(rivalSandbox.exec('true'), /retained_resource_busy/);
