@@ -33,6 +33,11 @@ status codes of the original two requests.
 - Stored 429 diagnostics contain status, fixed provider/model/endpoint labels,
   the standard HTTP reason, a validated correlation ID and parsed retry delay.
   Raw response bodies, request headers and credentials are not copied into jobs.
+- Parallel routing honors the longest Retry-After across all rate-limit responses.
+  A concurrent real error still spends an attempt and retains its status; its retry
+  also respects the outstanding rate-limit delay.
+- Manual recovery and failure reconciliation use the same lock; reconciliation
+  rereads the current state so a stale scan cannot overwrite recovery or completion.
 - Successful scores remain cached. A retry after partially completed routing
   reuses those scores and queues only one agent message.
 

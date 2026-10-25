@@ -131,3 +131,39 @@ async def test_recovery_preserves_legacy_failure_and_cannot_recover_completed_jo
     with pytest.raises(ValueError, match="Only failed"):
         await retry_jev_job(repo, job["job_id"])
     assert len(await repo.list("ops.jobs")) == 1
+
+
+async def test_postgres_recovery_and_completion_survive_stale_failure_scan(repository, monkeypatch):
+    from tank.runtime import Runtime
+
+    repo = repository
+    job = await seeded(repo)
+    await repo.put(
+        "ops.jobs",
+        job["job_id"],
+        {**job, "status": "FAILED", "attempts": 2, "last_error": "HTTPStatusError"},
+    )
+    original = repo.iter_all
+    recovered = []
+    other = PostgresRepository(repo.database_url)
+    await other.open()
+
+    async def stale_scan(collection, **kwargs):
+        async for row in original(collection, **kwargs):
+            if collection == "ops.jobs" and row["job_id"] == job["job_id"] and not recovered:
+                recovered.append(await retry_jev_job(other, job["job_id"]))
+                claimed = await other.claim_job()
+                await other.finish_job(claimed["job_id"])
+            yield row
+
+    monkeypatch.setattr(repo, "iter_all", stale_scan)
+    runtime = object.__new__(Runtime)
+    runtime.repo, runtime.settings = repo, options()
+    try:
+        await runtime.reconcile_delivery_failures()
+        row = await other.get("ops.jobs", job["job_id"])
+        assert row["status"] == "DONE"
+        assert len(row["manual_retries"]) == 1
+        assert row["manual_retries"][0]["last_error"] == "HTTPStatusError"
+    finally:
+        await other.close()

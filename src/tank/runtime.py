@@ -6,7 +6,7 @@ import logging
 import traceback
 from datetime import timedelta
 
-from tank.agents.jev import JevHTTPError, JevRateLimited
+from tank.agents.jev import JevBatchFailure, JevHTTPError, JevRateLimited
 from tank.agents.sessions import ADMITTED_JOB_TYPES, AdmissionDeferred
 from tank.delivery import DeliveryDeferred, DeliveryService
 from tank.jev_recovery import defer_jev_job
@@ -293,24 +293,32 @@ class Runtime:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                failure = exc.__cause__ if isinstance(exc, TimeoutError) and exc.__cause__ else exc
+                failure = (
+                    exc.error
+                    if isinstance(exc, JevBatchFailure)
+                    else exc.__cause__
+                    if isinstance(exc, TimeoutError) and exc.__cause__
+                    else exc
+                )
                 frames = " > ".join(
                     f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}:{frame.name}"
                     for frame in traceback.extract_tb(failure.__traceback__)
                 )
 
                 reason = (
-                    f"JevHTTPError: HTTP {exc.http_status}"
-                    if isinstance(exc, JevHTTPError)
+                    f"JevHTTPError: HTTP {failure.http_status}"
+                    if isinstance(failure, JevHTTPError)
                     else type(exc).__name__
+                    if isinstance(exc, TimeoutError)
+                    else type(failure).__name__
                 )
                 log.error("Job %s (%s) failed: %s [%s]", job["job_id"], job["type"], reason, frames)
                 try:
-                    await self.repo.fail_job(
-                        job["job_id"],
-                        reason,
-                        retry_after=getattr(exc, "retry_after", min(60, 2 ** job.get("attempts", 1))),
-                    )
+                    retry_after = getattr(exc, "retry_after", min(60, 2 ** job.get("attempts", 1)))
+                    if isinstance(exc, JevBatchFailure):
+                        remaining = max(0, (parse_time(job["expires_at"]) - utcnow()).total_seconds())
+                        retry_after = min(max(retry_after, exc.retry_after_s), remaining)
+                    await self.repo.fail_job(job["job_id"], reason, retry_after=retry_after)
                     current = await self.repo.get("ops.jobs", job["job_id"])
                     if current and current["status"] in {"FAILED", "EXPIRED"}:
                         await self.terminal_delivery_failure(current, reason)
@@ -346,15 +354,24 @@ class Runtime:
         for status in ("FAILED", "EXPIRED"):
             for kind in ("FILTER_ITEM", "ROUTE_ITEM", "AGENT_MESSAGE", "RUN_MARKET_TRUTH", "ESCALATE_TOKENS"):
                 async for job in self.repo.iter_all("ops.jobs", filters={"type": kind, "status": status}):
-                    if not job.get("ops_progress_recorded_at"):
-                        await job_failure_progress(
-                            self.repo, getattr(self, "settings", None), job, job.get("last_error") or status
-                        )
-                        await self.repo.put(
-                            "ops.jobs",
-                            job["job_id"],
-                            {**job, **collection_clock(utcnow()).fields("ops_progress_recorded_at")},
-                        )
+                    async with self.repo.lock("job:" + job["job_id"]), self.repo.transaction():
+                        current = await self.repo.get("ops.jobs", job["job_id"])
+                        if (
+                            current
+                            and current["status"] == status
+                            and not current.get("ops_progress_recorded_at")
+                        ):
+                            await job_failure_progress(
+                                self.repo,
+                                getattr(self, "settings", None),
+                                current,
+                                current.get("last_error") or status,
+                            )
+                            await self.repo.put(
+                                "ops.jobs",
+                                current["job_id"],
+                                {**current, **collection_clock(utcnow()).fields("ops_progress_recorded_at")},
+                            )
             async for job in self.repo.iter_all("ops.jobs", filters={"type": "DELIVER", "status": status}):
                 if not job.get("delivery_failure_recorded_at"):
                     await self.terminal_delivery_failure(job, status)

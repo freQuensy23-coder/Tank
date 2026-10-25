@@ -78,6 +78,15 @@ class JevRateLimited(JevHTTPError):
     """Schedule a confirmed HTTP 429 durably instead of spending processing attempts."""
 
 
+class JevBatchFailure(Exception):
+    """A real routing failure whose retry must also honor concurrent rate-limit responses."""
+
+    def __init__(self, error: Exception, retry_after_s: float):
+        super().__init__("Jev routing batch failed")
+        self.error = error
+        self.retry_after_s = retry_after_s
+
+
 async def classify(http, *, api_key=None, state, questions):
     pinned = binding(api_key)
     response = await http.post(

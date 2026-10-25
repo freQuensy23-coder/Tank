@@ -436,3 +436,173 @@ async def test_other_http_statuses_keep_the_failure_budget_and_record_the_actual
     assert row["last_error"] == f"JevHTTPError: HTTP {status}"
     assert "PRIVATE_API_KEY" not in json.dumps(row)
     assert "private-input" not in json.dumps(row)
+
+
+async def routing_context(repo):
+    job = await seeded(repo, kind="ROUTE_ITEM")
+    await repo.put(
+        "ingest.source_items",
+        item()["item_id"],
+        {**item(), "entities": ["airline"], "relevance": {"decision": "SEND"}},
+    )
+    for event in ("first", "second"):
+        await repo.put(
+            "evt.events",
+            event,
+            {"event_id": event, "entities": ["airline"], "statement": event, "lifecycle": "ANALYZING"},
+        )
+        await repo.put(
+            "ops.agent_sessions",
+            event,
+            {"session_id": event, "event_id": event, "status": "OPEN", "last_item_at": util.iso()},
+        )
+    settings = options()
+    settings.load_config = lambda name: (
+        {"routing_cutoff": 0.5, "routing_window_days": 3} if name == "thresholds" else {}
+    )
+    return job, settings
+
+
+@pytest.mark.parametrize(
+    "statuses,reason",
+    [
+        ((429, 401), "JevHTTPError: HTTP 401"),
+        ((401, 429), "JevHTTPError: HTTP 401"),
+        ((429, 200), "ValueError"),
+    ],
+)
+async def test_mixed_routing_failures_spend_attempt_and_honor_concurrent_rate_limit(
+    clock, monkeypatch, statuses, reason
+):
+    repo = MemoryRepository()
+    job, settings = await routing_context(repo)
+
+    def transport(request):
+        event = json.loads(request.content)["state"]["event"]["statement"]
+        status = statuses[0 if event == "first" else 1]
+        if status == 200:
+            return httpx.Response(200, json={"model": "unexpected-model", "answers": {}, "usage": {}})
+        return provider_response(status, delay="120")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+        pipeline = Pipeline(repo, settings, http=http)
+        for attempts in (1, 2):
+            await run_once(repo, pipeline.route_item, monkeypatch, kind="ROUTE_ITEM")
+            row = await repo.get("ops.jobs", job["job_id"])
+            assert row["attempts"] == attempts
+            assert row["last_error"] == reason
+            assert parse_time(row["run_after"]) >= clock[0] + timedelta(seconds=120)
+            clock[0] = parse_time(row["run_after"])
+    assert row["status"] == "FAILED"
+    assert "jev_rate_limit_count" not in row
+
+
+@pytest.mark.parametrize("delays", [("13", "120"), ("120", "13")])
+async def test_routing_batch_honors_longest_retry_after_independent_of_candidate_order(
+    clock, monkeypatch, delays
+):
+    repo = MemoryRepository()
+    job, settings = await routing_context(repo)
+    requests = []
+
+    def transport(request):
+        event = json.loads(request.content)["state"]["event"]["statement"]
+        requests.append(event)
+        return provider_response(429, delay=delays[0 if event == "first" else 1])
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+        pipeline = Pipeline(repo, settings, http=http)
+        await run_once(repo, pipeline.route_item, monkeypatch, kind="ROUTE_ITEM")
+        row = await repo.get("ops.jobs", job["job_id"])
+        assert row["attempts"] == 0 and row["status"] == "QUEUED"
+        assert parse_time(row["run_after"]) == clock[0] + timedelta(seconds=120)
+        clock[0] += timedelta(seconds=13)
+        await run_once(repo, pipeline.route_item, monkeypatch, kind="ROUTE_ITEM")
+        assert len(requests) == 2
+
+
+async def test_mixed_routing_failure_cannot_overflow_or_extend_original_expiry(clock, monkeypatch):
+    repo = MemoryRepository()
+    job, settings = await routing_context(repo)
+
+    def transport(request):
+        event = json.loads(request.content)["state"]["event"]["statement"]
+        return provider_response(429 if event == "first" else 401, delay="9" * 1000)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+        pipeline = Pipeline(repo, settings, http=http)
+        await run_once(repo, pipeline.route_item, monkeypatch, kind="ROUTE_ITEM")
+    row = await repo.get("ops.jobs", job["job_id"])
+    assert row["status"] == "QUEUED" and row["attempts"] == 1
+    assert row["run_after"] == job["expires_at"]
+    assert row["last_error"] == "JevHTTPError: HTTP 401"
+
+
+async def failed_job(repo):
+    job = await seeded(repo)
+    await repo.put(
+        "ops.jobs",
+        job["job_id"],
+        {**job, "status": "FAILED", "attempts": 2, "last_error": "HTTPStatusError"},
+    )
+    return job
+
+
+@pytest.mark.parametrize("complete_after_recovery", [False, True])
+async def test_reconciliation_does_not_overwrite_recovered_job_from_stale_scan(
+    clock, monkeypatch, complete_after_recovery
+):
+    repo = MemoryRepository()
+    job = await failed_job(repo)
+    original = repo.iter_all
+    recovered = []
+
+    async def stale_scan(collection, **kwargs):
+        async for row in original(collection, **kwargs):
+            if collection == "ops.jobs" and row["job_id"] == job["job_id"] and not recovered:
+                recovered.append(await retry_jev_job(repo, job["job_id"]))
+                if complete_after_recovery:
+                    claimed = await repo.claim_job()
+                    await repo.finish_job(claimed["job_id"])
+            yield row
+
+    monkeypatch.setattr(repo, "iter_all", stale_scan)
+    runtime = object.__new__(Runtime)
+    runtime.repo, runtime.settings = repo, options()
+    await runtime.reconcile_delivery_failures()
+    row = await repo.get("ops.jobs", job["job_id"])
+    assert row["status"] == ("DONE" if complete_after_recovery else "QUEUED")
+    assert len(row["manual_retries"]) == 1
+    assert row["manual_retries"][0]["last_error"] == "HTTPStatusError"
+
+
+async def test_recovery_waits_for_inflight_reconciliation_and_preserves_new_history(clock, monkeypatch):
+    repo = MemoryRepository()
+    job = await failed_job(repo)
+    entered, release, requested = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def progress(*args):
+        entered.set()
+        await release.wait()
+
+    monkeypatch.setattr(runtime_module, "job_failure_progress", progress)
+    runtime = object.__new__(Runtime)
+    runtime.repo, runtime.settings = repo, options()
+    reconciliation = asyncio.create_task(runtime.reconcile_delivery_failures())
+    await entered.wait()
+
+    async def recover():
+        requested.set()
+        return await retry_jev_job(repo, job["job_id"])
+
+    recovery_task = asyncio.create_task(recover())
+    await requested.wait()
+    try:
+        assert not recovery_task.done()
+    finally:
+        release.set()
+        await asyncio.gather(reconciliation, recovery_task)
+    row = await repo.get("ops.jobs", job["job_id"])
+    assert row["status"] == "QUEUED"
+    assert len(row["manual_retries"]) == 1
+    assert "ops_progress_recorded_at" not in row

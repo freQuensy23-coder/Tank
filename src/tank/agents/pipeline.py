@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import httpx
 
-from tank.agents.jev import MODEL, binding, classify
+from tank.agents.jev import MODEL, JevBatchFailure, JevRateLimited, binding, classify
 from tank.ops_progress import item_progress
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import iso, sha256, utcnow
@@ -410,9 +410,21 @@ class Pipeline:
                         request.cancel()
                     await asyncio.gather(*requests, return_exceptions=True)
                     raise
-                for result in results:
-                    if isinstance(result, BaseException):
-                        raise result
+                failures = [result for result in results if isinstance(result, BaseException)]
+                for failure in failures:
+                    if not isinstance(failure, Exception):
+                        raise failure
+                limited = [failure for failure in failures if isinstance(failure, JevRateLimited)]
+                errors = [failure for failure in failures if not isinstance(failure, JevRateLimited)]
+                if errors:
+                    error = errors[0]
+                    if limited and isinstance(error, Exception):
+                        raise JevBatchFailure(
+                            error, max(failure.retry_after_s or 0 for failure in limited)
+                        ) from error
+                    raise error
+                if limited:
+                    raise max(limited, key=lambda failure: failure.retry_after_s or 0)
 
                 for event, score in zip(candidates, results, strict=True):
                     scores[event["event_id"]] = score
