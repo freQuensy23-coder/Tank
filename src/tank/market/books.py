@@ -15,10 +15,10 @@ from tank.market.errors import SemanticError
 from tank.market.normalize import timestamp_fields
 from tank.market.precision import precise
 from tank.time_precision import collection_clock
-from tank.util import iso
+from tank.util import iso, parse_iso_time, utcnow
 
 type LevelWire = Sequence[Number] | Mapping[str, Number]
-type TimeInput = datetime | str | int | float | Decimal
+type TimeInput = datetime | str
 type Side = Literal["bid", "ask"]
 
 _JSON = TypeAdapter(dict[str, JsonValue])
@@ -95,8 +95,8 @@ class OrderBook:
         self._levels("bid", bids, snapshot=True)
         self._levels("ask", asks, snapshot=True)
         self.sequence = sequence
-        self.exchange_ts = iso(ts)
-        self.exchange_ts_prec = ts_prec if ts is not None else "COLLECTION_ONLY"
+        self.exchange_ts = iso(parse_iso_time(ts)) if ts is not None else None
+        self.exchange_ts_prec = ts_prec if ts is not None else None
         self.integrity_ok = bool(self.bids and self.asks)
         self.gap_reason = None if self.integrity_ok else "EMPTY_BOOK"
 
@@ -106,7 +106,7 @@ class OrderBook:
             "venue": self.instrument.venue,
             "venue_symbol": self.instrument.venue_symbol,
             **timestamp_fields("exchange_ts", self.exchange_ts, self.exchange_ts_prec),
-            **collection_clock().fields("received_ts"),
+            **collection_clock(utcnow()).fields("received_ts"),
             "bids": bids,
             "asks": asks,
             "sequence": sequence,
@@ -164,8 +164,8 @@ class OrderBook:
         self._levels("ask", asks)
         if sequence is not None:
             self.sequence = sequence
-        self.exchange_ts = iso(ts)
-        self.exchange_ts_prec = "EXACT" if ts is not None else "COLLECTION_ONLY"
+        self.exchange_ts = iso(parse_iso_time(ts)) if ts is not None else None
+        self.exchange_ts_prec = "EXACT" if ts is not None else None
         if key.startswith("kraken"):
             for side in _SIDES:
                 book = self.bids if side == "bid" else self.asks
@@ -233,7 +233,7 @@ class OrderBook:
         return copy
 
     @precise
-    def summary(self, *, received_ts: TimeInput | None = None) -> dict[str, JsonValue]:
+    def summary(self, *, received_ts: TimeInput) -> dict[str, JsonValue]:
         if not self.bids or not self.asks:
             raise SemanticError("empty order book")
         bid, ask = self._prices["bid"][-1], self._prices["ask"][0]
@@ -285,7 +285,7 @@ class OrderBook:
             "instrument_id": self.instrument.instrument_id,
             "token_id": self.instrument.token_id,
             **timestamp_fields("exchange_ts", self.exchange_ts, self.exchange_ts_prec),
-            **collection_clock(received_ts).fields("received_ts"),
+            **collection_clock(parse_iso_time(received_ts)).fields("received_ts"),
             "mid": mid,
             "best_bid": bid,
             "best_ask": ask,
