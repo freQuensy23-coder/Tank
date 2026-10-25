@@ -747,18 +747,11 @@ async def run_captured_tools(inputs, repo):
 
     with ExitStack() as stack:
         stack.callback(evidence_directory.cleanup)
-        original_iso = util.iso
-
-        def replay_iso(value=None):
-            return original_iso(clock.now() if value is None else value)
-
         for module in (event_tools, decisions, cards, storage, truth, util):
             if hasattr(module, "new_id"):
                 stack.enter_context(patch.object(module, "new_id", stable_id))
             if hasattr(module, "utcnow"):
                 stack.enter_context(patch.object(module, "utcnow", clock.now))
-            if hasattr(module, "iso"):
-                stack.enter_context(patch.object(module, "iso", replay_iso))
         async with httpx.AsyncClient(transport=httpx.MockTransport(captured_http)) as http:
             service = EventToolService(
                 repo,
@@ -1996,11 +1989,6 @@ async def replay_agent_session(
                 await repo.put("ops.jobs", job["job_id"], dict(job, result=result, status="DONE"))
             await asyncio.sleep(0.01)
 
-    original_iso = util.iso
-
-    def replay_iso(value=None):
-        return original_iso(clock.now() if value is None else value)
-
     with ExitStack() as stack:
         for module in (
             util,
@@ -2014,8 +2002,6 @@ async def replay_agent_session(
         ):
             if hasattr(module, "utcnow"):
                 stack.enter_context(patch.object(module, "utcnow", clock.now))
-            if hasattr(module, "iso"):
-                stack.enter_context(patch.object(module, "iso", replay_iso))
         stack.enter_context(
             patch.object(delivery_module, "collection_clock", lambda value=None, **kwargs: clock.timestamp())
         )
