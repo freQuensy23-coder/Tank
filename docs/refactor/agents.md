@@ -538,3 +538,8 @@ AgentUpdateReceipt now retains the complete exact-version ManagedAgentObservatio
 ### Harness and retained namespace confirmation
 
 The final desired-definition field sweep now observes _oma.harness and compares the declared pi harness. Exact-version confirmation also requires every retained provider metadata key/value sent in the update to survive, while allowing new provider entries. Four adapter/update regressions remove/change the harness or a retained metadata entry and prove a single publish followed by permanent refusal. A separate additive-extension case succeeds. All 73 sync/configuration cases pass in 5.53 seconds; independent strict source/contracts/helpers and Ruff/format pass. This completes normalized field-by-field ManagedAgentDefinition confirmation rather than raw response-object equality.
+
+
+### Combined publication-confirmation and serve-drain proof
+
+The held runtime resource branch now merges the exact OpenMA confirmation cohort with ingestion's monitored serve lifetime. A real keep_in_sync adapter response with a missing published harness passes through run_with_synchronization: exactly one agent publication occurs, the permanent OpenMAContractViolation sets stop, the owned runtime finishes its drain, and only then does the failure propagate. This combines the actual confirmation and lifetime paths rather than testing the exception class alone. All 85 sync/configuration/CLI cases pass in 6.17 seconds; the three sync source/contracts/test modules also pass the independent strict CI configuration without inherited per-module overrides.

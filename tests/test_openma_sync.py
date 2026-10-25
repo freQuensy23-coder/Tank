@@ -987,3 +987,36 @@ async def test_additional_provider_metadata_after_publication_is_preserved_as_an
     async with httpx.AsyncClient(base_url="http://oma", transport=httpx.MockTransport(additional)) as client:
         result = await openma_sync.sync(settings, client)
     assert {outcome.status for outcome in result.agents.values()} == {"UPDATED"}
+
+
+async def test_unconfirmed_publication_stops_and_drains_the_monitored_runtime(tmp_path: Path) -> None:
+    from tank.cli import run_with_synchronization
+
+    settings = settings_for(ROOT / "config", tmp_path)
+    fake = FakeOpenMA(settings)
+    stop, started, drained = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    def missing_confirmation(request: httpx.Request) -> httpx.Response:
+        response = fake.handler(request)
+        if request.method == "GET" and request.url.params.get("version") is not None:
+            body = fixture_object(decode_json(response.content))
+            fixture_object(body["_oma"]).pop("harness")
+            return httpx.Response(200, json=body)
+        return response
+
+    async def runtime() -> None:
+        started.set()
+        await stop.wait()
+        await asyncio.sleep(0)
+        drained.set()
+
+    async def synchronize() -> None:
+        await started.wait()
+        await openma_sync.keep_in_sync(
+            settings, stop, transport_factory=lambda: httpx.MockTransport(missing_confirmation)
+        )
+
+    with pytest.raises(OpenMAContractViolation):
+        await asyncio.wait_for(run_with_synchronization(runtime(), synchronize(), stop), timeout=1)
+    assert stop.is_set() and drained.is_set()
+    assert len(fake.writes("/v1/agents/")) == 1
