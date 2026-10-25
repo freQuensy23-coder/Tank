@@ -10,6 +10,7 @@ from pydantic import Field, GetCoreSchemaHandler, field_validator, model_validat
 from pydantic_core import CoreSchema, core_schema
 
 from tank.contracts import DomainModel
+from tank.contracts.scalars import FalseFlag, ZeroInt
 from tank.util import parse_iso_time
 
 
@@ -189,10 +190,10 @@ class HistoryDiagnostics(DomainModel):
 
 class UnavailableHistoryDiagnostics(DomainModel):
     target_window_duration_s: float = Field(gt=0)
-    exact: Literal[False]
+    exact: FalseFlag
     reason: Literal["INCOMPLETE", "INSUFFICIENT_HISTORY", "NOT_ESTIMABLE"]
     resolution_s: float | None = Field(gt=0)
-    sample_count: Literal[0]
+    sample_count: ZeroInt
 
 
 type HistoryDiagnostic = HistoryDiagnostics | UnavailableHistoryDiagnostics
