@@ -30,6 +30,23 @@ class NativeSessionResolution(DomainModel):
     role: Literal["ANALYST", "SCOUT"]
     replay: NativeReplayIdentity | None
 
+    @model_validator(mode="after")
+    def fresh_context_matches_role(self) -> Self:
+        target = self.target
+        if target.session_id is not None:
+            return self
+        if self.role == "SCOUT":
+            if target.proposal_id is None:
+                raise ValueError("Fresh scout sessions require their actual proposal identity")
+            if target.event_id is not None or target.item_id is not None:
+                raise ValueError("Fresh scout sessions cannot claim analyst event or item context")
+        else:
+            if target.event_id is None and target.item_id is None:
+                raise ValueError("Fresh analyst sessions require their actual event or item context")
+            if target.proposal_id is not None:
+                raise ValueError("Fresh analyst sessions cannot claim a scout proposal identity")
+        return self
+
     @classmethod
     def from_wire(
         cls, payload: dict[str, JsonValue], *, role: Literal["ANALYST", "SCOUT"], replay: bool

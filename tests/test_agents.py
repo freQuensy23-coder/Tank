@@ -1446,3 +1446,61 @@ async def test_live_native_creation_cannot_borrow_a_replay_only_opening_source()
         await service.close()
     assert not calls
     assert sha256(await repo.get("ops.agent_sessions", "replay-only")) == sha256(original)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("creation_role", ["ANALYST", "SCOUT"])
+@pytest.mark.parametrize("actual_scout", [False, True])
+async def test_explicit_native_continuation_preserves_the_actual_stored_context(
+    creation_role: Literal["ANALYST", "SCOUT"], actual_scout: bool
+) -> None:
+    repo = MemoryRepository()
+    opts, _ = settings()
+    original: dict[str, JsonValue] = {
+        "session_id": "existing",
+        "event_id": None if actual_scout else "actual-event",
+        "item_id": None if actual_scout else "actual-item",
+        "proposal_id": "actual-proposal" if actual_scout else None,
+        "status": "OPEN",
+        "opaque": {"integer": 1, "float": 1.0, "flag": True},
+    }
+    await repo.put("ops.agent_sessions", "existing", original)
+    calls: list[str] = []
+
+    def unexpected(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        raise AssertionError("Existing native session lookup must not create a fresh resource")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(unexpected)) as http:
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        resolved = await service.resolve(
+            NativeSessionResolution.from_wire({"session_id": "existing"}, role=creation_role, replay=False)
+        )
+        await service.close()
+    assert not calls
+    assert sha256(resolved) == sha256(original)
+    assert sha256(await repo.get("ops.agent_sessions", "existing")) == sha256(original)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("creation_role", ["ANALYST", "SCOUT"])
+async def test_explicit_missing_native_session_never_falls_back_to_creation(
+    creation_role: Literal["ANALYST", "SCOUT"],
+) -> None:
+    repo = MemoryRepository()
+    opts, _ = settings()
+    calls: list[str] = []
+
+    def unexpected(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        raise AssertionError("An explicit missing session must not become a fresh role")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(unexpected)) as http:
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        with pytest.raises(KeyError, match="missing"):
+            await service.resolve(
+                NativeSessionResolution.from_wire({"session_id": "missing"}, role=creation_role, replay=False)
+            )
+        await service.close()
+    assert not calls
+    assert await repo.list("ops.agent_sessions") == []
