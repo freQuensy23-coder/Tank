@@ -2573,6 +2573,8 @@ class EventToolService:
             )
             await self.repo.put("ana.watch_conditions", condition["cond_id"], condition)
             return {"accepted": True, "cond_id": condition["cond_id"], "status": "CANCELLED"}
+        if "review_at" in a or "review_question" in a:
+            return await self.arm_review(a, c, now)
         token = a.get("token_id")
         if not isinstance(token, str):
             raise ValueError("ARM requires token_id, a registry token key")
@@ -2650,10 +2652,55 @@ class EventToolService:
         await self.repo.put("ana.watch_conditions", condition["cond_id"], condition)
         return {"accepted": True, "condition": condition}
 
+    async def arm_review(self, a, c, now):
+        eid = a["event_id"]
+        event = await self.require("evt.events", eid)
+        if event.get("lifecycle") in {"CLOSED", "MERGED", "INVALIDATED"}:
+            raise ValueError("Cannot schedule review for a terminal event")
+        if a.get("conditions") or a.get("token_id"):
+            raise ValueError("Timed reviews cannot include token_id or metric conditions")
+        question = str(a.get("review_question") or "").strip()
+        if not question or not a.get("review_at"):
+            raise ValueError("Timed reviews require review_at and review_question")
+        due = parse_time(a["review_at"])
+        expiry = offset_schedule(collection_clock(now), timedelta(hours=int(a.get("expires_in_hours", 72))))
+        if not now < due < parse_time(expiry.value):
+            raise ValueError("review_at must be in the future and before the condition expiry")
+        expr = {"review_at": iso(due), "review_question": question}
+        active = [
+            row
+            for row in await self.rows("ana.watch_conditions", eid, filters={"status": "ARMED"})
+            if row.get("agent_defined")
+        ]
+        for row in active:
+            if row.get("expr") == expr:
+                return {"accepted": True, "condition": row, "existing": True}
+        if len(active) >= MAX_AGENT_WATCHES:
+            raise ValueError(
+                f"At most {MAX_AGENT_WATCHES} agent rules may be ARMED per event; DISARM one first"
+            )
+        condition = {
+            "cond_id": new_id("CND"),
+            "event_id": eid,
+            "token_id": None,
+            "role": "AGENT",
+            "human_text": question,
+            "expr": expr,
+            "status": "ARMED",
+            "agent_defined": True,
+            "created_by": "AGENT",
+            **collection_clock(now).fields("created_at"),
+            **expiry.fields("expires_at"),
+            **self.provenance(c),
+        }
+        await self.repo.put("ana.watch_conditions", condition["cond_id"], condition)
+        return {"accepted": True, "condition": condition}
+
     async def publish_card(self, a, c):
         from tank.analysis.cards import (
             alert_gate,
             compose_card,
+            preliminary_gate,
             publication_immediate,
         )
         from tank.telegram_rich import CARD_TEXT_LIMIT, card_rich_message
@@ -2706,8 +2753,30 @@ class EventToolService:
         if event["lifecycle"] in {"CLOSED", "MERGED"}:
             return publication_outcome({"published": False, "reason": "TERMINAL_EVENT"})
         event["thresholds"] = self.settings.load_config("thresholds")
+        kind = a["kind"]
+        preliminary = kind == "PRELIMINARY"
         newest = await self.repo.list_latest("out.alerts", "generated_at", filters={"event_id": eid}, limit=1)
-        previous = newest[0] if newest else None
+        newest_generated = newest[0] if newest else None
+        ordinary_heads = [
+            row
+            for ordinary_kind in ("PARTIAL", "FULL", "UPDATE")
+            for row in await self.repo.list_latest(
+                "out.alerts", "generated_at", filters={"event_id": eid, "kind": ordinary_kind}, limit=1
+            )
+        ]
+        previous = (
+            (newest_generated if newest_generated and newest_generated["kind"] == "PRELIMINARY" else None)
+            if preliminary
+            else max(ordinary_heads, key=lambda row: int(row["version"]), default=None)
+        )
+        if preliminary and ordinary_heads:
+            return publication_outcome({"published": False, "reason": "ORDINARY_CARD_EXISTS"})
+        if preliminary and (
+            not str(a.get("what") or "").strip()
+            or not str(a.get("unconfirmed") or "").strip()
+            or not any(str(line).strip() for line in a.get("why", []))
+        ):
+            raise ValueError("PRELIMINARY requires what, why and unconfirmed")
         initial_full = await self.first_alert(eid, "FULL")
         active_maps = await self.rows("evt.beneficiary_maps", eid)
         if active_maps:
@@ -2779,6 +2848,8 @@ class EventToolService:
             if last_sent
             else None
         )
+        if comparison and (comparison["kind"] == "PRELIMINARY") != preliminary:
+            last_sent, comparison = None, None
         gate_previous = None
         if comparison or previous:
             baseline = comparison or previous
@@ -2804,12 +2875,48 @@ class EventToolService:
             if a["kind"] == "UPDATE" and pinned_for_gate
             else decisions
         )
-        ok, reason = alert_gate(
-            event,
-            assessment,
-            previous=None if completing_partial else gate_previous,
-            decisions=gate_decisions,
+        previous_failed = previous and bool(
+            await self.repo.list_latest(
+                "out.deliveries",
+                "at",
+                filters={
+                    "alert_id": previous["alert_id"],
+                    "version": previous["version"],
+                    "status": "FAILED",
+                    "terminal": True,
+                },
+                limit=1,
+            )
         )
+        if preliminary:
+            ok, reason = preliminary_gate(event, assessment)
+            if ok and previous:
+                prior = previous["card_struct"]
+                current = {key: a.get(key) for key in ("what", "verdict", "why", "unconfirmed")}
+                prior_text = prior.get("preliminary_text")
+                prior_event = prior.get("event", {})
+                same_facts = all(
+                    event.get(key) == prior_event.get(key)
+                    for key in (
+                        "claims",
+                        "event_state",
+                        "certainty",
+                        "negative_marker",
+                    )
+                )
+                if same_facts and current == prior_text and not previous_failed:
+                    ok, reason = False, "NO_MATERIAL_CHANGE"
+                elif last_sent and utcnow() - parse_time(last_sent["at"]) < timedelta(
+                    seconds=event["thresholds"].get("update_rate_limit_s", 900)
+                ):
+                    ok, reason = False, "UPDATE_RATE_LIMIT"
+        else:
+            ok, reason = alert_gate(
+                event,
+                assessment,
+                previous=None if completing_partial else gate_previous,
+                decisions=gate_decisions,
+            )
         publication_state["gate_reason"] = reason
         rate_limited = not ok and reason == "UPDATE_RATE_LIMIT"
         if not ok and not rate_limited:
@@ -2823,7 +2930,9 @@ class EventToolService:
                 await self.repo.put("evt.events", eid, stored)
                 publication_state["lifecycle"] = stored["lifecycle"]
             return publication_outcome({"published": False, "reason": reason})
-        immediate = publication_immediate(event, assessment, previous=gate_previous, decisions=gate_decisions)
+        immediate = not preliminary and publication_immediate(
+            event, assessment, previous=gate_previous, decisions=gate_decisions
+        )
         delivery_stamp = collection_clock()
         if rate_limited:
             delivery_stamp = offset_schedule(
@@ -2832,7 +2941,7 @@ class EventToolService:
             )
         delivery_not_before = delivery_stamp.value
         kind = a["kind"]
-        if kind not in {"FULL", "PARTIAL", "UPDATE"}:
+        if kind not in {"FULL", "PARTIAL", "UPDATE", "PRELIMINARY"}:
             raise ValueError("Invalid alert kind")
         if kind == "UPDATE" and not previous:
             raise ValueError("UPDATE requires a published original")
@@ -2862,7 +2971,7 @@ class EventToolService:
                 candidates = [edge for edge in all_edges if edge.get("token_id") == token]
                 if candidates:
                     beneficiaries.append(max(candidates, key=lambda row: int(row["map_version"])))
-        elif kind == "PARTIAL":
+        elif kind in {"PARTIAL", "PRELIMINARY"}:
             beneficiaries = []
         else:
             primaries = sorted(
@@ -2898,6 +3007,8 @@ class EventToolService:
             if truth:
                 truth_by_token[token] = truth
         truths = list(truth_by_token.values())
+        if preliminary:
+            decisions, truths = [], []
         if kind == "FULL":
             required = (
                 set(max(current_maps, key=lambda row: int(row["map_version"]))["analysis_set"])
@@ -2928,12 +3039,14 @@ class EventToolService:
                 for truth, digest in zip(truths, truth_hashes, strict=True)
             ],
         }
+        if preliminary:
+            ctx["preliminary_text"] = {key: a.get(key) for key in ("what", "verdict", "why", "unconfirmed")}
         what = a.get("what", "")
         if what:
             ctx["what"] = what
         verdict = a.get("verdict", "")
         why = a.get("why", [])
-        if kind != "PARTIAL" and len(why) not in {2, 3}:
+        if kind not in {"PARTIAL", "PRELIMINARY"} and len(why) not in {2, 3}:
             raise ValueError("FULL/UPDATE require 2–3 WHY bullets")
         evidence_labels = {}
         source_items_read = {}
@@ -2949,6 +3062,12 @@ class EventToolService:
                     source = await self.repo.get("reg.sources", source_id) if source_id else None
                     evidence_labels[item_id] = (source or {}).get("name") or source_id or "source"
         event["evidence_labels"] = evidence_labels
+        if preliminary:
+            event["evidence_urls"] = {
+                item_id: item.get("url") or item.get("canonical_url")
+                for item_id, item in source_items_read.items()
+                if item
+            }
 
         event["token_labels"] = {
             row["token_id"]: str(row.get("project") or row.get("name") or row["token_id"])
@@ -2967,22 +3086,13 @@ class EventToolService:
             what=what,
             verdict=verdict,
             why=why,
+            unconfirmed=a.get("unconfirmed", ""),
         )
         rich_message = card_rich_message(
-            text, assessment, max_chars=event["thresholds"].get("card_max_chars", CARD_TEXT_LIMIT)
-        )
-        previous_failed = previous and bool(
-            await self.repo.list_latest(
-                "out.deliveries",
-                "at",
-                filters={
-                    "alert_id": previous["alert_id"],
-                    "version": previous["version"],
-                    "status": "FAILED",
-                    "terminal": True,
-                },
-                limit=1,
-            )
+            text,
+            assessment,
+            max_chars=event["thresholds"].get("card_max_chars", CARD_TEXT_LIMIT),
+            include_scores=not preliminary,
         )
         if (
             previous
@@ -3136,8 +3246,8 @@ class EventToolService:
             {"bundle_id": "EVB-" + digest, "sha256": digest, "path": str(bundle_path), "payload": bundle},
             immutable=True,
         )
-        aid = previous["alert_id"] if previous else new_id("alert")
-        version = previous["version"] + 1 if previous else 1
+        aid = newest_generated["alert_id"] if newest_generated else new_id("alert")
+        version = newest_generated["version"] + 1 if newest_generated else 1
 
         generated = collection_clock()
         if not rate_limited:
@@ -3168,7 +3278,7 @@ class EventToolService:
                 if d["token_id"] in {edge["token_id"] for edge in beneficiaries}
             ],
             evidence_bundle_id=digest,
-            supersedes_version=version - 1 if previous else None,
+            supersedes_version=version - 1 if newest_generated else None,
             **self.provenance(c),
         )
         await self.repo.put("out.alerts", f"{aid}:{version}", alert, immutable=True)

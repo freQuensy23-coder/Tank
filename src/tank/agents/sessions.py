@@ -2021,10 +2021,11 @@ class SessionService:
                 or payload.get("alert_id") in alert_ids
             ):
                 return False
-        if state == "INVALIDATED" and alerts:
+        ordinary_alerts = [alert for alert in alerts if alert.get("kind") != "PRELIMINARY"]
+        if state == "INVALIDATED" and ordinary_alerts:
             if not event.get("session_finalized_at"):
                 return False
-            latest = max(alerts, key=lambda alert: alert.get("version", 0))
+            latest = max(ordinary_alerts, key=lambda alert: alert.get("version", 0))
             if latest.get("kind") != "UPDATE":
                 return False
             deliveries = [

@@ -473,6 +473,8 @@ class Scheduler:
 
     @staticmethod
     def condition_requirements(expression):
+        if "review_at" in expression:
+            return []
         if "all" in expression:
             return [item for child in expression["all"] for item in Scheduler.condition_requirements(child)]
         metric = expression["metric"]
@@ -561,6 +563,54 @@ class Scheduler:
                     )
                     continue
                 expr = cond["expr"]
+                if "review_at" in expr:
+                    event = await self.repo.get("evt.events", cond["event_id"])
+                    updated = {**cond, **cutoff_stamp.fields("last_evaluated_at")}
+                    if not event or event.get("lifecycle") in {"CLOSED", "MERGED", "INVALIDATED"}:
+                        updated.update(status="CANCELLED", cancelled_by="EVENT_TERMINAL")
+                    elif parse_time(cutoff) >= parse_time(expr["review_at"]):
+                        updated.update(status="FIRED", **cutoff_stamp.fields("fired_at"))
+                        async with self.repo.lock("event:" + cond["event_id"]), self.repo.transaction():
+                            current_event = await self.repo.get("evt.events", cond["event_id"])
+                            if not current_event or current_event.get("lifecycle") in {
+                                "CLOSED",
+                                "MERGED",
+                                "INVALIDATED",
+                            }:
+                                await self.repo.put(
+                                    "ana.watch_conditions",
+                                    cond["cond_id"],
+                                    {
+                                        **updated,
+                                        "status": "CANCELLED",
+                                        "cancelled_by": "EVENT_TERMINAL",
+                                    },
+                                )
+                                outcomes["evaluated"].append(cond["cond_id"])
+                                continue
+                            await self.repo.put(
+                                "evt.events",
+                                cond["event_id"],
+                                {
+                                    **current_event,
+                                    **cutoff_stamp.fields("review_requested_at"),
+                                },
+                            )
+                            await self.repo.put("ana.watch_conditions", cond["cond_id"], updated)
+                            await self.message(
+                                "CONDITION_FIRED",
+                                cond["event_id"],
+                                cond["cond_id"],
+                                condition=updated,
+                                review_at=expr["review_at"],
+                                review_question=expr["review_question"],
+                                **({"session_id": cond["session_id"]} if cond.get("session_id") else {}),
+                            )
+                        outcomes["fired"].append(cond["cond_id"])
+                        continue
+                    await self.repo.put("ana.watch_conditions", cond["cond_id"], updated)
+                    outcomes["evaluated"].append(cond["cond_id"])
+                    continue
                 if "milestone" in expr:
                     continue
                 if cond["event_id"] not in event_cache:
@@ -1750,6 +1800,18 @@ class Scheduler:
     async def _advance_lifecycle(self, event, now):
         state = event["lifecycle"]
         event_id = event["event_id"]
+        review_pending = False
+        if state in {"TRACKED", "COOLDOWN"}:
+            review_pending = any(
+                [
+                    row.get("expr", {}).get("review_at")
+                    and row.get("expires_at")
+                    and parse_time(row["expires_at"]) > now
+                    async for row in self.repo.iter_all(
+                        "ana.watch_conditions", filters={"event_id": event_id, "status": "ARMED"}
+                    )
+                ]
+            )
         observations = await self.repo.list_latest(
             "evt.event_observations",
             "observed_at",
@@ -1759,6 +1821,7 @@ class Scheduler:
         )
         last = max(
             [event.get("known_to_us_at", iso(now))]
+            + ([event["review_requested_at"]] if event.get("review_requested_at") else [])
             + [o["observed_at"] for o in observations if o.get("observed_at")]
         )
         if state == "ALERTED":
@@ -1770,6 +1833,7 @@ class Scheduler:
         elif (
             (
                 state == "TRACKED"
+                and not review_pending
                 and (
                     not event.get("next_milestone")
                     or event["next_milestone"].get("status") in {"CONFIRMED", "VERIFIED", "FAILED", "MISSED"}
@@ -1777,7 +1841,12 @@ class Scheduler:
                 and now - parse_time(last) >= timedelta(days=self.threshold("event_close_days", 7))
             )
             or state == "COOLDOWN"
-            and now - parse_time(event.get("cooldown_at", last))
+            and not review_pending
+            and now
+            - max(
+                parse_time(event.get("cooldown_at", last)),
+                parse_time(event.get("review_requested_at", event.get("cooldown_at", last))),
+            )
             >= timedelta(days=self.threshold("event_close_days", 7))
         ):
             await self.repo.put(

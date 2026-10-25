@@ -113,14 +113,14 @@ def score_table(assessment):
     }
 
 
-def card_rich_message(text, assessment, *, max_chars=CARD_TEXT_LIMIT):
+def card_rich_message(text, assessment, *, max_chars=CARD_TEXT_LIMIT, include_scores=True):
     """Freeze the card with one native score table; all agent text stays literal."""
     marker = "\n" + score_summary(assessment)
     before, found, after = text.partition(marker)
-    if not found or after and not after.startswith("\n"):
+    if include_scores and (not found or after and not after.startswith("\n")):
         raise ValueError("CARD_LAYOUT: canonical score summary is missing")
     blocks = []
-    for section, part in enumerate((before, after)):
+    for section, part in enumerate((before, after) if include_scores else (text,)):
         if section:
             blocks.append(score_table(assessment))
         for index, line in enumerate(part.splitlines()):

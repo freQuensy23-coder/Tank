@@ -115,6 +115,31 @@ def alert_gate(event, assessment, *, previous=None, decisions=None, now=None):
     return True, "INITIAL"
 
 
+def preliminary_gate(event, assessment):
+    if assessment.get("class", assessment.get("ems_class")) != "MATERIAL":
+        return False, "PRELIMINARY_REQUIRES_MATERIAL"
+    if event.get("lifecycle") in {"CLOSED", "MERGED", "INVALIDATED"}:
+        return False, "TERMINAL_EVENT"
+    if event.get("freshness") == "STALE" or event.get("publication_trigger_freshness") == "STALE":
+        return False, "STALE"
+    claims = event.get("claims", [])
+    superseded = {
+        ref
+        for claim in claims
+        if claim.get("accepted") is not False
+        for ref in claim.get("supersedes_claim_ids", [])
+    }
+    if not any(
+        claim.get("accepted") is not False
+        and claim.get("claim_id") not in superseded
+        and claim.get("quote", "").strip()
+        and claim.get("evidence")
+        for claim in claims
+    ):
+        return False, "PRELIMINARY_REQUIRES_EVIDENCE"
+    return True, "PRELIMINARY"
+
+
 def _na(value, reason="NOT_AVAILABLE"):
     return str(value) if value is not None else "n/a (" + str(reason).replace("_", " ").lower() + ")"
 
@@ -319,7 +344,17 @@ def _holders_revenue_text(truth):
 
 
 def compose_card(
-    event, assessment, beneficiaries, decisions, market_truths, *, kind="FULL", what="", verdict="", why=None
+    event,
+    assessment,
+    beneficiaries,
+    decisions,
+    market_truths,
+    *,
+    kind="FULL",
+    what="",
+    verdict="",
+    why=None,
+    unconfirmed="",
 ):
     if isinstance(market_truths, dict):
         market_truths = list(market_truths.values())
@@ -372,6 +407,31 @@ def compose_card(
                 + " — "
                 + str(claim.get("verification_missing") or "n/a (verification gap not supplied)")
             )
+    if kind == "PRELIMINARY":
+        sources = list(
+            dict.fromkeys(
+                entry.get("url")
+                or event.get("evidence_urls", {}).get(entry.get("item_id"))
+                or event.get("evidence_labels", {}).get(entry.get("item_id"))
+                or str(entry.get("item_id", ""))
+                for claim in claims
+                if claim.get("accepted") is not False and claim.get("claim_id") not in superseded
+                for entry in claim.get("evidence", [])
+            )
+        )
+        text = "\n".join(
+            [
+                "PRELIMINARY — " + (verdict or event.get("statement") or ""),
+                "WHAT: " + what,
+                "SOURCE: " + "; ".join(source for source in sources if source),
+                "POSSIBLE EFFECT: " + " ".join(why or []),
+                "NOT CONFIRMED: " + unconfirmed,
+                "Certainty: " + str(event.get("certainty", "LOW")),
+            ]
+        )
+        if len(text) > max_chars:
+            raise ValueError(f"CARD_LENGTH: {len(text)} characters, at most {max_chars}")
+        return text
     scores = score_summary(assessment)
     stage = ("" if event.get("state_verified", event.get("verified")) is True else "unverified ") + _na(
         event.get("event_state", event.get("state"))
