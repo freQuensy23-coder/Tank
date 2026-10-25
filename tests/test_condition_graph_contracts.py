@@ -1156,6 +1156,10 @@ def test_enriched_empty_derivative_venues_cannot_create_a_negative_basis_predica
     support = unknown_derivative_support()
     graph = EnrichedConditionDerivatives(
         kind="ENRICHED",
+        funding_dispersion_normal_range=DecimalRange(bounds=None, reason="INSUFFICIENT_HISTORY"),
+        funding_dispersion_beyond_normal=ConditionUnavailablePredicate(
+            status="UNAVAILABLE", reason="INSUFFICIENT_HISTORY"
+        ),
         interval=interval,
         per_venue=(),
         synchronized=UnavailableConditionSynchronizedOpenInterest(status="UNAVAILABLE", reason="INCOMPLETE"),
@@ -1624,3 +1628,71 @@ def test_outcome_baseline_request_is_not_an_empty_unrequested_map_or_a_fabricate
         )
     with pytest.raises(ValidationError, match="actual horizon duration"):
         ConditionOutcomeRange.model_validate(baseline.model_copy(update={"window": "W4H"}))
+
+
+def test_impact_tier_retains_signed_execution_and_distinguishes_zero_notional() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionImpactTier
+    from tank.analysis.execution import BookWalkRequest, execute_book_walk
+    from tank.market.book_contracts import BookLevel
+
+    request = BookWalkRequest(
+        levels=[BookLevel.from_wire("9", "10")],
+        quote_notional=Decimal(10),
+        mid_quote_price=Decimal(10),
+        side="ask",
+    )
+    execution = execute_book_walk(request)
+    tier = ConditionImpactTier(
+        notional_usd=Decimal(10), notional_reason=None, execution=execution, execution_reason=None
+    )
+    assert tier.slippage_bps() == -1000.0
+    zero = ConditionImpactTier(
+        notional_usd=Decimal(0), notional_reason=None, execution=None, execution_reason="ZERO_NOTIONAL"
+    )
+    assert zero.notional_usd == 0 and zero.slippage_bps() is None
+    with pytest.raises(ValidationError, match="zero notional cannot produce"):
+        ConditionImpactTier.model_validate(tier.model_copy(update={"notional_usd": Decimal(0)}))
+    corrupt = execution.model_copy(update={"complete": False, "reason": "INSUFFICIENT_BOOK_DEPTH"})
+    with pytest.raises(ValidationError, match="cannot invent a complete slippage"):
+        tier.model_copy(update={"execution": corrupt}).slippage_bps()
+
+
+def test_depth_cohort_preserves_zero_and_exact_majority_without_fake_percentages() -> None:
+    from tank.analysis.condition_graph_contracts import ObservedConditionDepthCohort
+
+    empty_now = ObservedConditionDepthCohort(
+        status="OBSERVED", venues=("a",), current_usd=Decimal(0), previous_usd=Decimal(10)
+    )
+    assert empty_now.drop().value == 1.0
+    majority = empty_now.majority_lost()
+    assert majority.status == "OBSERVED" and majority.value is True
+    half = empty_now.model_copy(update={"current_usd": Decimal(5)})
+    assert half.drop().value == 0.5
+    half_majority = half.majority_lost()
+    assert half_majority.status == "OBSERVED" and half_majority.value is False
+    zero_base = empty_now.model_copy(update={"previous_usd": Decimal(0)})
+    assert zero_base.drop().value is None and zero_base.majority_lost().status == "UNAVAILABLE"
+    unrepresentable = empty_now.model_copy(
+        update={"current_usd": Decimal("1e300"), "previous_usd": Decimal("1e-300")}
+    )
+    undefined = unrepresentable.drop()
+    assert undefined.status == "UNAVAILABLE" and undefined.reason == "NOT_ESTIMABLE"
+    assert unrepresentable.current_usd == Decimal("1e300")
+
+
+def test_book_depth_does_not_replace_unknown_conversion_with_zero() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionBookSideDepth,
+        ConditionNativeDepthAmount,
+        ConditionUSDDepthAmount,
+    )
+
+    partial = ConditionBookSideDepth(
+        usd=ConditionUSDDepthAmount(value=None, reason="INCOMPLETE"),
+        native=ConditionNativeDepthAmount(value=Decimal(3), reason=None),
+    )
+    assert partial.native.value == 3 and partial.usd.value is None
+    with pytest.raises(ValidationError, match="same zero-quantity fact"):
+        ConditionBookSideDepth.model_validate(
+            partial.model_copy(update={"usd": ConditionUSDDepthAmount(value=Decimal(0), reason=None)})
+        )

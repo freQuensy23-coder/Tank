@@ -2,10 +2,12 @@
 
 from datetime import datetime
 from decimal import Decimal, localcontext
+from math import isfinite
 from typing import Annotated, Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 
+from tank.analysis.execution import BookWalkResult
 from tank.analysis.positioning import MissingOIDecomposition, OIDecomposition, oi_class
 from tank.analysis.price_reference import ReferencePriceReturn
 from tank.analysis.statistics_contracts import (
@@ -19,6 +21,7 @@ from tank.analysis.statistics_contracts import (
 )
 from tank.contracts import DomainModel
 from tank.contracts.provenance import ResolvedVersionIdentity
+from tank.market.trade_contracts import QuoteUsdValuation
 from tank.time_precision import Timestamp
 from tank.util import parse_iso_time
 
@@ -1712,7 +1715,12 @@ class ConditionObservedPredicate(DomainModel):
 class ConditionUnavailablePredicate(DomainModel):
     status: Literal["UNAVAILABLE"]
     reason: Literal[
-        "INCOMPLETE", "INSUFFICIENT_HISTORY", "NOT_ESTIMABLE", "NOT_SUPPORTED", "ZERO_TOTAL_VOLUME"
+        "INCOMPLETE",
+        "INSUFFICIENT_HISTORY",
+        "NOT_ESTIMABLE",
+        "NOT_SUPPORTED",
+        "ZERO_TOTAL_VOLUME",
+        "ZERO_BASELINE",
     ]
 
 
@@ -1899,11 +1907,21 @@ class EnrichedConditionDerivativeVenue(ConditionDerivativeVenue):
 
 class EnrichedConditionDerivatives(ConditionDerivativeWindow[EnrichedConditionDerivativeVenue]):
     kind: Literal["ENRICHED"]
+    funding_dispersion_normal_range: DecimalRange
+    funding_dispersion_beyond_normal: ConditionPredicate
     lead_lag: ObservedConditionLeadLag | UnavailableConditionLeadLag
     support_features: ConditionDerivativeSupportFeatures
 
     @model_validator(mode="after")
     def actual_enrichment_inputs(self) -> Self:
+        dispersion = self.funding_dispersion
+        bounds = self.funding_dispersion_normal_range.bounds
+        beyond = (
+            None
+            if not isinstance(dispersion, ConditionObservedFundingDispersion) or bounds is None
+            else dispersion.value < bounds.lower or dispersion.value > bounds.upper
+        )
+        _condition_predicate_matches(self.funding_dispersion_beyond_normal, beyond)
         if (
             self.support_features.spot_volume.window != self.interval.window
             or self.support_features.perp_volume.window != self.interval.window
@@ -2522,3 +2540,198 @@ class ConditionRelativeGraph(DomainModel):
         ):
             raise ValueError("A real captured event anchor cannot be relabelled as missing")
         return self
+
+
+class ConditionCoveredBookRange(DomainModel):
+    percent: float | None = Field(ge=0)
+    reason: Literal["INCOMPLETE"] | None
+
+    @model_validator(mode="after")
+    def actual_range_metadata(self) -> Self:
+        if (self.percent is None) != (self.reason is not None):
+            raise ValueError("Missing book range coverage requires its actual metadata gap")
+        return self
+
+
+class ConditionUSDDepthAmount(DomainModel):
+    value: Decimal | None = Field(ge=0)
+    reason: Literal["INCOMPLETE", "DEPTH_BAND_NOT_COVERED"] | None
+
+    @model_validator(mode="after")
+    def actual_depth_availability(self) -> Self:
+        if (self.value is None) != (self.reason is not None):
+            raise ValueError("Missing USD depth requires its actual coverage or conversion gap")
+        return self
+
+
+class ConditionNativeDepthAmount(DomainModel):
+    value: Decimal | None = Field(ge=0)
+    reason: Literal["INCOMPLETE", "DEPTH_BAND_NOT_COVERED"] | None
+
+    @model_validator(mode="after")
+    def actual_depth_availability(self) -> Self:
+        if (self.value is None) != (self.reason is not None):
+            raise ValueError("Missing native depth requires its actual coverage or quantity gap")
+        return self
+
+
+class ConditionBookSideDepth(DomainModel):
+    usd: ConditionUSDDepthAmount
+    native: ConditionNativeDepthAmount
+
+    @model_validator(mode="after")
+    def matching_observed_zero(self) -> Self:
+        if (
+            self.usd.value is not None
+            and self.native.value is not None
+            and (self.usd.value == 0) != (self.native.value == 0)
+        ):
+            raise ValueError("Known USD and native book depth must preserve the same zero-quantity fact")
+        return self
+
+
+class ConditionImpactTier(DomainModel):
+    notional_usd: Decimal | None = Field(ge=0)
+    notional_reason: Literal["INCOMPLETE"] | None
+    execution: BookWalkResult | None
+    execution_reason: Literal["INCOMPLETE", "ZERO_NOTIONAL"] | None
+
+    @model_validator(mode="after")
+    def actual_execution_inputs(self) -> Self:
+        if (self.notional_usd is None) != (self.notional_reason is not None):
+            raise ValueError("Missing impact-tier notional requires its actual volume-history gap")
+        if self.notional_usd is None:
+            if self.execution is not None or self.execution_reason != "INCOMPLETE":
+                raise ValueError("An unknown notional cannot produce an execution result")
+        elif self.notional_usd == 0:
+            if self.execution is not None or self.execution_reason != "ZERO_NOTIONAL":
+                raise ValueError("A known zero notional cannot produce a positive-order execution result")
+        elif self.execution is None:
+            if self.execution_reason != "INCOMPLETE":
+                raise ValueError("A missing impact execution requires its actual market-input gap")
+        else:
+            execution = self.execution
+            if self.execution_reason is not None or execution.side != "ask":
+                raise ValueError("An impact tier requires its actual ask execution result")
+            if execution.complete:
+                if (
+                    execution.slippage_bps is None
+                    or execution.reason is not None
+                    or execution.filled_native_quantity <= 0
+                    or execution.filled_quote_notional <= 0
+                ):
+                    raise ValueError("A completed book walk requires actual fills and signed slippage")
+            elif (
+                execution.slippage_bps is not None
+                or execution.reason != "INSUFFICIENT_BOOK_DEPTH"
+                or execution.remaining_quote_notional <= 0
+            ):
+                raise ValueError("An unfilled book walk cannot invent a complete slippage result")
+        return self
+
+    def slippage_bps(self) -> float | None:
+        validated = type(self).model_validate(self)
+        return None if validated.execution is None else validated.execution.slippage_bps
+
+
+class ConditionImpactTiers(DomainModel):
+    T1: ConditionImpactTier
+    T2: ConditionImpactTier
+    T3: ConditionImpactTier
+
+
+class ComputedConditionPreDepthSides(DomainModel):
+    status: Literal["COMPUTED"]
+    bid: ConditionBookSideDepth
+    ask: ConditionBookSideDepth
+
+
+class UnavailableConditionPreDepthSides(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["NO_EVENT_ANCHOR"]
+
+
+class ConditionLiquidityVenue(DomainModel):
+    venue: str = Field(min_length=1, pattern=r"\S")
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    observed_at: Timestamp
+    integrity_ok: Literal[True]
+    bid_range: ConditionCoveredBookRange
+    ask_range: ConditionCoveredBookRange
+    spread_bps: float | None = Field(ge=0)
+    spread_reason: Literal["INCOMPLETE"] | None
+    bid: ConditionBookSideDepth
+    ask: ConditionBookSideDepth
+    pre_depth: ComputedConditionPreDepthSides | UnavailableConditionPreDepthSides
+    impact_tiers: ConditionImpactTiers
+    quote_asset: str = Field(min_length=1, pattern=r"\S")
+    quote_valuation: QuoteUsdValuation
+
+    @model_validator(mode="after")
+    def actual_book_evidence(self) -> Self:
+        if self.observed_at.value is None:
+            raise ValueError("A selected liquidity book requires its actual source observation clock")
+        if (self.spread_bps is None) != (self.spread_reason is not None):
+            raise ValueError("Missing book spread requires its actual market-input gap")
+        if self.quote_asset == "USD" and self.quote_valuation.basis != "USD_UNIT":
+            raise ValueError("A USD quote uses its exact unit identity rather than an unknown exchange rate")
+        if self.quote_valuation.basis == "USD_UNIT" and self.quote_asset != "USD":
+            raise ValueError("A non-USD quote cannot use USD's fixed unit identity")
+        if (
+            any(
+                tier.execution is not None
+                for tier in (self.impact_tiers.T1, self.impact_tiers.T2, self.impact_tiers.T3)
+            )
+            and self.quote_valuation.rate is None
+        ):
+            raise ValueError("A USD impact notional requires actual quote/USD valuation before execution")
+        return self
+
+
+class ObservedConditionDepthDrop(DomainModel):
+    status: Literal["OBSERVED"]
+    value: float = Field(le=1)
+
+
+class UnavailableConditionDepthDrop(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    value: None
+    reason: Literal["ZERO_BASELINE", "INCOMPLETE", "NOT_ESTIMABLE"]
+
+
+class ObservedConditionDepthCohort(DomainModel):
+    status: Literal["OBSERVED"]
+    venues: tuple[Annotated[str, Field(min_length=1, pattern=r"\S")], ...] = Field(min_length=1)
+    current_usd: Decimal = Field(ge=0)
+    previous_usd: Decimal = Field(ge=0)
+
+    @model_validator(mode="after")
+    def actual_common_venues(self) -> Self:
+        if len(self.venues) != len(set(self.venues)):
+            raise ValueError("A depth comparison cohort cannot duplicate a venue")
+        return self
+
+    def drop(self) -> ObservedConditionDepthDrop | UnavailableConditionDepthDrop:
+        validated = type(self).model_validate(self)
+        if validated.previous_usd == 0:
+            return UnavailableConditionDepthDrop(status="UNAVAILABLE", value=None, reason="ZERO_BASELINE")
+        with localcontext() as context:
+            context.prec = 128
+            value = float(1 - validated.current_usd / validated.previous_usd)
+        if not isfinite(value):
+            return UnavailableConditionDepthDrop(status="UNAVAILABLE", value=None, reason="NOT_ESTIMABLE")
+        return ObservedConditionDepthDrop(status="OBSERVED", value=value)
+
+    def majority_lost(self) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        if validated.previous_usd == 0:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="ZERO_BASELINE")
+        return ConditionObservedPredicate(
+            status="OBSERVED",
+            value=_sum_native(validated.current_usd, validated.current_usd) < validated.previous_usd,
+        )
+
+
+class UnavailableConditionDepthCohort(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["NO_COMMON_VENUES", "NO_EVENT_ANCHOR"]
