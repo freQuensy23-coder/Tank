@@ -527,3 +527,14 @@ with zero skips, retaining all original classifier-output reset, policy rederiva
 and imported-source assertions. This is an authored fixture change; no production
 fallback or frozen data is altered. This follow-up remains a clean fd077 descendant
 without held HTTP ancestry.
+
+Page provenance now requires the actual content_type_header value or explicit None
+on both live and original recorded-body variants. PageRead validates this matches
+its read media_type. Thus an absent source header remains visible even when the
+existing raw-byte storage format uses application/octet-stream. Live receipts refuse
+missing/unknown instants. Live HTTP status/transport exceptions retain their HTTPX
+categories/types with bounded credential-free messages, preserving SessionService's
+SOURCE_HTTP/SOURCE_TRANSPORT protocol instead of relabeling them tool execution errors.
+Twelve page/admission boundary cases pass in1.73s; three tightened source/test modules
+pass strict mypy. Backend quota-history identity changes remain a separate held team
+prerequisite; these results do not claim the current backend is final.

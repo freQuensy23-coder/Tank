@@ -58,23 +58,33 @@ async def read_live_page(
         request = actual.build_request("GET", url, headers={"User-Agent": user_agent})
         try:
             response = await send_admitted(actual, access.admission, request, guard, stream=True)
-        except httpx.HTTPError as exc:
-            raise RuntimeError(f"{request.url.host}: {type(exc).__name__}") from None
+        except httpx.RequestError as exc:
+            raise type(exc)(f"{request.url.host}: {type(exc).__name__}", request=request) from None
         resources.push_async_callback(response.aclose)
         if response.is_error:
-            raise RuntimeError(f"{response.request.url.host}: HTTP {response.status_code}")
+            raise httpx.HTTPStatusError(
+                f"{response.request.url.host}: HTTP {response.status_code}",
+                request=response.request,
+                response=response,
+            )
         body = bytearray()
         try:
             async for chunk in response.aiter_bytes():
                 body.extend(chunk)
                 if len(body) > 2 * 1024 * 1024:
                     raise ValueError("Page exceeds 2 MB")
-        except httpx.HTTPError as exc:
-            raise RuntimeError(f"{response.request.url.host}: {type(exc).__name__}") from None
+        except httpx.RequestError as exc:
+            raise type(exc)(
+                f"{response.request.url.host}: {type(exc).__name__}", request=response.request
+            ) from None
         content = bytes(body)
         return PageRead(
             body=content,
             body_sha256=sha256(content),
             media_type=response.headers.get("content-type"),
-            provenance=LivePageProvenance(mode="LIVE_RESPONSE", received_at=collection_clock()),
+            provenance=LivePageProvenance(
+                mode="LIVE_RESPONSE",
+                received_at=collection_clock(),
+                content_type_header=response.headers.get("content-type"),
+            ),
         )
