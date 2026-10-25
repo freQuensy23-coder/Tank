@@ -8,24 +8,19 @@ from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
-from tank.contracts import DomainModel
 from tank.contracts.json import decode_unique_json
 from tank.deployment.contracts import (
     ActiveRelease,
+    BuildCacheKey,
     BuildDocument,
     BuildProvenance,
     Transaction,
     TransactionDocument,
 )
-from tank.deployment.identities import SHA256
 
 
 class JournalError(RuntimeError):
     pass
-
-
-class BuildCacheKey(DomainModel):
-    source_digest: SHA256
 
 
 type JournalValue = ActiveRelease | BuildProvenance | Transaction

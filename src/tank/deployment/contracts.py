@@ -115,3 +115,32 @@ type Transaction = DeploymentTransaction | RolledBackTransaction
 
 class TransactionDocument(RootModel[Transaction]):
     model_config = ConfigDict(strict=True, hide_input_in_errors=True)
+
+
+class BuildCacheKey(DomainModel):
+    source_digest: SHA256
+
+
+class ReleaseMarker(DomainModel):
+    release_sha: CommitSHA
+
+
+class PublisherPolicy(DomainModel):
+    build_timeout_s: float = Field(gt=0)
+
+
+class PreparedPublication(DomainModel):
+    release_sha: CommitSHA
+    candidate: BuildProvenance
+
+
+class WorkerRestored(DomainModel):
+    state: Literal["RESTORED"]
+    build_id: BuildID
+
+
+class NoPendingTransaction(DomainModel):
+    state: Literal["NO_PENDING_TRANSACTION"]
+
+
+type RollbackOutcome = WorkerRestored | NoPendingTransaction

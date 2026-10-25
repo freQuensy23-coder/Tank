@@ -5,13 +5,8 @@ from pathlib import Path
 import pytest
 
 from tank.contracts.json import DuplicateJsonKeyError
-from tank.deployment.artifacts import (
-    ArtifactError,
-    PackageRequest,
-    PublisherArtifactRuntime,
-    load_release,
-    package_release,
-)
+from tank.deployment.artifact_contracts import PackageRequest, PublisherArtifactRuntime
+from tank.deployment.artifacts import ArtifactError, load_release, package_release
 from tank.deployment.contracts import SourceRelease
 from tank.deployment.runtime_contracts import RuntimeEvidence
 

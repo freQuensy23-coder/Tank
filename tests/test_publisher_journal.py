@@ -8,11 +8,12 @@ from pydantic import ValidationError
 from tank.contracts.json import DuplicateJsonKeyError
 from tank.deployment.contracts import (
     ActiveRelease,
+    BuildCacheKey,
     DeploymentTransaction,
     HistoricalBuild,
     SourceBuild,
 )
-from tank.deployment.journal import BuildCacheKey, JournalError, PublisherJournal
+from tank.deployment.journal import JournalError, PublisherJournal
 
 
 def build() -> SourceBuild:

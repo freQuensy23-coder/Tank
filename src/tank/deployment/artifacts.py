@@ -1,67 +1,25 @@
 """Package selected Git actor blobs with independently identified orchestrator runtime."""
 
-import hashlib
 import json
 import subprocess
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Literal
 
-from pydantic import Field, JsonValue, model_validator
-
-from tank.contracts import DomainModel
 from tank.contracts.json import decode_unique_json
-from tank.contracts.scalars import OneInt
-from tank.deployment.api_contracts import ApifyProjection, SourcePath
+from tank.deployment.artifact_contracts import (
+    ActorDefinition,
+    HistoricalArtifact,
+    PackageRequest,
+    PublisherArtifactRuntime,
+    SelectedArtifact,
+    SourceArtifact,
+    SourceBundle,
+)
 from tank.deployment.contracts import HistoricalRelease, Release, ReleaseDocument, SourceRelease
-from tank.deployment.runtime_contracts import RuntimeEvidence
-
-type ImageRepository = Annotated[
-    str,
-    Field(
-        pattern=r"^ghcr\.io/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*/tank$"
-    ),
-]
 
 
 class ArtifactError(RuntimeError):
     pass
-
-
-class ActorDefinition(ApifyProjection):
-    actorSpecification: OneInt
-    name: str = Field(min_length=1)
-
-    @model_validator(mode="before")
-    @classmethod
-    def refuse_build_tag(cls, value: JsonValue) -> JsonValue:
-        if isinstance(value, dict) and "buildTag" in value:
-            raise ValueError("Worker definition must not activate a build tag")
-        return value
-
-
-class SourceBundle(DomainModel):
-    files: dict[SourcePath, bytes]
-
-    def digest(self) -> str:
-        hashes = {name: hashlib.sha256(body).hexdigest() for name, body in self.files.items()}
-        document = json.dumps(hashes, sort_keys=True, separators=(",", ":")).encode()
-        return hashlib.sha256(document).hexdigest()
-
-
-class PublisherArtifactRuntime(DomainModel):
-    contract: Literal["tank-publisher-runtime-v1"]
-    image_repository: ImageRepository
-    runtime: RuntimeEvidence
-
-    @property
-    def image_reference(self) -> str:
-        return self.image_repository + ":" + self.runtime.orchestrator_sha
-
-
-class PackageRequest(DomainModel):
-    repository: Path
-    destination: Path
-    publisher: PublisherArtifactRuntime
 
 
 def validate_source(bundle: SourceBundle) -> None:
@@ -191,3 +149,14 @@ def load_release(root: Path, *, selected_sha: str) -> Release:
     if isinstance(release, SourceRelease) and source_files(root / "worker").digest() != release.source_digest:
         raise ArtifactError("Release artifact source digest mismatch")
     return release
+
+
+class FilesystemArtifacts:
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def artifact(self, selected_sha: str) -> SelectedArtifact:
+        release = load_release(self.root, selected_sha=selected_sha)
+        if isinstance(release, SourceRelease):
+            return SourceArtifact(release=release, bundle=source_files(self.root / "worker"))
+        return HistoricalArtifact(release=release)
