@@ -31,8 +31,8 @@ func (l PGLedger) AcquireGroup(ctx context.Context, buckets []budget.Bucket, own
 	}
 	for _, b := range ordered {
 		var seconds float64
-		err = tx.QueryRow(ctx, "SELECT ops.request_budget_acquire($1::text,$2::numeric,$3::float8,$4::numeric,$5::text,$6::text)",
-			b.Name(), numeric(b.Capacity), b.WindowS, numeric(b.Weight), owner, h).Scan(&seconds)
+		err = tx.QueryRow(ctx, "SELECT ops.request_budget_acquire_scope($1::text,$2::numeric,$3::float8,$4::numeric,$5::text,$6::text)",
+			b.Key, numeric(b.Capacity), b.WindowS, numeric(b.Weight), owner, h).Scan(&seconds)
 		if err != nil {
 			return 0, err
 		}

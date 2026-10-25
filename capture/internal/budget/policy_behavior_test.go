@@ -68,13 +68,13 @@ func TestCompiledPolicyCannotBeRelabelledByMutableInput(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if used := ledger.Used(BucketName("hyperliquid", 60, 600), 60); used != 20 {
+	if used := ledger.Used(BucketName("hyperliquid", 60), 60); used != 20 {
 		t.Fatalf("mutable operation index changed actual debit:%v", used)
 	}
-	if used := ledger.Used(BucketName("binance.usdm.funding", 300, 250), 300); used != 1 {
+	if used := ledger.Used(BucketName("binance.usdm.funding", 300), 300); used != 1 {
 		t.Fatalf("mutable operation group changed actual debit:%v", used)
 	}
-	if used := ledger.Used(BucketName("bybit", 5, 300), 5); used != 2 {
+	if used := ledger.Used(BucketName("bybit", 5), 5); used != 2 {
 		t.Fatalf("mutable provider record changed actual debit:%v", used)
 	}
 }

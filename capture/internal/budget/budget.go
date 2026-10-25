@@ -15,10 +15,10 @@ type Bucket struct {
 	Weight            float64
 }
 
-func (b Bucket) Name() string { return BucketName(b.Key, b.WindowS, b.Capacity) }
+func (b Bucket) Name() string { return BucketName(b.Key, b.WindowS) }
 
-func BucketName(key string, windowS, capacity float64) string {
-	return key + "|" + floatRepr(windowS) + "|" + floatRepr(capacity)
+func BucketName(key string, windowS float64) string {
+	return key + "|" + floatRepr(windowS)
 }
 
 func floatRepr(f float64) string {

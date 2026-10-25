@@ -81,7 +81,7 @@ func TestSameHostRedirectsReleaseSingleSlotAndChargeEveryHop(t *testing.T) {
 	if _, err := client.Fetch(context.Background(), "GET", Binance+"/api/v3/depth?limit=100", nil, nil, nil, 0); err != nil {
 		t.Fatal(err)
 	}
-	if calls.Load() != 3 || ledger.Used(budget.BucketName("binance.spot", 60, 3000), 60) != 15 {
+	if calls.Load() != 3 || ledger.Used(budget.BucketName("binance.spot", 60), 60) != 15 {
 		t.Fatalf("physical hops escaped admission:calls=%d", calls.Load())
 	}
 }
@@ -133,7 +133,7 @@ func TestConfiguredCrossHostRedirectsStripCredentialsThroughLaterSameHostHops(t 
 	if originCalls.Load() != 1 || destinationCalls.Load() != 2 || leaked.Load() {
 		t.Fatalf("authority boundary violated:origin=%d destination=%d leaked=%v", originCalls.Load(), destinationCalls.Load(), leaked.Load())
 	}
-	if ledger.Used(budget.BucketName("binance.spot", 60, 3000), 60) != 20 || ledger.Used(budget.BucketName("binance.usdm", 60, 1200), 60) != 2 {
+	if ledger.Used(budget.BucketName("binance.spot", 60), 60) != 20 || ledger.Used(budget.BucketName("binance.usdm", 60), 60) != 2 {
 		t.Fatal("redirected configured hosts were not independently debited")
 	}
 }
@@ -151,7 +151,7 @@ func TestUnknownRedirectTargetRefusesBeforeDestinationEffects(t *testing.T) {
 	if result, err := client.Fetch(context.Background(), "GET", Binance+"/api/v3/exchangeInfo", nil, nil, nil, 0); err == nil || result != nil {
 		t.Fatalf("unknown redirect admitted:result=%+v err=%v", result, err)
 	}
-	if destinationCalls.Load() != 0 || ledger.Used(budget.BucketName("binance.spot", 60, 3000), 60) != 20 {
+	if destinationCalls.Load() != 0 || ledger.Used(budget.BucketName("binance.spot", 60), 60) != 20 {
 		t.Fatal("unconfigured destination crossed the transport boundary")
 	}
 }
@@ -179,7 +179,7 @@ func TestSameAuthority307ReplaysTheExactAdmittedBody(t *testing.T) {
 	if _, err := client.Fetch(context.Background(), "POST", Hyperliquid, nil, nil, payload, 0); err != nil {
 		t.Fatal(err)
 	}
-	if calls.Load() != 2 || ledger.Used(budget.BucketName("hyperliquid", 60, 600), 60) != 40 {
+	if calls.Load() != 2 || ledger.Used(budget.BucketName("hyperliquid", 60), 60) != 40 {
 		t.Fatal("replayed physical body escaped weight admission")
 	}
 }
@@ -234,7 +234,7 @@ func TestRedirectedRateLimitsObserveAndBlockOnlyActualDestination(t *testing.T) 
 			if until, blocked := ledger.Blocked("api.bybit.com"); !blocked || !until.After(time.Now()) {
 				t.Fatal("redirected response did not persist destination block")
 			}
-			if originCalls.Load() != 1 || destinationCalls.Load() != 1 || ledger.Used(budget.BucketName("binance.spot", 60, 3000), 60) != 20 || ledger.Used(budget.BucketName("bybit", 5, 300), 5) != 1 {
+			if originCalls.Load() != 1 || destinationCalls.Load() != 1 || ledger.Used(budget.BucketName("binance.spot", 60), 60) != 20 || ledger.Used(budget.BucketName("bybit", 5), 5) != 1 {
 				t.Fatal("actual destination debit/lifetime was not independent")
 			}
 		})
@@ -264,7 +264,7 @@ func Test303DropsBodyAndAdmitsTheNewConfiguredMethod(t *testing.T) {
 	if _, err := client.Fetch(context.Background(), "POST", Hyperliquid, nil, map[string]string{"Authorization": "Bearer FAKE"}, []byte("{\"type\":\"meta\"}"), 0); err != nil {
 		t.Fatal(err)
 	}
-	if targetCalls.Load() != 1 || ledger.Used(budget.BucketName("hyperliquid", 60, 600), 60) != 20 || ledger.Used(budget.BucketName("binance.spot", 60, 3000), 60) != 20 {
+	if targetCalls.Load() != 1 || ledger.Used(budget.BucketName("hyperliquid", 60), 60) != 20 || ledger.Used(budget.BucketName("binance.spot", 60), 60) != 20 {
 		t.Fatal("303 target method escaped its own policy")
 	}
 }
@@ -323,7 +323,7 @@ func TestRedirectLimitReleasesTheSingleHostLease(t *testing.T) {
 	if _, err := client.Fetch(context.Background(), "GET", Binance+"/api/v3/depth?limit=100", nil, nil, nil, 0); err == nil {
 		t.Fatal("unbounded redirect cycle accepted")
 	}
-	if calls.Load() != 10 || ledger.Used(budget.BucketName("binance.spot", 60, 3000), 60) != 50 {
+	if calls.Load() != 10 || ledger.Used(budget.BucketName("binance.spot", 60), 60) != 50 {
 		t.Fatalf("redirect bound hid physical attempts:%d", calls.Load())
 	}
 	if _, err := client.Fetch(context.Background(), "GET", Binance+"/api/v3/depth?limit=100&done=1", nil, nil, nil, 0); err != nil {
@@ -345,7 +345,7 @@ func TestExplicitLastResponsePolicyDoesNotReachRedirectTarget(t *testing.T) {
 	if err != nil || result == nil || result.Status != http.StatusFound {
 		t.Fatalf("explicit last-response policy lost:result=%+v err=%v", result, err)
 	}
-	if calls.Load() != 1 || ledger.Used(budget.BucketName("binance.spot", 60, 3000), 60) != 20 {
+	if calls.Load() != 1 || ledger.Used(budget.BucketName("binance.spot", 60), 60) != 20 {
 		t.Fatal("last-response policy followed or double-charged a redirect")
 	}
 }
