@@ -6,7 +6,7 @@ import re
 
 from tank.event_tools import SCOPED_TOOLS, validate_schema
 
-CONTEXT_VERSION = 2
+CONTEXT_VERSION = 3
 AGENT_SKILLS = {False: "tank-event-analyst", True: "tank-scout-reviewer"}
 ID_LOOKUP = {
     False: "tank-data data guide, «Finding record IDs for tool arguments»",
@@ -148,6 +148,18 @@ PREFIXES = (
 OPEN_LIFECYCLES_EXCLUDED = {"CLOSED", "MERGED", "INVALIDATED"}
 CONTEXT_TRANSITION = {
     False: (
+        "MATERIAL leads now have an optional PRELIMINARY publication path. Keep the original class and certainty, "
+        "including LOW certainty. Use it only for a concrete sourced lead with a potentially substantial "
+        "consequence; supply what, why and unconfirmed. LOW event class still stops. PRELIMINARY needs no "
+        "MarketTruth or decisions and never satisfies ordinary card requirements. The first ordinary card "
+        "remains FULL or STRUCTURAL_SHOCK PARTIAL. set_watch_condition can instead arm a timed event review "
+        "with review_at and review_question, without token_id or metric conditions. On CONDITION_FIRED "
+        "with review_question, investigate that question, record new evidence and reassess the same event; "
+        "do not go directly to get_decision. Schedule another review only with a concrete question and expiry. "
+        "If an official DENIAL invalidates an event whose only cards are PRELIMINARY, publish one more "
+        "PRELIMINARY at once stating the denial in what and why, without unconfirmed; Tank sends it in the "
+        "same thread marked DENIED. "
+        "These additions override older instructions to always stop on MATERIAL. "
         "Tank changed its tool contract. Follow the current tool definitions and this note over earlier tool "
         "instructions and skill text that cite records by description. Tool arguments name records only by ID. "
         "Registry objects now read «Name · key» (World (WLD) · world:WLD, Uniswap · uniswap): token_id, token_ids, "

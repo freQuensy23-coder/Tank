@@ -2252,7 +2252,7 @@
   },
   {
     "name": "publish_card",
-    "description": "Request publication using the canonical template. Supply a plain-language WHAT explanation, a neutral factual headline verdict and 2–3 WHY bullets, following skill wording rules L1–L12. Tank applies lifecycle, alert eligibility and update policy, composes structured values from authoritative MarketTruth/Decision outputs, stores immutable evidence and queues delivery. Tank does not lint or repair prose and does not require a fixed tool-call order. Returns publication status or refusal for the deterministic publication gate. An accepted ordinary UPDATE during cooldown is persisted and queued until delivery_not_before; published=true with delivery_status=QUEUED is not a transport acknowledgment. STALE state-change updates are not published. Delivery sends the accepted immutable payload without a second semantic eligibility judgment.",
+    "description": "Request publication using the canonical template. Supply a plain-language WHAT explanation, a neutral factual headline verdict and 2–3 WHY bullets, following skill wording rules L1–L12. Tank applies lifecycle, alert eligibility and update policy, composes structured values from authoritative MarketTruth/Decision outputs, stores immutable evidence and queues delivery. Tank does not lint or repair prose and does not require a fixed tool-call order. Returns publication status or refusal for the deterministic publication gate. An accepted ordinary UPDATE during cooldown is persisted and queued until delivery_not_before; published=true with delivery_status=QUEUED is not a transport acknowledgment. STALE state-change updates are not published. Delivery sends the accepted immutable payload without a second semantic eligibility judgment. PRELIMINARY is a sourced MATERIAL lead, including LOW certainty, without MarketTruth or decisions. Supply what, at least one why bullet, and unconfirmed. It is stored and delivered in the event thread but does not satisfy ordinary publication requirements. After an official denial invalidates an event that has only PRELIMINARY cards, one PRELIMINARY denial correction is accepted at once, without unconfirmed, and is marked DENIED.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -2261,7 +2261,8 @@
           "enum": [
             "PARTIAL",
             "FULL",
-            "UPDATE"
+            "UPDATE",
+            "PRELIMINARY"
           ]
         },
         "what": {
@@ -2284,6 +2285,13 @@
             "description": "One factual bullet, at most 220 characters."
           },
           "maxItems": 3
+        },
+        "unconfirmed": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "pattern": "\\S",
+          "description": "PRELIMINARY only: explicitly state what remains unconfirmed. Required for a preliminary card, except the denial correction of an invalidated event."
         }
       },
       "required": [
@@ -2434,7 +2442,7 @@
   },
   {
     "name": "set_watch_condition",
-    "description": "Change the monitoring rules of this session event. ARM adds your own rule for a registry token_id: Tank evaluates it every minute and, when every listed condition holds for persist_count consecutive windows, sends you CONDITION_FIRED in this session. Agent rules have role AGENT, never change deterministic decisions, and expire after expires_in_hours (default 72, at most 168). DISARM cancels an ARMED rule of the event by its cond_id; get_decision may later re-arm its own deterministic rules. Metrics: spot.cohort.direction, spot.cohort.cwb_buy, spot.cohort.cwb_sell, spot.classification, deriv.native_oi_chg_pct, deriv.native_oi_vs_normal, deriv.oi_class, deriv.funding_vs_normal, mt.move_class, mt.divergence_state, dc.class, price.repricing_band, price.close_vs_level, price.vs_anchor_pct, liq.depth_p1_vs_pre, liq.spread_ratio, event.state, event.contradiction_fatal. Ordered operators need numeric metrics; event.* conditions fire on the first match. Windows: W15M, W1H (default), W4H, W24H; all market conditions of one rule use the same window.",
+    "description": "Arm metric conditions with token_id and conditions, or one timed event review with review_at and review_question. Timed reviews need no token or MarketTruth. Both use existing watch storage and CONDITION_FIRED; a review fires once, can be disarmed, and expires normally.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -2507,6 +2515,18 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 168
+        },
+        "review_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ARM timed review: future UTC time before the condition expires. Mutually exclusive with token_id and metric conditions."
+        },
+        "review_question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "pattern": "\\S",
+          "description": "ARM timed review: concrete evidence question to investigate at review_at. Required with review_at."
         }
       },
       "required": [

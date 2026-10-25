@@ -2557,7 +2557,7 @@ class EventToolService:
     async def set_watch_condition(self, a, c):
         """Arm an agent monitoring rule (role AGENT) or disarm any ARMED rule of the event."""
         eid = a["event_id"]
-        await self.require("evt.events", eid)
+        event = await self.require("evt.events", eid)
         now = utcnow()
         if a["action"] == "DISARM":
             condition = await self.repo.get("ana.watch_conditions", a.get("cond_id") or "")
@@ -2574,50 +2574,68 @@ class EventToolService:
             await self.repo.put("ana.watch_conditions", condition["cond_id"], condition)
             return {"accepted": True, "cond_id": condition["cond_id"], "status": "CANCELLED"}
         token = a.get("token_id")
-        if not isinstance(token, str):
-            raise ValueError("ARM requires token_id, a registry token key")
-        registry = self.settings.load_config("registry") if hasattr(self.settings, "load_config") else None
-        if registry is not None and token not in {row["token_id"] for row in registry.get("tokens", [])}:
-            raise ValueError("ARM token_id is not a registry token key")
-        leaves = []
-        for leaf in a.get("conditions") or []:
-            if leaf["metric"] not in AGENT_WATCH_METRICS:
-                raise ValueError(
-                    "metric is not evaluated by the watch scheduler; use one of "
-                    + ", ".join(sorted(AGENT_WATCH_METRICS))
-                )
-            if leaf["metric"].startswith(("event.", "milestone.")) and leaf.get("persist_count", 1) > 1:
-                raise ValueError(
-                    "event.* and milestone.* conditions fire on the first match; omit persist_count"
-                )
-            if leaf["op"] == "in" and not isinstance(leaf["value"], list):
-                raise ValueError("op in requires a list value")
-            if leaf["op"] in (">", ">=", "<", "<=") and leaf["metric"] in CATEGORICAL_WATCH_METRICS:
-                raise ValueError(f"{leaf['metric']} is categorical; use ==, != or in")
-            if leaf["op"] in (">", ">=", "<", "<="):
-                try:
-                    number = Decimal(str(leaf["value"]))
-                except InvalidOperation:
-                    number = None
-                if isinstance(leaf["value"], bool) or number is None or not number.is_finite():
-                    raise ValueError(f"op {leaf['op']} requires a numeric value")
-            leaves.append(
-                {
-                    "metric": leaf["metric"],
-                    "window": leaf.get("window", "W1H"),
-                    "op": leaf["op"],
-                    "value": leaf["value"],
-                    "persist": {"count": leaf.get("persist_count", 1), "unit": "consecutive_windows"},
-                }
+        expiry = offset_schedule(collection_clock(now), timedelta(hours=int(a.get("expires_in_hours", 72))))
+        if "review_at" in a or "review_question" in a:
+            if event.get("lifecycle") in {"CLOSED", "MERGED", "INVALIDATED"}:
+                raise ValueError("Cannot schedule review for a terminal event")
+            if a.get("conditions") or token:
+                raise ValueError("Timed reviews cannot include token_id or metric conditions")
+            text = str(a.get("review_question") or "").strip()
+            if not text or not a.get("review_at"):
+                raise ValueError("Timed reviews require review_at and review_question")
+            due = parse_time(a["review_at"])
+            if not now < due < parse_time(expiry.value):
+                raise ValueError("review_at must be in the future and before the condition expiry")
+            token = None
+            expr = {"review_at": iso(due), "review_question": text}
+        else:
+            if not isinstance(token, str):
+                raise ValueError("ARM requires token_id, a registry token key")
+            registry = (
+                self.settings.load_config("registry") if hasattr(self.settings, "load_config") else None
             )
-        if not leaves:
-            raise ValueError("ARM requires at least one condition")
-        market_windows = {
-            leaf["window"] for leaf in leaves if not leaf["metric"].startswith(("event.", "milestone."))
-        }
-        if len(market_windows) > 1:
-            raise ValueError("All market conditions of one rule must use the same window")
-        expr = leaves[0] if len(leaves) == 1 else {"all": leaves}
+            if registry is not None and token not in {row["token_id"] for row in registry.get("tokens", [])}:
+                raise ValueError("ARM token_id is not a registry token key")
+            leaves = []
+            for leaf in a.get("conditions") or []:
+                if leaf["metric"] not in AGENT_WATCH_METRICS:
+                    raise ValueError(
+                        "metric is not evaluated by the watch scheduler; use one of "
+                        + ", ".join(sorted(AGENT_WATCH_METRICS))
+                    )
+                if leaf["metric"].startswith(("event.", "milestone.")) and leaf.get("persist_count", 1) > 1:
+                    raise ValueError(
+                        "event.* and milestone.* conditions fire on the first match; omit persist_count"
+                    )
+                if leaf["op"] == "in" and not isinstance(leaf["value"], list):
+                    raise ValueError("op in requires a list value")
+                if leaf["op"] in (">", ">=", "<", "<=") and leaf["metric"] in CATEGORICAL_WATCH_METRICS:
+                    raise ValueError(f"{leaf['metric']} is categorical; use ==, != or in")
+                if leaf["op"] in (">", ">=", "<", "<="):
+                    try:
+                        number = Decimal(str(leaf["value"]))
+                    except InvalidOperation:
+                        number = None
+                    if isinstance(leaf["value"], bool) or number is None or not number.is_finite():
+                        raise ValueError(f"op {leaf['op']} requires a numeric value")
+                leaves.append(
+                    {
+                        "metric": leaf["metric"],
+                        "window": leaf.get("window", "W1H"),
+                        "op": leaf["op"],
+                        "value": leaf["value"],
+                        "persist": {"count": leaf.get("persist_count", 1), "unit": "consecutive_windows"},
+                    }
+                )
+            if not leaves:
+                raise ValueError("ARM requires at least one condition")
+            market_windows = {
+                leaf["window"] for leaf in leaves if not leaf["metric"].startswith(("event.", "milestone."))
+            }
+            if len(market_windows) > 1:
+                raise ValueError("All market conditions of one rule must use the same window")
+            expr = leaves[0] if len(leaves) == 1 else {"all": leaves}
+            text = a.get("text") or ""
         active = [
             row
             for row in await self.rows("ana.watch_conditions", eid, filters={"status": "ARMED"})
@@ -2636,15 +2654,13 @@ class EventToolService:
             "event_id": eid,
             "token_id": token,
             "role": "AGENT",
-            "human_text": a.get("text") or "",
+            "human_text": text,
             "expr": expr,
             "status": "ARMED",
             "agent_defined": True,
             "created_by": "AGENT",
             **collection_clock(now).fields("created_at"),
-            **offset_schedule(
-                collection_clock(now), timedelta(hours=int(a.get("expires_in_hours", 72)))
-            ).fields("expires_at"),
+            **expiry.fields("expires_at"),
             **self.provenance(c),
         }
         await self.repo.put("ana.watch_conditions", condition["cond_id"], condition)
@@ -2654,6 +2670,7 @@ class EventToolService:
         from tank.analysis.cards import (
             alert_gate,
             compose_card,
+            preliminary_gate,
             publication_immediate,
         )
         from tank.telegram_rich import CARD_TEXT_LIMIT, card_rich_message
@@ -2706,8 +2723,30 @@ class EventToolService:
         if event["lifecycle"] in {"CLOSED", "MERGED"}:
             return publication_outcome({"published": False, "reason": "TERMINAL_EVENT"})
         event["thresholds"] = self.settings.load_config("thresholds")
+        kind = a["kind"]
+        preliminary = kind == "PRELIMINARY"
         newest = await self.repo.list_latest("out.alerts", "generated_at", filters={"event_id": eid}, limit=1)
-        previous = newest[0] if newest else None
+        newest_generated = newest[0] if newest else None
+        ordinary_heads = [
+            row
+            for ordinary_kind in ("PARTIAL", "FULL", "UPDATE")
+            for row in await self.repo.list_latest(
+                "out.alerts", "generated_at", filters={"event_id": eid, "kind": ordinary_kind}, limit=1
+            )
+        ]
+        previous = (
+            (newest_generated if newest_generated and newest_generated["kind"] == "PRELIMINARY" else None)
+            if preliminary
+            else max(ordinary_heads, key=lambda row: int(row["version"]), default=None)
+        )
+        if preliminary and ordinary_heads:
+            return publication_outcome({"published": False, "reason": "ORDINARY_CARD_EXISTS"})
+        if preliminary and (
+            not str(a.get("what") or "").strip()
+            or (event["lifecycle"] != "INVALIDATED" and not str(a.get("unconfirmed") or "").strip())
+            or not any(str(line).strip() for line in a.get("why", []))
+        ):
+            raise ValueError("PRELIMINARY requires what, why and unconfirmed")
         initial_full = await self.first_alert(eid, "FULL")
         active_maps = await self.rows("evt.beneficiary_maps", eid)
         if active_maps:
@@ -2719,12 +2758,14 @@ class EventToolService:
             newest_generated_alert_id=previous.get("alert_id") if previous else None,
             newest_generated_alert_version=previous.get("version") if previous else None,
         )
-        active_tokens = (
-            set(max(active_maps, key=lambda row: int(row["map_version"]))["analysis_set"])
-            if active_maps
-            else set(event.get("tokens_mentioned", []))
-        )
-        active_tokens |= await self.managed_tokens(eid)
+        active_tokens = set()
+        if not preliminary:
+            active_tokens = (
+                set(max(active_maps, key=lambda row: int(row["map_version"]))["analysis_set"])
+                if active_maps
+                else set(event.get("tokens_mentioned", []))
+            )
+            active_tokens |= await self.managed_tokens(eid)
         decisions = []
         for token in sorted(active_tokens):
             decision = await self.latest_record("ana.decisions", eid, token)
@@ -2779,6 +2820,8 @@ class EventToolService:
             if last_sent
             else None
         )
+        if comparison and (comparison["kind"] == "PRELIMINARY") != preliminary:
+            last_sent, comparison = None, None
         gate_previous = None
         if comparison or previous:
             baseline = comparison or previous
@@ -2804,12 +2847,48 @@ class EventToolService:
             if a["kind"] == "UPDATE" and pinned_for_gate
             else decisions
         )
-        ok, reason = alert_gate(
-            event,
-            assessment,
-            previous=None if completing_partial else gate_previous,
-            decisions=gate_decisions,
+        previous_failed = previous and bool(
+            await self.repo.list_latest(
+                "out.deliveries",
+                "at",
+                filters={
+                    "alert_id": previous["alert_id"],
+                    "version": previous["version"],
+                    "status": "FAILED",
+                    "terminal": True,
+                },
+                limit=1,
+            )
         )
+        if preliminary:
+            ok, reason = preliminary_gate(event, assessment, previous, bool(previous_failed))
+            if ok and previous and reason == "PRELIMINARY":
+                prior = previous["card_struct"]
+                current = {key: a.get(key) for key in ("what", "verdict", "why", "unconfirmed")}
+                prior_text = prior.get("preliminary_text")
+                prior_event = prior.get("event", {})
+                same_facts = all(
+                    event.get(key) == prior_event.get(key)
+                    for key in (
+                        "claims",
+                        "event_state",
+                        "certainty",
+                        "negative_marker",
+                    )
+                )
+                if same_facts and current == prior_text and not previous_failed:
+                    ok, reason = False, "NO_MATERIAL_CHANGE"
+                elif last_sent and utcnow() - parse_time(last_sent["at"]) < timedelta(
+                    seconds=event["thresholds"].get("update_rate_limit_s", 900)
+                ):
+                    ok, reason = False, "UPDATE_RATE_LIMIT"
+        else:
+            ok, reason = alert_gate(
+                event,
+                assessment,
+                previous=None if completing_partial else gate_previous,
+                decisions=gate_decisions,
+            )
         publication_state["gate_reason"] = reason
         rate_limited = not ok and reason == "UPDATE_RATE_LIMIT"
         if not ok and not rate_limited:
@@ -2823,7 +2902,10 @@ class EventToolService:
                 await self.repo.put("evt.events", eid, stored)
                 publication_state["lifecycle"] = stored["lifecycle"]
             return publication_outcome({"published": False, "reason": reason})
-        immediate = publication_immediate(event, assessment, previous=gate_previous, decisions=gate_decisions)
+        immediate = reason == "PRELIMINARY_CORRECTION" or (
+            not preliminary
+            and publication_immediate(event, assessment, previous=gate_previous, decisions=gate_decisions)
+        )
         delivery_stamp = collection_clock()
         if rate_limited:
             delivery_stamp = offset_schedule(
@@ -2832,7 +2914,7 @@ class EventToolService:
             )
         delivery_not_before = delivery_stamp.value
         kind = a["kind"]
-        if kind not in {"FULL", "PARTIAL", "UPDATE"}:
+        if kind not in {"FULL", "PARTIAL", "UPDATE", "PRELIMINARY"}:
             raise ValueError("Invalid alert kind")
         if kind == "UPDATE" and not previous:
             raise ValueError("UPDATE requires a published original")
@@ -2862,7 +2944,7 @@ class EventToolService:
                 candidates = [edge for edge in all_edges if edge.get("token_id") == token]
                 if candidates:
                     beneficiaries.append(max(candidates, key=lambda row: int(row["map_version"])))
-        elif kind == "PARTIAL":
+        elif kind in {"PARTIAL", "PRELIMINARY"}:
             beneficiaries = []
         else:
             primaries = sorted(
@@ -2928,12 +3010,14 @@ class EventToolService:
                 for truth, digest in zip(truths, truth_hashes, strict=True)
             ],
         }
+        if preliminary:
+            ctx["preliminary_text"] = {key: a.get(key) for key in ("what", "verdict", "why", "unconfirmed")}
         what = a.get("what", "")
         if what:
             ctx["what"] = what
         verdict = a.get("verdict", "")
         why = a.get("why", [])
-        if kind != "PARTIAL" and len(why) not in {2, 3}:
+        if kind not in {"PARTIAL", "PRELIMINARY"} and len(why) not in {2, 3}:
             raise ValueError("FULL/UPDATE require 2–3 WHY bullets")
         evidence_labels = {}
         source_items_read = {}
@@ -2967,22 +3051,12 @@ class EventToolService:
             what=what,
             verdict=verdict,
             why=why,
+            unconfirmed=a.get("unconfirmed", ""),
         )
         rich_message = card_rich_message(
-            text, assessment, max_chars=event["thresholds"].get("card_max_chars", CARD_TEXT_LIMIT)
-        )
-        previous_failed = previous and bool(
-            await self.repo.list_latest(
-                "out.deliveries",
-                "at",
-                filters={
-                    "alert_id": previous["alert_id"],
-                    "version": previous["version"],
-                    "status": "FAILED",
-                    "terminal": True,
-                },
-                limit=1,
-            )
+            text,
+            assessment,
+            max_chars=event["thresholds"].get("card_max_chars", CARD_TEXT_LIMIT),
         )
         if (
             previous
@@ -3136,8 +3210,8 @@ class EventToolService:
             {"bundle_id": "EVB-" + digest, "sha256": digest, "path": str(bundle_path), "payload": bundle},
             immutable=True,
         )
-        aid = previous["alert_id"] if previous else new_id("alert")
-        version = previous["version"] + 1 if previous else 1
+        aid = newest_generated["alert_id"] if newest_generated else new_id("alert")
+        version = newest_generated["version"] + 1 if newest_generated else 1
 
         generated = collection_clock()
         if not rate_limited:
@@ -3154,7 +3228,7 @@ class EventToolService:
             milestone_resolution_id=event.get("milestone_resolution_id")
             if event.get("milestone_resolved")
             else None,
-            terminal_correction=kind == "UPDATE"
+            terminal_correction=kind in {"UPDATE", "PRELIMINARY"}
             and event["lifecycle"] == "INVALIDATED"
             and any(r["type"] == "FATAL" for r in event["contradictions"]),
             event_id=eid,
@@ -3168,7 +3242,7 @@ class EventToolService:
                 if d["token_id"] in {edge["token_id"] for edge in beneficiaries}
             ],
             evidence_bundle_id=digest,
-            supersedes_version=version - 1 if previous else None,
+            supersedes_version=version - 1 if newest_generated else None,
             **self.provenance(c),
         )
         await self.repo.put("out.alerts", f"{aid}:{version}", alert, immutable=True)
