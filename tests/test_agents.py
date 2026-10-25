@@ -64,7 +64,7 @@ def settings(
         documents=config,
         tool_reader=Settings(_env_file=None).read_config_json,
         openrouter_api_key="secret",
-        opencode_api_key=None,
+        foundry_api_key="FAKE_FOUNDRY_KEY",
         replay=False,
         ops_progress_enabled=False,
         openma_api_key="secret",
@@ -124,7 +124,7 @@ async def test_filter_requires_calibration_and_logs_typed_usage() -> None:
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13-free",
+                "model": "microsoft-decision-1",
                 "answers": {"relevant": {"type": "noul", "noul": 0.9}},
                 "usage": {"input_tokens": 100, "output_tokens": 0, "cost": "0.0000042"},
             },
@@ -148,8 +148,8 @@ async def test_filter_requires_calibration_and_logs_typed_usage() -> None:
     assert len(jobs) == 1 and jobs[0]["type"] == "ROUTE_ITEM"
     usage = await repo.list("ops.llm_usage")
     assert usage[0]["cost_usd"] == "0.0000042"
-    assert usage[0]["billing_basis"] == "OPENCODE_REPORTED"
-    assert usage[0]["endpoint"] == "https://opencode.ai/inference/systemone/v1/systemone"
+    assert usage[0]["billing_basis"] == "AZURE_FOUNDRY_REPORTED"
+    assert usage[0]["endpoint"] == "https://synthetic.services.ai.azure.com/providers/microsoft/v1/systemone"
 
 
 @pytest.mark.asyncio
@@ -193,7 +193,7 @@ async def test_routing_whole_word_alias_three_day_and_best_score() -> None:
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13-free",
+                "model": "microsoft-decision-1",
                 "answers": {"same_event": {"type": "noul", "noul": 0.95 if event == "best" else 0.85}},
                 "usage": {"input_tokens": 100},
             },
@@ -423,14 +423,14 @@ async def test_canonical_event_routing_and_added_message() -> None:
     def handler(req):
         body = json.loads(req.content)
         posted.append(body)
-        if req.url.host == "opencode.ai":
-            assert req.url.path == "/inference/systemone/v1/systemone"
+        if req.url.host == "synthetic.services.ai.azure.com":
+            assert req.url.path == "/providers/microsoft/v1/systemone"
             assert body["state"]["event"]["stage"] == "live"
             assert body["state"]["event"]["tokens"] == ["AAVE"]
             return httpx.Response(
                 200,
                 json={
-                    "model": "jev-1.13-free",
+                    "model": "microsoft-decision-1",
                     "answers": {"same_event": {"type": "noul", "noul": 0.99}},
                     "usage": {"input_tokens": 100},
                 },
@@ -874,7 +874,7 @@ async def test_concurrent_items_without_event_candidates_open_distinct_idempoten
     creates, messages = [], []
 
     def handler(request: httpx.Request):
-        assert request.url.host != "opencode.ai"
+        assert request.url.host != "synthetic.services.ai.azure.com"
         if request.method == "GET":
             return httpx.Response(200, json={"data": [], "next_page": None})
         body = json.loads(request.content)
@@ -1114,7 +1114,7 @@ async def test_routing_and_resume_find_late_history_with_one_row_pages() -> None
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13-free",
+                "model": "microsoft-decision-1",
                 "answers": {
                     "same_event": {"type": "noul", "noul": 0.99 if "event" in body["state"] else 0.85}
                 },

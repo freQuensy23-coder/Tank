@@ -5,11 +5,11 @@ from typing import Protocol
 import httpx
 from pydantic import JsonValue
 
-from tank.agents.jev import JevQuestion, JevState, binding, classify
+from tank.agents.decision import DecisionQuestion, DecisionState, binding, classify
 from tank.agents.pipeline_contracts import (
     ClassificationIdentity,
     ClassificationName,
-    JevScoreRecord,
+    DecisionScoreRecord,
     MissingClassificationFields,
 )
 from tank.contracts.provenance import ResolvedVersionIdentity
@@ -24,17 +24,23 @@ class ClassificationSource(Protocol):
 
 class ClassificationSettings(Protocol):
     @property
-    def opencode_api_key(self) -> str | None: ...
+    def foundry_api_key(self) -> str | None: ...
+    @property
+    def foundry_endpoint(self) -> str: ...
+    @property
+    def foundry_deployment(self) -> str: ...
     @property
     def replay(self) -> bool: ...
 
 
 class ClassificationScores(Protocol):
-    async def get(self, key: str) -> JevScoreRecord | None: ...
-    async def put(self, key: str, value: JevScoreRecord, *, immutable: bool = False) -> JevScoreRecord: ...
+    async def get(self, key: str) -> DecisionScoreRecord | None: ...
+    async def put(
+        self, key: str, value: DecisionScoreRecord, *, immutable: bool = False
+    ) -> DecisionScoreRecord: ...
 
 
-JEV_PROMPT_VERSION = "jev-v2"
+DECISION_PROMPT_VERSION = "decision-1-v1"
 FILTER = "Is `item` about crypto: crypto assets, crypto exchanges, crypto regulation or enforcement, blockchain networks, or one of these projects: Bitcoin, Ethereum, Uniswap, PancakeSwap, Aerodrome, Curve, 1inch, 0x, CoW Protocol, Hyperliquid, Lighter, Aave, Morpho, Euler, Ondo, LayerZero, Quant, Avalanche, NEAR, Plasma, Ethena, World (Worldcoin)?"
 FILTER_CRITERIA = {
     "true": "About crypto, even if it reports nothing new or important.",
@@ -47,7 +53,7 @@ ROUTE_CRITERIA = {
 }
 
 
-class JevClassifier:
+class DecisionClassifier:
     def __init__(
         self,
         scores: ClassificationScores,
@@ -61,11 +67,13 @@ class JevClassifier:
         self.settings = settings
         self.http = http
 
-    async def score(self, item: ClassificationSource, name: ClassificationName, state: JevState) -> float:
+    async def score(
+        self, item: ClassificationSource, name: ClassificationName, state: DecisionState
+    ) -> float:
         return (await self._score_record(item, name, state)).score
 
     def score_identity(
-        self, item: ClassificationSource, name: ClassificationName, state: JevState
+        self, item: ClassificationSource, name: ClassificationName, state: DecisionState
     ) -> ClassificationIdentity:
         match name:
             case "relevant":
@@ -74,8 +82,10 @@ class JevClassifier:
                 instructions, criteria = ROUTE, ROUTE_CRITERIA
             case _:
                 raise ValueError("Unregistered classification question")
-        questions: dict[str, JevQuestion] = {name: JevQuestion(instructions=instructions, criteria=criteria)}
-        pinned = binding(self.settings.opencode_api_key)
+        questions: dict[str, DecisionQuestion] = {
+            name: DecisionQuestion(instructions=instructions, criteria=criteria)
+        }
+        pinned = binding(self.settings)
         wire_state = state.to_wire()
         wire_questions: dict[str, JsonValue] = {
             name: question.to_wire() for name, question in questions.items()
@@ -93,9 +103,10 @@ class JevClassifier:
             {
                 "item_id": item.item_id,
                 "model": pinned.request_model,
+                "semantic_model": pinned.semantic_model,
                 "provider": pinned.provider,
                 "base_url": pinned.base_url,
-                "prompt_version": JEV_PROMPT_VERSION,
+                "prompt_version": DECISION_PROMPT_VERSION,
                 "questions": wire_questions,
                 "state_fingerprint": state_fingerprint,
             }
@@ -110,8 +121,8 @@ class JevClassifier:
         )
 
     async def _score_record(
-        self, item: ClassificationSource, name: ClassificationName, state: JevState
-    ) -> JevScoreRecord:
+        self, item: ClassificationSource, name: ClassificationName, state: DecisionState
+    ) -> DecisionScoreRecord:
         identity = self.score_identity(item, name, state)
         cached = await self.scores.get(identity.usage_id)
         if cached is not None:
@@ -119,6 +130,10 @@ class JevClassifier:
                 cached.usage_id != identity.usage_id
                 or cached.item_id != item.item_id
                 or cached.requested_model_id != identity.binding.request_model
+                or cached.classifier_provider != identity.binding.provider
+                or cached.endpoint != identity.binding.endpoint
+                or cached.semantic_model_id != identity.binding.semantic_model
+                or cached.prompt_version != DECISION_PROMPT_VERSION
                 or cached.questions != identity.questions
                 or cached.state_fingerprint != identity.state_fingerprint
                 or cached.question_fingerprint != identity.question_fingerprint
@@ -128,36 +143,37 @@ class JevClassifier:
             return cached
         if self.settings.replay:
             raise ValueError(
-                "Replay requires stored Jev score for the exact wire question and state; live classification is disabled"
+                "Replay requires stored Decision-1 score for the exact wire question and state; live classification is disabled"
             )
         data = await classify(
             self.http,
-            api_key=self.settings.opencode_api_key,
+            api_key=self.settings.foundry_api_key,
             state=state,
             questions=identity.questions,
+            pinned=identity.binding,
         )
         usage = data.usage
-        cost_reason = "OpenCode does not report usage.cost" if usage.cost is None else None
+        cost_reason = "Azure Foundry does not report usage.cost" if usage.cost is None else None
         completed = collection_clock()
         at = completed.value
         if at is None:
             raise RuntimeError("Classification completion clock has no timestamp")
-        record = JevScoreRecord(
+        record = DecisionScoreRecord(
             usage_id=identity.usage_id,
             item_id=item.item_id,
             call="FILTER" if name == "relevant" else "ROUTE",
             model_id=data.model,
-            semantic_model_id="jev-1.13.0",
+            semantic_model_id="microsoft-decision-1:1",
             requested_model_id=identity.binding.request_model,
-            jev_provider="opencode",
-            endpoint="https://opencode.ai/inference/systemone/v1/systemone",
+            classifier_provider="azure-foundry",
+            endpoint=identity.binding.endpoint,
             resolved_model_id=data.model,
             response_id=data.id,
             upstream_provider=data.provider,
-            model_pin_evidence="OpenCode serves Jev 1.13 under this model name; no dated snapshot or patch suffix is exposed",
-            billing_basis="OPENCODE_REPORTED",
+            model_pin_evidence="Foundry deployment is configured for Microsoft-Decision-1 version 1; the response identifies microsoft-decision-1 but does not attest its version",
+            billing_basis="AZURE_FOUNDRY_REPORTED",
             billing_currency="USD",
-            prompt_version=JEV_PROMPT_VERSION,
+            prompt_version=DECISION_PROMPT_VERSION,
             questions=identity.questions,
             state_fingerprint=identity.state_fingerprint,
             question_fingerprint=identity.question_fingerprint,
@@ -171,12 +187,12 @@ class JevClassifier:
             stop_reason="NON_GENERATIVE_CLASSIFICATION",
             web_searches=0,
             missing_fields=MissingClassificationFields(
-                effort="Not applicable to nongenerative Jev classification",
+                effort="Not applicable to nongenerative Decision-1 classification",
                 cost_usd=cost_reason,
                 input_tokens="Provider omitted input tokens" if usage.input_tokens is None else None,
                 output_tokens="Provider omitted output tokens" if usage.output_tokens is None else None,
-                cache_read_tokens="Not exposed by Jev API",
-                cache_write_tokens="Not exposed by Jev API",
+                cache_read_tokens="Not exposed by Decision-1 API",
+                cache_write_tokens="Not exposed by Decision-1 API",
             ),
             cost_usd=usage.cost,
             cost_reason=cost_reason,

@@ -7,9 +7,9 @@ import pytest
 from agent_source_fixtures import declared_versions_fixture, source_item_fixture
 from pydantic import ValidationError
 
-from tank.agents.classification import JevClassifier
-from tank.agents.jev import JevItem, JevState
-from tank.agents.pipeline_contracts import JevScoreRecord
+from tank.agents.classification import DecisionClassifier
+from tank.agents.decision import DecisionItem, DecisionState
+from tank.agents.pipeline_contracts import DecisionScoreRecord
 from tank.contracts.repository import Collection, Repository
 from tank.storage import MemoryRepository
 
@@ -20,7 +20,7 @@ async def test_classifier_validates_durable_scores_and_reuses_exact_request(
     contradictory_subject: bool,
 ) -> None:
     store = MemoryRepository()
-    scores = Repository(store, Collection("ops.llm_usage", JevScoreRecord))
+    scores = Repository(store, Collection("ops.llm_usage", DecisionScoreRecord))
     calls: list[httpx.Request] = []
 
     def provider(request: httpx.Request) -> httpx.Response:
@@ -28,19 +28,24 @@ async def test_classifier_validates_durable_scores_and_reuses_exact_request(
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13-free",
+                "model": "microsoft-decision-1",
                 "answers": {"relevant": {"type": "noul", "noul": 0.97}},
                 "usage": {"input_tokens": 100, "output_tokens": 0},
             },
         )
 
     item = source_item_fixture("typed-classification", source_id="S30", text="ETH announcement")
-    state = JevState(item=JevItem(source=item.source, text=item.text))
+    state = DecisionState(item=DecisionItem(source=item.source, text=item.text))
     settings = SimpleNamespace(
-        opencode_api_key=None, replay=False, config_version="fixture", code_version="fixture"
+        foundry_api_key="FAKE_FOUNDRY_KEY",
+        foundry_endpoint="https://synthetic.services.ai.azure.com",
+        foundry_deployment="decision-1",
+        replay=False,
+        config_version="fixture",
+        code_version="fixture",
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as http:
-        classifier = JevClassifier(scores, settings, http, versions=declared_versions_fixture())
+        classifier = DecisionClassifier(scores, settings, http, versions=declared_versions_fixture())
         record = await classifier._score_record(item, "relevant", state)
         assert record.score == 0.97
         assert await classifier._score_record(item, "relevant", state) == record
@@ -54,8 +59,8 @@ async def test_classifier_validates_durable_scores_and_reuses_exact_request(
             else {"item_id": "different", "subject_id": "different"}
         )
         await damaged.put("ops.llm_usage", record.usage_id, {**row, **changes})
-        classifier = JevClassifier(
-            Repository(damaged, Collection("ops.llm_usage", JevScoreRecord)),
+        classifier = DecisionClassifier(
+            Repository(damaged, Collection("ops.llm_usage", DecisionScoreRecord)),
             settings,
             http,
             versions=declared_versions_fixture(),

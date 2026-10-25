@@ -133,17 +133,19 @@ def test_deployment_values_come_from_frozen_config_with_explicit_override(tmp_pa
     assert frozen.telegram_ops_chat == "-1000000000002"
 
 
-def test_opencode_alias_and_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("TANK_OPENCODE_API_KEY", raising=False)
-    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
-    assert Settings(_env_file=None).opencode_api_key is None
-    monkeypatch.setenv("OPENCODE_API_KEY", "FAKE-raw-router")
-    assert Settings(_env_file=None).opencode_api_key == "FAKE-raw-router"
-    monkeypatch.setenv("TANK_OPENCODE_API_KEY", "FAKE-prefixed-router")
+def test_foundry_alias_and_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TANK_FOUNDRY_API_KEY", raising=False)
+    monkeypatch.delenv("FOUNDRY_API_KEY", raising=False)
+    assert Settings(_env_file=None).foundry_api_key is None
+    monkeypatch.setenv("FOUNDRY_API_KEY", "FAKE-raw-router")
+    assert Settings(_env_file=None).foundry_api_key == "FAKE-raw-router"
+    monkeypatch.setenv("TANK_FOUNDRY_API_KEY", "FAKE-prefixed-router")
     settings = Settings(_env_file=None)
-    assert settings.opencode_api_key == "FAKE-prefixed-router"
+    assert settings.foundry_api_key == "FAKE-prefixed-router"
     assert "FAKE-prefixed-router" not in repr(settings)
-    assert Settings(_env_file=None, opencode_api_key="FAKE-explicit").opencode_api_key == "FAKE-explicit"
+    assert "foundry_api_key" not in settings.model_dump()
+    assert "FAKE-prefixed-router" in settings.configured_secrets()
+    assert Settings(_env_file=None, foundry_api_key="FAKE-explicit").foundry_api_key == "FAKE-explicit"
     assert "jev_provider" not in Settings.model_fields
 
 
@@ -162,12 +164,12 @@ def test_codex_auth_default_only_resolves_path(tmp_path: Path, monkeypatch: pyte
     )
 
 
-def test_readiness_checks_opencode_key(tmp_path: Path) -> None:
+def test_readiness_checks_foundry_key(tmp_path: Path) -> None:
     from tank.cli import readiness_checks
 
-    settings = Settings(_env_file=None, opencode_api_key="FAKE-ready-key")
+    settings = Settings(_env_file=None, foundry_api_key="FAKE-ready-key")
     checks = {row.check: row for row in readiness_checks(settings)}
-    assert checks["opencode_api_key"].ok
+    assert checks["foundry_api_key"].ok
     assert "jev_provider" not in checks
     assert "typesafe_api_key" not in checks
     assert "FAKE-ready-key" not in str(checks)
