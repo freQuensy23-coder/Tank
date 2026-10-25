@@ -8,7 +8,7 @@ from tank.market.cadences import supply_cadences as supply_cadences
 from tank.market.errors import SemanticError
 from tank.market.precision import async_precise, precise
 from tank.time_precision import collection_clock, propagate_timestamp
-from tank.util import clock_iso, iso, parse_iso_time, parse_time, sha256, utcnow
+from tank.util import clock_iso, iso, parse_epoch, parse_iso_time, parse_time, sha256, utcnow
 
 CHAIN_IDS = {
     "Ethereum": 1,
@@ -55,11 +55,11 @@ def unlock_schedule(payload, *, now=None):
         previous = None
         for point in sorted(bucket["data"], key=lambda r: r["timestamp"]):
             amount = D(str(point["unlocked"]))
-            ts = parse_time(point["timestamp"])
+            ts = parse_epoch(point["timestamp"], unit="s")
             if previous is not None and now <= ts <= end and amount > previous:
                 result.append(
                     {
-                        **propagate_timestamp(point, "timestamp").fields("date"),
+                        **propagate_timestamp({**point, "timestamp": iso(ts)}, "timestamp").fields("date"),
                         "qty": str(amount - previous),
                         "label": bucket["label"],
                         "kind": "POTENTIAL_SUPPLY",
@@ -260,7 +260,7 @@ class SupplyCapture:
                                 raise SemanticError("unexpected tokentx payload")
                             transfer_queries_succeeded += 1
                             for row in rows:
-                                if parse_time(row["timeStamp"]) < utcnow() - timedelta(days=1):
+                                if parse_epoch(row["timeStamp"], unit="s") < utcnow() - timedelta(days=1):
                                     continue
                                 internal = (
                                     row["from"].lower() in all_addresses
@@ -274,7 +274,7 @@ class SupplyCapture:
                                         "log_index": row.get("logIndex"),
                                         "from": row["from"],
                                         "to": row["to"],
-                                        "ts": iso(row["timeStamp"]),
+                                        "ts": iso(parse_epoch(row["timeStamp"], unit="s")),
                                         "ts_prec": "EXACT",
                                         "qty_native": str(
                                             D(row["value"]) / (D(10) ** int(row["tokenDecimal"]))
@@ -288,7 +288,8 @@ class SupplyCapture:
                                     }
                                 )
                             if len(rows) < 100 or any(
-                                parse_time(r["timeStamp"]) < utcnow() - timedelta(days=1) for r in rows
+                                parse_epoch(r["timeStamp"], unit="s") < utcnow() - timedelta(days=1)
+                                for r in rows
                             ):
                                 break
                     except Exception as exc:
