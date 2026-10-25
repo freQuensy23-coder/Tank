@@ -2861,7 +2861,7 @@ class EventToolService:
             )
         )
         if preliminary:
-            ok, reason = preliminary_gate(event, assessment, previous)
+            ok, reason = preliminary_gate(event, assessment, previous, bool(previous_failed))
             if ok and previous and reason == "PRELIMINARY":
                 prior = previous["card_struct"]
                 current = {key: a.get(key) for key in ("what", "verdict", "why", "unconfirmed")}

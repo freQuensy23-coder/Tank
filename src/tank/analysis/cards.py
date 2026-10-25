@@ -115,8 +115,15 @@ def alert_gate(event, assessment, *, previous=None, decisions=None, now=None):
     return True, "INITIAL"
 
 
-def preliminary_gate(event, assessment, previous=None):
-    if event.get("lifecycle") == "INVALIDATED" and previous and _new_fatal(event, assessment, previous):
+def preliminary_gate(event, assessment, previous=None, previous_failed=False):
+    if (
+        event.get("lifecycle") == "INVALIDATED"
+        and previous
+        and (
+            _new_fatal(event, assessment, previous)
+            or (previous_failed and previous.get("terminal_correction"))
+        )
+    ):
         return True, "PRELIMINARY_CORRECTION"
     if assessment.get("class", assessment.get("ems_class")) != "MATERIAL":
         return False, "PRELIMINARY_REQUIRES_MATERIAL"

@@ -492,6 +492,39 @@ async def test_denied_preliminary_gets_one_immediate_correction_in_its_thread(se
     assert requests[1]["reply_parameters"]["message_id"] == 41
 
 
+async def test_failed_denial_correction_can_be_republished_once_more(service):
+    args = await lead(service)
+    await service.dispatch("publish_card", args, {})
+    await deny(service, args["event_id"])
+    correction = {
+        **{key: value for key, value in args.items() if key != "unconfirmed"},
+        "why": ["The partner officially denied any integration."],
+    }
+    sent = await service.dispatch("publish_card", correction, {})
+    assert sent["version"] == 2
+    assert (await service.dispatch("publish_card", correction, {}))["reason"] == "TERMINAL_EVENT"
+    await service.repo.put(
+        "out.deliveries",
+        "failed",
+        {
+            "alert_id": sent["alert_id"],
+            "version": sent["version"],
+            "channel": "telegram:alerts",
+            "status": "FAILED",
+            "terminal": True,
+            "attempt": 5,
+            "at": iso(),
+        },
+        immutable=True,
+    )
+    retry = await service.dispatch("publish_card", correction, {})
+    assert retry["published"]
+    assert retry["version"] == 3
+    row = await service.repo.get("out.alerts", f"{retry['alert_id']}:3")
+    assert row["terminal_correction"]
+    assert row["card_text"].startswith("PRELIMINARY · DENIED")
+
+
 async def test_invalidated_event_without_preliminary_card_refuses_correction(service):
     args = await lead(service)
     await deny(service, args["event_id"])
