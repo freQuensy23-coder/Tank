@@ -745,3 +745,75 @@ configured memory engine. No helper grants admission or allocates an unrelated
 private quota ledger. The consumer selection passes 222 unit cases and four
 actual integration cases, with zero skips; scheduling helpers and source-page
 tests pass strict typing.
+### Independent next branch: source workflow outcomes (not activated)
+
+The independent source-state branch replaces actual acquire/drain count records
+with `FeedPollOutcome`, and the aggregate with `PolledSource | UnconfiguredSource`.
+Producers and aggregation use model attributes; no model implements dictionary
+access. An explicitly empty feed configuration returns UNCONFIGURED rather than
+claiming a healthy read. Required item counts/errors remain supplied by the actual
+workflow, and a nonempty error list cannot validate as healthy.
+
+Owned callers now consume attributes, retaining their original raw evidence,
+restart, malformed sibling, concurrency and queue assertions. The existing
+disabled/retired Binance-source regression now expects the honest unconfigured
+outcome and still verifies no reconstruction or I/O. Source configuration and
+the X tests pass strict mypy; the previous five untyped poll-call dependencies
+in that test module are closed. 209 source/admission units pass in 3.24s.
+
+This is deliberately not part of held head 477d58e. Two quality-owned E2E map
+subscriptions still need a later paired attribute migration; full integration
+is not claimed. Checkpoint ownership/state schemas and unknown prior Coinbase
+flags remain the next work inside this independent branch.
+
+
+### Independent next branch: explicit checkpoint operation ownership
+
+Every checkpoint write now receives the actual `SourceDefinition` operation.
+`SourcePoller.save` never derives source identity from key text or the number of
+configured sources. Existing contradictory ownership rejects before persistence;
+new checkpoint ownership comes from the required operation object. Opaque storage
+addresses are addresses, not evidence of a publisher identity.
+
+HTTP reads also receive that source context. The Go request's source_id and the
+receipt callback use the actual definition, not key.split(). The application
+must explicitly select whether a read persists feed HTTP evidence. The generic
+reader accepts a required nullable evidence hook: None means a detail/history
+read returns its typed receipt to its owning backlog instead of mutating the
+feed checkpoint. Primary versus detail behavior no longer depends on matching a
+generic key regex. The actor's request-start callback now marks the owning feed
+after admission and before actual I/O, preserving cadence when a provider block
+delays the paid run.
+
+Evidence before final start-hook assertion: 211 source/admission units pass in
+3.05s. The opaque/misleading-key test uses two configured sources and proves
+ownership follows the explicit definition; contradictory rows refuse with no
+write. Reader tests prove an opaque feed address persists evidence when explicitly
+selected, while a feed-looking detail address does not. Reader/X adapter strict
+checks pass. Full checkpoint record schemas and generic clock annotation remain
+open in this independent branch; these changes do not imply that migration is done.
+
+
+### Independent next branch: unknown prior Coinbase restriction flags
+
+The available imported baseline (0d3e0cb2, retained in 1216b4b) already contains
+the status_flags parser and the history backfill; 23aaac8b moved that diff work
+into a thread. Its regression simulates an older snapshot by removing the
+field. This establishes migration intent, not any actual prior flag values.
+Copying the current flags into that history therefore lacks evidentiary support.
+
+The backfill is removed. `CoinbaseRestrictionFlags` is a strict named five-flag
+facet: None means an unreported prior/current value, never false. A flag transition
+requires both observations. A newly observed flag alone updates the real snapshot
+baseline without claiming a market-state change. Existing proven false-to-true/
+true-to-false restriction changes still emit source items. If another real
+instrument state changes while prior flags are absent, new change evidence writes
+status_flags:null for that unknown side; it never inserts the current flags into
+the past. Historical input maps and retained raw bytes remain unchanged.
+
+Evidence: 214 source/admission units pass in 3.39s, including existing live flag
+transition, restart/baseline and dedup regressions plus explicit unknown-history
+evidence and input-immutability tests. The named facet is strict-mypy clean and
+Ruff passes touched files. Full instrument snapshot/parser record typing remains
+open; this is a bounded correction of a concrete evidence defect, not a claim
+that the entire polling module is complete.

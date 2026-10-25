@@ -23,9 +23,18 @@ from tank.contracts.source_items import (
     RawSourceReference,
     discovered_item,
 )
-from tank.contracts.sources import HttpFetchPlan, SourceDefinition, SourceFeed
+from tank.contracts.sources import (
+    FeedPollOutcome,
+    HttpFetchPlan,
+    PolledSource,
+    SourceDefinition,
+    SourceFeed,
+    SourcePollOutcome,
+    UnconfiguredSource,
+)
 from tank.ops_entry_errors import report_entry_errors
 from tank.sources.fetch import FetchedContent, NotModified
+from tank.sources.instrument_flags import CoinbaseRestrictionFlags
 from tank.util import TimeInput, new_id, parse_time, sha256
 
 log = logging.getLogger(__name__)
@@ -45,18 +54,32 @@ def instrument_changes(snapshot, previous, feed, pages, found_on, completed_at):
     transition (a venue-wide delisting reaches routing and the analyst once, not once per pair)
     or one newly listed base asset. Independent moves stay separate items.
     """
-    if previous is not None and feed.venue == "coinbase":
-        previous = deepcopy(previous)
-        for symbol, old in previous.items():
-            if symbol in snapshot and "status_flags" not in old:
-                old["status_flags"] = snapshot[symbol].get("status_flags", {})
     digest = sha256(snapshot)
     if previous is None:
         return [], digest
+
+    def differs(current, old):
+        if feed.venue != "coinbase" or current is None or old is None:
+            return current != old
+        if {key: value for key, value in current.items() if key != "status_flags"} != {
+            key: value for key, value in old.items() if key != "status_flags"
+        }:
+            return True
+        return bool(
+            CoinbaseRestrictionFlags.from_snapshot(old).known_changes(
+                CoinbaseRestrictionFlags.from_snapshot(current)
+            )
+        )
+
+    def evidence(record):
+        if record is not None and feed.venue == "coinbase" and "status_flags" not in record:
+            return {**record, "status_flags": None}
+        return record
+
     changed = [
         (symbol, snapshot.get(symbol), previous.get(symbol))
         for symbol in sorted(set(snapshot) | set(previous))
-        if snapshot.get(symbol) != previous.get(symbol)
+        if differs(snapshot.get(symbol), previous.get(symbol))
     ]
     if not changed:
         return [], digest
@@ -98,7 +121,7 @@ def instrument_changes(snapshot, previous, feed, pages, found_on, completed_at):
                     **row,
                     "external_id": f"{venue}|{market_type}|{symbol}|{sha256(current)}",
                     "title": f"{symbol} instrument change",
-                    "text": json.dumps({"before": old, "after": current}, sort_keys=True),
+                    "text": json.dumps({"before": evidence(old), "after": evidence(current)}, sort_keys=True),
                 }
             )
             continue
@@ -115,7 +138,12 @@ def instrument_changes(snapshot, previous, feed, pages, found_on, completed_at):
                 "text": json.dumps(
                     {
                         "changes": [
-                            {"symbol": symbol, "change": key[0], "before": old, "after": current}
+                            {
+                                "symbol": symbol,
+                                "change": key[0],
+                                "before": evidence(old),
+                                "after": evidence(current),
+                            }
                             for symbol, current, old in group
                         ]
                     },
@@ -156,7 +184,7 @@ class SourcePoller:
 
         return await self.service.repo.get("ops.source_checkpoints", key) or {}
 
-    async def save(self, key, state):
+    async def save(self, source: SourceDefinition, key: str, state):
         from tank.time_precision import collection_clock
 
         def annotate(value):
@@ -180,15 +208,9 @@ class SourcePoller:
                 for child in value:
                     annotate(child)
 
-        source_match = re.search(r"(?:^|:)(S\d{2})(?=:|$)", key)
-        declared_source = source_match.group(1) if source_match else state.get("source_id")
-        if declared_source is None and len(self.service.sources) == 1:
-            declared_source = next(iter(self.service.sources))
-        if declared_source is None:
-            raise ValueError("Checkpoint requires its declared source identity")
-        if state.get("source_id") not in {None, declared_source}:
-            raise ValueError("Checkpoint source identity conflicts with its feed key")
-        state["source_id"] = declared_source
+        if "source_id" in state and state["source_id"] != source.source_id:
+            raise ValueError("Checkpoint owner conflicts with the actual source operation")
+        state["source_id"] = source.source_id
         state.update(collection_clock(self.stamp()).fields("updated_at"))
         annotate(state)
         for field in (
@@ -290,13 +312,13 @@ class SourcePoller:
                 "page:" + page_state["payload_sha256"] + "|" + str(page_state["fetched_at"]),
                 page_state["fetched_at"],
             )
-            await self.save(key, current)
+            await self.save(source, key, current)
 
-    async def mark_request_start(self, key):
+    async def mark_request_start(self, source: SourceDefinition, key: str) -> None:
         async with self.lock(self.state_locks, key):
             current = await self.state(key)
             current["last_attempt_at"] = self.stamp()
-            await self.save(key, current)
+            await self.save(source, key, current)
 
     async def _fetch_rows(self, source, feed, key, state):
         svc = self.service
@@ -304,7 +326,12 @@ class SourcePoller:
         kind = feed.kind
         if sid == "S29":
             accounts = [account.handle.lstrip("@") for account in svc.accounts.values()]
-            result = await svc.xsensor.posts(feed.url, accounts, state.get("account_cursors", {}))
+            result = await svc.xsensor.posts(
+                feed.url,
+                accounts,
+                state.get("account_cursors", {}),
+                on_start=lambda: self.mark_request_start(source, key),
+            )
             state.update(
                 fetched_at=self.stamp(),
                 account_cursors=result.cursors,
@@ -313,7 +340,11 @@ class SourcePoller:
             )
             return result.rows, state, kind
         _http_read = await svc.fetch(
-            feed.request_plan(source.limits), key, on_start=lambda: self.mark_request_start(key)
+            source,
+            feed.request_plan(source.limits),
+            key,
+            persist_http_evidence=True,
+            on_start=lambda: self.mark_request_start(source, key),
         )
         payload = _http_read.payload
         if isinstance(_http_read, NotModified):
@@ -341,7 +372,10 @@ class SourcePoller:
                         }
                     )
                     _http_read = await svc.fetch(
-                        next_feed.request_plan(source.limits), key + ":cursor:" + sha256(cursor)
+                        source,
+                        next_feed.request_plan(source.limits),
+                        key + ":cursor:" + sha256(cursor),
+                        persist_http_evidence=False,
                     )
                     page = _http_read.payload
                     if isinstance(_http_read, NotModified):
@@ -370,7 +404,7 @@ class SourcePoller:
                 instrument_changes, snapshot, previous, feed, pages, found_on, self.stamp()
             )
             if stored.get("sha256") != digest:
-                await self.save(snapshot_key, {"sha256": digest, "instruments": snapshot})
+                await self.save(source, snapshot_key, {"sha256": digest, "instruments": snapshot})
         elif kind in {"rss", "atom", "feed"}:
             rows = await asyncio.to_thread(parsers.feeds, payload, sid, feed)
             state["entry_errors"] = [
@@ -486,7 +520,11 @@ class SourcePoller:
             escalated = await svc.is_escalated(sid)
             if (self.now() - last_head_check).total_seconds() >= self.interval(source, feed, escalated):
                 _http_read = await svc.fetch(
-                    feed.request_plan(source.limits), key, on_start=lambda: self.mark_request_start(key)
+                    source,
+                    feed.request_plan(source.limits),
+                    key,
+                    persist_http_evidence=True,
+                    on_start=lambda: self.mark_request_start(source, key),
                 )
                 head = _http_read.payload
                 last_head_check = self.now()
@@ -501,10 +539,12 @@ class SourcePoller:
                         row.update(observed_at=head_state["fetched_at"], _payload=head)
                     await self.retain_page(key, source, feed, head_rows, head_state)
             _http_read = await svc.fetch(
+                source,
                 page_feed.request_plan(source.limits),
                 key
                 + ":history:"
                 + str(page_number if sid == "S09" else offset if sid == "S24" else sha256(page_feed.url)),
+                persist_http_evidence=False,
             )
             page = _http_read.payload
             if isinstance(_http_read, NotModified):
@@ -539,8 +579,10 @@ class SourcePoller:
                     + "}) { id title body state start end created scores scores_total space { id } } }"
                 )
                 _http_read = await svc.fetch(
+                    source,
                     feed.model_copy(update={"body": {"query": query}}).request_plan(source.limits),
                     key + ":pending:" + str(start),
+                    persist_http_evidence=False,
                 )
                 extra = _http_read.payload
                 if isinstance(_http_read, NotModified):
@@ -574,7 +616,7 @@ class SourcePoller:
             )
         return rows, state
 
-    async def acquire(self, source, index, *, due_only=False, escalated=False):
+    async def acquire(self, source, index, *, due_only=False, escalated=False) -> FeedPollOutcome:
         sid = source.source_id
         key, feed = f"{sid}:{index}", self.feed(source, index)
         async with self.lock(self.acquisition_locks, key):
@@ -585,12 +627,12 @@ class SourcePoller:
                 and last
                 and (self.now() - parse_time(last)).total_seconds() < self.interval(source, feed, escalated)
             ):
-                return {"items": 0, "errors": []}
+                return FeedPollOutcome(items=0, errors=[])
             attempted = self.stamp()
             async with self.lock(self.state_locks, key):
                 current = await self.state(key)
                 current["last_attempt_at"] = attempted
-                await self.save(key, current)
+                await self.save(source, key, current)
             try:
                 rows, acquired, kind = await self._fetch_rows(source, feed, key, state)
                 async with self.lock(self.state_locks, key):
@@ -656,7 +698,7 @@ class SourcePoller:
                         current["last_success_at"] = self.stamp()
                     elif not current.get("last_success_at") and current["status"] == "HEALTHY":
                         current["status"] = "PENDING"
-                    await self.save(key, current)
+                    await self.save(source, key, current)
             except Exception as exc:
                 async with self.lock(self.state_locks, key):
                     current = await self.state(key)
@@ -669,12 +711,12 @@ class SourcePoller:
                         error=str(exc),
                         last_failure_at=self.stamp(),
                     )
-                    await self.save(key, current)
-                return {"items": 0, "errors": [str(exc)]}
+                    await self.save(source, key, current)
+                return FeedPollOutcome(items=0, errors=[str(exc)])
             await self.report_entry_errors(
                 key, source, feed, acquired.get("entry_errors") or [], acquired.get("fetched_at") or attempted
             )
-            return {"items": 0, "errors": []}
+            return FeedPollOutcome(items=0, errors=[])
 
     async def report_entry_errors(self, key, source, feed, errors, seen_at):
         """Report this poll's entry errors and earlier polls whose report failed.
@@ -700,7 +742,7 @@ class SourcePoller:
                 async with self.lock(self.state_locks, key):
                     current = await self.state(key)
                     current["entry_error_reports"] = failed
-                    await self.save(key, current)
+                    await self.save(source, key, current)
         except Exception:
             log.exception("Entry error report backlog for %s could not be saved", key)
 
@@ -719,8 +761,10 @@ class SourcePoller:
         svc, sid = self.service, source.source_id
         try:
             return await svc.fetch(
+                source,
                 HttpFetchPlan(url=item["url"], source_limits=source.limits),
                 key + ":" + sha256(item["url"]),
+                persist_http_evidence=False,
             )
         except httpx.HTTPStatusError as exc:
             binding = item.get("publisher_cms_identity")
@@ -741,8 +785,10 @@ class SourcePoller:
             ):
                 raise
             _http_read = await svc.fetch(
+                source,
                 HttpFetchPlan(url=fallback, source_limits=source.limits),
                 key + ":" + sha256(fallback),
+                persist_http_evidence=False,
             )
             article = _http_read.payload
             if isinstance(_http_read, NotModified):
@@ -772,12 +818,14 @@ class SourcePoller:
         if self.needs_detail(sid, batch["kind"]):
             if sid == "S09":
                 _http_read = await svc.fetch(
+                    source,
                     HttpFetchPlan(
                         url="https://www.binance.com/bapi/composite/v1/public/cms/article/detail/query?articleCode="
                         + item["external_id"],
                         source_limits=source.limits,
                     ),
                     key + ":detail:" + item["external_id"],
+                    persist_http_evidence=False,
                 )
                 payload = _http_read.payload
                 if isinstance(_http_read, NotModified):
@@ -825,7 +873,7 @@ class SourcePoller:
 
         return "DUPLICATE" if stored["item_id"] != item["item_id"] else None
 
-    async def drain(self, source, index, *, force=False, escalated=False):
+    async def drain(self, source, index, *, force=False, escalated=False) -> FeedPollOutcome:
         sid = source.source_id
         key, feed = f"{sid}:{index}", self.feed(source, index)
         async with self.lock(self.processing_locks, key):
@@ -837,7 +885,7 @@ class SourcePoller:
                 + timedelta(seconds=self.interval(source, feed, escalated))
                 > self.now()
             ):
-                return {"items": 0, "errors": []}
+                return FeedPollOutcome(items=0, errors=[])
             if any(
                 "item_id" not in row for batch in state.get("pending_batches", []) for row in batch["rows"]
             ):
@@ -845,7 +893,7 @@ class SourcePoller:
                     current = await self.state(key)
                     for batch in current.get("pending_batches", []):
                         batch["rows"] = [row for row in batch["rows"] if "item_id" in row]
-                    await self.save(key, current)
+                    await self.save(source, key, current)
                 state = await self.state(key)
             batches = deepcopy(state.get("pending_batches", []))
             if not any(batch["rows"] for batch in batches) and state.get("article_errors"):
@@ -858,9 +906,9 @@ class SourcePoller:
                         or current.get("acquisition_error")
                     ):
                         current.update(status="HEALTHY", error=None)
-                    await self.save(key, current)
+                    await self.save(source, key, current)
             if not batches:
-                return {"items": 0, "errors": []}
+                return FeedPollOutcome(items=0, errors=[])
             errors, completed, count, duplicates = [], {}, 0, []
             article_errors = {}
             for batch in batches:
@@ -942,28 +990,36 @@ class SourcePoller:
                         error="X_HISTORY_GAP_LIMIT" if current.get("scan_status") == "GAP_LIMIT" else None,
                         last_success_at=self.stamp(),
                     )
-                await self.save(key, current)
-            return {"items": count, "errors": errors}
+                await self.save(source, key, current)
+            return FeedPollOutcome(items=count, errors=errors)
 
-    async def poll_once(self, source_id, *, due_only=False, escalated=False):
+    async def poll_once(
+        self,
+        source_id: str,
+        *,
+        due_only: bool = False,
+        escalated: bool = False,
+    ) -> SourcePollOutcome:
         source = self.service.sources[source_id]
+        if not source.feeds:
+            return UnconfiguredSource(source_id=source_id, items=0, errors=[])
 
-        async def one_feed(index):
+        async def one_feed(index: int) -> FeedPollOutcome:
             acquired = await self.acquire(source, index, due_only=due_only, escalated=escalated)
             processed = await self.drain(source, index, force=not due_only, escalated=escalated)
-            return {"items": processed["items"], "errors": acquired["errors"] + processed["errors"]}
+            return FeedPollOutcome(items=processed.items, errors=acquired.errors + processed.errors)
 
         processed = await asyncio.gather(*(one_feed(i) for i in range(len(source.feeds))))
-        errors = [e for result in processed for e in result["errors"]]
+        errors = [error for result in processed for error in result.errors]
         states = [await self.state(f"{source_id}:{i}") for i in range(len(source.feeds))]
-        return {
-            "source_id": source_id,
-            "items": sum(result["items"] for result in processed),
-            "status": "DEGRADED"
-            if errors or any(s.get("status") == "DEGRADED" for s in states)
+        return PolledSource(
+            source_id=source_id,
+            items=sum(result.items for result in processed),
+            status="DEGRADED"
+            if errors or any(state.get("status") == "DEGRADED" for state in states)
             else "HEALTHY",
-            "errors": errors,
-        }
+            errors=errors,
+        )
 
     async def loop(self, source, stop):
         sid = source.source_id

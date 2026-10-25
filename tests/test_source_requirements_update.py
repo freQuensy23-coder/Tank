@@ -77,12 +77,12 @@ async def test_dtcc_official_html_only_and_zero_links_stays_degraded(tmp_path: P
         )
         try:
             first = await service.poll_once("S08")
-            assert first["status"] == "HEALTHY" and first["items"] == 1
+            assert first.status == "HEALTHY" and first.items == 1
             mode[0] = "empty"
             for _ in range(2):
                 outcome = await service.poll_once("S08")
                 state = await repo.get("ops.source_checkpoints", "S08:0")
-                assert outcome["status"] == state["status"] == "DEGRADED"
+                assert outcome.status == state["status"] == "DEGRADED"
                 assert "No article links matched" in state["acquisition_error"]
             assert len(await repo.list("ingest.source_items")) == 1
             assert all(method == "GET" for method, _ in calls)
@@ -199,7 +199,7 @@ async def test_poll_and_loop_never_reconstruct_legacy_binance_body_or_metadata(
     monkeypatch.setattr(parsers, "binance_body", forbidden)
     try:
         for _ in range(2):
-            assert (await service.poll_once("S09"))["status"] == "HEALTHY"
+            assert (await service.poll_once("S09")).status == "UNCONFIGURED"
         stop = asyncio.Event()
         stop.set()
         await service.poller.loop(source_definition(source), stop)

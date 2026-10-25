@@ -32,6 +32,7 @@ from tank.contracts.sources import (
     SourceDefinition,
     SourceEscalationControlView,
     SourceFilingRegistryView,
+    SourcePollOutcome,
 )
 from tank.http_admission import ConfiguredHttpAdmission
 from tank.ops_progress import RepositorySourceProgress
@@ -155,6 +156,7 @@ class SourceService:
 
     async def _send_fetch(
         self,
+        source: SourceDefinition,
         feed: HttpFetchPlan,
         headers: Mapping[str, str],
         key: str,
@@ -170,26 +172,46 @@ class SourceService:
                 feed.url,
                 headers=headers,
                 body=feed.body if feed.method == "POST" else None,
-                source_id=key.split(":", 1)[0],
+                source_id=source.source_id,
             )
         return await self.transport.request(feed, headers, on_start)
 
-    async def _record_fetch(self, key: str, receipt: FetchEvidence) -> None:
+    async def _record_fetch(self, source: SourceDefinition, key: str, receipt: FetchEvidence) -> None:
         async with self.poller.lock(self.poller.state_locks, key):
             evidence = await self.poller.state(key)
             evidence.update(receipt.storage_record())
-            await self.poller.save(key, evidence)
+            await self.poller.save(source, key, evidence)
 
     async def fetch(
         self,
+        source: SourceDefinition,
         feed: HttpFetchPlan,
         key: str,
         *,
+        persist_http_evidence: bool,
         on_start: RequestStarted | None = None,
     ) -> FetchResult:
         checkpoint = await self.repo.get("ops.source_checkpoints", key)
+        if (
+            checkpoint is not None
+            and "source_id" in checkpoint
+            and checkpoint["source_id"] != source.source_id
+        ):
+            raise ValueError("Checkpoint owner conflicts with the actual source operation")
         cache = HttpCheckpointProjection.from_document(checkpoint)
-        return await SourceHttpReader(self._send_fetch, self._record_fetch, self.now).read(
+
+        async def send(
+            plan: HttpFetchPlan,
+            headers: Mapping[str, str],
+            target: str,
+            start: RequestStarted | None,
+        ) -> httpx.Response:
+            return await self._send_fetch(source, plan, headers, target, start)
+
+        async def record(target: str, receipt: FetchEvidence) -> None:
+            await self._record_fetch(source, target, receipt)
+
+        return await SourceHttpReader(send, record if persist_http_evidence else None, self.now).read(
             feed, key, cache, on_start
         )
 
@@ -219,7 +241,9 @@ class SourceService:
         stored = await self._ingestion().ingest(source, captured)
         return stored.storage_record()
 
-    async def poll_once(self, source_id, *, due_only=False, escalated=False):
+    async def poll_once(
+        self, source_id: str, *, due_only: bool = False, escalated: bool = False
+    ) -> SourcePollOutcome:
         return await self.poller.poll_once(source_id, due_only=due_only, escalated=escalated)
 
     @cached_property
@@ -338,7 +362,7 @@ class SourceService:
             raise ValueError("Source escalation identity conflicts with its requested source")
         return any(control.active_at(moment) for control in controls)
 
-    async def control_once(self, source_id):
+    async def control_once(self, source_id: str) -> SourcePollOutcome:
         """Re-read durable controls independently of the normal HTTP poll cadence."""
         return await self.poll_once(source_id, due_only=True, escalated=await self.is_escalated(source_id))
 
