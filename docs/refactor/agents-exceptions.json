@@ -659,7 +659,8 @@
         "test_explicit_active_pointer_never_uses_a_stale_last_payload",
         "test_corrupt_owner_cannot_post_or_change_terminal_source_state",
         "test_active_callback_terminal_failure_does_not_fail_the_opening_or_last_source",
-        "test_acknowledged_execution_can_rebind_only_to_its_actual_journal_owner"
+        "test_acknowledged_execution_can_rebind_only_to_its_actual_journal_owner",
+        "test_active_sourceless_callback_cannot_record_or_implicitly_read_the_opening_document"
       ]
     },
     {
@@ -1174,6 +1175,68 @@
         "test_reference_cache_retains_closed_records_and_real_unknown_absence",
         "test_registry_objects_are_shown_with_their_key_and_the_key_is_what_tools_take",
         "test_a_source_registered_only_in_the_database_is_accepted"
+      ]
+    },
+    {
+      "ledger_key": "context-fixed-lookup-tables",
+      "sites": [
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "AGENT_SKILLS",
+          "line": 47
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ID_LOOKUP",
+          "line": 48
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "RECORDS",
+          "line": 116
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "REGISTRY",
+          "line": 123
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "QUERIES",
+          "line": 129
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "ID_FIELDS",
+          "line": 140
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "CLAIM_REFERENCE_LABELS",
+          "line": 159
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "LEGACY_REFERENCES",
+          "line": 165
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "PREFIXES",
+          "line": 182
+        },
+        {
+          "path": "src/tank/agents/context.py",
+          "symbol": "CONTEXT_TRANSITION",
+          "line": 191
+        }
+      ],
+      "kind": "fixed lookup relations and authored transition text",
+      "reason": "These constant tables relate tool/record/registry keys to schemas, storage tables, labels, ID kinds, renamed wire fields or authored migration guidance. They are lookup namespaces, not mutable application records. PREFIXES is an ordered typed prefix/kind relation. No configuration/session/provider fact defaults to one of these values.",
+      "validation": [
+        "test_every_id_field_of_the_model_contracts_is_validated",
+        "test_old_description_references_are_refused_and_name_the_id_field",
+        "test_scout_review_binds_its_proposal_and_names_the_duplicate_by_id"
       ]
     }
   ]

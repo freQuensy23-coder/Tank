@@ -404,7 +404,7 @@
     },
     {
       "path": "src/tank/agents/context_binding.py",
-      "lines": 83,
+      "lines": 80,
       "functions": [
         {
           "symbol": "ContextBinding.from_session",
@@ -417,14 +417,6 @@
         {
           "symbol": "ContextBinding.observation_source",
           "line": 75,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "ContextBinding.incoming_source",
-          "line": 82,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,

@@ -801,11 +801,11 @@ class ModelContext:
                         + self.lookup("item")
                     )
             elif tool == "record_event":
-                result["item_id"] = self.binding.incoming_source()
+                result["item_id"] = self.binding.observation_source()
                 if not result["item_id"]:
                     raise ValueError("record_event records the incoming source; this session has none")
             else:
-                result.setdefault("item_id", self.binding.incoming_source())
+                result.setdefault("item_id", self.binding.observation_source())
                 if not result["item_id"]:
                     raise ValueError(
                         "$.item_id: there is no incoming source; pass the item_id to read. "
