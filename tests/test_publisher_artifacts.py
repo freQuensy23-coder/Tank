@@ -138,3 +138,22 @@ def test_explicit_null_build_tag_is_refused_before_artifact_effects(
     with pytest.raises(ValueError, match="must not activate a build tag"):
         package_release(request)
     assert not request.destination.exists()
+
+
+def test_current_actor_package_carries_standalone_contract_and_hashed_runtime_closure(
+    tmp_path: Path,
+) -> None:
+    request = package_request(ROOT, tmp_path / "current-release")
+    release = package_release(request)
+    assert isinstance(release, SourceRelease)
+    module = request.destination / "worker/actor_contracts.py"
+    assert module.read_bytes() == subprocess.check_output(
+        ["git", "show", "HEAD:apify/x-reader/actor_contracts.py"], cwd=ROOT
+    )
+    requirements = (request.destination / "worker/requirements.txt").read_bytes()
+    assert b"--hash=sha256:" in requirements
+    assert requirements == (ROOT / "apify/x-reader/requirements.txt").read_bytes()
+    assert load_release(request.destination, selected_sha=git(ROOT, "rev-parse", "HEAD")) == release
+    module.write_bytes(module.read_bytes() + b"unexpected = True\n")
+    with pytest.raises(ArtifactError, match="source digest mismatch"):
+        load_release(request.destination, selected_sha=release.release_sha)
