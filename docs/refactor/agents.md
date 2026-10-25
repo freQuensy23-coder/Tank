@@ -604,3 +604,99 @@ Qualified proof: 398 owned units pass in 20.39 seconds; all 80 actual native/Mem
 ### Admission combined with the qualified runtime resource lifetime
 
 The ready admission branch normally merges exact parent 679c694c at fa605387. The sole source conflict was the Runtime import block; budget backend/scope/binding types and the new scout/clock codec imports are both retained. Required per-runtime backend selection, bind-before-intake and exact lease release coexist with capacity preparation, typed admission and owned clock updates. All seven independent strict targets remain green. The affected combined runtime/admission/scout cohort passes 78 units in 6.62 seconds and 12 actual Memory/PostgreSQL/native cases in 36.07 seconds, zero skips; no source behavior was dropped to resolve the merge.
+
+## Native executable-input acknowledgment increment
+
+agents.native_inputs models the Tank-owned user-message and custom-tool-result
+request shapes, a one-event batch, the pinned sent-event response variants, and
+named accepted/unreported/empty observations. SessionService.post_input is the
+shared adapter for initial durable messages, tool-result continuations and host
+retries. A reported event must have its actual tag and identity; tool results must
+name the posted call. Malformed, explicit-null or multiple acknowledgments fail
+before sent_at, returned_at, retry ownership or native-input lineage acceptance.
+
+The pinned provider schema permits absent data, an empty response list, an empty
+user content list and nullable/omitted processing metadata. These actual protocol
+cases remain explicit; no domain estimate or accepted identity is manufactured.
+Synthetic HTTP endpoints now echo validated posted inputs instead of returning
+id-only objects that the actual sent-event schema does not produce. Immutable
+retained payloads were not edited. Real initial/retry write-boundary regressions
+also prove malformed provider values do not appear in rendered validation errors.
+
+Independent strict checking passes native_inputs.py, test_native_input_contracts.py
+and native_input_fixtures.py. All 409 owned unit cases pass. The actual owner
+integration scan passed 77 cases and identified one remaining Scout synthetic
+id-only endpoint; after that fixture was corrected, its actual PostgreSQL case
+passed independently. Default mypy accepts sessions.py; whole SessionService and
+the legacy consumer test modules are not independent strict-complete. Discovery,
+creation, native history and complete durable session/journal typing remain open.
+
+## Native discovery, creation and input acknowledgment qualification
+
+SessionService.resolve now consumes NativeSessionResolution. The required
+NativeSessionEndpoint port, NativeSessionDiscovery coordinator and closed
+deployment/create/page/observation models separate HTTP wire handling from service
+facts. Native identity config validates the consumed deployment fields; admission
+capacity remains a Runtime/admission responsibility. Cached historical sessions
+retain genuinely missing replay metadata without reconstruction. Live lookup skips
+known replay sessions, and explicit recorded bindings must match their run,
+evidence digest, source session and cutoff before reuse. Opening-source lookup
+cannot borrow an undeclared replay lineage for live input; an explicit cutoff
+stays bound even without an evidence digest. These are caller identity labels,
+not a grant of recording or network authority.
+
+Discovery validates consumed page and native prompt facts, scans actual cursors,
+and refuses ambiguous identities/cursors. A recovered or newly created resource
+must confirm its requested agent/environment and every managed identity/replay
+metadata value before local session storage or initial input. Provider metadata
+extensions remain honest observations. Actual prompt JSON stays inside the adapter
+for canonical fingerprinting, preserving extension values and numeric types;
+services receive AgentProvenance rather than a remote dictionary. A typed identity
+marker preserves the prior live/replay canonical wire hashes exactly.
+
+Configured effort is recorded as configured_effort. effort comes only from the
+optional native model.effort observation, with explicit absence reason/basis.
+Malformed reported effort or extension shapes refuse; configured intent cannot
+become observed confirmation. Real write-boundary tests prove wrong agent,
+environment, identity and replay readbacks leave local sessions/tool calls absent
+and the source record unchanged. Omitted input acknowledgments remain explicit,
+while malformed reports cannot commit acceptance or retry lineage.
+
+Final owner proof: 472 unit cases passed in 26.84 seconds, p90 0.494 seconds,
+maximum 4.898 seconds; all 78 actual integrations passed in 38.91 seconds, with
+zero skips. Six new native model/test/helper targets pass independent strict mypy
+with both src and tests on MYPYPATH and the official Pydantic plugin. Ruff,
+formatting and the source-comment policy pass. Configured whole-source mypy has
+one existing analysis-owned truth cache annotation error; native/session consumers
+default-check clean. The exact logs are agents-native-ready2-{unit,integration}
+and metrics JSON in the owned worktree.
+
+This is a complete bounded native client increment, not a whole SessionService
+completion. Private session/journal state still uses repository JSON, and native
+GET/readback, history/execution lifecycle, usage, tool orchestration and stream
+state still need their full typed domain migration. The refreshed inventory
+records every remaining unannotated owned function; maps/defaults there remain
+implementation work rather than approved exceptions. The 42 assigned OpenMA
+vendor programs remain a separate implementation backlog.
+
+## Fresh creation-role selector companion
+
+The qualified native checkpoint remains 017e8402. Its separate companion adds
+NativeSessionResolution.fresh_context_matches_role: fresh scouts require their
+proposal and cannot select analyst event/item context; fresh analysts require
+their event/item context and cannot select a scout proposal. These are the actual
+ScoutMessage/SourceMessage producer shapes. Mixed fresh selectors otherwise
+collide with the resolver's identity priority or invert the proposal-based context.
+
+An explicit session_id is a continuation selector. It does not require invented
+fresh-role facts, and the existing stored analyst/scout context remains unchanged
+for either creation-role hint. An explicit missing ID still refuses before native
+creation. Controls cover all valid fresh shapes, all absent/mixed role contexts,
+both actual stored roles, opaque numeric/boolean field preservation, and missing
+continuation IDs.
+
+All 496 owner unit cases pass in 26.60 seconds (p90 0.526,
+maximum 4.870); all 78 actual integrations pass in 38.68
+seconds, zero skips. Native source/helper/contracts retain their independent
+strict gate, and Ruff/format/source-comment checks pass. This adds no default,
+wire dictionary, endpoint signature or broader session-lifecycle policy.

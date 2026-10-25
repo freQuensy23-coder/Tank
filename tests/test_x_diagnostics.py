@@ -1,16 +1,30 @@
 import base64
 import json
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from email import policy
 from email.parser import BytesParser
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
 import pytest
+from pydantic_settings import SettingsConfigDict
+from source_support import (
+    fixture_http_admission,
+    fixture_request_budgets,
+    fixture_versions,
+    source_definition,
+)
 from test_sources import settings as source_settings
 from test_xsensor import URL, run
 
+from tank import runtime_composition
+from tank.contracts.sources import SourceAccount
 from tank.delivery import DeliveryError, DeliveryService
 from tank.ops_entry_errors import report_entry_errors
+from tank.runtime import Runtime
+from tank.settings import Settings, resolve_versions
 from tank.sources import SourceService
 from tank.sources.x_diagnostics import documents, sanitize
 from tank.sources.xsensor import XSensor
@@ -62,14 +76,62 @@ def failed_run(evidence):
     )
 
 
-def telegram_settings():
-    return SimpleNamespace(
+class DiagnosticFixtureSettings(Settings):
+    model_config = SettingsConfigDict(env_file=None)
+
+
+def telegram_settings(tmp_path: Path) -> Settings:
+    return DiagnosticFixtureSettings(
+        data_dir=tmp_path / "data",
+        backup_dir=tmp_path / "backup",
         telegram_token="test",
         telegram_ops_chat="ops",
         telegram_alerts_chat="alerts",
         ops_progress_enabled=True,
         apify_api_token="apify-secret",
+        openma_api_key="synthetic-openma-key",
+        codex_gateway_key="synthetic-gateway-key",
     )
+
+
+def diagnostic_source():
+    return source_definition({"source_id": "S29", "name": "X", "feeds": [{"kind": "x", "url": URL}]})
+
+
+def telegram_transport(
+    handler: Callable[[httpx.Request], httpx.Response],
+) -> httpx.MockTransport:
+    def guarded(request: httpx.Request) -> httpx.Response:
+        if (
+            request.method != "POST"
+            or request.url.scheme != "https"
+            or request.url.host != "api.telegram.org"
+            or request.url.port not in (None, 443)
+            or request.url.userinfo
+            or request.url.path not in {"/bottest/sendMessage", "/bottest/sendDocument"}
+        ):
+            raise AssertionError("Diagnostic fixture refuses undeclared HTTP")
+        return handler(request)
+
+    return httpx.MockTransport(guarded)
+
+
+@asynccontextmanager
+async def delivery_runtime(
+    repo: MemoryRepository, settings: Settings, http: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[Runtime]:
+
+    def isolate_global_logging(captured: Settings) -> None:
+        return None
+
+    monkeypatch.setattr(runtime_composition, "configure_logging", isolate_global_logging)
+    runtime = runtime_composition.build_runtime(repo, resolve_versions(settings))
+    await runtime.delivery.close()
+    runtime.delivery = DeliveryService(repo, runtime.settings, http=http)
+    try:
+        yield runtime
+    finally:
+        await runtime.close()
 
 
 def multipart(request):
@@ -85,12 +147,12 @@ def multipart(request):
     }
 
 
-async def notice_for(repo, evidence):
+async def notice_for(repo, evidence, tmp_path: Path):
     notice_id = await report_entry_errors(
         repo,
-        telegram_settings(),
-        {"source_id": "S29", "name": "X"},
-        {"url": URL},
+        telegram_settings(tmp_path),
+        diagnostic_source(),
+        diagnostic_source().feeds[0],
         [{"account": "alice", "reason": "PUBLIC_PROFILE_HTTP_503", "diagnostics": evidence}],
         "2026-10-24T12:00:00Z",
     )
@@ -130,12 +192,16 @@ async def test_all_failed_accounts_reach_checkpoint_ops_and_preserve_cursor(tmp_
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda request: httpx.Response(201, json=failed_run(evidence)))
     ) as http:
-        service = SourceService(repo, config, http=http)
-        service.accounts = {"alice": {"handle": "alice", "role": "OTHER", "entity_id": "alice"}}
+        service = SourceService(
+            repo, config, http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
+        )
+        service.accounts = {
+            "alice": SourceAccount(handle="alice", role="OTHER", entity_id="alice", token_id=None)
+        }
         await repo.put("ops.source_checkpoints", "S29:0", {"account_cursors": {"alice": "90"}})
         result = await service.poll_once("S29")
     state = await repo.get("ops.source_checkpoints", "S29:0")
-    assert result["status"] == "DEGRADED" and result["items"] == 0
+    assert result.status == "DEGRADED" and result.items == 0
     assert state["account_cursors"] == {"alice": "90"}
     assert (
         state["entry_errors"][0]["diagnostics"]["attempts"][2]["response"]["body"]
@@ -148,18 +214,21 @@ async def test_all_failed_accounts_reach_checkpoint_ops_and_preserve_cursor(tmp_
     assert job["payload"] == {"notice_id": notice["notice_id"], "channel": "telegram:ops"}
 
 
-async def test_same_body_deduplicates_despite_new_attempt_time_and_request_id_but_changed_body_is_sent():
+async def test_same_body_deduplicates_despite_new_attempt_time_and_request_id_but_changed_body_is_sent(
+    tmp_path: Path,
+):
     repo = MemoryRepository()
-    first = await notice_for(repo, diagnostics("first"))
-    settings = telegram_settings()
-    source, feed = {"source_id": "S29"}, {"url": URL}
+    first = await notice_for(repo, diagnostics("first"), tmp_path)
+    settings = telegram_settings(tmp_path)
+    source = diagnostic_source()
+    feed = source.feeds[0]
     error = {
         "account": "alice",
         "reason": "PUBLIC_PROFILE_HTTP_503",
         "diagnostics": diagnostics("first", at="2026-10-24T12:05:00Z", request_id="two"),
     }
     assert await report_entry_errors(repo, settings, source, feed, [error], "2026-10-24T12:05:00Z") is None
-    second = await notice_for(repo, diagnostics("second"))
+    second = await notice_for(repo, diagnostics("second"), tmp_path)
     assert second["notice_id"] != first["notice_id"]
     assert len(await repo.list("out.ops_notices", filters={"kind": "ENTRY_ERRORS"})) == 2
 
@@ -172,21 +241,23 @@ async def test_same_body_deduplicates_despite_new_attempt_time_and_request_id_bu
         (b"\x00\xff\x80binary", "base64"),
     ],
 )
-async def test_actual_document_upload_preserves_every_response_byte_and_receipt(raw, encoding):
+async def test_actual_document_upload_preserves_every_response_byte_and_receipt(
+    raw, encoding, tmp_path: Path
+):
     repo = MemoryRepository()
     body = base64.b64encode(raw).decode() if encoding == "base64" else raw.decode()
-    notice = await notice_for(repo, diagnostics(body, encoding=encoding))
+    notice = await notice_for(repo, diagnostics(body, encoding=encoding), tmp_path)
     sent = []
 
     def send(request):
         sent.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent), "date": 1}})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
-        delivery = DeliveryService(repo, telegram_settings(), http=http)
+    async with httpx.AsyncClient(transport=telegram_transport(send)) as http:
+        delivery = DeliveryService(repo, telegram_settings(tmp_path), http=http)
         payload = {"notice_id": notice["notice_id"], "channel": "telegram:ops"}
         await delivery.deliver(payload)
-        await DeliveryService(repo, telegram_settings(), http=http).deliver(payload)
+        await DeliveryService(repo, telegram_settings(tmp_path), http=http).deliver(payload)
     assert len(sent) == 5 and sent[0].url.path.endswith("sendMessage")
     uploads = [multipart(request) for request in sent[1:]]
     assert all(
@@ -202,59 +273,61 @@ async def test_actual_document_upload_preserves_every_response_byte_and_receipt(
     assert len(receipts) == 4 and [row["document_bytes"] for row in receipts[:3]] == [len(raw)] * 3
 
 
-async def test_empty_http_response_body_is_delivered_explicitly_without_invalid_empty_upload():
+async def test_empty_http_response_body_is_delivered_explicitly_without_invalid_empty_upload(tmp_path: Path):
     repo = MemoryRepository()
-    notice = await notice_for(repo, diagnostics(""))
+    notice = await notice_for(repo, diagnostics(""), tmp_path)
     captured = []
 
     def send(request):
         captured.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": len(captured)}})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
-        await DeliveryService(repo, telegram_settings(), http=http).deliver(
-            {"notice_id": notice["notice_id"]}
+    async with httpx.AsyncClient(transport=telegram_transport(send)) as http:
+        await DeliveryService(repo, telegram_settings(tmp_path), http=http).deliver(
+            {"notice_id": notice["notice_id"], "channel": "telegram:ops"}
         )
     assert len(captured) == 2
     metadata = json.loads(multipart(captured[1])["document"][1])
     assert all(
         attempt["response"]["body"] == ""
         and attempt["response"]["bodyBytes"] == 0
-        and attempt["response"]["bodyDocument"] is None
+        and (attempt["response"]["bodyDocument"] is None)
         for attempt in metadata["attempts"]
     )
 
 
-async def test_oversized_response_uploads_bounded_prefix_and_explicit_truncation_metadata():
+async def test_oversized_response_uploads_bounded_prefix_and_explicit_truncation_metadata(tmp_path: Path):
     repo = MemoryRepository()
-    raw = b"a" * 2_000_050
+    raw = b"a" * 2000050
     evidence = diagnostics(raw.decode())
     evidence["attempts"] = evidence["attempts"][:1]
-    evidence["attempts"][0]["response"].update(bodyTruncated=True, omittedWireBytes=50, wireBytes=2_000_000)
-    notice = await notice_for(repo, evidence)
+    evidence["attempts"][0]["response"].update(bodyTruncated=True, omittedWireBytes=50, wireBytes=2000000)
+    notice = await notice_for(repo, evidence, tmp_path)
     captured = []
 
     def send(request):
         captured.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": len(captured)}})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
-        await DeliveryService(repo, telegram_settings(), http=http).deliver(
-            {"notice_id": notice["notice_id"]}
+    async with httpx.AsyncClient(transport=telegram_transport(send)) as http:
+        await DeliveryService(repo, telegram_settings(tmp_path), http=http).deliver(
+            {"notice_id": notice["notice_id"], "channel": "telegram:ops"}
         )
     assert len(captured) == 3
-    assert multipart(captured[1])["document"][1] == raw[:2_000_000]
+    assert multipart(captured[1])["document"][1] == raw[:2000000]
     metadata = json.loads(multipart(captured[2])["document"][1])
     response = metadata["attempts"][0]["response"]
     assert response["bodyTruncated"] and response["omittedWireBytes"] == 50
-    assert response["bodyBytes"] == 2_000_000
-    assert response["bodySha256"] == sha256(raw[:2_000_000])
+    assert response["bodyBytes"] == 2000000
+    assert response["bodySha256"] == sha256(raw[:2000000])
 
 
-async def test_partial_document_delivery_retry_does_not_duplicate_successful_message_or_documents():
+async def test_partial_document_delivery_retry_does_not_duplicate_successful_message_or_documents(
+    tmp_path: Path,
+):
     repo = MemoryRepository()
-    notice = await notice_for(repo, diagnostics("complete body"))
-    sent, successful = [], []
+    notice = await notice_for(repo, diagnostics("complete body"), tmp_path)
+    sent, successful = ([], [])
     fail = True
 
     def send(request):
@@ -267,12 +340,12 @@ async def test_partial_document_delivery_retry_does_not_duplicate_successful_mes
         return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent)}})
 
     payload = {"notice_id": notice["notice_id"], "channel": "telegram:ops"}
-    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
-        delivery = DeliveryService(repo, telegram_settings(), http=http)
+    async with httpx.AsyncClient(transport=telegram_transport(send)) as http:
+        delivery = DeliveryService(repo, telegram_settings(tmp_path), http=http)
         with pytest.raises(DeliveryError) as failure:
             await delivery.deliver(payload)
         assert failure.value.retry_after == pytest.approx(7, abs=0.1)
-        await DeliveryService(repo, telegram_settings(), http=http).deliver(payload)
+        await DeliveryService(repo, telegram_settings(tmp_path), http=http).deliver(payload)
         await delivery.deliver(payload)
     assert len(sent) == 6 and len(successful) == 5
     assert sum(request.url.path.endswith("sendMessage") for request in sent) == 1
@@ -295,7 +368,9 @@ async def test_diagnostics_do_not_allow_failed_account_posts_or_cursors_to_advan
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda request: httpx.Response(201, json=evidence))
     ) as http:
-        scan = await XSensor(http, "apify-secret").posts(URL, ["alice"], {"alice": "90"})
+        scan = await XSensor(http, "apify-secret", admission=fixture_http_admission()).posts(
+            URL, ["alice"], {"alice": "90"}
+        )
     assert scan.cursors == {"alice": "90"}
     assert scan.rows == []
 
@@ -325,15 +400,17 @@ def test_sanitization_preserves_adjacent_nonsecret_bytes(encoding, raw, expected
 
 
 @pytest.mark.parametrize("encoding", ["utf-8", "base64"])
-async def test_changed_json_detail_survives_redaction_and_creates_distinct_ops_notice(encoding):
+async def test_changed_json_detail_survives_redaction_and_creates_distinct_ops_notice(
+    encoding, tmp_path: Path
+):
     repo = MemoryRepository()
     notices = []
     for detail in ("A", "B"):
-        raw = (f'{{"cookie":"session","detail":"upstream {detail}"}}').encode()
+        raw = f'{{"cookie":"session","detail":"upstream {detail}"}}'.encode()
         if encoding == "base64":
             raw = b"\x00\xff" + raw
         body = base64.b64encode(raw).decode() if encoding == "base64" else raw.decode()
-        notices.append(await notice_for(repo, diagnostics(body, encoding=encoding)))
+        notices.append(await notice_for(repo, diagnostics(body, encoding=encoding), tmp_path))
     assert notices[0]["notice_id"] != notices[1]["notice_id"]
     for index, detail in enumerate((b"A", b"B")):
         attachments = documents(notices[index]["entry_errors"])
@@ -343,21 +420,22 @@ async def test_changed_json_detail_survives_redaction_and_creates_distinct_ops_n
 
 
 @pytest.mark.parametrize("exhaust_first", [False, True])
-async def test_job_runner_preserves_independent_document_retry_budgets(monkeypatch, exhaust_first):
+async def test_job_runner_preserves_independent_document_retry_budgets(
+    monkeypatch, exhaust_first, tmp_path: Path
+):
     import asyncio
     from datetime import timedelta
 
     import tank.delivery
     import tank.runtime
     import tank.storage
-    from tank.runtime import Runtime
     from tank.util import parse_time, utcnow
 
     now = utcnow()
     for module in (tank.delivery, tank.runtime, tank.storage):
         monkeypatch.setattr(module, "utcnow", lambda: now)
     repo = MemoryRepository()
-    notice = await notice_for(repo, diagnostics("full body"))
+    notice = await notice_for(repo, diagnostics("full body"), tmp_path)
     [job] = await repo.list("ops.jobs", filters={"type": "DELIVER"})
     counts = {}
     sent = []
@@ -377,17 +455,16 @@ async def test_job_runner_preserves_independent_document_retry_budgets(monkeypat
             sent.append(filename)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": message_count + len(sent)}})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
-        runtime = object.__new__(Runtime)
-        runtime.repo = repo
-        runtime.settings = telegram_settings()
+    async with (
+        httpx.AsyncClient(transport=telegram_transport(send)) as http,
+        delivery_runtime(repo, telegram_settings(tmp_path), http, monkeypatch) as runtime,
+    ):
         for _ in range(30):
             current = await repo.get("ops.jobs", job["job_id"])
             if current["status"] in {"DONE", "FAILED"}:
                 break
             now = max(now, parse_time(current["run_after"])) + timedelta(microseconds=1)
             stop = asyncio.Event()
-            runtime.delivery = DeliveryService(repo, runtime.settings, http=http)
 
             async def deliver(payload):
                 try:
@@ -409,14 +486,15 @@ async def test_job_runner_preserves_independent_document_retry_budgets(monkeypat
     assert len(failures) == int(exhaust_first)
 
 
-async def test_job_runner_defers_large_successful_document_batches_without_spending_attempts(monkeypatch):
+async def test_job_runner_defers_large_successful_document_batches_without_spending_attempts(
+    monkeypatch, tmp_path: Path
+):
     import asyncio
     from datetime import timedelta
 
     import tank.delivery
     import tank.runtime
     import tank.storage
-    from tank.runtime import Runtime
     from tank.util import parse_time, utcnow
 
     now = utcnow()
@@ -427,15 +505,11 @@ async def test_job_runner_defers_large_successful_document_batches_without_spend
     repo = MemoryRepository()
     notice_id = await report_entry_errors(
         repo,
-        telegram_settings(),
-        {"source_id": "S29", "name": "X"},
-        {"url": URL},
+        telegram_settings(tmp_path),
+        diagnostic_source(),
+        diagnostic_source().feeds[0],
         [
-            {
-                "account": f"account{index}",
-                "reason": "PUBLIC_PROFILE_HTTP_503",
-                "diagnostics": diagnostics(),
-            }
+            {"account": f"account{index}", "reason": "PUBLIC_PROFILE_HTTP_503", "diagnostics": diagnostics()}
             for index in range(86)
         ],
         "2026-10-24T12:00:00Z",
@@ -456,17 +530,16 @@ async def test_job_runner_defers_large_successful_document_batches_without_spend
             elapsed += 3
         return httpx.Response(200, json={"ok": True, "result": {"message_id": messages + len(sent)}})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
-        runtime = object.__new__(Runtime)
-        runtime.repo = repo
-        runtime.settings = telegram_settings()
+    async with (
+        httpx.AsyncClient(transport=telegram_transport(send)) as http,
+        delivery_runtime(repo, telegram_settings(tmp_path), http, monkeypatch) as runtime,
+    ):
         for _ in range(50):
             current = await repo.get("ops.jobs", job["job_id"])
             if current["status"] in {"DONE", "FAILED"}:
                 break
             now = max(now, parse_time(current["run_after"])) + timedelta(microseconds=1)
             stop = asyncio.Event()
-            runtime.delivery = DeliveryService(repo, runtime.settings, http=http)
 
             async def deliver(payload):
                 try:
@@ -480,7 +553,7 @@ async def test_job_runner_defers_large_successful_document_batches_without_spend
             batches.append(elapsed - started)
     current = await repo.get("ops.jobs", job["job_id"])
     assert current["status"] == "DONE" and current["attempts"] == 1
-    assert len(expected) == 344 and sent == expected and messages == 1
+    assert len(expected) == 344 and sent == expected and (messages == 1)
     assert len(batches) > 5 and all(0 < duration <= 30 for duration in batches)
     receipts = await repo.list("out.deliveries", filters={"method": "sendDocument", "status": "SENT"})
     assert len(receipts) == 344 and all(row["attempt"] == 1 for row in receipts)

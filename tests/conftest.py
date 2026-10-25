@@ -47,6 +47,8 @@ def scrub_inherited_environment(environment: MutableMapping[str, str]) -> None:
                     "OPENAI_",
                     "ANTHROPIC_",
                     "CODEX_",
+                    "APIFY_",
+                    "ACTOR_",
                     "AWS_",
                     "AZURE_",
                     "GOOGLE_",

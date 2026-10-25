@@ -403,3 +403,40 @@ Application storage retention currently deletes market rows/partitions, terminal
 Independent strict storage.py/models.py checks with actual imports and Ruff pass;30 existing storage units pass2.35s. Actual Memory/PostgreSQL probes pass first/next/idempotent writes, equal-clock ordering, stale/prior/key/bool/float/overflow refusal, mutable durable head, atomic immutable-financial-row/head rollback, canonical opaque-key parity, scoped FK refusal, direct SQL deletion refusal and physical/document revision binding. All97 owned storage/ClickHouse integrations pass18.83s, zero skips, using -n auto and the shared heavy lock. Source blobs and counts are recorded in `.verification/decision-head-qualification-a554.json`; successful log is `.verification/decision-head-schema-and-storage-a554-v2.log`. The initial standalone probe stopped before PG migration because it had not resolved the literal {worker} DSN; that failure log is preserved separately. The serial probe now uses quality's existing worker-route resolver; the full integration family still uses automatic xdist workers without caps.
 
 This is a mechanical schema prerequisite, not approval for every later writer. Analysis owns the maintained typed adapter/application tests for exact expected head tuple, full stored-document digest, reversed older/newer input commits, stale ended lineage, live-call eligibility, watch-mutation ordering and explicit legacy ambiguity. Those remain required before consumer activation. No default financial-cutoff ordering, legacy backfill, inferred winner or production migration/deployment is part of this tranche.
+## Strict fixed scalar boundary prerequisite (separate clean a554 branch)
+
+The pinned Python 3.13.13 / Pydantic 2.14.1 runtime admits integer `1`/`0` for `Literal[True]`/`Literal[False]` despite `strict=True`. The reciprocal probe admits `False`/`True` and `0.0`/`1.0` for `Literal[0]`/`Literal[1]`, returning integers. Thus fixed assertion/count fields were less strict than ordinary bool/int fields. Exact probe results are preserved in `.verification/strict-literal-runtime-a554.json`.
+
+`contracts.scalars.TrueFlag` and `FalseFlag` require an actual boolean before the existing Literal constant check. `ZeroInt` and `OneInt` require an integer, excluding bool, before checking the constant. `require_boolean` and `require_integer` are reusable `BeforeValidator` functions for other fixed contracts. Their `JsonValue` input describes the raw JSON validation boundary, including malformed values to reject; constructed domain fields remain concrete literal booleans or integers. No domain retains a JSON payload, no coercion/cast/ignore or global model workaround was added, and no defaults were added. Valid booleans, integers and integer Enum protocol values preserve their JSON payloads.
+
+The distinction is contract-specific. `require_number` admits finite JSON int/float values while excluding bool, text and nonfinite values. A fixed numeric coefficient can retain valid `1.0` as well as `1`, while an integer version/count refuses `1.0`. Other integer literals can compose `Annotated[Literal[2], BeforeValidator(require_integer)]`, likewise for an actual integer HTTP `404` contract. General numeric constants, static overloads and historical raw evidence are not rewritten wholesale.
+
+Owned active adoption:
+
+- `UnavailableHistoryDiagnostics.exact` uses `FalseFlag`; `sample_count` uses `ZeroInt`. An empty history retains actual false/zero and unknown resolution, rather than admitting numeric precision flags or boolean counters.
+- `EmptyFlowSnapshot.zero_trade_minute` uses `TrueFlag`. A proven empty minute still serializes true. The real FlowAccumulator/EmptyFlowBar regression refuses numeric `1`/`1.0` witnesses.
+- `Collection.encode` refuses copied models containing integer completeness or boolean count substitutions before a store call. No valid market calculation or captured payload changed. Malformed domain assertions are refused without rewriting retained raw evidence.
+
+### Owner adoption inventory
+
+The AST inventory `.verification/strict-literal-inventory-all-scalars-a554.json` records exact paths, symbols and lines on the a554 candidate and separately labelled private graph WIP. It distinguishes class fields from ordinary function arguments. Remaining sites require their owner's protocol/default audit and real behavior tests:
+
+| Owner | File and symbol | Contract |
+| --- | --- | --- |
+| Agents | `src/tank/agents/pipeline_contracts.py`: `JevScoreRecord.web_searches` | Integer zero usage count. |
+| Agents | `src/tank/agents/tool_contracts.py`: `FailedToolResponse.ok`, `NativeToolResult.is_error` | Actual false/true assertions; optional error absence stays distinct. |
+| Agents | `src/tank/runtime_contracts.py`: `RevisedReactionJob.automatic_revision` | Actual true revision assertion. |
+| Analysis | `src/tank/analysis/calibration_contracts.py`: `BestMeasuredRouting.automatic_apply` | False apply assertion. |
+| Analysis | `src/tank/fixture_reference_code.py`: `CapturedProjectionCodeInventory.archived_code_executed` | False execution assertion. |
+| Analysis | `src/tank/market/cache_contracts.py`: `SavedKlineDayCounts.version` | Integer schema version. |
+| Analysis | `src/tank/market/capture_contracts.py`: `CaptureWaitOutcome.incomplete_windows_excluded` | True exclusion assertion; its existing default needs an authored rationale. |
+| Ingestion | `src/tank/contracts/progress.py`: `PublicationReceipt.contract_version`, `ProgressNotice.format_version` | Integer versions 1 and 2. |
+| Ingestion | `src/tank/contracts/sources.py`: `UnconfiguredSource.items` | Integer zero item count. |
+| Ingestion | `src/tank/contracts/source_items.py`: `PublisherCMSRecovery.original_http_status` | Actual integer HTTP 404 status; preserve raw historical evidence. |
+| Quality | `scripts/ci/check_go_results.py`: `TestSummary.skipped` | Integer zero-skip count; preserve real aggregation semantics and malformed-input refusal. |
+
+Foundation's held graph also needs strict true assertions at `ConditionFlowAggregate.complete`, `ConditionSpotVenue.complete`, `ObservedConditionCohort.share_majority`, `ObservedConditionCohortComparison.share_majority` and `ConditionLiquidityVenue.integrity_ok`. Composite/venue direction codes require an actual discrete integer contract. Fixed seconds can legitimately accept integral floats. `UnavailableConditionComposite.sign` needs a separate absence audit, rather than blind `ZeroInt` adoption of its old numeric marker. These graph sites remain held and unactivated.
+
+`StatisticalPopulation.scaled.sign`, FlowAccumulator.add's `emit_record` overloads and Pipeline.priority's Literal return specialization are ordinary typed mathematical/control-flow contracts, not Pydantic input fields. Aliases are not automatically applied there. The sign helper already rejects bool; owners must preserve valid numeric semantics rather than infer requirements from annotation spelling alone.
+
+Independent strict source checks pass for `scalars.py`, `statistics_contracts.py` and `trade_contracts.py`; Pydantic-plugin strict tests pass with real `src:tests` imports. Ruff and 67 focused scalar/statistics/flow units pass in 2.29 seconds with `-n auto`, zero skips (`.verification/strict-literal-scalars-unit.log`). Coverage includes valid wire/schema shapes, both cross-type directions, integer-contract refusals, legitimate numeric coefficient floats, copied-model serialization refusal, actual unavailable history and real empty flow. Other-owner adoption and graph/cache activation remain open. This branch is independent of decision-head `ddea50ab` and the later main merge; no source/evidence reset occurred.

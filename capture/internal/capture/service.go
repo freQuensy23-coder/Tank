@@ -2,6 +2,7 @@ package capture
 
 import (
 	"context"
+	"github.com/freQuensy23-coder/Tank/capture/internal/hotstate"
 	"log/slog"
 	"sort"
 	"sync"
@@ -52,6 +53,7 @@ type Service struct {
 	metadata          map[string]map[string]any
 	klinesPolled      map[string][]string
 	activeObligations map[string]struct{}
+	startupRetry      *startupRepairRetry
 	flowLocks         map[string]*sync.Mutex
 	ctxLocks          map[string]*sync.Mutex
 	late              map[flow.Key]bool
@@ -206,16 +208,7 @@ func (s *Service) Run(ctx context.Context) error {
 		return err
 	}
 	s.syncHot(ctx, hot)
-	s.spawn(func(ctx context.Context) {
-		if !s.waitLeading(ctx) {
-			return
-		}
-
-		s.flush(ctx)
-
-		s.sweep(ctx)
-		s.startupRepairs(ctx, hot, maxTime(started, s.clock.Now()))
-	})
+	s.spawn(func(ctx context.Context) { s.startupAfterLeading(ctx, started) })
 	s.loop(ctx, time.Second, s.tick)
 	s.loop(ctx, streamStateEvery, func(context.Context) { s.publishStreams() })
 	s.loop(ctx, rawFlushEvery, func(context.Context) { s.flushRaw() })
@@ -462,6 +455,9 @@ func (s *Service) hotLoop(ctx context.Context) {
 			s.syncHot(ctx, hot)
 		}
 		if s.leading() {
+			if err == nil {
+				s.retryStartupRepairs(ctx, hot)
+			}
 			s.obligations(ctx)
 			s.requests(ctx)
 		}
@@ -474,16 +470,22 @@ func (s *Service) hotLoop(ctx context.Context) {
 	}
 }
 
-func (s *Service) syncHot(ctx context.Context, hot []map[string]any) {
+func (s *Service) syncHot(ctx context.Context, hot []hotstate.Record) {
 	since := map[string]time.Time{}
 	for _, row := range hot {
-		token := text(row["token_id"])
-		at, err := pytime.Parse(row["since"])
+		scope, err := row.Scope()
 		if err != nil {
+			s.log.Warn("HOT membership identity unavailable", "storage_key", row.StorageKey, "error", err)
 			continue
 		}
-		if old, ok := since[token]; !ok || at.Before(old) {
-			since[token] = at
+		origin, err := row.RecordedSince()
+		if err != nil {
+			s.log.Warn("HOT membership since unavailable", "storage_key", row.StorageKey, "error", err)
+			continue
+		}
+		at := origin.Clock.Value
+		if old, ok := since[scope.TokenID]; !ok || at.Before(old) {
+			since[scope.TokenID] = at
 		}
 	}
 	desired := map[string]map[string]bool{}

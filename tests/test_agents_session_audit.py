@@ -9,9 +9,11 @@ from agent_source_fixtures import (
     native_tool_arguments_fixture,
     source_record_fixture,
 )
+from native_session_fixtures import created_native_session
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
+from tank.agents.native_sessions import NativeSessionResolution
 from tank.openma_sync import agent_tools
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -183,7 +185,7 @@ async def test_replay_runs_verdict_code_and_uses_fresh_remote_session() -> None:
         body = json.loads(request.content)
         if request.url.path == "/v1/sessions":
             creates.append(body)
-            return httpx.Response(200, json={"id": "fresh"})
+            return httpx.Response(200, json=created_native_session(request, "fresh"))
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
@@ -199,11 +201,25 @@ async def test_replay_runs_verdict_code_and_uses_fresh_remote_session() -> None:
                 "input": {"token_id": "T"},
             },
         )
-        replay = await service.resolve({"event_id": "e", "replay_run_id": "run1"})
+        replay = await service.resolve(
+            NativeSessionResolution.from_wire(
+                {"event_id": "e", "replay_run_id": "run1"}, role="ANALYST", replay=True
+            )
+        )
         assert replay["session_id"] == "fresh"
-        assert (await service.resolve({"event_id": "e", "replay_run_id": "run1"}))["session_id"] == "fresh"
+        assert (
+            await service.resolve(
+                NativeSessionResolution.from_wire(
+                    {"event_id": "e", "replay_run_id": "run1"}, role="ANALYST", replay=True
+                )
+            )
+        )["session_id"] == "fresh"
         with pytest.raises(ValueError, match="original session"):
-            await service.resolve({"session_id": "s", "replay_run_id": "run1"})
+            await service.resolve(
+                NativeSessionResolution.from_wire(
+                    {"session_id": "s", "replay_run_id": "run1"}, role="ANALYST", replay=True
+                )
+            )
     assert calls == ["get_decision"] and (await repo.get("ops.tool_calls", "s:verdict"))["result"] == {
         "action": "EXIT"
     }

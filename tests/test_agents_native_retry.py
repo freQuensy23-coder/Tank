@@ -1,14 +1,16 @@
 """Native retry notifications are not terminal host-attempt failures."""
 
 import copy
-import json
 from types import SimpleNamespace
 
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture, source_record_fixture
+from pydantic import JsonValue, ValidationError
 
+from tank.agents.native_inputs import NativeInputRequest
 from tank.agents.sessions import SessionService
+from tank.contracts.json import decode_json
 from tank.storage import MemoryRepository
 
 INITIAL = "sevt_req_2e22f77108bd91574b7c9dc221bc999b7f504c6ef8a4b9ab1e7af3c3445fd864_0"
@@ -16,7 +18,7 @@ CALLBACK = "sevt_req_307a37e6867554883982be7e265843eb3c8a8f4d2244517084ecd68c79d
 RETRY = "sevt_req_81c757631379004a5af5ed4330bff07fc2d423d27d377ad45b45e87df8fc5010_0"
 
 
-def event(identity, kind, execution, **fields):
+def event(identity: str, kind: str, execution: str, **fields: JsonValue) -> dict[str, JsonValue]:
     return {
         "id": identity,
         "type": kind,
@@ -26,7 +28,7 @@ def event(identity, kind, execution, **fields):
     }
 
 
-def error(identity, execution, status):
+def error(identity: str, execution: str, status: str) -> dict[str, JsonValue]:
     return event(
         identity,
         "session.error",
@@ -35,7 +37,16 @@ def error(identity, execution, status):
     )
 
 
-async def setup():
+async def setup(
+    acknowledgment: dict[str, JsonValue] | None = None,
+) -> tuple[
+    MemoryRepository,
+    SessionService,
+    httpx.AsyncClient,
+    dict[str, str],
+    list[dict[str, JsonValue]],
+    list[dict[str, JsonValue]],
+]:
     repo = MemoryRepository()
     session = {
         "session_id": "s",
@@ -74,13 +85,20 @@ async def setup():
         },
     )
     states = {INITIAL: "COMPLETED", CALLBACK: "FAILED", RETRY: "RUNNING"}
-    posts, history = [], []
+    posts: list[dict[str, JsonValue]] = []
+    history: list[dict[str, JsonValue]] = []
 
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
             assert request.url.path == "/v1/sessions/s/events"
-            posts.append({"body": json.loads(request.content), "key": request.headers["idempotency-key"]})
-            return httpx.Response(200, json={"data": [{"id": RETRY}]})
+            posts.append({"body": decode_json(request.content), "key": request.headers["idempotency-key"]})
+            posted = NativeInputRequest.model_validate_json(request.content)
+            if acknowledgment is not None:
+                return httpx.Response(200, json=acknowledgment)
+            return httpx.Response(
+                200,
+                json={"data": [{"id": RETRY, **posted.events[0].model_dump(mode="json", exclude_none=True)}]},
+            )
         if request.url.path.endswith("/executions"):
             return httpx.Response(
                 200,
@@ -123,7 +141,7 @@ async def setup():
 
 
 @pytest.mark.parametrize("outcome", ["COMPLETED", "EXHAUSTED", "QUEUE_FAILED", "TERMINATED"])
-async def test_retained_old_exhausted_new_retrying_sequence_waits_for_actual_outcome(outcome) -> None:
+async def test_retained_old_exhausted_new_retrying_sequence_waits_for_actual_outcome(outcome: str) -> None:
     repo, service, http, states, posts, history = await setup()
     try:
         await service.process_event("s", error("old-exhausted", CALLBACK, "exhausted"))
@@ -233,6 +251,44 @@ async def test_unknown_execution_retry_notification_cannot_adopt_the_active_turn
             await service.process_event("s", error("unknown-retrying", "unknown-input", "retrying"))
         assert await repo.get("ops.agent_sessions", "s") == before
         assert not posts
+    finally:
+        await service.close()
+        await http.aclose()
+
+
+@pytest.mark.parametrize("stage", ["INITIAL", "RETRY"])
+async def test_malformed_acknowledgment_cannot_commit_input_ownership(stage: str) -> None:
+    secret = "synthetic-private-provider-value"
+    repo, service, http, _, posts, _ = await setup({"data": [{"id": secret, "type": "unknown"}]})
+    try:
+        if stage == "INITIAL":
+            current = await repo.get("ops.agent_sessions", "s")
+            assert current is not None
+            journal = current["message_log"]
+            assert isinstance(journal, list)
+            intent = journal[0]
+            assert isinstance(intent, dict)
+            intent["remote_event_id"] = None
+            intent["turn_status"] = "ACCEPTING"
+            await repo.put("ops.agent_sessions", "s", current)
+            with pytest.raises(ValidationError) as caught:
+                await service.post_message_intent("s", "message")
+        else:
+            with pytest.raises(ValidationError) as caught:
+                await service.process_event("s", error("old-exhausted", CALLBACK, "exhausted"))
+        assert secret not in str(caught.value)
+        current = await repo.get("ops.agent_sessions", "s")
+        assert current is not None
+        journal = current["message_log"]
+        assert isinstance(journal, list)
+        intent = journal[0]
+        assert isinstance(intent, dict)
+        assert intent["remote_event_id"] == (None if stage == "INITIAL" else INITIAL)
+        assert intent["retry_count"] == 0
+        assert "sent_at" not in intent
+        assert "native_input_attempts" not in intent
+        assert "superseded_native_input_ids" not in intent
+        assert len(posts) == 1
     finally:
         await service.close()
         await http.aclose()

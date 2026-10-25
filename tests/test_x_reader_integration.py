@@ -9,9 +9,12 @@ from pathlib import Path
 
 import httpx
 import pytest
+from source_support import fixture_request_budgets, fixture_versions
 from test_sources import settings as source_settings
 from test_x_diagnostics import multipart
+from test_xsensor import URL as ACTOR_URL
 
+from tank.contracts.sources import SourceAccount
 from tank.delivery import DeliveryService
 from tank.sources import SourceService
 from tank.storage import MemoryRepository
@@ -94,9 +97,20 @@ class LoopbackTelegramTransport(httpx.AsyncBaseTransport):
         self.transport = httpx.AsyncHTTPTransport()
 
     async def handle_async_request(self, request):
+        if request.method != "POST" or request.url.scheme != "https":
+            raise AssertionError("Loopback fixture refuses undeclared HTTP")
+        if request.url.host == "api.apify.com" and str(request.url) == ACTOR_URL:
+            path = "/actor"
+        elif request.url.host == "api.telegram.org" and request.url.path in {
+            "/botisolated-telegram-token/sendMessage",
+            "/botisolated-telegram-token/sendDocument",
+        }:
+            path = request.url.path
+        else:
+            raise AssertionError("Loopback fixture refuses undeclared destination")
         target = httpx.Request(
             request.method,
-            self.origin + request.url.path,
+            self.origin + path,
             headers=request.headers,
             stream=request.stream,
             extensions=request.extensions,
@@ -111,7 +125,7 @@ async def test_real_worker_http_errors_flow_through_source_checkpoint_to_multipa
     tmp_path, wire_server
 ):
     origin, state = wire_server
-    source = {"source_id": "S29", "name": "X", "feeds": [{"kind": "x", "url": origin + "/actor"}]}
+    source = {"source_id": "S29", "name": "X", "feeds": [{"kind": "x", "url": ACTOR_URL}]}
     config = source_settings(tmp_path, [source])
     config.apify_api_token = "isolated-apify-token"
     config.telegram_token = "isolated-telegram-token"
@@ -119,12 +133,19 @@ async def test_real_worker_http_errors_flow_through_source_checkpoint_to_multipa
     config.ops_progress_enabled = True
     repo = MemoryRepository()
     await repo.put("ops.source_checkpoints", "S29:0", {"account_cursors": {"alice": "90"}})
-    async with httpx.AsyncClient() as http:
-        service = SourceService(repo, config, http=http)
-        service.accounts = {"alice": {"handle": "alice", "entity_id": "alice", "role": "OTHER"}}
-        result = await service.poll_once("S29")
+    budgets = fixture_request_budgets()
+    async with httpx.AsyncClient(transport=LoopbackTelegramTransport(origin)) as http:
+        service = SourceService(repo, config, http=http, versions=fixture_versions(), budgets=budgets)
+        service.accounts = {
+            "alice": SourceAccount(handle="alice", entity_id="alice", role="OTHER", token_id=None)
+        }
+        try:
+            result = await service.poll_once("S29")
+        finally:
+            await service.close()
+    await budgets.shutdown()
     checkpoint = await repo.get("ops.source_checkpoints", "S29:0")
-    assert result["status"] == "DEGRADED" and result["items"] == 0
+    assert result.status == "DEGRADED" and result.items == 0
     assert checkpoint["account_cursors"] == {"alice": "90"}
     assert state["outputs"][0]["accounts"][0]["diagnostics"]["attemptCount"] == 3
     assert len(state["profile"]) == 3

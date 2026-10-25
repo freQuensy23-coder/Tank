@@ -3,6 +3,7 @@ package capture
 import (
 	"context"
 	"errors"
+	"github.com/freQuensy23-coder/Tank/capture/internal/hotstate"
 	"sync"
 	"testing"
 	"time"
@@ -157,7 +158,8 @@ func replayFixture(t *testing.T, name string) {
 			md["funding_interval_h"] = "8"
 		}
 		venues[inst.ID] = &replayVenue{fakeVenue: fakeVenue{inst: inst}, md: md}
-		mem.hot = append(mem.hot, map[string]any{"token_id": inst.TokenID, "event_id": "EVT-REPLAY", "since": pytime.ISO(end.Add(time.Hour))})
+		since := end.Add(time.Hour)
+		mem.hot = append(mem.hot, hotstate.Record{StorageKey: "replay-hot-" + inst.ID, TokenID: inst.TokenID, EventID: "EVT-REPLAY", Since: &since})
 	}
 	for _, f := range fx.Frames {
 		if f.REST == "depth_snapshot" {
