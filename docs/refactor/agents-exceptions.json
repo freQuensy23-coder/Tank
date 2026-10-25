@@ -2056,7 +2056,7 @@
       "sites": [
         {
           "path": "src/tank/agents/native_retry.py",
-          "symbol": "KnownRetryState"
+          "symbol": "ReadyRetryState"
         },
         {
           "path": "src/tank/agents/native_retry.py",
@@ -2065,14 +2065,21 @@
         {
           "path": "src/tank/agents/native_retry.py",
           "symbol": "retry_state"
+        },
+        {
+          "path": "src/tank/agents/native_retry.py",
+          "symbol": "ExhaustedRetryState"
         }
       ],
       "kind": "explicit historical retry refusal",
-      "reason": "Missing budget/count or current owner cannot authorize automatic posting and cannot become zero or last_message ownership. A missing original body refuses when retry would otherwise be allowed. Declared zero remains valid. Origin-only records can use their actual retained body/count; stale journal history cannot impersonate an origin-only input. Unreported prior input IDs remain None rather than invented superseded IDs.",
+      "reason": "Missing budget/count or current owner cannot authorize automatic posting and cannot become zero or last_message ownership. A missing original body refuses when retry would otherwise be allowed. Declared zero remains valid. Origin-only records can use their actual retained body/count; stale journal history cannot impersonate an origin-only input. Unreported prior input IDs remain None rather than invented superseded IDs. ReadyRetryState has integer zero and consumes a strict original input body only when another post is possible. ExhaustedRetryState consumes the actual owner and positive count only; irrelevant historical body/prior-input fields remain untouched in storage and cannot authorize another post. No body is fabricated or weakened to validate terminal bookkeeping.",
       "validation": [
         "test_unknown_historical_retry_state_refuses_before_posting_and_preserves_retained_row",
         "test_new_declared_input_budget_is_not_blocked_by_unknown_origin_history",
-        "test_restart_keeps_native_retry_execution_and_does_not_post_again"
+        "test_restart_keeps_native_retry_execution_and_does_not_post_again",
+        "test_exhausted_phase_consumes_only_actual_owner_and_count",
+        "test_ready_phase_never_relaxes_its_required_input_contract",
+        "test_exhausted_retry_records_terminal_failure_without_consuming_historical_body"
       ]
     },
     {
