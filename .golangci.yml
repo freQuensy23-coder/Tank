@@ -8,6 +8,11 @@ linters:
       - staticcheck
       text: 'ST1005: error strings should not be capitalized'
       source: var ErrInvalidBudget = errors\.New\("Invalid configured request budget"\)
+    - path: (^|/)internal/budget/hyper_policy\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: 'return nil, errors\.New\("Unconfigured Hyperliquid request weight: None"\)'
     - path: (^|/)internal/config/config\.go$
       linters:
       - staticcheck

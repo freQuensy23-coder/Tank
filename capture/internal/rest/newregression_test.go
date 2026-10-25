@@ -17,12 +17,14 @@ type observedWaitingLedger struct {
 	waiting chan float64
 }
 
-func (l observedWaitingLedger) Acquire(ctx context.Context, name string, capacity, windowS, weight float64, owner, host string) (time.Duration, error) {
-	wait, err := l.Ledger.Acquire(ctx, name, capacity, windowS, weight, owner, host)
+func (l observedWaitingLedger) AcquireGroup(ctx context.Context, buckets []budget.Bucket, owner, host string) (time.Duration, error) {
+	wait, err := l.Ledger.AcquireGroup(ctx, buckets, owner, host)
 	if err == nil && wait > 0 {
-		select {
-		case l.waiting <- weight:
-		default:
+		for _, b := range buckets {
+			select {
+			case l.waiting <- b.Weight:
+			default:
+			}
 		}
 	}
 	return wait, err
@@ -37,7 +39,7 @@ func TestBlockedWeightedRequestsLeaveHostSlotsForBaseline(t *testing.T) {
 		t.Fatalf("prefill %v %v", wait, err)
 	}
 	waiting := make(chan float64, budget.HostInFlight)
-	gate := budget.NewGate(observedWaitingLedger{ledger, waiting}, "test")
+	gate := budget.NewGate(observedWaitingLedger{ledger, waiting}, "test", fixturePolicies(t))
 	gate.Interval = func(string) time.Duration { return 0 }
 	client := NewClient("TankV0/test", gate, func() time.Time { return now })
 	exchange := &exchange{responses: []canned{ok("[]")}}
