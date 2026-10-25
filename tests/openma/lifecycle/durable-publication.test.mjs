@@ -35,7 +35,7 @@ function fixture(t) {
     createBoxLiteProvider(options) { return {
       async create(context) {
         const name = options.runtimeName?.(context) ?? 'oma-' + createHash('sha256').update(`litebox:${context.sessionId}`).digest('hex').slice(0, 32);
-        const box = { id: 'native-' + ++next, name, dirty: '', durable: '', running: true, stops: 0,
+        const box = { id: 'native-' + ++next, name, dirty: '', durable: '', running: true, stops: 0, archives: new Set(),
           info() { return { id: this.id, name, state: { running: this.running } }; },
           async exec(command, args, env) {
             assert.equal(command, '/bin/sync'); assert.deepEqual(args, []); assert.deepEqual(env, []);
@@ -63,6 +63,10 @@ function fixture(t) {
   t.mock.method(RetainedBoxOperations.prototype, 'exec', async function(command, args) {
     return this.use(async value => {
       const mode = args[2];
+      if (mode === 'export') value.box.archives.add(args[3]);
+      if (mode === 'read') value.box.archives.add(args[4]);
+      if (mode === 'append') { value.box.archives.add(args[3]); value.box.archives.delete(args[4]); }
+      if (command === 'rm') for (const path of args.slice(1)) value.box.archives.delete(path);
       if (mode === 'import') { await hooks.import?.(); value.box.dirty = 'preserved user workspace'; }
       const stdout = mode === 'describe' ? JSON.stringify({ bytes: archive.length, sha256: hash }) : command === 'rm' ? '' : hash;
       return { stdout, stderr: '', exitCode: 0 };
@@ -71,8 +75,8 @@ function fixture(t) {
   t.mock.method(RetainedBoxOperations.prototype, 'copyOut', async function(_guest, host) {
     await this.use(async () => { await hooks.copy?.(); await writeFile(host, archive); });
   });
-  t.mock.method(RetainedBoxOperations.prototype, 'copyIn', async function(host) {
-    await this.use(async () => assert.deepEqual(await readFile(host), archive));
+  t.mock.method(RetainedBoxOperations.prototype, 'copyIn', async function(host, guest) {
+    await this.use(async value => { assert.deepEqual(await readFile(host), archive); value.box.archives.add(guest); });
   });
   return { ...s, boxes, hooks, controller: options => s.controller({ ...options, provider }) };
 }
@@ -116,6 +120,42 @@ test('interrupted transfer keeps the original durable workspace for the next own
   const retry = s.controller({ identity: identity('b') });
   await retry.begin(permitted, signal()); await retry.idle(permitted);
   assert.equal(s.boxes.get(publication(s).handle.runtimeId).durable, 'preserved user workspace');
+});
+
+for (const stage of ['copy', 'import']) for (const reason of ['abort', 'execution_fence']) test(`${reason} during ${stage} removes owned temporary archives before suspension`, async t => {
+  const s = fixture(t); await retain(s);
+  const original = publication(s).handle.runtimeId;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const cancellation = new AbortController(); let executionCurrent = true;
+    const execution = async () => { if (!executionCurrent) throw Error('retained_execution_fence_lost'); };
+    s.hooks[stage] = async () => {
+      if (reason === 'abort') cancellation.abort(Error('retained_execution_cancelled'));
+      else executionCurrent = false;
+    };
+    await assert.rejects(s.controller({ identity: identity('b') }).begin(execution, cancellation.signal), /retained_execution_(cancelled|fence_lost)/);
+    assert.equal(publication(s).handle.runtimeId, original);
+    assert.equal(publication(s).state, 'upgrading');
+    assert.equal(s.boxes.get(original).durable, 'preserved user workspace');
+    for (const box of s.boxes.values()) {
+      assert.equal(box.archives.size, 0, `temporary archives accumulated on ${box.id}`);
+      assert.equal(box.running, false);
+    }
+  }
+  s.hooks[stage] = undefined;
+  const retry = s.controller({ identity: identity('b') });
+  await retry.begin(permitted, signal()); await retry.idle(permitted);
+  assert.equal(s.boxes.get(publication(s).handle.runtimeId).durable, 'preserved user workspace');
+});
+
+for (const stage of ['copy', 'import']) test(`resource fence loss during ${stage} forbids temporary-file cleanup by the stale owner`, async t => {
+  const s = fixture(t); await retain(s);
+  const original = publication(s).handle.runtimeId;
+  s.hooks[stage] = async () => { [...s.rows.values()][0].active = false; };
+  await assert.rejects(s.controller({ identity: identity('b') }).begin(permitted, signal()), /retained_fence_lost/);
+  assert.equal(publication(s).handle.runtimeId, original);
+  assert.equal(publication(s).state, 'upgrading');
+  assert.ok([...s.boxes.values()].some(box => box.archives.size > 0));
+  assert.equal(s.boxes.get(original).durable, 'preserved user workspace');
 });
 
 test('a failed publication flush leaves the original journal authoritative', async t => {
