@@ -632,3 +632,33 @@ def test_explicit_source_budget_numbers_keep_their_declared_json_form() -> None:
     feeds[0]["interval_s"] = 0.5
     reparsed = SourceDefinition.model_validate(source)
     assert canonical_json(reparsed.model_dump(mode="json", exclude_unset=True)) == canonical_json(source)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_budget", [None, 6])
+async def test_source_service_rejects_missing_or_excessive_known_provider_budget(
+    tmp_path: Path, bad_budget: int | None
+) -> None:
+    from tank.settings import Settings
+    from tank.sources import SourceService
+
+    class InvalidProviderBudget(Settings):
+        def load_config(self, name: str) -> dict[str, JsonValue]:
+            configuration = super().load_config(name)
+            if name == "api_limits":
+                rules = configuration["limits"]
+                assert isinstance(rules, list)
+                sec = next(rule for rule in rules if isinstance(rule, dict) and rule["provider"] == "sec.gov")
+                assert isinstance(sec, dict)
+                if bad_budget is None:
+                    del sec["tank_max_requests_per_s"]
+                else:
+                    sec["tank_max_requests_per_s"] = bad_budget
+            return configuration
+
+    repo = MemoryRepository()
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(ValidationError, match="explicit per-second|half the documented"):
+            SourceService(repo, InvalidProviderBudget(data_dir=tmp_path), http=http)
+    assert await repo.list("ops.jobs") == []
+    assert await repo.list("ingest.source_items") == []

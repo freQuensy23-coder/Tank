@@ -193,6 +193,12 @@ class SourceEndpointBudget(DomainModel):
     tank_request_budget: int = Field(gt=0)
     scope: str = Field(min_length=1)
 
+    @model_validator(mode="after")
+    def half_documented_capacity(self) -> Self:
+        if self.tank_request_budget > self.documented_requests / 2:
+            raise ValueError("Endpoint budget exceeds half the documented capacity")
+        return self
+
 
 class SourceProviderBudget(DomainModel):
     provider: str = Field(min_length=1)
@@ -227,6 +233,44 @@ class SourceProviderBudget(DomainModel):
     def documented_policy(self) -> Self:
         if self.basis is None and self.source_ref is None:
             raise ValueError("A provider budget requires declared policy or official source evidence")
+        if (
+            self.provider in {"sec.gov", "coinbase", "kraken", "etherscan"}
+            and self.tank_max_requests_per_s is None
+        ):
+            raise ValueError("This provider requires an explicit per-second request budget")
+        if (
+            self.provider in {"binance.spot", "binance.usdm", "hyperliquid"}
+            and self.tank_max_weight_per_min is None
+        ):
+            raise ValueError("This provider requires an explicit per-minute weight budget")
+        if self.provider == "okx" and not self.endpoint_limits:
+            raise ValueError("OKX requires its endpoint-specific budgets")
+        if self.provider == "bybit" and (
+            self.documented_requests is None
+            or self.period_s is None
+            or self.tank_request_budget is None
+            or self.scope is None
+        ):
+            raise ValueError("Bybit requires declared capacity, period, request budget and scope")
+        if self.provider == "duckduckgo" and (
+            self.client is None
+            or self.backend is None
+            or self.minimum_request_spacing_s is None
+            or self.retry_delays_s is None
+            or self.cost_usd is None
+            or self.api_key_required is None
+        ):
+            raise ValueError(
+                "Search provider requires its explicit backend, spacing, retry and access policy"
+            )
+        for documented, assigned in (
+            (self.documented_requests_per_s, self.tank_max_requests_per_s),
+            (self.documented_requests_per_day, self.tank_max_requests_per_day),
+            (self.documented_weight_per_min, self.tank_max_weight_per_min),
+            (self.documented_requests, self.tank_request_budget),
+        ):
+            if documented is not None and assigned is not None and assigned > documented / 2:
+                raise ValueError("Provider budget exceeds half the documented capacity")
         if self.request_weights is not None and any(weight <= 0 for weight in self.request_weights.values()):
             raise ValueError("Documented operation request weights must be positive")
         if self.retry_delays_s is not None and any(delay <= 0 for delay in self.retry_delays_s):
