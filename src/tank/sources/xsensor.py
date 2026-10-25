@@ -14,7 +14,7 @@ from tank.contracts.http_policy import HttpAdmission, HttpRefused
 from tank.contracts.source_items import DiscoveryEnvelope, DiscoveryObservation, SocialDiscovery
 from tank.contracts.sources import HttpFetchPlan
 from tank.logging import redact_text
-from tank.sources.http_client import SourceHttpTransport
+from tank.sources.http_client import RequestStarted, SourceHttpTransport
 from tank.util import iso
 
 RUN_TIMEOUT_S = 130
@@ -270,7 +270,14 @@ class XSensor:
         if isinstance(decision, HttpRefused):
             raise ValueError("X actor HTTP admission refused: " + decision.reason)
 
-    async def posts(self, url: str, accounts: list[str], cursors: Mapping[str, str]) -> Scan:
+    async def posts(
+        self,
+        url: str,
+        accounts: list[str],
+        cursors: Mapping[str, str],
+        *,
+        on_start: RequestStarted | None = None,
+    ) -> Scan:
         if not self.token:
             raise ValueError("APIFY_API_TOKEN is not set")
         previous = cursor_state(cursors)
@@ -289,7 +296,7 @@ class XSensor:
                 timeout=RUN_TIMEOUT_S,
             )
             response = await SourceHttpTransport(self.http, self._admit).send(
-                HttpFetchPlan(url=url, method="POST"), request, None
+                HttpFetchPlan(url=url, method="POST"), request, on_start
             )
             response.raise_for_status()
         except httpx.HTTPError as exc:

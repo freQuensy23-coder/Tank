@@ -558,3 +558,35 @@ class SourceEscalationControlView(DomainModel):
         if self.status != "ACTIVE" or self.confirmed_at is not None or self.cancelled_at is not None:
             return False
         return parse_iso_time(self.starts_at) <= parse_iso_time(moment) < parse_iso_time(self.expires_at)
+
+
+class FeedPollOutcome(DomainModel):
+    items: int = Field(ge=0)
+    errors: list[str]
+
+
+class PolledSource(FeedPollOutcome):
+    source_id: str = Field(min_length=1)
+    status: Literal["HEALTHY", "DEGRADED"]
+
+    @model_validator(mode="after")
+    def errors_are_degraded(self) -> Self:
+        if self.errors and self.status != "DEGRADED":
+            raise ValueError("A source read with errors cannot claim healthy status")
+        return self
+
+
+class UnconfiguredSource(FeedPollOutcome):
+    source_id: str = Field(min_length=1)
+    items: Literal[0]
+    status: Literal["UNCONFIGURED"] = "UNCONFIGURED"
+    reason: Literal["NO_CONFIGURED_FEEDS"] = "NO_CONFIGURED_FEEDS"
+
+    @model_validator(mode="after")
+    def no_attempted_reads(self) -> Self:
+        if self.errors:
+            raise ValueError("An unconfigured source has no attempted read errors")
+        return self
+
+
+type SourcePollOutcome = PolledSource | UnconfiguredSource

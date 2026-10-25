@@ -275,8 +275,8 @@ async def test_raw_first_dedup_and_conditional_get(tmp_path: Path) -> None:
         versions=fixture_versions(),
         budgets=fixture_request_budgets(),
     )
-    assert (await svc.poll_once("S30"))["items"] == 1
-    assert (await svc.poll_once("S30"))["items"] == 0
+    assert (await svc.poll_once("S30")).items == 1
+    assert (await svc.poll_once("S30")).items == 0
     record = next(v for (c, k), v in repo.rows.items() if c == "ingest.source_items")
     assert (
         zstandard.ZstdDecompressor().decompress(__import__("pathlib").Path(record["raw_ref"]).read_bytes())
@@ -284,7 +284,7 @@ async def test_raw_first_dedup_and_conditional_get(tmp_path: Path) -> None:
     )
     assert repo.jobs[0][0][0] == "FILTER_ITEM"
 
-    assert (await svc.poll_once("S30"))["items"] == 0
+    assert (await svc.poll_once("S30")).items == 0
     assert len(repo.jobs) == 1
     assert (await repo.get("ingest.source_items", record["item_id"]))["observation_count"] == 1
     assert [p.name for p in tmp_path.rglob("*.zst")] == [record["item_id"] + ".json.zst"]
@@ -464,9 +464,9 @@ async def test_instrument_baseline_diff_and_bybit_cursor(tmp_path: Path, collect
         versions=fixture_versions(),
         budgets=fixture_request_budgets(),
     )
-    assert (await svc.poll_once("S14"))["items"] == 0
+    assert (await svc.poll_once("S14")).items == 0
     phase[0] = 1
-    assert (await svc.poll_once("S14"))["items"] == 1
+    assert (await svc.poll_once("S14")).items == 1
     row = next(v for (c, k), v in repo.rows.items() if c == "ingest.source_items")
     assert row["change"] == "STATE_UPDATE" and "Settling" in row["text"]
     assert len(calls) == 4
@@ -515,9 +515,9 @@ async def test_snapshot_closed_proposal_checked_after_leaving_latest(tmp_path: P
         versions=fixture_versions(),
         budgets=fixture_request_budgets(),
     )
-    assert (await svc.poll_once("S24"))["items"] == 1
+    assert (await svc.poll_once("S24")).items == 1
     phase[0] = 1
-    assert (await svc.poll_once("S24"))["items"] == 1
+    assert (await svc.poll_once("S24")).items == 1
     rows = [v for (c, k), v in repo.rows.items() if c == "ingest.source_items"]
 
     assert any(r["external_id"] == "0xold|closed" for r in rows)
@@ -1053,7 +1053,7 @@ async def test_control_ticks_do_not_overpoll_failed_normal_cadence(
         versions=fixture_versions(),
         budgets=fixture_request_budgets(),
     )
-    assert (await service.control_once("S15"))["status"] == "DEGRADED"
+    assert (await service.control_once("S15")).status == "DEGRADED"
     assert len(calls) == 1
     clock[0] += timedelta(seconds=15)
     await service.control_once("S15")
@@ -1270,7 +1270,7 @@ async def test_missing_publisher_article_keeps_raw_error_and_continues_valid_ent
     )
     try:
         result = await service.poll_once("S20")
-        assert result["status"] == "DEGRADED" and result["items"] == 1
+        assert result.status == "DEGRADED" and result.items == 1
         rows = [r for (table, _), r in repo.rows.items() if table == "ingest.source_items"]
         assert len(rows) == 1 and rows[0]["title"] == "Valid publisher release"
         state = await repo.get("ops.source_checkpoints", "S20:0")
@@ -1334,7 +1334,7 @@ async def test_empty_200_article_isolated_without_suppressing_valid_sibling(
     )
     try:
         result = await service.poll_once("S20")
-        assert result["status"] == "DEGRADED" and result["items"] == 1
+        assert result.status == "DEGRADED" and result.items == 1
         state = await repo.get("ops.source_checkpoints", "S20:0")
         error = state["article_errors"]["https://publisher.example/newsroom/empty"]
         assert error["reason"] == "EMPTY_ARTICLE_BODY" and error["http_status"] == 200
@@ -1388,13 +1388,13 @@ async def test_seen_full_article_empty_index_deduplicates_before_new_content_gua
         budgets=fixture_request_budgets(),
     )
     try:
-        assert (await service.poll_once("S20"))["status"] == "HEALTHY"
+        assert (await service.poll_once("S20")).status == "HEALTHY"
         original = next(r for (table, _), r in repo.rows.items() if table == "ingest.source_items")
         original_hash = original["content_hash"]
         original_text = original["text"]
         phase[0] = 1
         result = await service.poll_once("S20")
-        assert result["status"] == "HEALTHY" and result["items"] == 1
+        assert result.status == "HEALTHY" and result.items == 1
         known = await repo.get("ingest.source_items", original["item_id"])
         assert known == original
         assert calls.count("/newsroom/known") == 1 and calls.count("/newsroom/later") == 1
@@ -1539,7 +1539,7 @@ async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path: Pat
             raise RuntimeError("storage unavailable")
 
         svc.ingest = fail
-        assert (await svc.poll_once("S14"))["status"] == "DEGRADED"
+        assert (await svc.poll_once("S14")).status == "DEGRADED"
         checkpoint = repo.rows["ops.source_checkpoints", "S14:0"]
 
         pending = [row for batch in checkpoint["pending_batches"] for row in batch["rows"]]
@@ -1548,7 +1548,7 @@ async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path: Pat
         snapshot = repo.rows["ops.source_checkpoints", "S14:0:instruments"]
         assert snapshot["instruments"]["ABCUSDT"]["status"] == "Settling"
         svc.ingest = original
-        assert (await svc.poll_once("S14"))["items"] == 1
+        assert (await svc.poll_once("S14")).items == 1
         assert "if-none-match" not in requests[-1].headers
 
 
@@ -1639,7 +1639,7 @@ async def test_slow_feed_does_not_block_fast_sibling_ingestion(tmp_path: Path) -
         row = next(v for (c, _), v in repo.rows.items() if c == "ingest.source_items")
         assert row["feed"].endswith("/fast")
         release.set()
-        assert (await poll)["status"] == "HEALTHY"
+        assert (await poll).status == "HEALTHY"
 
 
 @pytest.mark.asyncio
@@ -1816,10 +1816,10 @@ async def test_json_discovery_burst_reads_every_page_until_durable_boundary(
             versions=fixture_versions(),
             budgets=fixture_request_budgets(),
         )
-        assert (await svc.poll_once(source_id))["status"] == "HEALTHY"
+        assert (await svc.poll_once(source_id)).status == "HEALTHY"
         assert (await repo.get("ops.source_checkpoints", source_id + ":0"))["discovery_checkpoint"] == "1"
         phase[0] = 1
-        assert (await svc.poll_once(source_id))["status"] == "HEALTHY"
+        assert (await svc.poll_once(source_id)).status == "HEALTHY"
         rows = [row for (collection, _), row in repo.rows.items() if collection == "ingest.source_items"]
         assert len(rows) == 9
         assert {row.get("proposal_id", row["external_id"]) for row in rows} == {str(i) for i in range(9)}
@@ -1870,12 +1870,12 @@ async def test_failed_later_history_page_retains_earlier_items_without_advancing
         )
         await svc.poll_once("S03")
         phase[0] = 1
-        assert (await svc.poll_once("S03"))["status"] == "DEGRADED"
+        assert (await svc.poll_once("S03")).status == "DEGRADED"
         rows = [row for (collection, _), row in repo.rows.items() if collection == "ingest.source_items"]
         assert {row["external_id"] for row in rows} == {"1", "2", "3"}
         assert (await repo.get("ops.source_checkpoints", "S03:0"))["discovery_checkpoint"] == "1"
         phase[0] = 2
-        assert (await svc.poll_once("S03"))["status"] == "HEALTHY"
+        assert (await svc.poll_once("S03")).status == "HEALTHY"
         assert (await repo.get("ops.source_checkpoints", "S03:0"))["discovery_checkpoint"] == "3"
 
 
@@ -1973,9 +1973,9 @@ async def test_completed_later_batch_cannot_erase_failed_earlier_coverage(tmp_pa
         svc.ingest = ingest
         await svc.poll_once("S03")
         phase[0], fail[0] = 1, True
-        assert (await svc.poll_once("S03"))["status"] == "DEGRADED"
+        assert (await svc.poll_once("S03")).status == "DEGRADED"
         phase[0] = 2
-        assert (await svc.poll_once("S03"))["status"] == "DEGRADED"
+        assert (await svc.poll_once("S03")).status == "DEGRADED"
         rows = [row for (collection, _), row in repo.rows.items() if collection == "ingest.source_items"]
         assert {row["external_id"] for row in rows} == {"1", "3"}
         assert (await repo.get("ops.source_checkpoints", "S03:0"))["discovery_checkpoint"] == "1"
@@ -2032,7 +2032,7 @@ async def test_conditional_304_does_not_starve_durable_pending_detail(tmp_path: 
         )
         await repo.put("ops.source_checkpoints", "S20:0", state)
         result = await svc.poll_once("S20")
-        assert result["items"] == 1 and result["status"] == "HEALTHY"
+        assert result.items == 1 and result.status == "HEALTHY"
         assert not (await repo.get("ops.source_checkpoints", "S20:0"))["pending_batches"]
         assert len(repo.jobs) == 1
 
@@ -2129,7 +2129,7 @@ async def test_invalid_index_retains_source_associated_raw_before_parse_failure(
             versions=fixture_versions(),
             budgets=fixture_request_budgets(),
         )
-        assert (await svc.poll_once("S30"))["status"] == "DEGRADED"
+        assert (await svc.poll_once("S30")).status == "DEGRADED"
         state = await repo.get("ops.source_checkpoints", "S30:0")
         assert state["response_url"] == "https://example.org/rss"
         assert state["fetched_at_prec"] == "COLLECTION_ONLY"
@@ -2202,7 +2202,7 @@ async def test_malformed_index_entry_does_not_starve_valid_sibling_or_advance_va
             budgets=fixture_request_budgets(),
         )
         result = await svc.poll_once(source_id)
-        assert result["items"] == 1 and result["status"] == "DEGRADED"
+        assert result.items == 1 and result.status == "DEGRADED"
         state = await repo.get("ops.source_checkpoints", source_id + ":0")
         assert state["entry_errors"] and "etag" not in state
         assert not state.get("discovery_checkpoint")
@@ -2344,7 +2344,7 @@ async def test_long_history_catchup_refreshes_current_head_at_feed_cadence(
         )
         await svc.poll_once("S03")
         phase[0] = 1
-        assert (await svc.poll_once("S03"))["status"] == "HEALTHY"
+        assert (await svc.poll_once("S03")).status == "HEALTHY"
         rows = [row for (collection, _), row in repo.rows.items() if collection == "ingest.source_items"]
         assert {row["external_id"] for row in rows} == {str(i) for i in range(10)}
         assert sum(phase == 1 and page == 1 for phase, page, _ in calls) > 1
@@ -2396,9 +2396,9 @@ async def test_coinbase_trading_restriction_change_emits_item_without_status_enu
             versions=fixture_versions(),
             budgets=fixture_request_budgets(),
         )
-        assert (await svc.poll_once("S14"))["items"] == 0
+        assert (await svc.poll_once("S14")).items == 0
         restricted[0] = True
-        assert (await svc.poll_once("S14"))["items"] == 1
+        assert (await svc.poll_once("S14")).items == 1
         row = next(row for (collection, _), row in repo.rows.items() if collection == "ingest.source_items")
         change = json.loads(row["text"])
         assert change["before"]["status"] == change["after"]["status"] == "online"
@@ -2446,10 +2446,10 @@ async def test_new_coinbase_flag_observation_does_not_fabricate_historical_statu
             versions=fixture_versions(),
             budgets=fixture_request_budgets(),
         )
-        assert (await svc.poll_once("S14"))["items"] == 0
+        assert (await svc.poll_once("S14")).items == 0
         assert (await repo.get("ops.source_checkpoints", "S14:0"))["instrument_snapshot_schema_version"] == 2
         flag[0] = False
-        assert (await svc.poll_once("S14"))["items"] == 1
+        assert (await svc.poll_once("S14")).items == 1
 
 
 def test_treasury_duplicate_designated_publication_elements_are_one_source_timestamp() -> None:
@@ -2492,7 +2492,7 @@ async def test_unavailable_known_snapshot_proposal_remains_pending_and_explicitl
             budgets=fixture_request_budgets(),
         )
         result = await svc.poll_once("S24")
-        assert result["items"] == 0 and result["status"] == "DEGRADED"
+        assert result.items == 0 and result.status == "DEGRADED"
         state = await repo.get("ops.source_checkpoints", "S24:0")
         assert state["pending_proposals"] == ["known-now-unavailable"]
         assert state["entry_errors"][0]["reason"] == "PENDING_PROPOSAL_UNAVAILABLE"
@@ -2605,12 +2605,12 @@ async def test_raw_durability_failure_prevents_source_item_and_job_persistence(
 
     monkeypatch.setattr(raw_store.os, "fsync", fail_fsync)
     result = await svc.poll_once("S30")
-    assert result["status"] == "DEGRADED" and "durable storage failure" in result["errors"][0]
+    assert result.status == "DEGRADED" and "durable storage failure" in result.errors[0]
     assert not any(collection in {"ingest.source_items"} for collection, _ in repo.rows)
     assert not repo.jobs
     assert not list(Path(tmp_path).rglob("*.tmp"))
     monkeypatch.setattr(raw_store.os, "fsync", original_fsync)
-    assert (await svc.poll_once("S30"))["items"] == 1
+    assert (await svc.poll_once("S30")).items == 1
     recovered = next(v for (c, _), v in repo.rows.items() if c == "ingest.source_items")
     assert recovered["raw_ref"].endswith(recovered["item_id"] + ".json.zst")
     assert len(repo.jobs) == 1
@@ -2712,7 +2712,7 @@ async def test_binance_empty_body_pending_recovers_after_restart(
         first = SourceService(
             repo, cfg, http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
         )
-        assert (await first.poll_once("S09"))["status"] == "DEGRADED"
+        assert (await first.poll_once("S09")).status == "DEGRADED"
         before = deepcopy(await repo.get("ops.source_checkpoints", "S09:0"))
         assert before["pending_batches"] and not before.get("discovery_checkpoint")
         assert not any(table == "ingest.source_items" for table, _ in repo.rows)
@@ -2724,7 +2724,7 @@ async def test_binance_empty_body_pending_recovers_after_restart(
         result = await resumed.poller.drain(
             source_definition(cfg.load_config("sources")["sources"][0]), 0, force=True
         )
-        assert result["items"] == 1 and not result["errors"]
+        assert result.items == 1 and not result.errors
         after = await repo.get("ops.source_checkpoints", "S09:0")
         assert not after["pending_batches"] and after["discovery_checkpoint"] == "actual-code"
         item = next(row for (table, _), row in repo.rows.items() if table == "ingest.source_items")
@@ -2883,7 +2883,7 @@ async def test_pending_rows_without_item_id_are_dropped_and_rediscovered(tmp_pat
         )
         await svc.poller.drain(source_definition(source), 0, force=True)
         assert not (await repo.get("ops.source_checkpoints", "S30:0"))["pending_batches"]
-        assert (await svc.poll_once("S30"))["items"] == 1
+        assert (await svc.poll_once("S30")).items == 1
 
 
 @pytest.mark.asyncio
@@ -2973,12 +2973,14 @@ async def test_instrument_snapshot_written_only_when_it_changes(tmp_path: Path, 
         assert repo.snapshot_writes == 1
         assert "instruments" not in repo.rows["ops.source_checkpoints", "S14:0"]
         status[0] = "BREAK"
-        assert (await svc.poll_once("S14"))["items"] == 1
+        assert (await svc.poll_once("S14")).items == 1
         assert repo.snapshot_writes == 2
 
 
 def test_one_poll_of_a_venue_list_groups_symbols_that_made_the_same_move() -> None:
-    from tank.sources.polling import instrument_changes
+    from source_support import instrument_snapshot_fixture
+
+    from tank.sources.instruments import InstrumentPage, instrument_changes
 
     feed = {"url": "https://api.kraken.com/0/public/AssetPairs", "venue": "kraken", "market_type": "SPOT"}
     pages = [(b"page", "2026-10-23T14:00:00Z")]
@@ -2995,24 +2997,35 @@ def test_one_poll_of_a_venue_list_groups_symbols_that_made_the_same_move() -> No
         "OTHUSD": {"base": "OTH", "status": "online"},
     }
     rows, _ = instrument_changes(
-        snapshot, previous, source_feed(feed), pages, dict.fromkeys(snapshot, 0), "2026-10-23T14:00:05Z"
+        instrument_snapshot_fixture(snapshot, venue="kraken"),
+        instrument_snapshot_fixture(previous, venue="kraken"),
+        source_feed(feed),
+        [InstrumentPage(payload=payload, observed_at=observed_at) for payload, observed_at in pages],
+        dict.fromkeys(snapshot, 0),
+        "2026-10-23T14:00:05Z",
     )
-    by_title = {row["title"]: row for row in rows}
+    by_title = {row.discovery.title: row for row in rows}
     assert sorted(by_title) == [
         "OTHUSD instrument change",
         "kraken SPOT: 2 NEW instruments ADDED",
         "kraken SPOT: 3 instruments STATE_UPDATE online → cancel_only",
     ]
     delisting = by_title["kraken SPOT: 3 instruments STATE_UPDATE online → cancel_only"]
-    assert delisting["change"] == "STATE_UPDATE"
-    assert delisting["observed_at"] == "2026-10-23T14:00:00Z" and delisting["_payload"] == b"page"
-    assert [c["symbol"] for c in json.loads(delisting["text"])["changes"]] == ["ABCEUR", "ABCUSD", "DEFUSD"]
-    assert by_title["kraken SPOT: 2 NEW instruments ADDED"]["change"] == "ADDED"
-    assert json.loads(by_title["OTHUSD instrument change"]["text"])["before"] is None
+    assert delisting.discovery.change == "STATE_UPDATE"
+    assert delisting.observation.observed_at == "2026-10-23T14:00:00Z" and delisting.payload == b"page"
+    assert [c["symbol"] for c in json.loads(delisting.discovery.text)["changes"]] == [
+        "ABCEUR",
+        "ABCUSD",
+        "DEFUSD",
+    ]
+    assert by_title["kraken SPOT: 2 NEW instruments ADDED"].discovery.change == "ADDED"
+    assert json.loads(by_title["OTHUSD instrument change"].discovery.text)["before"] is None
 
 
 def test_a_grouped_change_keeps_its_own_identity_when_the_list_returns_to_an_earlier_snapshot() -> None:
-    from tank.sources.polling import instrument_changes
+    from source_support import instrument_snapshot_fixture
+
+    from tank.sources.instruments import InstrumentPage, instrument_changes
 
     feed = {"url": "https://api.kraken.com/0/public/AssetPairs", "venue": "kraken", "market_type": "SPOT"}
     pages = [(b"page", "2026-10-23T14:00:00Z")]
@@ -3023,9 +3036,14 @@ def test_a_grouped_change_keeps_its_own_identity_when_the_list_returns_to_an_ear
 
     def ids(snapshot, previous):
         rows, digest = instrument_changes(
-            snapshot, previous, source_feed(feed), pages, dict.fromkeys(snapshot, 0), "x"
+            instrument_snapshot_fixture(snapshot, venue="kraken"),
+            instrument_snapshot_fixture(previous, venue="kraken"),
+            source_feed(feed),
+            [InstrumentPage(payload=payload, observed_at=observed_at) for payload, observed_at in pages],
+            dict.fromkeys(snapshot, 0),
+            "2026-10-23T14:00:05Z",
         )
-        return [row["external_id"] for row in rows], digest
+        return [row.discovery.external_id for row in rows], digest
 
     forward, at_second = ids(second, first)
     other, _ = ids(third, second)
@@ -3063,3 +3081,40 @@ def test_binance_zero_epoch_precedes_alternate_publication_field() -> None:
     [record] = parsers.json_items(payload, "S09")
     assert record["published_at"] == "1970-01-01T00:00:00Z"
     assert record["published_prec"] == "EXACT"
+
+
+def test_coinbase_missing_prior_flags_remain_unknown_in_real_status_change_evidence() -> None:
+    from copy import deepcopy
+
+    from source_support import instrument_snapshot_fixture
+
+    from tank.sources.instruments import InstrumentPage, instrument_changes
+
+    previous = {"ETH-USD": {"status": "online", "base": "ETH"}}
+    original = deepcopy(previous)
+    current = {"ETH-USD": {"status": "offline", "base": "ETH", "status_flags": {"cancel_only": True}}}
+    rows, _ = instrument_changes(
+        instrument_snapshot_fixture(current, venue="coinbase"),
+        instrument_snapshot_fixture(previous, venue="coinbase"),
+        source_feed(
+            {"url": "https://api.exchange.coinbase.com/products", "venue": "coinbase", "market_type": "SPOT"}
+        ),
+        [InstrumentPage(payload=b"actual current response", observed_at="2026-10-25T00:00:00Z")],
+        {"ETH-USD": 0},
+        "2026-10-25T00:00:01Z",
+    )
+    [row] = rows
+    evidence = json.loads(row.discovery.text)
+    assert evidence["before"]["status_flags"] is None
+    assert evidence["after"]["status_flags"] == {"cancel_only": True}
+    assert previous == original
+
+
+def test_coinbase_unknown_flag_observation_is_not_a_proven_transition() -> None:
+    from tank.contracts.source_checkpoints import CoinbaseRestrictionFlags
+
+    unknown = CoinbaseRestrictionFlags()
+    observed = CoinbaseRestrictionFlags(cancel_only=True)
+    assert unknown.known_changes(observed) == ()
+    assert observed.known_changes(CoinbaseRestrictionFlags()) == ()
+    assert observed.known_changes(CoinbaseRestrictionFlags(cancel_only=False)) == ("cancel_only",)
