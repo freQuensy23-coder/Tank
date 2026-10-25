@@ -74,3 +74,41 @@ func TestChangedAssignedPolicySurvivesValidatedConfiguration(t *testing.T) {
 		t.Fatal("validated decoder replaced the declared assigned capacity")
 	}
 }
+
+func TestPolicyAdmissionPreservesYAML11ScalarTypes(t *testing.T) {
+	for _, test := range []struct {
+		name, basis, documented string
+		accepted                bool
+	}{
+		{"quoted text", "\"on\"", "4", true},
+		{"implicit boolean", "on", "4", false},
+		{"float documentation count", "\"fixture\"", "4.0", false},
+		{"quoted documentation count", "\"fixture\"", "\"4\"", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := "version: fixture\npolicy: fixture\nlimits:\n- provider: coinbase\n  basis: " + test.basis + "\n  documented_requests_per_s: " + test.documented + "\n  tank_max_requests_per_s: 2\n"
+			_, err := parseAPILimits([]byte(source))
+			if (err == nil) != test.accepted {
+				t.Fatalf("YAML11 scalar boundary:accepted=%v err=%v", test.accepted, err)
+			}
+		})
+	}
+}
+
+func TestPolicyAdmissionRejectsDuplicateKeysAndCyclicAliases(t *testing.T) {
+	for _, source := range []string{
+		"version: fixture\npolicy: fixture\nlimits:\n- provider: coinbase\n  basis: fixture\n  tank_max_requests_per_s: 2\n  tank_max_requests_per_s: 5\n",
+		"version: fixture\npolicy: fixture\nlimits: &loop [*loop]\n",
+	} {
+		if _, err := parseAPILimits([]byte(source)); err == nil {
+			t.Fatal("ambiguous or non-JSON policy accepted")
+		}
+	}
+}
+
+func TestExplicitYAMLMergeRemainsADeclaredPolicyInput(t *testing.T) {
+	source := "version: fixture\npolicy: fixture\nlimits:\n- &rate\n  provider: coinbase\n  basis: fixture\n  tank_max_requests_per_s: 2\n- <<: *rate\n  provider: kraken\n  tank_max_requests_per_s: 1\n"
+	if _, err := parseAPILimits([]byte(source)); err != nil {
+		t.Fatalf("declared YAML11 merge rejected:%v", err)
+	}
+}

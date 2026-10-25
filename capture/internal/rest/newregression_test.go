@@ -39,7 +39,7 @@ func TestBlockedWeightedRequestsLeaveHostSlotsForBaseline(t *testing.T) {
 		t.Fatalf("prefill %v %v", wait, err)
 	}
 	waiting := make(chan float64, budget.HostInFlight)
-	gate := budget.NewGate(observedWaitingLedger{ledger, waiting}, "test")
+	gate := budget.NewGate(observedWaitingLedger{ledger, waiting}, "test", fixturePolicies(t))
 	gate.Interval = func(string) time.Duration { return 0 }
 	client := NewClient("TankV0/test", gate, func() time.Time { return now })
 	exchange := &exchange{responses: []canned{ok("[]")}}

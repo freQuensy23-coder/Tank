@@ -77,6 +77,7 @@ func TestFetchPlannerErrorsCannotBecomeGuessedAdmission(t *testing.T) {
 		"https://www.okx.com/unconfigured-endpoint",
 		"https://api.hyperliquid.xyz/info",
 		"https://unconfigured.invalid/announcement",
+		"https://data-api.binance.vision/api/v3/klines",
 	} {
 		t.Run(rawURL, func(t *testing.T) {
 			client, exchange, _ := newClient(t, ok("{}"))

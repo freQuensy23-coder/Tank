@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -10,14 +11,16 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/freQuensy23-coder/Tank/capture/internal/pyjson"
 )
 
 type budgetEvidence struct {
-	Basis           string   `yaml:"basis"`
-	SourceRef       string   `yaml:"source_ref"`
-	SourceContent   string   `yaml:"source_content_sha256"`
-	VerifiedAt      string   `yaml:"verified_at"`
-	InferenceLimits []string `yaml:"inference_limits"`
+	Basis           string   `json:"basis"`
+	SourceRef       string   `json:"source_ref"`
+	SourceContent   string   `json:"source_content_sha256"`
+	VerifiedAt      string   `json:"verified_at"`
+	InferenceLimits []string `json:"inference_limits"`
 }
 
 func (e budgetEvidence) validate(requireCapture, requireBasis bool) error {
@@ -39,125 +42,121 @@ func (e budgetEvidence) validate(requireCapture, requireBasis bool) error {
 }
 
 type rateBudgetWire struct {
-	Provider       string   `yaml:"provider"`
-	Documented     *float64 `yaml:"documented_requests_per_s"`
-	Assigned       float64  `yaml:"tank_max_requests_per_s"`
-	budgetEvidence `yaml:",inline"`
+	Provider   string  `json:"provider"`
+	Documented *int64  `json:"documented_requests_per_s"`
+	Assigned   float64 `json:"tank_max_requests_per_s"`
+	budgetEvidence
 }
 
 type weightBudgetWire struct {
-	Provider       string  `yaml:"provider"`
-	Documented     float64 `yaml:"documented_weight_per_min"`
-	Assigned       float64 `yaml:"tank_max_weight_per_min"`
-	budgetEvidence `yaml:",inline"`
+	Provider   string `json:"provider"`
+	Documented int64  `json:"documented_weight_per_min"`
+	Assigned   int64  `json:"tank_max_weight_per_min"`
+	budgetEvidence
 }
 
 type spotBudgetWire struct {
-	weightBudgetWire `yaml:",inline"`
-	ObservedHeader   *string `yaml:"observed_header"`
+	weightBudgetWire
+	ObservedHeader *string `json:"observed_header"`
 }
 
 type clientProtectionWire struct {
-	Bucket              string    `yaml:"bucket"`
-	Paths               []string  `yaml:"paths"`
-	PolicyKind          string    `yaml:"policy_kind"`
-	DocumentationStatus string    `yaml:"documentation_status"`
-	Documented          yaml.Node `yaml:"documented_requests"`
-	PeriodS             float64   `yaml:"period_s"`
-	Assigned            float64   `yaml:"tank_request_budget"`
-	Scope               string    `yaml:"scope"`
-	Basis               string    `yaml:"basis"`
+	Bucket              string          `json:"bucket"`
+	Paths               []string        `json:"paths"`
+	PolicyKind          string          `json:"policy_kind"`
+	DocumentationStatus string          `json:"documentation_status"`
+	Documented          json.RawMessage `json:"documented_requests"`
+	PeriodS             int64           `json:"period_s"`
+	Assigned            int64           `json:"tank_request_budget"`
+	Scope               string          `json:"scope"`
+	Basis               string          `json:"basis"`
 }
 
 type usdmBudgetWire struct {
-	weightBudgetWire `yaml:",inline"`
-	Protection       []clientProtectionWire `yaml:"client_protection_limits"`
+	weightBudgetWire
+	Protection []clientProtectionWire `json:"client_protection_limits"`
 }
 
 type endpointBudgetWire struct {
-	Path       string  `yaml:"path"`
-	Documented float64 `yaml:"documented_requests"`
-	PeriodS    float64 `yaml:"period_s"`
-	Assigned   float64 `yaml:"tank_request_budget"`
-	Scope      string  `yaml:"scope"`
+	Path       string `json:"path"`
+	Documented int64  `json:"documented_requests"`
+	PeriodS    int64  `json:"period_s"`
+	Assigned   int64  `json:"tank_request_budget"`
+	Scope      string `json:"scope"`
 }
 
 type okxBudgetWire struct {
-	Provider       string `yaml:"provider"`
-	budgetEvidence `yaml:",inline"`
-	Endpoints      []endpointBudgetWire `yaml:"endpoint_limits"`
+	Provider string `json:"provider"`
+	budgetEvidence
+	Endpoints []endpointBudgetWire `json:"endpoint_limits"`
 }
 
 type bybitBudgetWire struct {
-	Provider       string `yaml:"provider"`
-	budgetEvidence `yaml:",inline"`
-	Documented     float64 `yaml:"documented_requests"`
-	PeriodS        float64 `yaml:"period_s"`
-	Assigned       float64 `yaml:"tank_request_budget"`
-	Scope          string  `yaml:"scope"`
+	Provider string `json:"provider"`
+	budgetEvidence
+	Documented int64  `json:"documented_requests"`
+	PeriodS    int64  `json:"period_s"`
+	Assigned   int64  `json:"tank_request_budget"`
+	Scope      string `json:"scope"`
 }
 
 type hyperliquidBudgetWire struct {
-	weightBudgetWire `yaml:",inline"`
-	Scope            string             `yaml:"scope"`
-	Weights          map[string]float64 `yaml:"request_weights"`
-	ExtraWeights     map[string]string  `yaml:"response_size_extra_weights"`
+	weightBudgetWire
+	Scope        string            `json:"scope"`
+	Weights      map[string]int64  `json:"request_weights"`
+	ExtraWeights map[string]string `json:"response_size_extra_weights"`
 }
 
 type publicClientBudgetWire struct {
-	Provider            string    `yaml:"provider"`
-	Host                string    `yaml:"host"`
-	PolicyKind          string    `yaml:"policy_kind"`
-	DocumentationStatus string    `yaml:"documentation_status"`
-	Documented          yaml.Node `yaml:"documented_requests"`
-	Assigned            float64   `yaml:"tank_request_budget"`
-	PeriodS             float64   `yaml:"period_s"`
-	Scope               string    `yaml:"scope"`
-	Basis               string    `yaml:"basis"`
+	Provider            string          `json:"provider"`
+	Host                string          `json:"host"`
+	PolicyKind          string          `json:"policy_kind"`
+	DocumentationStatus string          `json:"documentation_status"`
+	Documented          json.RawMessage `json:"documented_requests"`
+	Assigned            int64           `json:"tank_request_budget"`
+	PeriodS             int64           `json:"period_s"`
+	Scope               string          `json:"scope"`
+	Basis               string          `json:"basis"`
 }
 
 type etherscanBudgetWire struct {
-	Provider        string `yaml:"provider"`
-	budgetEvidence  `yaml:",inline"`
-	Tier            string  `yaml:"tier"`
-	Scope           string  `yaml:"scope"`
-	DocumentedRPS   float64 `yaml:"documented_requests_per_s"`
-	DocumentedDaily float64 `yaml:"documented_requests_per_day"`
-	AssignedRPS     float64 `yaml:"tank_max_requests_per_s"`
-	AssignedDaily   float64 `yaml:"tank_max_requests_per_day"`
+	Provider string `json:"provider"`
+	budgetEvidence
+	Tier            string  `json:"tier"`
+	Scope           string  `json:"scope"`
+	DocumentedRPS   int64   `json:"documented_requests_per_s"`
+	DocumentedDaily int64   `json:"documented_requests_per_day"`
+	AssignedRPS     float64 `json:"tank_max_requests_per_s"`
+	AssignedDaily   int64   `json:"tank_max_requests_per_day"`
 }
 
 type duckduckgoBudgetWire struct {
-	Provider       string `yaml:"provider"`
-	budgetEvidence `yaml:",inline"`
-	Client         string    `yaml:"client"`
-	Backend        string    `yaml:"backend"`
-	Spacing        float64   `yaml:"minimum_request_spacing_s"`
-	RetryDelays    []float64 `yaml:"retry_delays_s"`
-	Cost           *float64  `yaml:"cost_usd"`
-	KeyRequired    *bool     `yaml:"api_key_required"`
+	Provider string `json:"provider"`
+	budgetEvidence
+	Client      string  `json:"client"`
+	Backend     string  `json:"backend"`
+	Spacing     *int64  `json:"minimum_request_spacing_s"`
+	RetryDelays []int64 `json:"retry_delays_s"`
+	Cost        *int64  `json:"cost_usd"`
+	KeyRequired *bool   `json:"api_key_required"`
 }
 
 type apiLimitsWire struct {
-	Version string      `yaml:"version"`
-	Policy  string      `yaml:"policy"`
-	Limits  []yaml.Node `yaml:"limits"`
+	Version string            `json:"version"`
+	Policy  string            `json:"policy"`
+	Limits  []json.RawMessage `json:"limits"`
 }
 
-func decodeBudgetNode[T any](node *yaml.Node) (T, error) {
+func decodeBudgetRecord[T any](data []byte) (T, error) {
 	var result T
-	data, err := yaml.Marshal(node)
-	if err != nil {
-		return result, err
-	}
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true)
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&result); err != nil {
 		return result, err
 	}
-	var trailing yaml.Node
+	var trailing json.RawMessage
 	if err := decoder.Decode(&trailing); err != io.EOF {
-		return result, fmt.Errorf("request budget must contain exactly one YAML document")
+		return result, fmt.Errorf("request budget requires exactly one JSON record")
 	}
 	return result, nil
 }
@@ -187,25 +186,20 @@ type validatedBudgetDocument struct {
 	Duckduckgo  *duckduckgoBudgetWire
 }
 
-func budgetProvider(node *yaml.Node) (string, error) {
-	if node.Kind != yaml.MappingNode {
-		return "", fmt.Errorf("request budget entry must be a mapping")
+func budgetProvider(data json.RawMessage) (string, error) {
+	if trimmed := bytes.TrimSpace(data); len(trimmed) == 0 || trimmed[0] != '{' {
+		return "", fmt.Errorf("request budget entry must be an object")
 	}
-	provider := ""
-	for i := 0; i < len(node.Content); i += 2 {
-		if node.Content[i].Value != "provider" {
-			continue
-		}
-		value := node.Content[i+1]
-		if provider != "" || value.Kind != yaml.ScalarNode || value.Tag != "!!str" || value.Value == "" {
-			return "", fmt.Errorf("request budget requires one explicit provider")
-		}
-		provider = value.Value
+	var discriminator struct {
+		Provider *string `json:"provider"`
 	}
-	if provider == "" {
-		return "", fmt.Errorf("request budget requires provider")
+	if err := json.Unmarshal(data, &discriminator); err != nil {
+		return "", err
 	}
-	return provider, nil
+	if discriminator.Provider == nil || *discriminator.Provider == "" {
+		return "", fmt.Errorf("request budget requires explicit provider")
+	}
+	return *discriminator.Provider, nil
 }
 
 func validateClientProtection(rule clientProtectionWire) error {
@@ -242,15 +236,20 @@ func validateClientProtection(rule clientProtectionWire) error {
 
 func parseAPILimits(data []byte) (validatedBudgetDocument, error) {
 	var output validatedBudgetDocument
-	var wire apiLimitsWire
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&wire); err != nil {
+	if err := validateBudgetYAML(data); err != nil {
 		return output, err
 	}
-	var trailing yaml.Node
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return output, fmt.Errorf("request budgets require exactly one YAML document")
+	raw, err := SafeLoad(data)
+	if err != nil {
+		return output, err
+	}
+	encoded, err := pyjson.Dumps(raw, false)
+	if err != nil {
+		return output, err
+	}
+	wire, err := decodeBudgetRecord[apiLimitsWire](encoded)
+	if err != nil {
+		return output, err
 	}
 	if strings.TrimSpace(wire.Version) == "" || strings.TrimSpace(wire.Policy) == "" || len(wire.Limits) == 0 {
 		return output, fmt.Errorf("request budgets require version, policy and limits")
@@ -258,7 +257,7 @@ func parseAPILimits(data []byte) (validatedBudgetDocument, error) {
 	output.Version, output.Policy = wire.Version, wire.Policy
 	seen := make(map[string]bool, len(wire.Limits))
 	for i := range wire.Limits {
-		node := &wire.Limits[i]
+		node := wire.Limits[i]
 		provider, err := budgetProvider(node)
 		if err != nil {
 			return output, err
@@ -269,7 +268,7 @@ func parseAPILimits(data []byte) (validatedBudgetDocument, error) {
 		seen[provider] = true
 		switch provider {
 		case "sec.gov", "coinbase", "kraken":
-			rule, err := decodeBudgetNode[rateBudgetWire](node)
+			rule, err := decodeBudgetRecord[rateBudgetWire](node)
 			if err != nil {
 				return output, err
 			}
@@ -286,13 +285,13 @@ func parseAPILimits(data []byte) (validatedBudgetDocument, error) {
 				if !positiveIntegerBudget(*rule.Documented) {
 					return output, fmt.Errorf("documented request rate must be a positive integer")
 				}
-				if err := halfBudget(*rule.Documented, rule.Assigned); err != nil {
+				if err := halfBudget(float64(*rule.Documented), rule.Assigned); err != nil {
 					return output, err
 				}
 			}
 			output.Rates = append(output.Rates, rule)
 		case "binance.spot":
-			rule, err := decodeBudgetNode[spotBudgetWire](node)
+			rule, err := decodeBudgetRecord[spotBudgetWire](node)
 			if err != nil {
 				return output, err
 			}
@@ -307,7 +306,7 @@ func parseAPILimits(data []byte) (validatedBudgetDocument, error) {
 			}
 			output.Spot = &rule
 		case "binance.usdm":
-			rule, err := decodeBudgetNode[usdmBudgetWire](node)
+			rule, err := decodeBudgetRecord[usdmBudgetWire](node)
 			if err != nil {
 				return output, err
 			}
@@ -332,7 +331,7 @@ func parseAPILimits(data []byte) (validatedBudgetDocument, error) {
 			}
 			output.USDM = &rule
 		case "okx":
-			rule, err := decodeBudgetNode[okxBudgetWire](node)
+			rule, err := decodeBudgetRecord[okxBudgetWire](node)
 			if err != nil {
 				return output, err
 			}
@@ -360,7 +359,7 @@ func parseAPILimits(data []byte) (validatedBudgetDocument, error) {
 			}
 			output.OKX = &rule
 		case "bybit":
-			rule, err := decodeBudgetNode[bybitBudgetWire](node)
+			rule, err := decodeBudgetRecord[bybitBudgetWire](node)
 			if err != nil {
 				return output, err
 			}
@@ -375,7 +374,7 @@ func parseAPILimits(data []byte) (validatedBudgetDocument, error) {
 			}
 			output.Bybit = &rule
 		case "hyperliquid":
-			rule, err := decodeBudgetNode[hyperliquidBudgetWire](node)
+			rule, err := decodeBudgetRecord[hyperliquidBudgetWire](node)
 			if err != nil {
 				return output, err
 			}
@@ -389,7 +388,7 @@ func parseAPILimits(data []byte) (validatedBudgetDocument, error) {
 				return output, fmt.Errorf("hyperliquid requires operation and response-size policies")
 			}
 			for operation, weight := range rule.Weights {
-				if strings.TrimSpace(operation) == "" || !positiveBudget(weight) || math.Trunc(weight) != weight {
+				if strings.TrimSpace(operation) == "" || !positiveIntegerBudget(weight) {
 					return output, fmt.Errorf("invalid Hyperliquid operation weight")
 				}
 			}
@@ -400,7 +399,7 @@ func parseAPILimits(data []byte) (validatedBudgetDocument, error) {
 			}
 			output.Hyperliquid = &rule
 		case "binance.www", "binance.vision":
-			rule, err := decodeBudgetNode[publicClientBudgetWire](node)
+			rule, err := decodeBudgetRecord[publicClientBudgetWire](node)
 			if err != nil {
 				return output, err
 			}
@@ -414,7 +413,7 @@ func parseAPILimits(data []byte) (validatedBudgetDocument, error) {
 			}
 			output.Public = append(output.Public, rule)
 		case "etherscan":
-			rule, err := decodeBudgetNode[etherscanBudgetWire](node)
+			rule, err := decodeBudgetRecord[etherscanBudgetWire](node)
 			if err != nil {
 				return output, err
 			}
@@ -427,7 +426,7 @@ func parseAPILimits(data []byte) (validatedBudgetDocument, error) {
 			if !positiveIntegerBudget(rule.DocumentedRPS) {
 				return output, fmt.Errorf("documented Etherscan rate must be a positive integer")
 			}
-			if err := halfBudget(rule.DocumentedRPS, rule.AssignedRPS); err != nil {
+			if err := halfBudget(float64(rule.DocumentedRPS), rule.AssignedRPS); err != nil {
 				return output, err
 			}
 			if err := integerHalfBudget(rule.DocumentedDaily, rule.AssignedDaily); err != nil {
@@ -435,19 +434,19 @@ func parseAPILimits(data []byte) (validatedBudgetDocument, error) {
 			}
 			output.Etherscan = &rule
 		case "duckduckgo":
-			rule, err := decodeBudgetNode[duckduckgoBudgetWire](node)
+			rule, err := decodeBudgetRecord[duckduckgoBudgetWire](node)
 			if err != nil {
 				return output, err
 			}
 			if err := rule.validate(false, true); err != nil {
 				return output, err
 			}
-			if strings.TrimSpace(rule.Client) == "" || rule.Backend != "duckduckgo" || rule.Spacing < 0 || math.IsNaN(rule.Spacing) || math.IsInf(rule.Spacing, 0) || math.Trunc(rule.Spacing) != rule.Spacing ||
+			if strings.TrimSpace(rule.Client) == "" || rule.Backend != "duckduckgo" || rule.Spacing == nil || *rule.Spacing < 0 ||
 				rule.Cost == nil || *rule.Cost != 0 || rule.KeyRequired == nil || *rule.KeyRequired || len(rule.RetryDelays) == 0 {
 				return output, fmt.Errorf("invalid DuckDuckGo client policy")
 			}
 			for _, delay := range rule.RetryDelays {
-				if !positiveBudget(delay) || math.Trunc(delay) != delay {
+				if !positiveIntegerBudget(delay) {
 					return output, fmt.Errorf("invalid DuckDuckGo retry delay")
 				}
 			}
@@ -459,18 +458,60 @@ func parseAPILimits(data []byte) (validatedBudgetDocument, error) {
 	return output, nil
 }
 
-func positiveIntegerBudget(value float64) bool {
-	return positiveBudget(value) && math.Trunc(value) == value && value < 1<<53
+func positiveIntegerBudget(value int64) bool {
+	return value > 0 && value < 1<<53
 }
 
-func integerHalfBudget(documented, assigned float64) error {
+func integerHalfBudget(documented, assigned int64) error {
 	if !positiveIntegerBudget(documented) || !positiveIntegerBudget(assigned) {
 		return fmt.Errorf("documented request counts and weights require exactly representable positive integers")
 	}
-	return halfBudget(documented, assigned)
+	return halfBudget(float64(documented), float64(assigned))
 }
 
-func declaredNull(node yaml.Node) bool {
-	return node.Kind == yaml.ScalarNode && node.Tag == "!!null" &&
-		(node.Value == "" || node.Value == "~" || strings.EqualFold(node.Value, "null"))
+func declaredNull(value json.RawMessage) bool {
+	return bytes.Equal(bytes.TrimSpace(value), []byte("null"))
+}
+
+func validateBudgetYAML(data []byte) error {
+	var root yaml.Node
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(&root); err != nil {
+		return err
+	}
+	var trailing yaml.Node
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return fmt.Errorf("request budgets require exactly one YAML document")
+	}
+	return validateBudgetYAMLNode(&root, make(map[*yaml.Node]bool))
+}
+
+func validateBudgetYAMLNode(node *yaml.Node, active map[*yaml.Node]bool) error {
+	if node == nil || active[node] {
+		return fmt.Errorf("cyclic or missing request policy YAML node")
+	}
+	active[node] = true
+	defer delete(active, node)
+	if node.Kind == yaml.AliasNode {
+		return validateBudgetYAMLNode(node.Alias, active)
+	}
+	if node.Kind == yaml.MappingNode {
+		if len(node.Content)%2 != 0 {
+			return fmt.Errorf("invalid request policy YAML mapping")
+		}
+		keys := make(map[string]bool)
+		for index := 0; index < len(node.Content); index += 2 {
+			key := node.Content[index]
+			if key.Kind != yaml.ScalarNode || keys[key.Value] {
+				return fmt.Errorf("duplicate or non-scalar request policy key")
+			}
+			keys[key.Value] = true
+		}
+	}
+	for _, child := range node.Content {
+		if err := validateBudgetYAMLNode(child, active); err != nil {
+			return err
+		}
+	}
+	return nil
 }

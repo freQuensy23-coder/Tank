@@ -22,7 +22,7 @@ func TestFetchChargesActualURLQueryAndOverride(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ledger := budget.NewMemoryLedger(time.Now)
-			gate := budget.NewGate(ledger, "test")
+			gate := budget.NewGate(ledger, "test", fixturePolicies(t))
 			gate.Interval = func(string) time.Duration { return 0 }
 			client := NewClient("TankV0/test", gate, time.Now)
 			exchange := &exchange{responses: []canned{ok("{}")}}
@@ -39,7 +39,7 @@ func TestFetchChargesActualURLQueryAndOverride(t *testing.T) {
 
 func TestAmbiguousFetchQueryCannotSpendOrSend(t *testing.T) {
 	ledger := budget.NewMemoryLedger(time.Now)
-	client := NewClient("TankV0/test", budget.NewGate(ledger, "test"), time.Now)
+	client := NewClient("TankV0/test", budget.NewGate(ledger, "test", fixturePolicies(t)), time.Now)
 	exchange := &exchange{responses: []canned{ok("{}")}}
 	client.HTTP = &http.Client{Transport: exchange}
 	if _, err := client.Fetch(context.Background(), "GET", Binance+"/api/v3/depth?limit=100&limit=5000", nil, nil, nil, 0); err == nil {

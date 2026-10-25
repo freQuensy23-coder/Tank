@@ -3,11 +3,9 @@ package rest
 import (
 	"fmt"
 	"net/url"
-
-	"github.com/freQuensy23-coder/Tank/capture/internal/budget"
 )
 
-func effectiveFetchParams(target *url.URL, params map[string]string) (map[string]string, error) {
+func effectiveFetchParams(target *url.URL, params map[string]string, fields []string) (map[string]string, error) {
 	query, err := url.ParseQuery(target.RawQuery)
 	if err != nil {
 		return nil, fmt.Errorf("invalid fetch query: %w", err)
@@ -16,7 +14,7 @@ func effectiveFetchParams(target *url.URL, params map[string]string) (map[string
 		query.Set(key, value)
 	}
 	required := make(map[string]bool)
-	for _, key := range budget.RequestQueryFields(target.Hostname(), target.Path) {
+	for _, key := range fields {
 		required[key] = true
 	}
 	effective := make(map[string]string, len(query))

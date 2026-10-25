@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -78,7 +79,7 @@ func (c *Client) Do(ctx context.Context, method, rawURL string, params map[strin
 	if err != nil {
 		return nil, err
 	}
-	host := u.Hostname()
+	host := strings.ToLower(u.Hostname())
 	key, ttl, lockKey := "", time.Duration(0), ""
 	if host == "api.hyperliquid.xyz" {
 		switch body["type"] {
@@ -176,15 +177,26 @@ func (c *Client) live(ctx context.Context, method string, u *url.URL, host strin
 }
 
 func (c *Client) once(ctx context.Context, method string, u *url.URL, host string, params map[string]string, body map[string]any, priority int) (any, error) {
+	effective, err := effectiveFetchParams(u, params, c.Gate.QueryFields(host, u.Path))
+	if err != nil {
+		return nil, err
+	}
+	var requestBody json.RawMessage
+	if body != nil {
+		requestBody, err = json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+	}
 	for attempt := 0; attempt < Attempts; attempt++ {
-		if err := c.Gate.Admit(ctx, host, u.Path, params, body, priority); err != nil {
+		if err := c.Gate.Admit(ctx, method, host, u.Path, effective, requestBody, priority); err != nil {
 			return nil, err
 		}
 		release, err := c.Gate.Enter(ctx, host, priority)
 		if err != nil {
 			return nil, err
 		}
-		status, header, data, err := c.send(ctx, method, u, params, body)
+		status, header, data, err := c.send(ctx, method, u, params, requestBody)
 		if err != nil {
 			release()
 			if ctx.Err() != nil {
@@ -213,7 +225,7 @@ func (c *Client) once(ctx context.Context, method string, u *url.URL, host strin
 	return nil, fmt.Errorf("%s: rate limited after bounded retries", host)
 }
 
-func (c *Client) send(ctx context.Context, method string, u *url.URL, params map[string]string, body map[string]any) (int, http.Header, []byte, error) {
+func (c *Client) send(ctx context.Context, method string, u *url.URL, params map[string]string, body json.RawMessage) (int, http.Header, []byte, error) {
 	target := *u
 	if len(params) > 0 {
 		query := target.Query()
@@ -223,13 +235,10 @@ func (c *Client) send(ctx context.Context, method string, u *url.URL, params map
 		target.RawQuery = query.Encode()
 	}
 	var payload io.Reader
-	if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
-			return 0, nil, nil, err
-		}
-		payload = bytes.NewReader(data)
+	if len(body) > 0 {
+		payload = bytes.NewReader(body)
 	}
+
 	req, err := http.NewRequestWithContext(ctx, method, target.String(), payload)
 	if err != nil {
 		return 0, nil, nil, err
@@ -324,18 +333,12 @@ func (c *Client) Fetch(ctx context.Context, method, rawURL string, params, heade
 	if err != nil {
 		return nil, err
 	}
-	host := u.Hostname()
-	effective, err := effectiveFetchParams(u, params)
+	host := strings.ToLower(u.Hostname())
+	effective, err := effectiveFetchParams(u, params, c.Gate.QueryFields(host, u.Path))
 	if err != nil {
 		return nil, err
 	}
-	var payload map[string]any
-	if data := bytes.TrimSpace(body); len(data) > 0 && data[0] == '{' {
-		if err := json.Unmarshal(data, &payload); err != nil {
-			return nil, fmt.Errorf("invalid fetch JSON body: %w", err)
-		}
-	}
-	buckets, err := budget.FetchConstraints(host, u.Path, effective, payload)
+	buckets, err := c.Gate.PlanFetch(method, host, u.Path, effective, body)
 	if err != nil {
 		return nil, err
 	}

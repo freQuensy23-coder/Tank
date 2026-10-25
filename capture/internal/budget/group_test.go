@@ -55,7 +55,7 @@ func TestGateWaitsForWholeGroupWithoutSpendingAvailableWindow(t *testing.T) {
 	if wait, err := ledger.AcquireGroup(ctx, []Bucket{blocked}, "seed", "host"); wait != 0 || err != nil {
 		t.Fatalf("seed: wait=%v err=%v", wait, err)
 	}
-	gate := NewGate(ledger, "test")
+	gate := NewGate(ledger, "test", fixturePolicies(t))
 	gate.sleep = func(context.Context, time.Duration) error {
 		if used := ledger.Used(available.Name(), available.WindowS); used != 0 {
 			t.Fatalf("Gate consumed available window before group admission: %v", used)
