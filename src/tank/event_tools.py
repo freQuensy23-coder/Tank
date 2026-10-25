@@ -13,12 +13,15 @@ import httpx
 import zstandard
 
 from tank.analysis.decision_codec import (
+    decision_call_from_record,
     decision_inputs_from_records,
     decode_decision,
     encode_decision,
+    encode_outlook,
 )
 from tank.analysis.decision_contracts import (
     ActiveDecisionTracking,
+    DecisionCallContext,
     DecisionIdentity,
     DecisionMaterialization,
     DecisionMetadata,
@@ -51,7 +54,7 @@ from tank.analysis.page_access import (
 )
 from tank.analysis.reaction_scheduling import AssessmentFreeDiagnosticScheduling, ReactionScheduling
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
-from tank.analysis.watch_contracts import WatchCall, WatchCondition
+from tank.analysis.watch_contracts import WatchCondition
 from tank.contracts.page_evidence import (
     FetchPageRequest,
     PageRead,
@@ -2387,7 +2390,7 @@ class EventToolService:
         )
         generation = GenerationProvenance.model_validate(self.provenance(c))
         watch_conditions = [WatchCondition.model_validate(row) for row in conditions]
-        watch_calls = [WatchCall.model_validate(row) for row in calls]
+        watch_calls = [decision_call_from_record(row) for row in calls]
         prepared = c.get("_decision_prepared_condition_ids")
         prepared_ids = None if prepared is None else frozenset(prepared)
         if expired_calls and not calls and not new_fact_after_expiry:
@@ -2428,7 +2431,7 @@ class EventToolService:
                 ),
             ),
             latest_truth,
-            open_call=max(watch_calls, key=lambda call: parse_time(call.opened_at)) if watch_calls else None,
+            open_call=max(watch_calls, key=lambda call: call.opened_instant()) if watch_calls else None,
             conditions=[
                 condition
                 for condition in watch_conditions
@@ -2489,15 +2492,7 @@ class EventToolService:
             outlook_id=new_id("out"),
         )
         result = encode_decision(decision)
-        outlook = dict(
-            result["outlook"],
-            out_id=decision.outlook_id,
-            event_id=eid,
-            token_id=token,
-            **decision.metadata.identity.cutoff.fields("cutoff"),
-            **generation.model_dump(mode="json"),
-        )
-        await self.repo.put("ana.outlooks", decision.outlook_id, outlook)
+        await self.repo.put("ana.outlooks", decision.outlook_id, encode_outlook(decision))
         await self.repo.put("ana.decisions", decision.metadata.identity.decision_id, result)
         return result
 
@@ -2505,7 +2500,7 @@ class EventToolService:
         self,
         command: DecisionWatchCommand,
         existing: list[WatchCondition],
-        calls: list[WatchCall],
+        calls: list[DecisionCallContext],
         *,
         prepared_condition_ids: frozenset[str] | None,
     ) -> DecisionWatchReconciliation:

@@ -4,8 +4,8 @@ from datetime import datetime, timedelta
 
 from pydantic import Field, model_validator
 
-from tank.analysis.decision_contracts import DecisionDraft
-from tank.analysis.watch_contracts import WatchCall, WatchCondition, WatchExpression, WatchLeaf, WatchProposal
+from tank.analysis.decision_contracts import DecisionCallContext, DecisionDraft
+from tank.analysis.watch_contracts import WatchCondition, WatchExpression, WatchLeaf, WatchProposal
 from tank.contracts import DomainModel
 from tank.contracts.provenance import GenerationProvenance
 from tank.time_precision import Timestamp, collection_clock, offset_schedule
@@ -74,7 +74,7 @@ def _known_stamp(stamp: Timestamp) -> str:
 def reconcile_decision_watches(
     command: DecisionWatchCommand,
     existing: list[WatchCondition],
-    calls: list[WatchCall],
+    calls: list[DecisionCallContext],
     *,
     now: datetime,
     policy: DecisionWatchPolicy,
@@ -86,20 +86,13 @@ def reconcile_decision_watches(
     stamp = collection_clock(at)
     expiry = offset_schedule(stamp, policy.lifetime)
     identity = command
+    calls = [DecisionCallContext.model_validate(call) for call in calls]
     for call in calls:
         if call.event_id != identity.event_id or call.token_id != identity.token_id or call.status != "OPEN":
             raise ValueError("Decision watch lifetime requires its actual matching open calls")
     if calls:
-        latest_call = max(calls, key=lambda call: parse_iso_time(call.opened_at))
-        candidate = offset_schedule(
-            Timestamp(
-                latest_call.opened_at,
-                latest_call.opened_at_prec,
-                latest_call.opened_at_prec_reason,
-                latest_call.opened_at_bucket_anchor,
-            ),
-            policy.lifetime,
-        )
+        latest_call = max(calls, key=lambda call: call.opened_instant())
+        candidate = offset_schedule(latest_call.opened_at, policy.lifetime)
         if parse_iso_time(_known_stamp(candidate)) < parse_iso_time(_known_stamp(expiry)):
             expiry = candidate
     conditions = {condition.cond_id: WatchCondition.model_validate(condition) for condition in existing}
