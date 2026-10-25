@@ -234,3 +234,60 @@ def test_explicit_empty_precision_field_is_not_replaced_by_a_canonical_default()
     assert stamp.fields("ts", precision_field="observed_precision")["observed_precision"] == (
         "COLLECTION_ONLY"
     )
+
+
+@pytest.mark.parametrize("prior_precision", ["EXACT", "BUCKET(1h)"])
+def test_sparse_clock_replacement_removes_stale_owned_aliases_only(prior_precision: str) -> None:
+    from tank.time_precision import timestamp_owned_fields
+
+    stored: Record = {
+        "job_id": "job",
+        "run_after": "2026-10-17T10:00:00Z",
+        "run_after_prec": prior_precision,
+        "run_after_precision": prior_precision,
+        "run_after_precision_reason": None,
+        "created_at": "2026-10-17T09:00:00Z",
+        "created_at_prec": "EXACT",
+        "timestamp_precision": "EXACT",
+    }
+    if prior_precision == "BUCKET(1h)":
+        stored.update(run_after_bucket_size_s=3600, run_after_bucket_anchor="START")
+    assert propagate_timestamp(stored, "run_after").precision == prior_precision
+    updated = collection_clock(datetime(2026, 10, 17, 12, tzinfo=UTC)).fields("run_after")
+    naive = dict(stored)
+    naive.update(updated)
+    with pytest.raises(ValueError):
+        propagate_timestamp(naive, "run_after")
+    owned = timestamp_owned_fields("run_after")
+    replaced = {key: value for key, value in stored.items() if key not in owned}
+    replaced.update(updated)
+    stamp = propagate_timestamp(replaced, "run_after")
+    assert stamp.value == "2026-10-17T12:00:00Z" and stamp.precision == "COLLECTION_ONLY"
+    assert stamp.bucket_anchor is None and replaced["timestamp_precision"] == "EXACT"
+    assert propagate_timestamp(replaced, "created_at").precision == "EXACT"
+    assert replaced["job_id"] == "job"
+
+
+def test_published_clock_replacement_owns_canonical_published_aliases_and_explicit_provider_alias() -> None:
+    from tank.time_precision import timestamp_owned_fields
+
+    stored: Record = {
+        "published_at": "2026-10-17T10:00:00Z",
+        "published_prec": "BUCKET",
+        "published_at_precision": "BUCKET(1h)",
+        "published_at_bucket_size_s": 3600,
+        "published_at_bucket_anchor": "END",
+        "timestamp_precision": "BUCKET(1h)",
+        "published_at_reason": "old declaration",
+        "title": "Retain the authored title",
+    }
+    assert (
+        propagate_timestamp(stored, "published_at", precision_aliases=("timestamp_precision",)).bucket_anchor
+        == "END"
+    )
+    owned = timestamp_owned_fields("published_at", precision_aliases=("timestamp_precision",))
+    replaced = {key: value for key, value in stored.items() if key not in owned}
+    replaced.update(collection_clock(datetime(2026, 10, 17, 12, tzinfo=UTC)).fields("published_at"))
+    stamp = propagate_timestamp(replaced, "published_at", precision_aliases=("timestamp_precision",))
+    assert stamp.precision == "COLLECTION_ONLY" and stamp.bucket_anchor is None
+    assert stamp.precision_reason is None and replaced["title"] == "Retain the authored title"
