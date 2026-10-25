@@ -490,7 +490,9 @@ class _OutlookRowWire(_DecisionOutlookWire, GenerationProvenance, ResolvedVersio
 
     @field_validator("scenario_reasons", mode="before")
     @classmethod
-    def sparse_available_reasons(cls, value: JsonValue | DecisionScenarioReasons) -> DecisionScenarioReasons:
+    def decode_sparse_scenario_reasons(
+        cls, value: JsonValue | DecisionScenarioReasons
+    ) -> DecisionScenarioReasons:
         if isinstance(value, DecisionScenarioReasons):
             return DecisionScenarioReasons.model_validate(value)
         reasons = dict(_object(value, "scenario_reasons"))
@@ -686,8 +688,25 @@ def _sparse_reasons(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
     return payload
 
 
+def _require_current_scenario_explanations(outlook: DecisionOutlook) -> None:
+    explanations = outlook.scenario_explanations
+    for name, explanation in (
+        ("base", explanations.base),
+        ("upside", explanations.upside),
+        ("failure", explanations.failure),
+    ):
+        if explanation.state == "EXPLANATION_NOT_CAPTURED":
+            raise ValueError("New active " + name + " scenario requires its actual absence explanation")
+        if explanation.text is not None and not explanation.text.strip():
+            raise ValueError(
+                "New active " + name + " scenario requires actual text or an absence explanation"
+            )
+
+
 def encode_decision_draft(draft: DecisionDraft) -> dict[str, JsonValue]:
     draft = DecisionDraft.model_validate(draft)
+    if not isinstance(draft.metadata.tracking, EndedDecisionTracking):
+        _require_current_scenario_explanations(draft.calculation.outlook)
     payload = _base_payload(draft.calculation, draft.metadata)
     payload["conditions"] = [_wire_payload(value) for value in draft.proposals]
     wire = _DecisionDraftWire.model_validate(payload, strict=True)
@@ -702,6 +721,8 @@ def decode_decision_draft(payload: Mapping[str, JsonValue]) -> DecisionDraft:
 
 def encode_decision(record: DecisionRecord) -> dict[str, JsonValue]:
     record = DecisionRecord.model_validate(record)
+    if not isinstance(record.metadata.tracking, EndedDecisionTracking):
+        _require_current_scenario_explanations(record.calculation.outlook)
     payload = _base_payload(record.calculation, record.metadata)
     outlook = _wire_payload(record.calculation.outlook)
     outlook["conditions"] = JsonDocument.validate_value(
@@ -734,6 +755,7 @@ def encode_outlook(record: DecisionRecord) -> dict[str, JsonValue]:
     metadata = record.metadata
     if isinstance(metadata.tracking, EndedDecisionTracking):
         raise ValueError("Ended tracking cannot overwrite its historical outlook row")
+    _require_current_scenario_explanations(record.calculation.outlook)
     identity = metadata.identity
     payload = _wire_payload(record.calculation.outlook)
     payload["conditions"] = JsonDocument.validate_value(

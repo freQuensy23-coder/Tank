@@ -225,6 +225,39 @@ class DecisionScenarioReasons(DomainModel):
     failure: str | None
 
 
+type ScenarioExplanationState = Literal["AVAILABLE", "UNAVAILABLE", "EXPLANATION_NOT_CAPTURED"]
+
+
+def _scenario_explanation_state(text: str | None, reason: str | None) -> ScenarioExplanationState:
+    if text is not None:
+        return "AVAILABLE"
+    if reason is None or not reason.strip():
+        return "EXPLANATION_NOT_CAPTURED"
+    return "UNAVAILABLE"
+
+
+class ScenarioExplanation(DomainModel):
+    state: ScenarioExplanationState
+    text: str | None
+    reason: str | None
+
+    @model_validator(mode="after")
+    def captured_state(self) -> Self:
+        if self.state != _scenario_explanation_state(self.text, self.reason):
+            raise ValueError("Scenario explanation status disagrees with its captured fields")
+        return self
+
+    @classmethod
+    def from_values(cls, text: str | None, reason: str | None) -> Self:
+        return cls(state=_scenario_explanation_state(text, reason), text=text, reason=reason)
+
+
+class ScenarioExplanations(DomainModel):
+    base: ScenarioExplanation
+    upside: ScenarioExplanation
+    failure: ScenarioExplanation
+
+
 class DecisionOutlook(DomainModel):
     direction: Bias
     direction_rule: Bias
@@ -238,6 +271,14 @@ class DecisionOutlook(DomainModel):
     tactical: bool
     scenarios: DecisionScenarios
     scenario_reasons: DecisionScenarioReasons
+
+    @property
+    def scenario_explanations(self) -> ScenarioExplanations:
+        return ScenarioExplanations(
+            base=ScenarioExplanation.from_values(self.scenarios.base, self.scenario_reasons.base),
+            upside=ScenarioExplanation.from_values(self.scenarios.upside, self.scenario_reasons.upside),
+            failure=ScenarioExplanation.from_values(self.scenarios.failure, self.scenario_reasons.failure),
+        )
 
 
 class DecisionCore(DomainModel):

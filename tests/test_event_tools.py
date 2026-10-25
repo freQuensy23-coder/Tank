@@ -5894,36 +5894,58 @@ async def test_accepted_completion_and_native_failure_preserve_done_without_dead
             await native.close()
 
 
-async def test_expired_tracking_status_preserves_the_frozen_financial_calculation(service) -> None:
-    from test_decision_contracts import frozen_decision_fixture
+@pytest.mark.parametrize(
+    "backend",
+    ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])],
+)
+async def test_expired_tracking_status_preserves_the_frozen_financial_calculation(
+    service, backend, postgres_template, repository_lifetime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from copy import deepcopy
 
-    from tank.analysis.decision_codec import decode_decision, encode_decision
-    from tank.analysis.decision_contracts import DecisionIdentity, DecisionMetadata, DecisionRecord
-    from tank.time_precision import chosen_boundary, collection_clock
+    from foundation_helpers import object_field
 
-    authored = frozen_decision_fixture()
-    prior = authored.metadata
-    actual = prior.identity
-    cutoff = utcnow() - timedelta(days=3)
-    identity = DecisionIdentity.model_validate(
-        actual.model_copy(update={"cutoff": chosen_boundary(cutoff, precision="EXACT")})
-    )
-    frozen = DecisionRecord.model_validate(
-        authored.model_copy(
-            update={
-                "metadata": DecisionMetadata.model_validate(
-                    prior.model_copy(
-                        update={
-                            "identity": identity,
-                            "calculated_at": collection_clock(cutoff + timedelta(seconds=1)),
-                        }
-                    )
-                )
-            }
+    from tank.analysis.decision_codec import decode_decision, encode_decision, encode_outlook
+    from tank.util import parse_time
+
+    if backend == "postgres":
+        import os
+
+        url = os.getenv("TANK_TEST_DATABASE_URL")
+        if not url:
+            pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
+        service.repo = await repository_lifetime.enter_async_context(postgres_template.repository(url))
+
+    fixed = parse_time("2026-10-29T00:00:00Z")
+    for module in ("tank.util", "tank.event_tools"):
+        monkeypatch.setattr(module + ".utcnow", lambda: fixed)
+    frozen = decode_decision(
+        complete_decision_fixture(
+            "DEC-historical", "EVT-historical", "T", "2026-10-25T00:00:00Z", "MTA-historical"
         )
     )
+    identity = frozen.metadata.identity
+    original_outlook = encode_outlook(frozen)
+    original_wire = encode_decision(frozen)
+    object_field(original_wire, "outlook")["scenarios"] = {
+        "base": None,
+        "upside": None,
+        "failure": "The captured failure scenario remains available.",
+    }
+    object_field(original_wire, "outlook")["scenario_reasons"] = {"upside": "ORIGINAL_CAUSE_AS_CAPTURED"}
+    original_outlook["scenarios"] = object_field(original_wire, "outlook")["scenarios"]
+    original_outlook["scenario_reasons"] = {"upside": "ORIGINAL_CAUSE_AS_CAPTURED"}
+    literal_historical = deepcopy(original_wire)
+    literal_outlook = deepcopy(original_outlook)
+    expected = decode_decision(original_wire)
+    prior_truth = complete_truth_fixture(
+        identity.market_truth_id,
+        identity.event_id,
+        identity.token_id,
+        identity.cutoff.value,
+    )
     eid, token = identity.event_id, identity.token_id
-    closed_at = iso(cutoff + timedelta(days=1))
+    closed_at = "2026-10-28T00:00:00Z"
     for table, key, value in (
         (
             "evt.events",
@@ -5958,7 +5980,9 @@ async def test_expired_tracking_status_preserves_the_frozen_financial_calculatio
             "newer-truth",
             complete_truth_fixture("newer-truth", eid, token, clock_iso()),
         ),
-        ("ana.decisions", identity.decision_id, encode_decision(frozen)),
+        ("ana.market_truth", identity.market_truth_id, prior_truth),
+        ("ana.outlooks", frozen.outlook_id, original_outlook),
+        ("ana.decisions", identity.decision_id, original_wire),
         (
             "ana.calls",
             "expired-call",
@@ -5967,15 +5991,24 @@ async def test_expired_tracking_status_preserves_the_frozen_financial_calculatio
                 "event_id": eid,
                 "token_id": token,
                 "status": "CLOSED",
+                "opened_by_alert": "ALERT-historical-position",
+                "opened_by_version": 1,
+                "opened_at": "2026-10-25T00:00:00Z",
+                "opened_at_prec": "EXACT",
+                "opened_at_prec_reason": None,
+                "entry_ref_price": "1",
+                "invalidation_price": "0.9",
                 "closed_by": "EXPIRED",
                 "closed_at": closed_at,
+                "closed_at_prec": "COLLECTION_ONLY",
+                "closed_at_prec_reason": None,
             },
         ),
     ):
         await service.repo.put(table, key, value)
     wire = await service.get_decision({"event_id": eid, "token_id": token}, {})
     ended = decode_decision(wire)
-    assert ended.calculation == frozen.calculation
+    assert ended.calculation == expected.calculation
     assert ended.metadata.identity.cutoff == frozen.metadata.identity.cutoff
     assert ended.metadata.calculated_at == frozen.metadata.calculated_at
     assert ended.metadata.identity.generation == frozen.metadata.identity.generation
@@ -5986,4 +6019,7 @@ async def test_expired_tracking_status_preserves_the_frozen_financial_calculatio
     assert wire["outlook_id"] == frozen.outlook_id and wire["conditions"] == []
     assert wire["tracking_recorded_at"] is not None
     assert wire["tracking_writer"]["versions"] == service.versions.model_dump(mode="json")
-    assert await service.repo.get("ana.decisions", identity.decision_id) == encode_decision(frozen)
+    assert object_field(wire, "outlook")["scenario_reasons"] == {"upside": "ORIGINAL_CAUSE_AS_CAPTURED"}
+    assert ended.calculation.outlook.scenario_explanations.base.state == "EXPLANATION_NOT_CAPTURED"
+    assert await service.repo.get("ana.decisions", identity.decision_id) == literal_historical
+    assert await service.repo.get("ana.outlooks", frozen.outlook_id) == literal_outlook

@@ -457,7 +457,10 @@ def _token_block(
         ("Failure", scenarios.failure, scenarios.failure_reason),
     ):
         outlook_line += (
-            "\n• " + label + ": " + _na(value, reason if reason is not None else "scenario unavailable")
+            "\n• "
+            + label
+            + ": "
+            + _na(value, reason if reason is not None and reason.strip() else "explanation not captured")
         )
     conditions: list[str] = []
     for condition_role, symbol in (("UPGRADE", "↑"), ("DOWNGRADE", "↓")):
