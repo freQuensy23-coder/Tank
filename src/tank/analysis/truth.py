@@ -3077,7 +3077,9 @@ def supply_truth(snapshot, start, end):
             ),
             protocols=protocols,
             coverage=coverage,
-            as_of=iso(_time(fundamentals)),
+            **propagate_timestamp(
+                fundamentals, "ts", missing_reason="FUNDAMENTALS_TIME_PROVENANCE_UNAVAILABLE"
+            ).fields("as_of"),
             capture_received_at=fundamentals.get("received_ts"),
             capture_availability="KNOWN" if fundamentals.get("received_ts") is not None else "UNKNOWN",
             age_s=age,

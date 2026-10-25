@@ -294,7 +294,7 @@ async def test_full_sse_pipeline_postgres(
     from tank.storage import PostgresRepository
     from tank.util import clock_iso, iso, new_id
 
-    clock = datetime.now(UTC).replace(second=0, microsecond=0)
+    clock = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
     for name in (
         "tank.util",
         "tank.storage",
@@ -686,10 +686,15 @@ async def test_full_sse_pipeline_postgres(
             persisted_truth = (await repo.list("ana.market_truth", filters={"event_id": eid}))[0]
             assert all(isinstance(fact, str) for fact in persisted_truth["decisive_facts"])
             if complete_market:
+                assert persisted_truth["relative"]["beta_btc"] is not None
+                assert persisted_truth["relative"]["beta_flags"]["btc"] is None
                 assert persisted_truth["decisive_fact_details"]
                 assert any(
                     "EVENT" in fact and "NATIVE_TOKEN" in fact for fact in persisted_truth["decisive_facts"]
                 )
+            if not complete_market:
+                assert persisted_truth["relative"]["beta_btc"] is None
+                assert persisted_truth["relative"]["beta_flags"]["btc"] == "INSUFFICIENT_HISTORY"
             decision = await invoke("get_decision", {"event_id": eid, "token_id": "T"})
             assert decision["action"] == ("START" if complete_market else "WAIT"), decision
             what = "Binance approved listing T, allowing the exchange to add trading access for this token."

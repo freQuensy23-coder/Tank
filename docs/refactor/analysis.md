@@ -252,3 +252,40 @@ Evidence:212truth/review unit cases pass in11.31s. Direct history/variance/estim
 ### Strict context consumer fixtures
 
 The exposure-anchor fixture now supplies an explicit declared version facet to its EventToolService. The abort-finalization synthetic replay config now declares its actual S01 source display label, required by the typed context registry; this is an authored label-only view for the test, not reconstructed collector provenance. Its failure-case assertions still exercise actual native stream retirement, acceptance loss, timeout/cancellation and durable finalization. All33 exposure/replay-abort cases pass in1.71s; no schema/default fallback was restored.
+
+## Parent95 compatible integration repairs
+
+Authored replay context configs now declare their actual empty entity/instrument namespaces and source label catalogs; the captured CMS feed includes its explicit display name. Reference reconstruction includes the source catalog from its declared baseline when using the full config, and explicit empty label namespaces in its synthetic minimal config. These are authored fixture facts, not production fallbacks or changes to frozen captured registries.
+
+The retained Binance fixture adapters now declare milliseconds for REST openInterestHist timestamps and REST kline array open-time fields, and parse the archive metrics CSV create_time with its proven UTC convention. Original provider bytes are unchanged. Generic parse_time never guesses their unit or timezone.
+
+The current-minute synthetic refresh helper preserves requested minute-bound cutoff/flow observations but moves declared hourly bar open/close fields by whole hours, retaining the actual UTC hourly sample grid. The PostgreSQL positive fixture now declares nonconstant minute BTC observations matching the authored hourly benchmark rather than overwriting it with flat100. Positive paths assert an estimated beta with no unavailable flag; the independent flat-history negative remains intact. No coefficient/default is inserted.
+
+supply_truth now propagates actual fundamentals.ts timestamp provenance into as_of. COLLECTION_ONLY and explicit unknown precision/reasons remain distinct instead of a formatted ISO string becoming an intraday accuracy claim; receipt clocks and cadence are not substituted. A real calculator regression checks both states.
+
+Broad baseline/freshness migration is isolated under immutable stash efc063547cbd58a42aaad677dfc0b6aad0ccf0d1 while this compatible repair is qualified.248 affected unit cases pass4.76s and35 targeted current-minute/holders cases pass2.15s. Actual integration qualification follows on the immutable committed repair.
+
+### Required reaction scheduling capability (activation cohort)
+
+`EventToolService.__init__.scheduler` is now required and implements the narrow
+`ReactionScheduling.ensure_event_reactions(event_id)` command. Successful assessment
+dispatch always issues that command; the former `scheduler is not None` branch
+silently discarded required scheduling work. Runtime composition and operational
+replay must supply the actual Scheduler with captured policy and own its cleanup.
+This activation is held until those constructor companions are integrated.
+
+`AssessmentFreeDiagnosticScheduling` is an explicit restricted capability for a
+verified recorded diagnostic whose complete call catalog contains no assessment.
+`diagnostic_call_catalog` validates required call identities/tools and uniqueness,
+and binds the entire captured catalog (including arguments) to a digest alongside
+its verified input digest. Artifact verification remains the recorded reader's
+responsibility; a caller-supplied digest alone does not establish artifact trust.
+Dispatch refuses `set_assessment` before schema lookup, storage access or mutation
+when this capability is present. It cannot silently absorb a scheduling command.
+No live request, quota admission or clock sleep belongs to this capability.
+
+Three behavior cases prove that declared assessments prohibit this mode, changes
+to captured arguments change the catalog binding, and forbidden assessment cannot
+reach its implementation or change persisted event/assessment state. The named
+contract passes strict mypy; Ruff/format pass. Actual scheduling effects and replay
+reader qualification belong to the companion cohort, not this initial checkpoint.
