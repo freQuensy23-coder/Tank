@@ -266,3 +266,16 @@ async def test_entry_error_notices_persist_and_deduplicate_in_storage(backend, p
         assert len(await entry_notices(repo)) == 1
         assert len(await repo.list("out.ops_notices", filters={"kind": "ENTRY_ERROR"})) == 1
         assert len(await entry_jobs(repo)) == 1
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(0, "0"), (False, "False"), (None, ""), ("<b>zero</b> &amp; text", "zero & text")],
+)
+def test_operator_plain_text_preserves_explicit_zero_and_false(
+    value: str | int | float | bool | None,
+    expected: str,
+) -> None:
+    from tank.ops_cards import plain
+
+    assert plain(value).strip() == expected

@@ -419,3 +419,15 @@ imports application configuration. Its owner label is required explicitly and
 remains observability only, never a quota partition. Runtime's owner must pair
 the configure call with the existing release lifetime before integration; this
 small API companion does not alter memory/physical repository selection.
+
+
+`ops_cards.plain` now takes an explicit scalar display value and handles only
+None as absent. Zero and false retain their visible values rather than disappearing
+through truthiness. Its 400-character default is the established presentation cap;
+callers can choose their named field-specific cap. This closes the untyped helper
+dependency in `ops_entry_errors`, which now passes strict mypy together with
+`sources.errors`. Entry-error variant parsing chooses a declared digest/proposal
+identity by key presence; empty declared identity values therefore reach that
+variant's required validation rather than trying a different record shape.
+Evidence: 164 Ops/source units pass in 7.26s, including new zero/false/markup cases;
+Ruff passes touched source/tests. The rest of ops_cards remains open.
