@@ -88,20 +88,23 @@ class HttpFetchPlan(DomainModel):
     requests_per_minute: int | float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
 
+type FeedKind = Literal[
+    "rss",
+    "atom",
+    "feed",
+    "html",
+    "rendered",
+    "rendered_html",
+    "html_diff",
+    "json",
+    "graphql",
+    "instruments",
+    "x",
+]
+
+
 class SourceFeed(FeedParsingSpec):
-    kind: Literal[
-        "rss",
-        "atom",
-        "feed",
-        "html",
-        "rendered",
-        "rendered_html",
-        "html_diff",
-        "json",
-        "graphql",
-        "instruments",
-        "x",
-    ]
+    kind: FeedKind
     interval_s: int | float = Field(gt=0, allow_inf_nan=False)
     method: Literal["GET", "POST"] = "GET"
     author_organization: str | None = None

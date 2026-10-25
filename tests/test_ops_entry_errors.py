@@ -231,7 +231,7 @@ async def test_failed_report_does_not_fail_acquisition_and_is_retried_next_poll(
             raise RuntimeError("database unavailable")
         return await report(*args)
 
-    monkeypatch.setattr("tank.sources.polling.report_entry_errors", flaky)
+    monkeypatch.setattr("tank.ops_entry_errors.report_entry_errors", flaky)
     results = await poll(repo, tmp_path, [broken("Bad"), broken("Bad") if second == "broken" else RSS])
     assert [result.items for result in results] == [1, 0]
     [notice] = await entry_notices(repo)

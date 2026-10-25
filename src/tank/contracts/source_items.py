@@ -15,7 +15,7 @@ from pydantic import (
 
 from tank.contracts import DomainModel
 from tank.contracts.page_evidence import PageReadProvenance, RecordedBodyProvenance
-from tank.contracts.provenance import GenerationProvenance
+from tank.contracts.provenance import GenerationProvenance, ResolvedVersionIdentity
 from tank.contracts.repository import Collection
 from tank.contracts.sources import SourceAuthorRole
 from tank.time_precision import Timestamp, collection_clock, propagate_timestamp
@@ -371,6 +371,55 @@ class PendingSourceItem(SourceObservedClock):
                 discovery_code_version=self.discovery_code_version,
             ),
         )
+
+
+class PendingCaptureMetadata(SourceObservedClock):
+    item_id: str = Field(min_length=1)
+    feed: str = Field(min_length=1)
+    discovery_config_version: str = Field(min_length=1)
+    discovery_code_version: str = Field(min_length=1)
+    observed_at_prec: Literal["COLLECTION_ONLY"] | None = None
+    observed_at_prec_reason: None = None
+    observed_at_precision: Literal["COLLECTION_ONLY"] | None = None
+    raw_ref: str | None = Field(default=None, min_length=1)
+    raw_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+    @model_validator(mode="after")
+    def captured_declarations(self) -> Self:
+        if self.observed_at_prec is None and self.observed_at_precision is None:
+            raise ValueError("Pending source item has no declared collection clock")
+        if (self.raw_ref is None) != (self.raw_sha256 is None):
+            raise ValueError("Pending source raw evidence requires both reference and digest")
+        ResolvedVersionIdentity(
+            config_version=self.discovery_config_version,
+            code_version=self.discovery_code_version,
+        )
+        return self
+
+
+def pending_source_item(source_id: str, wire: Mapping[str, JsonValue]) -> PendingSourceItem:
+    """Validate a flat durable pending row before any enrichment or ingestion."""
+    metadata = PendingCaptureMetadata.model_validate(
+        {name: wire[name] for name in PendingCaptureMetadata.model_fields if name in wire}
+    )
+    material = discovered_item(
+        source_id,
+        {name: value for name, value in wire.items() if name not in PendingCaptureMetadata.model_fields},
+    )
+    raw = (
+        None
+        if metadata.raw_ref is None or metadata.raw_sha256 is None
+        else RawSourceReference(raw_ref=metadata.raw_ref, raw_sha256=metadata.raw_sha256)
+    )
+    return PendingSourceItem(
+        discovery=material.discovery,
+        item_id=metadata.item_id,
+        feed=metadata.feed,
+        observed_at=metadata.observed_at,
+        discovery_config_version=metadata.discovery_config_version,
+        discovery_code_version=metadata.discovery_code_version,
+        raw=raw,
+    )
 
 
 class PendingRelevance(DomainModel):
