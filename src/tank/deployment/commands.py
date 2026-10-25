@@ -19,6 +19,18 @@ type PublisherAction = Literal[
 ]
 
 
+PUBLISHER_ACTIONS: tuple[PublisherAction, ...] = (
+    "prepare",
+    "activate",
+    "commit",
+    "finish",
+    "rollback",
+    "rollback_finish",
+    "previous_release",
+    "recovery_release",
+)
+
+
 class PublisherCommand(DomainModel):
     action: PublisherAction
     release_sha: CommitSHA

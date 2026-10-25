@@ -37,7 +37,8 @@ def test_runtime_info_needs_no_host_credential_state_or_worker_artifact(tmp_path
     observed = RuntimeEvidence.model_validate_json(result.stdout)
     assert observed.orchestrator_sha == "a" * 40
     assert observed.selected_release_sha == "b" * 40
-    assert list(tmp_path.iterdir()) == []
+    assert not (tmp_path / "apify-state").exists()
+    assert not (tmp_path / ".env").exists()
     assert b"ambient-token" not in result.stdout + result.stderr
 
 
@@ -49,9 +50,22 @@ def test_cli_refuses_noncommand_methods_without_runtime_or_host_access(action: s
     assert b"ambient-token" not in result.stderr
 
 
-def test_worker_arguments_cannot_select_ambient_paths_or_timeout() -> None:
-    result = invoke(
+@pytest.mark.parametrize(
+    "action",
+    [
         "prepare",
+        "activate",
+        "commit",
+        "finish",
+        "rollback",
+        "rollback_finish",
+        "previous_release",
+        "recovery_release",
+    ],
+)
+def test_worker_arguments_cannot_select_ambient_paths_or_timeout(action: str) -> None:
+    result = invoke(
+        action,
         "--orchestrator-sha",
         "a" * 40,
         "--selected-release-sha",

@@ -4,13 +4,12 @@ import argparse
 import os
 import time
 from pathlib import Path
-from typing import get_args
 
 from pydantic import ValidationError
 
 from tank.deployment.apify_api import ApifyAPI, ApifyAPIError, ApifyEndpoint
 from tank.deployment.artifacts import ArtifactError, FilesystemArtifacts
-from tank.deployment.commands import PublisherAction, PublisherCommand, execute_command
+from tank.deployment.commands import PUBLISHER_ACTIONS, PublisherCommand, execute_command
 from tank.deployment.contracts import PublisherPolicy
 from tank.deployment.credentials import PublisherCredentialError, host_token
 from tank.deployment.journal import JournalError, PublisherJournal
@@ -47,7 +46,7 @@ def parse_arguments() -> Arguments:
     parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_subparsers(dest="action", required=True)
     actions.add_parser("runtime-info", parents=[common])
-    for action in get_args(PublisherAction):
+    for action in PUBLISHER_ACTIONS:
         actions.add_parser(action, parents=[worker])
     return parser.parse_args(namespace=Arguments())
 
