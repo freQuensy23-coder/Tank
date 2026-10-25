@@ -2,6 +2,7 @@ package budget
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -41,5 +42,28 @@ func TestInvalidGroupCannotPartiallySpend(t *testing.T) {
 		if ledger.Used(b.Name(), b.WindowS) != 0 {
 			t.Fatal("invalid group consumed capacity")
 		}
+	}
+}
+
+func TestGateWaitsForWholeGroupWithoutSpendingAvailableWindow(t *testing.T) {
+	now := time.Unix(100, 0)
+	ledger := NewMemoryLedger(func() time.Time { return now })
+	available := Bucket{Key: "a-available", Capacity: 1, WindowS: 1, Weight: 1}
+	blocked := Bucket{Key: "z-blocked", Capacity: 1, WindowS: 60, Weight: 1}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if wait, err := ledger.AcquireGroup(ctx, []Bucket{blocked}, "seed", "host"); wait != 0 || err != nil {
+		t.Fatalf("seed: wait=%v err=%v", wait, err)
+	}
+	gate := NewGate(ledger, "test")
+	gate.sleep = func(context.Context, time.Duration) error {
+		if used := ledger.Used(available.Name(), available.WindowS); used != 0 {
+			t.Fatalf("Gate consumed available window before group admission: %v", used)
+		}
+		cancel()
+		return ctx.Err()
+	}
+	if err := gate.AdmitBuckets(ctx, "host", []Bucket{available, blocked}, 0); !errors.Is(err, context.Canceled) {
+		t.Fatalf("group cancellation: %v", err)
 	}
 }

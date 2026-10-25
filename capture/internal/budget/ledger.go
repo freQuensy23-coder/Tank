@@ -7,6 +7,8 @@ import (
 )
 
 type Ledger interface {
+	AcquireGroup(ctx context.Context, buckets []Bucket, owner, host string) (time.Duration, error)
+
 	Acquire(ctx context.Context, bucket string, capacity, windowS, weight float64, owner, host string) (time.Duration, error)
 
 	Block(ctx context.Context, host string, until time.Time, reason, owner string) error

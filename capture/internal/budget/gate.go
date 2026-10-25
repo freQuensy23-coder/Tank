@@ -120,39 +120,47 @@ func (g *Gate) AdmitBuckets(ctx context.Context, host string, buckets []Bucket, 
 	if banned && time.Now().Before(until) {
 		return &BannedError{Host: host, Until: until}
 	}
-	for _, b := range buckets {
-		if err := g.acquire(ctx, host, b, priority); err != nil {
-			return err
-		}
-	}
-	return nil
+	return g.acquireGroup(ctx, host, buckets, priority)
 }
 
 func (g *Gate) acquire(ctx context.Context, host string, b Bucket, priority int) error {
-	if err := b.Validate(); err != nil {
+	return g.acquireGroup(ctx, host, []Bucket{b}, priority)
+}
+
+func (g *Gate) acquireGroup(ctx context.Context, host string, buckets []Bucket, priority int) error {
+	ordered, err := OrderedBuckets(buckets)
+	if err != nil {
 		return err
 	}
-	name := b.Name()
 	urgent := priority < 0
 	if urgent {
 		g.mu.Lock()
-		g.urgent[name]++
+		for _, b := range ordered {
+			g.urgent[b.Name()]++
+		}
 		g.mu.Unlock()
 		defer func() {
 			g.mu.Lock()
-			if g.urgent[name]--; g.urgent[name] <= 0 {
-				delete(g.urgent, name)
+			for _, b := range ordered {
+				name := b.Name()
+				if g.urgent[name]--; g.urgent[name] <= 0 {
+					delete(g.urgent, name)
+				}
 			}
 			g.mu.Unlock()
 		}()
 	}
 	for {
 		g.mu.Lock()
-		yielding := !urgent && g.urgent[name] > 0
+		yielding := false
+		wait := 50 * time.Millisecond
+		for _, b := range ordered {
+			yielding = yielding || (!urgent && g.urgent[b.Name()] > 0)
+			wait = min(wait, seconds(b.WindowS))
+		}
 		g.mu.Unlock()
-		wait := min(50*time.Millisecond, seconds(b.WindowS))
 		if !yielding {
-			w, err := g.ledger.Acquire(ctx, name, b.Capacity, b.WindowS, b.Weight, g.owner, host)
+			w, err := g.ledger.AcquireGroup(ctx, ordered, g.owner, host)
 			if err != nil {
 				return err
 			}

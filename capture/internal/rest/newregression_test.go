@@ -17,12 +17,14 @@ type observedWaitingLedger struct {
 	waiting chan float64
 }
 
-func (l observedWaitingLedger) Acquire(ctx context.Context, name string, capacity, windowS, weight float64, owner, host string) (time.Duration, error) {
-	wait, err := l.Ledger.Acquire(ctx, name, capacity, windowS, weight, owner, host)
+func (l observedWaitingLedger) AcquireGroup(ctx context.Context, buckets []budget.Bucket, owner, host string) (time.Duration, error) {
+	wait, err := l.Ledger.AcquireGroup(ctx, buckets, owner, host)
 	if err == nil && wait > 0 {
-		select {
-		case l.waiting <- weight:
-		default:
+		for _, b := range buckets {
+			select {
+			case l.waiting <- b.Weight:
+			default:
+			}
 		}
 	}
 	return wait, err
