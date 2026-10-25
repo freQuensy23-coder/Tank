@@ -1,15 +1,32 @@
 import re
 from copy import deepcopy
+from datetime import timedelta
 from decimal import Decimal
 from typing import Literal
 
 import pytest
-from foundation_helpers import array_field, object_field, present, text_field
-from pydantic import JsonValue
+from foundation_helpers import object_field, present, text_field
 from score_fixtures import unassessed_score_dimensions
+from test_card_policy import gate_inputs as publication_case
+from test_card_template import card_inputs as template_inputs
+from test_card_template import wire_card_inputs
 from test_decision_contracts import decision_wire_fixture
 
-from tank.analysis.cards import alert_gate, compose_card
+from tank.analysis.card_contracts import (
+    ActiveCardDecision,
+    CardCondition,
+    CardDataLimit,
+    CardExclusion,
+    CardInputs,
+    CardOutlook,
+    CardReturns,
+    CardScenarios,
+    CardSubject,
+    InactiveCardDecision,
+    PublicationDecisionStatus,
+)
+from tank.analysis.card_policy import alert_gate
+from tank.analysis.cards import compose_card
 from tank.analysis.decision_codec import decision_inputs_from_records
 from tank.analysis.decision_contracts import (
     Action,
@@ -21,8 +38,6 @@ from tank.analysis.decision_contracts import (
     DecisionTriggers,
 )
 from tank.analysis.decisions import POSITIVE_ACTIONS, DecisionEngine
-from tank.analysis.watch_contracts import WatchRule
-from tank.contracts.json import decode_json
 from tank.models import Record
 
 
@@ -65,23 +80,45 @@ def scenario_texts(scenarios: DecisionScenarios) -> tuple[str, str, str]:
     return (present(scenarios.base), present(scenarios.upside), present(scenarios.failure))
 
 
-def card_projection(evaluation: DecisionEvaluation, token_id: str) -> Record:
-    """Serialize only at the public presentation boundary, without inventing persistence identity."""
-    payload = decode_json(evaluation.model_dump_json(exclude={"conditions"}, warnings="error"))
-    if not isinstance(payload, dict):
-        raise AssertionError("Decision presentation must be an object")
-    payload["token_id"] = token_id
-    conditions: list[JsonValue] = []
-    for proposed in evaluation.conditions:
-        rule = WatchRule(role=proposed.role, human_text=proposed.human_text, expr=proposed.expr)
-        wire = decode_json(rule.model_dump_json(exclude_unset=True, warnings="error"))
-        if not isinstance(wire, dict):
-            raise AssertionError("Watch presentation must be an object")
-        if proposed.milestone is not None:
-            wire["milestone_id"] = proposed.milestone.reference
-        conditions.append(wire)
-    payload["conditions"] = conditions
-    return payload
+def card_projection(evaluation: DecisionEvaluation, token_id: str) -> ActiveCardDecision:
+    outlook = evaluation.outlook
+    scenarios = CardScenarios(
+        base=outlook.scenarios.base,
+        upside=outlook.scenarios.upside,
+        failure=outlook.scenarios.failure,
+        base_reason=outlook.scenario_reasons.base,
+        upside_reason=outlook.scenario_reasons.upside,
+        failure_reason=outlook.scenario_reasons.failure,
+    )
+    return ActiveCardDecision(
+        kind="ACTIVE",
+        token_id=token_id,
+        action=evaluation.action,
+        thesis_grade=evaluation.thesis_grade,
+        trade_grade=evaluation.trade_grade,
+        raw_trade_grade=evaluation.trade_rule,
+        trade_reasons=tuple(evaluation.trade_reasons),
+        tactical=evaluation.tactical,
+        outlook=CardOutlook(
+            direction=outlook.direction,
+            potential=outlook.potential,
+            horizon=outlook.best_horizon,
+            confidence=outlook.confidence,
+            limitation=outlook.confidence_limiting,
+            scenarios=scenarios,
+        ),
+        conditions=tuple(
+            CardCondition(role=condition.role, human_text=condition.human_text)
+            for condition in evaluation.conditions
+        ),
+    )
+
+
+def evaluated_template(evaluation: DecisionEvaluation) -> CardInputs:
+    values = template_inputs()
+    return values.model_copy(
+        update={"decisions_by_token": {"world:WLD": card_projection(evaluation, "world:WLD")}}
+    )
 
 
 def test_start_and_ordered_blockers() -> None:
@@ -144,56 +181,58 @@ def test_context_lifecycle_safety() -> None:
     e["lifecycle"] = "INVALIDATED"
     d = engine.evaluate(policy_inputs(e, a, b, m, open_call=call))
     assert d.action == "EXIT"
-    assert not alert_gate(
-        e,
-        a,
-        previous={"decisions": [{"token_id": "T", "action": "START"}]},
-        decisions=[card_projection(d, text_field(b, "token_id"))],
-    )[0]
-    assert not alert_gate(e, a)[0]
+    case = publication_case()
+    event = case.event.model_copy(
+        update={"freshness": "STALE", "lifecycle": "INVALIDATED", "active_fatal_ids": frozenset({"fatal"})}
+    )
+    status = PublicationDecisionStatus(token_id="T", action=d.action, active=True)
+    assert not alert_gate(case.model_copy(update={"event": event, "decisions": (status,)})).allowed
+    assert not alert_gate(case.model_copy(update={"event": event, "previous": None})).allowed
 
 
 def test_card_diagnostics_and_probability() -> None:
     e, a, b, m = inputs()
     m["move_class"] = "PERP_LED_CHASE"
     m["divergence"] = {"state": "PERP_LED_MARKUP", "trigger": True, "unresolved": ["ABSORPTION_CANDIDATE"]}
-    d = DecisionEngine().evaluate(policy_inputs(e, a, b, m))
-    text = compose_card(
-        e,
-        a,
-        [b],
-        [card_projection(d, text_field(b, "token_id"))],
-        [m],
-        verdict="A verified event changes the thesis.",
+    evaluated = DecisionEngine().evaluate(policy_inputs(e, a, b, m))
+    values = evaluated_template(evaluated)
+    truth = values.market_by_token["world:WLD"].model_copy(
+        update={"move": "PERP_LED_CHASE", "unresolved": ("ABSORPTION_CANDIDATE",)}
     )
+    text = compose_card(values.model_copy(update={"market_by_token": {"world:WLD": truth}}))
     assert "ABSORPTION_CANDIDATE" in text and len(text) <= 3500
 
 
 def test_three_token_template_with_structured_figures() -> None:
     e, a, b, m = inputs()
-    bs: list[Record] = []
-    ds: list[Record] = []
-    ms: list[Record] = []
-    for token in ["AAA", "BBB", "CCC"]:
+    values = template_inputs()
+    beneficiaries = []
+    decisions: dict[str, ActiveCardDecision] = {}
+    markets = {}
+    for token in ("AAA", "BBB", "CCC"):
         edge = dict(b, token_id=token)
         truth = deepcopy(m)
         truth["token_id"] = token
-        truth["decisive_facts"] = [
-            {"metric": "price", "value": "3.2", "unit": "%", "window": "W4H"},
-            {"metric": "native net flow", "value": "12000", "unit": "tokens", "window": "W1H"},
-        ]
-        bs.append(edge)
-        ms.append(truth)
-        ds.append(card_projection(DecisionEngine().evaluate(policy_inputs(e, a, edge, truth)), token))
-    text = compose_card(
-        e,
-        a,
-        bs,
-        ds,
-        ms,
-        verdict="The approval advances a direct token mechanism.",
-        why=["What changed: approval verified.", "Economic effect: not estimable."],
+        evaluated = DecisionEngine().evaluate(policy_inputs(e, a, edge, truth))
+        subject = values.beneficiaries[0].subject.model_copy(
+            update={"token_id": token, "entity_id": token, "entity_name": token}
+        )
+        beneficiaries.append(values.beneficiaries[0].model_copy(update={"subject": subject}))
+        decisions[token] = card_projection(evaluated, token)
+        markets[token] = values.market_by_token["world:WLD"].model_copy(
+            update={
+                "token_id": token,
+                "decisive_facts": ("4h: price 3.2%", "1h: native net flow 12000 tokens"),
+            }
+        )
+    values = values.model_copy(
+        update={
+            "beneficiaries": tuple(beneficiaries),
+            "decisions_by_token": decisions,
+            "market_by_token": markets,
+        }
     )
+    text = compose_card(values)
     assert len(text) <= 3500 and text.count("WHAT TO DO:") == 3
 
 
@@ -331,28 +370,20 @@ def test_add_never_overrides_literal_b1_b2_precedence(
 
 
 def test_update_gate_materiality_rate_limit_and_safety() -> None:
-    e, a, b, m = inputs()
-    previous: Record = {
-        "event_state": "ANNOUNCED",
-        "class": "MAJOR",
-        "decisions": [{"token_id": "T", "action": "WATCH_TO_START"}],
-        "published_at": "2026-10-17T00:00:00Z",
-    }
-    assert alert_gate(e, a, previous=previous, now="2026-10-17T00:16:00Z")[0]
-    assert alert_gate(e, a, previous=previous, now="2026-10-17T00:01:00Z")[1] == "UPDATE_RATE_LIMIT"
-    e["state_verified"] = False
-    assert alert_gate(e, a, previous=previous, now="2026-10-17T00:16:00Z") == (False, "NO_MATERIAL_CHANGE")
-    e["negative_marker"] = "PAUSED"
-    assert alert_gate(e, a, previous=previous, now="2026-10-17T00:16:00Z")[0]
-    e["event_state"] = "ANNOUNCED"
-    d = DecisionEngine().evaluate(policy_inputs(e, a, b, m))
-    assert alert_gate(
-        e,
-        a,
-        previous=previous,
-        decisions=[card_projection(d, text_field(b, "token_id"))],
-        now="2026-10-17T00:01:00Z",
-    )[0]
+    case = publication_case()
+    previous = present(case.previous)
+    previous = previous.model_copy(update={"event": previous.event.model_copy(update={"state": "ANNOUNCED"})})
+    case = case.model_copy(update={"previous": previous})
+    elapsed = case.model_copy(update={"now": case.now + timedelta(minutes=15)})
+    assert alert_gate(elapsed).allowed
+    assert alert_gate(case).reason == "UPDATE_RATE_LIMIT"
+    unverified = case.event.model_copy(update={"state_verified": False})
+    assert alert_gate(elapsed.model_copy(update={"event": unverified})).reason == "NO_MATERIAL_CHANGE"
+    paused = unverified.model_copy(update={"negative_marker": "PAUSED"})
+    assert alert_gate(elapsed.model_copy(update={"event": paused})).allowed
+    start = PublicationDecisionStatus(token_id="T", action="START", active=True)
+    paused = paused.model_copy(update={"state": "ANNOUNCED"})
+    assert alert_gate(case.model_copy(update={"event": paused, "decisions": (start,)})).allowed
 
 
 def test_horizons_and_scenarios_no_probabilities() -> None:
@@ -373,9 +404,11 @@ def test_horizons_and_scenarios_no_probabilities() -> None:
 
 
 def test_canonical_claim_evidence_and_verification_update() -> None:
-    e, a, b, m = inputs()
-    e["evidence_labels"] = {"ITM-24": "Issuer announcement"}
-    e["claims"] = [
+    from tank.analysis.card_codec import card_inputs_from_records
+
+    event, assessment, beneficiary, decision, truth = wire_card_inputs()
+    event["evidence_labels"] = {"ITM-24": "Issuer announcement"}
+    event["claims"] = [
         {
             "claim_id": "CLM-24",
             "subject": "Issuer",
@@ -386,37 +419,37 @@ def test_canonical_claim_evidence_and_verification_update() -> None:
             "evidence": [{"item_id": "ITM-24", "quote": "Issuer signed agreement."}],
         }
     ]
-    d = DecisionEngine().evaluate(policy_inputs(e, a, b, m))
+    fixture = template_inputs()
     text = compose_card(
-        e,
-        a,
-        [b],
-        [card_projection(d, text_field(b, "token_id"))],
-        [m],
-        verdict="Agreement advances.",
-        why=["What changed: signature.", "Economic effect: not estimable."],
+        card_inputs_from_records(
+            event,
+            assessment,
+            [beneficiary],
+            [decision],
+            [truth],
+            narrative=fixture.narrative,
+            policy=fixture.policy,
+        )
     )
     assert "Issuer signed agreement [Issuer announcement]" in text
     assert "source unavailable" not in text and "confirmed claim" not in text
-    previous: Record = {
-        "card_struct": {"event": dict(e, state_verified=False)},
-        "decisions": [card_projection(d, text_field(b, "token_id"))],
-        "class": "MAJOR",
-    }
-    assert alert_gate(e, a, previous=previous, decisions=[card_projection(d, text_field(b, "token_id"))])[0]
-    e["freshness"] = "STALE"
-    assert (
-        alert_gate(e, a, previous=previous, decisions=[card_projection(d, text_field(b, "token_id"))])[1]
-        == "STALE_STATE_CHANGE"
+    case = publication_case()
+    previous = present(case.previous)
+    previous = previous.model_copy(
+        update={
+            "event": previous.event.model_copy(update={"state_verified": False}),
+            "acknowledged_send": None,
+        }
     )
-    e["contradictions"] = [{"type": "FATAL"}]
+    case = case.model_copy(update={"previous": previous})
+    assert alert_gate(case).allowed
+    stale = case.event.model_copy(update={"freshness": "STALE"})
+    case = case.model_copy(update={"event": stale})
+    assert alert_gate(case).reason == "STALE_STATE_CHANGE"
+    stale = stale.model_copy(update={"active_fatal_ids": frozenset({"fatal"})})
+    exit_status = PublicationDecisionStatus(token_id="T", action="EXIT", active=True)
     assert (
-        alert_gate(
-            e,
-            a,
-            previous=previous,
-            decisions=[dict(card_projection(d, text_field(b, "token_id")), action="EXIT")],
-        )[1]
+        alert_gate(case.model_copy(update={"event": stale, "decisions": (exit_status,)})).reason
         == "STALE_STATE_CHANGE"
     )
 
@@ -443,45 +476,56 @@ def test_crowding_uses_fixed_four_hour_window() -> None:
 
 
 def test_card_keeps_secondary_layer_explanations_and_least_repriced() -> None:
-    e, a, b, m = inputs()
-    object_field(a, "impact_horizon").update(
-        ramp_shape="STEP",
-        dependencies=["verified settlement"],
-        timing_confidence="HIGH",
-        time_to_materiality="days",
-    )
-    e["beneficiary_map"] = {
-        "layers": {
-            "SETTLEMENT": {"status": "NONE", "note": "No eligible universe rail."},
-            "ORACLE": {"status": "UNKNOWN", "note": "Dependency not verified."},
-        },
-        "no_credible_secondary_reason": "No secondary meets eligibility.",
-        "least_repriced_edge": "EDG-abc",
-    }
-    b.update(edge_id="EDG-abc", role="SECONDARY", exposure_score=8)
-    d = DecisionEngine().evaluate(policy_inputs(e, a, b, m))
-    text = compose_card(e, a, [b], [card_projection(d, text_field(b, "token_id"))], [m])
-    assert "least-repriced" in text
-    assert "ramp STEP" not in text and "timing HIGH" not in text
-    assert object_field(a, "impact_horizon")["dependencies"] == ["verified settlement"]
-    b["credible"] = False
-    text = compose_card(e, a, [b], [card_projection(d, text_field(b, "token_id"))], [m])
+    from tank.analysis.card_codec import card_inputs_from_records
+
+    event, assessment, beneficiary, decision, truth = wire_card_inputs()
+    mapping = object_field(event, "beneficiary_map")
+    mapping["least_repriced_edge"] = "EDG-abc"
+    mapping["no_credible_secondary_reason"] = "No secondary meets eligibility."
+    layers = object_field(mapping, "layers")
+    object_field(layers, "SETTLEMENT_L1_L2")["note"] = "No eligible universe rail."
+    object_field(layers, "ORACLE_DATA")["note"] = "Dependency not verified."
+    beneficiary.update(edge_id="EDG-abc", role="SECONDARY", exposure_score=8)
+    fixture = template_inputs()
+
+    def current() -> str:
+        return compose_card(
+            card_inputs_from_records(
+                event,
+                assessment,
+                [beneficiary],
+                [decision],
+                [truth],
+                narrative=fixture.narrative,
+                policy=fixture.policy,
+            )
+        )
+
+    text = current()
+    assert "least-repriced" in text and "ramp STEP" not in text and "timing HIGH" not in text
+    beneficiary["credible"] = False
+    text = current()
     assert "secondary none — No secondary meets eligibility." in text
     assert "SETTLEMENT: NONE" not in text and "ORACLE: UNKNOWN" not in text
     assert "• Settlement L1 / L2: No eligible universe rail." in text
     assert "• Oracles / data: Dependency not verified." in text
-    assert (
-        object_field(object_field(object_field(e, "beneficiary_map"), "layers"), "ORACLE")["note"]
-        == "Dependency not verified."
-    )
+    assert object_field(layers, "ORACLE_DATA")["note"] == "Dependency not verified."
 
 
 def test_structural_partial_has_facts_without_market_forecast() -> None:
-    e, a, _b, _m = inputs()
-    a["class"] = "STRUCTURAL_SHOCK"
-    text = compose_card(e, a, [], [], [], kind="PARTIAL", verdict="Issuer confirms approval.", why=[])
+    values = template_inputs()
+    values = values.model_copy(
+        update={
+            "assessment": values.assessment.model_copy(update={"classification": "STRUCTURAL_SHOCK"}),
+            "narrative": values.narrative.model_copy(update={"kind": "PARTIAL"}),
+            "beneficiaries": (),
+            "decisions_by_token": {},
+            "market_by_token": {},
+        }
+    )
+    text = compose_card(values)
     assert "Market analysis pending" in text
-    assert "WHAT TO DO:" not in text and "OUTLOOK:" not in text and ("──" not in text)
+    assert "WHAT TO DO:" not in text and "OUTLOOK:" not in text and "──" not in text
 
 
 def test_class_specific_scenarios_and_unknown() -> None:
@@ -510,52 +554,74 @@ def test_class_specific_scenarios_and_unknown() -> None:
 
 
 def test_full_who_names_outside_primary_but_omits_unverified_compatibility_candidate() -> None:
-    e, a, b, m = inputs()
-    b["token_id"] = "1INCH"
-    m["token_id"] = "1INCH"
-    e["beneficiary_edges"] = [
-        {"entity_id": "OutsideNetwork", "role": "PRIMARY", "token_id": None},
-        {"entity_id": "Rail", "role": "SECONDARY", "layer": "SETTLEMENT", "integration_state": "COMPATIBLE"},
-    ]
-    object_field(m, "relative")["windows"] = {"EVENT": {"r_raw": "0.021", "r_btc_adj": "0.013"}}
-    d = DecisionEngine().evaluate(policy_inputs(e, a, b, m))
-    text = compose_card(e, a, [b], [card_projection(d, text_field(b, "token_id"))], [m])
-    assert "primary OutsideNetwork" in text
-    assert "secondary Rail" not in text and "COMPATIBLE" not in text
+    values = template_inputs()
+    outside = CardSubject(
+        token_id=None,
+        entity_id="OutsideNetwork",
+        entity_name=None,
+        role="PRIMARY",
+        credible=False,
+        outside_scope="NO_MAPPED_TOKEN",
+        layer=None,
+        integration_state=None,
+        integration_verified=False,
+    )
+    candidate = CardSubject(
+        token_id=None,
+        entity_id="Rail",
+        entity_name=None,
+        role="SECONDARY",
+        credible=False,
+        outside_scope=None,
+        layer="SETTLEMENT_L1_L2",
+        integration_state="COMPATIBLE",
+        integration_verified=False,
+    )
+    truth = values.market_by_token["world:WLD"]
+    relative = truth.relative.model_copy(
+        update={
+            "returns_by_window": {
+                "EVENT": CardReturns(
+                    raw=Decimal(".021"), btc_adjusted=Decimal(".013"), btc_adjusted_reason=None
+                )
+            }
+        }
+    )
+    truth = truth.model_copy(update={"relative": relative})
+    text = compose_card(
+        values.model_copy(
+            update={"other_subjects": (outside, candidate), "market_by_token": {"world:WLD": truth}}
+        )
+    )
+    assert "primary OutsideNetwork" in text and "secondary Rail" not in text and "COMPATIBLE" not in text
     assert "2.10% raw; 1.30% net BTC" in text and "WHAT CHANGES THE ACTION:" in text
 
 
 def test_expired_call_is_tracking_notice_without_action() -> None:
-    e, a, b, m = inputs()
-    d = card_projection(DecisionEngine().evaluate(policy_inputs(e, a, b, m)), text_field(b, "token_id"))
-    d.update(tracking_ended=True, actionable=False, conditions=[])
-    text = compose_card(e, a, [b], [d], [m])
+    values = template_inputs()
+    inactive = InactiveCardDecision(kind="INACTIVE", token_id="world:WLD", reason="CALL_EXPIRED")
+    text = compose_card(values.model_copy(update={"decisions_by_token": {"world:WLD": inactive}}))
     assert "No longer following: call expired." in text
     assert "WHAT TO DO:" not in text and "WHAT CHANGES THE ACTION:" not in text
 
 
 def test_stale_expiry_never_bypasses_publication_gate() -> None:
-    e, a, b, m = inputs()
-    e.update(freshness="STALE", call_expired=True)
-    frozen: Record = {"token_id": "T", "action": "START", "tracking_ended": True, "actionable": False}
-    previous: Record = {
-        "event_state": e["event_state"],
-        "class": "MAJOR",
-        "decisions": [frozen],
-        "published_at": "2026-10-17T00:00:00Z",
-    }
-    assert alert_gate(e, a, previous=previous, decisions=[frozen], now="2026-10-17T00:01:00Z") == (
-        False,
-        "STALE_STATE_CHANGE",
+    case = publication_case()
+    event = case.event.model_copy(update={"freshness": "STALE", "has_expired_call_fact": True})
+    frozen = PublicationDecisionStatus(token_id="T", action="START", active=False)
+    previous = present(case.previous).model_copy(update={"actions_by_token": {"T": "START"}})
+    case = case.model_copy(update={"event": event, "previous": previous, "decisions": (frozen,)})
+    assert alert_gate(case).reason == "STALE_STATE_CHANGE"
+    assert (
+        alert_gate(case.model_copy(update={"now": case.now + timedelta(minutes=15)})).reason
+        == "STALE_STATE_CHANGE"
     )
-    assert alert_gate(e, a, previous=previous, decisions=[frozen], now="2026-10-17T00:16:00Z") == (
-        False,
-        "STALE_STATE_CHANGE",
-    )
-    text = compose_card(e, a, [b], [frozen], [m])
+    values = template_inputs()
+    inactive = InactiveCardDecision(kind="INACTIVE", token_id="world:WLD", reason="CALL_EXPIRED")
+    text = compose_card(values.model_copy(update={"decisions_by_token": {"world:WLD": inactive}}))
     assert "MARKET TRUTH:" not in text and "OUTLOOK:" not in text
-    frozen.update(removed_from_analysis=True)
-    text = compose_card(e, a, [b], [frozen], [m])
+    inactive = inactive.model_copy(update={"reason": "REMOVED_FROM_ANALYSIS"})
+    text = compose_card(values.model_copy(update={"decisions_by_token": {"world:WLD": inactive}}))
     assert "token removed from current beneficiary map." in text
 
 
@@ -580,49 +646,69 @@ def test_exact_majority_flag_preserves_tiny_sell_boundary() -> None:
 
 
 def test_b16_fraction_percent_exclusions_and_header_proof() -> None:
-    e, a, b, m = inputs()
-    e.update(
-        public_at="2026-10-17T12:30:00Z",
-        public_at_prec="EXACT",
-        known_to_us_at="2026-10-17T12:31:00Z",
-        known_to_us_at_prec="EXACT",
+    values = template_inputs()
+    truth = values.market_by_token["world:WLD"]
+    returns = CardReturns(raw=Decimal(".0705"), btc_adjusted=Decimal(".066"), btc_adjusted_reason=None)
+    relative = truth.relative.model_copy(update={"returns_by_window": {"EVENT": returns}})
+    excluded = CardExclusion(
+        venue="Bybit",
+        reason="Current day history incomplete",
+        detail=None,
+        source_reasons=(),
+        missing_metrics=(),
     )
-    object_field(m, "relative")["windows"] = {"EVENT": {"r_raw": "0.0705", "r_btc_adj": "0.066"}}
-    object_field(object_field(object_field(m, "spot"), "W4H"), "coverage")["excluded"] = [
-        {"venue": "Bybit", "reason": "Current day history incomplete"}
-    ]
-    object_field(m, "data_confidence")["limiting"] = {
-        "condition": "spot_coverage",
-        "reason": "Only partial coverage",
-    }
-    m["decisive_facts"] = [
-        {
-            "metric": "derivatives.oi_native_chg_pct",
-            "value": "0.0818",
-            "unit": "DECIMAL_RETURN",
-            "window": "W4H",
+    spot = truth.spot.model_copy(update={"excluded": (excluded,)})
+    confidence = truth.confidence.model_copy(
+        update={
+            "classification": "MEDIUM",
+            "limiting": CardDataLimit(condition="spot_coverage", reason="Only partial coverage"),
         }
-    ]
-    d = DecisionEngine().evaluate(policy_inputs(e, a, b, m))
-    text = compose_card(e, a, [b], [card_projection(d, text_field(b, "token_id"))], [m])
+    )
+    truth = truth.model_copy(
+        update={
+            "relative": relative,
+            "spot": spot,
+            "confidence": confidence,
+            "decisive_facts": ("4h: derivatives.oi native chg pct 8.18%",),
+        }
+    )
+    decision = values.decisions_by_token["world:WLD"]
+    assert isinstance(decision, ActiveCardDecision)
+    limitation = decision.outlook.limitation.model_copy(update={"input": "data", "text": None})
+    outlook = decision.outlook.model_copy(update={"confidence": "MEDIUM", "limitation": limitation})
+    decision = decision.model_copy(update={"outlook": outlook})
+    text = compose_card(
+        values.model_copy(
+            update={"market_by_token": {"world:WLD": truth}, "decisions_by_token": {"world:WLD": decision}}
+        )
+    )
     assert "7.05% raw; 6.60% net BTC" in text and "4h: derivatives.oi native chg pct 8.18%" in text
     assert "Excluded: Bybit — Current day history incomplete" in text
-    assert "public 12:30Z · known 12:31Z" in text and "Data HIGH" in text
+    assert "public 12:30Z · known 12:31Z" in text and "Data MEDIUM" in text
     assert "Spot venue coverage is incomplete: only partial coverage" in text
 
 
 def test_versioned_card_limits_and_missing_decisions() -> None:
-    e, a, b, m = inputs()
-    e["thresholds"] = {"version": "test-v1", "card_max_chars": 10, "update_rate_limit_s": 1800}
-    import pytest
-
+    values = template_inputs()
+    policy = values.policy.model_copy(update={"card_max_chars": 10, "update_rate_limit_s": 1800})
+    partial = values.model_copy(
+        update={"narrative": values.narrative.model_copy(update={"kind": "PARTIAL"}), "policy": policy}
+    )
     with pytest.raises(ValueError, match="CARD_LENGTH"):
-        compose_card(e, a, [], [], [], kind="PARTIAL")
-    object_field(e, "thresholds")["card_max_chars"] = 3500
+        compose_card(partial)
     with pytest.raises(ValueError, match="MISSING_DECISION"):
-        compose_card(e, a, [b], [], [m])
-    previous: Record = {"class": "MAJOR", "event_state": "ANNOUNCED", "published_at": "2026-10-17T00:00:00Z"}
-    assert alert_gate(e, a, previous=previous, now="2026-10-17T00:16:00Z") == (False, "UPDATE_RATE_LIMIT")
+        compose_card(values.model_copy(update={"decisions_by_token": {}}))
+    case = publication_case()
+    previous = present(case.previous)
+    previous = previous.model_copy(update={"event": previous.event.model_copy(update={"state": "ANNOUNCED"})})
+    case = case.model_copy(
+        update={
+            "policy": policy.model_copy(update={"card_max_chars": 3500}),
+            "previous": previous,
+            "now": case.now + timedelta(minutes=15),
+        }
+    )
+    assert alert_gate(case).reason == "UPDATE_RATE_LIMIT"
 
 
 def test_dont_chase_conditions_exact_library_rows() -> None:
@@ -652,79 +738,45 @@ def test_trade_base_a_reason_is_preserved() -> None:
 
 
 def test_persistent_safety_is_silent_but_new_fatal_and_action_transition_are_immediate() -> None:
-    event: Record = {
-        "event_state": "APPROVED",
-        "freshness": "NORMAL",
-        "contradictions": [{"contradiction_id": "fatal-1", "type": "FATAL"}],
-    }
-    assessment: Record = {"class": "MAJOR"}
-    previous: Record = {
-        "card_struct": {"event": dict(event), "assessment": assessment},
-        "decisions": [{"token_id": "T", "action": "EXIT"}],
-        "class": "MAJOR",
-        "published_at": "2026-10-17T00:00:00Z",
-    }
-    decisions: list[Record] = [{"token_id": "T", "action": "EXIT"}]
-    assert alert_gate(
-        event, assessment, previous=previous, decisions=decisions, now="2026-10-17T00:01:00Z"
-    ) == (False, "NO_MATERIAL_CHANGE")
-    assert alert_gate(
-        event,
-        {"class": "STRUCTURAL_SHOCK"},
-        previous=previous,
-        decisions=decisions,
-        now="2026-10-17T00:01:00Z",
-    ) == (False, "UPDATE_RATE_LIMIT")
-    new_event: Record = {
-        **event,
-        "contradictions": array_field(event, "contradictions")
-        + [{"contradiction_id": "fatal-2", "type": "FATAL"}],
-    }
-    assert alert_gate(
-        new_event, assessment, previous=previous, decisions=decisions, now="2026-10-17T00:01:00Z"
-    )[0]
-    assert alert_gate(
-        event,
-        assessment,
-        previous=previous,
-        decisions=[{"token_id": "T", "action": "START"}],
-        now="2026-10-17T00:01:00Z",
-    )[0]
+    case = publication_case()
+    event = case.event.model_copy(update={"freshness": "NORMAL", "active_fatal_ids": frozenset({"fatal-1"})})
+    previous = present(case.previous).model_copy(update={"event": event, "actions_by_token": {"T": "EXIT"}})
+    exit_status = PublicationDecisionStatus(token_id="T", action="EXIT", active=True)
+    case = case.model_copy(update={"event": event, "previous": previous, "decisions": (exit_status,)})
+    assert alert_gate(case).reason == "NO_MATERIAL_CHANGE"
+    assert (
+        alert_gate(case.model_copy(update={"assessment_class": "STRUCTURAL_SHOCK"})).reason
+        == "UPDATE_RATE_LIMIT"
+    )
+    new_event = event.model_copy(update={"active_fatal_ids": frozenset({"fatal-1", "fatal-2"})})
+    assert alert_gate(case.model_copy(update={"event": new_event})).allowed
+    start = exit_status.model_copy(update={"action": "START"})
+    assert alert_gate(case.model_copy(update={"decisions": (start,)})).allowed
 
 
 @pytest.mark.parametrize("prior_stage,prior_verified", [("APPROVED", True), ("LIVE", False)])
 def test_old_stage_does_not_resurface_on_timer_but_new_action_and_safety_facts_can_publish(
     prior_stage: Literal["APPROVED", "LIVE"], prior_verified: bool
 ) -> None:
-    event: Record = {
-        "event_state": "LIVE",
-        "state_verified": True,
-        "freshness": "FRESH",
-        "publication_stage_freshness": "STALE",
-    }
-    assessment: Record = {"class": "MAJOR"}
-    previous: Record = {
-        "card_struct": {"event": {"event_state": prior_stage, "state_verified": prior_verified}},
-        "decisions": [{"token_id": "T", "action": "WATCH_TO_START"}],
-        "class": "MAJOR",
-        "published_at": "2026-10-17T00:00:00Z",
-    }
-    now = "2026-10-17T00:01:00Z"
-    assert alert_gate(event, assessment, previous=previous, decisions=previous["decisions"], now=now) == (
-        False,
-        "NO_MATERIAL_CHANGE",
+    case = publication_case()
+    event = case.event.model_copy(update={"state": "LIVE", "stage_freshness": "STALE"})
+    previous = present(case.previous)
+    previous = previous.model_copy(
+        update={
+            "event": previous.event.model_copy(
+                update={"state": prior_stage, "state_verified": prior_verified}
+            )
+        }
     )
-    for action in ["START", "EXIT"]:
-        assert alert_gate(
-            event, assessment, previous=previous, decisions=[{"token_id": "T", "action": action}], now=now
-        ) == (True, "UPDATE")
-    assert alert_gate(
-        dict(event, contradictions=[{"contradiction_id": "new", "type": "FATAL"}]),
-        assessment,
-        previous=previous,
-        decisions=previous["decisions"],
-        now=now,
-    ) == (True, "UPDATE")
+    case = case.model_copy(update={"event": event, "previous": previous})
+    assert alert_gate(case).reason == "NO_MATERIAL_CHANGE"
+    for action in ("START", "EXIT"):
+        decision = PublicationDecisionStatus.model_validate(
+            {"token_id": "T", "action": action, "active": True}
+        )
+        assert alert_gate(case.model_copy(update={"decisions": (decision,)})).reason == "UPDATE"
+    event = event.model_copy(update={"active_fatal_ids": frozenset({"new"})})
+    assert alert_gate(case.model_copy(update={"event": event})).reason == "UPDATE"
 
 
 @pytest.mark.parametrize("event_class", ["LOW", "MATERIAL", "MAJOR", "STRUCTURAL_SHOCK"])
@@ -733,68 +785,81 @@ def test_never_sent_rules_apply_before_update_rate_exceptions(
     event_class: Literal["LOW", "MATERIAL", "MAJOR", "STRUCTURAL_SHOCK"],
     trigger: Literal["START", "EXIT", "FATAL", "EXPIRY"],
 ) -> None:
-    event, assessment, _, _ = inputs()
-    assessment["class"] = event_class
-    event["freshness"] = "STALE"
-    event["contradictions"] = [{"type": "FATAL"}] if trigger == "FATAL" else []
-    event["call_expired"] = trigger == "EXPIRY"
-    previous: Record = {"class": "MAJOR", "decisions": [{"token_id": "T", "action": "WATCH_TO_START"}]}
-    decision: Record = {"token_id": "T", "action": trigger if trigger in {"START", "EXIT"} else "WAIT"}
-    allowed, reason = alert_gate(event, assessment, previous=previous, decisions=[decision])
-    assert not allowed
-    assert reason == ("BELOW_MAJOR" if event_class in {"LOW", "MATERIAL"} else "STALE_STATE_CHANGE")
-    event["freshness"] = "FRESH"
-    allowed, reason = alert_gate(event, assessment, previous=previous, decisions=[decision])
-    assert allowed is (event_class in {"MAJOR", "STRUCTURAL_SHOCK"})
+    case = publication_case()
+    previous = present(case.previous).model_copy(update={"acknowledged_send": None})
+    event = case.event.model_copy(
+        update={
+            "freshness": "STALE",
+            "active_fatal_ids": frozenset({"fatal"}) if trigger == "FATAL" else frozenset(),
+            "has_expired_call_fact": trigger == "EXPIRY",
+        }
+    )
+    action = trigger if trigger in {"START", "EXIT"} else "WAIT"
+    decision = PublicationDecisionStatus.model_validate({"token_id": "T", "action": action, "active": True})
+    case = case.model_copy(
+        update={
+            "event": event,
+            "assessment_class": event_class,
+            "previous": previous,
+            "decisions": (decision,),
+        }
+    )
+    outcome = alert_gate(case)
+    assert not outcome.allowed
+    assert outcome.reason == ("BELOW_MAJOR" if event_class in {"LOW", "MATERIAL"} else "STALE_STATE_CHANGE")
+    outcome = alert_gate(case.model_copy(update={"event": event.model_copy(update={"freshness": "FRESH"})}))
+    assert outcome.allowed is (event_class in {"MAJOR", "STRUCTURAL_SHOCK"})
 
 
 def test_unverified_stage_advance_is_stored_but_does_not_trigger_a_standalone_update() -> None:
-    event: Record = {"event_state": "LIVE", "state_verified": False, "freshness": "FRESH"}
-    assessment: Record = {"class": "MAJOR"}
-    previous: Record = {
-        "card_struct": {"event": {"event_state": "APPROVED", "state_verified": True}},
-        "decisions": [{"token_id": "T", "action": "WAIT"}],
-        "class": "MAJOR",
-        "published_at": "2026-10-17T00:00:00Z",
-    }
-    original = deepcopy(event)
-    assert alert_gate(
-        event, assessment, previous=previous, decisions=previous["decisions"], now="2026-10-17T00:16:00Z"
-    ) == (False, "NO_MATERIAL_CHANGE")
-    assert event == original
+    case = publication_case()
+    event = case.event.model_copy(update={"state": "LIVE", "state_verified": False})
+    wait = PublicationDecisionStatus(token_id="T", action="WAIT", active=True)
+    previous = present(case.previous).model_copy(update={"actions_by_token": {"T": "WAIT"}})
+    case = case.model_copy(
+        update={
+            "event": event,
+            "previous": previous,
+            "decisions": (wait,),
+            "now": case.now + timedelta(minutes=15),
+        }
+    )
+    original = case.model_copy(deep=True)
+    assert alert_gate(case).reason == "NO_MATERIAL_CHANGE"
+    assert case == original
 
 
 def test_agent_verified_stage_advance_can_trigger_an_update() -> None:
-    event: Record = {"event_state": "LIVE", "state_verified": True, "freshness": "FRESH"}
-    previous: Record = {
-        "card_struct": {"event": {"event_state": "APPROVED", "state_verified": True}},
-        "class": "MAJOR",
-        "published_at": "2026-10-17T00:00:00Z",
-    }
-    assert alert_gate(event, {"class": "MAJOR"}, previous=previous, now="2026-10-17T00:16:00Z") == (
-        True,
-        "UPDATE",
+    case = publication_case()
+    case = case.model_copy(
+        update={
+            "event": case.event.model_copy(update={"state": "LIVE"}),
+            "now": case.now + timedelta(minutes=15),
+        }
     )
+    outcome = alert_gate(case)
+    assert outcome.allowed and outcome.reason == "UPDATE"
 
 
 @pytest.mark.parametrize("prior_stage", ["APPROVED", "LIVE"])
 def test_unverified_stage_does_not_suppress_an_independent_start(
     prior_stage: Literal["APPROVED", "LIVE"],
 ) -> None:
-    event: Record = {"event_state": "LIVE", "state_verified": False, "freshness": "FRESH"}
-    previous: Record = {
-        "card_struct": {"event": {"event_state": prior_stage, "state_verified": False}},
-        "decisions": [{"token_id": "T", "action": "WATCH_TO_START"}],
-        "class": "MAJOR",
-        "published_at": "2026-10-17T00:00:00Z",
-    }
-    assert alert_gate(
-        event,
-        {"class": "MAJOR"},
-        previous=previous,
-        decisions=[{"token_id": "T", "action": "START"}],
-        now="2026-10-17T00:01:00Z",
-    ) == (True, "UPDATE")
+    case = publication_case()
+    previous = present(case.previous)
+    previous = previous.model_copy(
+        update={"event": previous.event.model_copy(update={"state": prior_stage, "state_verified": False})}
+    )
+    start = PublicationDecisionStatus(token_id="T", action="START", active=True)
+    case = case.model_copy(
+        update={
+            "event": case.event.model_copy(update={"state": "LIVE", "state_verified": False}),
+            "previous": previous,
+            "decisions": (start,),
+        }
+    )
+    outcome = alert_gate(case)
+    assert outcome.allowed and outcome.reason == "UPDATE"
 
 
 @pytest.mark.parametrize("move,expect", [("UNKNOWN", False), ("SPOT_LED_ACCUMULATION", True)])

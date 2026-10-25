@@ -549,7 +549,7 @@ class CardLengthDiagnostics(DomainModel):
     model_config = ConfigDict(validate_by_name=True)
 
     actual: int = Field(ge=0)
-    max_chars: int = Field(gt=0, alias="max")
+    max_chars: int = Field(gt=0, validation_alias="max", serialization_alias="max")
     excess: int = Field(gt=0)
     sections: tuple[CardLengthSection, ...]
     newline_chars: int = Field(ge=0)
