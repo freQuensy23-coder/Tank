@@ -7,9 +7,10 @@ import pytest
 from pydantic import JsonValue
 from scheduling_support import RecordingReactionScheduling
 from score_fixtures import unassessed_score_dimensions
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_request_budgets, fixture_versions
 
 from tank.agents.context import CONTEXT_VERSION
+from tank.analysis.page_access import LivePageAccess
 from tank.contracts.json import JsonDocument
 from tank.event_tools import EventToolService, freshness, validate_schema
 from tank.settings import Settings
@@ -24,7 +25,13 @@ async def service(tmp_path: Path):
     await repo.open()
     settings = Settings(data_dir=tmp_path)
     return EventToolService(
-        repo, settings, None, None, versions=fixture_versions(), scheduler=RecordingReactionScheduling()
+        repo,
+        settings,
+        None,
+        None,
+        versions=fixture_versions(),
+        scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
 
 
@@ -638,7 +645,9 @@ async def test_assessment_escalates_all_official_sources_in_consumer_table(servi
     expected = next(
         e for e in service.settings.load_config("registry")["entities"] if e["entity_id"] == "world"
     )["official_sources"]
-    sources = SourceService(service.repo, service.settings, versions=fixture_versions())
+    sources = SourceService(
+        service.repo, service.settings, versions=fixture_versions(), budgets=fixture_request_budgets()
+    )
     for source_id in expected:
         assert await sources.is_escalated(source_id)
     assert not await sources.is_escalated("S01")
@@ -2163,6 +2172,7 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
         reference_clock=service.reference_clock,
         versions=fixture_versions(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
     item_id = new_id("item")
     stamp = clock_iso()
@@ -3453,6 +3463,7 @@ async def test_assessment_dispatch_creates_real_reaction_jobs(tmp_path: Path) ->
             DecisionEngine(settings),
             versions=fixture_versions(),
             scheduler=services.scheduler,
+            pages=LivePageAccess(fixture_http_admission()),
         )
         created, _, _ = await seed_economic_event(tools, negative_relation=False)
         jobs = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
@@ -3652,6 +3663,7 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
             reference_clock=service.reference_clock,
             versions=fixture_versions(),
             scheduler=RecordingReactionScheduling(),
+            pages=LivePageAccess(fixture_http_admission()),
         )
     repo = service.repo
     sid = new_id("native-session")
@@ -4203,6 +4215,7 @@ async def test_trusted_reference_clock_changes_logical_age_only(
             reference_clock=clock,
             versions=fixture_versions(),
             scheduler=RecordingReactionScheduling(),
+            pages=LivePageAccess(fixture_http_admission()),
         )
     with pytest.raises(ValueError, match="isolated fixture"):
         EventToolService(
@@ -4213,6 +4226,7 @@ async def test_trusted_reference_clock_changes_logical_age_only(
             reference_clock=object(),
             versions=fixture_versions(),
             scheduler=RecordingReactionScheduling(),
+            pages=LivePageAccess(fixture_http_admission()),
         )
     reference = EventToolService(
         service.repo,
@@ -4222,6 +4236,7 @@ async def test_trusted_reference_clock_changes_logical_age_only(
         reference_clock=clock,
         versions=fixture_versions(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
     x = extraction()
     x["public_at"] = dict(value=public, precision="DAY", basis="Original publication", quote=None)
@@ -4263,6 +4278,7 @@ async def test_trusted_reference_clock_changes_logical_age_only(
         reference_clock=clock,
         versions=fixture_versions(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
     assert not (await unimported.dispatch("search_tank_items", {"query": "Product"}, {}))["items"]
     monkeypatch.setattr("tank.event_tools.utcnow", lambda: parse_time("2022-09-22T01:00:00Z"))

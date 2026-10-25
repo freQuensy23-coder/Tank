@@ -538,3 +538,38 @@ SOURCE_HTTP/SOURCE_TRANSPORT protocol instead of relabeling them tool execution 
 Twelve page/admission boundary cases pass in1.73s; three tightened source/test modules
 pass strict mypy. Backend quota-history identity changes remain a separate held team
 prerequisite; these results do not claim the current backend is final.
+
+### Owned required-admission consumer checkpoint
+
+Owned MarketService fixtures now inject the real configured admission resolver and
+explicit memory budget backend; owned EventTool fixtures declare live page access
+or, for operational replay, recorded_page_access of the actual validated packet.
+SourceService fixture construction supplies its explicit budget port. None of these
+helpers returns a fabricated ADMITTED result. The replay cases retain their actual
+shared Scheduler and verified input-bound recorded capability.
+
+The former generic0.08s timing assertions are replaced with actual configured
+Etherscan admission oracles: overdue starts do not create a future burst, cancelling
+a wait reserves no future request, and freeing a saturated in-flight slot does not
+restart the provider window. The generic-site case independently verifies overlap
+with zero invented quota wait. Negative-priority budget admission now uses an explicit
+real memory backend. The former FakeLedger/Instant/optional-global-ledger fixture is
+removed: actual injected memory host blocks observe starts at0,120,720 seconds for
+real418/429 feedback, preserving120s/600s without clamps. PostgreSQL cross-process
+and host-isolation checks use explicit RequestLedger-backed engines and shutdown;
+the binding regression now proves unbound/closed refusal rather than implicit memory.
+
+The owned broad selection passes769 units in34.93s, p90 .85s and max3.35s, zero skips
+(/tmp/analysis-http-owned-unit-2.xml). Twenty targeted rate/deadline/source-field/real-
+scheduling cases pass in2.74s, and twelve explicit external ownership/rate cases pass
+in4.36s. The final HTTPX-category/header refinements have their additional focused
+proof. These are held-cohort results; the shared budget identity correction and
+combined actual integration/retained-artifact qualification remain required.
+
+Actual retained-input validation was attempted with all live admission/scope/block/
+provider-sleep/client-creation traps. It correctly stopped before exposing captures
+when fixture_reference required a referenced immutable raw source body absent from
+the25 staged input-only artifacts. No hash/derivation check was bypassed and no
+production data was read. The scratch verifier is retained at
+ data/qa/verify-retained-http-effects.py; no success artifact is claimed. Verified raw
+bodies and an explicit historical-path reader are needed for that full loader proof.

@@ -8,9 +8,10 @@ import httpx
 import pytest
 import zstandard
 from scheduling_support import RecordingReactionScheduling
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_versions
 
 import tank.event_tools as CANDIDATE
+from tank.analysis.page_access import LivePageAccess
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.util import clock_iso, sha256
@@ -44,6 +45,7 @@ async def setup(tmp_path: Path, handler, owned, monkeypatch: pytest.MonkeyPatch)
         http=None if owned else client,
         versions=fixture_versions(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
     if owned:
 
@@ -121,7 +123,7 @@ async def test_http_failure_has_no_partial_evidence(
         tmp_path, lambda request: httpx.Response(status, content=b"error"), False, monkeypatch
     )
     try:
-        with pytest.raises(httpx.HTTPStatusError):
+        with pytest.raises(httpx.HTTPStatusError, match=f"HTTP {status}"):
             await service.fetch_page({"url": "https://example.com/page"}, {})
         await no_evidence(service)
     finally:

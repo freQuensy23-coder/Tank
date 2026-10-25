@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 from scheduling_support import RecordingReactionScheduling
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_versions
 from test_agents_session_audit import settings as session_settings
 from test_event_tools import complete_assessment_fixture, complete_event_fixture
 from test_session_binding_concurrency import fixture_repo
@@ -24,6 +24,7 @@ from test_truth_start_fixture import compact_start_snapshot
 
 from tank.agents import SessionService
 from tank.analysis.decisions import DecisionEngine
+from tank.analysis.page_access import LivePageAccess
 from tank.analysis.truth import MarketTruthService
 from tank.event_tools import EventToolService
 from tank.market.capture_contracts import CaptureReadiness, RepairCompleted
@@ -223,6 +224,7 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
             DecisionEngine(),
             versions=fixture_versions(),
             scheduler=RecordingReactionScheduling(),
+            pages=LivePageAccess(fixture_http_admission()),
         )
         scheduler = Scheduler(repo, settings, market, truth, versions=fixture_versions())
         await seed_domain(repo, settings, end)
@@ -396,6 +398,7 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
             DecisionEngine(),
             versions=fixture_versions(),
             scheduler=RecordingReactionScheduling(),
+            pages=LivePageAccess(fixture_http_admission()),
         )
         await seed_domain(repo, settings, end)
         first = await truth.assess(
@@ -495,6 +498,7 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
             engine,
             versions=fixture_versions(),
             scheduler=RecordingReactionScheduling(),
+            pages=LivePageAccess(fixture_http_admission()),
         )
         await seed_domain(repo, settings, end)
         await truth.assess("e", "T", chosen_boundary(end - timedelta(minutes=1), precision="BUCKET(1m)"))
@@ -591,6 +595,7 @@ async def test_event_only_risk_watch_never_waits_for_market_refresh(
         DecisionEngine(),
         versions=fixture_versions(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
     await seed_domain(repo, settings, end)
     first = await truth.assess("e", "T", chosen_boundary(end - timedelta(minutes=1), precision="BUCKET(1m)"))

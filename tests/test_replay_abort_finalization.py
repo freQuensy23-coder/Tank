@@ -12,7 +12,13 @@ from tank.agents import SessionService
 from tank.analysis.decisions import DecisionEngine
 from tank.analysis.truth import MarketTruthService
 from tank.event_tools import EventToolService
-from tank.replay import ReplayError, ReplayMarketReader, load_inputs, replay_agent_session
+from tank.replay import (
+    ReplayError,
+    ReplayMarketReader,
+    load_inputs,
+    recorded_page_access,
+    replay_agent_session,
+)
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -259,6 +265,7 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
             http=http,
             versions=fixture_versions(),
             scheduler=reaction_scheduler,
+            pages=recorded_page_access(load_inputs(packet, settings)),
         )
         task = asyncio.create_task(
             replay_agent_session(

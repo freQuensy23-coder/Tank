@@ -1,15 +1,20 @@
-"""Per-host admission: several requests in flight, starts spaced by the host interval."""
+"""Configured provider admission preserves concurrency and actual start-time budgets."""
 
 import asyncio
-import time
-from types import SimpleNamespace
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from source_support import fixture_versions
+from source_support import (
+    FixtureBudgetClock,
+    fixture_http_admission,
+    fixture_request_budgets,
+    fixture_versions,
+)
 
 from tank.market.rate_gate import PriorityGate
 from tank.market.service import MarketService
+from tank.request_budget import MemoryBudgetBackend, SharedRequestBudgets, SystemBudgetClock
 
 
 @pytest.mark.asyncio
@@ -31,36 +36,37 @@ async def test_gate_admits_capacity_holders_then_lowest_priority_first() -> None
 
 
 @pytest.mark.asyncio
-async def test_concurrent_requests_overlap_but_start_one_interval_apart(setup) -> None:
+async def test_unconfigured_requests_overlap_without_invented_provider_interval(setup) -> None:
     repo, settings, _ = setup
-    starts, active, peak = [], [0], [0]
+    clock = FixtureBudgetClock()
+    admission = fixture_http_admission(budgets=fixture_request_budgets(clock=clock))
+    starts: list[float] = []
+    active, peak = 0, 0
     release = asyncio.Event()
 
-    async def handler(request: httpx.Request):
-        starts.append(time.monotonic())
-        active[0] += 1
-        peak[0] = max(peak[0], active[0])
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal active, peak
+        starts.append(clock.elapsed)
+        active += 1
+        peak = max(peak, active)
         if len(starts) == 4:
             release.set()
         await release.wait()
-        active[0] -= 1
+        active -= 1
         return httpx.Response(200, json={"ok": True})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = MarketService(repo, settings, http=http, versions=fixture_versions())
+        service = MarketService(repo, settings, http=http, versions=fixture_versions(), admission=admission)
         await asyncio.gather(
             *(service._request("GET", "https://api.llama.fi/summary/fees/abc") for _ in range(4))
         )
-    gaps = [b - a for a, b in zip(sorted(starts), sorted(starts)[1:], strict=False)]
-    assert peak[0] > 1
-    assert all(gap >= 0.07 for gap in gaps)
+    assert peak == 4 and starts == [0.0, 0.0, 0.0, 0.0]
+    assert clock.elapsed == 0.0
 
 
 @pytest.mark.asyncio
 async def test_a_negative_priority_request_takes_a_full_budget_first() -> None:
-    from tank.sources.rate_limits import SharedRequestBudgets
-
-    budgets = SharedRequestBudgets()
+    budgets = SharedRequestBudgets(MemoryBudgetBackend(SystemBudgetClock()))
     await budgets.acquire("host", 1, 0.2)
     order = []
 
@@ -80,46 +86,38 @@ class ControlledClock:
     """Drive only the SUT module's clock/sleep; pytest's event loop stays real."""
 
     def __init__(self) -> None:
-        self.now = 10.0
-        self.sleeping = asyncio.Queue()
-        self.pending = []
+        self.elapsed = 10.0
+        self.sleeping: asyncio.Queue[float] = asyncio.Queue()
+        self.pending: list[tuple[float, asyncio.Future[None]]] = []
 
-    def monotonic(self):
-        return self.now
+    def monotonic(self) -> float:
+        return self.elapsed
 
-    async def sleep(self, delay) -> None:
+    def now(self) -> datetime:
+        return datetime(2026, 10, 1, tzinfo=UTC) + timedelta(seconds=self.elapsed)
+
+    async def sleep(self, delay: float) -> None:
         future = asyncio.get_running_loop().create_future()
-        self.pending.append((self.now + delay, future))
+        self.pending.append((self.elapsed + delay, future))
         self.sleeping.put_nowait(delay)
         await future
 
-    def advance(self, seconds) -> None:
-        self.now += seconds
+    def advance(self, seconds: float) -> None:
+        self.elapsed += seconds
         ready, self.pending = self.pending, []
         for deadline, future in ready:
             if future.done():
                 continue
-            if deadline <= self.now + 1e-9:
+            if deadline <= self.elapsed + 1e-9:
                 future.set_result(None)
             else:
                 self.pending.append((deadline, future))
 
 
-def control_request_clock(monkeypatch: pytest.MonkeyPatch):
-    from tank.market import service as module
-
-    clock = ControlledClock()
-    monkeypatch.setattr(module, "time", SimpleNamespace(**(vars(time) | {"monotonic": clock.monotonic})))
-    monkeypatch.setattr(module, "asyncio", SimpleNamespace(**(vars(asyncio) | {"sleep": clock.sleep})))
-    return clock
-
-
 @pytest.mark.asyncio
-async def test_overdue_request_starts_are_spaced_from_actual_admission(
-    setup, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_overdue_request_starts_are_spaced_from_actual_admission(setup) -> None:
     repo, settings, _ = setup
-    clock = control_request_clock(monkeypatch)
+    clock = ControlledClock()
     starts, active, peak = [], 0, 0
     entered, release = asyncio.Queue(), asyncio.Event()
 
@@ -135,23 +133,31 @@ async def test_overdue_request_starts_are_spaced_from_actual_admission(
             active -= 1
         return httpx.Response(200, json={"ok": True})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = MarketService(repo, settings, http=http, versions=fixture_versions())
+    async with httpx.AsyncClient(
+        params={"apikey": "fixture-key"}, transport=httpx.MockTransport(handler)
+    ) as http:
+        service = MarketService(
+            repo,
+            settings,
+            http=http,
+            versions=fixture_versions(),
+            admission=fixture_http_admission(budgets=fixture_request_budgets(clock=clock)),
+        )
         requests = [
-            asyncio.create_task(service._request("GET", "https://api.llama.fi/summary/fees/abc"))
+            asyncio.create_task(service._request("GET", "https://api.etherscan.io/v2/api?chainid=1"))
             for _ in range(4)
         ]
         try:
             await entered.get()
             await clock.sleeping.get()
 
-            clock.advance(0.5)
+            clock.advance(2.0)
             await entered.get()
             for _ in range(2):
                 await clock.sleeping.get()
-                clock.advance(0.08)
+                clock.advance(1.0)
                 await entered.get()
-            assert starts == pytest.approx([10.0, 10.5, 10.58, 10.66])
+            assert starts == pytest.approx([10.0, 12.0, 13.0, 14.0])
             assert peak == 4
         finally:
             release.set()
@@ -159,11 +165,9 @@ async def test_overdue_request_starts_are_spaced_from_actual_admission(
 
 
 @pytest.mark.asyncio
-async def test_cancelled_pacing_wait_does_not_reserve_a_future_start(
-    setup, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_cancelled_pacing_wait_does_not_reserve_a_future_start(setup) -> None:
     repo, settings, _ = setup
-    clock = control_request_clock(monkeypatch)
+    clock = ControlledClock()
     starts, entered, release = [], asyncio.Queue(), asyncio.Event()
 
     async def handler(request: httpx.Request):
@@ -172,23 +176,35 @@ async def test_cancelled_pacing_wait_does_not_reserve_a_future_start(
         await release.wait()
         return httpx.Response(200, json={"ok": True})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = MarketService(repo, settings, http=http, versions=fixture_versions())
-        first = asyncio.create_task(service._request("GET", "https://api.llama.fi/summary/fees/abc"))
+    async with httpx.AsyncClient(
+        params={"apikey": "fixture-key"}, transport=httpx.MockTransport(handler)
+    ) as http:
+        service = MarketService(
+            repo,
+            settings,
+            http=http,
+            versions=fixture_versions(),
+            admission=fixture_http_admission(budgets=fixture_request_budgets(clock=clock)),
+        )
+        first = asyncio.create_task(service._request("GET", "https://api.etherscan.io/v2/api?chainid=1"))
         waiting = following = None
         try:
             await entered.get()
-            waiting = asyncio.create_task(service._request("GET", "https://api.llama.fi/summary/fees/abc"))
-            assert await clock.sleeping.get() == pytest.approx(0.08)
+            waiting = asyncio.create_task(
+                service._request("GET", "https://api.etherscan.io/v2/api?chainid=1")
+            )
+            assert await clock.sleeping.get() == pytest.approx(1.0)
             waiting.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await waiting
-            following = asyncio.create_task(service._request("GET", "https://api.llama.fi/summary/fees/abc"))
+            following = asyncio.create_task(
+                service._request("GET", "https://api.etherscan.io/v2/api?chainid=1")
+            )
             delay = await clock.sleeping.get()
-            assert delay == pytest.approx(0.08)
+            assert delay == pytest.approx(1.0)
             clock.advance(delay)
             await entered.get()
-            assert starts == pytest.approx([10.0, 10.08])
+            assert starts == pytest.approx([10.0, 11.0])
         finally:
             release.set()
             for task in (waiting, following):
@@ -200,11 +216,9 @@ async def test_cancelled_pacing_wait_does_not_reserve_a_future_start(
 
 
 @pytest.mark.asyncio
-async def test_delayed_response_frees_saturated_slot_without_restarting_pacer(
-    setup, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_delayed_response_frees_saturated_slot_without_restarting_pacer(setup) -> None:
     repo, settings, _ = setup
-    clock = control_request_clock(monkeypatch)
+    clock = ControlledClock()
     starts, entered = [], asyncio.Queue()
     releases = [asyncio.Event() for _ in range(4)]
 
@@ -216,22 +230,30 @@ async def test_delayed_response_frees_saturated_slot_without_restarting_pacer(
             await releases[index].wait()
         return httpx.Response(200, json={"ok": True})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = MarketService(repo, settings, http=http, versions=fixture_versions())
+    async with httpx.AsyncClient(
+        params={"apikey": "fixture-key"}, transport=httpx.MockTransport(handler)
+    ) as http:
+        service = MarketService(
+            repo,
+            settings,
+            http=http,
+            versions=fixture_versions(),
+            admission=fixture_http_admission(budgets=fixture_request_budgets(clock=clock)),
+        )
         requests, observers = [], []
         try:
             for index in range(4):
                 requests.append(
-                    asyncio.create_task(service._request("GET", "https://api.llama.fi/summary/fees/abc"))
+                    asyncio.create_task(service._request("GET", "https://api.etherscan.io/v2/api?chainid=1"))
                 )
                 if index:
                     clock.advance(await clock.sleeping.get())
                 assert await entered.get() == index
             requests.append(
-                asyncio.create_task(service._request("GET", "https://api.llama.fi/summary/fees/abc"))
+                asyncio.create_task(service._request("GET", "https://api.etherscan.io/v2/api?chainid=1"))
             )
             await asyncio.sleep(0)
-            assert len(service._request_locks["api.llama.fi"].waiters) == 1
+            assert len(service._request_locks["api.etherscan.io"].waiters) == 1
             clock.advance(2.0)
             released_at = clock.monotonic()
             releases[0].set()

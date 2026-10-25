@@ -2,8 +2,9 @@ from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_versions
 
+from tank.analysis.page_access import LivePageAccess
 from tank.analysis.reaction_scheduling import (
     AssessmentFreeDiagnosticScheduling,
     diagnostic_call_catalog,
@@ -47,7 +48,13 @@ async def test_diagnostic_refuses_assessment_before_method_or_storage(
     await repo.put("evt.events", "event-1", {"event_id": "event-1", "statement": "Captured statement"})
     before = await repo.get("evt.events", "event-1")
     tools = EventToolService(
-        repo, Settings(data_dir=tmp_path), None, None, versions=fixture_versions(), scheduler=scheduling
+        repo,
+        Settings(data_dir=tmp_path),
+        None,
+        None,
+        versions=fixture_versions(),
+        scheduler=scheduling,
+        pages=LivePageAccess(fixture_http_admission()),
     )
 
     async def forbidden_assessment() -> None:

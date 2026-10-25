@@ -5,9 +5,17 @@ import httpx
 import pytest
 from model_fixture import audited_result, model_arguments
 from scheduling_support import RecordingReactionScheduling
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_versions
 
-from tank.replay import ReplayClock, ReplayError, evaluate_frozen, load_inputs, replay_bundle
+from tank.analysis.page_access import LivePageAccess
+from tank.replay import (
+    ReplayClock,
+    ReplayError,
+    evaluate_frozen,
+    load_inputs,
+    recorded_page_access,
+    replay_bundle,
+)
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -683,6 +691,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
             http=http,
             versions=fixture_versions(),
             scheduler=reaction_scheduler,
+            pages=recorded_page_access(load_inputs(packet, config)),
         )
         report = await replay_agent_session(
             packet,
@@ -1433,6 +1442,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
             DecisionEngine(config),
             versions=fixture_versions(),
             scheduler=reaction_scheduler,
+            pages=recorded_page_access(load_inputs(packet, config)),
         )
         report = await replay_agent_session(
             packet,
@@ -2068,6 +2078,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
             DecisionEngine(config),
             versions=fixture_versions(),
             scheduler=reaction_scheduler,
+            pages=recorded_page_access(load_inputs(packet, config)),
         )
         report = await replay_agent_session(
             packet,
@@ -2446,6 +2457,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
             DecisionEngine(config),
             versions=fixture_versions(),
             scheduler=reaction_scheduler,
+            pages=recorded_page_access(load_inputs(packet, config)),
         )
 
         async def fixture_grade(arguments, context):
@@ -2945,6 +2957,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
             reference_clock=TrustedFixtureClock(inputs) if inputs.fixture_reference else None,
             versions=fixture_versions(),
             scheduler=reaction_scheduler,
+            pages=recorded_page_access(load_inputs(path, config)),
         )
         if profile == "ordinary_missing_sent":
             with pytest.raises(ReplayError, match="one captured SENT delivery receipt required"):
@@ -3026,6 +3039,7 @@ async def test_captured_tools_decision_refreshes_fired_market_watch_offline(
         DecisionEngine(),
         versions=fixture_versions(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
     initial = await tools.dispatch("get_decision", {"event_id": "e", "token_id": "T"}, {})
     watch = next(row for row in initial["conditions"] if row["role"] == "UPGRADE")

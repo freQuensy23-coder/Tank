@@ -5,8 +5,9 @@ from pathlib import Path
 
 import pytest
 from scheduling_support import RecordingReactionScheduling
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_versions
 
+from tank.analysis.page_access import LivePageAccess
 from tank.event_tools import EventToolService
 from tank.settings import Settings
 from tank.util import clock_iso, new_id, sha256
@@ -27,6 +28,7 @@ async def test_primary_paraphrase_persists_high_in_postgres(tmp_path: Path, post
             None,
             versions=fixture_versions(),
             scheduler=RecordingReactionScheduling(),
+            pages=LivePageAccess(fixture_http_admission()),
         )
         stamp = clock_iso()
         quote = "The SEC announced approval of the application."

@@ -6,9 +6,10 @@ from types import SimpleNamespace
 
 import pytest
 from scheduling_support import RecordingReactionScheduling
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_versions
 
 from tank.analysis.decisions import DecisionEngine
+from tank.analysis.page_access import LivePageAccess
 from tank.event_tools import EventToolService
 from tank.scheduler import Scheduler
 from tank.settings import Settings
@@ -35,6 +36,7 @@ async def test_scoped_global_and_resolved_fatal_condition_to_actual_decision(
         DecisionEngine(settings),
         versions=fixture_versions(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
     event, ems, beneficiary, market = inputs()
     now = utcnow()
