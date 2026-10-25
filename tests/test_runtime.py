@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
@@ -8,8 +9,11 @@ from unittest.mock import AsyncMock
 import pytest
 from agent_source_fixtures import declared_versions_fixture
 from pydantic import JsonValue
+from pydantic_settings import SettingsConfigDict
 
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
+from tank.contracts import DomainModel
+from tank.contracts.json import decode_json, encode_json
 from tank.contracts.progress import ProgressPreferences
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.market.capture_contracts import CaptureReadiness
@@ -526,23 +530,64 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
     config.mkdir()
     backup = tmp_path / "backup"
     backup.mkdir()
-    baseline = Settings()
-    for name in ("registry", "semantics", "dependency_map", "exchange_addresses"):
-        (config / f"{name}.yaml").write_bytes(baseline.read_config_bytes(name + ".yaml"))
     import yaml
 
-    (config / "sources.yaml").write_text(
-        yaml.safe_dump(
+    class ReloadFixtureSettings(Settings):
+        model_config = SettingsConfigDict(env_file=None)
+
+    class GenerationStart(DomainModel):
+        config_version: str
+        filter_cutoff: float
+
+    catalog_bytes = encode_json({"pools": []})
+    (config / "reload-pools.json").write_bytes(catalog_bytes)
+    registry_fixture: dict[str, JsonValue] = {
+        "version": "reload-fixture",
+        "tokens": [],
+        "instruments": [],
+        "entities": [
             {
-                "version": "reload-fixture",
-                "contact_email": "runtime@example.test",
-                "sources": [],
+                "entity_id": "reload-fixture",
+                "kind": "OTHER",
+                "names": ["Synthetic reload entity"],
+                "aliases": ["Synthetic reload entity"],
+                "tokens": [],
+                "official_sources": [],
+                "layers_served": [],
+                "competes_with": [],
             }
-        )
-    )
+        ],
+        "sector_baskets": [],
+        "x_accounts": [],
+        "lending_pool_catalog": {
+            "source_url": "fixture:reload-empty-pools",
+            "captured_at": "2026-10-25T00:00:00Z",
+            "source_sha256": hashlib.sha256(catalog_bytes).hexdigest(),
+            "pools": [],
+        },
+    }
+    documents: dict[str, dict[str, JsonValue]] = {
+        "registry": registry_fixture,
+        "sources": {
+            "version": "reload-fixture",
+            "contact_email": "runtime@example.test",
+            "sources": [],
+        },
+        "semantics": {"version": "reload-fixture", "metrics": []},
+        "dependency_map": {"version": "reload-fixture", "edges": []},
+        "exchange_addresses": {
+            "version": "reload-fixture",
+            "wallet_lists": [],
+            "unavailable": {},
+            "setup_required": "Synthetic reload fixture declares no wallet catalogs",
+        },
+    }
+    for name, document in documents.items():
+        (config / (name + ".yaml")).write_bytes(encode_json(document))
 
     thresholds = config / "thresholds.yaml"
-    threshold_values = Settings(_env_file=None).thresholds().model_dump(mode="json")
+    threshold_values = decode_json(ReloadFixtureSettings().thresholds().model_dump_json())
+    assert isinstance(threshold_values, dict)
 
     def write_thresholds(value: float) -> None:
         thresholds.write_text(
@@ -550,7 +595,7 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
         )
 
     write_thresholds(0.4)
-    base = Settings(
+    base = ReloadFixtureSettings(
         config_dir=config,
         data_dir=tmp_path / "data",
         backup_dir=backup,
@@ -559,13 +604,13 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
         telegram_ops_chat="2",
     )
     original = resolve_versions(base)
-    started = []
-    loads = []
+    started: list[GenerationStart] = []
+    loads: list[bool] = []
     stop = asyncio.Event()
     reload_event = asyncio.Event()
 
     class Generation:
-        def __init__(self, repo, settings) -> None:
+        def __init__(self, repo: None, settings: Settings) -> None:
             self.settings = settings
 
         def validate(self) -> None:
@@ -574,16 +619,19 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
         async def prepare(self) -> None:
             self.validate()
 
-        async def run(self, flag) -> None:
+        async def run(self, flag: asyncio.Event) -> None:
             started.append(
-                (self.settings.config_version, self.settings.load_config("thresholds")["filter_cutoff"])
+                GenerationStart(
+                    config_version=self.settings.config_version,
+                    filter_cutoff=self.settings.thresholds().filter_cutoff,
+                )
             )
             await flag.wait()
 
         async def close(self) -> None:
             pass
 
-    def load():
+    def load() -> Settings:
         loads.append(True)
         return resolve_versions(base)
 
@@ -592,7 +640,7 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
     )
     task = asyncio.create_task(supervisor.run(stop, reload_event))
 
-    async def until(predicate) -> None:
+    async def until(predicate: Callable[[], bool]) -> None:
         async with asyncio.timeout(2):
             while not predicate():
                 await asyncio.sleep(0.001)
@@ -603,7 +651,8 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
         assert original.load_config("thresholds")["filter_cutoff"] == 0.4
         reload_event.set()
         await until(lambda: len(started) == 2)
-        assert started[0][0] != started[1][0] and started[1][1] == 0.8
+        assert started[0].config_version != started[1].config_version
+        assert started[1].filter_cutoff == 0.8
         assert original.code_version == supervisor.settings.code_version
         assert (base.data_dir / "config_versions" / f"{original.config_version}.json").exists()
         thresholds.write_text("filter_cutoff: [malformed\n")
@@ -612,7 +661,7 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
         await asyncio.sleep(0.01)
         assert len(started) == 2 and supervisor.settings.load_config("thresholds")["filter_cutoff"] == 0.8
         write_thresholds(0.8)
-        broken_registry = baseline.load_config("registry")
+        broken_registry = supervisor.settings.load_config("registry")
         entities = broken_registry["entities"]
         assert isinstance(entities, list)
         entity = entities[0]
@@ -623,7 +672,7 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
         await until(lambda: len(loads) == 3)
         await asyncio.sleep(0.01)
         assert len(started) == 2 and not task.done()
-        assert supervisor.settings.load_config("registry") == baseline.load_config("registry")
+        assert supervisor.settings.load_config("registry") == registry_fixture
     finally:
         stop.set()
         await task
