@@ -6,6 +6,8 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
 
+from integration_shard import parse_shard, shard_for
+
 
 def verify(reports: list[Path], collections: list[Path], shard: str | None = None) -> dict:
     expected = json.loads(collections[0].read_text())
@@ -14,8 +16,6 @@ def verify(reports: list[Path], collections: list[Path], shard: str | None = Non
     if any(json.loads(path.read_text()) != expected for path in collections[1:]):
         raise ValueError("integration shards collected different full case sets")
     if shard is not None:
-        from integration_shard import parse_shard, shard_for
-
         if len(reports) != 1 or len(collections) != 1:
             raise ValueError("a shard check requires exactly one report and collection")
         index, count = parse_shard(shard)

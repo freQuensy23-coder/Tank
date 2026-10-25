@@ -194,13 +194,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-          sparse-checkout: scripts/ci/check_integration_results.py
-          sparse-checkout-cone-mode: false
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
         with:
           version: "0.11.7"
           python-version: "3.13.13"
-          enable-cache: false
+          enable-cache: true
+      - run: uv sync --python 3.13.13 --frozen --extra dev
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: python-integration-results-*
@@ -208,7 +207,7 @@ jobs:
       - name: Require the full integration union exactly once with zero skips
         run: |
           test "$(find .test-results/shards -name integration.xml | wc -l)" -eq 3
-          uv run --no-project --python 3.13.13 python -I -S scripts/ci/check_integration_results.py \
+          uv run --frozen --extra dev python scripts/ci/check_integration_results.py \
             .test-results/shards/*/integration.xml \
             --collection .test-results/shards/*/integration-collection.json
 
