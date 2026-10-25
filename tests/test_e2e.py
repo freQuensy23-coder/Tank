@@ -354,6 +354,9 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
         edges = await repo.list("evt.beneficiary_edges", filters={"event_id": eid, "token_id": "T"})
         assert len(edges) == 1
         edge = edges[0]
+        assert event["event_state"] == "APPROVED" and event["state_verified"] is True
+        assert assessment["class"] == "MAJOR"
+        assert edge["capture_class"] == "DIRECT" and edge["credible"] is True
         event["contradictions"] = await repo.list("ana.contradictions", filters={"event_id": eid})
         inputs = decision_inputs_from_records(event, assessment, edge, market, open_call=None, conditions=())
         evaluation = DecisionEngine().evaluate(inputs)
