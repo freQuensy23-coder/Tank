@@ -16,7 +16,7 @@ from tank.deployment.contracts import (
     Transaction,
     TransactionDocument,
 )
-from tank.deployment.runtime import SHA256
+from tank.deployment.identities import SHA256
 
 
 class JournalError(RuntimeError):

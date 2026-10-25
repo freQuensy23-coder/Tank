@@ -7,14 +7,9 @@ import platform
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Annotated
-
-from pydantic import Field
 
 from tank.contracts import DomainModel
-
-type CommitSHA = Annotated[str, Field(pattern=r"^[0-9a-f]{40}$")]
-type SHA256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+from tank.deployment.identities import SHA256, CommitSHA
 
 
 class PublisherRuntimeError(RuntimeError):

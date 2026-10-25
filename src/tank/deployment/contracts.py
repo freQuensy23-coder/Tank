@@ -6,7 +6,7 @@ from pydantic import ConfigDict, Field, RootModel, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.scalars import TrueFlag
-from tank.deployment.runtime import SHA256, CommitSHA
+from tank.deployment.identities import SHA256, CommitSHA
 
 type ActorID = Literal["rbf5CQKQgKNVl4SfO"]
 type BuildID = Annotated[str, Field(pattern=r"^[A-Za-z0-9]{17}$")]
