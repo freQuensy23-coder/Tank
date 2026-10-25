@@ -14,6 +14,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
 
@@ -22,6 +23,7 @@ from pydantic import JsonValue
 
 from tank import ops_cards
 from tank.analysis.cards import telegram_card_html
+from tank.contracts.native_readback import NativeSessionMissing
 from tank.ops_progress import STAGES
 from tank.runtime_contracts import TelegramAnswerJob
 from tank.telegram_rich import message_text, rich_message_text
@@ -79,13 +81,43 @@ def days_text(days):
     return f"{days} {'дня' if days % 10 == 1 and days % 100 != 11 else 'дней'}"
 
 
+def remote_session_missing(session: Mapping[str, JsonValue]) -> bool:
+    """Validate a retained missing-resource observation without inventing lifecycle facts."""
+    remote = session.get("remote_state")
+    if remote is None:
+        return False
+    if not isinstance(remote, dict):
+        raise ValueError("Native remote observation must be an object")
+    if remote.get("kind") != "MISSING" and "missing" not in remote:
+        return False
+    observation = NativeSessionMissing.model_validate(
+        {
+            field: value
+            for field, value in remote.items()
+            if field
+            not in {
+                "checked_at",
+                "checked_at_prec",
+                "checked_at_prec_reason",
+                "checked_at_bucket_anchor",
+            }
+        }
+    )
+    if observation.session_id != session["session_id"]:
+        raise ValueError("Native missing-resource observation belongs to another session")
+    return True
+
+
 def closed_reason(session):
     """Why a follow-up cannot continue this session, or None while it is live: (status, reason text)."""
     if session is None or session.get("replay_run_id"):
         return "NO_SESSION", GONE_TEXT
+    missing = remote_session_missing(session)
     remote = session.get("remote_state") or {}
     if session.get("termination_receipt") or remote.get("status") == "terminated":
         return "TERMINATED", TERMINATED_TEXT
+    if missing:
+        return "NO_SESSION", GONE_TEXT
     if session.get("status") != "ENDED" and not remote.get("archived_at"):
         return None
     if session.get("archive_reason") == "RETENTION" and session.get("archive_keep_days"):

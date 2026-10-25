@@ -4,9 +4,9 @@ from typing import Literal, Protocol, Self
 
 from pydantic import Field, JsonValue, model_validator
 
-from tank.agents.provenance import resolve_agent_provenance
+from tank.agents.provenance import observe_resolved_native_prompt
 from tank.contracts import DomainModel
-from tank.contracts.openma import AgentSkillReference, ManagedAgentEffort
+from tank.contracts.openma import ManagedAgentEffort
 from tank.contracts.provenance import AgentProvenance
 from tank.contracts.session_admission import SessionTarget
 from tank.util import sha256
@@ -160,39 +160,6 @@ class NativeSessionHeader(DomainModel):
     metadata: dict[str, str]
 
 
-class NativeResolvedEffort(DomainModel):
-    type: ManagedAgentEffort
-
-
-class NativeResolvedModelIdentity(DomainModel):
-    id: str = Field(min_length=1)
-    effort: NativeResolvedEffort | None = None
-
-    @model_validator(mode="after")
-    def reported_effort_is_not_null(self) -> Self:
-        if "effort" in self.model_fields_set and self.effort is None:
-            raise ValueError("Native model effort can be omitted but cannot be null")
-        return self
-
-
-class NativeResolvedPromptHeader(DomainModel):
-    id: str = Field(min_length=1)
-    version: int = Field(ge=1)
-    model: NativeResolvedModelIdentity
-    system: str | None = Field(repr=False)
-    skills: list[AgentSkillReference]
-    tools: list[dict[str, JsonValue]] = Field(repr=False)
-    mcp_servers: list[dict[str, JsonValue]] = Field(repr=False)
-    multiagent: dict[str, JsonValue] | None = Field(repr=False)
-    extension: dict[str, JsonValue] | None = Field(default=None, validation_alias="_oma", repr=False)
-
-    @model_validator(mode="after")
-    def reported_extension_is_not_null(self) -> Self:
-        if "extension" in self.model_fields_set and self.extension is None:
-            raise ValueError("Native agent extension can be omitted but cannot be null")
-        return self
-
-
 class NativeSessionObservation(DomainModel):
     session_id: str = Field(min_length=1)
     environment_id: str = Field(min_length=1)
@@ -218,37 +185,13 @@ def observe_native_session(
     header = NativeSessionHeader.model_validate(
         {field: wire[field] for field in ("id", "environment_id", "metadata")}
     )
-    agent = wire["agent"]
-    if not isinstance(agent, dict):
-        raise ValueError("Native session must report its resolved agent snapshot")
-    model = agent["model"]
-    if not isinstance(model, dict):
-        raise ValueError("Native session must report its resolved model identity")
-    prompt = NativeResolvedPromptHeader.model_validate(
-        {
-            **{
-                field: agent[field]
-                for field in ("id", "version", "system", "skills", "tools", "mcp_servers", "multiagent")
-            },
-            "model": {
-                "id": model["id"],
-                **({"effort": model["effort"]} if "effort" in model else {}),
-            },
-            **({"_oma": agent["_oma"]} if "_oma" in agent else {}),
-        }
-    )
-    provenance = resolve_agent_provenance(
-        wire,
-        {"prompt_version": deployment.prompt_version},
-        declared_agent_id=deployment.agent_id,
-        declared_model_id=prompt.model.id,
-    )
+    prompt = observe_resolved_native_prompt(wire, prompt_label=deployment.prompt_version)
     return NativeSessionObservation(
         session_id=header.id,
         environment_id=header.environment_id,
         metadata=header.metadata,
-        provenance=provenance,
-        effort=prompt.model.effort.type if prompt.model.effort is not None else None,
+        provenance=prompt.provenance,
+        effort=prompt.effort,
     )
 
 

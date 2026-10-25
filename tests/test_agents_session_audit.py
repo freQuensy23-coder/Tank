@@ -9,7 +9,7 @@ from agent_source_fixtures import (
     native_tool_arguments_fixture,
     source_record_fixture,
 )
-from native_session_fixtures import created_native_session
+from native_session_fixtures import created_native_session, native_session_record
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
@@ -409,6 +409,7 @@ async def test_legacy_prompt_label_requires_exact_native_snapshot() -> None:
     repo = MemoryRepository()
     session = await seed(repo)
     session.update(prompt_version="baseline-2.3", prompt_version_basis=None, prompt_label=None)
+    await repo.put("ops.agent_sessions", "s", session)
     requests = []
     snapshot = {
         "id": "agent",
@@ -421,7 +422,17 @@ async def test_legacy_prompt_label_requires_exact_native_snapshot() -> None:
 
     def transport(request: httpx.Request):
         requests.append(request.url.path)
-        return httpx.Response(200, json={"data": {"id": "s", "agent": snapshot}})
+        return httpx.Response(
+            200,
+            json=native_session_record(
+                "s",
+                agent_id="agent",
+                environment_id="live",
+                metadata={},
+                model_id="gpt-6.1-sol",
+                agent_snapshot=snapshot,
+            ),
+        )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
         service = SessionService(repo, settings(), None, http=http, versions=declared_versions_fixture())

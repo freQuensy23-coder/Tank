@@ -7,6 +7,7 @@ import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture
 from native_input_fixtures import acknowledge_native_input
+from native_session_fixtures import native_session_record
 from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_http_admission
 from test_agents_execution_barrier import config, idle
@@ -69,7 +70,7 @@ async def test_actual_producer_consumer_workflow(tmp_path: Path, backend, case, 
             args["freshness"] = "STALE"
         posts = []
 
-        def handler(request: pytest.FixtureRequest):
+        def handler(request: httpx.Request) -> httpx.Response:
             if request.method == "POST":
                 posts.append(request.content)
                 return httpx.Response(
@@ -90,19 +91,14 @@ async def test_actual_producer_consumer_workflow(tmp_path: Path, backend, case, 
             if request.url.path.endswith("/sessions/s"):
                 return httpx.Response(
                     200,
-                    json={
-                        "data": {
-                            "id": "s",
-                            "agent": {
-                                "id": "agent",
-                                "version": 1,
-                                "system": "Actual resolved test-session bytes",
-                                "skills": [],
-                                "tools": [],
-                                "model": {"id": "gpt-6.1-sol"},
-                            },
-                        }
-                    },
+                    json=native_session_record(
+                        "s",
+                        agent_id="agent",
+                        environment_id="environment",
+                        metadata={},
+                        model_id="gpt-6.1-sol",
+                        agent_snapshot={"system": "Actual resolved test-session bytes"},
+                    ),
                 )
             raise AssertionError(request.url)
 
@@ -282,7 +278,7 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
     posts = []
     reads = []
 
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
             posts.append(request.content)
             return httpx.Response(200, json=acknowledge_native_input(request, "ack-" + str(len(posts))))
