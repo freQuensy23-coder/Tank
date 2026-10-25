@@ -6441,6 +6441,8 @@ class FullConditionMarketState(DomainModel):
             )
         ):
             raise ValueError("Full state cannot borrow another token's financial context")
+        if any(observation.token_id != self.token_id for observation in self.data_confidence.freshness):
+            raise ValueError("Full confidence cannot borrow another subject's observed freshness")
         if any(window.interval.cutoff != self.cutoff for window in self.relative.windows.values()):
             raise ValueError("Full relative context cannot borrow another cutoff")
         return self
@@ -6556,3 +6558,364 @@ type ConditionTopNodeValue = (
 type ConditionStateNodeValue = (
     ConditionSpotWindowGraph | ConditionRelativeGraph | BasicConditionDerivatives | ConditionSupplyGraph
 )
+
+
+class MissingConditionProofObservation(DomainModel):
+    status: Literal["MISSING"]
+    collection: ConditionCollection
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    metric_key: str | None = Field(min_length=1, pattern=r"\S")
+    observation_kind: str | None = Field(min_length=1, pattern=r"\S")
+    chain: str | None = Field(min_length=1, pattern=r"\S")
+    observed_at: Timestamp
+    cadence: ConditionCadence
+    reason: Literal["OBSERVATION_NOT_CAPTURED", "OBSERVATION_CLOCK_NOT_CAPTURED"]
+
+    @model_validator(mode="after")
+    def actual_missing_clock_and_scope(self) -> Self:
+        if self.observed_at.value is not None:
+            raise ValueError("A missing proof observation cannot claim a reported clock")
+        _bind_cadence_scope(
+            self.cadence.scope,
+            collection=self.collection,
+            token_id=self.token_id,
+            instrument_id=self.instrument_id,
+            metric_key=self.metric_key,
+            observation_kind=self.observation_kind,
+            chain=self.chain,
+        )
+        return self
+
+
+type ConditionProofObservation = (
+    ConditionFieldObservation | ConditionDepthObservation | MissingConditionProofObservation
+)
+
+
+class AssessedConditionProofFreshness(DomainModel):
+    kind: Literal["ASSESSED"]
+    observations: tuple[ConditionProofObservation, ...] = Field(min_length=1)
+
+    def passes(self) -> bool:
+        value = type(self).model_validate(self)
+        return all(
+            not isinstance(observation, MissingConditionProofObservation) and observation.fresh
+            for observation in value.observations
+        )
+
+
+class UnavailableConditionProofFreshness(DomainModel):
+    kind: Literal["UNAVAILABLE"]
+    reason: Literal["NO_REQUIRED_OBSERVATIONS"]
+
+
+class UnappliedConditionProofFreshness(DomainModel):
+    kind: Literal["NOT_APPLIED"]
+    reason: Literal["NO_ADDITIONAL_FRESHNESS_GATE"]
+
+
+type ConditionProofFreshness = (
+    AssessedConditionProofFreshness | UnavailableConditionProofFreshness | UnappliedConditionProofFreshness
+)
+
+
+class ConditionOpenInterestCoverage(DomainModel):
+    venues: tuple[Annotated[str, Field(min_length=1, pattern=r"\S")], ...]
+
+    @model_validator(mode="after")
+    def distinct_actual_cohort(self) -> Self:
+        if len(self.venues) != len(set(self.venues)):
+            raise ValueError("OI proof coverage must preserve distinct actual synchronized venues")
+        return self
+
+
+def condition_metric_domain(metric: ConditionMetric) -> ConditionCacheDomain:
+    match metric:
+        case "spot.cohort.direction" | "spot.cohort.cwb_buy" | "spot.cohort.cwb_sell" | "spot.classification":
+            return "spot"
+        case "deriv.native_oi_chg_pct" | "deriv.native_oi_vs_normal" | "deriv.oi_class":
+            return "oi"
+        case "deriv.funding_vs_normal":
+            return "funding"
+        case "price.close_vs_level":
+            return "close"
+        case "price.repricing_band" | "price.vs_anchor_pct":
+            return "relative"
+        case "dc.class":
+            return "dc"
+        case "liq.depth_p1_vs_pre" | "liq.spread_ratio":
+            return "depth"
+        case "mt.move_class" | "mt.divergence_state":
+            return "state"
+
+
+class ConditionEvaluationProof(DomainModel):
+    requirement: ConditionRequirement
+    cache_key: ConditionTopCacheKey
+    reused: bool
+    available: bool
+    reason: Literal["INCOMPLETE"] | None
+    freshness: ConditionProofFreshness
+    coverage: ConditionSpotCoverage | ConditionOpenInterestCoverage | None
+
+    @model_validator(mode="after")
+    def actual_requirement_and_freshness(self) -> Self:
+        domain = condition_metric_domain(self.requirement.metric)
+        if self.cache_key.domain != domain or self.cache_key.window != self.requirement.window:
+            raise ValueError("A proof must preserve the actual requirement's cache domain/window")
+        gate = domain in {"oi", "funding", "depth"}
+        if gate == isinstance(self.freshness, UnappliedConditionProofFreshness):
+            raise ValueError("Additional freshness gates must preserve their actual metric applicability")
+        if (domain == "spot") != isinstance(self.coverage, ConditionSpotCoverage):
+            raise ValueError("Spot proof coverage must preserve its actual coverage projection")
+        if (domain == "oi") != isinstance(self.coverage, ConditionOpenInterestCoverage):
+            raise ValueError("OI proof coverage must preserve its actual synchronized cohort")
+        if domain not in {"spot", "oi"} and self.coverage is not None:
+            raise ValueError("This metric defines no separate coverage projection")
+        passed = isinstance(self.freshness, UnappliedConditionProofFreshness) or (
+            isinstance(self.freshness, AssessedConditionProofFreshness) and self.freshness.passes()
+        )
+        if gate and not passed and self.available:
+            raise ValueError("A required unproven freshness gate cannot expose an available metric")
+        if (self.reason is None) != (self.available and passed):
+            raise ValueError("Proof success requires actual availability and its applicable freshness gate")
+        if isinstance(self.freshness, AssessedConditionProofFreshness):
+            expected_collection = {"oi": "oi", "funding": "funding", "depth": "books"}[domain]
+            for observation in self.freshness.observations:
+                collection = (
+                    "books" if isinstance(observation, ConditionDepthObservation) else observation.collection
+                )
+                if collection != expected_collection or observation.token_id != self.cache_key.token_id:
+                    raise ValueError("Proof observations must preserve actual collection and subject scope")
+                stamp = observation.observed_at.value
+                if isinstance(observation, MissingConditionProofObservation):
+                    continue
+                if stamp is None:
+                    raise ValueError("An observed proof requires its actual reported clock")
+                age = (self.cache_key.cutoff - parse_iso_time(stamp)).total_seconds()
+                cadence = observation.cadence
+                fresh = isinstance(cadence, DeclaredConditionCadence) and 0 <= age <= cadence.seconds
+                if observation.fresh != fresh:
+                    raise ValueError("Proof freshness must preserve its actual cutoff and cadence")
+                if isinstance(observation, ConditionFieldObservation) and observation.age_s != age:
+                    raise ValueError("Proof age cannot be borrowed from another cutoff")
+        return self
+
+
+class ConditionUnavailableRequirement(DomainModel):
+    requirement: ConditionRequirement
+    reason: Literal["NOT_SUPPORTED", "INCOMPLETE"]
+
+
+class UnrequestedConditionFacet(DomainModel):
+    status: Literal["NOT_REQUESTED"]
+
+
+class UnsupportedConditionFacet(DomainModel):
+    status: Literal["NOT_SUPPORTED"]
+    requirements: tuple[ConditionRequirement, ...] = Field(min_length=1)
+
+
+type UncomputedConditionFacet = UnrequestedConditionFacet | UnsupportedConditionFacet
+
+
+class SelectiveConditionValues(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    cutoff: Timestamp
+    requested: tuple[ConditionRequirement, ...]
+    spot: dict[ConditionWindow, BasicConditionSpot]
+    derivatives: dict[ConditionWindow, BasicConditionDerivatives]
+    close: ConditionClose | UncomputedConditionFacet
+    confidence: SelectiveConditionConfidence | UncomputedConditionFacet
+    depth: ConditionDepthNode | UncomputedConditionFacet
+    state: ConditionMarketState | UncomputedConditionFacet
+    relative: ConditionRelativeGraph | UncomputedConditionFacet
+    proofs: tuple[ConditionEvaluationProof, ...]
+    unavailable_metrics: tuple[ConditionUnavailableRequirement, ...]
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    transient: TrueFlag
+
+    @model_validator(mode="after")
+    def actual_requested_graph(self) -> Self:
+        if self.cutoff.value is None:
+            raise ValueError("A selected condition graph requires its actual cutoff")
+        end = parse_iso_time(self.cutoff.value)
+        requested = set(self.requested)
+        if len(requested) != len(self.requested):
+            raise ValueError("Requested condition facts must be distinct")
+        proof_requirements = {proof.requirement for proof in self.proofs}
+        if len(proof_requirements) != len(self.proofs) or not proof_requirements <= requested:
+            raise ValueError("Condition proofs must preserve distinct actual requested facts")
+        unavailable = {value.requirement: value.reason for value in self.unavailable_metrics}
+        if len(unavailable) != len(self.unavailable_metrics) or not set(unavailable) <= requested:
+            raise ValueError("Unavailable facts must preserve distinct actual requested requirements")
+        if requested != proof_requirements | set(unavailable):
+            raise ValueError("Every requested fact requires its actual proof or unsupported result")
+        if any(
+            reason != "NOT_SUPPORTED"
+            for requirement, reason in unavailable.items()
+            if requirement not in proof_requirements
+        ):
+            raise ValueError("An incomplete selected fact requires its actual evaluated proof")
+        expected_spot = {
+            proof.requirement.window for proof in self.proofs if proof.cache_key.domain == "spot"
+        }
+        expected_derivatives = {
+            proof.requirement.window for proof in self.proofs if proof.cache_key.domain in {"oi", "funding"}
+        }
+        if set(self.spot) != expected_spot or set(self.derivatives) != expected_derivatives:
+            raise ValueError(
+                "Selected window indexes must preserve every actually evaluated requested window"
+            )
+        for proof in self.proofs:
+            if (
+                proof.cache_key.domain == "spot"
+                and proof.coverage != self.spot[proof.requirement.window].coverage
+            ):
+                raise ValueError("Spot proof coverage cannot differ from its actual selected window")
+            if proof.cache_key.domain == "oi":
+                synchronized = self.derivatives[proof.requirement.window].synchronized
+                expected_venues = (
+                    synchronized.venues if isinstance(synchronized, ConditionSynchronizedOpenInterest) else ()
+                )
+                if (
+                    not isinstance(proof.coverage, ConditionOpenInterestCoverage)
+                    or proof.coverage.venues != expected_venues
+                ):
+                    raise ValueError("OI proof coverage cannot differ from its actual selected cohort")
+            if proof.available != self._metric_available(proof.requirement):
+                raise ValueError("Proof availability must preserve its actual selected financial facts")
+            if proof.cache_key.token_id != self.token_id or proof.cache_key.cutoff != end:
+                raise ValueError("A selected result cannot borrow another subject or cutoff proof")
+            if (proof.available and proof.reason is None) != (proof.requirement not in unavailable):
+                raise ValueError("Unavailable facts must preserve their actual proof result")
+        for window, spot in self.spot.items():
+            if spot.token_id != self.token_id or not any(
+                value.window == window and condition_metric_domain(value.metric) == "spot"
+                for value in self.requested
+            ):
+                raise ValueError("Selected spot windows must preserve actual subject/request scope")
+        for window, derivatives in self.derivatives.items():
+            if (
+                derivatives.token_id != self.token_id
+                or derivatives.interval.cutoff != end
+                or derivatives.interval.window != window
+            ):
+                raise ValueError("Selected derivative windows must preserve actual subject/window/cutoff")
+            if not any(
+                value.window == window and condition_metric_domain(value.metric) in {"oi", "funding"}
+                for value in self.requested
+            ):
+                raise ValueError("Derivative calculations cannot be presented as directly requested facts")
+            domains = {proof.cache_key.domain for proof in self.proofs if proof.requirement.window == window}
+            if "oi" in domains and (
+                isinstance(derivatives.synchronized, UnrequestedConditionSynchronizedOpenInterest)
+                or any(
+                    isinstance(venue.open_interest, UnrequestedConditionOpenInterest)
+                    for venue in derivatives.per_venue
+                )
+            ):
+                raise ValueError("An evaluated OI request cannot be labeled not requested")
+            if "funding" in domains and any(
+                isinstance(venue.funding, UnrequestedConditionFunding) for venue in derivatives.per_venue
+            ):
+                raise ValueError("An evaluated funding request cannot be labeled not requested")
+        if (
+            isinstance(self.close, ObservedConditionClose)
+            and self.close.observed_at.value is not None
+            and parse_iso_time(self.close.observed_at.value) > end
+        ):
+            raise ValueError("A selected close cannot borrow a future observed price")
+        facets = (
+            ("close", self.close),
+            ("dc", self.confidence),
+            ("depth", self.depth),
+            ("state", self.state),
+            ("relative", self.relative),
+        )
+        for domain, facet in facets:
+            selected = {value for value in requested if condition_metric_domain(value.metric) == domain}
+            if isinstance(facet, UnrequestedConditionFacet):
+                if selected:
+                    raise ValueError("A selected fact cannot be labeled not requested")
+            elif isinstance(facet, UnsupportedConditionFacet):
+                if set(facet.requirements) != selected or any(
+                    unavailable.get(value) != "NOT_SUPPORTED" for value in selected
+                ):
+                    raise ValueError(
+                        "Unsupported facets must preserve their exact selected unsupported facts"
+                    )
+            elif not selected:
+                raise ValueError("Unrequested calculations cannot be presented as selected facets")
+        if isinstance(self.relative, ConditionRelativeGraph) and (
+            self.relative.token_id != self.token_id
+            or any(value.interval.cutoff != end for value in self.relative.windows.values())
+        ):
+            raise ValueError("Selected relative facts must preserve subject/cutoff scope")
+        if isinstance(self.depth, ConditionDepthNode) and (
+            self.depth.cutoff != end
+            or any(observation.token_id != self.token_id for observation in self.depth.observations)
+        ):
+            raise ValueError("Selected depth facts must preserve actual subject/cutoff scope")
+        if isinstance(self.confidence, SelectiveConditionConfidence) and (
+            self.confidence.analysis_window.cutoff != end
+            or any(observation.token_id != self.token_id for observation in self.confidence.freshness)
+        ):
+            raise ValueError("Selected confidence must preserve the actual cutoff")
+        if isinstance(self.state, FullConditionMarketState) and (
+            self.state.token_id != self.token_id or self.state.cutoff != end
+        ):
+            raise ValueError("Selected full state must preserve actual subject/cutoff scope")
+        if isinstance(self.state, NonForwardConditionMarketState) and (
+            self.state.token_id != self.token_id or self.state.interval.cutoff != end
+        ):
+            raise ValueError("Selected nonforward state must preserve actual subject/cutoff scope")
+        return self
+
+    def _metric_available(self, requirement: ConditionRequirement) -> bool:
+        metric, window = requirement.metric, requirement.window
+        domain = condition_metric_domain(metric)
+        if domain == "spot":
+            return self.spot[window].direction is not None
+        if domain in {"oi", "funding"}:
+            derivatives = self.derivatives[window]
+            if domain == "funding":
+                return bool(derivatives.per_venue) and all(
+                    isinstance(venue.funding, AvailableConditionFunding)
+                    and venue.funding.funding_vs_normal is not None
+                    for venue in derivatives.per_venue
+                )
+            synchronized = derivatives.synchronized
+            if not isinstance(synchronized, ConditionSynchronizedOpenInterest):
+                return False
+            values = synchronized.values
+            match metric:
+                case "deriv.native_oi_chg_pct":
+                    return True
+                case "deriv.native_oi_vs_normal":
+                    return values.native_oi_vs_normal is not None
+                case "deriv.oi_class":
+                    return values.oi_class is not None
+            raise ValueError("OI availability requires an actual OI condition metric")
+        if domain == "close":
+            return isinstance(self.close, ObservedConditionClose)
+        if domain == "dc":
+            return isinstance(self.confidence, SelectiveConditionConfidence)
+        if domain == "depth":
+            if not isinstance(self.depth, ConditionDepthNode):
+                return False
+            return (
+                self.depth.spread_ratio is not None
+                if metric == "liq.spread_ratio"
+                else isinstance(self.depth.comparison(), ObservedConditionRatio)
+            )
+        if domain == "state":
+            return isinstance(self.state, (FullConditionMarketState, NonForwardConditionMarketState))
+        if not isinstance(self.relative, ConditionRelativeGraph):
+            return False
+        return (
+            isinstance(self.relative.repricing.band(), ObservedConditionRepricingBand)
+            if metric == "price.repricing_band"
+            else self.relative.windows["EVENT"].raw.value is not None
+        )
