@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from agent_source_fixtures import source_item_fixture
+from agent_source_fixtures import declared_versions_fixture, source_item_fixture
 from pydantic import ValidationError
 
 from tank.agents.classification import JevClassifier
@@ -40,7 +40,7 @@ async def test_classifier_validates_durable_scores_and_reuses_exact_request(
         opencode_api_key=None, replay=False, config_version="fixture", code_version="fixture"
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as http:
-        classifier = JevClassifier(scores, settings, http)
+        classifier = JevClassifier(scores, settings, http, versions=declared_versions_fixture())
         record = await classifier._score_record(item, "relevant", state)
         assert record.score == 0.97
         assert await classifier._score_record(item, "relevant", state) == record
@@ -55,7 +55,10 @@ async def test_classifier_validates_durable_scores_and_reuses_exact_request(
         )
         await damaged.put("ops.llm_usage", record.usage_id, {**row, **changes})
         classifier = JevClassifier(
-            Repository(damaged, Collection("ops.llm_usage", JevScoreRecord)), settings, http
+            Repository(damaged, Collection("ops.llm_usage", JevScoreRecord)),
+            settings,
+            http,
+            versions=declared_versions_fixture(),
         )
         with pytest.raises(ValidationError if contradictory_subject else ValueError):
             await classifier._score_record(item, "relevant", state)

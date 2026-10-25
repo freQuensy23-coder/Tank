@@ -12,19 +12,21 @@ from tank.agents.pipeline_contracts import (
     JevScoreRecord,
     MissingClassificationFields,
 )
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.time_precision import collection_clock
 from tank.util import sha256
 
 
 class ClassificationSource(Protocol):
-    item_id: str
+    @property
+    def item_id(self) -> str: ...
 
 
 class ClassificationSettings(Protocol):
-    opencode_api_key: str | None
-    replay: bool
-    config_version: str
-    code_version: str
+    @property
+    def opencode_api_key(self) -> str | None: ...
+    @property
+    def replay(self) -> bool: ...
 
 
 class ClassificationScores(Protocol):
@@ -47,8 +49,14 @@ ROUTE_CRITERIA = {
 
 class JevClassifier:
     def __init__(
-        self, scores: ClassificationScores, settings: ClassificationSettings, http: httpx.AsyncClient
+        self,
+        scores: ClassificationScores,
+        settings: ClassificationSettings,
+        http: httpx.AsyncClient,
+        *,
+        versions: ResolvedVersionIdentity,
     ) -> None:
+        self.versions = ResolvedVersionIdentity.model_validate(versions)
         self.scores = scores
         self.settings = settings
         self.http = http
@@ -180,7 +188,7 @@ class JevClassifier:
             created_at_prec_reason=None,
             subject_id=item.item_id,
             model=data.model,
-            config_version=self.settings.config_version,
-            code_version=self.settings.code_version,
+            config_version=self.versions.config_version,
+            code_version=self.versions.code_version,
         )
         return await self.scores.put(identity.usage_id, record, immutable=True)

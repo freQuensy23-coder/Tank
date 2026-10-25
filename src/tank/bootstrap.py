@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.json import decode_json
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.registry import (
     AggressorSemantics,
     DependencyConfiguration,
@@ -68,10 +69,6 @@ class RegistryProvenance(RegistryArtifact):
 
 
 class RegistrySettings(Protocol):
-    @property
-    def config_version(self) -> str: ...
-    @property
-    def code_version(self) -> str: ...
     def read_config_bytes(self, relative: str) -> bytes: ...
     def load_config_as[T: BaseModel](self, name: str, schema: type[T]) -> T: ...
     def registry(self) -> RegistryConfiguration: ...
@@ -233,10 +230,12 @@ def _routing_aliases(entity: RegistryEntity) -> list[EntityAliasRecord]:
     return aliases
 
 
-def _artifact(settings: RegistrySettings, filename: RegistryFile, version: str) -> RegistryArtifact:
+def _artifact(
+    settings: RegistrySettings, filename: RegistryFile, version: str, versions: ResolvedVersionIdentity
+) -> RegistryArtifact:
     return RegistryArtifact(
-        config_version=settings.config_version,
-        code_version=settings.code_version,
+        config_version=versions.config_version,
+        code_version=versions.code_version,
         config_file=filename,
         config_schema_version=version,
         config_sha256=hashlib.sha256(settings.read_config_bytes(filename)).hexdigest(),
@@ -270,18 +269,19 @@ def _entity_record(entity: RegistryEntity) -> RegistryEntity:
     return RegistryEntity.model_validate(entity.model_copy(update={"name": display}))
 
 
-def validate_registry(settings: RegistrySettings) -> PreparedRegistry:
+def validate_registry(settings: RegistrySettings, versions: ResolvedVersionIdentity) -> PreparedRegistry:
     """Prepare complete typed rows without database mutation before generation activation."""
+    versions = ResolvedVersionIdentity.model_validate(versions)
     sources = settings.load_config_as("sources", SourceConfiguration)
     registry = settings.registry()
     dependencies = settings.dependencies()
     semantics = settings.semantics()
     addresses = settings.exchange_addresses()
-    sources_artifact = _artifact(settings, "sources.yaml", sources.version)
-    registry_artifact = _artifact(settings, "registry.yaml", registry.version)
-    dependency_artifact = _artifact(settings, "dependency_map.yaml", dependencies.version)
-    semantics_artifact = _artifact(settings, "semantics.yaml", semantics.version)
-    addresses_artifact = _artifact(settings, "exchange_addresses.yaml", addresses.version)
+    sources_artifact = _artifact(settings, "sources.yaml", sources.version, versions)
+    registry_artifact = _artifact(settings, "registry.yaml", registry.version, versions)
+    dependency_artifact = _artifact(settings, "dependency_map.yaml", dependencies.version, versions)
+    semantics_artifact = _artifact(settings, "semantics.yaml", semantics.version, versions)
+    addresses_artifact = _artifact(settings, "exchange_addresses.yaml", addresses.version, versions)
     aliases = [alias for entity in registry.entities for alias in _routing_aliases(entity)]
     baskets = [
         SectorBasketRecord.model_validate(
@@ -481,9 +481,11 @@ async def _sync_rows[T: DomainModel](
     return len(rows)
 
 
-async def sync_registry(repo: RegistryStore, settings: RegistrySettings) -> RegistrySyncResult:
+async def sync_registry(
+    repo: RegistryStore, settings: RegistrySettings, *, versions: ResolvedVersionIdentity
+) -> RegistrySyncResult:
     """Atomically sync validated captured rows while retaining independently discovered rows."""
-    prepared = validate_registry(settings)
+    prepared = validate_registry(settings, versions)
     async with repo.lock("tank:registry_sync"), repo.transaction():
         return RegistrySyncResult(
             sources=await _sync_rows(repo, "reg.sources", prepared.sources),

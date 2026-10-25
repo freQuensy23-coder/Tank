@@ -6,7 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from agent_source_fixtures import source_record_fixture
+from agent_source_fixtures import declared_versions_fixture, source_record_fixture
 from test_agents_execution_barrier import config, idle
 from test_session_binding_concurrency import fixture_repo, seed
 
@@ -173,7 +173,9 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
             raise AssertionError(request.url)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            service = SessionService(repo, config(), domain.dispatch, http=client)
+            service = SessionService(
+                repo, config(), domain.dispatch, http=client, versions=declared_versions_fixture()
+            )
             sequence = 0
 
             async def emit(tool, arguments):
@@ -344,7 +346,9 @@ async def test_ignored_item_keeps_event_and_call_for_next_native_update(
             raise AssertionError(request.url)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-            service = SessionService(repo, config(), domain.dispatch, http=http)
+            service = SessionService(
+                repo, config(), domain.dispatch, http=http, versions=declared_versions_fixture()
+            )
 
             service.start_stream = lambda sid: None
             await service.process_event("s", idle("ignored-end", "input"))

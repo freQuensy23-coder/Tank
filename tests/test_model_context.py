@@ -6,6 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from agent_source_fixtures import declared_versions_fixture
 
 from tank.agents.context import CONTEXT_VERSION, ID_FIELDS, ModelContext, identifier_field
 from tank.agents.sessions import SessionService
@@ -160,7 +161,9 @@ async def test_real_record_and_followup_tools_take_ids_and_reply_without_them(co
         return httpx.Response(200, json={"data": []})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
-        service = SessionService(repo, settings, tools.dispatch, http=http)
+        service = SessionService(
+            repo, settings, tools.dispatch, http=http, versions=declared_versions_fixture()
+        )
         await service.tool(session, {"id": "call_record", "name": "record_event", "input": recorded(item)})
     ledger = await repo.get("ops.tool_calls", "session_private:call_record")
     assert ledger["status"] == "DONE", ledger.get("result")
@@ -397,7 +400,9 @@ async def test_merge_into_by_event_id_works_when_the_session_never_displayed_the
 
     tools = EventToolService(repo, settings, None, None)
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
-        service = SessionService(repo, settings, tools.dispatch, http=http)
+        service = SessionService(
+            repo, settings, tools.dispatch, http=http, versions=declared_versions_fixture()
+        )
         await service.tool(
             session, {"id": "merge", "name": "merge_into", "input": {"event_id": target["event_id"]}}
         )
@@ -610,7 +615,9 @@ async def test_real_domain_refusal_uses_display_names_and_keeps_raw_audit(contex
 
     tools = EventToolService(repo, settings, None, None)
     async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
-        service = SessionService(repo, settings, tools.dispatch, http=http)
+        service = SessionService(
+            repo, settings, tools.dispatch, http=http, versions=declared_versions_fixture()
+        )
         await service.tool(
             session, {"id": "decision_error", "name": "get_decision", "input": {"token_id": "uniswap:UNI"}}
         )
@@ -866,7 +873,9 @@ async def test_milestone_callback_confirms_from_the_fetched_official_document_by
             {"event_id": session["event_id"], "source_id": "S01", "milestone": "Approval", "due_at": due},
             {},
         )
-        sessions = SessionService(repo, settings, domain.dispatch, http=http)
+        sessions = SessionService(
+            repo, settings, domain.dispatch, http=http, versions=declared_versions_fixture()
+        )
         await sessions.tool(session, {"id": "fetch-proof", "name": "fetch_page", "input": {"url": url}})
         fetched_call = await repo.get("ops.tool_calls", session["session_id"] + ":fetch-proof")
         assert fetched_call["status"] == "DONE", fetched_call.get("result")

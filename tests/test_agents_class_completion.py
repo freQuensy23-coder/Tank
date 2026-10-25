@@ -6,6 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from agent_source_fixtures import declared_versions_fixture
 from test_agents_execution_barrier import config, idle
 from test_event_tools import extraction, unknown_assessment
 from test_session_binding_concurrency import fixture_repo, seed
@@ -68,7 +69,9 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
             raise AssertionError(request.url)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            service = SessionService(repo, config(), tools.dispatch, http=client)
+            service = SessionService(
+                repo, config(), tools.dispatch, http=client, versions=declared_versions_fixture()
+            )
             system_context = service.tool_context(session, "fixture-setup") | {
                 "session_id": None,
                 "role": "system",

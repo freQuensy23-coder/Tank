@@ -5,6 +5,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from agent_source_fixtures import declared_versions_fixture
 from test_agents_execution_barrier import config, idle
 from test_event_tools import unknown_assessment
 from test_session_binding_concurrency import fixture_repo, seed
@@ -103,7 +104,9 @@ async def test_actual_producer_consumer_workflow(tmp_path: Path, backend, case, 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             session_settings = config()
             session_settings.ops_progress_enabled = True
-            service = SessionService(repo, session_settings, tools.dispatch, http=client)
+            service = SessionService(
+                repo, session_settings, tools.dispatch, http=client, versions=declared_versions_fixture()
+            )
             count = 0
             execution_id = "input"
 
@@ -286,7 +289,7 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
         return {"ok": True}
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        service = SessionService(repo, config(), dispatch, http=client)
+        service = SessionService(repo, config(), dispatch, http=client, versions=declared_versions_fixture())
 
         async def hydrate(session) -> None:
             pass

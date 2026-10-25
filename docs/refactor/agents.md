@@ -414,3 +414,14 @@ Independent proof:40 focused bootstrap/config/runtime unit cases passed in6.39se
 
 
 Independent review caught an ownership gap across valid metric variants: clearing only the new record type's fields retained old depth-only fields when the same metric key became funding. bootstrap._owned_fields now enumerates the complete closed schema family for every physical table; the metrics family unions all six supported variants. There is no new immutable metric-family policy. A two-sync test using actual valid depth/funding configurations proves removed family fields clear, new declared fields persist and unrelated discovery metadata remains canonical/type-equivalent.
+
+
+### Required producer-version facet
+
+Bootstrap, Pipeline/JevClassifier and SessionService now require a validated ResolvedVersionIdentity dependency. Bootstrap's config-reader port no longer exposes raw config/code version properties; classifier settings contain only actual provider/replay controls. Runtime composition obtains the facet with Settings.require_versions after capture, and passes it to source, scheduler and owned producer constructors. Native resolve/tool_context/usage use the required host producer identity while historical session_config_version/session_code_version remain explicitly nullable; old session identity is not relabelled.
+
+Fixture calls declare synthetic identities explicitly. Production-effect regressions reject invalid/copied marker identities before client allocation or config reads/writes and prove a classifier with no raw version attributes writes the supplied identity. Session in-memory execution/history polling now uses strict ExecutionPoll/HistoryPoll records rather than positional tuples; absent cache entries mean a first poll, not unknown execution facts. The 50ms initial/one-second capped polling policy is unchanged. HTTP request query sequences normalize through the SDK QueryParams boundary, retaining repeated ID order. Borrowed/owned HTTP clients now branch on explicit None rather than truthiness.
+
+The SessionFileSender port is the native bridge's file-response envelope; it is not a general domain-record substitute. Its temporary dict result reflects the current Telegram adapter API and is serialized at the native tool boundary. Full SessionService/Context/Telegram receipt migrations remain open, including constructor and journal domain types; this stage does not claim full session strict typing.
+
+Proof:268 focused owned unit cases passed in13.96seconds, four required-facet production-effect cases passed in1.49seconds, strict classifier/Pipeline/bootstrap/poll-state/facet-test targets pass, and default owned source/composition mypy passes. The guarded integration result is recorded in agents-required-versions-integration-v2.log. Calibration and quality-owned E2E callers require their coordinated explicit-facet companion; no compatibility default is provided.
