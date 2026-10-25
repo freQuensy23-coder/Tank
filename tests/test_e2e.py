@@ -165,7 +165,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
     sent = []
     event_posts = []
     failures = [True]
-    tool_event = {"id": "tool1", "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
+    tool_event = {"id": "tool1", "seq": 1, "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
 
     native_sessions: dict[str, dict[str, JsonValue]] = {}
 
@@ -612,9 +612,7 @@ async def test_full_sse_pipeline_postgres(
             return httpx.Response(
                 200,
                 headers={"content-type": "text/event-stream"},
-                text="".join(
-                    "id: " + str(i + 1) + "\ndata: " + json.dumps(e) + "\n\n" for i, e in enumerate(active)
-                ),
+                text="".join("id: " + str(e["seq"]) + "\ndata: " + json.dumps(e) + "\n\n" for e in active),
             )
         if path.endswith("/events"):
             posted.append(json.loads(req.content))
@@ -763,7 +761,13 @@ async def test_full_sse_pipeline_postgres(
                 count += 1
                 call_id = f"{sid}-full-{count}"
                 active[:] = [
-                    {"id": call_id, "type": "agent.custom_tool_use", "name": name, "input": model_args}
+                    {
+                        "id": call_id,
+                        "seq": count,
+                        "type": "agent.custom_tool_use",
+                        "name": name,
+                        "input": model_args,
+                    }
                 ]
                 if name == "get_market_truth":
                     import asyncio
@@ -1202,7 +1206,7 @@ async def test_runtime_autonomous_source_to_telegram(
                     "id: "
                     + str(event["seq"])
                     + "\ndata: "
-                    + json.dumps({"seq": event["seq"], "event": event["body"]})
+                    + json.dumps({**event["body"], "seq": event["seq"]})
                     + "\n\n"
                 ).encode()
 
@@ -1257,7 +1261,7 @@ async def test_runtime_autonomous_source_to_telegram(
             return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=SSE())
         if path.endswith("/events"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "has_more": False})
             event = json.loads(request.content)["events"][0]
             if event["type"] == "user.message":
                 payload = json.loads(event["content"][0]["text"])
