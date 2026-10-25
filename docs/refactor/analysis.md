@@ -643,3 +643,21 @@ unmeasured economic effect. The first-reference QUEUED/unsent intent and ordinar
 missing-SENT refusal oracles remain unchanged. Both actual integration profiles pass
 in2.89s with zero skips. This companion is clean3e26558b + exact485 schema ancestry;
 held HTTP and decision/card renderer activation are excluded.
+
+### Final paired HTTP qualification repairs
+
+The first full owned selection at e773ee78 executed779 units and83 actual integrations.
+Its remaining failures were nine authored publication fixtures with empty/undersized
+WHY under the new public schema and two assertions for retired capacity-bearing SQL
+bucket text. Seven named positive/publication-purpose fixtures now author their actual
+World-approval/product-announcement facts plus the publication's absence of quantified
+price/liquidity effects. Vague test headlines are replaced with the actual product
+announcement where that was the seed. The overlength-WHY test retains a valid second
+bullet so it reaches the intended221-character refusal. Lifecycle, model provenance,
+metadata fidelity, durability, generation-clock and bounded-read oracles are unchanged.
+SQL ledger assertions now decode the actual two-field stable key/window identity;
+capacity is deliberately not part of that identity. Cross-process waits, host isolation,
+actual persisted owner rows and unbound/closed refusal remain independently asserted.
+All115 targeted units pass in12.07s and all3 actual ledger/ownership cases pass in7.12s,
+zero skips. A fresh complete owned selection is run on the resulting immutable head;
+previous logs/XML remain preserved separately. No production-policy waiver is involved.

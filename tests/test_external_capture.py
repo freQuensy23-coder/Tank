@@ -13,7 +13,7 @@ from pathlib import Path
 import httpx
 import pytest
 import yaml
-from pydantic import JsonValue
+from pydantic import JsonValue, TypeAdapter
 from source_support import FixtureBudgetClock, fixture_http_admission, fixture_versions
 
 from tank.market.normalize import timestamp_fields
@@ -360,10 +360,13 @@ async def test_request_ledger_is_one_budget_for_every_process(migrated) -> None:
         await first.acquire("binance.spot", 3000, 60, weight=2, host="api.binance.com")
         await second.acquire("binance.spot", 3000, 60, weight=4, host="api.binance.com")
 
-        assert [(row["bucket"], row["owner"]) for row in await ledger_rows(migrated)] == [
-            ("kraken|1.0|1.0", "second"),
-            ("binance.spot|60.0|3000.0", "first"),
-            ("binance.spot|60.0|3000.0", "second"),
+        assert [
+            (TypeAdapter(tuple[str, float]).validate_json(row["bucket"]), row["owner"])
+            for row in await ledger_rows(migrated)
+        ] == [
+            (("kraken", 1.0), "second"),
+            (("binance.spot", 60.0), "first"),
+            (("binance.spot", 60.0), "second"),
         ]
         await first.block("api.binance.com", utcnow() + timedelta(seconds=1), "HTTP 429")
         started = time.monotonic()
@@ -415,9 +418,10 @@ async def test_ledger_is_explicitly_bound_for_every_postgres_process(migrated: P
     ledger = RequestLedger(migrated.database_url, "explicit-process")
     binding = scope.bind(ledger)
     await scope.acquire_many(constraints)
-    assert [(row["bucket"], row["owner"]) for row in await ledger_rows(migrated)] == [
-        ("coinbase|1.0|5.0", "explicit-process")
-    ]
+    assert [
+        (TypeAdapter(tuple[str, float]).validate_json(row["bucket"]), row["owner"])
+        for row in await ledger_rows(migrated)
+    ] == [(("coinbase", 1.0), "explicit-process")]
     await scope.release(binding)
     with pytest.raises(RuntimeError, match="not been bound"):
         await scope.acquire_many(constraints)

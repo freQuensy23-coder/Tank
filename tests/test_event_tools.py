@@ -705,7 +705,7 @@ async def test_structural_assessment_requires_agent_partial_without_parallel_pub
         "kind": "PARTIAL",
         "what": "World access approved",
         "verdict": "World access approved",
-        "why": [],
+        "why": ["World access approved", "The publication does not quantify price or liquidity effects."],
     }
     result = await service.dispatch(
         "publish_card", args, {"event_id": extraction["event_id"], "role": "analyst"}
@@ -1422,7 +1422,7 @@ async def test_bundle_keeps_producing_model_and_separate_session_config(service)
             "kind": "PARTIAL",
             "what": "World access approved",
             "verdict": "World access approved",
-            "why": [],
+            "why": ["World access approved", "The publication does not quantify price or liquidity effects."],
         },
         {"event_id": event["event_id"], "role": "system"},
     )
@@ -1520,7 +1520,13 @@ async def test_market_truth_domain_result_and_evidence_bundle_keep_full_metadata
     assert full["spot"]["W1H"]["coverage"]["n_complete"] == 0
     published = await service.dispatch(
         "publish_card",
-        {"event_id": eid, "kind": "PARTIAL", "what": "Approved fact", "verdict": "Approved fact", "why": []},
+        {
+            "event_id": eid,
+            "kind": "PARTIAL",
+            "what": "Product announced",
+            "verdict": "Product announced",
+            "why": ["Product announced", "The publication does not quantify price or liquidity effects."],
+        },
         {},
     )
     assert published["published"], published
@@ -2021,7 +2027,13 @@ async def test_terminal_event_cannot_publish_new_card(service, lifecycle) -> Non
     )
     result = await service.dispatch(
         "publish_card",
-        {"event_id": eid, "kind": "PARTIAL", "what": "Approved fact", "verdict": "Approved fact", "why": []},
+        {
+            "event_id": eid,
+            "kind": "PARTIAL",
+            "what": "Product announced",
+            "verdict": "Product announced",
+            "why": ["Product announced", "The publication does not quantify price or liquidity effects."],
+        },
         {},
     )
     assert not result["published"] and result["reason"] == "TERMINAL_EVENT"
@@ -3632,9 +3644,9 @@ async def test_bundle_directory_sync_failure_never_creates_database_reference(
             {
                 "event_id": eid,
                 "kind": "PARTIAL",
-                "what": "Approved source fact",
-                "verdict": "Approved source fact",
-                "why": [],
+                "what": "Product announced",
+                "verdict": "Product announced",
+                "why": ["Product announced", "The publication does not quantify price or liquidity effects."],
             },
             {},
         )
@@ -5288,7 +5300,7 @@ def test_publish_card_schema_bounds_agent_text() -> None:
     with pytest.raises(ValueError, match=r"\$\.verdict: 161 characters, at most 160"):
         validate_schema(dict(ok, verdict="v" * 161), schema)
     with pytest.raises(ValueError, match=r"\$\.why\[0\]: 221 characters"):
-        validate_schema(dict(ok, why=["w" * 221]), schema)
+        validate_schema(dict(ok, why=["w" * 221, "Second authored fact"]), schema)
 
     manifest = json.loads(
         (Path(__file__).resolve().parents[1] / "config/skills/tank-event-analyst/tools.json").read_text()
@@ -5505,7 +5517,13 @@ async def test_card_generated_at_is_the_version_write_and_deliver_is_runnable_th
     )
     result = await service.dispatch(
         "publish_card",
-        {"event_id": eid, "kind": "PARTIAL", "what": "v", "verdict": "v", "why": []},
+        {
+            "event_id": eid,
+            "kind": "PARTIAL",
+            "what": "Product announced",
+            "verdict": "Product announced",
+            "why": ["Product announced", "The publication does not quantify price or liquidity effects."],
+        },
         {"event_id": eid, "call_id": "c", "role": "system"},
     )
     alert = await service.repo.get("out.alerts", f"{result['alert_id']}:1")
@@ -5637,7 +5655,13 @@ async def test_publish_card_keeps_market_truth_once_and_bounds_evidence_and_ops_
     monkeypatch.setattr(service.repo, "iter_all", counting)
     result = await service.dispatch(
         "publish_card",
-        {"event_id": eid, "kind": "PARTIAL", "what": "v", "verdict": "v", "why": []},
+        {
+            "event_id": eid,
+            "kind": "PARTIAL",
+            "what": "Product announced",
+            "verdict": "Product announced",
+            "why": ["Product announced", "The publication does not quantify price or liquidity effects."],
+        },
         {"event_id": eid, "call_id": "c", "role": "system"},
     )
     assert result["published"]
