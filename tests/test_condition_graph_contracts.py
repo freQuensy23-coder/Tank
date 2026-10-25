@@ -1293,3 +1293,98 @@ def test_relative_calculation_revalidates_a_constructed_or_mutated_nested_return
         invalid.relative_return()
     with pytest.raises(ValidationError, match="Unavailable beta cannot manufacture"):
         invalid.beyond_normal()
+
+
+def test_market_context_known_zero_is_neutral_and_missing_volatility_is_unavailable() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionMarketContextInputs
+
+    zero_range = FloatRange(bounds=FloatBounds(lower=0.0, upper=0.0), reason=None)
+    inputs = ConditionMarketContextInputs(
+        btc_return_24h=0.0,
+        rv24=0.0,
+        rv24_bound=AT,
+        rv24_resolution_s=3600,
+        return_normal_range=zero_range,
+        return_lower_quartile=0.0,
+        rv_normal_range=zero_range,
+        rule="normal_range",
+    )
+    result = inputs.classification()
+    assert result.status == "OBSERVED" and result.value == "NEUTRAL"
+    absent = inputs.model_copy(update={"rv24": None}).classification()
+    assert absent.status == "UNAVAILABLE" and absent.value is None
+    with pytest.raises(ValidationError, match="completed UTC hour"):
+        inputs.model_copy(update={"rv24_bound": AT + timedelta(seconds=1)}).classification()
+    with pytest.raises(ValidationError, match="actual available return history"):
+        inputs.model_copy(update={"return_lower_quartile": None}).classification()
+
+
+def test_repricing_requires_declared_direction_and_preserves_signed_return_orientation() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionRelativeNormalRange,
+        ConditionRelativeReturn,
+        DeclaredConditionRepricing,
+        UndeclaredConditionRepricingDirection,
+    )
+
+    unknown = UndeclaredConditionRepricingDirection(
+        status="UNAVAILABLE", reason="DIRECTION_NOT_DECLARED"
+    ).band()
+    assert unknown.value is None and unknown.reason == "DIRECTION_NOT_DECLARED"
+    inputs = DeclaredConditionRepricing(
+        status="DIRECTION_DECLARED",
+        direction="BUY",
+        event_return=ConditionRelativeReturn(value=-0.3, reason=None),
+        event_range=ConditionRelativeNormalRange(bounds=FloatBounds(lower=-0.1, upper=0.2), reason=None),
+        day_range=ConditionRelativeNormalRange(bounds=FloatBounds(lower=-0.2, upper=0.4), reason=None),
+        event_lower_quartile=-0.05,
+        event_upper_quartile=0.1,
+    )
+    assert inputs.band().value == "NEGATIVE"
+    assert inputs.model_copy(update={"direction": "SELL"}).band().value == "HEAVY"
+    with pytest.raises(ValidationError, match="actual directional quartile evidence"):
+        inputs.model_copy(update={"event_lower_quartile": None, "event_upper_quartile": None}).band()
+
+
+def test_repricing_preserves_heavy_day_threshold_without_inventing_event_history() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionRelativeNormalRange,
+        ConditionRelativeReturn,
+        DeclaredConditionRepricing,
+    )
+
+    inputs = DeclaredConditionRepricing(
+        status="DIRECTION_DECLARED",
+        direction="BUY",
+        event_return=ConditionRelativeReturn(value=0.3, reason=None),
+        event_range=ConditionRelativeNormalRange(bounds=None, reason="INSUFFICIENT_HISTORY"),
+        day_range=ConditionRelativeNormalRange(bounds=FloatBounds(lower=-0.1, upper=0.2), reason=None),
+        event_lower_quartile=None,
+        event_upper_quartile=None,
+    )
+    assert inputs.band().value == "HEAVY"
+    unavailable = inputs.model_copy(
+        update={"event_return": ConditionRelativeReturn(value=0.0, reason=None)}
+    ).band()
+    assert unavailable.status == "UNAVAILABLE" and unavailable.reason == "INSUFFICIENT_HISTORY"
+
+
+def test_degenerate_event_history_retains_observed_quartiles_without_a_false_band() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionRelativeNormalRange,
+        ConditionRelativeReturn,
+        DeclaredConditionRepricing,
+    )
+
+    evidence = DeclaredConditionRepricing(
+        status="DIRECTION_DECLARED",
+        direction="BUY",
+        event_return=ConditionRelativeReturn(value=0.0, reason=None),
+        event_range=ConditionRelativeNormalRange(bounds=None, reason="DEGENERATE_HISTORY"),
+        day_range=ConditionRelativeNormalRange(bounds=None, reason="INCOMPLETE"),
+        event_lower_quartile=0.0,
+        event_upper_quartile=0.0,
+    )
+    result = evidence.band()
+    assert evidence.event_upper_quartile == 0 and result.status == "UNAVAILABLE"
+    assert result.reason == "DEGENERATE_HISTORY"

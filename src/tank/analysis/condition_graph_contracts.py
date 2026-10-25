@@ -2041,3 +2041,163 @@ class ConditionRelativeWindow(DomainModel):
             raise ValueError(
                 "An adjusted relative return must preserve its actual beta and fresh benchmark return"
             )
+
+
+class ObservedConditionMarketContext(DomainModel):
+    status: Literal["OBSERVED"]
+    value: Literal["STRESS", "HEADWIND", "NEUTRAL"]
+
+
+class UnavailableConditionMarketContext(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    value: None
+    reason: Literal["NOT_ESTIMABLE"]
+
+
+class ConditionMarketContextInputs(DomainModel):
+    btc_return_24h: float | None
+    rv24: float | None = Field(ge=0)
+    rv24_bound: datetime
+    rv24_resolution_s: Literal[3600]
+    return_normal_range: FloatRange
+    return_lower_quartile: float | None
+    rv_normal_range: FloatRange
+    rule: Literal["normal_range"]
+
+    @field_validator("rv24_bound")
+    @classmethod
+    def actual_hour_boundary(cls, value: datetime) -> datetime:
+        at = parse_iso_time(value)
+        if at.minute != 0 or at.second != 0 or at.microsecond != 0:
+            raise ValueError("The realized-volatility bound must preserve the actual completed UTC hour")
+        return at
+
+    @model_validator(mode="after")
+    def actual_return_history(self) -> Self:
+        if (self.return_normal_range.bounds is None) != (self.return_lower_quartile is None):
+            raise ValueError("A return quartile must preserve actual available return history")
+        return self
+
+    def classification(self) -> ObservedConditionMarketContext | UnavailableConditionMarketContext:
+        validated = type(self).model_validate(self)
+        returns, vols = validated.return_normal_range.bounds, validated.rv_normal_range.bounds
+        r, rv, quartile = validated.btc_return_24h, validated.rv24, validated.return_lower_quartile
+        if returns is None or vols is None or r is None or rv is None or quartile is None:
+            return UnavailableConditionMarketContext(status="UNAVAILABLE", value=None, reason="NOT_ESTIMABLE")
+        value: Literal["STRESS", "HEADWIND", "NEUTRAL"] = (
+            "STRESS" if r < returns.lower or rv > vols.upper else "HEADWIND" if r < quartile else "NEUTRAL"
+        )
+        return ObservedConditionMarketContext(status="OBSERVED", value=value)
+
+
+class ObservedConditionRepricingBand(DomainModel):
+    status: Literal["OBSERVED"]
+    value: Literal["NEGATIVE", "UNPRICED", "EARLY", "SUBSTANTIAL", "HEAVY"]
+
+
+class UnavailableConditionRepricingBand(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    value: None
+    reason: Literal[
+        "DIRECTION_NOT_DECLARED",
+        "NO_EVENT_ANCHOR",
+        "INCOMPLETE",
+        "INSUFFICIENT_HISTORY",
+        "NOT_ESTIMABLE",
+        "DEGENERATE_HISTORY",
+        "NO_FRESH_ENDPOINTS",
+        "NOT_APPLICABLE_BENCHMARK",
+        "NOT_APPLICABLE",
+    ]
+
+
+class DeclaredConditionRepricing(DomainModel):
+    status: Literal["DIRECTION_DECLARED"]
+    direction: Literal["BUY", "SELL"]
+    event_return: ConditionRelativeReturn
+    event_range: ConditionRelativeNormalRange
+    day_range: ConditionRelativeNormalRange
+    event_lower_quartile: float | None
+    event_upper_quartile: float | None
+
+    @model_validator(mode="after")
+    def actual_event_quantiles(self) -> Self:
+        if (self.event_lower_quartile is None) != (self.event_upper_quartile is None):
+            raise ValueError("Event return quartiles require their actual paired observations")
+        if self.event_range.bounds is None:
+            if self.event_range.reason != "DEGENERATE_HISTORY" and self.event_lower_quartile is not None:
+                raise ValueError("Unavailable event history cannot invent observed return quartiles")
+        elif self.event_lower_quartile is None:
+            raise ValueError("Available event history requires actual directional quartile evidence")
+        if (
+            self.event_lower_quartile is not None
+            and self.event_upper_quartile is not None
+            and self.event_lower_quartile > self.event_upper_quartile
+        ):
+            raise ValueError("Observed event return quartiles must preserve their actual order")
+        return self
+
+    def band(self) -> ObservedConditionRepricingBand | UnavailableConditionRepricingBand:
+        validated = type(self).model_validate(self)
+        raw = validated.event_return.value
+        if raw is None:
+            reason = validated.event_return.reason
+            if reason is None:
+                raise ValueError("An unavailable event return requires its actual reason")
+            return UnavailableConditionRepricingBand(status="UNAVAILABLE", value=None, reason=reason)
+        sign = 1 if validated.direction == "BUY" else -1
+        value = raw * sign
+        er, dr = validated.event_range.bounds, validated.day_range.bounds
+        day_upper = None if dr is None else dr.upper if sign == 1 else -dr.lower
+        if day_upper is not None and value > day_upper:
+            return ObservedConditionRepricingBand(status="OBSERVED", value="HEAVY")
+        if er is None:
+            history_reason = validated.event_range.reason
+            if history_reason is None:
+                raise ValueError("Unavailable event history requires its actual cause")
+            return UnavailableConditionRepricingBand(status="UNAVAILABLE", value=None, reason=history_reason)
+        lower, upper = (er.lower, er.upper) if sign == 1 else (-er.upper, -er.lower)
+        quartile = (
+            validated.event_upper_quartile
+            if sign == 1
+            else -validated.event_lower_quartile
+            if validated.event_lower_quartile is not None
+            else None
+        )
+        if quartile is None:
+            raise ValueError("Directional repricing requires its actual observed event quartile")
+        band: Literal["NEGATIVE", "UNPRICED", "EARLY", "SUBSTANTIAL", "HEAVY"] = (
+            "NEGATIVE"
+            if value < lower
+            else "SUBSTANTIAL"
+            if value > upper
+            else "EARLY"
+            if value > quartile
+            else "UNPRICED"
+        )
+        return ObservedConditionRepricingBand(status="OBSERVED", value=band)
+
+
+class UndeclaredConditionRepricingDirection(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["DIRECTION_NOT_DECLARED"]
+
+    def band(self) -> UnavailableConditionRepricingBand:
+        type(self).model_validate(self)
+        return UnavailableConditionRepricingBand(
+            status="UNAVAILABLE", value=None, reason="DIRECTION_NOT_DECLARED"
+        )
+
+
+class UnavailableConditionEventRepricing(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["NO_EVENT_ANCHOR"]
+
+    def band(self) -> UnavailableConditionRepricingBand:
+        type(self).model_validate(self)
+        return UnavailableConditionRepricingBand(status="UNAVAILABLE", value=None, reason="NO_EVENT_ANCHOR")
+
+
+type ConditionRepricing = (
+    DeclaredConditionRepricing | UndeclaredConditionRepricingDirection | UnavailableConditionEventRepricing
+)
