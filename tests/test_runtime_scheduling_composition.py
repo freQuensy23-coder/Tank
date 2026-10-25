@@ -10,7 +10,7 @@ from tank import runtime_composition
 from tank.analysis.page_access import LivePageAccess
 from tank.event_tools import EventToolService
 from tank.http_admission import ConfiguredHttpAdmission
-from tank.request_budget import MemoryBudgetBackend, RequestLedger
+from tank.request_budget import MemoryBudgetBackend, RequestLedger, build_budget_backend
 from tank.settings import Settings, resolve_versions
 from tank.sources import SourceService
 from tank.storage import MemoryRepository, PostgresRepository
@@ -70,10 +70,10 @@ async def test_production_composition_binds_the_real_scheduler_and_owns_shutdown
 
 
 def test_production_budget_backend_uses_explicit_repository_kind_without_connecting() -> None:
-    memory = runtime_composition.build_budget_backend(MemoryRepository())
+    memory = build_budget_backend(MemoryRepository(), owner="tank-core")
     assert isinstance(memory, MemoryBudgetBackend)
-    postgres = runtime_composition.build_budget_backend(
-        PostgresRepository("postgresql://synthetic.invalid/tank")
+    postgres = build_budget_backend(
+        PostgresRepository("postgresql://synthetic.invalid/tank"), owner="tank-core"
     )
     assert isinstance(postgres, RequestLedger)
     assert postgres.database_url == "postgresql://synthetic.invalid/tank"

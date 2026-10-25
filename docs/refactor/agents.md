@@ -543,3 +543,10 @@ The final desired-definition field sweep now observes _oma.harness and compares 
 ### Combined publication-confirmation and serve-drain proof
 
 The held runtime resource branch now merges the exact OpenMA confirmation cohort with ingestion's monitored serve lifetime. A real keep_in_sync adapter response with a missing published harness passes through run_with_synchronization: exactly one agent publication occurs, the permanent OpenMAContractViolation sets stop, the owned runtime finishes its drain, and only then does the failure propagate. This combines the actual confirmation and lifetime paths rather than testing the exception class alone. All 85 sync/configuration/CLI cases pass in 6.17 seconds; the three sync source/contracts/test modules also pass the independent strict CI configuration without inherited per-module overrides.
+
+
+### Final owned resource-cohort qualification
+
+The exact ingestion f2106cb3 follow-up is merged. Runtime production composition reuses the single tank.request_budget.build_budget_backend factory with explicit owner tank-core, rather than duplicating backend selection. RequestBudgetScope now refuses replacement while bound; its owner regression proves the first lease remains active and stale cleanup cannot release a later replacement. The CLI source-check fixture declares the required budgets port and its existing network opt-in assertions remain intact.
+
+On the paired factory/lease/sync/runtime head, all 462 owned runtime/session/context/OpenMA/configuration/CLI unit cases pass in 16.10 seconds and all 52 actual native/Memory/PostgreSQL owned integration cases pass in 36.59 seconds, zero skips. The expanded production composition test passes independent strict CI configuration; sync source/contracts/test helpers independently pass strict. Ruff formatting/checks and source-comment policy pass. External analysis constructor fixtures and quality's actual E2E companion remain separately coordinated before parent activation; full SessionService/context/runtime job-domain migration remains open.

@@ -20,18 +20,12 @@ from tank.http_admission import ConfiguredHttpAdmission
 from tank.logging import configure_logging
 from tank.market.service import MarketService
 from tank.ops_progress import RepositorySourceProgress
-from tank.request_budget import (
-    BudgetBackend,
-    MemoryBudgetBackend,
-    RequestBudgetScope,
-    RequestLedger,
-    SystemBudgetClock,
-)
+from tank.request_budget import RequestBudgetScope, build_budget_backend
 from tank.runtime import Runtime
 from tank.scheduler import Scheduler
 from tank.settings import Settings, resolve_versions
 from tank.sources import SourceService
-from tank.storage import MemoryRepository, PostgresRepository, Repository
+from tank.storage import Repository
 from tank.telegram_inbox import TelegramInbox
 
 log = logging.getLogger(__name__)
@@ -73,19 +67,11 @@ def validate_runtime_settings(settings: Settings) -> None:
     validate_registry(settings, settings.require_versions())
 
 
-def build_budget_backend(repo: Repository) -> BudgetBackend:
-    if isinstance(repo, PostgresRepository):
-        return RequestLedger(repo.database_url, owner="tank-core")
-    if isinstance(repo, MemoryRepository):
-        return MemoryBudgetBackend(SystemBudgetClock())
-    raise TypeError("Runtime request admission requires a declared PostgreSQL or memory repository")
-
-
 def build_runtime(repo: Repository, settings: Settings) -> Runtime:
     validate_runtime_settings(settings)
     versions = settings.require_versions()
     configure_logging(settings)
-    budget_backend = build_budget_backend(repo)
+    budget_backend = build_budget_backend(repo, owner="tank-core")
     budget_scope = RequestBudgetScope()
     policy = settings.load_config_as("api_limits", SourceApiLimitsConfiguration)
     admission = ConfiguredHttpAdmission(policy, versions, budget_scope)
