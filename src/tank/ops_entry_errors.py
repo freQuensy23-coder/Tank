@@ -15,6 +15,7 @@ from datetime import timedelta
 
 from tank.ops_cards import plain
 from tank.ops_progress import enabled
+from tank.sources.x_diagnostics import documents, evidence_identity, sanitize
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import parse_time, sha256
 
@@ -30,6 +31,11 @@ MESSAGE_LIMIT = 3900
 
 
 def identity(error):
+    if error.get("diagnostics"):
+        return {
+            "account": str(error.get("account") or "").lower(),
+            "evidence": evidence_identity(error["diagnostics"]),
+        }
     if error.get("entry_sha256"):
         return {"entry_sha256": error["entry_sha256"]}
     if error.get("proposal_id"):
@@ -87,6 +93,15 @@ def entry_block(number, error, payload_shown):
         lines.append("sha256 записи: " + error["entry_sha256"])
     if error.get("payload_sha256") and not payload_shown:
         lines.append("sha256 ответа: " + error["payload_sha256"])
+    if diagnostics := error.get("diagnostics"):
+        lines.extend(
+            [
+                "HTTP fetch failure: GET " + diagnostics["request"]["url"],
+                "Тело запроса GET: отсутствует (не тело HTTP-ответа)",
+                f"Попыток: {diagnostics['attemptCount']}; исход: {diagnostics['outcome']}",
+                "Тела HTTP-ответов и заголовки: приложенные документы; усечённые ответы обозначены bodyTruncated.",
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -96,7 +111,9 @@ def render(notice):
     payloads = {error.get("payload_sha256") for error in errors}
     shared = len(payloads) == 1 and None not in payloads
     head = [
-        "TANK OPS · Записи источника не разобраны",
+        "TANK OPS · Ошибка HTTP-сбора X"
+        if any(error.get("diagnostics") for error in errors)
+        else "TANK OPS · Записи источника не разобраны",
         "Источник: " + plain(source, 200),
         "Лента: " + notice["feed_url"],
         "Обнаружено: " + seen_label(notice["seen_at"]),
@@ -105,6 +122,8 @@ def render(notice):
     if shared:
         head.append("sha256 ответа: " + payloads.pop())
     text = "\n".join(head)
+    if any(error.get("diagnostics") for error in errors):
+        text += "\nHTTP response bodies / headers: документы к этому сообщению. GET request body: empty."
     for index, error in enumerate(errors):
         block = entry_block(index + 1, error, shared)
         rest = len(errors) - index - 1
@@ -126,6 +145,11 @@ async def report_entry_errors(repo, settings, source, feed, errors, seen_at):
     feed_url = feed["url"]
     pending = {}
     for error in errors:
+        if error.get("diagnostics"):
+            error = {
+                **error,
+                "diagnostics": sanitize(error["diagnostics"], getattr(settings, "apify_api_token", None)),
+            }
         pending.setdefault(error_key(source_id, feed_url, error), error)
     async with repo.lock(f"ops-entry-errors:{source_id}:{sha256(feed_url)}"), repo.transaction():
         fresh = {
@@ -170,6 +194,11 @@ async def report_entry_errors(repo, settings, source, feed, errors, seen_at):
             "created_by": "source-poller",
         }
         notice["text"] = render(notice)
+        if attachments := documents(notice["entry_errors"]):
+            notice["document_manifest"] = [
+                {"filename": row["filename"], "sha256": row["sha256"], "bytes": len(row["content"])}
+                for row in attachments
+            ]
         await repo.put("out.ops_notices", notice_id, notice, immutable=True)
         await repo.enqueue(
             "DELIVER",
