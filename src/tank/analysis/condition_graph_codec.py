@@ -7,15 +7,17 @@ from typing import Protocol
 from pydantic import JsonValue
 
 from tank.analysis.condition_graph_contracts import (
+    BasicConditionSpot,
     ConditionFlowAggregate,
     ConditionFlowAggregateProjection,
     ConditionFlowCaptureProjection,
     ConditionFlowCaptureWitness,
     FlowAggregateEvidenceRef,
     FlowCaptureEvidenceRef,
+    KnownConditionTradeCount,
 )
 from tank.contracts.json import JsonDocument
-from tank.util import sha256
+from tank.util import iso, sha256
 
 
 def _checked_projection(value: ConditionFlowAggregateProjection) -> ConditionFlowAggregateProjection:
@@ -169,3 +171,46 @@ def bind_flow_capture_evidence(
         complete=projection.complete,
         evidence=checked_reference,
     )
+
+
+def encode_basic_condition_spot(
+    value: BasicConditionSpot, evidence: ConditionFlowEvidenceLookup
+) -> dict[str, JsonValue]:
+    validated = BasicConditionSpot.model_validate(value)
+    result = JsonDocument.validate_value(
+        validated.model_dump(mode="json", exclude={"kind", "token_id"}, warnings="error")
+    )
+    if not isinstance(result, dict):
+        raise TypeError("A basic spot result must serialize as an object")
+    venues: list[JsonValue] = []
+    for venue in validated.venues:
+        serialized_venue = JsonDocument.validate_value(
+            venue.model_dump(mode="json", exclude={"boundary_segments"}, warnings="error")
+        )
+        if not isinstance(serialized_venue, dict):
+            raise TypeError("A spot venue must serialize as an object")
+        boundaries: list[JsonValue] = []
+        for boundary in venue.boundary_segments:
+            count = boundary.trade_count()
+            serialized_boundary: dict[str, JsonValue] = {
+                "start": iso(boundary.start),
+                "cutoff": iso(boundary.cutoff),
+                "trade_count": count.value,
+                "aggregates": [
+                    flow_aggregate_evidence_wire(aggregate, evidence) for aggregate in boundary.aggregates
+                ],
+            }
+            if not isinstance(count, KnownConditionTradeCount):
+                serialized_boundary["trade_count_reason"] = count.reason
+            boundaries.append(serialized_boundary)
+        serialized_venue["boundary_segments"] = boundaries
+        venues.append(serialized_venue)
+    result["venues"] = venues
+    composite = JsonDocument.validate_value(
+        validated.composite_max.model_dump(mode="json", exclude={"status"}, warnings="error")
+    )
+    result["composite_max"] = composite
+    result["composite_cohort"] = None
+    result["cohort_consistent"] = {}
+    result["size_profile"] = None
+    return result

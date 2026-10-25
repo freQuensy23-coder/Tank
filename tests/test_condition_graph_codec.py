@@ -195,3 +195,64 @@ def test_capture_geometry_binds_actual_scope_without_dummy_financial_totals() ->
         bind_flow_capture_evidence(
             witness.model_copy(update={"end": witness.end + timedelta(seconds=1)}), reference
         )
+
+
+def test_basic_spot_wire_rejoins_verified_boundary_and_keeps_unknown_count() -> None:
+    from test_condition_graph_contracts import basic_spot_graph
+
+    from tank.analysis.condition_graph_codec import encode_basic_condition_spot
+    from tank.analysis.condition_graph_contracts import BasicConditionSpot, ConditionBoundaryGroup
+
+    source = ConditionFlowAggregateProjection.model_validate(projection().model_copy(update={"venue": "A"}))
+    lookup = EvidenceLookup(source)
+    aggregate = bind_flow_aggregate_evidence(
+        source,
+        FlowAggregateEvidenceRef(
+            projection_sha256=flow_aggregate_projection_sha256(source),
+            source_evidence_sha256=lookup.source_identity,
+        ),
+    )
+    base = basic_spot_graph()
+    boundary = ConditionBoundaryGroup(start=aggregate.start, cutoff=aggregate.end, aggregates=(aggregate,))
+    first = base.venues[0].model_copy(update={"boundary_segments": (boundary,)})
+    model = BasicConditionSpot.model_validate(base.model_copy(update={"venues": (first, base.venues[1])}))
+    wire = encode_basic_condition_spot(model, lookup)
+    assert lookup.calls == 1
+    venues = wire["venues"]
+    assert isinstance(venues, list) and isinstance(venues[0], dict)
+    segments = venues[0]["boundary_segments"]
+    assert isinstance(segments, list) and isinstance(segments[0], dict)
+    assert segments[0]["trade_count"] is None
+    assert segments[0]["trade_count_reason"] == "INCOMPLETE"
+    assert segments[0]["aggregates"] == [lookup.wire]
+    assert wire["cw_breadth"] == {"buy": 1.0, "sell": 0.0, "neutral": 0.0, "null_reasons": {}}
+    assert wire["direction"] == "BUY" and wire["composite_cohort"] is None
+    assert wire["cohort_consistent"] == {} and wire["size_profile"] is None
+    assert "kind" not in wire and "token_id" not in wire
+    segments[0]["aggregates"] = []
+    assert lookup.wire["provider_note"] == {"unchanged": True}
+    assert model.venues[0].boundary_segments[0].aggregates[0] == aggregate
+
+
+def test_basic_spot_wire_refuses_stale_aggregate_before_lookup() -> None:
+    from test_condition_graph_contracts import basic_spot_graph
+
+    from tank.analysis.condition_graph_codec import encode_basic_condition_spot
+    from tank.analysis.condition_graph_contracts import ConditionBoundaryGroup
+
+    source = ConditionFlowAggregateProjection.model_validate(projection().model_copy(update={"venue": "A"}))
+    lookup = EvidenceLookup(source)
+    bound = bind_flow_aggregate_evidence(
+        source,
+        FlowAggregateEvidenceRef(
+            projection_sha256=flow_aggregate_projection_sha256(source),
+            source_evidence_sha256=lookup.source_identity,
+        ),
+    )
+    changed = bound.model_copy(update={"buy_qty": Decimal(11)})
+    group = ConditionBoundaryGroup(start=changed.start, cutoff=changed.end, aggregates=(changed,))
+    base = basic_spot_graph()
+    first = base.venues[0].model_copy(update={"boundary_segments": (group,)})
+    with pytest.raises(ValueError, match="does not match"):
+        encode_basic_condition_spot(base.model_copy(update={"venues": (first, base.venues[1])}), lookup)
+    assert lookup.calls == 0
