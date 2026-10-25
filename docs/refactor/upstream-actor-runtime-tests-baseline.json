@@ -1,0 +1,1361 @@
+{
+  "revision": "122d8c7248c824cb8d07614221f27cce262bfe3b",
+  "scope": "immutable upstream X-reader unit/integration test programs; supplements the five-program actor/publisher baseline without replacing it",
+  "tool_sha256": "09301d3b0019f6cd9b4e13a862db1f968b1887795f2a2cc2ec3b9292e0c7a88c",
+  "inputs": {
+    "tests/test_x_reader.py": "3ec2189b4e5ad88de1d257f80af8acdf8aa7121dff284b2d9cf9cc5f54b8b8ac",
+    "tests/test_x_reader_integration.py": "19a59b740f4e8d9d904a21d0533f601c30caa66042ea5dccc7424afdfdf3584d"
+  },
+  "inventory": {
+    "files": 2,
+    "coverage": [
+      "active Python files in src/tests/scripts/deploy/capture/apify; vendor provenance is a separate openma_inventory report",
+      "active Go files in src/tests/scripts/deploy/capture/apify; unchanged upstream programs are not first-party completion evidence",
+      "explicit embedded Python snippets from JavaScript report",
+      "Python import graph covers src and apify/x-reader; actor:x-reader labels distinguish sibling runtime modules from the external SDK"
+    ],
+    "embedded_python": 0,
+    "counts": {
+      "dictionary": 40,
+      "fallback": 4,
+      "none_default": 2,
+      "untyped_parameter": 75,
+      "untyped_return": 40
+    },
+    "findings": [
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 17,
+        "symbol": "reader",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 17,
+        "symbol": "reader",
+        "kind": "untyped_return",
+        "expression": "reader"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 23,
+        "symbol": "clock",
+        "kind": "untyped_parameter",
+        "expression": "reader"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 23,
+        "symbol": "clock",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 23,
+        "symbol": "clock",
+        "kind": "untyped_return",
+        "expression": "clock"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 27,
+        "symbol": "clock.Clock.__init__",
+        "kind": "untyped_return",
+        "expression": "__init__"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 30,
+        "symbol": "clock.Clock.monotonic",
+        "kind": "untyped_return",
+        "expression": "monotonic"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 33,
+        "symbol": "clock.Clock.sleep",
+        "kind": "untyped_parameter",
+        "expression": "value"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 33,
+        "symbol": "clock.Clock.sleep",
+        "kind": "untyped_return",
+        "expression": "sleep"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 41,
+        "symbol": "clock",
+        "kind": "dictionary",
+        "expression": "{'monotonic': clock.monotonic, 'time': time.time}"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 48,
+        "symbol": "BodyStream.__init__",
+        "kind": "untyped_parameter",
+        "expression": "body"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 48,
+        "symbol": "BodyStream.__init__",
+        "kind": "untyped_return",
+        "expression": "__init__"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 52,
+        "symbol": "BodyStream.__aiter__",
+        "kind": "untyped_return",
+        "expression": "__aiter__"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 55,
+        "symbol": "BodyStream.aclose",
+        "kind": "untyped_return",
+        "expression": "aclose"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 59,
+        "symbol": "http_error",
+        "kind": "untyped_parameter",
+        "expression": "status"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 59,
+        "symbol": "http_error",
+        "kind": "untyped_parameter",
+        "expression": "body"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 59,
+        "symbol": "http_error",
+        "kind": "untyped_parameter",
+        "expression": "headers"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 59,
+        "symbol": "http_error",
+        "kind": "untyped_return",
+        "expression": "http_error"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 59,
+        "symbol": "http_error",
+        "kind": "none_default",
+        "expression": "None"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 60,
+        "symbol": "http_error",
+        "kind": "fallback",
+        "expression": "headers or {'Content-Type': 'text/plain'}"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 60,
+        "symbol": "http_error",
+        "kind": "dictionary",
+        "expression": "{'Content-Type': 'text/plain'}"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 63,
+        "symbol": "sequence",
+        "kind": "untyped_parameter",
+        "expression": "reader"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 63,
+        "symbol": "sequence",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 63,
+        "symbol": "sequence",
+        "kind": "untyped_parameter",
+        "expression": "values"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 63,
+        "symbol": "sequence",
+        "kind": "untyped_parameter",
+        "expression": "clock"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 63,
+        "symbol": "sequence",
+        "kind": "untyped_return",
+        "expression": "sequence"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 66,
+        "symbol": "sequence.open_profile",
+        "kind": "untyped_parameter",
+        "expression": "request"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 66,
+        "symbol": "sequence.open_profile",
+        "kind": "untyped_return",
+        "expression": "open_profile"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 85,
+        "symbol": "test_transient_http_retry_stops_on_first_success",
+        "kind": "untyped_parameter",
+        "expression": "reader"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 85,
+        "symbol": "test_transient_http_retry_stops_on_first_success",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 85,
+        "symbol": "test_transient_http_retry_stops_on_first_success",
+        "kind": "untyped_parameter",
+        "expression": "clock"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 85,
+        "symbol": "test_transient_http_retry_stops_on_first_success",
+        "kind": "untyped_parameter",
+        "expression": "success_on"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 85,
+        "symbol": "test_transient_http_retry_stops_on_first_success",
+        "kind": "untyped_parameter",
+        "expression": "expected_times"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 85,
+        "symbol": "test_transient_http_retry_stops_on_first_success",
+        "kind": "untyped_parameter",
+        "expression": "expected_waits"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 84,
+        "symbol": "test_transient_http_retry_stops_on_first_success",
+        "kind": "untyped_return",
+        "expression": "test_transient_http_retry_stops_on_first_success"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 97,
+        "symbol": "test_exhaustion_retains_all_three_response_bodies",
+        "kind": "untyped_parameter",
+        "expression": "reader"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 97,
+        "symbol": "test_exhaustion_retains_all_three_response_bodies",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 97,
+        "symbol": "test_exhaustion_retains_all_three_response_bodies",
+        "kind": "untyped_parameter",
+        "expression": "clock"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 97,
+        "symbol": "test_exhaustion_retains_all_three_response_bodies",
+        "kind": "untyped_parameter",
+        "expression": "status"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 97,
+        "symbol": "test_exhaustion_retains_all_three_response_bodies",
+        "kind": "untyped_return",
+        "expression": "test_exhaustion_retains_all_three_response_bodies"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 111,
+        "symbol": "test_exhaustion_retains_all_three_response_bodies",
+        "kind": "dictionary",
+        "expression": "{'method': 'GET', 'url': 'https://x.com/alice', 'body': None}"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 116,
+        "symbol": "test_permanent_http_failure_is_not_retried",
+        "kind": "untyped_parameter",
+        "expression": "reader"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 116,
+        "symbol": "test_permanent_http_failure_is_not_retried",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 116,
+        "symbol": "test_permanent_http_failure_is_not_retried",
+        "kind": "untyped_parameter",
+        "expression": "clock"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 116,
+        "symbol": "test_permanent_http_failure_is_not_retried",
+        "kind": "untyped_parameter",
+        "expression": "status"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 116,
+        "symbol": "test_permanent_http_failure_is_not_retried",
+        "kind": "untyped_return",
+        "expression": "test_permanent_http_failure_is_not_retried"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 125,
+        "symbol": "test_connection_errors_retry_and_parser_errors_do_not",
+        "kind": "untyped_parameter",
+        "expression": "reader"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 125,
+        "symbol": "test_connection_errors_retry_and_parser_errors_do_not",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 125,
+        "symbol": "test_connection_errors_retry_and_parser_errors_do_not",
+        "kind": "untyped_parameter",
+        "expression": "clock"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 125,
+        "symbol": "test_connection_errors_retry_and_parser_errors_do_not",
+        "kind": "untyped_return",
+        "expression": "test_connection_errors_retry_and_parser_errors_do_not"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 140,
+        "symbol": "test_run_deadline_prevents_retry_and_preserves_completed_attempts",
+        "kind": "untyped_parameter",
+        "expression": "reader"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 140,
+        "symbol": "test_run_deadline_prevents_retry_and_preserves_completed_attempts",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 140,
+        "symbol": "test_run_deadline_prevents_retry_and_preserves_completed_attempts",
+        "kind": "untyped_parameter",
+        "expression": "clock"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 140,
+        "symbol": "test_run_deadline_prevents_retry_and_preserves_completed_attempts",
+        "kind": "untyped_parameter",
+        "expression": "deadline"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 140,
+        "symbol": "test_run_deadline_prevents_retry_and_preserves_completed_attempts",
+        "kind": "untyped_parameter",
+        "expression": "expected"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 139,
+        "symbol": "test_run_deadline_prevents_retry_and_preserves_completed_attempts",
+        "kind": "untyped_return",
+        "expression": "test_run_deadline_prevents_retry_and_preserves_completed_attempts"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 152,
+        "symbol": "test_response_capture_is_bounded_and_preserves_encoding",
+        "kind": "untyped_parameter",
+        "expression": "reader"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 152,
+        "symbol": "test_response_capture_is_bounded_and_preserves_encoding",
+        "kind": "untyped_parameter",
+        "expression": "kind"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 152,
+        "symbol": "test_response_capture_is_bounded_and_preserves_encoding",
+        "kind": "untyped_return",
+        "expression": "test_response_capture_is_bounded_and_preserves_encoding"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 167,
+        "symbol": "test_response_capture_is_bounded_and_preserves_encoding",
+        "kind": "dictionary",
+        "expression": "{'Content-Length': str(len(wire)), 'Content-Type': 'application/octet-stream'}"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 185,
+        "symbol": "test_partial_error_stream_preserves_prefix_and_closes_transport",
+        "kind": "untyped_parameter",
+        "expression": "reader"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 185,
+        "symbol": "test_partial_error_stream_preserves_prefix_and_closes_transport",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 185,
+        "symbol": "test_partial_error_stream_preserves_prefix_and_closes_transport",
+        "kind": "untyped_parameter",
+        "expression": "clock"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 185,
+        "symbol": "test_partial_error_stream_preserves_prefix_and_closes_transport",
+        "kind": "untyped_return",
+        "expression": "test_partial_error_stream_preserves_prefix_and_closes_transport"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 187,
+        "symbol": "test_partial_error_stream_preserves_prefix_and_closes_transport.BrokenBody.__aiter__",
+        "kind": "untyped_return",
+        "expression": "__aiter__"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 195,
+        "symbol": "test_partial_error_stream_preserves_prefix_and_closes_transport",
+        "kind": "dictionary",
+        "expression": "{'Content-Length': '20'}"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 207,
+        "symbol": "test_partial_error_response_reports_known_missing_bytes",
+        "kind": "untyped_parameter",
+        "expression": "reader"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 207,
+        "symbol": "test_partial_error_response_reports_known_missing_bytes",
+        "kind": "untyped_return",
+        "expression": "test_partial_error_response_reports_known_missing_bytes"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 208,
+        "symbol": "test_partial_error_response_reports_known_missing_bytes",
+        "kind": "dictionary",
+        "expression": "{'Content-Length': '20'}"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 213,
+        "symbol": "test_diagnostics_exclude_credentials_even_if_echoed_by_upstream",
+        "kind": "untyped_parameter",
+        "expression": "reader"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 213,
+        "symbol": "test_diagnostics_exclude_credentials_even_if_echoed_by_upstream",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 213,
+        "symbol": "test_diagnostics_exclude_credentials_even_if_echoed_by_upstream",
+        "kind": "untyped_return",
+        "expression": "test_diagnostics_exclude_credentials_even_if_echoed_by_upstream"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 217,
+        "symbol": "test_diagnostics_exclude_credentials_even_if_echoed_by_upstream",
+        "kind": "dictionary",
+        "expression": "{'Content-Type': 'text/plain', 'Set-Cookie': 'session-secret', 'Authorization': 'auth-secret', 'X-Request-ID': 'safe-id'}"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 228,
+        "symbol": "test_diagnostics_exclude_credentials_even_if_echoed_by_upstream",
+        "kind": "dictionary",
+        "expression": "{'content-type': 'text/plain', 'x-request-id': 'safe-id'}"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 232,
+        "symbol": "test_failed_actor_output_keeps_cursor_and_transports_diagnostics",
+        "kind": "untyped_parameter",
+        "expression": "reader"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 232,
+        "symbol": "test_failed_actor_output_keeps_cursor_and_transports_diagnostics",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 232,
+        "symbol": "test_failed_actor_output_keeps_cursor_and_transports_diagnostics",
+        "kind": "untyped_parameter",
+        "expression": "clock"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 232,
+        "symbol": "test_failed_actor_output_keeps_cursor_and_transports_diagnostics",
+        "kind": "untyped_return",
+        "expression": "test_failed_actor_output_keeps_cursor_and_transports_diagnostics"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 235,
+        "symbol": "test_failed_actor_output_keeps_cursor_and_transports_diagnostics",
+        "kind": "dictionary",
+        "expression": "{'handles': ['alice'], 'cursors': {'alice': '90'}}"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 235,
+        "symbol": "test_failed_actor_output_keeps_cursor_and_transports_diagnostics",
+        "kind": "dictionary",
+        "expression": "{'alice': '90'}"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 237,
+        "symbol": "test_failed_actor_output_keeps_cursor_and_transports_diagnostics",
+        "kind": "dictionary",
+        "expression": "{'alice': '90'}"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 242,
+        "symbol": "test_recovered_actor_has_no_terminal_failure",
+        "kind": "untyped_parameter",
+        "expression": "reader"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 242,
+        "symbol": "test_recovered_actor_has_no_terminal_failure",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 242,
+        "symbol": "test_recovered_actor_has_no_terminal_failure",
+        "kind": "untyped_parameter",
+        "expression": "clock"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 242,
+        "symbol": "test_recovered_actor_has_no_terminal_failure",
+        "kind": "untyped_return",
+        "expression": "test_recovered_actor_has_no_terminal_failure"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 245,
+        "symbol": "test_recovered_actor_has_no_terminal_failure",
+        "kind": "dictionary",
+        "expression": "{'handles': ['alice'], 'cursors': {'alice': '90'}}"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 245,
+        "symbol": "test_recovered_actor_has_no_terminal_failure",
+        "kind": "dictionary",
+        "expression": "{'alice': '90'}"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 247,
+        "symbol": "test_recovered_actor_has_no_terminal_failure",
+        "kind": "dictionary",
+        "expression": "{'alice': '100'}"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 265,
+        "symbol": "test_credential_value_redaction_preserves_adjacent_response_evidence",
+        "kind": "untyped_parameter",
+        "expression": "reader"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 265,
+        "symbol": "test_credential_value_redaction_preserves_adjacent_response_evidence",
+        "kind": "untyped_parameter",
+        "expression": "raw"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 265,
+        "symbol": "test_credential_value_redaction_preserves_adjacent_response_evidence",
+        "kind": "untyped_parameter",
+        "expression": "expected"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 265,
+        "symbol": "test_credential_value_redaction_preserves_adjacent_response_evidence",
+        "kind": "untyped_return",
+        "expression": "test_credential_value_redaction_preserves_adjacent_response_evidence"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 281,
+        "symbol": "test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes",
+        "kind": "untyped_parameter",
+        "expression": "reader"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 281,
+        "symbol": "test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 281,
+        "symbol": "test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes",
+        "kind": "untyped_parameter",
+        "expression": "clock"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 281,
+        "symbol": "test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes",
+        "kind": "untyped_parameter",
+        "expression": "count"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 281,
+        "symbol": "test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes",
+        "kind": "untyped_parameter",
+        "expression": "kind"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 280,
+        "symbol": "test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes",
+        "kind": "untyped_return",
+        "expression": "test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 295,
+        "symbol": "test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes.open_profile",
+        "kind": "untyped_parameter",
+        "expression": "request"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 295,
+        "symbol": "test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes.open_profile",
+        "kind": "untyped_return",
+        "expression": "open_profile"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 296,
+        "symbol": "test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes.open_profile",
+        "kind": "dictionary",
+        "expression": "{'Content-Length': str(len(raw))}"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 309,
+        "symbol": "test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes",
+        "kind": "dictionary",
+        "expression": "{'handles': names, 'cursors': dict.fromkeys(names, '90')}"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 337,
+        "symbol": "test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes.send",
+        "kind": "untyped_parameter",
+        "expression": "request"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 337,
+        "symbol": "test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes.send",
+        "kind": "untyped_return",
+        "expression": "send"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 340,
+        "symbol": "test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes.send",
+        "kind": "dictionary",
+        "expression": "{'ok': True, 'result': {'message_id': len(sent) + 1}}"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 340,
+        "symbol": "test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes.send",
+        "kind": "dictionary",
+        "expression": "{'message_id': len(sent) + 1}"
+      },
+      {
+        "path": "tests/test_x_reader.py",
+        "line": 344,
+        "symbol": "test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes",
+        "kind": "dictionary",
+        "expression": "{'notice_id': notice['notice_id']}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 24,
+        "symbol": "wire_server",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 24,
+        "symbol": "wire_server",
+        "kind": "untyped_return",
+        "expression": "wire_server"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 29,
+        "symbol": "wire_server",
+        "kind": "dictionary",
+        "expression": "{'profile': [], 'telegram': [], 'outputs': [], 'body': b'upstream diagnostic full response ' * 1000}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 37,
+        "symbol": "wire_server.Handler.log_message",
+        "kind": "untyped_parameter",
+        "expression": "args"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 37,
+        "symbol": "wire_server.Handler.log_message",
+        "kind": "untyped_return",
+        "expression": "log_message"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 40,
+        "symbol": "wire_server.Handler.respond",
+        "kind": "untyped_parameter",
+        "expression": "status"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 40,
+        "symbol": "wire_server.Handler.respond",
+        "kind": "untyped_parameter",
+        "expression": "payload"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 40,
+        "symbol": "wire_server.Handler.respond",
+        "kind": "untyped_parameter",
+        "expression": "headers"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 40,
+        "symbol": "wire_server.Handler.respond",
+        "kind": "untyped_return",
+        "expression": "respond"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 40,
+        "symbol": "wire_server.Handler.respond",
+        "kind": "none_default",
+        "expression": "None"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 42,
+        "symbol": "wire_server.Handler.respond",
+        "kind": "fallback",
+        "expression": "headers or {}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 42,
+        "symbol": "wire_server.Handler.respond",
+        "kind": "dictionary",
+        "expression": "{}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 48,
+        "symbol": "wire_server.Handler.do_GET",
+        "kind": "untyped_return",
+        "expression": "do_GET"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 49,
+        "symbol": "wire_server.Handler.do_GET",
+        "kind": "dictionary",
+        "expression": "dict(self.headers)"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 54,
+        "symbol": "wire_server.Handler.do_GET",
+        "kind": "dictionary",
+        "expression": "{'Content-Type': 'text/plain', 'Content-Encoding': 'gzip', 'X-Request-ID': 'safe-wire-id', 'Set-Cookie': 'forbidden-cookie'}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 62,
+        "symbol": "wire_server.Handler.do_POST",
+        "kind": "untyped_return",
+        "expression": "do_POST"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 63,
+        "symbol": "wire_server.Handler.do_POST",
+        "kind": "fallback",
+        "expression": "self.headers.get('Content-Length', '0')"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 67,
+        "symbol": "wire_server.Handler.do_POST",
+        "kind": "dictionary",
+        "expression": "{'Content-Type': 'application/json'}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 69,
+        "symbol": "wire_server.Handler.do_POST",
+        "kind": "dictionary",
+        "expression": "dict(self.headers)"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 73,
+        "symbol": "wire_server.Handler.do_POST",
+        "kind": "dictionary",
+        "expression": "{'ok': True, 'result': {'message_id': len(state['telegram']), 'date': 1}}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 73,
+        "symbol": "wire_server.Handler.do_POST",
+        "kind": "dictionary",
+        "expression": "{'message_id': len(state['telegram']), 'date': 1}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 75,
+        "symbol": "wire_server.Handler.do_POST",
+        "kind": "dictionary",
+        "expression": "{'Content-Type': 'application/json'}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 92,
+        "symbol": "LoopbackTelegramTransport.__init__",
+        "kind": "untyped_parameter",
+        "expression": "origin"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 92,
+        "symbol": "LoopbackTelegramTransport.__init__",
+        "kind": "untyped_return",
+        "expression": "__init__"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 96,
+        "symbol": "LoopbackTelegramTransport.handle_async_request",
+        "kind": "untyped_parameter",
+        "expression": "request"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 96,
+        "symbol": "LoopbackTelegramTransport.handle_async_request",
+        "kind": "untyped_return",
+        "expression": "handle_async_request"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 106,
+        "symbol": "LoopbackTelegramTransport.aclose",
+        "kind": "untyped_return",
+        "expression": "aclose"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 111,
+        "symbol": "test_real_worker_http_errors_flow_through_source_checkpoint_to_multipart_ops_documents",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 111,
+        "symbol": "test_real_worker_http_errors_flow_through_source_checkpoint_to_multipart_ops_documents",
+        "kind": "untyped_parameter",
+        "expression": "wire_server"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 110,
+        "symbol": "test_real_worker_http_errors_flow_through_source_checkpoint_to_multipart_ops_documents",
+        "kind": "untyped_return",
+        "expression": "test_real_worker_http_errors_flow_through_source_checkpoint_to_multipart_ops_documents"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 114,
+        "symbol": "test_real_worker_http_errors_flow_through_source_checkpoint_to_multipart_ops_documents",
+        "kind": "dictionary",
+        "expression": "{'source_id': 'S29', 'name': 'X', 'feeds': [{'kind': 'x', 'url': origin + '/actor'}]}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 114,
+        "symbol": "test_real_worker_http_errors_flow_through_source_checkpoint_to_multipart_ops_documents",
+        "kind": "dictionary",
+        "expression": "{'kind': 'x', 'url': origin + '/actor'}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 121,
+        "symbol": "test_real_worker_http_errors_flow_through_source_checkpoint_to_multipart_ops_documents",
+        "kind": "dictionary",
+        "expression": "{'account_cursors': {'alice': '90'}}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 121,
+        "symbol": "test_real_worker_http_errors_flow_through_source_checkpoint_to_multipart_ops_documents",
+        "kind": "dictionary",
+        "expression": "{'alice': '90'}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 124,
+        "symbol": "test_real_worker_http_errors_flow_through_source_checkpoint_to_multipart_ops_documents",
+        "kind": "dictionary",
+        "expression": "{'alice': {'handle': 'alice', 'entity_id': 'alice', 'role': 'OTHER'}}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 124,
+        "symbol": "test_real_worker_http_errors_flow_through_source_checkpoint_to_multipart_ops_documents",
+        "kind": "dictionary",
+        "expression": "{'handle': 'alice', 'entity_id': 'alice', 'role': 'OTHER'}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 126,
+        "symbol": "test_real_worker_http_errors_flow_through_source_checkpoint_to_multipart_ops_documents",
+        "kind": "fallback",
+        "expression": "repo.get('ops.source_checkpoints', 'S29:0')"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 128,
+        "symbol": "test_real_worker_http_errors_flow_through_source_checkpoint_to_multipart_ops_documents",
+        "kind": "dictionary",
+        "expression": "{'alice': '90'}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 134,
+        "symbol": "test_real_worker_http_errors_flow_through_source_checkpoint_to_multipart_ops_documents",
+        "kind": "dictionary",
+        "expression": "{'type': 'DELIVER'}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 151,
+        "symbol": "test_real_worker_http_errors_flow_through_source_checkpoint_to_multipart_ops_documents",
+        "kind": "dictionary",
+        "expression": "{'status': 'SENT'}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 158,
+        "symbol": "test_absolute_deadline_closes_slow_http_transport_and_retains_completed_evidence",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 158,
+        "symbol": "test_absolute_deadline_closes_slow_http_transport_and_retains_completed_evidence",
+        "kind": "untyped_parameter",
+        "expression": "phase"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 157,
+        "symbol": "test_absolute_deadline_closes_slow_http_transport_and_retains_completed_evidence",
+        "kind": "untyped_return",
+        "expression": "test_absolute_deadline_closes_slow_http_transport_and_retains_completed_evidence"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 169,
+        "symbol": "test_absolute_deadline_closes_slow_http_transport_and_retains_completed_evidence.serve",
+        "kind": "untyped_parameter",
+        "expression": "stream"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 169,
+        "symbol": "test_absolute_deadline_closes_slow_http_transport_and_retains_completed_evidence.serve",
+        "kind": "untyped_parameter",
+        "expression": "writer"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 169,
+        "symbol": "test_absolute_deadline_closes_slow_http_transport_and_retains_completed_evidence.serve",
+        "kind": "untyped_return",
+        "expression": "serve"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 218,
+        "symbol": "test_absolute_deadline_closes_slow_http_transport_and_retains_completed_evidence",
+        "kind": "dictionary",
+        "expression": "{'handles': ['alice'], 'cursors': {'alice': '90'}}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 218,
+        "symbol": "test_absolute_deadline_closes_slow_http_transport_and_retains_completed_evidence",
+        "kind": "dictionary",
+        "expression": "{'alice': '90'}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 223,
+        "symbol": "test_absolute_deadline_closes_slow_http_transport_and_retains_completed_evidence",
+        "kind": "dictionary",
+        "expression": "{'alice': '90'}"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 244,
+        "symbol": "test_absolute_deadline_closes_stalled_tls_handshake",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 244,
+        "symbol": "test_absolute_deadline_closes_stalled_tls_handshake",
+        "kind": "untyped_return",
+        "expression": "test_absolute_deadline_closes_stalled_tls_handshake"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 252,
+        "symbol": "test_absolute_deadline_closes_stalled_tls_handshake.serve",
+        "kind": "untyped_parameter",
+        "expression": "stream"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 252,
+        "symbol": "test_absolute_deadline_closes_stalled_tls_handshake.serve",
+        "kind": "untyped_parameter",
+        "expression": "writer"
+      },
+      {
+        "path": "tests/test_x_reader_integration.py",
+        "line": 252,
+        "symbol": "test_absolute_deadline_closes_stalled_tls_handshake.serve",
+        "kind": "untyped_return",
+        "expression": "serve"
+      }
+    ],
+    "areas": {
+      "tests": {
+        "untyped_parameter": 75,
+        "untyped_return": 40,
+        "dictionary": 40,
+        "none_default": 2,
+        "fallback": 4
+      }
+    },
+    "modules": {
+      "tests/test_x_reader.py": {
+        "untyped_parameter": 59,
+        "untyped_return": 27,
+        "dictionary": 19,
+        "none_default": 1,
+        "fallback": 1
+      },
+      "tests/test_x_reader_integration.py": {
+        "untyped_parameter": 16,
+        "untyped_return": 13,
+        "dictionary": 21,
+        "none_default": 1,
+        "fallback": 3
+      }
+    },
+    "symbols": {
+      "tests/test_x_reader.py:BodyStream.__aiter__": {
+        "untyped_return": 1
+      },
+      "tests/test_x_reader.py:BodyStream.__init__": {
+        "untyped_parameter": 1,
+        "untyped_return": 1
+      },
+      "tests/test_x_reader.py:BodyStream.aclose": {
+        "untyped_return": 1
+      },
+      "tests/test_x_reader.py:clock": {
+        "untyped_parameter": 2,
+        "untyped_return": 1,
+        "dictionary": 1
+      },
+      "tests/test_x_reader.py:clock.Clock.__init__": {
+        "untyped_return": 1
+      },
+      "tests/test_x_reader.py:clock.Clock.monotonic": {
+        "untyped_return": 1
+      },
+      "tests/test_x_reader.py:clock.Clock.sleep": {
+        "untyped_parameter": 1,
+        "untyped_return": 1
+      },
+      "tests/test_x_reader.py:http_error": {
+        "untyped_parameter": 3,
+        "untyped_return": 1,
+        "none_default": 1,
+        "fallback": 1,
+        "dictionary": 1
+      },
+      "tests/test_x_reader.py:reader": {
+        "untyped_parameter": 1,
+        "untyped_return": 1
+      },
+      "tests/test_x_reader.py:sequence": {
+        "untyped_parameter": 4,
+        "untyped_return": 1
+      },
+      "tests/test_x_reader.py:sequence.open_profile": {
+        "untyped_parameter": 1,
+        "untyped_return": 1
+      },
+      "tests/test_x_reader.py:test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes": {
+        "untyped_parameter": 5,
+        "untyped_return": 1,
+        "dictionary": 2
+      },
+      "tests/test_x_reader.py:test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes.open_profile": {
+        "untyped_parameter": 1,
+        "untyped_return": 1,
+        "dictionary": 1
+      },
+      "tests/test_x_reader.py:test_actor_outage_bounds_aggregate_evidence_and_uploads_retained_prefixes.send": {
+        "untyped_parameter": 1,
+        "untyped_return": 1,
+        "dictionary": 2
+      },
+      "tests/test_x_reader.py:test_connection_errors_retry_and_parser_errors_do_not": {
+        "untyped_parameter": 3,
+        "untyped_return": 1
+      },
+      "tests/test_x_reader.py:test_credential_value_redaction_preserves_adjacent_response_evidence": {
+        "untyped_parameter": 3,
+        "untyped_return": 1
+      },
+      "tests/test_x_reader.py:test_diagnostics_exclude_credentials_even_if_echoed_by_upstream": {
+        "untyped_parameter": 2,
+        "untyped_return": 1,
+        "dictionary": 2
+      },
+      "tests/test_x_reader.py:test_exhaustion_retains_all_three_response_bodies": {
+        "untyped_parameter": 4,
+        "untyped_return": 1,
+        "dictionary": 1
+      },
+      "tests/test_x_reader.py:test_failed_actor_output_keeps_cursor_and_transports_diagnostics": {
+        "untyped_parameter": 3,
+        "untyped_return": 1,
+        "dictionary": 3
+      },
+      "tests/test_x_reader.py:test_partial_error_response_reports_known_missing_bytes": {
+        "untyped_parameter": 1,
+        "untyped_return": 1,
+        "dictionary": 1
+      },
+      "tests/test_x_reader.py:test_partial_error_stream_preserves_prefix_and_closes_transport": {
+        "untyped_parameter": 3,
+        "untyped_return": 1,
+        "dictionary": 1
+      },
+      "tests/test_x_reader.py:test_partial_error_stream_preserves_prefix_and_closes_transport.BrokenBody.__aiter__": {
+        "untyped_return": 1
+      },
+      "tests/test_x_reader.py:test_permanent_http_failure_is_not_retried": {
+        "untyped_parameter": 4,
+        "untyped_return": 1
+      },
+      "tests/test_x_reader.py:test_recovered_actor_has_no_terminal_failure": {
+        "untyped_parameter": 3,
+        "untyped_return": 1,
+        "dictionary": 3
+      },
+      "tests/test_x_reader.py:test_response_capture_is_bounded_and_preserves_encoding": {
+        "untyped_parameter": 2,
+        "untyped_return": 1,
+        "dictionary": 1
+      },
+      "tests/test_x_reader.py:test_run_deadline_prevents_retry_and_preserves_completed_attempts": {
+        "untyped_parameter": 5,
+        "untyped_return": 1
+      },
+      "tests/test_x_reader.py:test_transient_http_retry_stops_on_first_success": {
+        "untyped_parameter": 6,
+        "untyped_return": 1
+      },
+      "tests/test_x_reader_integration.py:LoopbackTelegramTransport.__init__": {
+        "untyped_parameter": 1,
+        "untyped_return": 1
+      },
+      "tests/test_x_reader_integration.py:LoopbackTelegramTransport.aclose": {
+        "untyped_return": 1
+      },
+      "tests/test_x_reader_integration.py:LoopbackTelegramTransport.handle_async_request": {
+        "untyped_parameter": 1,
+        "untyped_return": 1
+      },
+      "tests/test_x_reader_integration.py:test_absolute_deadline_closes_slow_http_transport_and_retains_completed_evidence": {
+        "untyped_parameter": 2,
+        "untyped_return": 1,
+        "dictionary": 3
+      },
+      "tests/test_x_reader_integration.py:test_absolute_deadline_closes_slow_http_transport_and_retains_completed_evidence.serve": {
+        "untyped_parameter": 2,
+        "untyped_return": 1
+      },
+      "tests/test_x_reader_integration.py:test_absolute_deadline_closes_stalled_tls_handshake": {
+        "untyped_parameter": 1,
+        "untyped_return": 1
+      },
+      "tests/test_x_reader_integration.py:test_absolute_deadline_closes_stalled_tls_handshake.serve": {
+        "untyped_parameter": 2,
+        "untyped_return": 1
+      },
+      "tests/test_x_reader_integration.py:test_real_worker_http_errors_flow_through_source_checkpoint_to_multipart_ops_documents": {
+        "untyped_parameter": 2,
+        "untyped_return": 1,
+        "dictionary": 9,
+        "fallback": 1
+      },
+      "tests/test_x_reader_integration.py:wire_server": {
+        "untyped_parameter": 1,
+        "untyped_return": 1,
+        "dictionary": 1
+      },
+      "tests/test_x_reader_integration.py:wire_server.Handler.do_GET": {
+        "untyped_return": 1,
+        "dictionary": 2
+      },
+      "tests/test_x_reader_integration.py:wire_server.Handler.do_POST": {
+        "untyped_return": 1,
+        "fallback": 1,
+        "dictionary": 5
+      },
+      "tests/test_x_reader_integration.py:wire_server.Handler.log_message": {
+        "untyped_parameter": 1,
+        "untyped_return": 1
+      },
+      "tests/test_x_reader_integration.py:wire_server.Handler.respond": {
+        "untyped_parameter": 3,
+        "untyped_return": 1,
+        "none_default": 1,
+        "fallback": 1,
+        "dictionary": 1
+      }
+    },
+    "imports": {},
+    "cycles": [],
+    "reference_programs": {}
+  }
+}
