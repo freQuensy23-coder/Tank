@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from source_support import fixture_versions
 
 from tank.scheduler import Scheduler
 from tank.settings import Settings
@@ -17,7 +18,14 @@ NOW = parse_time("2026-10-18T12:00:00Z")
 
 
 def quiet_scheduler(repo):
-    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     scheduler.launch = lambda *args: None
     scheduler.expire_calls = AsyncMock()
     scheduler.demote = AsyncMock()
@@ -40,7 +48,12 @@ async def test_verified_backup_is_cached_per_process_day_but_force_and_restart_r
     monkeypatch.setattr("tank.scheduler.verify_backup", lambda path, **kwargs: calls.append(path))
     settings = Settings(backup_dir=tmp_path)
     scheduler = Scheduler(
-        MemoryRepository(), settings, None, None, thresholds=Settings(_env_file=None).thresholds()
+        MemoryRepository(),
+        settings,
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     scheduler.retention = AsyncMock()
     for _ in range(3):
@@ -50,7 +63,12 @@ async def test_verified_backup_is_cached_per_process_day_but_force_and_restart_r
     await scheduler.maintenance(NOW, force=True)
     assert calls == [final, final]
     restarted = Scheduler(
-        MemoryRepository(), settings, None, None, thresholds=Settings(_env_file=None).thresholds()
+        MemoryRepository(),
+        settings,
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     await restarted.maintenance(NOW, prune=False)
     assert calls == [final, final, final]
@@ -77,6 +95,7 @@ async def test_failed_backup_verification_never_enters_cache(
         None,
         None,
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     scheduler.retention = AsyncMock()
     for _ in range(2):
@@ -89,7 +108,14 @@ async def test_failed_backup_verification_never_enters_cache(
 @pytest.mark.asyncio
 async def test_expired_milestone_is_timer_missed_not_failed_source_outcome() -> None:
     repo = MemoryRepository()
-    scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     await repo.put(
         "evt.events",
         "e",
@@ -142,7 +168,14 @@ async def test_terminal_capture_is_recorded_as_gap_and_not_resurrected_or_claime
     await scheduler.tick(NOW)
     assert not await repo.list("ops.jobs", filters={"idem_key": "e:T:POST_72H"})
 
-    real_scheduler = Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds())
+    real_scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     real_scheduler.analysis_tokens = AsyncMock(return_value={"T"})
     await real_scheduler.lifecycle(NOW)
     assert (await repo.get("evt.events", "e"))["lifecycle"] == "MONITORING"
@@ -185,7 +218,14 @@ async def test_checkpoint_expiry_does_not_slide_on_later_ticks_and_scans_are_bat
 async def test_conditions_share_truth_for_identical_event_token_cutoff() -> None:
     repo = MemoryRepository()
     truth = SimpleNamespace(assess=AsyncMock(return_value={"move_class": "SPOT_LED_ACCUMULATION"}))
-    scheduler = Scheduler(repo, Settings(), None, truth, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        truth,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     await repo.put("evt.events", "e", {"event_id": "e"})
     for identifier in ("one", "two"):
         await repo.put(
@@ -223,6 +263,7 @@ async def test_backup_cache_reverifies_replaced_manifest_identity(
         None,
         None,
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     await scheduler.maintenance(NOW, prune=False)
     await scheduler.maintenance(NOW, prune=False)
@@ -248,7 +289,14 @@ async def test_selective_condition_union_never_calls_full_assess_or_persists_mis
             }
         ),
     )
-    scheduler = Scheduler(repo, Settings(), None, truth, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        truth,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     await repo.put("evt.events", "e", {"event_id": "e"})
     for identifier, metric in (("one", "price.close_vs_level"), ("two", "mt.move_class")):
         await repo.put(
@@ -296,7 +344,14 @@ async def test_closed_hour_completion_or_correction_is_rechecked_without_double_
     truth = SimpleNamespace(
         condition_values=selective, assess=AsyncMock(side_effect=AssertionError("no full truth"))
     )
-    scheduler = Scheduler(repo, Settings(), None, truth, thresholds=Settings(_env_file=None).thresholds())
+    scheduler = Scheduler(
+        repo,
+        Settings(),
+        None,
+        truth,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    )
     await repo.put("evt.events", "e", {"event_id": "e"})
     await repo.put(
         "ana.watch_conditions",
@@ -352,6 +407,7 @@ async def test_late_correction_of_preceding_closed_hour_cannot_false_fire() -> N
         None,
         SimpleNamespace(condition_values=selective),
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     await repo.put("evt.events", "e", {"event_id": "e"})
     await repo.put(

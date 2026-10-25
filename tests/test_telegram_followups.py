@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from source_support import fixture_versions
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
@@ -1082,6 +1083,7 @@ async def test_fired_agent_watch_wakes_the_session_that_armed_it() -> None:
         None,
         SimpleNamespace(assess=AsyncMock(return_value={})),
         thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
     )
     await scheduler.eval_conditions({"cutoff": iso(now)})
     jobs = await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})

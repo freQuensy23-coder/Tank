@@ -5,6 +5,7 @@ from functools import cache
 
 from pydantic import JsonValue
 
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.sources import HttpFetchPlan, SourceConfiguration, SourceDefinition, SourceFeed
 from tank.settings import Settings
 
@@ -78,3 +79,8 @@ def operational_configuration(name: str) -> dict[str, JsonValue]:
     if name not in {"api_limits", "thresholds"}:
         raise ValueError("No operational fixture declared for " + name)
     return Settings().load_config(name)
+
+
+def fixture_versions() -> ResolvedVersionIdentity:
+    """Declare the known synthetic version identity of these isolated service fixtures."""
+    return ResolvedVersionIdentity(config_version="test", code_version="test")

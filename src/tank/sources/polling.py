@@ -257,8 +257,8 @@ class SourcePoller:
                 item_id=item_id,
                 feed=feed.url,
                 observed_at=observed_at,
-                discovery_config_version=svc.settings.config_version,
-                discovery_code_version=svc.settings.code_version,
+                discovery_config_version=svc.versions.config_version,
+                discovery_code_version=svc.versions.code_version,
                 raw=raw,
             )
             pending.add(external)

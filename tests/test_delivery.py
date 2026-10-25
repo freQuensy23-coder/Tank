@@ -1,3 +1,4 @@
+from source_support import fixture_versions
 from types import SimpleNamespace
 
 import httpx
@@ -755,7 +756,7 @@ async def test_first_sent_persists_alerted_until_subsequent_scheduler_transition
             delivery_job({"alert_id": "a", "version": 1})
         )
     assert (await repo.get("evt.events", "e"))["lifecycle"] == "ALERTED"
-    await Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds()).lifecycle(
+    await Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds(), versions=fixture_versions()).lifecycle(
         utcnow()
     )
     event = await repo.get("evt.events", "e")

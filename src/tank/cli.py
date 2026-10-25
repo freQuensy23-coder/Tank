@@ -363,7 +363,7 @@ def sources_check(probe, accounts):
     async def command(repo, settings):
         from tank.sources import SourceService
 
-        service = SourceService(repo, settings)
+        service = SourceService(repo, settings, versions=settings.require_versions())
         try:
             return await service.check(probe=probe, check_accounts=accounts)
         finally:
@@ -631,7 +631,9 @@ def backup(force, prune):
         from tank.scheduler import Scheduler
         from tank.util import utcnow
 
-        return await Scheduler(repo, settings, None, None).maintenance(utcnow(), force=force, prune=prune)
+        return await Scheduler(repo, settings, None, None, versions=settings.require_versions()).maintenance(
+            utcnow(), force=force, prune=prune
+        )
 
     run_db(command)
 
