@@ -5,6 +5,7 @@ import pytest
 from agent_source_fixtures import declared_versions_fixture
 from native_input_fixtures import acknowledge_native_input
 from pydantic import JsonValue
+from session_followup_fixtures import UnexpectedFollowupRefusals
 from test_session_outbound_intents import pending_record
 
 from tank.agents.native_retry import UnknownNativeRetryState
@@ -56,6 +57,7 @@ async def test_unknown_historical_retry_state_refuses_before_posting_and_preserv
             None,
             http=http,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         with pytest.raises(UnknownNativeRetryState) as refused:
             await service.process_event("session", {"id": "failure", "type": "agent.refusal"})
@@ -97,6 +99,7 @@ async def test_new_declared_input_budget_is_not_blocked_by_unknown_origin_histor
             None,
             http=http,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         with pytest.raises(UnknownNativeRetryState):
             await service.process_event("session", {"id": "old-refusal", "type": "agent.refusal"})
@@ -122,3 +125,57 @@ async def test_new_declared_input_budget_is_not_blocked_by_unknown_origin_histor
     assert len(posted) == 2 and posted[0] == posted[1]
     assert keys == ["message:message", "turn-retry:session:message"]
     assert stored["last_message"] == stale_body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("count", [1, 2])
+@pytest.mark.parametrize("body", [None, {"type": "user.message"}, "opaque retained body"])
+async def test_exhausted_retry_records_terminal_failure_without_consuming_historical_body(
+    count: int, body: JsonValue
+) -> None:
+    repo = MemoryRepository()
+    done: dict[str, JsonValue] = {
+        "message_id": "done",
+        "turn_status": "DONE",
+        "immutable": {"historical": [False, 0]},
+    }
+    active: dict[str, JsonValue] = {
+        "message_id": "active",
+        "turn_status": "RUNNING",
+        "retry_count": count,
+        "body": body,
+        "remote_event_id": {"unknown": "unused prior input"},
+        "payload": {"kind": "USER_QUESTION", "question_id": "question", "session_id": "session"},
+    }
+    original: dict[str, JsonValue] = {
+        "session_id": "session",
+        "status": "OPEN",
+        "runtime_status": "RUNNING",
+        "active_message_id": "active",
+        "message_log": [done, active],
+    }
+    await repo.put("ops.agent_sessions", "session", original)
+
+    def forbidden(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("Exhausted retry cannot post or fetch native input")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(forbidden)) as http:
+        service = SessionService(
+            repo,
+            Settings(_env_file=None, ops_progress_enabled=False),
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+        )
+        await service.process_event("session", {"id": "final-failure", "type": "session.error"})
+    stored = await repo.get("ops.agent_sessions", "session")
+    assert stored is not None and stored["status"] == "FAILED" and stored["runtime_status"] == "IDLE"
+    assert stored["active_message_id"] is None
+    journal = stored["message_log"]
+    assert isinstance(journal, list) and journal[0] == done
+    failed = journal[1]
+    assert isinstance(failed, dict) and failed["body"] == body
+    assert failed["remote_event_id"] == {"unknown": "unused prior input"}
+    assert failed["retry_count"] == count and failed["turn_status"] == "FAILED"
+    terminal = stored["terminal_failure"]
+    assert isinstance(terminal, dict) and terminal["event_id"] == "final-failure"
