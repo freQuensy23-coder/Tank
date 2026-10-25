@@ -472,6 +472,9 @@ def legacy_boundary_calculation() -> ConditionFlowAggregate:
     )
 
     return ConditionFlowAggregate(
+        token_id="T",
+        venue="venue",
+        market_type="SPOT",
         instrument_id="venue:spot:T",
         start=AT - timedelta(seconds=30),
         end=AT,
@@ -487,7 +490,7 @@ def legacy_boundary_calculation() -> ConditionFlowAggregate:
         counts=IncompleteConditionTradeCounts(
             status="UNAVAILABLE", n_buy=None, n_sell=None, reason="INCOMPLETE"
         ),
-        evidence=FlowAggregateEvidenceRef(projection_sha256="e" * 64),
+        evidence=FlowAggregateEvidenceRef(projection_sha256="e" * 64, source_evidence_sha256="f" * 64),
     )
 
 
@@ -596,6 +599,7 @@ def basic_spot_graph() -> BasicConditionSpot:
     )
     right = left.model_copy(update={"venue": "B"})
     return BasicConditionSpot(
+        token_id="T",
         kind="BASIC",
         venues=(left, right),
         composite_max=ObservedConditionComposite(
@@ -639,6 +643,7 @@ def windowed_spot_graph() -> WindowedConditionSpot:
 
     base = basic_spot_graph()
     return WindowedConditionSpot(
+        token_id=base.token_id,
         kind="WINDOWED",
         venues=base.venues,
         composite_max=base.composite_max,
@@ -696,6 +701,7 @@ def test_requested_primary_size_evidence_is_unavailable_rather_than_unrequested(
         name: comparison for name in base.cohort_consistent
     }
     enriched = EnrichedConditionSpot(
+        token_id=base.token_id,
         kind="ENRICHED",
         venues=base.venues,
         composite_max=base.composite_max,
@@ -2786,7 +2792,7 @@ def test_funding_confirmation_missing_secondary_or_history_stays_unavailable() -
     assert isinstance(unknown.independent_beyond_normal(), ConditionUnavailablePredicate)
 
 
-def complete_flow_window(instrument: str, venue: str) -> ConditionFlowWindowQualification:
+def complete_perp_flow_window(instrument: str, venue: str) -> ConditionFlowWindowQualification:
     from tank.analysis.condition_graph_contracts import ConditionFlowCapturePiece
 
     pieces: list[ConditionFlowCapturePiece] = []
@@ -2797,6 +2803,8 @@ def complete_flow_window(instrument: str, venue: str) -> ConditionFlowWindowQual
             prototype.model_copy(
                 update={
                     "instrument_id": instrument,
+                    "venue": venue,
+                    "market_type": "PERP",
                     "start": start,
                     "end": start + timedelta(minutes=1),
                 }
@@ -2817,6 +2825,7 @@ def complete_flow_window(instrument: str, venue: str) -> ConditionFlowWindowQual
         token_id="T",
         instrument_id=instrument,
         venue=venue,
+        market_type="PERP",
         interval=ConditionInterval(window="W15M", start=AT - timedelta(minutes=15), cutoff=AT),
         pieces=tuple(pieces),
     )
@@ -2828,7 +2837,7 @@ def test_fragmentation_flow_capture_requires_actual_minute_grid_and_visible_evid
         ConditionUnavailablePredicate,
     )
 
-    window = complete_flow_window("a:perp:T", "a")
+    window = complete_perp_flow_window("a:perp:T", "a")
     known = window.complete()
     assert isinstance(known, ConditionObservedPredicate) and known.value is True
     partial = type(window).model_validate(window.model_copy(update={"pieces": window.pieces[:-1]}))
@@ -2878,7 +2887,7 @@ def test_fragmentation_funding_validation_requires_actual_scoped_flow_windows() 
         price_pairs=(),
         price_confirmations=(),
         funding=funding_confirmation_graph(),
-        flow_capture=(complete_flow_window("a:perp:T", "a"), complete_flow_window("b:perp:T", "b")),
+        flow_capture=(complete_perp_flow_window("a:perp:T", "a"), complete_perp_flow_window("b:perp:T", "b")),
     )
     assert isinstance(graph.persistent_gap(), ConditionUnavailablePredicate)
     assert isinstance(graph.price_path_validated(), ConditionUnavailablePredicate)
@@ -2889,7 +2898,7 @@ def test_fragmentation_funding_validation_requires_actual_scoped_flow_windows() 
     assert isinstance(no_capture.validated(), ConditionUnavailablePredicate)
     with pytest.raises(ValidationError, match="unrelated fragmentation"):
         type(graph).model_validate(
-            graph.model_copy(update={"flow_capture": (complete_flow_window("other:perp:T", "other"),)})
+            graph.model_copy(update={"flow_capture": (complete_perp_flow_window("other:perp:T", "other"),)})
         )
 
 
@@ -2900,7 +2909,7 @@ def test_unaligned_fragmentation_window_requires_both_actual_boundary_chains() -
         ConditionUnavailablePredicate,
     )
 
-    prototype = complete_flow_window("a:perp:T", "a")
+    prototype = complete_perp_flow_window("a:perp:T", "a")
     assembled = Timestamp(value="2026-10-17T12:00:10Z", precision="COLLECTION_ONLY")
     visibility = ConditionReceiptVisibility(
         received_at=Timestamp(value="2026-10-17T12:00:06Z", precision="COLLECTION_ONLY"),
@@ -3600,4 +3609,197 @@ def test_lending_observed_change_requires_actual_prior_timestamp_and_same_assemb
     with pytest.raises(ValidationError, match="distinct from unmapped"):
         type(recorded).model_validate(
             recorded.model_copy(update={"unmapped_pool_ids": (recorded.pools[0].pool_id,)})
+        )
+
+
+def test_boundary_proofs_cannot_cross_actual_token_venue_or_market_scope() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionBoundaryGroup,
+        ConditionSpotVenue,
+        IncompleteConditionTradeCounts,
+    )
+
+    spot = basic_spot_graph()
+    base = legacy_boundary_calculation()
+    aggregate = type(base).model_validate(
+        base.model_copy(
+            update={
+                "venue": "A",
+                "buy_qty": Decimal(15),
+                "sell_qty": Decimal(0),
+                "sum_sq_qty": Decimal(15),
+                "counts": IncompleteConditionTradeCounts(
+                    status="UNAVAILABLE", n_buy=None, n_sell=0, reason="INCOMPLETE"
+                ),
+            }
+        )
+    )
+    group = ConditionBoundaryGroup(start=aggregate.start, cutoff=aggregate.end, aggregates=(aggregate,))
+    venue = ConditionSpotVenue.model_validate(
+        spot.venues[0].model_copy(update={"boundary_segments": (group,)})
+    )
+    checked = BasicConditionSpot.model_validate(spot.model_copy(update={"venues": (venue, spot.venues[1])}))
+    assert checked.token_id == "T"
+    for field, value in (("venue", "OTHER"), ("market_type", "PERP")):
+        wrong = type(group).model_validate(
+            group.model_copy(update={"aggregates": (aggregate.model_copy(update={field: value}),)})
+        )
+        with pytest.raises(ValidationError, match="actual venue and spot"):
+            ConditionSpotVenue.model_validate(venue.model_copy(update={"boundary_segments": (wrong,)}))
+    other_token = type(group).model_validate(
+        group.model_copy(update={"aggregates": (aggregate.model_copy(update={"token_id": "OTHER"}),)})
+    )
+    bad_venue = ConditionSpotVenue.model_validate(
+        venue.model_copy(update={"boundary_segments": (other_token,)})
+    )
+    with pytest.raises(ValidationError, match="another token"):
+        BasicConditionSpot.model_validate(spot.model_copy(update={"venues": (bad_venue, spot.venues[1])}))
+    with pytest.raises(ValidationError, match="cannot mix"):
+        ConditionBoundaryGroup(
+            start=aggregate.start,
+            cutoff=aggregate.end,
+            aggregates=(aggregate, aggregate.model_copy(update={"token_id": "OTHER"})),
+        )
+
+
+def test_flow_capture_proof_cannot_borrow_another_actual_token_venue_or_market() -> None:
+    window = complete_perp_flow_window("a:perp:T", "a")
+    for field, value in (("token_id", "OTHER"), ("venue", "OTHER"), ("market_type", "SPOT")):
+        piece = window.pieces[0].model_copy(
+            update={"aggregate": window.pieces[0].aggregate.model_copy(update={field: value})}
+        )
+        with pytest.raises(ValidationError, match="another token/venue/market"):
+            type(window).model_validate(window.model_copy(update={"pieces": (piece, *window.pieces[1:])}))
+
+
+def test_observed_zero_spot_volume_has_no_majority_or_arbitrary_contributor() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionSpotBreadth,
+        ConditionSpotConcentration,
+        ConditionSpotCoverage,
+        ConditionSpotMajority,
+        ConditionSpotTopN,
+        ConditionWeightedBreadth,
+        ObservedConditionComposite,
+    )
+
+    source = basic_spot_graph()
+    venues = tuple(
+        type(row).model_validate(
+            row.model_copy(
+                update={
+                    "volume_native": Decimal(0),
+                    "buy_qty": Decimal(0),
+                    "sell_qty": Decimal(0),
+                    "cvd": Decimal(0),
+                    "sum_sq_qty": Decimal(0),
+                    "sign": 0,
+                    "buy_share": None,
+                    "bs_ratio": None,
+                    "volume_share": None,
+                    "null_reasons": {
+                        "buy_share": "ZERO_TOTAL_VOLUME",
+                        "bs_ratio": "ZERO_SELL_QUANTITY",
+                        "volume_share": "ZERO_TOTAL_VOLUME",
+                    },
+                }
+            )
+        )
+        for row in source.venues
+    )
+    empty_top = ConditionSpotTopN(n=0, venues=(), agreement=None, agreement_reason="ZERO_TOTAL_VOLUME")
+    concentration = ConditionSpotConcentration(
+        hhi=None,
+        top_volume_venue=None,
+        top_volume_share=None,
+        top_contrib_venue=None,
+        top_contrib_share=None,
+        others_cwb_dir=None,
+        null_reasons={
+            "hhi": "ZERO_TOTAL_VOLUME",
+            "top_volume_venue": "ZERO_TOTAL_VOLUME",
+            "top_volume_share": "ZERO_TOTAL_VOLUME",
+            "top_contrib_venue": "ZERO_DIRECTIONAL_CONTRIBUTION",
+            "top_contrib_share": "ZERO_DIRECTIONAL_CONTRIBUTION",
+            "others_cwb_dir": "ZERO_DIRECTIONAL_CONTRIBUTION",
+        },
+    )
+    graph = BasicConditionSpot(
+        token_id="T",
+        kind="BASIC",
+        venues=venues,
+        composite_max=ObservedConditionComposite(
+            status="OBSERVED",
+            cvd=Decimal(0),
+            volume=Decimal(0),
+            buy_share=None,
+            bs_ratio=None,
+            venues=("A", "B"),
+            sign=0,
+            null_reasons={"buy_share": "ZERO_TOTAL_VOLUME", "bs_ratio": "ZERO_SELL_QUANTITY"},
+        ),
+        breadth=ConditionSpotBreadth(
+            n_pos=0, n_neg=0, n_neutral=2, pct_pos=0.0, pct_neg=0.0, null_reasons={}
+        ),
+        cw_breadth=ConditionWeightedBreadth(
+            buy=None,
+            sell=None,
+            neutral=None,
+            null_reasons={
+                "buy": "ZERO_TOTAL_VOLUME",
+                "sell": "ZERO_TOTAL_VOLUME",
+                "neutral": "ZERO_TOTAL_VOLUME",
+            },
+        ),
+        exact_majority=ConditionSpotMajority(
+            buy=None,
+            sell=None,
+            neutral=None,
+            covered=None,
+            null_reasons={
+                "buy": "ZERO_TOTAL_VOLUME",
+                "sell": "ZERO_TOTAL_VOLUME",
+                "neutral": "ZERO_TOTAL_VOLUME",
+                "covered": "ZERO_TOTAL_VOLUME",
+            },
+        ),
+        topn=empty_top,
+        concentration=concentration,
+        direction="NEUTRAL",
+        direction_reason=None,
+        classification="INSUFFICIENT_DATA",
+        coverage=ConditionSpotCoverage(
+            covered_share_est=None,
+            exact_majority=None,
+            n_complete=2,
+            excluded=(),
+            null_reasons={"covered_share_est": "ZERO_TOTAL_VOLUME", "exact_majority": "ZERO_TOTAL_VOLUME"},
+        ),
+    )
+    assert graph.topn.n == 0 and graph.direction == "NEUTRAL"
+    assert isinstance(graph.composite_max, ObservedConditionComposite)
+    assert graph.composite_max.volume == 0
+    with pytest.raises(ValidationError, match="majority set or top contributor"):
+        type(graph).model_validate(graph.model_copy(update={"topn": source.topn}))
+
+
+def test_unrepresentable_display_ratios_preserve_known_native_values_and_other_sides() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionWeightedBreadth, ObservedConditionComposite
+
+    composite = ObservedConditionComposite(
+        status="OBSERVED",
+        cvd=Decimal("-0." + "9" * 400),
+        volume=Decimal("1." + "0" * 399 + "1"),
+        buy_share=None,
+        bs_ratio=None,
+        venues=("a",),
+        sign=0,
+        null_reasons={"buy_share": "NOT_ESTIMABLE", "bs_ratio": "NOT_ESTIMABLE"},
+    )
+    assert composite.volume > 1 and composite.cvd > -1
+    breadth = ConditionWeightedBreadth(buy=None, sell=1.0, neutral=0.0, null_reasons={"buy": "NOT_ESTIMABLE"})
+    assert breadth.sell == 1.0 and breadth.neutral == 0.0 and breadth.buy is None
+    with pytest.raises(ValidationError, match="same actual volume denominator"):
+        type(breadth).model_validate(
+            breadth.model_copy(update={"null_reasons": {"buy": "ZERO_TOTAL_VOLUME"}})
         )

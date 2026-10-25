@@ -594,9 +594,13 @@ type ConditionTradeCounts = ObservedConditionTradeCounts | IncompleteConditionTr
 
 class FlowAggregateEvidenceRef(DomainModel):
     projection_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
-class ConditionFlowAggregate(DomainModel):
+class ConditionFlowAggregateProjection(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    venue: str = Field(min_length=1, pattern=r"\S")
+    market_type: Literal["SPOT", "PERP"]
     instrument_id: str = Field(min_length=1, pattern=r"\S")
     start: datetime
     end: datetime
@@ -610,7 +614,6 @@ class ConditionFlowAggregate(DomainModel):
     low: Decimal | None = Field(gt=0)
     low_reason: Literal["INCOMPLETE", "EMPTY_INTERVAL"] | None
     counts: ConditionTradeCounts
-    evidence: FlowAggregateEvidenceRef
 
     @field_validator("start", "end")
     @classmethod
@@ -637,6 +640,10 @@ class ConditionFlowAggregate(DomainModel):
         if (volume == 0) != (self.sum_sq_qty == 0):
             raise ValueError("Flow squared quantity cannot invent or erase observed native flow")
         return self
+
+
+class ConditionFlowAggregate(ConditionFlowAggregateProjection):
+    evidence: FlowAggregateEvidenceRef
 
 
 class KnownConditionTradeCount(DomainModel):
@@ -667,6 +674,11 @@ class ConditionBoundaryGroup(DomainModel):
     def contained_pieces(self) -> Self:
         if self.start >= self.cutoff:
             raise ValueError("A boundary proof requires its actual positive interval")
+        scopes = {
+            (aggregate.token_id, aggregate.venue, aggregate.market_type) for aggregate in self.aggregates
+        }
+        if len(scopes) != 1:
+            raise ValueError("A boundary group cannot mix token/venue/market scope")
         for aggregate in self.aggregates:
             if not self.start <= aggregate.start < aggregate.end <= self.cutoff:
                 raise ValueError("A boundary aggregate falls outside its declared proof interval")
@@ -694,7 +706,9 @@ class ObservedConditionComposite(DomainModel):
     venues: tuple[str, ...] = Field(min_length=1)
     sign: Annotated[Literal[-1, 0, 1], BeforeValidator(require_integer)]
 
-    null_reasons: dict[Literal["buy_share", "bs_ratio"], Literal["ZERO_TOTAL_VOLUME", "ZERO_SELL_QUANTITY"]]
+    null_reasons: dict[
+        Literal["buy_share", "bs_ratio"], Literal["ZERO_TOTAL_VOLUME", "ZERO_SELL_QUANTITY", "NOT_ESTIMABLE"]
+    ]
 
     @model_validator(mode="after")
     def actual_native_direction(self) -> Self:
@@ -707,8 +721,10 @@ class ObservedConditionComposite(DomainModel):
             raise ValueError("Native net flow cannot exceed total observed native volume")
         if self.volume == 0 and (self.buy_share is not None or self.bs_ratio is not None):
             raise ValueError("Zero-volume flow ratios are undefined, not observed zero fractions")
-        if self.volume > 0 and self.buy_share is None:
-            raise ValueError("Observed positive volume requires its actual buy share")
+        if self.volume > 0 and self.buy_share is None and self.null_reasons["buy_share"] != "NOT_ESTIMABLE":
+            raise ValueError(
+                "Observed positive volume requires its actual or explicitly unrepresentable buy share"
+            )
         if self.sign == 1 and self.cvd <= 0 or self.sign == -1 and self.cvd >= 0:
             raise ValueError("Significant flow direction contradicts the actual net native quantity")
         return self
@@ -781,7 +797,15 @@ class ConditionWeightedBreadth(DomainModel):
             tuple(self.null_reasons.items()),
         )
         missing = (self.buy is None, self.sell is None, self.neutral is None)
-        if any(missing) and not all(missing):
+        shared_gap = (
+            self.buy is None
+            and self.null_reasons["buy"] != "NOT_ESTIMABLE"
+            or self.sell is None
+            and self.null_reasons["sell"] != "NOT_ESTIMABLE"
+            or self.neutral is None
+            and self.null_reasons["neutral"] != "NOT_ESTIMABLE"
+        )
+        if shared_gap and not all(missing):
             raise ValueError("Weighted breadth sides must share the same actual volume denominator")
         return self
 
@@ -806,7 +830,7 @@ class ConditionSpotTopN(DomainModel):
     n: int = Field(ge=0)
     venues: tuple[str, ...]
     agreement: float | None = Field(ge=0, le=1)
-    agreement_reason: Literal["NO_COMPLETE_VENUES"] | None
+    agreement_reason: Literal["NO_COMPLETE_VENUES", "ZERO_TOTAL_VOLUME"] | None
 
     @model_validator(mode="after")
     def real_top_set(self) -> Self:
@@ -916,6 +940,12 @@ class ConditionSpotVenue(DomainModel):
 
     @model_validator(mode="after")
     def actual_native_totals(self) -> Self:
+        for boundary in self.boundary_segments:
+            if any(
+                aggregate.venue != self.venue or aggregate.market_type != "SPOT"
+                for aggregate in boundary.aggregates
+            ):
+                raise ValueError("Spot boundary evidence must preserve its actual venue and spot market")
         _statistical_nulls(
             (("buy_share", self.buy_share), ("bs_ratio", self.bs_ratio), ("volume_share", self.volume_share)),
             tuple(self.null_reasons.items()),
@@ -945,6 +975,7 @@ def _sum_native(left: Decimal, right: Decimal) -> Decimal:
 
 
 class ConditionSpotValues(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
     venues: tuple[ConditionSpotVenue, ...]
     composite_max: ConditionComposite
     breadth: ConditionSpotBreadth
@@ -959,6 +990,10 @@ class ConditionSpotValues(DomainModel):
 
     @model_validator(mode="after")
     def actual_spot_cohort(self) -> Self:
+        for venue in self.venues:
+            for boundary in venue.boundary_segments:
+                if any(aggregate.token_id != self.token_id for aggregate in boundary.aggregates):
+                    raise ValueError("Spot boundary evidence cannot borrow another token")
         names = tuple(venue.venue for venue in self.venues)
         if len(names) != len(set(names)):
             raise ValueError("A spot graph cannot repeat an observed venue")
@@ -972,8 +1007,33 @@ class ConditionSpotValues(DomainModel):
             or self.breadth.n_neutral != sum(venue.sign == 0 for venue in self.venues)
         ):
             raise ValueError("Spot breadth counts must match the actual venue directions")
+        if not set(self.topn.venues).issubset(names):
+            raise ValueError("Top-venue selection cannot borrow an unobserved venue")
+        concentration = self.concentration
+        for selected in (concentration.top_volume_venue, concentration.top_contrib_venue):
+            if selected is not None and selected not in names:
+                raise ValueError("Spot concentration cannot borrow an unobserved venue")
         composite = self.composite_max
         if isinstance(composite, ObservedConditionComposite):
+            if composite.volume == 0 and (
+                self.topn.n != 0
+                or self.topn.agreement_reason != "ZERO_TOTAL_VOLUME"
+                or concentration.top_volume_venue is not None
+                or concentration.top_contrib_venue is not None
+            ):
+                raise ValueError("Observed zero volume cannot invent a majority set or top contributor")
+            if composite.volume > 0 and self.topn.n == 0:
+                raise ValueError("Observed positive volume requires its actual nonempty top-venue set")
+            contributing = any(
+                composite.sign == 1 and venue.cvd > 0 or composite.sign == -1 and venue.cvd < 0
+                for venue in self.venues
+            )
+            if not contributing and (
+                concentration.top_contrib_venue is not None
+                or concentration.top_contrib_share is not None
+                or concentration.others_cwb_dir is not None
+            ):
+                raise ValueError("Zero directional contribution cannot select an arbitrary contributor")
             if composite.venues != names:
                 raise ValueError("Spot composite identities must match its actual constituent venues")
             volume, cvd = Decimal(0), Decimal(0)
@@ -1162,6 +1222,11 @@ class ConditionSpotWindowGraph(DomainModel):
         windows = {"W15M", "W1H", "W4H", "W24H", "EVENT"}
         if set(self.spots) != windows or set(self.durations_s) != windows:
             raise ValueError("A spot window graph requires the actual five named windows")
+        if (
+            len({spot.token_id for spot in self.spots.values()}) != 1
+            or len({spot.interval.cutoff for spot in self.spots.values()}) != 1
+        ):
+            raise ValueError("Spot windows must preserve one actual token and cutoff")
         for name, spot in self.spots.items():
             if set(spot.cohort_consistent) != windows - {name}:
                 raise ValueError("A spot consistency index requires the actual other windows")
@@ -4312,6 +4377,7 @@ class ConditionFlowWindowQualification(DomainModel):
     assembled_at: Timestamp
     instrument_id: str = Field(min_length=1, pattern=r"\S")
     venue: str = Field(min_length=1, pattern=r"\S")
+    market_type: Literal["SPOT", "PERP"]
     interval: ConditionInterval
     pieces: tuple[ConditionFlowCapturePiece, ...]
 
@@ -4340,6 +4406,8 @@ class ConditionFlowWindowQualification(DomainModel):
             if piece.visibility.assembled_at != self.assembled_at:
                 raise ValueError("Flow visibility must use the actual snapshot assembly clock")
             row = piece.aggregate
+            if (row.token_id, row.venue, row.market_type) != (self.token_id, self.venue, self.market_type):
+                raise ValueError("Flow capture cannot borrow another token/venue/market scope")
             if (
                 row.instrument_id != self.instrument_id
                 or not self.interval.start <= row.start < row.end <= self.interval.cutoff
@@ -4564,15 +4632,15 @@ class ConditionFragmentationGraph(DomainModel):
         ):
             raise ValueError("Funding fragmentation must preserve actual token and cutoff")
         captures: set[str] = set()
-        known_venues: dict[str, str] = {}
+        known_venues: dict[str, tuple[str, Literal["SPOT", "PERP"]]] = {}
         for pair in self.price_pairs:
-            known_venues[pair.left_instrument_id] = pair.left_venue
-            known_venues[pair.right_instrument_id] = pair.right_venue
+            known_venues[pair.left_instrument_id] = (pair.left_venue, "SPOT")
+            known_venues[pair.right_instrument_id] = (pair.right_venue, "SPOT")
         for rate in self.funding.primary:
             prior = known_venues.get(rate.instrument_id)
-            if prior is not None and prior != rate.venue:
+            if prior is not None and prior != (rate.venue, "PERP"):
                 raise ValueError("A fragmentation instrument cannot change venue between source families")
-            known_venues[rate.instrument_id] = rate.venue
+            known_venues[rate.instrument_id] = (rate.venue, "PERP")
         for capture in self.flow_capture:
             if capture.assembled_at != self.assembled_at:
                 raise ValueError("Flow qualification cannot borrow another snapshot assembly clock")
@@ -4583,7 +4651,7 @@ class ConditionFragmentationGraph(DomainModel):
             ):
                 raise ValueError("Flow capture qualification requires a distinct actual token/window scope")
             captures.add(capture.instrument_id)
-            if known_venues.get(capture.instrument_id) != capture.venue:
+            if known_venues.get(capture.instrument_id) != (capture.venue, capture.market_type):
                 raise ValueError("Flow capture cannot qualify an unrelated fragmentation instrument")
         return self
 

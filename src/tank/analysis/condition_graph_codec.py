@@ -1,0 +1,110 @@
+"""Explicit condition-graph serialization and consumed-evidence binding."""
+
+from collections.abc import Mapping
+from copy import deepcopy
+from typing import Protocol
+
+from pydantic import JsonValue
+
+from tank.analysis.condition_graph_contracts import (
+    ConditionFlowAggregate,
+    ConditionFlowAggregateProjection,
+    FlowAggregateEvidenceRef,
+)
+from tank.contracts.json import JsonDocument
+from tank.util import sha256
+
+
+def _checked_projection(value: ConditionFlowAggregateProjection) -> ConditionFlowAggregateProjection:
+    if type(value) not in (ConditionFlowAggregateProjection, ConditionFlowAggregate):
+        raise TypeError("A declared flow aggregate projection is required")
+    validated = type(value).model_validate(value)
+    return ConditionFlowAggregateProjection(
+        token_id=validated.token_id,
+        venue=validated.venue,
+        market_type=validated.market_type,
+        instrument_id=validated.instrument_id,
+        start=validated.start,
+        end=validated.end,
+        complete=validated.complete,
+        buy_qty=validated.buy_qty,
+        sell_qty=validated.sell_qty,
+        sum_sq_qty=validated.sum_sq_qty,
+        buy_notional=validated.buy_notional,
+        sell_notional=validated.sell_notional,
+        notional_reason=validated.notional_reason,
+        low=validated.low,
+        low_reason=validated.low_reason,
+        counts=validated.counts,
+    )
+
+
+def flow_aggregate_projection_sha256(value: ConditionFlowAggregateProjection) -> str:
+    projection = _checked_projection(value)
+    serialized = JsonDocument.model_validate(projection.model_dump(mode="json"), strict=True).root
+    envelope: dict[str, JsonValue] = {"schema": "tank.condition.flow-aggregate.v1", "projection": serialized}
+    return sha256(envelope)
+
+
+def validate_flow_aggregate_evidence(value: ConditionFlowAggregate) -> None:
+    if type(value) is not ConditionFlowAggregate:
+        raise TypeError("A bound flow aggregate is required")
+    validated = ConditionFlowAggregate.model_validate(value)
+    expected = flow_aggregate_projection_sha256(validated)
+    if validated.evidence.projection_sha256 != expected:
+        raise ValueError("Flow aggregate evidence does not match its declared projection")
+
+
+def bind_flow_aggregate_evidence(
+    value: ConditionFlowAggregateProjection, reference: FlowAggregateEvidenceRef
+) -> ConditionFlowAggregate:
+    projection = _checked_projection(value)
+    if isinstance(value, ConditionFlowAggregate):
+        validate_flow_aggregate_evidence(value)
+    digest = flow_aggregate_projection_sha256(projection)
+    validated_reference = FlowAggregateEvidenceRef.model_validate(reference)
+    if validated_reference.projection_sha256 != digest:
+        raise ValueError("Flow aggregate evidence does not match its declared projection")
+    return ConditionFlowAggregate(
+        token_id=projection.token_id,
+        venue=projection.venue,
+        market_type=projection.market_type,
+        instrument_id=projection.instrument_id,
+        start=projection.start,
+        end=projection.end,
+        complete=projection.complete,
+        buy_qty=projection.buy_qty,
+        sell_qty=projection.sell_qty,
+        sum_sq_qty=projection.sum_sq_qty,
+        buy_notional=projection.buy_notional,
+        sell_notional=projection.sell_notional,
+        notional_reason=projection.notional_reason,
+        low=projection.low,
+        low_reason=projection.low_reason,
+        counts=projection.counts,
+        evidence=validated_reference,
+    )
+
+
+class ConditionFlowEvidenceLookup(Protocol):
+    """Resolve immutable effective wire evidence after reprojecting and binding the expected data.
+
+    The read adapter preserves original evidence separately, refuses ambiguous projection
+    identities, and never substitutes expected financial values for missing source fields.
+    """
+
+    def resolve_flow_aggregate(
+        self, reference: FlowAggregateEvidenceRef, *, expected: ConditionFlowAggregateProjection
+    ) -> Mapping[str, JsonValue]: ...
+
+
+def flow_aggregate_evidence_wire(
+    value: ConditionFlowAggregate, evidence: ConditionFlowEvidenceLookup
+) -> dict[str, JsonValue]:
+    validate_flow_aggregate_evidence(value)
+    projection = _checked_projection(value)
+    resolved = evidence.resolve_flow_aggregate(value.evidence, expected=projection)
+    checked = JsonDocument.validate_value(dict(resolved))
+    if not isinstance(checked, dict):
+        raise ValueError("Flow aggregate proof serialization requires an object")
+    return deepcopy(checked)
