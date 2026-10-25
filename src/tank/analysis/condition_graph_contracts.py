@@ -8,7 +8,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BeforeValidator, Field, field_validator, model_validator
 
-from tank.analysis.execution import BookWalkResult
+from tank.analysis.execution import BookWalkRequest, BookWalkResult, execute_book_walk
 from tank.analysis.positioning import MissingOIDecomposition, OIDecomposition, oi_class
 from tank.analysis.price_reference import ReferencePriceReturn
 from tank.analysis.statistics_contracts import (
@@ -23,6 +23,7 @@ from tank.analysis.statistics_contracts import (
 from tank.contracts import DomainModel
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.scalars import TrueFlag, require_integer, require_number
+from tank.market.book_contracts import BookLevel
 from tank.market.trade_contracts import QuoteUsdValuation
 from tank.time_precision import Timestamp
 from tank.util import parse_iso_time
@@ -3963,7 +3964,7 @@ class UnavailableConditionVolatilityState(DomainModel):
 
 class ConditionVolatilityCompression(DomainModel):
     token_id: str = Field(min_length=1, pattern=r"\S")
-    reference_venue: str = Field(min_length=1, pattern=r"\S")
+    reference_venue: str | None = Field(min_length=1, pattern=r"\S")
     cutoff: datetime
     window: Literal["W24H"]
     realized: ConditionVolatility
@@ -3976,6 +3977,10 @@ class ConditionVolatilityCompression(DomainModel):
 
     @model_validator(mode="after")
     def actual_measurement_and_history(self) -> Self:
+        if self.reference_venue is None and (
+            isinstance(self.realized, ObservedConditionVolatility) or self.normal_range.bounds is not None
+        ):
+            raise ValueError("Observed volatility and its history require the actual reference venue")
         if isinstance(self.realized, ObservedConditionVolatility):
             stamp = self.realized.completed_hour.value
             if stamp is None:
@@ -4649,3 +4654,237 @@ class ConditionFragmentationGraph(DomainModel):
     def validated(self) -> ConditionPredicate:
         checked = type(self).model_validate(self)
         return condition_predicates_any((checked.price_path_validated(), checked.funding_path_validated()))
+
+
+class ConditionImpactOrder(DomainModel):
+    notional_usd: Decimal | None = Field(ge=0)
+    reason: Literal["INCOMPLETE"] | None
+
+    @model_validator(mode="after")
+    def actual_order_size(self) -> Self:
+        if (self.notional_usd is None) != (self.reason is not None):
+            raise ValueError("Missing impact order size requires the actual incomplete volume-history reason")
+        return self
+
+
+class ConditionImpactOrders(DomainModel):
+    T1: ConditionImpactOrder
+    T2: ConditionImpactOrder
+    T3: ConditionImpactOrder
+
+
+class ObservedConditionSlippage(DomainModel):
+    status: Literal["OBSERVED"]
+    value: float
+
+
+class UnavailableConditionSlippage(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    value: None
+    reason: Literal["INCOMPLETE", "ZERO_NOTIONAL", "INSUFFICIENT_BOOK_DEPTH", "QUOTE_CONVERSION_UNAVAILABLE"]
+
+
+type ConditionSlippage = ObservedConditionSlippage | UnavailableConditionSlippage
+
+
+class ConditionSplitExecutionBook(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    venue: str = Field(min_length=1, pattern=r"\S")
+    observed_at: Timestamp
+    visibility: ConditionReceiptVisibility
+    integrity_ok: TrueFlag
+    quote_asset: str = Field(min_length=1, pattern=r"\S")
+    quote_valuation: QuoteUsdValuation
+    mid_quote: Decimal = Field(gt=0)
+    allocation_depth_p1_usd: Decimal | None = Field(ge=0)
+    allocation_depth_reason: Literal["INCOMPLETE", "DEPTH_BAND_NOT_COVERED"] | None
+    asks: tuple[BookLevel, ...]
+
+    @model_validator(mode="after")
+    def actual_execution_book(self) -> Self:
+        if (self.allocation_depth_p1_usd is None) != (self.allocation_depth_reason is not None):
+            raise ValueError("Missing allocation depth requires its actual book coverage reason")
+        if self.quote_asset == "USD" and self.quote_valuation.basis != "USD_UNIT":
+            raise ValueError("USD allocation books require actual USD unit identity")
+        if self.quote_asset != "USD" and self.quote_valuation.basis == "USD_UNIT":
+            raise ValueError("A non-USD book cannot assume USD unit identity")
+        return self
+
+
+class ConditionSplitExecution(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    cutoff: datetime
+    assembled_at: Timestamp
+    books: tuple[ConditionSplitExecutionBook, ...]
+    orders: ConditionImpactOrders
+
+    @field_validator("cutoff")
+    @classmethod
+    def aware_cutoff(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_execution_scope(self) -> Self:
+        if len({book.venue for book in self.books}) != len(self.books) or len(
+            {book.instrument_id for book in self.books}
+        ) != len(self.books):
+            raise ValueError("Split execution requires distinct actual venue instruments")
+        for book in self.books:
+            stamp = book.observed_at.value
+            if book.token_id != self.token_id or stamp is None or parse_iso_time(stamp) > self.cutoff:
+                raise ValueError("Split execution cannot borrow another token or future/unclocked book")
+            if book.visibility.assembled_at != self.assembled_at:
+                raise ValueError("Split execution visibility requires its actual snapshot assembly clock")
+            if book.quote_valuation.as_of is not None and book.quote_valuation.as_of > self.cutoff:
+                raise ValueError("Split execution cannot borrow future quote valuation")
+        return self
+
+    def split_slippage(self, tier: Literal["T1", "T2", "T3"]) -> ConditionSlippage:
+        validated = type(self).model_validate(self)
+        order = {"T1": validated.orders.T1, "T2": validated.orders.T2, "T3": validated.orders.T3}[tier]
+        notional = order.notional_usd
+        if notional is None:
+            return UnavailableConditionSlippage(status="UNAVAILABLE", value=None, reason="INCOMPLETE")
+        if notional == 0:
+            return UnavailableConditionSlippage(status="UNAVAILABLE", value=None, reason="ZERO_NOTIONAL")
+        if not validated.books:
+            return UnavailableConditionSlippage(status="UNAVAILABLE", value=None, reason="INCOMPLETE")
+        depths: list[Decimal] = []
+        for book in validated.books:
+            visibility = book.visibility.eligible()
+            if (
+                not isinstance(visibility, ConditionObservedPredicate)
+                or not visibility.value
+                or book.allocation_depth_p1_usd is None
+            ):
+                return UnavailableConditionSlippage(status="UNAVAILABLE", value=None, reason="INCOMPLETE")
+            depths.append(book.allocation_depth_p1_usd)
+        total = _condition_sum_known_depth(tuple(depths))
+        if total is None:
+            raise ValueError("Observed split depth requires its actual nonempty venue cohort")
+        if total == 0:
+            return UnavailableConditionSlippage(
+                status="UNAVAILABLE", value=None, reason="INSUFFICIENT_BOOK_DEPTH"
+            )
+        values = (notional, total, *depths)
+        span = (
+            max(value.adjusted() for value in values)
+            - min(int(value.as_tuple().exponent) for value in values)
+            + 1
+        )
+        weighted: list[float] = []
+        with localcontext() as context:
+            context.prec = max(128, 4 * span + 32)
+            for book, depth in zip(validated.books, depths, strict=True):
+                if depth == 0:
+                    continue
+                rate = book.quote_valuation.rate
+                if rate is None:
+                    return UnavailableConditionSlippage(
+                        status="UNAVAILABLE", value=None, reason="QUOTE_CONVERSION_UNAVAILABLE"
+                    )
+                if not book.asks:
+                    return UnavailableConditionSlippage(status="UNAVAILABLE", value=None, reason="INCOMPLETE")
+                allocation = notional * depth / total
+                execution = execute_book_walk(
+                    BookWalkRequest(
+                        levels=list(book.asks),
+                        quote_notional=allocation / rate,
+                        mid_quote_price=book.mid_quote,
+                        side="ask",
+                    )
+                )
+                if execution.slippage_bps is None:
+                    return UnavailableConditionSlippage(
+                        status="UNAVAILABLE", value=None, reason="INSUFFICIENT_BOOK_DEPTH"
+                    )
+                weighted.append(float(allocation / notional) * execution.slippage_bps)
+        return ObservedConditionSlippage(status="OBSERVED", value=sum(weighted))
+
+
+class EnrichedConditionLiquidity(ConditionLiquidityValues):
+    kind: Literal["ENRICHED"]
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    assembled_at: Timestamp
+    fragmentation: ConditionFragmentationGraph
+    vol_compression: ConditionVolatilityCompression
+    execution: ConditionSplitExecution
+
+    @model_validator(mode="after")
+    def actual_enrichment_inputs(self) -> Self:
+        if (
+            self.fragmentation.token_id,
+            self.fragmentation.interval.cutoff,
+            self.fragmentation.assembled_at,
+        ) != (self.token_id, self.interval.cutoff, self.assembled_at):
+            raise ValueError(
+                "Enriched liquidity fragmentation must preserve actual token/cutoff/assembly scope"
+            )
+        if (self.execution.token_id, self.execution.cutoff, self.execution.assembled_at) != (
+            self.token_id,
+            self.interval.cutoff,
+            self.assembled_at,
+        ):
+            raise ValueError("Enriched liquidity execution must preserve actual token/cutoff/assembly scope")
+        if (self.vol_compression.token_id, self.vol_compression.cutoff) != (
+            self.token_id,
+            self.interval.cutoff,
+        ):
+            raise ValueError("Enriched liquidity volatility must preserve its actual token and cutoff")
+        books = {book.instrument_id: book for book in self.execution.books}
+        if set(books) != {venue.instrument_id for venue in self.per_venue}:
+            raise ValueError("Split and single-venue execution must preserve the actual selected book cohort")
+        for venue in self.per_venue:
+            book = books[venue.instrument_id]
+            if (book.venue, book.observed_at, book.quote_asset, book.quote_valuation) != (
+                venue.venue,
+                venue.observed_at,
+                venue.quote_asset,
+                venue.quote_valuation,
+            ):
+                raise ValueError(
+                    "Split execution cannot substitute a different selected book or quote valuation"
+                )
+            for impact, order in (
+                (venue.impact_tiers.T1, self.execution.orders.T1),
+                (venue.impact_tiers.T2, self.execution.orders.T2),
+                (venue.impact_tiers.T3, self.execution.orders.T3),
+            ):
+                if impact.notional_usd != order.notional_usd:
+                    raise ValueError("Split and single-venue impact must use the same actual USD order size")
+        return self
+
+    def best_single_venue_slippage(self, tier: Literal["T1", "T2", "T3"]) -> ConditionSlippage:
+        validated = type(self).model_validate(self)
+        order = {
+            "T1": validated.execution.orders.T1,
+            "T2": validated.execution.orders.T2,
+            "T3": validated.execution.orders.T3,
+        }[tier]
+        if order.notional_usd is None:
+            return UnavailableConditionSlippage(status="UNAVAILABLE", value=None, reason="INCOMPLETE")
+        if order.notional_usd == 0:
+            return UnavailableConditionSlippage(status="UNAVAILABLE", value=None, reason="ZERO_NOTIONAL")
+        values: list[float] = []
+        incomplete_depth = 0
+        for venue in validated.per_venue:
+            impact = {"T1": venue.impact_tiers.T1, "T2": venue.impact_tiers.T2, "T3": venue.impact_tiers.T3}[
+                tier
+            ]
+            value = impact.slippage_bps()
+            if value is not None:
+                values.append(value)
+            elif impact.execution is not None and impact.execution.reason == "INSUFFICIENT_BOOK_DEPTH":
+                incomplete_depth += 1
+        if values:
+            return ObservedConditionSlippage(status="OBSERVED", value=min(values))
+        reason: Literal["INCOMPLETE", "INSUFFICIENT_BOOK_DEPTH"] = (
+            "INSUFFICIENT_BOOK_DEPTH"
+            if validated.per_venue and incomplete_depth == len(validated.per_venue)
+            else "INCOMPLETE"
+        )
+        return UnavailableConditionSlippage(status="UNAVAILABLE", value=None, reason=reason)
+
+
+type ConditionLiquidity = BasicConditionLiquidity | EnrichedConditionLiquidity

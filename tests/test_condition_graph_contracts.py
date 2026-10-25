@@ -28,6 +28,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionRelativeWindow,
     ConditionReplenishmentBurst,
     ConditionReplenishmentScope,
+    ConditionSplitExecution,
     ConditionTopVenueSignHistory,
     DeclaredConditionCadence,
     NonForwardConditionInterval,
@@ -2995,3 +2996,216 @@ def test_top_sign_history_distinguishes_observed_neutral_from_missing_direction(
     original = sign_history((1, 0, -1, 1))
     with pytest.raises(ValidationError, match="consecutive"):
         type(original).model_validate(original.model_copy(update={"windows": original.windows[1:]}))
+
+
+def split_execution() -> ConditionSplitExecution:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionImpactOrder,
+        ConditionImpactOrders,
+        ConditionSplitExecutionBook,
+    )
+    from tank.market.book_contracts import BookLevel
+
+    assembled = Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY")
+    book = ConditionSplitExecutionBook(
+        token_id="T",
+        instrument_id="a:spot:T",
+        venue="a",
+        observed_at=Timestamp(value="2026-10-17T11:59:55Z", precision=None, precision_reason="NOT_CAPTURED"),
+        visibility=ConditionReceiptVisibility(
+            received_at=Timestamp(value="2026-10-17T11:59:56Z", precision="COLLECTION_ONLY"),
+            assembled_at=assembled,
+        ),
+        integrity_ok=True,
+        quote_asset="USD",
+        quote_valuation=QuoteUsdValuation(
+            rate=Decimal(1), as_of=None, basis="USD_UNIT", unavailable_reason=None
+        ),
+        mid_quote=Decimal(100),
+        allocation_depth_p1_usd=Decimal(10000),
+        allocation_depth_reason=None,
+        asks=(BookLevel.from_wire("101", "100"),),
+    )
+    order = ConditionImpactOrder(notional_usd=Decimal(100), reason=None)
+    return ConditionSplitExecution(
+        token_id="T",
+        cutoff=AT,
+        assembled_at=assembled,
+        books=(book,),
+        orders=ConditionImpactOrders(T1=order, T2=order, T3=order),
+    )
+
+
+def test_split_execution_ignores_known_zero_allocations_without_inventing_a_fill() -> None:
+    from tank.analysis.condition_graph_contracts import ObservedConditionSlippage
+
+    split = split_execution()
+    empty = type(split.books[0]).model_validate(
+        split.books[0].model_copy(
+            update={
+                "venue": "b",
+                "instrument_id": "b:spot:T",
+                "allocation_depth_p1_usd": Decimal(0),
+                "asks": (),
+            }
+        )
+    )
+    with_empty = type(split).model_validate(split.model_copy(update={"books": (*split.books, empty)}))
+    value = with_empty.split_slippage("T1")
+    assert isinstance(value, ObservedConditionSlippage) and value.value == pytest.approx(100)
+    assert with_empty.books[1].asks == ()
+    assert value == split.split_slippage("T1")
+
+
+def test_split_execution_preserves_missing_depth_fx_and_zero_order_causes() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionImpactOrder, UnavailableConditionSlippage
+
+    split = split_execution()
+    missing = type(split.books[0]).model_validate(
+        split.books[0].model_copy(
+            update={
+                "allocation_depth_p1_usd": None,
+                "allocation_depth_reason": "INCOMPLETE",
+            }
+        )
+    )
+    no_depth = type(split).model_validate(split.model_copy(update={"books": (missing,)})).split_slippage("T1")
+    assert isinstance(no_depth, UnavailableConditionSlippage) and no_depth.reason == "INCOMPLETE"
+    zero_orders = type(split.orders).model_validate(
+        split.orders.model_copy(update={"T1": ConditionImpactOrder(notional_usd=Decimal(0), reason=None)})
+    )
+    zero = type(split).model_validate(split.model_copy(update={"orders": zero_orders})).split_slippage("T1")
+    assert isinstance(zero, UnavailableConditionSlippage) and zero.reason == "ZERO_NOTIONAL"
+    no_fx = type(split.books[0]).model_validate(
+        split.books[0].model_copy(
+            update={
+                "quote_asset": "USDT",
+                "quote_valuation": QuoteUsdValuation(
+                    rate=None,
+                    as_of=None,
+                    basis="UNAVAILABLE",
+                    unavailable_reason="QUOTE_USD_RATE_UNAVAILABLE",
+                ),
+            }
+        )
+    )
+    result = type(split).model_validate(split.model_copy(update={"books": (no_fx,)})).split_slippage("T1")
+    assert (
+        isinstance(result, UnavailableConditionSlippage) and result.reason == "QUOTE_CONVERSION_UNAVAILABLE"
+    )
+
+
+def test_enriched_liquidity_binds_selected_book_orders_and_actual_family_scope() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionFragmentationGraph,
+        ConditionImpactOrder,
+        ConditionImpactOrders,
+        ConditionVolatilityCompression,
+        EnrichedConditionLiquidity,
+        ObservedConditionSlippage,
+        UnavailableConditionVolatility,
+    )
+
+    basic = single_venue_liquidity()
+    source = split_execution()
+    venue = basic.per_venue[0]
+    book = type(source.books[0]).model_validate(
+        source.books[0].model_copy(
+            update={
+                "instrument_id": venue.instrument_id,
+                "observed_at": venue.observed_at,
+                "allocation_depth_p1_usd": Decimal(100),
+            }
+        )
+    )
+    orders = ConditionImpactOrders(
+        T1=ConditionImpactOrder(notional_usd=venue.impact_tiers.T1.notional_usd, reason=None),
+        T2=ConditionImpactOrder(notional_usd=venue.impact_tiers.T2.notional_usd, reason=None),
+        T3=ConditionImpactOrder(notional_usd=venue.impact_tiers.T3.notional_usd, reason=None),
+    )
+    execution = type(source).model_validate(source.model_copy(update={"orders": orders, "books": (book,)}))
+    fragment_interval = ConditionInterval(window="W15M", start=AT - timedelta(minutes=15), cutoff=AT)
+    funding = ConditionFundingConfirmationGraph(
+        token_id="T",
+        assembled_at=source.assembled_at,
+        cutoff=AT,
+        primary=(),
+        independent=(),
+        normal_range_8h=DecimalRange(bounds=None, reason="INCOMPLETE"),
+    )
+    fragment = ConditionFragmentationGraph(
+        token_id="T",
+        assembled_at=source.assembled_at,
+        interval=fragment_interval,
+        price_pairs=(),
+        price_confirmations=(),
+        funding=funding,
+        flow_capture=(),
+        top_sign_history=ConditionTopVenueSignHistory(
+            token_id="T", interval=basic.interval, selected_venues=(), windows=()
+        ),
+    )
+    graph = EnrichedConditionLiquidity(
+        kind="ENRICHED",
+        token_id="T",
+        assembled_at=source.assembled_at,
+        interval=basic.interval,
+        measurement_band_percent=basic.measurement_band_percent,
+        per_venue=basic.per_venue,
+        current_depth=basic.current_depth,
+        previous_depth=basic.previous_depth,
+        elasticity=basic.elasticity,
+        replenishment=basic.replenishment,
+        fragmentation=fragment,
+        execution=execution,
+        vol_compression=ConditionVolatilityCompression(
+            token_id="T",
+            reference_venue=None,
+            cutoff=AT,
+            window="W24H",
+            realized=UnavailableConditionVolatility(status="UNAVAILABLE", value=None, reason="INCOMPLETE"),
+            normal_range=FloatRange(bounds=None, reason="INCOMPLETE"),
+        ),
+    )
+    value = graph.execution.split_slippage("T1")
+    assert isinstance(value, ObservedConditionSlippage) and value.value == pytest.approx(100)
+    best = graph.best_single_venue_slippage("T1")
+    assert best.value is None
+    with pytest.raises(ValidationError, match="selected book cohort"):
+        type(graph).model_validate(
+            graph.model_copy(update={"execution": execution.model_copy(update={"books": ()})})
+        )
+
+
+def test_missing_volatility_reference_does_not_invent_a_venue_for_an_unavailable_measurement() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionVolatilityCompression,
+        ObservedConditionVolatility,
+        UnavailableConditionVolatility,
+    )
+
+    graph = ConditionVolatilityCompression(
+        token_id="T",
+        reference_venue=None,
+        cutoff=AT,
+        window="W24H",
+        realized=UnavailableConditionVolatility(status="UNAVAILABLE", value=None, reason="INCOMPLETE"),
+        normal_range=FloatRange(bounds=None, reason="INCOMPLETE"),
+    )
+    assert graph.classification().value is None
+    with pytest.raises(ValidationError, match="actual reference venue"):
+        type(graph).model_validate(
+            graph.model_copy(
+                update={
+                    "realized": ObservedConditionVolatility(
+                        status="OBSERVED",
+                        value=0.0,
+                        completed_hour=Timestamp(
+                            value="2026-10-17T12:00:00Z", precision=None, precision_reason="NOT_CAPTURED"
+                        ),
+                        return_count=24,
+                        resolution_s=3600,
+                    )
+                }
+            )
+        )
