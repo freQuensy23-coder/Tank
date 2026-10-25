@@ -263,3 +263,10 @@ Named absence and dictionary cases in this tranche:
 - Field freshness can preserve future reported evidence (negative age) only as not fresh; an unavailable cadence cannot authorize a fresh field. Unknown measurement precision stays unknown. Liquidation last-event freshness and stream-watermark evidence remain distinct from complete capture coverage.
 - Selective confidence intentionally does not compute derivative classification readiness: None/NOT_ESTIMABLE is distinct from the full graph's actual boolean. Reduced confidence names its actual first failed input, and HIGH cannot coexist with a failed limiter.
 - The two small rule/profile-field maps in cadence validation are finite policy registries keyed by the closed rule enum, not record-shaped domain bags. Their values name valid collection scopes; they provide no numeric defaults.
+
+
+### Complete timestamp families for sparse replacement
+
+`timestamp_owned_fields(field, precision_aliases=())` is the public pure ownership inventory for one timestamp wire family. It shares canonical precision-name calculation with `propagate_timestamp`, includes the value, canonical/standard precision names and their reason siblings, field reason/bucket anchor/bucket size, and only explicitly requested extra provider aliases. It does not erase unrelated timestamps or generic provider metadata by discovery. Sparse queue/status adapters can remove these owned names before merging the new explicit Timestamp fields, preventing old EXACT aliases or bucket facets from contradicting a new COLLECTION_ONLY clock. The caller owns its actual atomic repository update; this helper performs no mutation or I/O.
+
+All 35 time-precision cases pass with `-n auto`, zero skips, 1.51 seconds; independent source/test strict mypy and Ruff pass. Three new replacement cases demonstrate the original valid EXACT/bucket row, the failed naive merge, correct replacement, preserved unrelated clocks/data, and the canonical published_prec family with an explicitly owned provider alias. Agents owns the actual queue-wake regression and consumer adoption.
