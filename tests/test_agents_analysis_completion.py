@@ -7,6 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture, source_record_fixture
+from native_input_fixtures import acknowledge_native_input
 from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_http_admission
 from test_agents_execution_barrier import config, idle
@@ -166,7 +167,7 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
                 if event["type"] == "user.message":
                     posts.append(request.content)
                 accepted.append(identity)
-                return httpx.Response(200, json={"data": [{"id": identity}]})
+                return httpx.Response(200, json=acknowledge_native_input(request, identity))
             if request.url.path.endswith("/executions"):
                 return httpx.Response(
                     200,
@@ -361,7 +362,9 @@ async def test_ignored_item_keeps_event_and_call_for_next_native_update(
             if request.method == "POST":
                 assert request.url.path == "/v1/sessions/s/events"
                 accepted.append(json.loads(request.content)["events"][0])
-                return httpx.Response(200, json={"data": [{"id": "accepted-" + str(len(accepted))}]})
+                return httpx.Response(
+                    200, json=acknowledge_native_input(request, "accepted-" + str(len(accepted)))
+                )
             if request.url.path.endswith("/executions"):
                 return httpx.Response(
                     200,

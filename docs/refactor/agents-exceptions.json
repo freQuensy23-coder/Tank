@@ -581,7 +581,7 @@
         {
           "path": "src/tank/agents/sessions.py",
           "symbol": "SessionService.__init__",
-          "line": 125
+          "line": 141
         }
       ],
       "kind": "native adapter resource and cache initialization",
@@ -917,7 +917,7 @@
         {
           "path": "src/tank/runtime.py",
           "symbol": "Runtime.close",
-          "line": 478
+          "line": 485
         }
       ],
       "kind": "owned runtime resource lifetime absence",
@@ -1517,12 +1517,12 @@
         {
           "path": "src/tank/runtime.py",
           "symbol": "Runtime.worker",
-          "line": 165
+          "line": 170
         },
         {
           "path": "src/tank/runtime.py",
           "symbol": "Runtime.run",
-          "line": 361
+          "line": 366
         }
       ],
       "kind": "owned timestamp wire serialization",
@@ -1549,12 +1549,12 @@
         {
           "path": "src/tank/agents/sessions.py",
           "symbol": "SessionService.scout_review",
-          "line": 2227
+          "line": 2214
         },
         {
           "path": "src/tank/runtime.py",
           "symbol": "Runtime.scout_review",
-          "line": 161
+          "line": 166
         }
       ],
       "kind": "native read/reference and worker serialization boundary",
@@ -1585,12 +1585,12 @@
         {
           "path": "tests/test_agents.py",
           "symbol": "settings",
-          "line": 28
+          "line": 32
         },
         {
           "path": "tests/test_agents_session_audit.py",
           "symbol": "settings",
-          "line": 21
+          "line": 23
         }
       ],
       "kind": "typed fixture behavior port and literal configuration namespace",
@@ -1607,32 +1607,32 @@
         {
           "path": "src/tank/runtime.py",
           "symbol": "Runtime.validate",
-          "line": 114
+          "line": 119
         },
         {
           "path": "src/tank/runtime.py",
           "symbol": "Runtime.prepare",
-          "line": 119
+          "line": 124
         },
         {
           "path": "src/tank/agents/sessions.py",
           "symbol": "SessionService.admission",
-          "line": 2210
+          "line": 2197
         },
         {
           "path": "src/tank/agents/sessions.py",
           "symbol": "SessionService.running_session_cap",
-          "line": 2218
+          "line": 2205
         },
         {
           "path": "src/tank/agents/sessions.py",
           "symbol": "SessionService.admit",
-          "line": 2221
+          "line": 2208
         },
         {
           "path": "src/tank/agents/sessions.py",
           "symbol": "SessionService.wake_waiting",
-          "line": 2224
+          "line": 2211
         },
         {
           "path": "src/tank/agents/admission_repository.py",
@@ -1651,6 +1651,218 @@
         "test_runtime_prepare_refuses_missing_admission_capacity_before_gateway_effects",
         "test_admission_factory_requires_a_declared_positive_integer_cap",
         "test_cap_queues_turns_in_order_never_drops_and_running_session_bypasses"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_inputs.py",
+          "symbol": "NativeInputResponse",
+          "line": 54
+        },
+        {
+          "path": "src/tank/agents/native_inputs.py",
+          "symbol": "NativeSentUserMessage",
+          "line": 30
+        },
+        {
+          "path": "src/tank/agents/native_inputs.py",
+          "symbol": "NativeSentToolResult",
+          "line": 35
+        }
+      ],
+      "kind": "documented native response absence",
+      "reason": "The pinned session-events sent schema permits omitted response data and optional nullable processed_at, is_error and session_thread_id. Missing tool-result content is supported, while explicit null content/data is rejected. Omitted data and an empty list produce distinct named unreported observations; malformed reported entries never become absence.",
+      "validation": [
+        "test_provider_can_omit_acknowledged_events",
+        "test_malformed_reported_acknowledgment_cannot_claim_unreported_acceptance"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_inputs.py",
+          "symbol": "parse_native_input",
+          "line": 76
+        },
+        {
+          "path": "src/tank/agents/native_inputs.py",
+          "symbol": "observe_native_input",
+          "line": 80
+        }
+      ],
+      "kind": "native JSON adapter only",
+      "reason": "Input dictionaries are exact persisted request/HTTP JSON documents at the adapter boundary. They decode into a closed one-event request and discriminated sent-event models; services receive named acknowledgment variants. The synthetic response helper serializes the actual posted model and never fabricates missing provider identity.",
+      "validation": [
+        "test_one_executable_input_is_serialized_without_invented_optional_fields",
+        "test_reported_user_event_binds_the_native_input_identity",
+        "test_tool_continuation_acknowledgment_binds_the_posted_call"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.accepted_input_id",
+          "line": 708
+        }
+      ],
+      "kind": "verified unreported native ownership",
+      "reason": "Only a typed unreported acknowledgment returns None. A present acknowledgment must carry one supported event with a nonempty native ID and matching posted type/tool identity before any acceptance write. Initial input, tool continuation and retry all use the same adapter.",
+      "validation": [
+        "test_malformed_acknowledgment_cannot_commit_input_ownership",
+        "test_retained_old_exhausted_new_retrying_sequence_waits_for_actual_outcome",
+        "test_rest_ack_timeout_retains_result_and_reuses_native_ack_body"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_sessions.py",
+          "symbol": "NativeSessionResolution.from_wire",
+          "line": 34
+        },
+        {
+          "path": "src/tank/agents/native_sessions.py",
+          "symbol": "NativeReplayIdentity",
+          "line": 15
+        },
+        {
+          "path": "src/tank/agents/native_sessions.py",
+          "symbol": "NativeStoredSessionBinding.from_record",
+          "line": 334
+        },
+        {
+          "path": "src/tank/agents/native_sessions.py",
+          "symbol": "NativeStoredSessionBinding.verify",
+          "line": 355
+        }
+      ],
+      "kind": "actual alternative identity and historical replay absence",
+      "reason": "Nullable target identities select actual session/event/item/proposal alternatives. Replay is absent for live input; missing historical private replay facets remain unknown and are never padded into captured evidence. Live lookup skips actual replay rows and cannot borrow replay-only origin lineage. Explicit replay requests must match their run and any supplied evidence/source/cutoff binding, including a cutoff declared without a digest. Cutoffs bind exact caller identity labels here; artifact verification remains the replay composition's responsibility, with no time guessing or network authority inferred by this adapter.",
+      "validation": [
+        "test_cached_private_state_does_not_require_invented_replay_provenance",
+        "test_cached_replay_binding_must_match_the_requested_recorded_evidence",
+        "test_replay_identity_requires_explicit_composition_and_real_recorded_metadata",
+        "test_opening_source_lookup_does_not_cross_an_undeclared_replay_scope",
+        "test_live_native_creation_cannot_borrow_a_replay_only_opening_source",
+        "test_declared_unrecorded_cutoff_is_bound_without_inventing_an_evidence_digest"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_sessions.py",
+          "symbol": "NativeSessionIdentity",
+          "line": 88
+        },
+        {
+          "path": "src/tank/agents/native_sessions.py",
+          "symbol": "NativeSessionIdentityMetadata.from_binding",
+          "line": 105
+        },
+        {
+          "path": "src/tank/agents/native_sessions.py",
+          "symbol": "NativeSessionIdentityMetadata.expected_fields",
+          "line": 123
+        }
+      ],
+      "kind": "canonical metadata wire serialization",
+      "reason": "The closed identity model serializes absent live replay_run_id out of the existing canonical fingerprint. Managed replay metadata keys are absent for live sessions; an unreported digest stays absent while an explicitly declared cutoff remains bound to its run. The HTTP metadata protocol permits only string values. expected_fields emits that exact wire namespace for readback comparison; it is not a Mapping-compatible domain facade.",
+      "validation": [
+        "test_typed_identity_marker_preserves_the_existing_canonical_wire_hash",
+        "test_replay_identity_requires_explicit_composition_and_real_recorded_metadata",
+        "test_new_session_confirms_its_requested_immutable_resource_and_metadata_binding"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_sessions.py",
+          "symbol": "NativeSessionHeader",
+          "line": 140
+        },
+        {
+          "path": "src/tank/agents/native_sessions.py",
+          "symbol": "NativeResolvedPromptHeader",
+          "line": 161
+        },
+        {
+          "path": "src/tank/agents/native_sessions.py",
+          "symbol": "observe_native_session",
+          "line": 198
+        },
+        {
+          "path": "src/tank/agents/native_sessions.py",
+          "symbol": "observe_native_session_page",
+          "line": 238
+        }
+      ],
+      "kind": "provider JSON projections and exact fingerprint input",
+      "reason": "Arbitrary provider metadata keys are a real string namespace. Tool JSON schemas, MCP descriptors, multiagent descriptors and provider extension members remain JSON objects only inside this native wire adapter because the exact original prompt representation is fingerprint evidence. Required consumed snapshot identities/fields and object/array shapes validate before AgentProvenance is produced; raw prompt objects do not escape into the service interface or authorize tool execution. Nullable system/multiagent and omitted _oma are specified provider shapes; explicit malformed _oma refuses.",
+      "validation": [
+        "test_prompt_fingerprint_preserves_provider_extension_values_and_number_types",
+        "test_resolved_prompt_facts_are_required_before_provenance_is_recorded",
+        "test_malformed_reported_prompt_extension_cannot_become_a_verified_snapshot",
+        "test_floating_native_skill_version_retains_explicit_incomplete_prompt_provenance"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_sessions.py",
+          "symbol": "NativeResolvedModelIdentity",
+          "line": 150
+        },
+        {
+          "path": "src/tank/agents/native_sessions.py",
+          "symbol": "NativeSessionObservation",
+          "line": 179
+        }
+      ],
+      "kind": "genuinely unreported native effort",
+      "reason": "The provider model permits omitted effort, which stays unknown; explicit null or malformed reported effort rejects. Session creation writes configured_effort separately and uses only observed model.effort for effort, with explicit basis/reason. Configured intent never fills an unreported observation.",
+      "validation": [
+        "test_configured_effort_is_distinct_from_reported_native_effort",
+        "test_malformed_reported_effort_cannot_become_configured_effort",
+        "test_new_native_session_records_observed_effort_without_relabeling_intent"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_sessions.py",
+          "symbol": "NativeOpeningSource",
+          "line": 252
+        }
+      ],
+      "kind": "durable opening-source alternatives",
+      "reason": "Historical source references may have an item_id, an explicit opened_by_item, or neither. The two named origin fields must agree when both are known; no active input or last_payload is inferred as an opening source. An event with no durable opening source refuses before native creation.",
+      "validation": [
+        "test_explicit_opening_source_conflict_is_not_resolved_by_value_order",
+        "test_native_creation_binding_failure_never_commits_a_local_session"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_sessions.py",
+          "symbol": "NativeSessionEndpoint.request",
+          "line": 271
+        },
+        {
+          "path": "src/tank/agents/native_sessions.py",
+          "symbol": "NativeSessionDiscovery.discover_or_create",
+          "line": 287
+        }
+      ],
+      "kind": "HTTP operation absence and discovery state",
+      "reason": "GET has no JSON/idempotency body; POST has no query parameters. Optional page and remote variables represent first-page/no-match state. Required page data/cursor facts never default to an empty page, repeated cursors or identity matches refuse, and exactly one idempotent create is attempted only after exhaustive unambiguous discovery.",
+      "validation": [
+        "test_existing_binding_is_found_after_an_actual_page_boundary_without_creation",
+        "test_ambiguous_discovery_never_creates_a_replacement",
+        "test_contradictory_created_binding_is_not_returned_as_a_success",
+        "test_required_deployment_binding_refuses_before_any_native_effect"
       ]
     }
   ]
