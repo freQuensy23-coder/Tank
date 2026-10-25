@@ -29,6 +29,8 @@ from tank.analysis.condition_graph_contracts import (
     ConditionObservedPredicate,
     ConditionOpenInterest,
     ConditionPredicate,
+    ConditionReferenceTradeEvidenceRef,
+    ConditionReferenceTradeProjection,
     ConditionSpotValues,
     ConditionSynchronizedOpenInterest,
     ConditionWireClocks,
@@ -680,3 +682,46 @@ def encode_scoped_condition_spot(
         result["size_profile"] = None
         result["size_profile_status"] = "NOT_REQUESTED"
     return result
+
+
+def reference_trade_projection_sha256(value: ConditionReferenceTradeProjection) -> str:
+    projection = ConditionReferenceTradeProjection.model_validate(value)
+    serialized: JsonValue = _model_wire(projection)
+    envelope: dict[str, JsonValue] = {
+        "schema": "tank.condition.reference-trade.v1",
+        "projection": serialized,
+    }
+    return sha256(envelope)
+
+
+class ConditionReferenceTradeLookup(Protocol):
+    """Resolve original/effective storage-read trade evidence with qualified SPOT identity.
+
+    The adapter verifies its source descriptor and reprojects the expected token,
+    instrument, market, price and actual clock. Canonical storage-read projections
+    must not be described as original provider HTTP bytes.
+    """
+
+    def resolve_reference_trade(
+        self, reference: ConditionReferenceTradeEvidenceRef, *, expected: ConditionReferenceTradeProjection
+    ) -> Mapping[str, JsonValue]: ...
+
+
+class ConditionRelativeEvidenceLookup(ConditionFlowEvidenceLookup, ConditionReferenceTradeLookup, Protocol):
+    pass
+
+
+def reference_trade_evidence_wire(
+    value: ConditionReferenceTradeProjection,
+    reference: ConditionReferenceTradeEvidenceRef,
+    evidence: ConditionReferenceTradeLookup,
+) -> dict[str, JsonValue]:
+    projection = ConditionReferenceTradeProjection.model_validate(value)
+    validated = ConditionReferenceTradeEvidenceRef.model_validate(reference)
+    if validated.projection_sha256 != reference_trade_projection_sha256(projection):
+        raise ValueError("Reference trade evidence does not match its declared projection")
+    resolved = evidence.resolve_reference_trade(validated, expected=projection)
+    checked = JsonDocument.validate_value(dict(resolved))
+    if not isinstance(checked, dict):
+        raise TypeError("Reference trade evidence must serialize as an object")
+    return deepcopy(checked)

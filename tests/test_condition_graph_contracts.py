@@ -1478,8 +1478,13 @@ def relative_graph_without_event() -> ConditionRelativeGraph:
         reason="INCOMPLETE",
     )
     anchor_at = AT - timedelta(hours=4)
+    from tank.analysis.condition_graph_contracts import UndeclaredConditionDirection
+
     return ConditionRelativeGraph(
         token_id="T",
+        direction_declaration=UndeclaredConditionDirection(
+            status="UNDECLARED", value=None, reason="DIRECTION_NOT_DECLARED"
+        ),
         reference_instrument_id="spot:i",
         reference_reason=None,
         reference_coverage={

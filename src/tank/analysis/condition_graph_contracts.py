@@ -2353,8 +2353,24 @@ class UnavailableConditionReferencePrice(DomainModel):
 type ConditionReferencePrice = ObservedConditionReferencePrice | UnavailableConditionReferencePrice
 
 
+class ConditionReferenceTradeProjection(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    market_type: Literal["SPOT"]
+    source: Literal["LAST_TRADE"]
+    price: Decimal = Field(gt=0)
+    observed_at: Timestamp
+
+    @model_validator(mode="after")
+    def actual_trade_clock(self) -> Self:
+        if self.observed_at.value is None:
+            raise ValueError("An anchor trade projection requires its actual source clock")
+        return self
+
+
 class ConditionReferenceTradeEvidenceRef(DomainModel):
     projection_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class ConditionDeclaredEventAnchor(DomainModel):
@@ -2504,8 +2520,39 @@ class UnrequestedConditionOutcomeRanges(DomainModel):
     status: Literal["NOT_REQUESTED"]
 
 
+type ConditionDirectionValue = (
+    Literal["BULLISH", "BEARISH", "LOSER"] | Annotated[int | float, BeforeValidator(require_number)]
+)
+
+
+class DeclaredConditionDirection(DomainModel):
+    status: Literal["DECLARED"]
+    value: ConditionDirectionValue
+
+    @field_validator("value")
+    @classmethod
+    def actual_numeric_direction(cls, value: ConditionDirectionValue) -> ConditionDirectionValue:
+        if not isinstance(value, str) and value not in (-1, 1):
+            raise ValueError("A numeric direction declaration must be exactly negative or positive one")
+        return value
+
+    def normalized(self) -> Literal["BUY", "SELL"]:
+        validated = type(self).model_validate(self)
+        return "SELL" if validated.value in ("BEARISH", "LOSER", -1) else "BUY"
+
+
+class UndeclaredConditionDirection(DomainModel):
+    status: Literal["UNDECLARED"]
+    value: None
+    reason: Literal["DIRECTION_NOT_DECLARED"]
+
+
+type ConditionDirectionDeclaration = DeclaredConditionDirection | UndeclaredConditionDirection
+
+
 class ConditionRelativeGraph(DomainModel):
     token_id: str = Field(min_length=1, pattern=r"\S")
+    direction_declaration: ConditionDirectionDeclaration
     reference_instrument_id: str | None = Field(min_length=1, pattern=r"\S")
     reference_coverage: dict[
         Annotated[str, Field(min_length=1, pattern=r"\S")], ConditionPriceReferenceCoverage
@@ -2621,11 +2668,23 @@ class ConditionRelativeGraph(DomainModel):
                     )
         for iid, coverage in self.reference_coverage.items():
             for group in coverage.boundary_segments:
-                if any(aggregate.instrument_id != iid for aggregate in group.aggregates):
+                if any(
+                    aggregate.instrument_id != iid
+                    or aggregate.token_id != self.token_id
+                    or aggregate.market_type != "SPOT"
+                    for aggregate in group.aggregates
+                ):
                     raise ValueError(
                         "Reference coverage cannot borrow another instrument's boundary evidence"
                     )
         if isinstance(self.repricing, DeclaredConditionRepricing):
+            if (
+                not isinstance(self.direction_declaration, DeclaredConditionDirection)
+                or self.direction_declaration.normalized() != self.repricing.direction
+            ):
+                raise ValueError(
+                    "Directional repricing must preserve its actual captured direction declaration"
+                )
             if not isinstance(self.anchor.origin, ConditionDeclaredEventAnchor):
                 raise ValueError("Directional event repricing requires a real declared event anchor")
             event, day = self.windows["EVENT"], self.windows["W24H"]
@@ -2637,6 +2696,10 @@ class ConditionRelativeGraph(DomainModel):
                 raise ValueError(
                     "Repricing inputs must preserve the actual selected relative returns and baselines"
                 )
+        elif isinstance(self.repricing, UndeclaredConditionRepricingDirection) and not isinstance(
+            self.direction_declaration, UndeclaredConditionDirection
+        ):
+            raise ValueError("A captured direction cannot be mislabeled as undeclared")
         elif isinstance(self.anchor.origin, ConditionAnalysisWindowStart) and not isinstance(
             self.repricing, UnavailableConditionEventRepricing
         ):

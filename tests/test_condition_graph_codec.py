@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
@@ -15,6 +16,8 @@ from tank.analysis.condition_graph_codec import (
 from tank.analysis.condition_graph_contracts import (
     BasicConditionDerivatives,
     ConditionFlowAggregateProjection,
+    ConditionReferenceTradeEvidenceRef,
+    ConditionReferenceTradeProjection,
     ConditionSizeProfile,
     ConditionWireClocks,
     EnrichedConditionSpot,
@@ -855,3 +858,84 @@ def test_enriched_spot_wire_preserves_actual_shared_cohorts_and_unknown_prior_ve
     other = comparisons["W15M"]["other"]
     assert isinstance(other, dict) and other["volume"] == "30" and "status" not in other
     assert comparisons["W15M"]["reason"] is None
+
+
+class ReferenceTradeEvidence:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.wire: dict[str, JsonValue] = {
+            "token_id": "T",
+            "instrument_id": "opaque-spot-iid",
+            "market_type": "SPOT",
+            "p": "12.50",
+            "ts": "2026-10-17T10:59:00Z",
+            "provider_note": {"exact": "retained"},
+        }
+        self.original = deepcopy(self.wire)
+
+    def source_digest(self) -> str:
+        return sha256(
+            {"schema": "fixture.storage-read-reference.v1", "original": self.original, "effective": self.wire}
+        )
+
+    def projection(self) -> ConditionReferenceTradeProjection:
+        from tank.time_precision import Timestamp
+
+        token, instrument, price, stamp = (
+            self.wire[name] for name in ("token_id", "instrument_id", "p", "ts")
+        )
+        if (
+            not isinstance(token, str)
+            or not isinstance(instrument, str)
+            or not isinstance(price, str)
+            or not isinstance(stamp, str)
+            or self.wire["market_type"] != "SPOT"
+        ):
+            raise ValueError("Invalid fixture storage-read trade")
+        return ConditionReferenceTradeProjection(
+            token_id=token,
+            instrument_id=instrument,
+            market_type="SPOT",
+            source="LAST_TRADE",
+            price=Decimal(price),
+            observed_at=Timestamp(value=stamp, precision=None, precision_reason="NOT_CAPTURED"),
+        )
+
+    def resolve_reference_trade(
+        self, reference: ConditionReferenceTradeEvidenceRef, *, expected: ConditionReferenceTradeProjection
+    ) -> Mapping[str, JsonValue]:
+        from tank.analysis.condition_graph_codec import reference_trade_projection_sha256
+
+        self.calls += 1
+        if (
+            reference.source_evidence_sha256 != self.source_digest()
+            or self.projection() != expected
+            or reference.projection_sha256 != reference_trade_projection_sha256(expected)
+        ):
+            raise ValueError("Reference source evidence mismatch")
+        return self.wire
+
+
+def test_reference_trade_wire_binds_source_descriptor_and_actual_projection_before_rejoin() -> None:
+    from tank.analysis.condition_graph_codec import (
+        reference_trade_evidence_wire,
+        reference_trade_projection_sha256,
+    )
+
+    source = ReferenceTradeEvidence()
+    projection = source.projection()
+    reference = ConditionReferenceTradeEvidenceRef(
+        projection_sha256=reference_trade_projection_sha256(projection),
+        source_evidence_sha256=source.source_digest(),
+    )
+    wire = reference_trade_evidence_wire(projection, reference, source)
+    assert source.calls == 1 and wire == source.wire
+    wire["provider_note"] = {"exact": "changed"}
+    assert source.wire["provider_note"] == {"exact": "retained"}
+    with pytest.raises(ValueError, match="declared projection"):
+        reference_trade_evidence_wire(projection.model_copy(update={"token_id": "OTHER"}), reference, source)
+    assert source.calls == 1
+    source.wire["p"] = "13.50"
+    with pytest.raises(ValueError, match="source evidence mismatch"):
+        reference_trade_evidence_wire(projection, reference, source)
+    assert source.original["p"] == "12.50"
