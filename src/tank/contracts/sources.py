@@ -505,3 +505,20 @@ class SourceFilingRegistryView(DomainModel):
             for entity in wire.entities
         ]
         return cls(tokens=token_labels, entities=entity_labels)
+
+
+class AccountProbeResponse(DomainModel):
+    handle: str = Field(min_length=1)
+    http_status: int = Field(ge=100, le=599)
+    exists: None = None
+    identity_status: Literal["REQUIRES_OWNER_EVIDENCE"] = "REQUIRES_OWNER_EVIDENCE"
+    role: SourceAuthorRole
+
+
+class AccountProbeFailure(DomainModel):
+    handle: str = Field(min_length=1)
+    exists: None = None
+    error: str = Field(min_length=1)
+
+
+type AccountProbeResult = AccountProbeResponse | AccountProbeFailure

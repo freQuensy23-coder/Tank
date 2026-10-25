@@ -499,3 +499,53 @@ The complete owned unit selection after this backend activation passes 496 cases
 in 6.33s, zero skips (owned-explicit-backend-unit.xml). The two actual PostgreSQL
 admission cases remain the focused physical proof; the full integration/E2E cohort
 must wait for the coordinated required constructor/resource companions.
+
+
+### Remaining source transports enter admission
+
+`XSensor` now requires `HttpAdmission` and admits its actual built actor request,
+including each redirect, before I/O. Its explicit 130-second actor timeout,
+Authorization header, account/cursor body, raw response and cursor/degradation
+rules remain intact. Actor requests require the declared HTTPS api.apify.com
+destination; redirects cannot send a run to another host. Missing token still
+fails before any request. The actor's uncaptured API quota remains an explicit
+unconfigured-policy outcome; this does not invent a quota or start additional
+paid runs. Existing configured S29 acquisition/cost/cadence ownership remains
+the authorization boundary.
+
+`SourceHttpTransport.send` is the actual-request entry point shared by reader,
+actor and diagnostic adapters; `request` performs the standard feed request
+build before that same loop. Source smoke probes now use this admitted redirect
+transport with the configured headers and form/body. Public account diagnostics
+use the actual built query request and wait for empirical host blocks. They
+return strict response/failure models. HTTP status alone cannot establish an
+account's existence or organizational authority: `exists=None` and
+`identity_status=REQUIRES_OWNER_EVIDENCE` are explicit diagnostic semantics,
+with the actual HTTP status retained. No source authority is changed by a probe.
+
+Retained X adapter cases: token=None is legitimate when S29 is inactive and
+causes an explicit error if a run is requested; optional successful-account/run
+error text is provider telemetry. Failed-account omitted historyGap means no
+reported gap and never permits cursor advancement, because that account remains
+an explicit failed read. Run-level failed health requires nonblank run error or
+a concrete failed-account reason; blank run telemetry cannot hide the real
+account failure. Degraded health without a detailed reason produces the exact
+RUN_DEGRADED status witness, never a fabricated cause. Cursor/report lookups are
+genuinely associative, and missing requested reports/cursors become explicit
+failures. Extra actor telemetry remains only in retained raw bytes. Required
+successful-account post counts/history-gap facets and post identity/aware
+publication fields still validate strictly.
+
+Evidence before the final failed-run edge regression: 205 source/admission units
+pass in 3.11s. Real transport tests prove unbound scope cannot start the paid
+actor, cross-host actor redirect refuses before second I/O, and 200/404/503 public
+diagnostics wait for observed blocks while retaining unknown identity. The
+source configuration, common HTTP transport and X adapter are strict-mypy clean;
+the X test module still has five calls into the currently untyped polling API,
+which remains explicitly open. Probe result/workflow typing also remains open.
+
+
+Final scoped transport proof: 206 source/admission units pass in 3.11s after
+the blank failed-run evidence edge is closed; the three completed source modules
+remain strict-mypy clean. This adds no cross-owner constructor requirement beyond
+the already-coordinated SourceService budget port.

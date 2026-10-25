@@ -29,6 +29,14 @@ class SourceHttpTransport:
             json=feed.body if feed.method == "POST" else None,
             data=feed.form if feed.method == "POST" else None,
         )
+        return await self.send(feed, request, on_start)
+
+    async def send(
+        self,
+        feed: HttpFetchPlan,
+        request: httpx.Request,
+        on_start: RequestStarted | None,
+    ) -> httpx.Response:
         for redirect in range(self.client.max_redirects + 1):
             if is_exchange_url(str(request.url)):
                 raise ValueError("Source redirect requires exchange capture transport")

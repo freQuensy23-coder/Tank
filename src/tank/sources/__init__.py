@@ -22,6 +22,9 @@ from tank.contracts.http_policy import HttpRefused
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.source_items import SourceText, captured_item
 from tank.contracts.sources import (
+    AccountProbeFailure,
+    AccountProbeResponse,
+    AccountProbeResult,
     HttpFetchPlan,
     SourceAccountRegistryView,
     SourceApiLimitsConfiguration,
@@ -81,7 +84,9 @@ class SourceService:
         )
         self.transport = SourceHttpTransport(self.http, self._admit_request)
         self.owns_http = http is None
-        self.xsensor = XSensor(self.http, getattr(settings, "apify_api_token", None))
+        self.xsensor = XSensor(
+            self.http, getattr(settings, "apify_api_token", None), admission=self.http_admission
+        )
         self.configuration = cfg
         self.sources = {source.source_id: source for source in cfg.sources}
         self.source_host_limits: dict[str, int] = {}
@@ -304,23 +309,18 @@ class SourceService:
             )
         return results
 
-    async def _account_checks(self):
-        results = []
+    async def _account_checks(self) -> list[AccountProbeResult]:
+        results: list[AccountProbeResult] = []
         for handle, account in self.accounts.items():
             try:
-                response = await self.http.get(
-                    "https://publish.twitter.com/oembed", params={"url": f"https://x.com/{handle}"}
-                )
+                plan = HttpFetchPlan(url="https://publish.twitter.com/oembed")
+                request = self.http.build_request("GET", plan.url, params={"url": f"https://x.com/{handle}"})
+                response = await self.transport.send(plan, request, None)
                 results.append(
-                    {
-                        "handle": handle,
-                        "exists": response.status_code == 200,
-                        "identity_status": "REQUIRES_OWNER_EVIDENCE",
-                        "role": account.role,
-                    }
+                    AccountProbeResponse(handle=handle, http_status=response.status_code, role=account.role)
                 )
             except httpx.HTTPError as exc:
-                results.append({"handle": handle, "exists": None, "error": str(exc)})
+                results.append(AccountProbeFailure(handle=handle, error=type(exc).__name__))
         return results
 
     async def close(self):
