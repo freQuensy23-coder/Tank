@@ -7,6 +7,7 @@ import pytest
 import yaml
 
 from tank.contracts.configuration import DeliveryConfiguration
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.sources import SourceConfiguration
 from tank.settings import Settings, resolve_versions
 
@@ -276,3 +277,35 @@ def test_declared_empty_role_password_keeps_its_declared_host_instead_of_local_f
     assert settings.openma_database_url == "postgresql://oma:@postgres:5432/oma"
     explicit = Settings(_env_file=None, tank_db_password="", database_url="postgresql:///explicit")
     assert explicit.database_url == "postgresql:///explicit"
+
+
+def test_version_identity_requires_capture_and_detects_post_capture_relabelling(tmp_path: Path) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "rules.yaml").write_text("value: 1\n")
+    intake = Settings(config_dir=config, data_dir=tmp_path / "data", _env_file=None)
+    with pytest.raises(ValueError, match="requires resolve_versions"):
+        intake.require_versions()
+    declared_intake = Settings(
+        config_dir=config, config_version="declared-release", code_version="0.1.0", _env_file=None
+    )
+    with pytest.raises(ValueError, match="requires resolve_versions"):
+        declared_intake.require_versions()
+    resolved = resolve_versions(intake)
+    identity = resolved.require_versions()
+    assert identity.config_version == resolved.config_version
+    assert identity.code_version == resolved.code_version
+    (config / "rules.yaml").write_text("value: 2\n")
+    assert resolved.require_versions() == identity
+    with pytest.raises(ValueError, match="no longer matches"):
+        resolved.model_copy(update={"config_version": "different-label"}).require_versions()
+    assert (
+        ResolvedVersionIdentity(config_version="declared-release", code_version="0.1.0").code_version
+        == "0.1.0"
+    )
+
+
+@pytest.mark.parametrize("config_version", ["", " ", "unversioned", "UNKNOWN"])
+def test_version_identity_refuses_empty_or_unknown_provenance(config_version: str) -> None:
+    with pytest.raises(ValueError):
+        ResolvedVersionIdentity(config_version=config_version, code_version="declared-code")
