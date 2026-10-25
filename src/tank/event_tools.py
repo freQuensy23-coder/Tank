@@ -25,6 +25,7 @@ from tank.analysis.identity import (
 )
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.analysis.watch_contracts import WatchCondition
+from tank.contracts.source_repository import SourceExtractionRepository
 from tank.contracts.tool_schema import SCOPED_TOOLS as SCOPED_TOOLS
 from tank.contracts.tool_schema import validate_schema as validate_schema
 from tank.ops_progress import event_progress, item_progress, tool_progress
@@ -367,6 +368,7 @@ class EventToolService:
         self, repo, settings, market_truth, decision_engine, *, http=None, search=None, reference_clock=None
     ):
         self.repo, self.settings, self.truth, self.engine = repo, settings, market_truth, decision_engine
+        self.source_extraction = SourceExtractionRepository(repo)
         self.http = http
         self.search_service = search
         self.scheduler = None
@@ -376,6 +378,11 @@ class EventToolService:
             if type(reference_clock) is not TrustedFixtureClock or not settings.replay:
                 raise ValueError("Trusted fixture clock requires isolated fixture replay mode")
         self.reference_clock = reference_clock
+
+    async def _complete_source(self, item_id: str) -> None:
+        completed = await self.source_extraction.complete(item_id)
+        if completed is None:
+            raise ValueError("Source item disappeared before accepted extraction completion")
 
     def item_known_at(self, item):
         return (
@@ -525,6 +532,8 @@ class EventToolService:
             async with AsyncExitStack() as locks:
                 if tool == "record_event" and ctx.get("session_id"):
                     await locks.enter_async_context(self.repo.lock("session:" + ctx["session_id"]))
+                if tool in {"record_event", "add_observation"}:
+                    await locks.enter_async_context(self.repo.lock("ingest-dedup"))
                 await locks.enter_async_context(self.repo.transaction())
                 async with self.repo.lock(
                     "event:" + str(event_id or ctx.get("session_id") or arguments.get("item_id"))
@@ -1270,10 +1279,7 @@ class EventToolService:
                 **self.provenance(c),
             ),
         )
-        item["extraction_status"] = "DONE"
-        item.pop("extraction_decision", None)
-        item.pop("extraction_reason", None)
-        await self.repo.put("ingest.source_items", item["item_id"], item)
+        await self._complete_source(item["item_id"])
         await item_progress(
             self.repo, self.settings, item["item_id"], "EVENT_RECORDED", x["statement"], event_id=eid
         )
@@ -1526,10 +1532,7 @@ class EventToolService:
                 **self.provenance(c),
             ),
         )
-        item["extraction_status"] = "DONE"
-        item.pop("extraction_decision", None)
-        item.pop("extraction_reason", None)
-        await self.repo.put("ingest.source_items", item["item_id"], item)
+        await self._complete_source(item["item_id"])
         await item_progress(
             self.repo, self.settings, item["item_id"], "OBSERVATION_ADDED", link, event_id=event["event_id"]
         )
