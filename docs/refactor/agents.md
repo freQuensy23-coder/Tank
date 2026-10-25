@@ -741,3 +741,24 @@ observations without importing native transport code. The move changes no
 field, default or lifecycle behavior; 19 reader/tool-confirmation cases pass
 in 2.15 seconds, and the inward contract/adapter/test independent strict gate
 passes.
+
+## Durable outbound ownership work in progress
+
+The separate outbound branch begins with JournalInputLineage,
+ToolInputLineage and NativeInputOwner. Current input identity and its actual
+recorded retry count can prove ownership; explicit native_input_attempts entries
+prove older attempts. A superseded ID without an ordinal is unknown historical
+lineage, not an array-position retry count. A tool callback without a recorded
+retry count cannot acquire attempt zero. Conflicting journal owners refuse.
+
+A known native execution can still rebind an obsolete active pointer to its
+actual acknowledged journal owner. The owner resolver therefore validates the
+journal identities and accepted lineage before the process_event write guard
+validates the newly established pointer. It does not use an inconsistent active
+pointer to infer a source.
+
+Forty ownership/native-retry/execution-barrier cases pass in 4.97 seconds,
+including the actual acknowledged-execution rebind. The new pure model and
+service-boundary tests pass independent strict mypy. Pending/accepted/retry
+intent phase models and durable write/recovery migration remain work in
+progress; this checkpoint is not a release of the outbound slice.

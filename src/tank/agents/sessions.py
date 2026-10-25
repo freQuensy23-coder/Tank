@@ -23,6 +23,7 @@ from tank.agents.admission import SessionAdmission
 from tank.agents.admission_repository import admission_candidate, build_admission
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
 from tank.agents.context_binding import ContextBinding
+from tank.agents.input_ownership import JournalInputLineage, NativeInputOwner, ToolInputLineage
 from tank.agents.native_inputs import (
     AcceptedNativeInput,
     NativeInput,
@@ -70,6 +71,7 @@ from tank.agents.tool_contracts import (
 from tank.agents.wire import tool_wire_result
 from tank.agents.workflow import SOURCE_COMPLETION_VERSION
 from tank.contracts.json import decode_json
+from tank.contracts.native_readback import NativeSessionReference
 from tank.contracts.openma import (
     ManagedAgentName,
     ManagedToolManifest,
@@ -733,27 +735,38 @@ class SessionService:
         """Only a validated reported input establishes native execution ownership."""
         return response.event_id if isinstance(response, AcceptedNativeInput) else None
 
-    async def native_input_owner(self, session, execution_id):
-        """Resolve exact accepted-input lineage, including tool-result continuations."""
-        if not execution_id:
+    async def native_input_owner(
+        self, session: dict[str, JsonValue], execution_id: str | None
+    ) -> NativeInputOwner | None:
+        """Resolve only actual recorded accepted-input lineage, including tool continuations."""
+        if execution_id is None:
             return None
-        messages = {row["message_id"]: row for row in session.get("message_log", [])}
-        for message in messages.values():
-            if execution_id == message.get("remote_event_id") or execution_id in message.get(
-                "superseded_native_input_ids", []
-            ):
-                attempt = message.get("native_input_attempts", {}).get(execution_id)
-                if attempt is None:
-                    attempt = (
-                        message.get("retry_count", 0)
-                        if execution_id == message.get("remote_event_id")
-                        else message.get("superseded_native_input_ids", []).index(execution_id)
-                    )
-                return message["message_id"], attempt
-        async for call in self.repo.iter_all("ops.tool_calls", filters={"session_id": session["session_id"]}):
-            if call.get("remote_event_id") == execution_id and call.get("native_turn_message_id") in messages:
-                return call["native_turn_message_id"], call.get("native_turn_retry_count", 0)
-        return None
+        if not execution_id:
+            raise ValueError("Native execution identity must be nonempty")
+        journal = session.get("message_log", [])
+        if not isinstance(journal, list):
+            raise ValueError("Native input journal must be an array")
+        lineages: dict[str, JournalInputLineage] = {}
+        for raw in journal:
+            if not isinstance(raw, dict):
+                raise ValueError("Native input journal message must be an object")
+            lineage = JournalInputLineage.from_record(raw)
+            if lineage.message_id in lineages:
+                raise ValueError("Native input journal repeats a message identity")
+            lineages[lineage.message_id] = lineage
+        owners = {
+            owner for lineage in lineages.values() if (owner := lineage.owner(execution_id)) is not None
+        }
+        sid = NativeSessionReference.model_validate({"session_id": session["session_id"]}).session_id
+        async for call in self.repo.iter_all("ops.tool_calls", filters={"session_id": sid}):
+            if call.get("remote_event_id") != execution_id:
+                continue
+            owner = ToolInputLineage.from_record(call).owner(execution_id, frozenset(lineages))
+            if owner is not None:
+                owners.add(owner)
+        if len(owners) > 1:
+            raise ValueError("Native input has conflicting journal ownership")
+        return next(iter(owners)) if owners else None
 
     async def execution_barrier(self, session, calls=None, *, verify_remote=False):
         """Correlate accepted inputs with native execution receipts, never idle timing."""
@@ -954,7 +967,7 @@ class SessionService:
             owner = await self.native_input_owner(session, execution_id)
             if not owner:
                 continue
-            message_id, attempt = owner
+            message_id, attempt = owner.message_id, owner.attempt
             if attempt < attempts.get(message_id, attempt):
                 continue
             if attempt > attempts.get(message_id, attempt):
@@ -1750,9 +1763,11 @@ class SessionService:
             }:
                 owner = await self.native_input_owner(session, event["execution_id"])
                 if owner:
-                    session["active_message_id"] = owner[0]
+                    session["active_message_id"] = owner.message_id
                     ContextBinding.from_session(session)
-                    event = dict(event, _host_turn_message_id=owner[0], _host_turn_retry_count=owner[1])
+                    event = dict(
+                        event, _host_turn_message_id=owner.message_id, _host_turn_retry_count=owner.attempt
+                    )
                 elif kind in {
                     "agent.custom_tool_use",
                     "session.error",
