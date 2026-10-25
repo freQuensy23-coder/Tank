@@ -6,14 +6,22 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const lanes = {
   "local-unit": [
     "deploy/openma-entrypoint.test.mjs",
-    "deploy/openma_lifecycle/retained-session.test.mjs",
-    "deploy/openma_lifecycle/boxlite-provider.test.mjs",
-    "deploy/openma_lifecycle/node-lifecycle.test.mjs",
-    "deploy/openma_lifecycle/replay-attachment.test.mjs",
+    "tests/openma/agents/tool-config.test.mjs",
+    "tests/openma/lifecycle/retained-session.test.mjs",
+    "tests/openma/lifecycle/boxlite-provider.test.mjs",
+    "tests/openma/lifecycle/guest-filesystem.test.mjs",
+    "tests/openma/lifecycle/durable-publication.test.mjs",
+    "tests/openma/lifecycle/node-lifecycle.test.mjs",
+    "tests/openma/lifecycle/replay-attachment.test.mjs",
+    "tests/openma/lifecycle/image-upgrade.test.mjs",
+    "tests/openma/lifecycle/runtime-identity.test.mjs",
+    "tests/openma/lifecycle/image-recovery.test.mjs",
+    "tests/openma/lifecycle/memory-bindings.test.mjs",
   ],
   "local-contract": [
     "deploy/openma_lifecycle/native-qualification.test.mjs",
-    "deploy/openma_replay/replay-evidence.test.mjs",
+    "tests/openma/replay/replay-evidence.test.mjs",
+    "tests/openma/lifecycle/workspace-transfer.test.mjs",
   ],
 };
 
@@ -34,6 +42,8 @@ if (Number(process.versions.node.split(".")[0]) < 24) {
 const result = spawnSync(
   process.execPath,
   [
+    "--import", resolve(root, "scripts/node-typescript-loader.mjs"),
+    "--experimental-transform-types",
     "--experimental-test-module-mocks",
     "--test",
     "--test-reporter=tap",

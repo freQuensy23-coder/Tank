@@ -102,6 +102,75 @@ def test_new_commit_gets_its_own_feedback_budget():
     assert BUDGET["origin"](event, run) == BUDGET["timestamp"](run["created_at"])
 
 
+@pytest.mark.parametrize("action", ["opened", "synchronize"])
+def test_rerun_uses_its_attempt_creation_before_queue_and_setup(action):
+    calls = []
+    event = {"action": action, "pull_request": {"created_at": "2026-10-22T12:00:00Z"}}
+
+    def api(suffix, method, deadline):
+        calls.append((suffix, method, deadline))
+        if not suffix:
+            return {"created_at": "2026-10-23T12:00:00Z", "run_attempt": 2}
+        if suffix == "/attempts/2":
+            return {
+                "created_at": "2026-10-23T12:10:01Z",
+                "run_started_at": "2026-10-23T12:10:00Z",
+                "run_attempt": 2,
+            }
+        assert suffix == "/attempts/2/jobs?per_page=100&page=1"
+        return {"jobs": passed_jobs("2026-10-23T12:11:40Z"), "total_count": len(passed_jobs())}
+
+    outcome = BUDGET["watch"](
+        event,
+        api,
+        now=lambda: BUDGET["timestamp"]("2026-10-23T12:11:41Z"),
+        sleep=lambda _: pytest.fail("the current attempt is complete"),
+    )
+
+    assert outcome == {"budget_seconds": 240, "elapsed_seconds": 101}
+    assert calls == [
+        ("", "GET", None),
+        ("/attempts/2", "GET", None),
+        ("/attempts/2/jobs?per_page=100&page=1", "GET", BUDGET["timestamp"]("2026-10-23T12:14:00Z")),
+    ]
+
+
+def test_rerun_queued_past_its_own_budget_is_cancelled():
+    calls = []
+
+    def api(suffix, method, deadline):
+        calls.append((suffix, method))
+        if not suffix:
+            return {"created_at": "2026-10-23T12:00:00Z", "run_attempt": 2}
+        if suffix == "/attempts/2":
+            return {
+                "created_at": "2026-10-23T12:10:00Z",
+                "run_started_at": "2026-10-23T12:13:30Z",
+                "run_attempt": 2,
+            }
+        assert (suffix, method) == ("/force-cancel", "POST")
+        return {}
+
+    with pytest.raises(TimeoutError):
+        BUDGET["watch"](
+            {},
+            api,
+            now=lambda: BUDGET["timestamp"]("2026-10-23T12:14:01Z"),
+            sleep=lambda _: pytest.fail("queue and setup must count"),
+        )
+
+    assert calls == [("", "GET"), ("/attempts/2", "GET"), ("/force-cancel", "POST")]
+
+
+def test_first_attempt_does_not_drop_queue_time():
+    run = {
+        "created_at": "2026-10-23T12:00:00Z",
+        "run_started_at": "2026-10-23T12:03:30Z",
+        "run_attempt": 1,
+    }
+    assert BUDGET["origin"]({}, run) == BUDGET["timestamp"]("2026-10-23T12:00:00Z")
+
+
 def test_budget_waits_for_all_lanes_and_images():
     deadline = BUDGET["timestamp"]("2026-10-23T12:04:00Z")
     jobs = passed_jobs()
