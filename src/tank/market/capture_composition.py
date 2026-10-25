@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.market.capture_contracts import CapturePolicy
 from tank.market.capture_lifecycle import CaptureLifecycle
 from tank.market.capture_ports import CaptureClock
@@ -14,6 +15,8 @@ def build_capture_lifecycle(
     settings: Settings,
     known_tokens: frozenset[str],
     clock: CaptureClock,
+    *,
+    versions: ResolvedVersionIdentity,
 ) -> CaptureLifecycle:
     policy = CapturePolicy(
         thresholds=settings.thresholds(),
@@ -21,8 +24,8 @@ def build_capture_lifecycle(
         request_budget_s=Decimal("30"),
         request_grace_s=Decimal("2"),
         hot_ttl_hours=72,
-        config_version=settings.config_version,
-        code_version=settings.code_version,
+        config_version=versions.config_version,
+        code_version=versions.code_version,
     )
     repository = CaptureRepository(
         store,

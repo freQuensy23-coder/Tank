@@ -667,6 +667,7 @@ async def run_captured_tools(inputs, repo):
     from tank.event_tools import EventToolService
     from tank.settings import Settings
 
+    versions = ResolvedVersionIdentity(config_version=inputs.config_version, code_version=inputs.code_version)
     calls = inputs.config.get("replay_tool_calls")
     if not calls:
         raise ReplayError("insufficient_fixture: missing captured analyst tool calls")
@@ -757,8 +758,11 @@ async def run_captured_tools(inputs, repo):
             service = EventToolService(
                 repo,
                 settings,
-                truth.MarketTruthService(repo, settings, ReplayMarketReader(inputs, evidence)),
+                truth.MarketTruthService(
+                    repo, settings, ReplayMarketReader(inputs, evidence), versions=versions
+                ),
                 DecisionEngine(settings),
+                versions=versions,
                 http=http,
             )
             seeded = set()
@@ -1266,7 +1270,8 @@ async def run_operational_replay(bundle_path, repo, settings, *, http=None):
         input_sha256=hashlib.sha256(Path(bundle_path).read_bytes()).hexdigest(),
     )
     evidence = evidence_view.advance(first_timestamp)
-    truth = MarketTruthService(repo, settings, ReplayMarketReader(inputs, evidence))
+    versions = ResolvedVersionIdentity(config_version=inputs.config_version, code_version=inputs.code_version)
+    truth = MarketTruthService(repo, settings, ReplayMarketReader(inputs, evidence), versions=versions)
     from tank.fixture_reference import TrustedFixtureClock
 
     tools = EventToolService(
@@ -1274,6 +1279,7 @@ async def run_operational_replay(bundle_path, repo, settings, *, http=None):
         settings,
         truth,
         DecisionEngine(settings),
+        versions=versions,
         reference_clock=TrustedFixtureClock(inputs) if inputs.fixture_reference else None,
     )
     client = http or httpx.AsyncClient(timeout=httpx.Timeout(30, read=None))

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from source_support import fixture_versions
 
 from tank.market.service import MarketService
 from tank.util import iso, utcnow
@@ -24,7 +25,7 @@ async def test_close_loader_reads_only_hour_ending_candle_and_reference_flow(set
     repo.iter_range = ranges
     end = utcnow().replace(minute=34, second=17, microsecond=0)
     async with httpx.AsyncClient() as http:
-        service = MarketService(repo, settings, http=http)
+        service = MarketService(repo, settings, http=http, versions=fixture_versions())
         await service.condition_snapshot(
             inst["token_id"], end, requirements=[{"metric": "price.close_vs_level", "window": "W1H"}]
         )
@@ -64,7 +65,7 @@ async def test_native_history_cache_refreshes_late_correction_without_rereading_
 
     repo.iter_range = ranges
     async with httpx.AsyncClient() as http:
-        service = MarketService(repo, settings, http=http)
+        service = MarketService(repo, settings, http=http, versions=fixture_versions())
         service.instruments[perp["instrument_id"]] = perp
         requirements = [{"metric": "deriv.native_oi_chg_pct", "window": "W1H"}]
         first = await service.condition_snapshot(spot["token_id"], end, requirements=requirements)
@@ -96,7 +97,7 @@ async def test_composite_reads_only_dependency_metadata_and_invalidates_old_poin
     repo, settings, inst = setup
     end = utcnow() - timedelta(hours=1)
     async with httpx.AsyncClient() as http:
-        service = MarketService(repo, settings, http=http)
+        service = MarketService(repo, settings, http=http, versions=fixture_versions())
         service._range = AsyncMock(side_effect=AssertionError("no domain payload for composite"))
         req = [{"metric": "market.overall_classification", "window": "W1H"}]
         first = await service.condition_snapshot(inst["token_id"], end, requirements=req)
@@ -136,7 +137,7 @@ async def test_depth_baseline_cache_uses_source_head_and_refreshes_real_change(s
     }
     await repo.put("mkt.book_summaries", "pre-book", point)
     async with httpx.AsyncClient() as http:
-        service = MarketService(repo, settings, http=http)
+        service = MarketService(repo, settings, http=http, versions=fixture_versions())
         original = repo.iter_market_projection
         reads = []
 
@@ -210,7 +211,7 @@ async def test_dc_and_depth_loader_use_bounded_inputs_and_cutoff_safe_latest(set
 
     repo.iter_range = ranges
     async with httpx.AsyncClient() as http:
-        service = MarketService(repo, settings, http=http)
+        service = MarketService(repo, settings, http=http, versions=fixture_versions())
         packet = await service.condition_snapshot(
             inst["token_id"],
             end,
@@ -252,7 +253,7 @@ async def test_native_cache_cutoff_movement_never_leaks_future_or_loses_precolle
             },
         )
     async with httpx.AsyncClient() as http:
-        service = MarketService(repo, settings, http=http)
+        service = MarketService(repo, settings, http=http, versions=fixture_versions())
         service.instruments[perp["instrument_id"]] = perp
         req = [{"metric": "deriv.native_oi_chg_pct", "window": "W1H"}]
         first = await service.condition_snapshot(spot["token_id"], end, requirements=req)
@@ -287,7 +288,7 @@ async def test_composite_semantic_head_detects_newly_eligible_point_behind_late_
             },
         )
     async with httpx.AsyncClient() as http:
-        service = MarketService(repo, settings, http=http)
+        service = MarketService(repo, settings, http=http, versions=fixture_versions())
         req = [{"metric": "mt.move_class", "window": "W1H"}]
         first = await service.condition_snapshot(inst["token_id"], end, requirements=req)
         advanced = await service.condition_snapshot(
@@ -330,7 +331,7 @@ async def test_compact_kline_vectors_preserve_native_precision_and_prove_append_
 
     repo.iter_market_projection = projection
     async with httpx.AsyncClient() as http:
-        service = MarketService(repo, settings, http=http)
+        service = MarketService(repo, settings, http=http, versions=fixture_versions())
         cutoff = start + timedelta(minutes=2)
         first = await service._condition_kline_series(
             inst, start, cutoff, iso(), kind="volume", coverage_count=1
@@ -381,7 +382,7 @@ async def test_projected_flow_restores_declared_aliases_without_inventing_missin
         },
     )
     async with httpx.AsyncClient() as http:
-        service = MarketService(repo, settings, http=http)
+        service = MarketService(repo, settings, http=http, versions=fixture_versions())
         rows, _ = await service._condition_projected_history(
             "mkt.flow_bars_1m",
             "minute_start",
@@ -426,7 +427,7 @@ async def test_rolling_kline_cursor_serves_an_earlier_checkpoint_without_rereadi
 
     async def fresh(window_start, cutoff, kind):
         async with httpx.AsyncClient() as http:
-            alone = MarketService(repo, settings, http=http)
+            alone = MarketService(repo, settings, http=http, versions=fixture_versions())
             return await alone._condition_kline_series(
                 inst, window_start, cutoff, iso(), kind=kind, coverage_count=1, fixed_window=True
             )
@@ -439,7 +440,7 @@ async def test_rolling_kline_cursor_serves_an_earlier_checkpoint_without_rereadi
         )
 
     async with httpx.AsyncClient() as http:
-        service = MarketService(repo, settings, http=http)
+        service = MarketService(repo, settings, http=http, versions=fixture_versions())
         repo.iter_market_projection = projection
         for kind in ("price", "volume"):
             reads.clear()
@@ -548,7 +549,7 @@ async def test_rolling_kline_cursor_serves_an_older_assembly_clock_without_later
         )
 
     async with httpx.AsyncClient() as http:
-        service = MarketService(repo, settings, http=http)
+        service = MarketService(repo, settings, http=http, versions=fixture_versions())
         repo.iter_market_projection = projection
         older = iso(utcnow() - timedelta(minutes=10))
         await series(service, iso())
@@ -557,7 +558,9 @@ async def test_rolling_kline_cursor_serves_an_older_assembly_clock_without_later
         repo.iter_market_projection = original
         async with httpx.AsyncClient() as other:
             assert list(behind["values"]) == list(
-                (await series(MarketService(repo, settings, http=other), older))["values"]
+                (await series(MarketService(repo, settings, http=other, versions=fixture_versions()), older))[
+                    "values"
+                ]
             )
         repo.iter_market_projection = projection
 
@@ -569,5 +572,7 @@ async def test_rolling_kline_cursor_serves_an_older_assembly_clock_without_later
         assert 99.0 not in list(rebuilt["values"])
         repo.iter_market_projection = original
         async with httpx.AsyncClient() as other:
-            fresh = await series(MarketService(repo, settings, http=other), older)
+            fresh = await series(
+                MarketService(repo, settings, http=other, versions=fixture_versions()), older
+            )
         assert list(rebuilt["values"]) == list(fresh["values"])

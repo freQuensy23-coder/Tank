@@ -27,7 +27,7 @@ async def test_scoped_global_and_resolved_fatal_condition_to_actual_decision(
 
     repo = MemoryRepository()
     settings = Settings(data_dir=tmp_path)
-    tools = EventToolService(repo, settings, None, DecisionEngine(settings))
+    tools = EventToolService(repo, settings, None, DecisionEngine(settings), versions=fixture_versions())
     event, ems, beneficiary, market = inputs()
     now = utcnow()
     event.update(current_ems_id="ems", lifecycle="MONITORING")

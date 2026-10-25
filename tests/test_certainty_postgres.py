@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 import pytest
+from source_support import fixture_versions
 
 from tank.event_tools import EventToolService
 from tank.settings import Settings
@@ -18,7 +19,7 @@ async def test_primary_paraphrase_persists_high_in_postgres(tmp_path: Path, post
         pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
     async with postgres_template.repository(url) as repo:
         item_id, event_id = new_id("item"), None
-        service = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+        service = EventToolService(repo, Settings(data_dir=tmp_path), None, None, versions=fixture_versions())
         stamp = iso()
         quote = "The SEC announced approval of the application."
         (tmp_path / "source.txt").write_text(quote)

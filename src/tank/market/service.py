@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import httpx
 
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.market import normalize as norm
 from tank.market.capture import TimeInput
 from tank.market.capture_composition import build_capture_lifecycle
@@ -263,9 +264,10 @@ class _MarketCaptureClock:
 
 
 class MarketService:
-    def __init__(self, repo, settings, *, http=None):
+    def __init__(self, repo, settings, *, versions: ResolvedVersionIdentity, http=None):
         self.repo = repo
         self.settings = settings
+        self.versions = versions
         registry = settings.load_config("registry")
         self.tokens = {r["token_id"]: r for r in registry["tokens"]}
         self.sector_baskets = deepcopy(registry.get("sector_baskets", []))
@@ -292,7 +294,9 @@ class MarketService:
         self._request_locks = {}
         self._request_pace_locks = {}
         self.thresholds = settings.load_config("thresholds")
-        self._capture = build_capture_lifecycle(repo, settings, frozenset(self.tokens), _MarketCaptureClock())
+        self._capture = build_capture_lifecycle(
+            repo, settings, frozenset(self.tokens), _MarketCaptureClock(), versions=versions
+        )
         self.http = (
             httpx.AsyncClient(timeout=30, headers={"User-Agent": settings.user_agent})
             if http is None
@@ -330,7 +334,7 @@ class MarketService:
 
     def provenance(self, row):
         return self._redact(
-            dict(row, config_version=self.settings.config_version, code_version=self.settings.code_version)
+            dict(row, config_version=self.versions.config_version, code_version=self.versions.code_version)
         )
 
     async def _put(self, collection, key, row, *, immutable=False):
@@ -1618,8 +1622,8 @@ class MarketService:
                 preanchor_heads,
                 reference,
                 [i["instrument_id"] for i in selected],
-                self.settings.config_version,
-                self.settings.code_version,
+                self.versions.config_version,
+                self.versions.code_version,
             ]
         )
 
@@ -1851,8 +1855,8 @@ class MarketService:
             "token_id": token_id,
             "anchor": anchor,
             "instruments": instruments,
-            "config_version": self.settings.config_version,
-            "code_version": self.settings.code_version,
+            "config_version": self.versions.config_version,
+            "code_version": self.versions.code_version,
         }
         result.update(requested.fields("cutoff"))
         result.update(requested.fields("requested_cutoff"))
@@ -2102,8 +2106,8 @@ class MarketService:
                 [
                     dependency,
                     instruments,
-                    self.settings.config_version,
-                    self.settings.code_version,
+                    self.versions.config_version,
+                    self.versions.code_version,
                 ]
             )
         if "composite" in domains:
@@ -2155,8 +2159,8 @@ class MarketService:
                     self.tokens,
                     self.sector_baskets,
                     await self._capture_metadata(token_id, end),
-                    self.settings.config_version,
-                    self.settings.code_version,
+                    self.versions.config_version,
+                    self.versions.code_version,
                 ]
             )
         if any(
@@ -2562,8 +2566,8 @@ class MarketService:
             else {"type": "T0", **norm.timestamp_fields("ts", anchor, None)}
             if anchor is not None
             else None,
-            "config_version": self.settings.config_version,
-            "code_version": self.settings.code_version,
+            "config_version": self.versions.config_version,
+            "code_version": self.versions.code_version,
         }
         instruments = [r for r in self.instruments.values() if r["token_id"] == token_id]
         ids = {r["instrument_id"] for r in instruments}

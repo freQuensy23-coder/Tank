@@ -5,6 +5,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from source_support import fixture_versions
 
 from tank.event_tools import LAYERS, EventToolService
 from tank.settings import Settings
@@ -16,7 +17,7 @@ from tank.util import iso, utcnow
 async def owner_service(tmp_path: Path):
     repo = MemoryRepository()
     await repo.open()
-    return EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+    return EventToolService(repo, Settings(data_dir=tmp_path), None, None, versions=fixture_versions())
 
 
 @pytest.mark.parametrize("query", [{"entity_id": "world"}, {"token_id": "world:WLD"}])
