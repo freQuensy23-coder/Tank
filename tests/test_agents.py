@@ -11,12 +11,14 @@ from agent_source_fixtures import (
     native_tool_arguments_fixture,
     source_record_fixture,
 )
+from native_session_fixtures import created_native_session
 from pydantic import JsonValue
 from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_http_admission
 
 from tank.agents import ConfigurationError, Pipeline, SessionService
 from tank.agents.context import CONTEXT_VERSION
+from tank.agents.native_sessions import NativeSessionResolution
 from tank.analysis.page_access import LivePageAccess
 from tank.contracts.source_items import parse_feed_source_item
 from tank.ops_progress import DisabledSourceProgress
@@ -51,6 +53,7 @@ def settings(
             "environment_id": "env_1",
             "max_running_sessions": 2,
             "prompt_version": "test",
+            "reasoning_effort": "medium",
         },
     }
     config["thresholds"] = {
@@ -455,7 +458,9 @@ async def test_new_scout_session_wire_protocol_and_isolation() -> None:
             return httpx.Response(200, json={"data": [], "next_page": None})
         body = json.loads(req.content)
         posted.append(body)
-        return httpx.Response(200, json={"id": "ses_scout"} if req.url.path == "/v1/sessions" else {})
+        return httpx.Response(
+            200, json=created_native_session(req, "ses_scout") if req.url.path == "/v1/sessions" else {}
+        )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
@@ -799,7 +804,9 @@ async def test_concurrent_items_without_event_candidates_open_distinct_idempoten
         body = json.loads(request.content)
         if request.url.path == "/v1/sessions":
             creates.append(body)
-            return httpx.Response(200, json={"id": f"pending_session_{len(creates)}"})
+            return httpx.Response(
+                200, json=created_native_session(request, f"pending_session_{len(creates)}")
+            )
         messages.append(body)
         return httpx.Response(200, json={"data": []})
 
@@ -1046,7 +1053,11 @@ async def test_routing_and_resume_find_late_history_with_one_row_pages() -> None
         assert result["route_event_id"] == "zz_event"
         assert len(seen) == 1
         service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
-        assert (await service.resolve({"event_id": "zz_event"}))["session_id"] == "zz_session"
+        assert (
+            await service.resolve(
+                NativeSessionResolution.from_wire({"event_id": "zz_event"}, role="ANALYST", replay=False)
+            )
+        )["session_id"] == "zz_session"
         stop = asyncio.Event()
         resumed = []
 
@@ -1079,9 +1090,9 @@ async def test_session_acceptance_and_tools_keep_clock_and_source_precision_sepa
     def transport(request: httpx.Request):
         if request.url.path.endswith("/sessions"):
             return (
-                httpx.Response(200, json={"data": []})
+                httpx.Response(200, json={"data": [], "next_page": None})
                 if request.method == "GET"
-                else httpx.Response(201, json={"id": "fresh"})
+                else httpx.Response(201, json=created_native_session(request, "fresh"))
             )
         return httpx.Response(200, json={})
 
@@ -1214,9 +1225,14 @@ async def test_new_session_prompt_version_binds_actual_resolved_agent_not_static
         nonlocal created
         if request.url.path.endswith("/sessions"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "next_page": None})
             created += 1
-            return httpx.Response(201, json={"id": "fresh-" + str(created), "agent": copy.deepcopy(snapshot)})
+            return httpx.Response(
+                201,
+                json=created_native_session(
+                    request, "fresh-" + str(created), agent_snapshot=copy.deepcopy(snapshot)
+                ),
+            )
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
@@ -1316,3 +1332,175 @@ async def test_publish_card_requires_declared_verdict_and_two_factual_bullets(
     assert capture is not None and capture["status"] == "REFUSED"
     assert capture["is_error"] is True and capture["returned_at"]
     assert dispatched == [] and len(responses) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("effort", ["high", None])
+async def test_new_native_session_records_observed_effort_without_relabeling_intent(
+    effort: str | None,
+) -> None:
+    repo = MemoryRepository()
+    opts, _ = settings()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": [], "next_page": None})
+        snapshot: dict[str, JsonValue] = {"model": {"id": "gpt-6.1-sol"}}
+        model = snapshot["model"]
+        assert isinstance(model, dict)
+        if effort is not None:
+            model["effort"] = {"type": effort}
+        return httpx.Response(201, json=created_native_session(request, "observed", agent_snapshot=snapshot))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        result = await service.resolve(
+            NativeSessionResolution.from_wire({"item_id": "item"}, role="ANALYST", replay=False)
+        )
+    assert result["configured_effort"] == "medium"
+    assert result["effort"] == effort
+    assert result["effort_basis"] == ("RESOLVED_SESSION_AGENT" if effort is not None else None)
+    assert result["effort_reason"] == (
+        "Native resolved agent did not report reasoning effort" if effort is None else None
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("defect", ["agent", "environment", "identity", "replay"])
+async def test_native_creation_binding_failure_never_commits_a_local_session(defect: str) -> None:
+    repo = MemoryRepository()
+    opts, configuration = settings()
+    payload: dict[str, JsonValue] = {"kind": "NEW_ITEM", "item_id": "input"}
+    if defect == "replay":
+        opts.replay = True
+        configuration["openma"]["replay_environment_id"] = "replay-environment"
+        payload.update(
+            replay_run_id="run",
+            replay_source_session_id="original",
+            replay_evidence_sha256="1" * 64,
+            replay_cutoff="2026-10-01T00:00:00Z",
+        )
+    item = source_record_fixture({"item_id": "input", "text": "Declared synthetic source"})
+    await repo.put("ingest.source_items", "input", item)
+    calls: list[tuple[str, str]] = []
+    private_value = "synthetic-private-provider-metadata"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": [], "next_page": None})
+        assert request.url.path == "/v1/sessions"
+        wire = created_native_session(request, "unconfirmed")
+        metadata = wire["metadata"]
+        assert isinstance(metadata, dict)
+        metadata["provider_private"] = private_value
+        if defect == "agent":
+            agent = wire["agent"]
+            assert isinstance(agent, dict)
+            agent["id"] = "different-agent"
+        elif defect == "environment":
+            wire["environment_id"] = "different-environment"
+        elif defect == "identity":
+            metadata["tank_identity"] = "different-identity"
+        else:
+            del metadata["tank_replay_evidence_sha256"]
+        return httpx.Response(201, json=wire)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        with pytest.raises(ValueError) as caught:
+            await service.send_message(payload)
+        await service.close()
+    assert private_value not in str(caught.value)
+    assert calls == [("GET", "/v1/sessions"), ("POST", "/v1/sessions")]
+    assert await repo.list("ops.agent_sessions") == []
+    assert await repo.list("ops.tool_calls") == []
+    assert sha256(await repo.get("ingest.source_items", "input")) == sha256(item)
+
+
+@pytest.mark.asyncio
+async def test_live_native_creation_cannot_borrow_a_replay_only_opening_source() -> None:
+    repo = MemoryRepository()
+    opts, _ = settings()
+    original: dict[str, JsonValue] = {
+        "session_id": "replay-only",
+        "event_id": "event",
+        "item_id": "replayed-item",
+        "opened_by_item": "replayed-item",
+        "replay_run_id": "previous-run",
+        "status": "OPEN",
+    }
+    await repo.put("ops.agent_sessions", "replay-only", original)
+    calls: list[str] = []
+
+    def unexpected(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        raise AssertionError("An undeclared replay source cannot initiate native creation")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(unexpected)) as http:
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        with pytest.raises(ValueError, match="durable opening source"):
+            await service.resolve(
+                NativeSessionResolution.from_wire({"event_id": "event"}, role="ANALYST", replay=False)
+            )
+        await service.close()
+    assert not calls
+    assert sha256(await repo.get("ops.agent_sessions", "replay-only")) == sha256(original)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("creation_role", ["ANALYST", "SCOUT"])
+@pytest.mark.parametrize("actual_scout", [False, True])
+async def test_explicit_native_continuation_preserves_the_actual_stored_context(
+    creation_role: Literal["ANALYST", "SCOUT"], actual_scout: bool
+) -> None:
+    repo = MemoryRepository()
+    opts, _ = settings()
+    original: dict[str, JsonValue] = {
+        "session_id": "existing",
+        "event_id": None if actual_scout else "actual-event",
+        "item_id": None if actual_scout else "actual-item",
+        "proposal_id": "actual-proposal" if actual_scout else None,
+        "status": "OPEN",
+        "opaque": {"integer": 1, "float": 1.0, "flag": True},
+    }
+    await repo.put("ops.agent_sessions", "existing", original)
+    calls: list[str] = []
+
+    def unexpected(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        raise AssertionError("Existing native session lookup must not create a fresh resource")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(unexpected)) as http:
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        resolved = await service.resolve(
+            NativeSessionResolution.from_wire({"session_id": "existing"}, role=creation_role, replay=False)
+        )
+        await service.close()
+    assert not calls
+    assert sha256(resolved) == sha256(original)
+    assert sha256(await repo.get("ops.agent_sessions", "existing")) == sha256(original)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("creation_role", ["ANALYST", "SCOUT"])
+async def test_explicit_missing_native_session_never_falls_back_to_creation(
+    creation_role: Literal["ANALYST", "SCOUT"],
+) -> None:
+    repo = MemoryRepository()
+    opts, _ = settings()
+    calls: list[str] = []
+
+    def unexpected(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        raise AssertionError("An explicit missing session must not become a fresh role")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(unexpected)) as http:
+        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        with pytest.raises(KeyError, match="missing"):
+            await service.resolve(
+                NativeSessionResolution.from_wire({"session_id": "missing"}, role=creation_role, replay=False)
+            )
+        await service.close()
+    assert not calls
+    assert await repo.list("ops.agent_sessions") == []

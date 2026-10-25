@@ -6,6 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture
+from native_input_fixtures import acknowledge_native_input
 from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_http_admission
 from test_agents_execution_barrier import config, idle
@@ -71,7 +72,9 @@ async def test_actual_producer_consumer_workflow(tmp_path: Path, backend, case, 
         def handler(request: pytest.FixtureRequest):
             if request.method == "POST":
                 posts.append(request.content)
-                return httpx.Response(200, json={"data": [{"id": "accepted-" + str(len(posts))}]})
+                return httpx.Response(
+                    200, json=acknowledge_native_input(request, "accepted-" + str(len(posts)))
+                )
             if request.url.path.endswith("/executions"):
                 return httpx.Response(
                     200,
@@ -282,7 +285,7 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
     def handler(request: pytest.FixtureRequest):
         if request.method == "POST":
             posts.append(request.content)
-            return httpx.Response(200, json={"data": [{"id": "ack-" + str(len(posts))}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, "ack-" + str(len(posts))))
         reads.append(request.url.path)
         if request.url.path.endswith("/executions"):
             return httpx.Response(

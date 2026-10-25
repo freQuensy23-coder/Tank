@@ -4,6 +4,8 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
+from tank.contracts.json import encode_json
+from tank.contracts.repository import Collection
 from tank.market.flow import FlowAccumulator
 from tank.market.trade_contracts import (
     ActiveFlowBar,
@@ -159,9 +161,12 @@ def test_empty_minute_keeps_proven_predecessor_without_inventing_prices() -> Non
     point = bar.reference_points[0]
     assert point.complete and point.last_trade is not None
     assert point.last_trade.ts == AT - timedelta(seconds=30)
-    wire = bar.model_dump(mode="json")
+    wire = Collection("mkt.flow_bars_1m", EmptyFlowBar).encode(bar)
     assert wire["zero_trade_minute"] is True
     assert "trade_aggregation" not in wire and "notional_reason" not in wire
+    for invalid in (1, 1.0):
+        with pytest.raises(ValidationError, match="boolean"):
+            EmptyFlowBar.model_validate_json(encode_json({**wire, "zero_trade_minute": invalid}), strict=True)
 
 
 def test_bucket_thresholds_and_no_snapshot_request_have_explicit_behavior() -> None:
