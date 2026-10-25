@@ -396,3 +396,34 @@ pending runtime scheduling constructor companion. Whole Truth snapshots/results,
 calculation input maps, configurable-policy fallbacks and sibling reference-clock
 precision defaults remain on the broad owned migration inventory. This tranche
 completes the statistical baseline/declared-freshness layer, not the full Truth module.
+
+### Additive admitted-HTTP/page boundary (held activation)
+
+`http_transport.send_admitted` takes actual built requests, a required admission
+port and a required per-request guard. It admits every actual attempt/redirect,
+checks the admitted host matches the transport destination, runs a declared
+first-request accounting hook only after admission, and explicitly disables
+HTTPX's implicit redirects. Intermediate responses close. UNCONFIGURED retains
+its explicit generic-site meaning; it does not fabricate a provider quota.
+`retry_after_deadline` accepts only actual nonnegative finite Retry-After seconds
+or a valid aware HTTP date; missing/invalid instructions remain unavailable and
+no sixty-second value/clamp is synthesized.
+
+`contracts.page_evidence.PageRead` validates binary bytes against their actual
+computed digest and the two-megabyte bound. An original recorded-body claim must
+match its recorded digest. Live receipt and verified recorded/reconstructed
+provenance are distinct named records. Unknown source Content-Type remains None;
+a reconstruction's format is not an original source response header. Infrastructure
+handles are precise protocol/dataclass composition objects in analysis.page_access,
+not Pydantic arbitrary types. `LivePageAccess` requires admission; `RecordedPageAccess`
+requires its recorded reader. The live reader owns only a client it constructs and
+closes all response streams, preserving a borrowed client's lifetime.
+
+Six independent boundary cases pass in1.35s; all five new source/test modules pass
+independent strict mypy and Ruff/format. Tests prove actual client query credentials
+reach configured admission, configured waits occur, unconfigured redirects invent
+no waits, refused destinations never reach transport, accounting hook ordering,
+binary digest fidelity, unknown media and client lifetime. These are additive
+contracts; Market/Event activation and actual verified offline reader proof remain
+held for the companion cohort. The verified replay inventory already substitutes
+complete captured external tool results; raw response reconstruction is not assumed.
