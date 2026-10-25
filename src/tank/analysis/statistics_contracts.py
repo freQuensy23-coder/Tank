@@ -245,21 +245,55 @@ class DepthBaseline(DomainModel):
     mean_usd: Decimal = Field(ge=0)
 
 
-@dataclass(slots=True)
-class BaselineCache[T]:
+type BaselineFamily = Literal[
+    "open_interest",
+    "funding",
+    "hourly_returns",
+    "beta",
+    "relative_history",
+    "bitcoin_context",
+    "native_volume",
+    "depth",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class BaselineRetention:
     capacity: int
-    _entries: dict[str, T] = field(default_factory=dict, init=False, repr=False)
+    _order: dict[tuple[BaselineFamily, str], Callable[[], None]] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
-        if isinstance(self.capacity, bool) or self.capacity < 1:
-            raise ValueError("Baseline cache capacity must be positive")
+        if isinstance(self.capacity, bool) or not isinstance(self.capacity, int) or self.capacity < 1:
+            raise ValueError("Baseline cache capacity must be a positive integer")
+
+    def admit(self, family: BaselineFamily, key: str, evict: Callable[[], None]) -> None:
+        identity = (family, key)
+        if identity in self._order:
+            raise ValueError("Baseline family/key already belongs to another cache")
+        if len(self._order) == self.capacity:
+            oldest = next(iter(self._order))
+            self._order.pop(oldest)()
+        self._order[identity] = evict
+
+
+@dataclass(frozen=True, slots=True)
+class BaselineCache[T]:
+    family: BaselineFamily
+    retention: BaselineRetention
+    _entries: dict[str, T] = field(default_factory=dict, init=False, repr=False)
 
     def get(self, key: str) -> T | None:
         return self._entries.get(key)
 
     def put(self, key: str, value: T) -> None:
-        if key not in self._entries and len(self._entries) == self.capacity:
-            del self._entries[next(iter(self._entries))]
+        if key not in self._entries:
+
+            def evict() -> None:
+                del self._entries[key]
+
+            self.retention.admit(self.family, key, evict)
         self._entries[key] = value
 
     def remember(self, key: str, build: Callable[[], T]) -> T:
@@ -268,7 +302,7 @@ class BaselineCache[T]:
         return self._entries[key]
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class BaselineCaches:
     open_interest: BaselineCache[OpenInterestBaseline]
     funding: BaselineCache[FundingBaseline]
@@ -278,3 +312,17 @@ class BaselineCaches:
     bitcoin_context: BaselineCache[BitcoinContextHistory]
     native_volume: BaselineCache[NativeVolumeIndex]
     depth: BaselineCache[DepthBaseline]
+
+    @classmethod
+    def with_capacity(cls, capacity: int) -> Self:
+        retention = BaselineRetention(capacity)
+        return cls(
+            open_interest=BaselineCache("open_interest", retention),
+            funding=BaselineCache("funding", retention),
+            hourly_returns=BaselineCache("hourly_returns", retention),
+            beta=BaselineCache("beta", retention),
+            relative_history=BaselineCache("relative_history", retention),
+            bitcoin_context=BaselineCache("bitcoin_context", retention),
+            native_volume=BaselineCache("native_volume", retention),
+            depth=BaselineCache("depth", retention),
+        )

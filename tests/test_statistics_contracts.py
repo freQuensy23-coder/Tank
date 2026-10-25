@@ -6,6 +6,8 @@ from pydantic import ValidationError
 
 from tank.analysis.statistics_contracts import (
     BaselineCache,
+    BaselineCaches,
+    BaselineRetention,
     BitcoinContextHistory,
     DecimalBounds,
     DecimalRange,
@@ -114,7 +116,7 @@ def test_volume_index_preserves_exact_money_and_epoch_zero_without_sentinels() -
 
 
 def test_family_cache_evicts_oldest_only_and_does_not_recompute_hits() -> None:
-    cache = BaselineCache[int](capacity=2)
+    cache = BaselineCache[int](family="depth", retention=BaselineRetention(capacity=2))
     calls = 0
 
     def build() -> int:
@@ -138,3 +140,22 @@ def test_measured_zero_beta_remains_estimated_and_finite() -> None:
     assert estimate.value == 0.0 and estimate.kind == "ESTIMATED"
     with pytest.raises(ValidationError):
         EstimatedBeta(kind="ESTIMATED", value=float("nan"), paired_sample_count=200)
+
+
+def test_baseline_families_share_the_original_total_fifo_budget() -> None:
+    retention = BaselineRetention(capacity=2)
+    left = BaselineCache[int](family="depth", retention=retention)
+    right = BaselineCache[str](family="funding", retention=retention)
+    left.put("same-key", 1)
+    right.put("same-key", "kept")
+    left.put("same-key", 2)
+    right.put("third-key", "new")
+    assert left.get("same-key") is None
+    assert right.get("same-key") == "kept"
+    assert right.get("third-key") == "new"
+    left.put("fourth-key", 4)
+    assert right.get("same-key") is None
+    assert left.get("fourth-key") == 4
+    composed = BaselineCaches.with_capacity(128)
+    assert composed.open_interest.retention is composed.depth.retention
+    assert composed.depth.retention.capacity == 128
