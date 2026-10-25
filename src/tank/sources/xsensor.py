@@ -3,6 +3,9 @@
 Each pass is one synchronous actor run: the registry handles and the per-account
 cursors go in, and every visible own post (usually the latest five per account),
 the next cursors and per-account health come back. The token is APIFY_API_TOKEN.
+A post that quotes, replies to or links another post carries that post's author,
+URL and text; Tank stores them in the item's "quoted" text with their origin named.
+Signed-out profiles show no reposts and no replies to other accounts.
 """
 
 from collections.abc import Mapping
@@ -10,7 +13,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from tank.logging import redact_text
 from tank.sources.x_diagnostics import sanitize
@@ -25,16 +28,51 @@ class ApifyModel(BaseModel):
     model_config = ConfigDict(frozen=True)
 
 
+class ApifyReferencedPost(ApifyModel):
+    """A post that a monitored post quotes, replies to or links; text is None when unreadable."""
+
+    relation: Literal["quoted", "replied_to", "linked"]
+    id: str
+    author: str | None = None
+    url: str
+    published_at: str | None = Field(default=None, alias="publishedAt")
+    text: str | None = None
+    error: str | None = None
+
+    @field_validator("published_at")
+    @classmethod
+    def utc_time(cls, value: str | None) -> str | None:
+        """The publish time in Tank's UTC form; an unreadable time is left out, not fatal to the run."""
+        if value is None:
+            return None
+        try:
+            return iso(value)
+        except (ValueError, OverflowError, OSError):
+            return None
+
+    def context(self, monitored: str) -> str:
+        """The referenced post with its origin stated, as the agent and the classifier read it."""
+        verb = {"quoted": "quoted", "replied_to": "replied to", "linked": "linked"}[self.relation]
+        origin = f"@{self.author}" if self.author else "an unknown account"
+        when = f", published {self.published_at}" if self.published_at else ""
+        if self.text is None:
+            body = f"[text unavailable: {self.error or 'NOT_RETURNED'}]"
+        else:
+            body = self.text or "[the post has no text]"
+        return f"@{monitored} {verb} a post by {origin} ({self.url}{when}):\n{body}"
+
+
 class ApifyPost(ApifyModel):
     id: str
     author: str
     text: str
     url: str
     published_at: str = Field(alias="publishedAt")
+    referenced_posts: list[ApifyReferencedPost] = Field(default_factory=list, alias="referencedPosts")
 
     def row(self, raw: bytes) -> dict[str, object]:
         """The post as the source poller ingests it; raw is the actor response it came in."""
-        return {
+        row: dict[str, object] = {
             "external_id": self.id,
             "author": self.author,
             "monitored_author": self.author,
@@ -45,6 +83,9 @@ class ApifyPost(ApifyModel):
             "published_at_precision": "EXACT",
             "_payload": raw,
         }
+        if self.referenced_posts:
+            row["quoted"] = "\n\n".join(post.context(self.author) for post in self.referenced_posts)
+        return row
 
 
 class ApifyAccount(ApifyModel):
