@@ -23,9 +23,21 @@ from tank.analysis.identity import (
 from tank.analysis.identity import (
     resolve_token as resolve_token,
 )
+from tank.analysis.page_access import (
+    LivePageAccess,
+    PageAccess,
+    RecordedPageAccess,
+    read_live_page,
+)
 from tank.analysis.reaction_scheduling import AssessmentFreeDiagnosticScheduling, ReactionScheduling
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.analysis.watch_contracts import WatchCondition
+from tank.contracts.page_evidence import (
+    FetchPageRequest,
+    PageRead,
+    PageReadProvenance,
+    RecordedBodyProvenance,
+)
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.source_repository import SourceExtractionRepository
 from tank.contracts.tool_schema import SCOPED_TOOLS as SCOPED_TOOLS
@@ -375,6 +387,7 @@ class EventToolService:
         *,
         versions: ResolvedVersionIdentity,
         scheduler: ReactionScheduling,
+        pages: PageAccess,
         http=None,
         search=None,
         reference_clock=None,
@@ -384,6 +397,9 @@ class EventToolService:
         self.source_extraction = SourceExtractionRepository(repo)
         self.http = http
         self.search_service = search
+        if not isinstance(pages, (LivePageAccess, RecordedPageAccess)):
+            raise TypeError("Event tools require explicit live or verified recorded page access")
+        self.pages = pages
         if not isinstance(scheduler, ReactionScheduling):
             raise TypeError("Event tools require a reaction scheduling port")
         self.scheduler = (
@@ -975,6 +991,7 @@ class EventToolService:
         media_type="text/plain",
         raw_capture=None,
         evidence_kind="FETCHED_PAGE",
+        page_read_provenance: PageReadProvenance | None = None,
     ):
         self.validate_evidence_url(url)
         original = raw_bytes if raw_bytes is not None else text.encode("utf-8")
@@ -1014,6 +1031,8 @@ class EventToolService:
         existing = await self.repo.get("ingest.source_items", iid)
         if existing:
             return existing
+        if page_read_provenance is not None:
+            row["page_read_provenance"] = page_read_provenance.model_dump(mode="json")
         await self.repo.put("ingest.source_items", iid, row)
         await item_progress(
             self.repo,
@@ -1087,45 +1106,58 @@ class EventToolService:
         }
 
     async def fetch_page(self, a, c):
-        self.validate_evidence_url(a["url"])
-        if urlparse(a["url"]).scheme != "https":
+        request = FetchPageRequest.model_validate(a)
+        self.validate_evidence_url(request.url)
+        if urlparse(request.url).scheme != "https":
             raise ValueError("Only HTTPS evidence fetches are allowed")
-        limit = min(20, float(a.get("timeout_s") or 20))
-        if is_exchange_url(a["url"]):
-            response = await capture_fetch(self.repo, "GET", a["url"], budget_s=limit)
+        provenance = None
+        if isinstance(self.pages, RecordedPageAccess):
+            read = await self.pages.reader.read(request.url)
+            read = PageRead.model_validate(read)
+            if not isinstance(read.provenance, RecordedBodyProvenance):
+                raise ValueError("Recorded page access requires verified original-body provenance")
+            original, media_type, provenance = read.body, read.media_type, read.provenance
+        elif is_exchange_url(request.url):
+            response = await capture_fetch(self.repo, "GET", request.url, budget_s=request.timeout_s)
             response.raise_for_status()
             if len(response.content) > 2 * 1024 * 1024:
                 raise ValueError("Page exceeds 2 MB")
-            chunks, media_type = [response.content], response.headers.get("content-type")
+            original, media_type = response.content, response.headers.get("content-type")
         else:
-            chunks, media_type = await self._direct_page(a["url"], limit)
-        original = b"".join(chunks)
+            read = await self._direct_page(request)
+            original, media_type, provenance = read.body, read.media_type, read.provenance
         self.validate_evidence_bytes(original)
-        return await self._store_page(a, c, original, media_type or "application/octet-stream")
+        return await self._store_page(
+            request,
+            c,
+            original,
+            "application/octet-stream" if media_type is None else media_type,
+            provenance,
+        )
 
-    async def _direct_page(self, url, limit):
-        async with (
-            asyncio.timeout(limit),
-            (
-                httpx.AsyncClient(timeout=limit, follow_redirects=False)
-                if self.http is None
-                else _borrow(self.http)
-            ) as client,
-            client.stream("GET", url, headers={"User-Agent": self.settings.user_agent}) as r,
-        ):
-            r.raise_for_status()
-            chunks = []
-            size = 0
-            async for chunk in r.aiter_bytes():
-                size += len(chunk)
-                if size > 2 * 1024 * 1024:
-                    raise ValueError("Page exceeds 2 MB")
-                chunks.append(chunk)
-            return chunks, r.headers.get("content-type")
+    def _guard_python_page(self, request: httpx.Request) -> None:
+        if request.url.scheme != "https":
+            raise ValueError("Only HTTPS evidence fetches are allowed")
+        if is_exchange_url(str(request.url)):
+            raise ValueError("Evidence redirect requires exchange capture transport")
 
-    async def _store_page(self, a, c, original, media_type):
+    async def _direct_page(self, request: FetchPageRequest) -> PageRead:
+        if not isinstance(self.pages, LivePageAccess):
+            raise ValueError("Direct HTTP requires live page access")
+        return await read_live_page(
+            self.pages,
+            request.url,
+            client=self.http,
+            timeout_s=request.timeout_s,
+            user_agent=self.settings.user_agent,
+            guard=self._guard_python_page,
+        )
 
-        capture = self.persist_web_raw(a["url"], original, media_type, c)
+    async def _store_page(
+        self, request: FetchPageRequest, c, original, media_type, provenance: PageReadProvenance | None
+    ):
+
+        capture = self.persist_web_raw(request.url, original, media_type, c)
         from selectolax.parser import HTMLParser
 
         html = original.decode("utf-8", errors="replace")
@@ -1133,13 +1165,14 @@ class EventToolService:
         for node in tree.css("script,style,noscript"):
             node.decompose()
         return await self.save_web(
-            a["url"],
+            request.url,
             tree.text(separator=" ", strip=True),
             "Fetched page",
             c,
             raw_bytes=original,
             media_type=media_type,
             raw_capture=capture,
+            page_read_provenance=provenance,
         )
 
     def validate_time(self, x, item):
@@ -3327,17 +3360,6 @@ class EventToolService:
             priority=4,
         )
         return row
-
-
-class _borrow:
-    def __init__(self, client):
-        self.client = client
-
-    async def __aenter__(self):
-        return self.client
-
-    async def __aexit__(self, *args):
-        return False
 
 
 def evidence_ids(evidence):

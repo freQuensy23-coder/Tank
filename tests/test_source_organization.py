@@ -4,7 +4,12 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from source_support import fixture_versions, operational_configuration, source_configuration
+from source_support import (
+    fixture_request_budgets,
+    fixture_versions,
+    operational_configuration,
+    source_configuration,
+)
 
 from tank.agents.pipeline_contracts import RoutingRegistry
 from tank.agents.routing import RoutingItem, RoutingSelector
@@ -99,7 +104,9 @@ async def test_normal_poll_preserves_actual_author_and_exposes_exact_pruner_orga
 
     repo = MemoryRepository()
     async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as http:
-        service = SourceService(repo, config, http=http, versions=fixture_versions())
+        service = SourceService(
+            repo, config, http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
+        )
         try:
             await service.poll_once(sid)
             rows = await repo.list("ingest.source_items")

@@ -19,12 +19,19 @@ import httpx
 from httpx_sse import aconnect_sse
 from pydantic import JsonValue, ValidationError
 
+from tank.agents.admission import SessionAdmission
+from tank.agents.admission_repository import admission_candidate, build_admission
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
 from tank.agents.context_binding import ContextBinding
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.provenance import resolve_agent_provenance
 from tank.agents.security import redact_tool_arguments
-from tank.agents.session_contracts import ExecutionPoll, HistoryPoll
+from tank.agents.session_contracts import (
+    ExecutionPoll,
+    HistoryPoll,
+    ScoutProposalIdentity,
+    ScoutSessionReference,
+)
 from tank.agents.session_ownership import put_owned_session
 from tank.agents.tool_contracts import (
     CapturedToolResult,
@@ -39,6 +46,9 @@ from tank.agents.wire import tool_wire_result
 from tank.agents.workflow import SOURCE_COMPLETION_VERSION
 from tank.contracts.json import decode_json
 from tank.contracts.provenance import AgentProvenance, ResolvedVersionIdentity
+from tank.contracts.session_admission import (
+    BUSY_RUNTIME_STATES,
+)
 from tank.contracts.source_items import (
     FailedExtraction,
     SkippedExtraction,
@@ -47,14 +57,13 @@ from tank.contracts.source_repository import SourceExtractionRepository
 from tank.delivery import DeliveryDeferred
 from tank.openma_sync import agent_tools
 from tank.ops_progress import session_progress
+from tank.runtime_contracts import ScoutMessage, ScoutReviewJob
 from tank.telegram_inbox import DOCUMENT_LIMIT, closed_reason, question_message, record_answer
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, parse_time, sha256, utcnow
 
 REST_TIMEOUT_S = 30
 
-DEFAULT_MAX_RUNNING_SESSIONS = 2
-ADMITTED_JOB_TYPES = ("AGENT_MESSAGE", "SCOUT_REVIEW")
 
 ADMISSION_SLEEP_S = 60
 
@@ -74,6 +83,14 @@ MATERIAL_EVENT_TYPES = {
 }
 
 IDLE_RECHECK_TICKS = 60
+SESSION_FOLLOW_FIELDS = (
+    "session_id",
+    "status",
+    "runtime_status",
+    "active_message_id",
+    "followups_only",
+    "archive_after",
+)
 
 
 def seen_key(event):
@@ -88,26 +105,6 @@ def material_event(event):
     return any(
         isinstance(block, dict) and block.get("type") == "refusal" for block in event.get("content") or []
     )
-
-
-SESSION_ADMISSION_FIELDS = (
-    "session_id",
-    "status",
-    "runtime_status",
-    "active_message_id",
-    "followups_only",
-    "archive_after",
-)
-JOB_ADMISSION_FIELDS = ("job_id", "status", "priority", "payload", "slot_waiting_since", "slot_admitted")
-BUSY_RUNTIME_STATES = {"PENDING", "RUNNING", "REQUIRES_ACTION"}
-
-
-class AdmissionDeferred(Exception):
-    """The running-session cap is full: the message waits in order, no attempt is spent."""
-
-    def __init__(self, not_before):
-        self.not_before = not_before
-        super().__init__("Running-session cap reached; the message waits for a free slot")
 
 
 class SessionFileSender(Protocol):
@@ -2210,113 +2207,48 @@ class SessionService:
                     await asyncio.gather(stream_task, return_exceptions=True)
             await asyncio.sleep(delay)
 
-    def running_session_cap(self):
-        cap = self.settings.load_config("openma").get("max_running_sessions", DEFAULT_MAX_RUNNING_SESSIONS)
-        if isinstance(cap, bool) or not isinstance(cap, int) or cap < 1:
-            raise ConfigurationError("openma.yaml max_running_sessions must be a positive integer")
-        return cap
-
-    @staticmethod
-    def running(session):
-        return session.get("status") == "OPEN" and (
-            session.get("runtime_status") in BUSY_RUNTIME_STATES or bool(session.get("active_message_id"))
+    def admission(self) -> SessionAdmission:
+        return build_admission(
+            self.repo,
+            self.settings.load_config("openma"),
+            self.clock_timestamp,
+            timedelta(seconds=ADMISSION_SLEEP_S),
         )
 
-    async def existing_session(self, payload):
-        """The admission fields of the session a message would go to, without creating one."""
-        event_id = payload.get("event_id")
-        for field, value in (
-            ("session_id", payload.get("session_id")),
-            ("event_id", event_id),
-            ("item_id", payload.get("item_id") if not event_id else None),
-            ("proposal_id", payload.get("proposal_id") or payload.get("prp_id")),
-        ):
-            if value:
-                async for session in self.repo.iter_metadata(
-                    "ops.agent_sessions", SESSION_ADMISSION_FIELDS, filters={field: value}
-                ):
-                    return session
-        return None
+    def running_session_cap(self) -> int:
+        return self.admission().policy.max_running_sessions
 
-    async def slot_state(self, exclude_job=None):
-        """Running turns (busy sessions plus admitted jobs) and the queued waiting jobs."""
-        running = {
-            session["session_id"]
-            async for session in self.repo.iter_metadata(
-                "ops.agent_sessions", SESSION_ADMISSION_FIELDS, filters={"status": "OPEN"}
-            )
-            if self.running(session)
-        }
-        waiting = []
-        for kind in ADMITTED_JOB_TYPES:
-            async for other in self.repo.iter_metadata(
-                "ops.jobs", JOB_ADMISSION_FIELDS, filters={"type": kind, "status": "RUNNING"}
-            ):
-                if other["job_id"] != exclude_job and other.get("slot_admitted"):
-                    running.add("job:" + other["job_id"])
-            async for other in self.repo.iter_metadata(
-                "ops.jobs", JOB_ADMISSION_FIELDS, filters={"type": kind, "status": "QUEUED"}
-            ):
-                if other["job_id"] != exclude_job and other.get("slot_waiting_since"):
-                    waiting.append(other)
-        waiting.sort(key=lambda row: (row["priority"], row["slot_waiting_since"], row["job_id"]))
-        return running, waiting
+    async def admit(self, job: dict[str, JsonValue]) -> None:
+        await self.admission().admit(admission_candidate(job))
 
-    async def admit(self, job):
-        """Admit a turn under the running-session cap or raise AdmissionDeferred.
+    async def wake_waiting(self) -> None:
+        await self.admission().wake()
 
-        A message to a session already running a turn is never blocked: OpenMA
-        queues it behind the current turn. Otherwise the turn starts only while
-        fewer than the cap are running and no older waiting message (by priority,
-        then first enqueue) is still queued, so waiting messages keep their order.
-        A deferred job sleeps; wake_waiting() schedules it when a slot frees, so
-        waiting turns never occupy the job workers.
-        """
-        target = await self.existing_session(job["payload"])
-        if target and self.running(target):
-            return
-        cap = self.running_session_cap()
-        own = (job["priority"], job.get("slot_waiting_since") or job["created_at"])
-        async with self.repo.lock("session-admission"):
-            running, waiting = await self.slot_state(exclude_job=job["job_id"])
-            older = any((row["priority"], row["slot_waiting_since"]) < own for row in waiting)
-            if older or len(running) >= cap:
-                raise AdmissionDeferred(
-                    offset_schedule(collection_clock(), timedelta(seconds=ADMISSION_SLEEP_S))
-                )
-            current = await self.repo.get("ops.jobs", job["job_id"])
-            await self.repo.put("ops.jobs", job["job_id"], {**current, "slot_admitted": True})
-
-    async def wake_waiting(self):
-        """Schedule the oldest waiting turns for the free slots, and any turn whose session runs."""
-        cap = self.running_session_cap()
-        async with self.repo.lock("session-admission"):
-            running, waiting = await self.slot_state()
-            free = max(0, cap - len(running))
-            now = collection_clock()
-            for row in waiting:
-                target = await self.existing_session(row["payload"])
-                if free > 0 or (target and self.running(target)):
-                    if not (target and self.running(target)):
-                        free -= 1
-                    current = await self.repo.get("ops.jobs", row["job_id"])
-                    if current and current["status"] == "QUEUED":
-                        await self.repo.put("ops.jobs", row["job_id"], {**current, **now.fields("run_after")})
-
-    async def scout_review(self, payload):
-        proposal_id = payload.get("proposal_id") or payload.get("prp_id")
-        if not proposal_id:
-            raise ValueError("SCOUT_REVIEW needs proposal_id")
-        proposal = await self.repo.get("scout.expansion_proposals", proposal_id)
+    async def scout_review(self, payload: ScoutReviewJob) -> ScoutSessionReference:
+        proposal = await self.repo.get("scout.expansion_proposals", payload.proposal_id)
         if proposal is None:
-            raise KeyError(proposal_id)
-        return await self.send_message({"kind": "SCOUT_REVIEW", "proposal_id": proposal_id})
+            raise KeyError(payload.proposal_id)
+        identity = ScoutProposalIdentity.model_validate(
+            {field: proposal[field] for field in ("prp_id",) if field in proposal}
+        )
+        if identity.prp_id != payload.proposal_id:
+            raise ValueError("Scout proposal identity conflicts with its storage key")
+        message = ScoutMessage(kind="SCOUT_REVIEW", proposal_id=payload.proposal_id)
+        session = await self.send_message(message.model_dump(mode="json", exclude_unset=True, by_alias=True))
+        if not isinstance(session, dict):
+            raise TypeError("Scout message did not produce a persisted native session")
+        reference = ScoutSessionReference.model_validate(
+            {field: session[field] for field in ("session_id", "proposal_id") if field in session}
+        )
+        if reference.proposal_id != payload.proposal_id:
+            raise ValueError("Scout session belongs to another proposal")
+        return reference
 
     async def run(self, stop):
         tick = 0
         while not stop.is_set() and not self.closed:
             async for session in self.repo.iter_metadata(
-                "ops.agent_sessions", SESSION_ADMISSION_FIELDS, filters={"status": "OPEN"}
+                "ops.agent_sessions", SESSION_FOLLOW_FIELDS, filters={"status": "OPEN"}
             ):
                 sid = session["session_id"]
                 settled = session.get("runtime_status") == "IDLE" and not session.get("active_message_id")

@@ -6,8 +6,9 @@ from runpy import run_path
 
 import pytest
 from scheduling_support import RecordingReactionScheduling
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_versions
 
+from tank.analysis.page_access import LivePageAccess
 from tank.event_tools import EventToolService
 from tank.settings import Settings
 
@@ -28,6 +29,7 @@ async def test_reference_clock_view_and_search_with_actual_postgres(
             None,
             versions=fixture_versions(),
             scheduler=RecordingReactionScheduling(),
+            pages=LivePageAccess(fixture_http_admission()),
         )
         case = run_path(str(Path(__file__).with_name("test_event_tools.py")))[
             "test_trusted_reference_clock_changes_logical_age_only"

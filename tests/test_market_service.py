@@ -5,7 +5,7 @@ from pathlib import Path
 import httpx
 import pytest
 import yaml
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_versions
 
 from tank.market.service import MarketService
 from tank.settings import Settings
@@ -76,7 +76,9 @@ def setup(tmp_path: Path):
 async def test_snapshot_exact_cutoff_anchor_and_benchmark_history(setup) -> None:
     repo, settings, inst = setup
     http = httpx.AsyncClient()
-    service = MarketService(repo, settings, http=http, versions=fixture_versions())
+    service = MarketService(
+        repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+    )
     cutoff = "2026-06-17T00:02:00Z"
     for iid, minute in [
         (inst["instrument_id"], "00:00"),
@@ -153,7 +155,9 @@ async def test_fundamentals_use_registered_slugs_only_and_partial_holders_revenu
         )
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    service = MarketService(repo, settings, http=http, versions=fixture_versions())
+    service = MarketService(
+        repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+    )
     capture = SupplyCapture(service)
     result = await capture.fundamentals(token)
     assert result["metrics"]["dailyFees"]["total24h"] == "20"
@@ -182,7 +186,9 @@ async def test_market_transport_and_recursive_metadata_never_persist_api_key(set
         raise httpx.ConnectError("Connection failed: " + str(request.url), request=request)
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    service = MarketService(repo, settings, http=http, versions=fixture_versions())
+    service = MarketService(
+        repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+    )
     with pytest.raises(RuntimeError) as captured:
         await service._request("GET", "https://api.etherscan.io/v2/api", params={"apikey": secret})
     assert secret not in str(captured.value)
@@ -213,11 +219,15 @@ async def test_market_transport_and_recursive_metadata_never_persist_api_key(set
 async def test_hot_escalation_priority_age_repeat_and_event_specific_demote(setup) -> None:
     repo, settings, _inst = setup
     http = httpx.AsyncClient()
-    service = MarketService(repo, settings, http=http, versions=fixture_versions())
+    service = MarketService(
+        repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+    )
     thresholds = settings.load_config("thresholds")
     thresholds["hot_token_cap"] = 1
     (settings.config_dir / "thresholds.yaml").write_text(yaml.safe_dump(thresholds))
-    service = MarketService(repo, settings, http=http, versions=fixture_versions())
+    service = MarketService(
+        repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+    )
     await repo.put(
         "evt.events",
         "old",
@@ -263,7 +273,9 @@ async def test_hot_escalation_priority_age_repeat_and_event_specific_demote(setu
     assert len(hot) == 1 and hot[0]["token_id"] == "bitcoin:BTC"
     thresholds["hot_token_cap"] = 2
     (settings.config_dir / "thresholds.yaml").write_text(yaml.safe_dump(thresholds))
-    service = MarketService(repo, settings, http=http, versions=fixture_versions())
+    service = MarketService(
+        repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+    )
     await service.escalate("old", ["bitcoin:BTC"])
     await service.demote("bitcoin:BTC", "old")
     assert len(await repo.list("mkt.hot_tokens")) == 1
@@ -291,7 +303,9 @@ async def test_capture_tier_uses_durable_activation_and_demotion_history_not_fut
     clock = parse_time("2026-06-17T11:00:00Z")
     monkeypatch.setattr(module, "utcnow", lambda: clock)
     async with httpx.AsyncClient() as http:
-        service = MarketService(repo, settings, http=http, versions=fixture_versions())
+        service = MarketService(
+            repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+        )
         token = inst["token_id"]
         assert (await service._capture_metadata(token, clock))["tier"] == "UNKNOWN"
         await repo.put(
@@ -324,7 +338,9 @@ async def test_capture_tier_uses_durable_activation_and_demotion_history_not_fut
         assert (await service._capture_metadata(token, active))["tier"] == "HOT"
         clock += timedelta(minutes=1)
         await service.demote(token)
-        restarted = MarketService(repo, settings, http=http, versions=fixture_versions())
+        restarted = MarketService(
+            repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+        )
         assert (await restarted._capture_metadata(token, active))["tier"] == "HOT"
         assert (await restarted._capture_metadata(token, clock))["tier"] == "BASE"
         assert (await restarted._capture_metadata(token, baseline - timedelta(seconds=1)))[
@@ -342,7 +358,9 @@ async def test_actual_producer_tier_metadata_controls_90second_oi_and_funding_fr
     repo, settings, spot = setup
     perp = add_perp_instrument(settings, spot)
     http = httpx.AsyncClient()
-    service = MarketService(repo, settings, http=http, versions=fixture_versions())
+    service = MarketService(
+        repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+    )
     cutoff = utcnow().replace(second=0, microsecond=0)
     stamp = iso(cutoff - timedelta(seconds=90))
     iid = perp["instrument_id"]
@@ -402,9 +420,9 @@ async def test_actual_producer_tier_metadata_controls_90second_oi_and_funding_fr
     clock = cutoff + timedelta(seconds=1)
     await service.demote(spot["token_id"], "event")
     assert (
-        await MarketService(repo, settings, http=http, versions=fixture_versions()).snapshot(
-            spot["token_id"], cutoff
-        )
+        await MarketService(
+            repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+        ).snapshot(spot["token_id"], cutoff)
     )["capture_tier"] == "HOT"
     base_snapshot = await service.snapshot(spot["token_id"], clock)
     assert base_snapshot["capture_tier"] == "BASE"
@@ -457,7 +475,7 @@ async def test_capture_wait_is_bounded_and_late_completion_supersedes_timeout(se
     import asyncio
 
     repo, settings, inst = setup
-    service = MarketService(repo, settings, versions=fixture_versions())
+    service = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     from tank.market.capture import event_anchor
 
     event = {"event_id": "E-wait", "public_at": clock_iso(), "public_at_prec": "EXACT"}
@@ -501,7 +519,7 @@ async def test_hot_expiry_protection_is_scoped_to_event_and_token(setup) -> None
     from tank.util import iso
 
     repo, settings, inst = setup
-    service = MarketService(repo, settings, versions=fixture_versions())
+    service = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     with pytest.raises(ValueError, match="missing event"):
         await service.escalate("E-protected", [inst["token_id"]])
     assert await repo.list("mkt.hot_tokens") == []
@@ -576,7 +594,9 @@ async def test_exchange_rest_is_rejected_before_python_http(setup, method, url, 
         return httpx.Response(200, json=[])
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(record)) as client:
-        service = MarketService(repo, settings, http=client, versions=fixture_versions())
+        service = MarketService(
+            repo, settings, http=client, versions=fixture_versions(), admission=fixture_http_admission()
+        )
         with pytest.raises(RuntimeError, match="exchange REST belongs to tank-capture"):
             await service._request(method, url, **kwargs)
     assert requests == []
@@ -585,7 +605,7 @@ async def test_exchange_rest_is_rejected_before_python_http(setup, method, url, 
 @pytest.mark.asyncio
 async def test_capture_changes_are_durable_bounded_and_stable(setup) -> None:
     repo, settings, inst = setup
-    service = MarketService(repo, settings, versions=fixture_versions())
+    service = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     for key, status, finished in [
         ("a", "COMPLETE", "2026-01-01T01:00:00Z"),
         ("b", "PARTIAL", "2026-01-01T02:00:00Z"),
@@ -606,7 +626,7 @@ async def test_capture_changes_are_durable_bounded_and_stable(setup) -> None:
         )
     changes = [r async for r in service.capture_changes("2026-01-01T01:00:00Z", "2026-01-01T02:00:00Z")]
     assert len(changes) == 1 and changes[0]["backfill_id"] == "a"
-    restarted = MarketService(repo, settings, versions=fixture_versions())
+    restarted = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     again = [r async for r in restarted.capture_changes("2026-01-01T01:00:00Z", "2026-01-01T02:00:00Z")]
     assert again[0]["change_id"] == changes[0]["change_id"]
     await service.close()
@@ -619,7 +639,7 @@ async def test_cold_bybit_oi_uses_registry_without_runtime_probe(setup) -> None:
     from tank.market import normalize as norm
 
     repo, settings, inst = setup
-    service = MarketService(repo, settings, versions=fixture_versions())
+    service = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     inst = {
         **inst,
         "instrument_id": "bybit:perp_linear:ABCUSD",
@@ -660,7 +680,7 @@ async def test_cold_bybit_oi_uses_registry_without_runtime_probe(setup) -> None:
 @pytest.mark.asyncio
 async def test_bybit_legacy_temporal_proof_not_reused_by_condition_loader(setup) -> None:
     repo, settings, inst = setup
-    service = MarketService(repo, settings, versions=fixture_versions())
+    service = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     inst = {**inst, "venue": "bybit", "market_type": "PERP_LINEAR"}
     service.instruments = {inst["instrument_id"]: inst}
     key = "bybit.linear.open-interest"
@@ -701,7 +721,7 @@ async def test_series_counts_survive_an_import_evicting_a_counted_day(
     from tank.market import service as service_module
 
     repo, settings, instrument = setup
-    service = MarketService(repo, settings, versions=fixture_versions())
+    service = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     iid = instrument["instrument_id"]
     cutoff = utcnow().replace(hour=12, minute=0, second=0, microsecond=0)
     start = cutoff - timedelta(days=3, hours=1)
@@ -727,7 +747,9 @@ async def test_snapshot_keeps_book_levels_only_on_the_newest_rows(setup) -> None
 
     repo, settings, inst = setup
     http = httpx.AsyncClient()
-    service = MarketService(repo, settings, http=http, versions=fixture_versions())
+    service = MarketService(
+        repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+    )
     start = parse_time("2026-06-17T00:00:00Z")
     count = BOOK_LEVEL_ROWS + 10
     levels = [["2", "1"], ["3", "1"]]
@@ -760,7 +782,7 @@ async def test_snapshot_keeps_book_levels_only_on_the_newest_rows(setup) -> None
 @pytest.mark.asyncio
 async def test_bucketed_oi_cadence_is_bounded_by_its_source(setup) -> None:
     repo, settings, inst = setup
-    service = MarketService(repo, settings, versions=fixture_versions())
+    service = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     await service._record_capture_tier(inst["token_id"], "HOT", "TEST")
     oi = (await service._capture_metadata(inst["token_id"], utcnow()))["collections"]["oi"]
     assert oi["cadence_s"] == 60.0
@@ -777,7 +799,7 @@ async def test_condition_heads_are_reused_until_their_scope_is_written(
     from tank.util import iso
 
     repo, settings, inst = setup
-    service = MarketService(repo, settings, versions=fixture_versions())
+    service = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     iid = inst["instrument_id"]
     now = utcnow().replace(microsecond=0)
     row = {
@@ -839,7 +861,9 @@ async def test_snapshot_anchors_yield_widest_first_and_equal_single_snapshots(se
 
     repo, settings, inst = setup
     http = httpx.AsyncClient()
-    service = MarketService(repo, settings, http=http, versions=fixture_versions())
+    service = MarketService(
+        repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+    )
     cutoff = parse_time("2026-06-17T12:00:00Z")
     levels = [["2", "1"], ["3", "1"]]
     for i in range(BOOK_LEVEL_ROWS + 300):
@@ -879,7 +903,7 @@ async def test_snapshot_anchors_yield_widest_first_and_equal_single_snapshots(se
 @pytest.mark.asyncio
 async def test_snapshot_never_queues_behind_a_running_flush(setup) -> None:
     repo, settings, inst = setup
-    service = MarketService(repo, settings, versions=fixture_versions())
+    service = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     flushes = []
     real = service.flush_market
 
@@ -907,7 +931,7 @@ async def test_loop_watchdog_logs_the_stack_that_holds_the_loop(
     from tank.market import service as service_module
 
     repo, settings, _ = setup
-    service = MarketService(repo, settings, versions=fixture_versions())
+    service = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     service._stop = asyncio.Event()
     monkeypatch.setattr(service_module, "LOOP_STALL_S", 1)
     watchdog = asyncio.create_task(service._loop_watchdog())
@@ -938,7 +962,9 @@ async def test_reaction_snapshot_reads_books_and_tickers_only_at_the_window_boun
 
     repo, settings, inst = setup
     http = httpx.AsyncClient()
-    service = MarketService(repo, settings, http=http, versions=fixture_versions())
+    service = MarketService(
+        repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+    )
     cutoff = parse_time("2026-06-17T12:00:00Z")
     anchor = cutoff - timedelta(hours=72)
     for i in range(0, 7 * 24 * 60, 20):
@@ -1006,7 +1032,9 @@ async def test_market_truth_snapshot_reads_one_day_of_books_and_tickers_at_windo
 
     repo, settings, inst = setup
     http = httpx.AsyncClient()
-    service = MarketService(repo, settings, http=http, versions=fixture_versions())
+    service = MarketService(
+        repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+    )
     cutoff = parse_time("2026-06-17T12:00:00Z")
     anchor = cutoff - timedelta(minutes=30)
     for i in range(0, 3 * 24 * 60, 10):
@@ -1102,7 +1130,7 @@ async def test_past_day_kline_counts_survive_a_restart_unless_their_day_was_rewr
 
     monkeypatch.setattr(service_module, "market_series_day_counts", counting)
     start = today - timedelta(days=3)
-    first = MarketService(repo, settings, versions=fixture_versions())
+    first = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     assert (await first._series_counts([iid], start, utcnow(), clock_iso()))[iid] == 15
     assert counted == [(start, today)]
     await first._save_day_counts(force=True)
@@ -1111,7 +1139,7 @@ async def test_past_day_kline_counts_survive_a_restart_unless_their_day_was_rewr
     await repo.put_market_batch(
         "mkt.klines_1m", [kline(rewritten, clock_iso())], keys=[iid + ":" + iso(rewritten)]
     )
-    restarted = MarketService(repo, settings, versions=fixture_versions())
+    restarted = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     assert await restarted._load_day_counts() == 2
     counted.clear()
     assert (await restarted._series_counts([iid], start, utcnow(), clock_iso()))[iid] == 16
@@ -1135,7 +1163,7 @@ async def test_window_cache_reads_equal_fresh_reads_through_appends_rewrites_and
     from tank.market import service as service_module
 
     repo, settings, inst = setup
-    service = MarketService(repo, settings, versions=fixture_versions())
+    service = MarketService(repo, settings, versions=fixture_versions(), admission=fixture_http_admission())
     books = collection == "mkt.book_summaries"
     field = "exchange_ts" if books else "minute_start"
     base = (utcnow() - timedelta(hours=3)).replace(second=0, microsecond=0)
@@ -1233,7 +1261,9 @@ def test_window_cache_is_bounded_by_age_and_rows(monkeypatch: pytest.MonkeyPatch
 async def test_generic_market_write_cannot_bypass_capture_control_contract(setup) -> None:
     repo, settings, _inst = setup
     async with httpx.AsyncClient() as http:
-        service = MarketService(repo, settings, http=http, versions=fixture_versions())
+        service = MarketService(
+            repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+        )
         with pytest.raises(ValueError, match="validated capture repository"):
             await service._put("mkt.backfill_runs", "BF-invalid", {})
     assert await repo.get("mkt.backfill_runs", "BF-invalid") is None

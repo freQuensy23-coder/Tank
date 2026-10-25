@@ -35,21 +35,22 @@ type minuteBuild struct {
 }
 
 type restFlow struct {
-	s        *Service
-	inst     *venue.Instrument
-	lo, end  time.Time
-	ids      bool
-	pending  map[int64][]*normalize.Trade
-	seen     map[string]bool
-	built    map[int64]*minuteBuild
-	previous *normalize.Trade
-	err      error
+	s            *Service
+	inst         *venue.Instrument
+	lo, end      time.Time
+	ids          bool
+	pending      map[int64][]*normalize.Trade
+	seen         map[string]bool
+	built        map[int64]*minuteBuild
+	previous     *normalize.Trade
+	predecessors *predecessorIndex
+	err          error
 }
 
 func newRESTFlow(s *Service, inst *venue.Instrument, lo, end time.Time) *restFlow {
 	return &restFlow{
 		s: s, inst: inst, lo: pytime.MinuteFloor(lo), end: end, ids: ConsecutiveIDs(inst),
-		pending: map[int64][]*normalize.Trade{}, seen: map[string]bool{}, built: map[int64]*minuteBuild{},
+		predecessors: newPredecessorIndex(ConsecutiveIDs(inst)), pending: map[int64][]*normalize.Trade{}, seen: map[string]bool{}, built: map[int64]*minuteBuild{},
 	}
 }
 
@@ -71,6 +72,7 @@ func (r *restFlow) add(t *normalize.Trade) {
 		r.err = fmt.Errorf("print %s after its minute was built", t.TradeID)
 		return
 	}
+	r.predecessors.add(t)
 	r.pending[m] = append(r.pending[m], t)
 }
 
@@ -104,14 +106,12 @@ func (r *restFlow) build(m int64) {
 	for _, t := range held.Trades {
 		if !r.seen[t.TradeID] {
 			prints = append(prints, t)
+			r.predecessors.add(t)
 		}
 	}
 	sort.SliceStable(prints, func(i, j int) bool { return lessPrint(prints[i], prints[j], r.ids) })
 	acc := flow.New()
-	var prior *normalize.Trade
-	for _, t := range r.previousOf(minute) {
-		prior = t
-	}
+	prior := r.previousOf(minute)
 	if prior != nil {
 		acc.Last[r.inst.ID] = prior
 	}
@@ -140,32 +140,12 @@ func (r *restFlow) build(m int64) {
 	r.built[m] = b
 }
 
-func (r *restFlow) previousOf(minute time.Time) []*normalize.Trade {
-	var best *normalize.Trade
-	consider := func(t *normalize.Trade) {
-		if t.TS.Before(minute) && (best == nil || lessPrint(best, t, r.ids)) {
-			best = t
-		}
+func (r *restFlow) previousOf(minute time.Time) *normalize.Trade {
+	best := r.predecessors.before(minute.Unix())
+	if r.previous != nil && r.previous.TS.Before(minute) && (best == nil || lessPrint(best, r.previous, r.ids)) {
+		best = r.previous
 	}
-	if r.previous != nil {
-		consider(r.previous)
-	}
-	for m, prints := range r.pending {
-		if time.Unix(m, 0).UTC().Before(minute) {
-			for _, t := range prints {
-				consider(t)
-			}
-		}
-	}
-	for m, b := range r.built {
-		if time.Unix(m, 0).UTC().Before(minute) && b.last != nil {
-			consider(b.last)
-		}
-	}
-	if best == nil {
-		return nil
-	}
-	return []*normalize.Trade{best}
+	return best
 }
 
 func (r *restFlow) finish() {

@@ -4,7 +4,7 @@ from pathlib import Path
 import httpx
 import pytest
 import zstandard
-from source_support import fixture_versions, source_definition, source_feed
+from source_support import fixture_request_budgets, fixture_versions, source_definition, source_feed
 from test_sources import Repo, settings
 
 from tank.sources import SourceService, parsers
@@ -80,7 +80,13 @@ async def test_retained_canonical_404_recovers_only_exact_same_cms_entry(tmp_pat
     source = {"source_id": "S13", "name": "Robinhood", "author_organization": "Robinhood", "feeds": [FEED]}
     repo = Repo()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http, versions=fixture_versions())
+        svc = SourceService(
+            repo,
+            settings(tmp_path, [source]),
+            http=http,
+            versions=fixture_versions(),
+            budgets=fixture_request_budgets(),
+        )
         row = original()
         row["feed"] = FEED["url"]
         row["discovery_config_version"] = "test"
@@ -137,7 +143,13 @@ async def test_cms_fallback_is_not_used_for_non404_failure(
 
     source = {"source_id": "S13", "name": "Robinhood", "feeds": [FEED]}
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
-        svc = SourceService(Repo(), settings(tmp_path, [source]), http=http, versions=fixture_versions())
+        svc = SourceService(
+            Repo(),
+            settings(tmp_path, [source]),
+            http=http,
+            versions=fixture_versions(),
+            budgets=fixture_request_budgets(),
+        )
         row = original()
         row["feed"] = FEED["url"]
         row["discovery_config_version"] = "test"
@@ -167,7 +179,13 @@ async def test_checkpoint_fallback_must_match_same_host_and_declared_slug(tmp_pa
 
     source = {"source_id": "S13", "name": "Robinhood", "feeds": [FEED]}
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
-        svc = SourceService(Repo(), settings(tmp_path, [source]), http=http, versions=fixture_versions())
+        svc = SourceService(
+            Repo(),
+            settings(tmp_path, [source]),
+            http=http,
+            versions=fixture_versions(),
+            budgets=fixture_request_budgets(),
+        )
         row = original()
         row["feed"] = FEED["url"]
         row["discovery_config_version"] = "test"

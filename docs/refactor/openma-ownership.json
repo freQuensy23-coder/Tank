@@ -1,0 +1,606 @@
+{
+  "source_coverage_sha256": "a4db5a04f1dda691f000fc7ee931f568ff60d24fd7e3a6826ec6b00a228b0a86",
+  "coverage_checkout_commit": "54a7fbea603b6d9d9f3fab8b31b726fa3155780c",
+  "upstream_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+  "archive_sha256": "a1bca52a11dd2e621b9a451e204abe5055b70fc45a8db017fd00587ebce618e9",
+  "priority": "Preserve all ready checkpoints; finish current bounded owned tranche before starting queued vendor changes. Coordinate cross-owner interfaces, source-only first; no production reads/process changes are implied.",
+  "assignments": [
+    {
+      "path": "vendor/openma/apps/agent/src/harness/default-loop.ts",
+      "owner": "quality",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "520cac8e1ef3b318e7bf845f3dd7f0504e75ba7edf45f851ddbda852cf73054c",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/apps/agent/src/harness/sandbox-browser.ts",
+      "owner": "quality",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "af79834e2ae907a5dc2c8fd77b0f30affd449043ae39ecf77dbce3da9abb5b54",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/apps/agent/src/harness/tools.ts",
+      "owner": "quality",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "a2b6833b49c488ec73566f3e5026b1a3c03edf65f0c147265e308341dfb634fc",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/apps/main-node/test/tank-execution-status-faults.test.ts",
+      "owner": "agents",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "ada25ccd7cb0a7c928a13c877fb9f2a45fdd1d630ef14d8a3db17a389401ab55",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/apps/main-node/test/tank-existing-inputs-fixture-adapted.test.ts",
+      "owner": "agents",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "3e4d14db4889b1563ef068750d96240196f4e87adeaf58691d29983f66b5db97",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/apps/main-node/test/tank-session-executions-route.test.ts",
+      "owner": "agents",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "8e2751769074e00a67b84ce259d60880ebe7b4b8fe56f1314e6392f4c400ed20",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/apps/main-node/test/tank-skill-archive.test.ts",
+      "owner": "agents",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "b95eb8c46d9d3f563a495dbc436451026079f0a3e1bd3d6a4627aa38ecb88744",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/apps/main-node/test/tank-stable-skill-paths.test.ts",
+      "owner": "agents",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "ae3832acc169a1139e7467e50fcf3a6af53898aed3d2a41c456bce76c21a36ca",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/agents-store/src/adapters/sql-agent-repo.ts",
+      "owner": "foundation",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "d011b9e5c6d5f20aaf80c4a6f90f37a868f0bbc7fc095e8190fc476fd5760a35",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/browser-harness/src/index.ts",
+      "owner": "quality",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "28b938d3e69fa0217df5f1740ad3f94c4b4d01d002e4c5c4686479510df600c0",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/browser-harness/test/tank-sandbox.test.ts",
+      "owner": "quality",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "4e94532ed1a52bd8e8c70137c339ce8a0b9a5254a582b170e0622003756e5ae3",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/node-managed-agent-codec.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "13afa1dbb5756ef40598cc64547dfd1c9f6ef5ed11a0a619392c5a219c1bef1d",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/node-managed-confirmed-tool-executor.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "d044bf3cc62f8a8fadb659acba4661daaf79b1485961b2b5b1d42d9cb273a7b9",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/node-managed-harness-runtime.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "9677b8e230295031ce09549a0a1c8bcf61d8db033f70446266f4c2306ecf97ca",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/node-managed-session-inputs.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "f64dbb8bb4c191dc20b9788bce1b67a098457065cc6754b0e491aa9e8c532c3c",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/node-managed-session-runner.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "dafcca564f6ce442581bfe8f7c257fda4e41926b6313c93bc397baa8c56aa930",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/node-managed-session-runtime.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "9fa7a2f8d4d194809db4d6716174efa6ee1839361737b08eb5ec9dc38055aced",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/node-managed-skill-aliases.py",
+      "owner": "agents",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "e77a62f3905da8cc0575fffc603b41be34a37b2f3f9d7a1f85da22855b9d36b1",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/node-managed-skill-manifest.ts",
+      "owner": "agents",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "506fcde08e4a6536cf618016c08d02b441f2e233314c80267f35b23eb776cc8d",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/node-managed-stable-skills.ts",
+      "owner": "agents",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "a9f6ba3bf37517ee21046fbe152fb75d309a71d2c5708caf3972743ca5dddb23",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/node-managed-workspace-checkpoints.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "b3062e65c14ae99bd137c1ef690cee516c390cf9744d8133d7435c7d5b9938cb",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/node-session-execution-status.ts",
+      "owner": "agents",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "be6c8bd343e34074dc52b9b865e9a5a817d016e4e6713a599133071144160650",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/node-session-execution-worker.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "2a52f5f6754b5e65dd77a626a24a298adc0925321c9c774d5ec0dbc1fe6852d9",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts",
+      "owner": "agents",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "6f2c6f3ead3410e95577363ea73a45848c55d9235d242141963b55a3923244ed",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/tank-retained/guest-file-io.ts",
+      "owner": "agents",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "f3c30e333e3e0b013264334c8f0d829aa1a09d7be131a4701a8d98c3bf67b477",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/tank-retained/guest-file-worker.ts",
+      "owner": "agents",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "5381ce39bd0bdc62db18df95aa04e0a5411972b12482d07fc9cf7f3f1605cc28",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts",
+      "owner": "agents",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "9eb10bb1dd1c188f6de145bf42704a81ed4638017b7ad42a4cee0bc2a7bd1258",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/tank-retained/replay-attachment.ts",
+      "owner": "agents",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "24515c58fdb3bcad8e49e0a8bd199f8ff3e2b55d574b2ea0cbdfd7ab6cc76b1d",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/lib/tank-retained/retained-session.ts",
+      "owner": "agents",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "c2e634ba013e02fa5797825915bd1af08a772c3ddaca18a51c8b1153765114a0",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/modules/node-foundation.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "2946e3d1b449efdf8d0e4f859dda71a0fa3cea1e3cb1ec6045474e6864d4118b",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/modules/node-http.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "08423097e4cb8eb86c6b4dc00f1acfadf1be13b46d2028f4c543affc7f52e842",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/modules/node-managed.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "a1585724024d32c24e52ed53f7f46238802702dacfd5ca2e8006407855638848",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/modules/node-runtime.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "5577e3ce54a009e5d73d237039b4023547da982256f475e8857454e401fc12da",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/registry.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "c2537b5d10c884ae64011ddc5d2e1a951dc5d1d90385b325e787213131598294",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/credentials-store/src/adapters/sql-credential-repo.ts",
+      "owner": "foundation",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "ed2a04d334643e450fbf94f96865394404e327c28369aae6ecbb61879a1b2232",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/dreams-store/src/adapters/sql-dream-repo.ts",
+      "owner": "foundation",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "65b35c1d0d62300e66ea88f13ea7595d2b3f517c1a46c7d8f4a5dcb711646cad",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/environments-store/src/adapters/sql-environment-repo.ts",
+      "owner": "foundation",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "0c99dc14d30695202b884e3494c51c51388f817f0ba9e0aee054324a3c23e7be",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/evals-store/src/adapters/sql-eval-run-repo.ts",
+      "owner": "foundation",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "060c1b053fa9102bd7cf998108cbea91651a592eb876133bc60289f94724130b",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/files-store/src/adapters/sql-file-repo.ts",
+      "owner": "foundation",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "c31384edc3719503b7b5f29541667ff3bff83e6d545a43690dba3ff6f09cc8f3",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-adapters-runtime/src/index.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "08e863e77d96f8a4c20c68d67638139b282ebdbd2964e3a6da0ca7b0138e1ec3",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-adapters-sql/src/session-event-polling-stream.ts",
+      "owner": "foundation",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "59056fa760322e485ff3d19b7c3c04ecf770f02aa0402a8d1728744922242d41",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-adapters-sql/src/session-event-replicated-stream.ts",
+      "owner": "foundation",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "024f2f4a8c1287cfdc8375a7763e641ae9efe756673962b606bde654a61e3c44",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-adapters-sql/src/session-runtime-projection-sql-persistence.ts",
+      "owner": "foundation",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "b8ef2a35759ba7bceaad591ea43ce268b563e1d6097551af1ecb320d1154208d",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-api/src/contracts/agent-input-components.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "b127ddfd8ffa9310c5e7e002fa754cf4d0cb36d8382b531b89966029510845b6",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-api/src/contracts/agent-response-components.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "b7c5baf65f725fe18be44a4547a81c36f0cb919342f12f156a8f757e27dcb0a9",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-api/src/contracts/agents.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "b092b5cf08587d88708f42cf350050c8431379820e8921ede3b713b32ad536b2",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-api/src/contracts/session-events.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "9f40c44949cbe3acd7bf2e197e46d26bdfe62bfc6a2f1555fabdf15af8be3cea",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-api/src/managed-sessions-api.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "ad5ddfb067147c9e594e48afe0f4d2555aadfa95959e8d762d98f3a6fabf8c6e",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-api/src/mappers/agent-definition.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "04cd1cb308a18c909f1cd3b014b2fdb125434ff8cc5b134041161f05579416d0",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-api/src/mappers/session-events.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "102ee34180005ed7f3fb65d816d5abc824ece571fb5aaa78f82c779c9ef09789",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-api/src/routes/session-executions.ts",
+      "owner": "agents",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "cad3086d5b06d1b335e7f554b36d950e5908e73f47e53e4dc5ba09be7475dbc4",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-application/src/agents/definition-resolution.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "161f473dd8b6b2b991b8eecc40e2019451a735ae6473f018b9257f46ee4189b5",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-application/src/session-execution/application.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "0d2fa3165eaa341ebb74785df365cae454e0ab02b29cc916f227a11942393a52",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-domain/src/agents/definition.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "7059d6eecd693de2624e05c268406401bd65069d686f1d22981cde7b81cb894d",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-domain/src/sessions/event.ts",
+      "owner": "agents",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "7a435f63b763baa020b7770b9d02463fc34acac52869daf23864a2aa30231828",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/memory-store/src/adapters/sql-memory-repo.ts",
+      "owner": "foundation",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "966d8022ff77756ee694c033387a67ce1bfce02ff7db7fa4a978d9868273cdab",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/memory-store/src/adapters/sql-store-repo.ts",
+      "owner": "foundation",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "378356c44b85991bc9a0d5b761366c3acd861b474f69dfe2de9e94d501180dd3",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/memory-store/src/adapters/sql-version-repo.ts",
+      "owner": "foundation",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "fdaa836161480555bcc761ef405606f4afc5fcd865e3a16d52b197f9b6763502",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/sandbox-adapter-litebox/src/index.ts",
+      "owner": "quality",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "d6098f2f309f75ebfcf65d88eee6f6f9c708c2af9a2dc6c1e7fe42e93b4ea8dd",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/sandbox-adapter-litebox/src/litebox.ts",
+      "owner": "quality",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "9b620c4b19ee021da5667c1b2f3d4321201f64864daea407cb54ebd04c9358f2",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/sandbox-adapter-litebox/src/tank-replay-evidence.ts",
+      "owner": "agents",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "eed62fb4c9d1530c51d15229a8d2768f31e1d23a6933b0e7fdd9a5694b16280c",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/sandbox-adapter-litebox/test/litebox.test.ts",
+      "owner": "quality",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "a43d226f3f7feb00e14f19fba46e41202757ae9c22ee7ab13ade85a5d1173f7e",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/sandbox-adapter-litebox/test/tank-network.test.ts",
+      "owner": "quality",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "c3d4f4fe5aa1a78aec4ae20ab7655f77e258e772fc6f5a35d5ec7bf518a44165",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/sandbox-adapter-litebox/test/tank-private-ip-network.test.ts",
+      "owner": "quality",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "8adde209d56675f3ff8885494a1fe149f1b3912947b3b12cad9aa8940a27bc08",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/session-event-store-sql/src/index.ts",
+      "owner": "foundation",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "ec917dc3ed2a2760f2004f398fbe4dedb8e7fb427df53bea3580fdba56c5d3e5",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/session-runtime-contract/src/continuation.ts",
+      "owner": "foundation",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "33f5cc8a61d7fc7dc6c56f1adf0442653e7a4e8f5402d4356b14fd9ef7027127",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/session-runtime-contract/src/coordination.ts",
+      "owner": "foundation",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "9d4d55e9c4293e538b00ccc24187d49552ae14655aae6c032cd6b7710ce3a1e6",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/session-runtime-contract/src/history.ts",
+      "owner": "foundation",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "bc2f68dbd341a7e1ed6c63a54c8769a88cf783efada45d7caf6e3531ecab881e",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/session-runtime-sql/src/continuation.ts",
+      "owner": "foundation",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "85f93046c5ff17307645424df804933b67d3eda18b36f60e4ae6bcd1d5d1c9af",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/session-runtime-sql/src/coordination.ts",
+      "owner": "foundation",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "55b762ad136273ef3cb21de69271368ccf769d597b7b7ccfbbbce7e50edd400b",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/sessions-store/src/adapters/sql-session-repo.ts",
+      "owner": "foundation",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "436742a248e1cc8f40aef0ce2c8a9b3b3cb40cf325d7d5cb4c64e0b88760c077",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/packages/vaults-store/src/adapters/sql-vault-repo.ts",
+      "owner": "foundation",
+      "classification": "MODIFIED_UPSTREAM",
+      "reviewed_input_sha256": "1a5092e9a9efab726bba6f078d6e101944230f492f4473b54f3eb9efc1259974",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mjs",
+      "owner": "quality",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "fb97968b094f68b8bc92a1e845387ff01baf8e1334f2780e5a759594fa7f79a3",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    },
+    {
+      "path": "vendor/openma/tank-deploy/openma_entrypoint.mts",
+      "owner": "quality",
+      "classification": "TANK_ADDED",
+      "reviewed_input_sha256": "163f2a37d7a57f2da65bbdcf573896f9766eccba24df6349a393ae4e8bf61112",
+      "scope": "Whole Tank-added program; for mixed programs, Tank-authored changes and necessary typed boundary support only. Preserve upstream comments/licenses and unrelated upstream behavior.",
+      "status": "assigned; implementation and semantic verification remain to be completed"
+    }
+  ],
+  "counts": {
+    "quality": 12,
+    "agents": 42,
+    "foundation": 20
+  }
+}

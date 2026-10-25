@@ -1,4 +1,4 @@
-"""In-memory native polling state; neither class supplies execution or source facts."""
+"""Native polling state and required scout/session identity projections."""
 
 from pydantic import Field
 
@@ -14,3 +14,12 @@ class ExecutionPoll(DomainModel):
 class HistoryPoll(DomainModel):
     deadline: float
     delay: float = Field(gt=0)
+
+
+class ScoutProposalIdentity(DomainModel):
+    prp_id: str = Field(min_length=1)
+
+
+class ScoutSessionReference(DomainModel):
+    session_id: str = Field(min_length=1)
+    proposal_id: str = Field(min_length=1)

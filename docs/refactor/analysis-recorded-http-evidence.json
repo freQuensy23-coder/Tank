@@ -1,0 +1,28 @@
+{
+  "archived_code_executed": false,
+  "authentic_refusals": {
+    "captured_code_not_located": 11,
+    "host_only_identity_map_not_supplied": 6
+  },
+  "captured_module_hashes": 5,
+  "captured_results_selected": 5,
+  "evidence_artifact": "/srv/tank-refactor-evidence/analysis-http-retained-reader-proof-a783-v1.json",
+  "evidence_artifact_sha256": "79aa43dc37ae7b2a924280d6685e4515ec877a2ffd4efa3d08047fa1fc712b06",
+  "f02": "EXCLUDED_MANIFEST_MISMATCH",
+  "frozen_inputs_modified": false,
+  "hash_verified_input_packets": 25,
+  "live_clients_created": 0,
+  "live_effect_counts": {
+    "admit": 0,
+    "feedback": 0,
+    "scope_acquire": 0,
+    "scope_block": 0,
+    "scope_wait": 0,
+    "sleep": 0
+  },
+  "module_hashes_verified_in_git": 1,
+  "normal_load_inputs_validated": 8,
+  "private_maps_or_sealed_outcomes_read": false,
+  "scope": "Actual eligible retained loader/captured-result boundary and explicit refusal; not full agent acceptance",
+  "unresolved_module_hashes": 4
+}

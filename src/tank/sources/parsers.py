@@ -13,6 +13,7 @@ from selectolax.parser import HTMLParser
 
 from tank.contracts.source_items import discovered_item
 from tank.contracts.sources import FeedParsingSpec
+from tank.sources.instrument_adapters import parse_instrument_page
 from tank.time_precision import Timestamp
 from tank.util import EpochUnit, iso, parse_epoch, parse_utc_time, sha256
 
@@ -619,61 +620,10 @@ def _json_items(payload, source_id):
     raise ValueError(f"No JSON parser for {source_id}")
 
 
-def instruments(payload, feed):
-    feed = _feed_spec(feed)
-    data = json.loads(payload) if isinstance(payload, (str, bytes)) else payload
-    venue = feed.venue
-    kind = feed.market_type
-    if venue == "binance":
-        rows = data["symbols"]
-        fields = ("symbol", "baseAsset", "quoteAsset", "status")
-    elif venue == "coinbase":
-        rows = data
-        fields = ("id", "base_currency", "quote_currency", "status")
-    elif venue == "kraken":
-        if data.get("error"):
-            raise ValueError(str(data["error"]))
-        rows = [dict(r, symbol=k) for k, r in data["result"].items()]
-        fields = ("symbol", "base", "quote", "status")
-    elif venue == "okx":
-        if str(data.get("code", "0")) != "0":
-            raise ValueError(str(data))
-        rows = data["data"]
-        fields = ("instId", "baseCcy", "quoteCcy", "state")
-    elif venue == "bybit":
-        if data.get("retCode", 0) != 0:
-            raise ValueError(str(data))
-        rows = data["result"]["list"]
-        fields = ("symbol", "baseCoin", "quoteCoin", "status")
-    elif venue == "hyperliquid":
-        rows = data["universe"]
-        fields = ("name", "name", "quote", "status")
-    else:
-        raise ValueError("Unknown instrument venue " + venue)
-    result = {}
-    for r in rows:
-        symbol = r[fields[0]]
-        status = r.get(fields[3])
-        if venue == "hyperliquid":
-            status = "DELISTED" if r.get("isDelisted") else "TRADING"
-        if venue == "coinbase" and r.get("trading_disabled"):
-            status = "TRADING_DISABLED"
-        result[symbol] = {
-            "venue": venue,
-            "market_type": kind,
-            "symbol": symbol,
-            "base": r.get(fields[1]),
-            "quote": r.get(fields[2]),
-            "status": status,
-            "contract_type": r.get("contractType") or r.get("ctType"),
-        }
-        if venue == "coinbase":
-            result[symbol]["status_flags"] = {
-                field: r[field]
-                for field in ("trading_disabled", "cancel_only", "post_only", "limit_only", "auction_mode")
-                if field in r
-            }
-    return result
+def instruments(
+    payload: bytes | JsonValue, feed: FeedParsingSpec | Mapping[str, JsonValue]
+) -> dict[str, JsonValue]:
+    return parse_instrument_page(payload, _feed_spec(feed)).snapshot.storage_record()
 
 
 def binance_body(value):

@@ -157,7 +157,7 @@ EndpointVerification recognizes the existing optional checked_at clock declarati
 The same declared JSON-number preservation applies to SourceLimits.budget_fraction, SourceFeed/HttpFetchPlan request_weight/requests_per_minute and SourceProviderBudget.tank_max_requests_per_s. Their strict int|float forms represent genuine valid JSON numbers without coercing integer capacities/counts to float; existing bounds/nonfinite/bool checks remain. Actual api_limits.yaml canonical roundtrip and an explicit mixed integer-budget/fractional-cadence source configuration roundtrip provide behavior evidence. Runtime rolling-budget arithmetic still uses its precise numeric model.
 
 
-Known provider budgets now validate their actual required operational facets instead of accepting a nullable missing capacity: sec.gov/Coinbase/Kraken/Etherscan require RPS; Binance spot/usdm/Hyperliquid require per-minute weight; OKX requires endpoint budgets; Bybit requires period/capacity/budget/scope; DuckDuckGo requires declared client/backend/spacing/retry/access policy. A declared Tank capacity cannot exceed the existing api_limits.yaml half-documented-capacity policy, including endpoint budgets. Truly irrelevant facet fields remain optional for other provider kinds. Real SourceService startup regressions reject a missing SEC RPS or an excessive configured capacity before any source/job persistence, closing the nullable-capacity admission gap without guessing a fallback quota.
+Known provider budgets now validate their actual required operational facets instead of accepting a nullable missing capacity: sec.gov/Coinbase/Kraken/Etherscan require RPS; Binance spot/usdm/Hyperliquid require per-minute weight; OKX requires endpoint budgets; Bybit requires period/capacity/budget/scope; DuckDuckGo requires declared client/backend/spacing/retry/access policy. A declared Tank capacity cannot exceed the existing api_limits.yaml half-documented-capacity policy, including endpoint budgets. Closed provider variants omit unrelated facets entirely; only the genuinely uncaptured Coinbase/Kraken documented RPS remains optional. Real SourceService startup regressions reject a missing SEC RPS or an excessive configured capacity before any source/job persistence, closing the nullable-capacity admission gap without guessing a fallback quota.
 
 ## Retained source-item exceptions by exact symbol/site
 
@@ -269,9 +269,9 @@ sec.gov IP scope across subdomains. Unknown routes have an explicit unconfigured
 outcome, never a fabricated quota.
 
 `BudgetConstraint.host=None` means a primitive quota lacks a provider-block
-association; it does not suppress its quota. `SharedRequestBudgets.acquire`
-retains capacity=None only for existing explicitly unconfigured primitive callers;
-the configured adapter always supplies validated positive capacities. Priority=0
+association; it does not suppress its quota. `SharedRequestBudgets.acquire` requires a validated positive capacity.
+Unregistered public routes are explicit policy outcomes and never call an
+unlimited/missing-capacity primitive. Priority=0
 is the ordinary fairness class; negative priorities receive existing urgent
 precedence. Budget maps are associative indexes by validated complete quota
 identity; deques are rolling weighted admission histories. `RequestLedger.connection`
@@ -429,6 +429,217 @@ both helper/test modules pass strict mypy and Ruff. Constructor consumer migrati
 will be paired with analysis' exact required ReactionScheduling activation.
 This clean branch is based on parent 95ce994 and does not include the held
 admission/7af27d3 cohort or the independent polling-state WIP.
+The former `SharedRequestBudgets.configure(repo, settings)` capability guess
+and unused Settings dependency are removed. Backend selection now belongs to
+explicit composition, as described below. Owner labels remain observability only,
+never quota partitions.
+
+
+`ops_cards.plain` now takes an explicit scalar display value and handles only
+None as absent. Zero and false retain their visible values rather than disappearing
+through truthiness. Its 400-character default is the established presentation cap;
+callers can choose their named field-specific cap. This closes the untyped helper
+dependency in `ops_entry_errors`, which now passes strict mypy together with
+`sources.errors`. Entry-error variant parsing chooses a declared digest/proposal
+identity by key presence; empty declared identity values therefore reach that
+variant's required validation rather than trying a different record shape.
+Evidence: 164 Ops/source units pass in 7.26s, including new zero/false/markup cases;
+Ruff passes touched source/tests. The rest of ops_cards remains open.
+
+
+### Explicit admission backend and lifetime activation
+
+`SharedRequestBudgets(backend)` requires the closed concrete choice
+`MemoryBudgetBackend | RequestLedger`; unsupported backend objects reject before
+binding. There is no repository-based fallback to memory and no capacity=None
+admission path. Every actual acquisition revalidates its complete constraints,
+including previously constructed model instances. Unknown public routes and
+genuinely absent additional caps remain explicit `HttpUnconfigured`/constraint-plan
+decisions at the caller boundary, not an unlimited engine operation.
+
+`MemoryBudgetBackend` requires its operational clock and enforces weighted windows,
+atomic groups and observed provider-host blocks. `RequestLedger` retains real
+PostgreSQL transactions and shared host-block storage; its database and owner are
+required. Both expose host-only block waiting without fabricating a provider quota.
+An unregistered public URL still waits for an actually observed host block while
+returning the explicit unconfigured-policy outcome. Host-block absence means
+unblocked, which is distinct from declaring any provider capacity. The old
+already-serialized single-window compatibility method has been removed; all
+physical acquisition keys come from the same validated canonical identity.
+
+`RequestBudgetScope._active=None` is solely the real before-bind/after-release
+resource state. Acquire, host wait and block all raise when unbound. `bind` returns
+the exact owned engine lease and refuses a second binding while that lease is
+active. After the old lease is released, a replacement can bind; stale repeated
+cleanup of the old lease cannot clear that replacement.
+Runtime composition must supply an explicit backend and inject the scope into its
+services; the core does not choose a backend by inspecting a structural repository.
+
+`SourceService(..., budgets:RequestBudgets)` now requires its port. It validates the
+actual source-configured API policy and constructs the configured resolver with
+that required engine. Direct operator source checks bind a PostgreSQL ledger for
+their exact command lifetime and release it even if service construction fails.
+`HttpAdmission.block(actual_request, until, reason)` uses the same injected engine
+as request admission; it never consults a global optional ledger flag. Live
+provider admission remains separate from verified recorded-evidence transport.
+
+Retained resource maps are genuinely associative: `windows` indexes weighted
+history by complete quota identity; `locks` indexes concurrency resources;
+`urgent.get(bucket, 0)` means no waiting urgent requests; `blocked_hosts.get(host)`
+means no observed host block. Empty history on a new configured bucket is actual
+absence of prior spend, not guessed capacity. `RequestLedger.connection=None`
+is lazy/closed connection state, never a missing backend. Its host-delay SQL
+zero for a missing block row represents the actual absence of a block. All clock
+values used for memory admission must be finite; block instants require aware
+timestamps. The production clock is real and the test clock is explicitly supplied.
+
+`source_support.fixture_request_budgets` creates the real memory implementation
+with an isolated virtual operational clock advancing only on waits.
+`fixture_http_admission` uses the actual configured resolver and declared synthetic
+version facet. It never fabricates an ADMITTED decision/provider or bypasses quota
+arithmetic. The synthetic operational clock is not event/publication provenance.
+Owned source fixtures explicitly choose this backend; cross-owner runtime/E2E/
+market callers must merge their paired constructor companion before activation.
+
+Evidence: 200 source/admission units pass in 3.34s; two actual PostgreSQL cases pass
+in 1.61s, zero skips. They prove all-or-none rollback and cross-owner host-block
+visibility with no quota-spend rows for unknown public routes. Memory cases prove
+unbound refusal, effective host blocking, no partial spend, required capacity
+revalidation and replacement lease ownership. Five engine/policy/helper/test
+modules pass strict mypy. Full combined constructor cohort remains pending the
+corresponding owners' canonical companions; prior ee97e89 remains the last pinned
+487-unit/33-integration green snapshot.
+
+
+The complete owned unit selection after this backend activation passes 496 cases
+in 6.33s, zero skips (owned-explicit-backend-unit.xml). The two actual PostgreSQL
+admission cases remain the focused physical proof; the full integration/E2E cohort
+must wait for the coordinated required constructor/resource companions.
+
+
+### Remaining source transports enter admission
+
+`XSensor` now requires `HttpAdmission` and admits its actual built actor request,
+including each redirect, before I/O. Its explicit 130-second actor timeout,
+Authorization header, account/cursor body, raw response and cursor/degradation
+rules remain intact. Actor requests require the declared HTTPS api.apify.com
+destination; redirects cannot send a run to another host. Missing token still
+fails before any request. The actor's uncaptured API quota remains an explicit
+unconfigured-policy outcome; this does not invent a quota or start additional
+paid runs. Existing configured S29 acquisition/cost/cadence ownership remains
+the authorization boundary.
+
+`SourceHttpTransport.send` is the actual-request entry point shared by reader,
+actor and diagnostic adapters; `request` performs the standard feed request
+build before that same loop. Source smoke probes now use this admitted redirect
+transport with the configured headers and form/body. Public account diagnostics
+use the actual built query request and wait for empirical host blocks. They
+return strict response/failure models. HTTP status alone cannot establish an
+account's existence or organizational authority: `exists=None` and
+`identity_status=REQUIRES_OWNER_EVIDENCE` are explicit diagnostic semantics,
+with the actual HTTP status retained. No source authority is changed by a probe.
+
+Retained X adapter cases: token=None is legitimate when S29 is inactive and
+causes an explicit error if a run is requested; optional successful-account/run
+error text is provider telemetry. Failed-account omitted historyGap means no
+reported gap and never permits cursor advancement, because that account remains
+an explicit failed read. Run-level failed health requires nonblank run error or
+a concrete failed-account reason; blank run telemetry cannot hide the real
+account failure. Degraded health without a detailed reason produces the exact
+RUN_DEGRADED status witness, never a fabricated cause. Cursor/report lookups are
+genuinely associative, and missing requested reports/cursors become explicit
+failures. Extra actor telemetry remains only in retained raw bytes. Required
+successful-account post counts/history-gap facets and post identity/aware
+publication fields still validate strictly.
+
+Evidence before the final failed-run edge regression: 205 source/admission units
+pass in 3.11s. Real transport tests prove unbound scope cannot start the paid
+actor, cross-host actor redirect refuses before second I/O, and 200/404/503 public
+diagnostics wait for observed blocks while retaining unknown identity. The
+source configuration, common HTTP transport and X adapter are strict-mypy clean;
+the X test module still has five calls into the currently untyped polling API,
+which remains explicitly open. Probe result/workflow typing also remains open.
+
+
+Final scoped transport proof: 206 source/admission units pass in 3.11s after
+the blank failed-run evidence edge is closed; the three completed source modules
+remain strict-mypy clean. This adds no cross-owner constructor requirement beyond
+the already-coordinated SourceService budget port.
+
+
+### Required source cadence controls
+
+`SourceEscalationControlView` is the narrow persisted-control projection consumed
+by `SourceService.is_escalated`. Source identity, lifecycle status, aware start
+and expiry are required; missing status no longer becomes ACTIVE, and absent
+clock fields no longer silently disable or fabricate a window. Confirmed and
+cancelled statuses require their actual terminal clock. Terminal markers remain
+genuinely absent during ACTIVE phase; a present terminal marker suppresses active
+reads even if a retained row still carries the older ACTIVE label. The declared
+window must be positive and remains half-open at expiry.
+
+The reader validates all source-filtered rows through the declared projection and
+rejects identity mismatch. It uses iter_all rather than truncating control
+eligibility at an arbitrary 10,000 rows. Optional `now=None` selects the actual
+service operational clock; supplied instants must be aware ISO/datetime values.
+No current-time fallback replaces a missing persisted control clock.
+The existing actual assessment/milestone producer-to-15-second-read tests remain
+in the source cohort. Before final terminal/iterator checks, 208 source/admission
+units passed in 3.19s; contracts strict mypy passes. Final scoped proof follows.
+
+
+### Observed synchronization lifetime in serve
+
+`run_with_synchronization` monitors the actual synchronizer future alongside the
+owned supervisor. A permanent synchronization failure sets the real stop event,
+drains the runtime, awaits background cleanup and propagates the failure.
+A successful one-shot synchronization is normal and leaves runtime running until
+its stop signal. Caller cancellation shields the runtime from abrupt cancellation,
+signals graceful drain, cancels/awaits the owned synchronizer, and then propagates
+cancellation. Simultaneous synchronization/drain failures are observed together;
+neither disappears. CLI error groups expose only error classes, without arbitrary
+provider/configuration payloads or a misleading successful stopped/CURRENT result.
+
+The generic future result type is intentionally unused: this helper governs
+resource lifetime and never invents or interprets a synchronization report.
+`primary=None` means no caught task failure, and the shutdown-cancellation flag
+distinguishes an owned cleanup cancellation from an unexpected service
+cancellation. Exception identity de-duplication is a real collection of observed
+failures, not a domain mapping facade. Transient retry policy stays inside the
+existing synchronizer and is unchanged.
+
+Evidence: 11 CLI/readiness units pass in 1.57s, including the actual uncaptured
+Settings preflight guard, normal one-shot continuation, awaited cancellation and
+dual-failure drain. Tests are strict-mypy clean and the helper emits no errors in
+the full CLI strict check. The wider CLI still has its explicitly inventoried
+untyped command/service boundaries. The permanent OpenMA effort/binding activation
+must be paired by its owner before integrated verification.
+
+
+### Held HTTP cohort: named web-page read provenance
+
+`WebEvidenceItem.page_read_provenance` now imports the closed shared
+`PageReadProvenance` union from contracts.page_evidence. It is genuinely optional
+for historical captured rows that were written without this information. Omission
+remains omission through storage serialization and SourceItemDocument; no current
+clock, input digest or provider authority is backfilled. New page reader producers
+must supply their actual live or verified-recorded provenance.
+
+Verified recorded-body provenance must match the row's actual raw_sha256. The
+field does not admit a speculative reconstruction variant or label reconstructed
+bytes as original captured material. Live receipts preserve their declared
+collection Timestamp. The test wire-writer port is the exact used interface to
+the real historical save_web producer, followed by validation through the full
+WebEvidenceItem schema; it does not fabricate a source row or provider result.
+The producer itself remains analysis-owned and incompletely typed.
+
+Evidence: six page/source scheduling cases pass in 1.72s with zero skips; source
+item and page tests pass strict mypy and Ruff. Historical real producer output,
+live roundtrip, verified-body roundtrip and digest-conflict rejection are covered.
+This additive checkpoint belongs only to the held HTTP cohort descended from
+4041eb68/477d58e. It does not activate HTTP consumers or alter the clean scheduling
+cohort or independent source-state branch.
+
 
 
 The independent required-scheduling caller companion now uses that real async
@@ -443,3 +654,329 @@ Scoped proof: 216 owned constructor/helper units pass in 3.84s, and both actual
 source-cadence integration cases pass in 2.45s. No external HTTP is allowed by the
 real composition fixture. Full pinned owned verification is the next gate; these
 results do not assert completed reaction measurement or full scheduler typing.
+
+
+### Held HTTP cohort: required owned consumer composition
+
+Owned MarketService constructors now receive the real configured admission port.
+The operational scheduling fixture constructs it from the actual settings policy,
+the same explicit version facet and an explicitly declared memory backend with
+isolated operational time. The resource container exposes that same port to each
+EventToolService's `LivePageAccess`; it does not fabricate admission or page data.
+Fixture version override is a legitimate choice between the declared synthetic
+default and an explicitly supplied captured facet.
+
+The standalone CLI market command owns a PostgreSQL RequestLedger, configured
+resolver, MarketService and shutdown lifetime. It never infers a memory backend
+from a missing capability or silently skips a required close. Source constructors
+retain their already-required budget port. The exact clean scheduling constructor
+companion was merged normally; source-budget fields were preserved in the owned
+merge conflicts, with both evidence ledgers retained.
+
+Proof: all 512 owned unit cases pass in 7.12s, zero skips. Four operational helper/
+page test modules pass strict mypy. Full physical/E2E qualification remains pending
+the corresponding runtime, recorded-read and quality-owned constructor companions;
+this checkpoint is not a claim that the held HTTP cohort is integrated.
+
+
+### Held HTTP lifetime follow-up
+
+`build_budget_backend(repo, *, owner)` centralizes explicit composition for the
+two supported concrete repository backends. PostgresRepository selects a real
+RequestLedger with its required database/owner; MemoryRepository explicitly selects
+the actual process-local implementation. Every other repository implementation
+raises TypeError, rather than being guessed to mean memory. The factory is a
+composition boundary, not an admission fallback. CLI source and market commands
+reuse it, so real isolated memory fixtures remain supported without accessing a
+nonexistent database_url.
+
+`RequestBudgetScope.bind` now refuses an already-active lease before replacing
+anything. The regression proves the first backend remains active and receives
+actual spend. After release, the replacement can bind, and stale old cleanup
+does not disable it. This preserves orderly reload ownership without silently
+abandoning a live backend.
+
+Proof: 29 admission/CLI cases pass in 1.64s, zero skips; engine/admission tests pass
+strict mypy and Ruff. Factory cases exercise explicit memory and unopened physical
+resources; unsupported repository rejection is an explicit closed runtime guard.
+Agents owns the CLI fake Source constructor update and production reuse of this
+common factory. Combined runtime/physical verification follows that exact pair.
+
+
+## Capacity reload admission review (paired activation held)
+
+The parent review demonstrated that capacity was incorrectly part of quota
+identity. The local correction separates `BudgetBucket(key, window_s)` from
+`BudgetConstraint.capacity`. Memory history, locks, and urgency accounting now
+share the same provider scope and declared period across capacity changes.
+Capacity remains required, positive policy input for each actual admission.
+
+The regression consumes two units at capacity two, verifies a capacity-one
+request waits without spending its grouped sibling, then checks capacity three
+admits only the third total unit and period expiry releases the original spend.
+The actual SEC source workflow also retains both host/minute debits when its two
+feed operations select different configured capacities. The selected source and
+admission cohort passes 96 unit cases.
+
+This is not yet an activated PostgreSQL or Go transition. Existing persisted
+capacity-suffixed rows must retain their history, and old and new clients must
+share one lock domain. Arbitrary period changes and a global minimum policy
+across stale deployments are not established by this memory proof.
+
+The new ordered migration `006_request_budget_policy_identity.sql` leaves every
+applied migration unchanged. `request_budget_acquire_scope` receives raw scope
+separately and locks/stores `request_budget_scope_key(scope, period)`, the SQL
+JSON-array encoding. The legacy entrypoint validates its supplied numeric suffixes
+and delegates to the same structured function. Under that canonical lock,
+historical capacity variants are rekeyed without rewriting timestamps, weights,
+or owners. Scope parsing splits only the final two numeric components, preserving
+opaque scopes that themselves contain pipes or numeric suffixes.
+
+Migration iteration uses an associative storage identity set; it recognizes only
+the declared positive legacy numeric grammar and exact scope/period. This is an
+explicit bridge for already-written quota evidence, not a generic record parser.
+The transaction owns both rekeying and debit writes, so a blocked grouped attempt
+rolls back all tentative changes. Period remains a separate constraint identity.
+
+The scheduling test composition now receives an explicit shared request-budget
+port. Owned source workflows pass the same actual engine to their source reader
+and reaction services; isolated web/operations cases declare their own real
+configured memory engine. No helper grants admission or allocates an unrelated
+private quota ledger. The consumer selection passes 222 unit cases and four
+actual integration cases, with zero skips; scheduling helpers and source-page
+tests pass strict typing.
+### Independent next branch: source workflow outcomes (not activated)
+
+The independent source-state branch replaces actual acquire/drain count records
+with `FeedPollOutcome`, and the aggregate with `PolledSource | UnconfiguredSource`.
+Producers and aggregation use model attributes; no model implements dictionary
+access. An explicitly empty feed configuration returns UNCONFIGURED rather than
+claiming a healthy read. Required item counts/errors remain supplied by the actual
+workflow, and a nonempty error list cannot validate as healthy.
+
+Owned callers now consume attributes, retaining their original raw evidence,
+restart, malformed sibling, concurrency and queue assertions. The existing
+disabled/retired Binance-source regression now expects the honest unconfigured
+outcome and still verifies no reconstruction or I/O. Source configuration and
+the X tests pass strict mypy; the previous five untyped poll-call dependencies
+in that test module are closed. 209 source/admission units pass in 3.24s.
+
+This is deliberately not part of held head 477d58e. Two quality-owned E2E map
+subscriptions still need a later paired attribute migration; full integration
+is not claimed. Checkpoint ownership/state schemas and unknown prior Coinbase
+flags remain the next work inside this independent branch.
+
+
+### Independent next branch: explicit checkpoint operation ownership
+
+Every checkpoint write now receives the actual `SourceDefinition` operation.
+`SourcePoller.save` never derives source identity from key text or the number of
+configured sources. Existing contradictory ownership rejects before persistence;
+new checkpoint ownership comes from the required operation object. Opaque storage
+addresses are addresses, not evidence of a publisher identity.
+
+HTTP reads also receive that source context. The Go request's source_id and the
+receipt callback use the actual definition, not key.split(). The application
+must explicitly select whether a read persists feed HTTP evidence. The generic
+reader accepts a required nullable evidence hook: None means a detail/history
+read returns its typed receipt to its owning backlog instead of mutating the
+feed checkpoint. Primary versus detail behavior no longer depends on matching a
+generic key regex. The actor's request-start callback now marks the owning feed
+after admission and before actual I/O, preserving cadence when a provider block
+delays the paid run.
+
+Evidence before final start-hook assertion: 211 source/admission units pass in
+3.05s. The opaque/misleading-key test uses two configured sources and proves
+ownership follows the explicit definition; contradictory rows refuse with no
+write. Reader tests prove an opaque feed address persists evidence when explicitly
+selected, while a feed-looking detail address does not. Reader/X adapter strict
+checks pass. Full checkpoint record schemas and generic clock annotation remain
+open in this independent branch; these changes do not imply that migration is done.
+
+
+### Independent next branch: unknown prior Coinbase restriction flags
+
+The available imported baseline (0d3e0cb2, retained in 1216b4b) already contains
+the status_flags parser and the history backfill; 23aaac8b moved that diff work
+into a thread. Its regression simulates an older snapshot by removing the
+field. This establishes migration intent, not any actual prior flag values.
+Copying the current flags into that history therefore lacks evidentiary support.
+
+The backfill is removed. `CoinbaseRestrictionFlags` is a strict named five-flag
+facet: None means an unreported prior/current value, never false. A flag transition
+requires both observations. A newly observed flag alone updates the real snapshot
+baseline without claiming a market-state change. Existing proven false-to-true/
+true-to-false restriction changes still emit source items. If another real
+instrument state changes while prior flags are absent, new change evidence writes
+status_flags:null for that unknown side; it never inserts the current flags into
+the past. Historical input maps and retained raw bytes remain unchanged.
+
+Evidence: 214 source/admission units pass in 3.39s, including existing live flag
+transition, restart/baseline and dedup regressions plus explicit unknown-history
+evidence and input-immutability tests. The named facet is strict-mypy clean and
+Ruff passes touched files. Full instrument snapshot/parser record typing remains
+open; this is a bounded correction of a concrete evidence defect, not a claim
+that the entire polling module is complete.
+
+The paired transition has now been qualified on immutable combined checkpoint
+9f35afaa: 515 owned unit cases passed in 6.06 seconds at its unchanged application
+parent, 38 actual integration cases passed in 7.99 seconds, and the final combined
+four-E2E plus ten PostgreSQL admission/transition selection passed all 14 cases in
+11.49 seconds with zero skips. Quality's exact paired Go checkpoint passed all
+354 race-enabled cases against actual PostgreSQL/ClickHouse, including legacy
+capacity variants and twelve mixed old/new concurrent callers. Global Ruff and
+formatting passed 336 files; six focused budget/helper/source-page modules passed
+strict typing. Default mypy retained one analysis-owned Truth cache annotation
+error, reported to that owner.
+
+The new SQL tests seed two genuinely historical capacity-suffixed records with
+unequal weights, compare timestamps/weights/owners before and after a blocked
+group, and then verify a larger-cap request sees exactly the combined prior spend.
+Adversarial scopes contain pipes and trailing numeric segments. Old serialized
+and new structured callers contend on one canonical lock; capacity remains each
+caller's explicit policy input. Distinct periods retain distinct constraints.
+There is no claim of an authoritative minimum capacity across stale deployments
+or continuity when a configured period is changed.
+
+## Instrument snapshot ownership migration
+
+contracts.source_checkpoints now owns the required instrument observation
+schema, associative symbol-indexed snapshot, observed Coinbase restriction flags,
+and the inward ReadCounter. read_report.ReadCounter is a temporary import
+reexport; the source-only flag implementation is retired. Snapshot validation
+rejects missing observation fields and mismatched symbol keys, hides raw inputs
+in validation errors, and verifies venue/market ownership against the actual feed
+before decisions.
+
+InstrumentObservation.base, quote, and contract_type are required nullable
+facts: OKX swap observations omit the base/quote projection, Hyperliquid
+universe rows omit an explicit quote, and spot listings omit contract type.
+InstrumentObservation.status is required nonempty text; an omitted provider
+status fails validation instead of becoming an unknown healthy snapshot. They are not filled from symbol spelling or
+market assumptions. CoinbaseInstrument.status_flags=None means no historical
+flag collection; each nullable flag means that specific flag was absent. Only
+two known observations of the same flag establish a flag change. Unknown prior
+flags remain explicitly unknown in event evidence.
+
+The pure sources.instruments.instrument_changes consumes validated snapshots
+and actual InstrumentPage evidence and returns typed instrument discoveries.
+It refuses an owner mismatch or a change without response evidence. Composite
+action tuples group equivalent transitions; symbol maps retain associative
+identity, and symbol-to-page-index maps preserve the actual supporting response.
+JSON dictionaries exist only when hashing the established serialized identity or
+rendering before/after evidence. The grouping digest and external identity retain
+the existing canonical algorithm, including a dedicated parity assertion.
+
+The poller validates both newly parsed and persisted instrument snapshots before
+comparison and serializes models only at checkpoint storage. It no longer mutates
+or copies current restriction flags into prior history. Tests declare synthetic
+unknown currencies/contract metadata explicitly; this fixture constructor is not
+a production source fallback. The selected source/contract cohort passes 152
+unit cases; the new contract, pure comparison, fixture helper, and behavioral
+tests pass strict typing. Full feed lifecycle checkpoints, pending batches,
+parser wire variants, and recursive clock annotation remain open and are not
+claimed complete by this instrument slice.
+
+The actual source workflow regression additionally admits a valid mocked provider
+response, stores its baseline, then observes a response missing required status.
+The result is DEGRADED with no new source item; the prior instrument checkpoint
+is exactly equal as a decoded stored document, and the validation report omits an
+unrelated private raw field. Twelve focused instrument cases now cover this
+workflow alongside identity/parity, required fields, and actual page ownership.
+
+
+At canonical source-state checkpoint 29195f2d the full owned selection passed
+533 unit cases in 6.86 seconds and 38 actual integration cases in 7.60 seconds,
+with zero skips. Quality's two typed-outcome E2E caller changes preserved the
+four actual workflows and passed all four cases in 10.85 seconds; the exact
+consumer was merged normally into 10c7b8aa. These checks qualify the explicit
+owner/outcome and instrument tranche, not the remaining full checkpoint/parser
+migration. The ready quota/HTTP checkpoint remains separately preserved.
+
+## X range boundary preservation
+
+XSensor.scan now retains a previously checkpointed account cursor when that
+account reports history_gap=True, even if the response offers a higher cursor.
+Returned posts and their exact run bytes are retained; the next actual request
+still asks from the prior boundary. Only a complete successful account report
+can advance that existing range. Cursor-regression and missing-account/error
+validation continue to run.
+
+The no-prior-cursor branch retains the explicit baseline policy: it establishes
+the first observed head, emits no historical posts, and still reports the actor's
+gap. It does not claim a completed historical range before monitoring began.
+The new regression performs two real MockTransport requests: the partial run
+offers cursor 110 over checkpoint 100, the follow-up still requests 100 and
+returns the previously missing 105, and only then commits 110. Exact response
+bytes remain attached to the respective post observations.
+
+All 20 X adapter cases pass with zero skips, including both new boundary/baseline
+cases; source and tests pass strict typing and Ruff. This is independent of the
+unactivated pending checkpoint/quarantine work.
+
+## Atomic instrument snapshot and pending capture
+
+SourcePoller._fetch_rows now prepares an InstrumentSnapshotUpdate without writing
+the comparison baseline. Raw item bytes are made durable while preparing pending
+rows. SourcePoller.acquire then writes the pending checkpoint and the prepared
+snapshot in the same repository transaction. A raw capture failure leaves the old
+baseline intact; a failure after either actual database put rolls both puts back.
+The independently recorded HTTP receipt remains truthful I/O evidence and does
+not acknowledge instrument coverage.
+
+InstrumentSnapshotUpdate requires the actual S14 owner, checkpoint key, validated
+snapshot/digest and captured version facet. Snapshot writes record those real
+config/code versions. No-change snapshots still avoid redundant writes, and the
+initial snapshot remains a baseline rather than a generated business event.
+
+The real PostgreSQL oracle exposed missing publication precision in S14
+discoveries. The producer now explicitly declares published_at=None and
+COLLECTION_ONLY/INCOMPLETE, retaining its separate actual observed_at collection
+clock. Snapshot comparison establishes when a change was observed, not when it
+happened. No observation is substituted as a publication or transition time.
+
+The bounded proof includes three actual MemoryRepository cases (raw failure and
+failure after either checkpoint put), plus three PostgreSQL cases. Both SQL put
+faults preserve the prior baseline across service restart and then emit the
+Trading-to-Settling change. A separate later-ingest fault proves that an already
+durable pending capture keeps its original item ID, observation clock and raw
+bytes across restart. The source/instrument unit selection passes all 94 cases;
+all three PostgreSQL cases pass, with zero skips. Three focused source/test
+targets pass strict typing. Envelope success-code validation and the unfinished
+quarantine workflow remain separate workstreams.
+
+
+### Instrument protocol envelopes after snapshot durability
+
+The new `sources.instrument_adapters.parse_instrument_page` validates named strict Pydantic success envelopes before producing `InstrumentSnapshot`; polling consumes the typed cursor directly. `parsers.instruments` is an explicit serialization adapter retained for probe/test callers that consume the existing wire snapshot. External provider objects are projected at this boundary because their additional descriptive fields are not workflow facts; canonical instrument observations are fully validated before leaving it. Snapshot maps are associative by provider symbol; Kraken's result keys remain the native identifiers. Duplicate symbols within a response refuse rather than silently replace an observation.
+
+Required facts: Bybit `retCode` must be an integer zero (booleans/strings/null/missing refuse), `result.list` must exist; OKX `code` must be string zero and `data` must exist; Kraken requires both `error` and `result`, with a nonempty error list refusing. Binance requires `symbols` and refuses an error-code envelope. Coinbase requires its actual array response, Hyperliquid its `universe` array. Empty declared arrays/maps remain valid successful catalogs. Explicit declared null/wrong-type cursor, text and restriction flags refuse. Provider payloads are excluded from validation exception text.
+
+Retained optional sites: `BybitSpotResult.nextPageCursor=""` represents documented absence in spot responses; explicit empty terminal values are mapped to `InstrumentPageResult.next_cursor=None`; it never supplies a success code. [Bybit instruments](https://bybit-exchange.github.io/docs/v5/market/instrument). `optional_text` returns None for uncaptured/nonapplicable base, quote and contract metadata (notably OKX derivative base/quote and Hyperliquid's absent quote); present text must actually be text. Empty `contractType` retains the existing alternative `ctType` projection; neither creates a contract type. [OKX instruments](https://www.okx.com/docs-v5/trick_en/).
+
+`parse_instrument_page` retains the Hyperliquid sparse `isDelisted` omission rule: absent means the existing catalog label TRADING (not marked delisted), not a captured false flag or proof of execution availability. Official metadata examples omit it for BTC/ETH and supply true for a delisted asset; the official SDK's AssetInfo does not require it. Explicit null/string/numeric flags refuse. Raw response bytes preserve whether the flag was absent. This current protocol rule does not backfill historical snapshot flags. [Hyperliquid perpetual metadata](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/perpetuals), [official SDK metadata types](https://github.com/hyperliquid-dex/hyperliquid-python-sdk/blob/master/hyperliquid/utils/types.py).
+
+Coinbase flag omission remains an unknown observation, serialized only for actually declared booleans; no old snapshot receives today's flags. Existing trading_disabled=true overrides the catalog status. [Coinbase product schema](https://docs.cdp.coinbase.com/api-reference/exchange-api/rest-api/products/get-all-known-trading-pairs). Kraken's error list is an explicit success fact, not truthiness of a missing value. [Kraken asset pairs](https://docs.kraken.com/api-reference/market-data/get-tradable-asset-pairs).
+
+Behavior evidence: the new strict test module exercises all six successful empty envelopes, malformed/missing/null/wrong-type envelopes and flags, sparse Hyperliquid metadata, cursor semantics and safe errors. Actual SourceService/MemoryRepository tests for Bybit and OKX seed a live snapshot, replay missing-code empty responses through restart, and prove DEGRADED/no removals/no baseline advance. A subsequent explicit successful empty response correctly emits REMOVED. The existing raw-failure/transaction-rollback/PostgreSQL restart oracle remains unchanged. The broader pending/quarantine migration remains separate and unfinished.
+
+Pinned envelope qualification: exact 2bcc6374e93cec496701b31a633699aefb83c1ca remained unchanged and tracked-clean before/after the complete owned cohort: 570 unit cases passed in 8.07s and all 37 collected actual integration cases passed in 14.15s, zero skips. Evidence: instrument-envelope-owned-unit.xml, instrument-envelope-owned-integration.xml, instrument-envelope-owned-cohort.log in the isolated evidence directory. Independent strict adapter/test proof and affected-source default mypy passed; Ruff check/format passed for src/tests/scripts (372 files). Broad polling/parsers strict closure and the pending/quarantine workflow remain open.
+
+
+### Acquisition identity under a declared frozen clock
+
+New source acquisition batches now receive a genuinely new batch identity through new_id("batch"), independent of the clock, page digest and feed key. Publisher external IDs, dedup fingerprints, item IDs, raw bytes and observed clocks retain their existing semantics. Historical batches are not relabelled. The former clock-derived batch key could collide for different reads and merge the drain's per-batch completion bookkeeping.
+
+The actual frozen-clock source oracle performs two different instrument reads at one collection timestamp, retains both rows in order, deliberately fails the first row while the later row succeeds, and proves the first batch remains a coverage barrier. A new service instance drains the original remaining item identity; both original item IDs exist exactly once, pending coverage then empties, and an additional drain does nothing. The same oracle runs against MemoryRepository and isolated PostgreSQL. This closes new-acquisition identity separately from the still-open historical quarantine workflow.
+
+
+Bybit pagination review correction: omission is permitted only by BybitSpotResult. BybitPerpetualResult requires a declared string nextPageCursor even on an empty success page; an explicit empty string is the terminal fact. The earlier generic cursor default was too broad and is replaced before activation. The actual source restart refusal oracle now covers missing perpetual cursor as well as missing success codes; absent cursor cannot overwrite the previous snapshot, emit removals, or claim successful coverage.
+
+Frozen-clock identity qualification: exact c399945e2001af769e6ecc58db98ac015a41d92a passed 571 owned units in 7.86s and all 38 actual integrations in 14.29s, zero skips, tracked-clean and unchanged throughout. This includes the new same-clock PostgreSQL acquisition/restart oracle. One obsolete direct test caller was migrated to the new batch allocator after its first pinned run exposed the removed token argument.
+
+Final cursor companion qualification: exact 08c311a9066ad43e9cfc0f34ad2432d6868aac72 passed all 573 owned unit cases in 10.54s and all 38 actual integration cases in 14.23s, zero skips; the tracked snapshot remained clean and unchanged throughout. Evidence is bybit-cursor-final-unit.xml, bybit-cursor-final-integration.xml and bybit-cursor-final-cohort.log. Strict adapter/envelope/durability targets and src/tests/scripts Ruff/format passed before that pinned run.
+
+
+Final spot protocol refinement: BybitSpotResult.no_spot_pagination rejects a declared nonempty cursor. Omitted and explicit-empty spot cursor values remain valid; perpetual cursors remain required and may contain an actual next-page token. The actual source refusal/restart test asserts no outgoing cursor request, no false removals and no snapshot advance for a contradictory spot declaration, followed by a valid explicit-empty observation. The generic successful-pagination unit fixture now declares PERP_LINEAR, the real supported protocol.
+
+Spot contradiction companion qualification: exact c50959f717fc20389dfc44ed3cdc83e1e2bf838b passed all 575 owned units in 8.23s and all 38 actual integrations in 15.68s, zero skips; tracked snapshot remained clean and unchanged. Evidence is bybit-spot-cursor-final-unit.xml, bybit-spot-cursor-final-integration.xml and bybit-spot-cursor-final-cohort.log. Strict adapter/envelope targets and src/tests/scripts Ruff/format passed.

@@ -1,20 +1,52 @@
-import importlib.util
-import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
+from typing import Literal
 
 import pytest
+from pydantic import BaseModel, ConfigDict
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def module(name):
-    spec = importlib.util.spec_from_file_location(name, ROOT / "deploy" / f"{name}.py")
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
+class Receipt(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+
+class SandboxRouteReceipt(Receipt):
+    defaults: str
+    isolated: str
+    rejected: int
+
+
+class ReplayDatabaseReceipt(Receipt):
+    address: str
+    url: str
+
+
+class ReplayRouteReceipt(Receipt):
+    called: bool
+    resolved: ReplayDatabaseReceipt
+    denied: int
+
+
+def node_probe(mode: Literal["sandbox", "replay"]) -> str:
+    node = shutil.which("node")
+    if node is None:
+        pytest.fail("Pinned Node 24.22.0 is required for deployment contracts")
+    version = subprocess.run([node, "--version"], check=True, capture_output=True, text=True, timeout=3)
+    assert version.stdout.strip() == "v24.22.0", "Deployment contracts require pinned Node 24.22.0"
+    result = subprocess.run(
+        [node, str(ROOT / "deploy/openma-route-probe.mts"), mode],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=3,
+    )
+    return result.stdout
 
 
 def test_postgres_image_hba_confines_every_role_to_its_compose_address() -> None:
@@ -32,59 +64,19 @@ def test_postgres_image_hba_confines_every_role_to_its_compose_address() -> None
 @pytest.mark.node
 @pytest.mark.process
 def test_sandbox_route_defaults_and_validated_isolated_override() -> None:
-    import shutil
-
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("Node executable required for actual deployment entrypoint contract")
-    script = """
-import {sandboxDatabaseRoute} from './vendor/openma/tank-deploy/openma_entrypoint.mjs';
-const readSecret = name => {if(name!=='tank_agent_db_password')throw Error('wrong secret');return 'synthetic:p@ss';};
-const defaults=sandboxDatabaseRoute({},readSecret);
-const isolated=sandboxDatabaseRoute({TANK_SANDBOX_DATABASE_NAME:'tank_integration_extract_20261018',TANK_SANDBOX_DATABASE_ROLE:'tank_integration_extract_agent'},readSecret);
-let rejected=0;
-for(const value of ['', 'tank;DROP', '../tank', 'A', 'x'.repeat(64)])for(const key of ['TANK_SANDBOX_DATABASE_NAME','TANK_SANDBOX_DATABASE_ROLE']){try{sandboxDatabaseRoute({[key]:value},readSecret);}catch{rejected++;}}
-console.log(JSON.stringify({defaults,isolated,rejected}));
-"""
-    result = subprocess.run(
-        [node, "--input-type=module", "-e", script],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=3,
-    )
-    data = json.loads(result.stdout)
-    assert data["defaults"] == "postgresql://tank_agent:synthetic%3Ap%40ss@postgres:5432/tank"
-    assert data["isolated"].endswith("@postgres:5432/tank_integration_extract_20261018")
-    assert data["rejected"] == 10
+    data = SandboxRouteReceipt.model_validate_json(node_probe("sandbox"))
+    assert data.defaults == "postgresql://tank_agent:synthetic%3Ap%40ss@postgres:5432/tank"
+    assert data.isolated.endswith("@postgres:5432/tank_integration_extract_20261018")
+    assert data.rejected == 10
 
 
 @pytest.mark.integration
 @pytest.mark.node
 @pytest.mark.process
 def test_replay_route_resolves_only_declared_private_service_for_l4_acl() -> None:
-    import shutil
-
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("Node executable required")
-    script = """import {replayDatabaseRoute} from './vendor/openma/tank-deploy/openma_entrypoint.mjs';
-let called=false;
-const resolved=await replayDatabaseRoute(()=> 'synthetic',async(host,opts)=>{if(host!=='postgres'||opts.family!==4)throw Error('wrong host');called=true;return {address:'172.30.42.2'};});
-let denied=0;for(const address of ['8.8.8.8','0.0.0.0','127.0.0.1','::1'])try{await replayDatabaseRoute(()=> 'synthetic',async()=>({address}));}catch{denied++;}
-console.log(JSON.stringify({called,resolved,denied}));"""
-    result = subprocess.run(
-        [node, "--input-type=module", "-e", script],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=3,
-    )
-    data = json.loads(result.stdout)
-    assert data["called"] and data["denied"] == 4
-    assert data["resolved"]["url"] == "postgresql://tank_replay_agent:synthetic@172.30.42.2:5432/tank_replay"
+    data = ReplayRouteReceipt.model_validate_json(node_probe("replay"))
+    assert data.called and data.denied == 4
+    assert data.resolved.url == "postgresql://tank_replay_agent:synthetic@172.30.42.2:5432/tank_replay"
 
 
 def capture_compile_step() -> str:

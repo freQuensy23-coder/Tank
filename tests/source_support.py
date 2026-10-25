@@ -1,12 +1,24 @@
 """Explicit complete source fixtures derived from the checked-in publisher registry."""
 
+import asyncio
+import math
 from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
 from functools import cache
 
 from pydantic import JsonValue
 
 from tank.contracts.provenance import ResolvedVersionIdentity
-from tank.contracts.sources import HttpFetchPlan, SourceConfiguration, SourceDefinition, SourceFeed
+from tank.contracts.source_checkpoints import InstrumentSnapshot
+from tank.contracts.sources import (
+    HttpFetchPlan,
+    SourceApiLimitsConfiguration,
+    SourceConfiguration,
+    SourceDefinition,
+    SourceFeed,
+)
+from tank.http_admission import ConfiguredHttpAdmission
+from tank.request_budget import BudgetClock, MemoryBudgetBackend, RequestBudgets, SharedRequestBudgets
 from tank.settings import Settings
 
 
@@ -84,3 +96,65 @@ def operational_configuration(name: str) -> dict[str, JsonValue]:
 def fixture_versions() -> ResolvedVersionIdentity:
     """Declare the known synthetic version identity of these isolated service fixtures."""
     return ResolvedVersionIdentity(config_version="test", code_version="test")
+
+
+class FixtureBudgetClock:
+    """An isolated operational clock; it never assigns event/publication provenance."""
+
+    def __init__(self) -> None:
+        self.elapsed = 0.0
+        self.origin = datetime(2026, 10, 25, tzinfo=UTC)
+
+    def monotonic(self) -> float:
+        return self.elapsed
+
+    def now(self) -> datetime:
+        return self.origin + timedelta(seconds=self.elapsed)
+
+    async def sleep(self, delay: float) -> None:
+        if not math.isfinite(delay) or delay < 0:
+            raise ValueError("Fixture budget waits require finite nonnegative durations")
+        self.elapsed += delay
+        await asyncio.sleep(0)
+
+
+def fixture_request_budgets(*, clock: BudgetClock | None = None) -> SharedRequestBudgets:
+    """Explicit memory admission with deterministic elapsed time and real quota arithmetic."""
+    return SharedRequestBudgets(MemoryBudgetBackend(FixtureBudgetClock() if clock is None else clock))
+
+
+def fixture_http_admission(
+    *,
+    policy: SourceApiLimitsConfiguration | None = None,
+    budgets: RequestBudgets | None = None,
+    versions: ResolvedVersionIdentity | None = None,
+) -> ConfiguredHttpAdmission:
+    """Use the real configured resolver, never a fabricated admission/provider result."""
+    actual = (
+        SourceApiLimitsConfiguration.model_validate(Settings().load_config("api_limits"))
+        if policy is None
+        else policy
+    )
+    return ConfiguredHttpAdmission(
+        actual,
+        fixture_versions() if versions is None else versions,
+        fixture_request_budgets() if budgets is None else budgets,
+    )
+
+
+def instrument_snapshot_fixture(
+    records: Mapping[str, dict[str, JsonValue]], *, venue: str
+) -> InstrumentSnapshot:
+    """Declare unknown synthetic currencies/contract metadata explicitly."""
+    wire: dict[str, JsonValue] = {}
+    for symbol, observation in records.items():
+        wire[symbol] = {
+            "venue": venue,
+            "market_type": "SPOT",
+            "symbol": symbol,
+            "base": None,
+            "quote": None,
+            "contract_type": None,
+            **observation,
+        }
+    return InstrumentSnapshot.model_validate(wire)

@@ -9,7 +9,7 @@ from pathlib import Path
 import httpx
 import pytest
 import zstandard
-from source_support import fixture_versions
+from source_support import fixture_request_budgets, fixture_versions
 
 from tank.settings import Settings
 from tank.sources import SourceService, parsers
@@ -119,10 +119,12 @@ async def test_normal_anchorage_poll_uses_actual_retained_bodies_and_source_inge
     settings = Settings(data_dir=tmp_path, user_agent="Tank offline source regression")
     repo = MemoryRepository()
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-        service = SourceService(repo, settings, http=http, versions=fixture_versions())
+        service = SourceService(
+            repo, settings, http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
+        )
         try:
             outcome = await service.poll_once("S28")
-            assert outcome["status"] == "HEALTHY" and outcome["items"] == 12, outcome
+            assert outcome.status == "HEALTHY" and outcome.items == 12, outcome
             items = await repo.list("ingest.source_items")
             assert len(items) == 12
             for original, payload, quote in fixtures:

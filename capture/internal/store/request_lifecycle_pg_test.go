@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"os"
 	"testing"
 	"time"
@@ -62,14 +65,18 @@ func TestSparseRequestLifecyclePreservesInvalidNumericEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claimed == nil || claimed["request_id"] != id+"-live" || claimed["status"] != "RUNNING" || claimed["budget_s"] != "NaN" {
+	if claimed == nil || claimed.ID != id+"-live" || claimed.BudgetS == nil || *claimed.BudgetS != "NaN" {
 		t.Fatalf("invalid persisted numeric evidence could not enter explicit lifecycle handling: %v", claimed)
 	}
-	if claimed["started_at"] != pytime.ISO(now) || claimed["started_at_prec"] != pytime.CollectionOnly || claimed["started_at_prec_reason"] != nil {
+	if !claimed.StartedAt.Equal(now) {
 		t.Fatalf("claim did not persist the actual collection start clock: %v", claimed)
 	}
-	snapshots = append(snapshots, lifecycleSnapshot{Stage: "claimed_running", Record: claimed})
-	if pyjson.Canonical(claimed["request"]) != pyjson.Canonical(body) {
+	running, err := s.Get(ctx, requests, firstKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshots = append(snapshots, lifecycleSnapshot{Stage: "claimed_running", Record: running})
+	if string(claimed.Request) == "" || pyjson.Canonical(running["request"]) != pyjson.Canonical(body) {
 		t.Fatalf("claim rewrote opaque request evidence: %v", claimed)
 	}
 	expired, err := s.Get(ctx, requests, expiredKey)
@@ -80,10 +87,7 @@ func TestSparseRequestLifecyclePreservesInvalidNumericEvidence(t *testing.T) {
 		t.Fatalf("expiry could not retain invalid numeric evidence: %v", expired)
 	}
 	snapshots = append(snapshots, lifecycleSnapshot{Stage: "expired", Record: expired})
-	claimed = copyRequestRecord(claimed)
-	claimed["status"], claimed["reason"], claimed["result"] = "FAILED", "CAPTURE_REQUEST_BUDGET_INVALID", nil
-	pytime.CollectionClock(now.Add(time.Second)).Into(claimed, "finished_at")
-	if err := s.FinishRequest(ctx, claimed); err != nil {
+	if err := s.FinishRequest(ctx, requeststate.Completion{ID: claimed.ID, Outcome: requeststate.Failure(requeststate.BudgetInvalid, nil), FinishedAt: now.Add(time.Second)}); err != nil {
 		t.Fatal(err)
 	}
 	stored, err := s.Get(ctx, requests, firstKey)
@@ -96,7 +100,7 @@ func TestSparseRequestLifecyclePreservesInvalidNumericEvidence(t *testing.T) {
 	if pyjson.Canonical(stored["request"]) != pyjson.Canonical(body) || stored["config_version"] != "retained-config" || stored["code_version"] != "retained-code" {
 		t.Fatalf("terminal update changed original request provenance: %v", stored)
 	}
-	if stored["writer"] != "sparse-test-writer" || stored["started_at"] != claimed["started_at"] ||
+	if stored["writer"] != "sparse-test-writer" || stored["started_at"] != pytime.ISO(claimed.StartedAt) ||
 		stored["finished_at"] != pytime.ISO(now.Add(time.Second)) || stored["finished_at_prec"] != pytime.CollectionOnly ||
 		stored["finished_at_prec_reason"] != nil || stored["result"] != nil {
 		t.Fatalf("terminal update lost claim identity or exact clock/null bindings: %v", stored)
@@ -120,23 +124,38 @@ func TestSparseRequestLifecyclePreservesInvalidNumericEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := map[string]any{"status_code": int64(200), "body": map[string]any{"quoted": "a'b", "nullable": nil}, "bytes": int64(17)}
-	completing["status"], completing["reason"], completing["result"] = "COMPLETE", nil, result
-	pytime.CollectionClock(now.Add(time.Second)).Into(completing, "finished_at")
-	if err := s.FinishRequest(ctx, completing); err != nil {
+	bodyText := `{"quoted":"a'b","nullable":null}`
+	digest := sha256.Sum256([]byte(bodyText))
+	result := requeststate.FetchResult{StatusCode: 200, ContentType: "application/json", Body: &bodyText, Bytes: int64(len(bodyText)), SHA256: hex.EncodeToString(digest[:]), FetchedAt: pytime.ISO(now)}
+	outcome := requeststate.Completed(result)
+	if err := s.FinishRequest(ctx, requeststate.Completion{ID: completing.ID, Outcome: outcome, FinishedAt: now.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	expectedJSON, err := outcome.JSONResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var expectedResult map[string]json.RawMessage
+	if err := json.Unmarshal(expectedJSON, &expectedResult); err != nil {
 		t.Fatal(err)
 	}
 	completed, err := s.Get(ctx, requests, completedKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if completed["status"] != "COMPLETE" || completed["reason"] != nil || pyjson.Canonical(completed["result"]) != pyjson.Canonical(result) ||
+	expectedCanonical, err := json.Marshal(expectedResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actualCanonical, err := json.Marshal(completed["result"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed["status"] != "COMPLETE" || completed["reason"] != nil || string(actualCanonical) != string(expectedCanonical) ||
 		completed["writer"] != "complete-test-writer" || completed["semantic_fingerprint"] != schema.Fingerprint(completed, requests) {
 		t.Fatalf("successful result JSON/null reason lost typed SQL binding parity: %v", completed)
 	}
-	missing := map[string]any{"request_id": id + "-missing", "status": "FAILED", "reason": "not queued"}
-	pytime.CollectionClock(now).Into(missing, "finished_at")
-	if err := s.FinishRequest(ctx, missing); err == nil {
+	if err := s.FinishRequest(ctx, requeststate.Completion{ID: id + "-missing", Outcome: requeststate.Failure(requeststate.BudgetInvalid, nil), FinishedAt: now}); err == nil {
 		t.Fatal("finishing an unqueued identity must not create a guessed storage key")
 	}
 	if path := os.Getenv("TANK_CAPTURE_LIFECYCLE_EVIDENCE"); path != "" {
@@ -149,12 +168,4 @@ func TestSparseRequestLifecyclePreservesInvalidNumericEvidence(t *testing.T) {
 		}
 	}
 
-}
-
-func copyRequestRecord(row map[string]any) map[string]any {
-	result := make(map[string]any, len(row))
-	for key, value := range row {
-		result[key] = value
-	}
-	return result
 }

@@ -2,7 +2,6 @@
 
 import asyncio
 import math
-import re
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from typing import Literal
@@ -105,7 +104,7 @@ class SourceHttpReader:
     def __init__(
         self,
         send: FetchSender,
-        record: ReceiptRecorder,
+        record: ReceiptRecorder | None,
         now: Callable[[], datetime],
     ) -> None:
         self.send, self.record, self.now = send, record, now
@@ -132,7 +131,7 @@ class SourceHttpReader:
                     http_status=response.status_code,
                     response_url=str(response.url),
                 )
-                if re.fullmatch(r"S\d{2}:\d+", key):
+                if self.record is not None:
                     await self.record(key, receipt.evidence())
                 response.raise_for_status()
                 return FetchedContent(payload=response.content, receipt=receipt)

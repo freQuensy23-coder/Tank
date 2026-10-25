@@ -8,7 +8,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_versions
 
 from tank.market.service import MarketService
 from tank.runtime import Runtime
@@ -109,7 +109,9 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         },
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(external)) as http:
-        market = MarketService(repo, settings, http=http, versions=fixture_versions())
+        market = MarketService(
+            repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+        )
         scheduler = Scheduler(
             repo,
             settings,

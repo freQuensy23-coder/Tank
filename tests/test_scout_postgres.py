@@ -14,10 +14,13 @@ import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture
 from scheduling_support import RecordingReactionScheduling
+from source_support import fixture_http_admission
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
+from tank.analysis.page_access import LivePageAccess
 from tank.event_tools import EventToolService
+from tank.runtime_contracts import ScoutReviewJob
 from tank.settings import Settings
 from tank.util import clock_iso, sha256
 
@@ -102,6 +105,7 @@ def scout_settings(tmp_path: Path):
                 "agent_id": "agt_analyst",
                 "scout_agent_id": "agt_scout",
                 "environment_id": "env_analysis",
+                "max_running_sessions": 2,
                 "prompt_version": "test",
             }
         return config(name)
@@ -205,6 +209,7 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
         None,
         versions=declared_versions_fixture(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
     openma = FakeOpenMA()
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma)) as http:
@@ -239,8 +244,8 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
         assert max(job["priority"] for job in await repository.list("ops.jobs")) == 4
 
         openma.posted.clear()
-        scout = await sessions.scout_review(jobs[0]["payload"])
-        assert scout["proposal_id"] == prp_id
+        scout = await sessions.scout_review(ScoutReviewJob.model_validate(jobs[0]["payload"]))
+        assert scout.proposal_id == prp_id
         create = openma.posted[0]
         assert create[0] == "/v1/sessions" and create[1]["agent"] == "agt_scout"
         message = json.loads(openma.posted[1][1]["events"][0]["content"][0]["text"])
@@ -271,7 +276,7 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
         ]
         for number, (name, arguments) in enumerate(attempts):
             await sessions.process_event(
-                scout["session_id"],
+                scout.session_id,
                 {
                     "id": f"scout_call_{number}",
                     "type": "agent.custom_tool_use",
@@ -283,7 +288,7 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
 
     calls = {
         row["tool"]: row
-        for row in await repository.list("ops.tool_calls", filters={"session_id": scout["session_id"]})
+        for row in await repository.list("ops.tool_calls", filters={"session_id": scout.session_id})
     }
     for name in ("publish_card", "set_assessment", "record_event", "get_decision", "propose_pattern"):
         assert calls[name]["status"] == "REFUSED", name
@@ -302,7 +307,7 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
 
     assert (await repository.get("ops.agent_sessions", "ses_analyst"))["session_id"] == "ses_analyst"
     assert all(
-        row["session_id"] == scout["session_id"]
+        row["session_id"] == scout.session_id
         for row in await repository.list("ops.tool_calls")
         if row["call_id"].startswith("scout_call_")
     )

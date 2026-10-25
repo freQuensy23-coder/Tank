@@ -78,6 +78,3 @@ class ContextBinding(ContextScope):
         if not self.trigger.active_message and not self.trigger.has_payload:
             return self.item_id
         return None
-
-    def incoming_source(self) -> str | None:
-        return self.trigger.item_id if self.trigger.item_id is not None else self.item_id

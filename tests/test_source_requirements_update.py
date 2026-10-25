@@ -10,6 +10,7 @@ import httpx
 import pytest
 import yaml
 from source_support import (
+    fixture_request_budgets,
     fixture_versions,
     operational_configuration,
     source_configuration,
@@ -67,15 +68,21 @@ async def test_dtcc_official_html_only_and_zero_links_stays_degraded(tmp_path: P
 
     repo = MemoryRepository()
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-        service = SourceService(repo, config(tmp_path, [source]), http=http, versions=fixture_versions())
+        service = SourceService(
+            repo,
+            config(tmp_path, [source]),
+            http=http,
+            versions=fixture_versions(),
+            budgets=fixture_request_budgets(),
+        )
         try:
             first = await service.poll_once("S08")
-            assert first["status"] == "HEALTHY" and first["items"] == 1
+            assert first.status == "HEALTHY" and first.items == 1
             mode[0] = "empty"
             for _ in range(2):
                 outcome = await service.poll_once("S08")
                 state = await repo.get("ops.source_checkpoints", "S08:0")
-                assert outcome["status"] == state["status"] == "DEGRADED"
+                assert outcome.status == state["status"] == "DEGRADED"
                 assert "No article links matched" in state["acquisition_error"]
             assert len(await repo.list("ingest.source_items")) == 1
             assert all(method == "GET" for method, _ in calls)
@@ -88,7 +95,9 @@ async def test_dtcc_official_html_only_and_zero_links_stays_degraded(tmp_path: P
 async def test_duplicate_preserves_capture_and_counts_one_observation(tmp_path: Path) -> None:
     repo = MemoryRepository()
     source = {"source_id": "S30", "name": "Original publisher", "feeds": []}
-    service = SourceService(repo, config(tmp_path, [source]), versions=fixture_versions())
+    service = SourceService(
+        repo, config(tmp_path, [source]), versions=fixture_versions(), budgets=fixture_request_budgets()
+    )
     first_time, later = "2026-10-20T10:00:00Z", "2026-10-20T10:05:00Z"
 
     def captured(item_id, payload, item):
@@ -151,7 +160,9 @@ async def test_poll_and_loop_never_reconstruct_legacy_binance_body_or_metadata(
 ) -> None:
     repo = MemoryRepository()
     source = {"source_id": "S09", "feeds": []}
-    service = SourceService(repo, config(tmp_path, [source]), versions=fixture_versions())
+    service = SourceService(
+        repo, config(tmp_path, [source]), versions=fixture_versions(), budgets=fixture_request_budgets()
+    )
     ref, digest = service.raw(
         json.dumps(
             {
@@ -188,7 +199,7 @@ async def test_poll_and_loop_never_reconstruct_legacy_binance_body_or_metadata(
     monkeypatch.setattr(parsers, "binance_body", forbidden)
     try:
         for _ in range(2):
-            assert (await service.poll_once("S09"))["status"] == "HEALTHY"
+            assert (await service.poll_once("S09")).status == "UNCONFIGURED"
         stop = asyncio.Event()
         stop.set()
         await service.poller.loop(source_definition(source), stop)

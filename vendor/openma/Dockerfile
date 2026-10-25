@@ -118,7 +118,7 @@ COPY --from=dependencies /app /app
 COPY --from=deps /app/packages /app/packages
 COPY --from=deps /app/apps /app/apps
 COPY --from=deps /app/tsconfig.json /app/tsconfig.json
-COPY tank-deploy/openma_entrypoint.mjs /app/tank-deploy/openma_entrypoint.mjs
+COPY tank-deploy/openma_entrypoint.mjs tank-deploy/openma_entrypoint.mts /app/tank-deploy/
 COPY tank-native-qualification.json /app/tank-native-qualification.json
 
 # /app/data holds the sqlite db + per-session sandbox workdirs. Mount a

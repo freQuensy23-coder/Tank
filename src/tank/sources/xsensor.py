@@ -10,8 +10,11 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from tank.contracts import DomainModel
+from tank.contracts.http_policy import HttpAdmission, HttpRefused
 from tank.contracts.source_items import DiscoveryEnvelope, DiscoveryObservation, SocialDiscovery
+from tank.contracts.sources import HttpFetchPlan
 from tank.logging import redact_text
+from tank.sources.http_client import RequestStarted, SourceHttpTransport
 from tank.util import iso
 
 RUN_TIMEOUT_S = 130
@@ -151,7 +154,7 @@ class ApifyRun(ApifyModel):
             raise ValueError("X actor returned duplicate account reports")
         if (
             self.health == "failed"
-            and self.error is None
+            and not (self.error is not None and self.error.strip())
             and not any(isinstance(account, ApifyFailedAccount) for account in self.accounts)
         ):
             raise ValueError("Failed X actor run requires its error evidence")
@@ -181,11 +184,15 @@ def cursor_state(cursors: Mapping[str, str]) -> dict[str, str]:
 
 
 def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: bytes) -> Scan:
-    """Bind every cursor advance to a requested successful account report."""
+    """Advance an existing boundary only after the requested account reports a complete range.
+
+    A first observed head establishes the explicit monitoring baseline; no prior
+    cursor exists whose historical range could be acknowledged by that read.
+    """
     if run.health == "failed":
         reason = (
             run.error
-            if run.error is not None
+            if run.error is not None and run.error.strip()
             else "; ".join(
                 account.error for account in run.accounts if isinstance(account, ApifyFailedAccount)
             )
@@ -225,6 +232,8 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
         if key in previous and int(next_cursor) < int(previous[key]):
             failures.append(AccountFailure(account=handle, reason="CURSOR_REGRESSION"))
             continue
+        if account.history_gap and key in previous:
+            continue
         updated[key] = next_cursor
     gaps = [
         account.handle
@@ -234,16 +243,47 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
     if any(key not in requested for key in reported) or any(key not in requested for key in run.next_cursors):
         failures.append(AccountFailure(account=None, reason="UNREQUESTED_ACCOUNT_RESULT"))
     if run.health == "degraded" and not failures and not gaps:
-        failures.append(AccountFailure(account=None, reason=run.error if run.error else "RUN_DEGRADED"))
+        failures.append(
+            AccountFailure(
+                account=None,
+                reason=run.error if run.error is not None and run.error.strip() else "RUN_DEGRADED",
+            )
+        )
     return Scan(rows=rows, cursors=updated, failures=failures, gaps=gaps)
 
 
 class XSensor:
-    def __init__(self, http: httpx.AsyncClient, token: str | None) -> None:
+    def __init__(
+        self,
+        http: httpx.AsyncClient,
+        token: str | None,
+        *,
+        admission: HttpAdmission,
+    ) -> None:
         self.http = http
         self.token = token
+        self.admission = admission
 
-    async def posts(self, url: str, accounts: list[str], cursors: Mapping[str, str]) -> Scan:
+    async def _admit(self, feed: HttpFetchPlan, request: httpx.Request) -> None:
+        if (
+            request.url.scheme != "https"
+            or request.url.host != "api.apify.com"
+            or request.url.port not in (None, 443)
+            or request.url.userinfo
+        ):
+            raise ValueError("X actor requests require the declared HTTPS Apify API destination")
+        decision = await self.admission.admit(request)
+        if isinstance(decision, HttpRefused):
+            raise ValueError("X actor HTTP admission refused: " + decision.reason)
+
+    async def posts(
+        self,
+        url: str,
+        accounts: list[str],
+        cursors: Mapping[str, str],
+        *,
+        on_start: RequestStarted | None = None,
+    ) -> Scan:
         if not self.token:
             raise ValueError("APIFY_API_TOKEN is not set")
         previous = cursor_state(cursors)
@@ -254,11 +294,15 @@ class XSensor:
         }
         secrets = (self.token, repr(self.token)[1:-1])
         try:
-            response = await self.http.post(
+            request = self.http.build_request(
+                "POST",
                 url,
                 json={"handles": accounts, "cursors": known} if known else {"handles": accounts},
                 headers={"Authorization": f"Bearer {self.token}"},
                 timeout=RUN_TIMEOUT_S,
+            )
+            response = await SourceHttpTransport(self.http, self._admit).send(
+                HttpFetchPlan(url=url, method="POST"), request, on_start
             )
             response.raise_for_status()
         except httpx.HTTPError as exc:

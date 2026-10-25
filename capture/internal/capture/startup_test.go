@@ -2,6 +2,7 @@ package capture
 
 import (
 	"context"
+	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"io"
 	"log/slog"
 	"testing"
@@ -75,7 +76,7 @@ func TestStandbyWritesNothingUntilLeading(t *testing.T) {
 	holding := false
 	raw := &countingRaw{}
 	r.s.opt.Leading, r.s.opt.CanWrite, r.s.opt.Raw = leading, func() bool { return holding }, raw
-	r.mem.requests = []map[string]any{{"request_id": "R1", "kind": "HTTP_FETCH", "status": "PENDING"}}
+	r.mem.requests = []requeststate.Record{{StorageKey: "R1", RequestID: "R1", Kind: requestText("HTTP_FETCH"), Status: requestText("PENDING")}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if r.s.leading() || r.s.waitLeading(ctx) {

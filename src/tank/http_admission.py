@@ -1,6 +1,7 @@
 """Apply declared provider quotas to actual built Python HTTP requests."""
 
 from collections.abc import Sequence
+from datetime import datetime
 from hashlib import sha256
 from urllib.parse import parse_qsl
 
@@ -10,7 +11,7 @@ from tank.contracts import DomainModel
 from tank.contracts.http_policy import HttpAdmissionDecision, HttpAdmitted, HttpRefused, HttpUnconfigured
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.sources import SourceApiLimitsConfiguration, SourceEtherscanBudget, SourceSecBudget
-from tank.request_budget import BudgetConstraint, SharedRequestBudgets
+from tank.request_budget import BudgetConstraint, RequestBudgets
 
 
 class HttpAdmissionPlan(DomainModel):
@@ -23,7 +24,7 @@ class ConfiguredHttpAdmission:
         self,
         policy: SourceApiLimitsConfiguration,
         versions: ResolvedVersionIdentity,
-        budgets: SharedRequestBudgets,
+        budgets: RequestBudgets,
     ) -> None:
         self.policy = SourceApiLimitsConfiguration.model_validate(policy)
         self.versions = ResolvedVersionIdentity.model_validate(versions)
@@ -41,7 +42,15 @@ class ConfiguredHttpAdmission:
         values = (*plan.constraints, *constraints)
         if values:
             await self.budgets.acquire_many(values)
+        else:
+            await self.budgets.wait_host(request.url.host)
         return plan.decision
+
+    async def block(self, request: httpx.Request, until: datetime, reason: str) -> None:
+        host = request.url.host
+        if not host:
+            raise ValueError("HTTP host blocks require an actual request destination")
+        await self.budgets.block(host, until, reason)
 
     def plan(self, request: httpx.Request) -> HttpAdmissionPlan:
         host = request.url.host

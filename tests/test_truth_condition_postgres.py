@@ -11,7 +11,7 @@ from runpy import run_path
 
 import httpx
 import pytest
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_versions
 
 from tank.analysis.truth import MarketTruthService, compute_market_truth
 from tank.market.cadences import supply_cadences
@@ -244,7 +244,9 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
         monkeypatch.setattr(repo, "put", forbidden)
         monkeypatch.setattr(repo, "put_market_batch", forbidden)
         async with httpx.AsyncClient() as http:
-            market = MarketService(repo, settings, http=http, versions=fixture_versions())
+            market = MarketService(
+                repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+            )
             monkeypatch.setattr(market, "snapshot", forbidden)
             monkeypatch.setattr(market, "_put", forbidden)
             monkeypatch.setattr(market, "flush_market", forbidden)

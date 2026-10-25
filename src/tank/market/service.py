@@ -17,7 +17,9 @@ from types import SimpleNamespace
 import httpx
 from pydantic import ValidationError
 
+from tank.contracts.http_policy import HttpAdmission
 from tank.contracts.provenance import ResolvedVersionIdentity
+from tank.http_transport import retry_after_deadline, send_admitted
 from tank.market import normalize as norm
 from tank.market.cache_contracts import (
     DayCountKey,
@@ -275,10 +277,13 @@ class _MarketCaptureClock:
 
 
 class MarketService:
-    def __init__(self, repo, settings, *, versions: ResolvedVersionIdentity, http=None):
+    def __init__(
+        self, repo, settings, *, versions: ResolvedVersionIdentity, admission: HttpAdmission, http=None
+    ):
         self.repo = repo
         self.settings = settings
         self.versions = versions
+        self.admission = admission
         registry = settings.load_config("registry")
         self.tokens = {r["token_id"]: r for r in registry["tokens"]}
         self.sector_baskets = deepcopy(registry.get("sector_baskets", []))
@@ -301,9 +306,7 @@ class MarketService:
         self._market_flush_lock = asyncio.Lock()
         self._condition_heads_memo: dict[DependencyHeadKey, DependencyHeadMemo] = {}
         self._stop = None
-        self._last_request: dict[str, float] = {}
         self._request_locks: dict[str, PriorityGate] = {}
-        self._request_pace_locks: dict[str, asyncio.Lock] = {}
         self.thresholds = settings.load_config("thresholds")
         self._capture = build_capture_lifecycle(
             repo, settings, frozenset(self.tokens), _MarketCaptureClock(), versions=versions
@@ -460,48 +463,37 @@ class MarketService:
         self._reads[host] = self._reads[host].success()
         return body
 
-    async def _request_once(self, method, url, **kwargs):
-        from tank.sources.rate_limits import shared_request_budgets
+    @staticmethod
+    def _guard_python_request(request: httpx.Request) -> None:
+        if is_exchange_url(str(request.url)):
+            raise RuntimeError(EXCHANGE_REST_OWNER)
 
+    async def _request_once(self, method, url, **kwargs):
         priority = kwargs.pop("_priority", 0)
         host = httpx.URL(url).host
-        if is_exchange_url(url):
-            raise RuntimeError(EXCHANGE_REST_OWNER)
-        interval = 0.35 if host == "api.etherscan.io" else 0.08
+        self._guard_python_request(self.http.build_request(method, url, **kwargs))
         lock = self._request_locks.setdefault(host, PriorityGate(HOST_IN_FLIGHT))
         for _attempt in range(4):
             async with lock.enter(priority):
-                async with self._request_pace_locks.setdefault(host, asyncio.Lock()):
-                    while True:
-                        now = time.monotonic()
-                        previous = self._last_request.get(host)
-                        delay = 0 if previous is None else previous + interval - now
-                        if delay <= 0:
-                            self._last_request[host] = now
-                            break
-                        await asyncio.sleep(delay)
+                request = self.http.build_request(method, url, **kwargs)
                 try:
-                    response = await self.http.request(method, url, **kwargs)
+                    response = await send_admitted(
+                        self.http, self.admission, request, self._guard_python_request, stream=False
+                    )
                 except httpx.HTTPError as exc:
                     raise RuntimeError(f"{host}: {type(exc).__name__}") from None
                 if response.status_code in (418, 429):
-                    delay = float(response.headers.get("Retry-After", "60"))
-                    self._last_request[host] = max(
-                        self._last_request[host], time.monotonic() + min(max(delay, 1), 60)
-                    )
-
-                    banned = response.status_code == 418
-                    await shared_request_budgets.block(
-                        host,
-                        utcnow() + timedelta(seconds=max(delay, 1) if banned else min(max(delay, 1), 60)),
-                        f"HTTP {response.status_code}",
-                    )
-                    if banned and shared_request_budgets.ledger is not None:
-                        raise RuntimeError(f"{host}: HTTP 418 banned for {delay:.0f}s")
+                    deadline = retry_after_deadline(response.headers.get("Retry-After"), utcnow())
+                    if deadline is None:
+                        raise RuntimeError(
+                            f"{host}: HTTP {response.status_code} retry instruction unavailable"
+                        )
+                    await self.admission.block(response.request, deadline, f"HTTP {response.status_code}")
+                    if response.status_code == 418:
+                        raise RuntimeError(f"{host}: HTTP 418")
                     continue
                 if response.is_error:
                     raise RuntimeError(f"{host}: HTTP {response.status_code} {response.text[:200]}")
-
                 return json.loads(response.content, parse_float=Decimal)
         raise RuntimeError(f"{host}: rate limited after bounded retries")
 

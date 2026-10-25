@@ -14,6 +14,7 @@ from pydantic import (
 )
 
 from tank.contracts import DomainModel
+from tank.contracts.page_evidence import PageReadProvenance, RecordedBodyProvenance
 from tank.contracts.provenance import GenerationProvenance
 from tank.contracts.repository import Collection
 from tank.contracts.sources import SourceAuthorRole
@@ -229,6 +230,10 @@ class DiscoveryEnvelope(DomainModel):
     discovery: DiscoveredItem
     observation: DiscoveryObservation
     payload: bytes | None
+
+
+class InstrumentDiscoveryEnvelope(DiscoveryEnvelope):
+    discovery: InstrumentDiscovery
 
 
 def discovered_item(source_id: str, wire: Mapping[str, JsonValue | bytes]) -> DiscoveryEnvelope:
@@ -796,6 +801,7 @@ class WebEvidenceItem(GenerationProvenance, SourceText, SourceExtractionFields, 
     observed_at_prec_reason: None
     observed_at_precision: Literal["COLLECTION_ONLY"] | None = None
     source_class: SourceClass
+    page_read_provenance: PageReadProvenance | None = None
     observation_count: int | None = Field(default=None, ge=1)
     observed_feeds: list[str] | None = None
 
@@ -821,6 +827,11 @@ class WebEvidenceItem(GenerationProvenance, SourceText, SourceExtractionFields, 
 
     @model_validator(mode="after")
     def evidence_origin(self) -> Self:
+        if (
+            isinstance(self.page_read_provenance, RecordedBodyProvenance)
+            and self.page_read_provenance.captured_body_sha256 != self.raw_sha256
+        ):
+            raise ValueError("Recorded page provenance conflicts with the stored raw digest")
         expected = "web:search" if self.evidence_kind == "SEARCH_RESULT" else "web:page"
         if self.feed != expected or self.external_id != self.item_id:
             raise ValueError("Web evidence origin conflicts with its capture identity")

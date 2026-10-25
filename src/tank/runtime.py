@@ -10,16 +10,17 @@ from typing import TYPE_CHECKING, Protocol
 
 from pydantic import JsonValue
 
-from tank.agents.sessions import ADMITTED_JOB_TYPES, AdmissionDeferred
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.contracts.jobs import JobRetryState
+from tank.contracts.session_admission import ADMITTED_JOB_TYPES, AdmissionDeferred
 from tank.delivery import DeliveryDeferred, DeliveryService
 from tank.ops_progress import job_failure_progress
-from tank.runtime_contracts import EscalateTokensJob, MarketTruthJob
+from tank.request_budget import BudgetBackend, RequestBudgetScope, SharedRequestBudgets
+from tank.runtime_contracts import EscalateTokensJob, MarketTruthJob, ScoutReviewJob, replace_job_clock
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import Repository
-from tank.time_precision import Timestamp, collection_clock, offset_schedule
+from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import parse_time, utcnow
 
 if TYPE_CHECKING:
@@ -88,6 +89,8 @@ class Runtime:
         scheduler: Scheduler,
         gateway: GatewayPort,
         inbox: "TelegramInbox",
+        budget_scope: RequestBudgetScope,
+        budget_backend: BudgetBackend,
         bootstrap: Callable[[], Awaitable[None]],
         validate: Callable[[], None],
     ) -> None:
@@ -96,6 +99,8 @@ class Runtime:
         self.pipeline, self.sessions = pipeline, sessions
         self.delivery, self.scheduler, self.gateway, self.inbox = delivery, scheduler, gateway, inbox
         self._bootstrap, self._validate = bootstrap, validate
+        self.budget_scope, self.budget_backend = budget_scope, budget_backend
+        self.budget_binding: SharedRequestBudgets | None = None
         self.active_jobs: set[str] = set()
         self.handlers = {
             "FILTER_ITEM": pipeline.filter_item_wire,
@@ -114,6 +119,7 @@ class Runtime:
     def validate(self) -> None:
         self._validate()
         self.sessions.config()
+        self.sessions.running_session_cap()
 
     async def prepare(self) -> None:
         self.validate()
@@ -157,10 +163,9 @@ class Runtime:
         )
         return await self.truth.assess_for_job(payload.event_id, payload.token_id, cutoff)
 
-    async def scout_review(self, payload):
-        if not hasattr(self.sessions, "scout_review"):
-            raise RuntimeError("SessionService.scout_review is required for SCOUT_REVIEW jobs")
-        return await self.sessions.scout_review(payload)
+    async def scout_review(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        reference = await self.sessions.scout_review(ScoutReviewJob.model_validate(payload))
+        return reference.model_dump(mode="json")
 
     async def worker(self, stop, number=0):
         if not hasattr(self, "active_jobs"):
@@ -182,7 +187,10 @@ class Runtime:
                     await self.repo.put(
                         "ops.jobs",
                         job["job_id"],
-                        {**job, "status": "EXPIRED", **collection_clock(utcnow()).fields("finished_at")},
+                        {
+                            **replace_job_clock(job, "finished_at", collection_clock(utcnow())),
+                            "status": "EXPIRED",
+                        },
                     )
                     await self.terminal_delivery_failure(job, "EXPIRED")
                     continue
@@ -196,19 +204,20 @@ class Runtime:
                         "ops.jobs",
                         job["job_id"],
                         {
-                            **job,
+                            **replace_job_clock(
+                                job,
+                                "run_after",
+                                offset_schedule(collection_clock(utcnow()), timedelta(seconds=0.25)),
+                            ),
                             "status": "QUEUED",
                             "attempts": max(0, job["attempts"] - 1),
-                            **offset_schedule(collection_clock(utcnow()), timedelta(seconds=0.25)).fields(
-                                "run_after"
-                            ),
                         },
                     )
                     continue
                 kind = job["type"]
                 if kind not in self.handlers:
                     raise ValueError(f"Unregistered durable job kind: {kind}")
-                if kind in ADMITTED_JOB_TYPES and hasattr(getattr(self, "sessions", None), "admit"):
+                if kind in ADMITTED_JOB_TYPES:
                     try:
                         async with asyncio.timeout(ADMISSION_TIMEOUT_S):
                             await self.sessions.admit(job)
@@ -229,26 +238,27 @@ class Runtime:
                             "ops.jobs",
                             job["job_id"],
                             {
-                                **current,
+                                **replace_job_clock(current, "run_after", deferred.not_before),
                                 "status": "QUEUED",
                                 "attempts": max(0, current["attempts"] - 1),
-                                **deferred.not_before.fields("run_after"),
                             },
                         )
             except AdmissionDeferred as deferred:
                 async with self.repo.transaction():
                     current = await self.repo.get("ops.jobs", job["job_id"])
                     if current and current["status"] == "RUNNING":
+                        requeued = replace_job_clock(current, "run_after", deferred.not_before)
+                        if current.get("slot_waiting_since") is None:
+                            requeued = replace_job_clock(
+                                requeued, "slot_waiting_since", propagate_timestamp(current, "created_at")
+                            )
                         await self.repo.put(
                             "ops.jobs",
                             job["job_id"],
                             {
-                                **current,
+                                **requeued,
                                 "status": "QUEUED",
                                 "attempts": max(0, current["attempts"] - 1),
-                                "slot_waiting_since": current.get("slot_waiting_since")
-                                or current["created_at"],
-                                **deferred.not_before.fields("run_after"),
                             },
                         )
             except asyncio.CancelledError:
@@ -354,8 +364,6 @@ class Runtime:
         await self._bootstrap()
 
     async def run(self, stop: asyncio.Event) -> None:
-        from tank.sources.rate_limits import shared_request_budgets
-
         self.validate()
         await self.bootstrap()
         await self.repo.recover_jobs()
@@ -366,7 +374,7 @@ class Runtime:
             await self.close()
             raise
 
-        self.request_ledger = shared_request_budgets.configure(self.repo, self.settings)
+        self.budget_binding = self.budget_scope.bind(self.budget_backend)
         intake_stop, market_stop, sessions_stop, workers_stop = [asyncio.Event() for _ in range(4)]
         intake_services: tuple[tuple[str, RuntimeService], ...] = (
             ("sources", self.sources),
@@ -458,11 +466,13 @@ class Runtime:
                                     "ops.jobs",
                                     job_id,
                                     {
-                                        **interrupted_job,
+                                        **replace_job_clock(
+                                            replace_job_clock(interrupted_job, "run_after", interrupted_at),
+                                            "interrupted_at",
+                                            interrupted_at,
+                                        ),
                                         "status": "QUEUED",
                                         "attempts": state.attempts - 1,
-                                        **interrupted_at.fields("run_after"),
-                                        **interrupted_at.fields("interrupted_at"),
                                         "interruption_reason": "CONTROLLED_GENERATION_STOP",
                                     },
                                 )
@@ -487,6 +497,7 @@ class Runtime:
                 await service.close()
             except Exception:
                 log.exception("Resource close failed")
-        from tank.sources.rate_limits import shared_request_budgets
-
-        await shared_request_budgets.release(getattr(self, "request_ledger", None))
+        binding = self.budget_binding
+        if binding is not None:
+            self.budget_binding = None
+            await self.budget_scope.release(binding)

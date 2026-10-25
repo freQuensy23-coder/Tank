@@ -4,7 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
-from source_support import fixture_versions
+from source_support import fixture_request_budgets, fixture_versions
 
 from tank.analysis.cards import compose_card
 from tank.util import clock_iso
@@ -501,16 +501,14 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
     import json
     from contextlib import AsyncExitStack
     from types import SimpleNamespace
-    from typing import Never
 
     import httpx
+    from scheduler_support import operational_reaction_services
 
     from tank.analysis.decisions import DecisionEngine
-    from tank.analysis.truth import MarketTruthService
+    from tank.analysis.page_access import LivePageAccess
     from tank.delivery import DeliveryService
     from tank.event_tools import EventToolService
-    from tank.market.service import MarketService
-    from tank.scheduler import Scheduler
     from tank.settings import Settings
     from tank.storage import MemoryRepository
     from tank.telegram_rich import rich_message_text
@@ -545,24 +543,23 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
     repo = MemoryRepository()
     market_http_calls = 0
 
-    def unexpected_market_request(request: httpx.Request) -> Never:
+    async def record_market_request(_request: httpx.Request) -> None:
         nonlocal market_http_calls
         market_http_calls += 1
-        raise AssertionError("Publication must not fetch exchange HTTP")
 
     async with AsyncExitStack() as resources:
         await repo.open()
         resources.push_async_callback(repo.close)
-        market_http = await resources.enter_async_context(
-            httpx.AsyncClient(transport=httpx.MockTransport(unexpected_market_request))
-        )
         settings = Settings(data_dir=tmp_path, _env_file=None)
         versions = fixture_versions()
-        market = MarketService(repo, settings, versions=versions, http=market_http)
-        resources.push_async_callback(market.close)
-        truth_service = MarketTruthService(repo, settings, market, versions=versions)
-        scheduler = Scheduler(repo, settings, market, truth_service, versions=versions)
-        resources.push_async_callback(scheduler.close)
+        services = await resources.enter_async_context(
+            operational_reaction_services(
+                repo, settings, versions=versions, budgets=fixture_request_budgets()
+            )
+        )
+        market, truth_service, scheduler = services.market, services.truth, services.scheduler
+        market_http = market.http
+        market_http.event_hooks["request"].append(record_market_request)
         await repo.put("evt.events", eid, event)
         await repo.put("evt.ems_assessments", "current-ems", assessment)
         await repo.put(
@@ -594,7 +591,14 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
             },
         )
         service = EventToolService(
-            repo, settings, truth_service, DecisionEngine(settings), versions=versions, scheduler=scheduler
+            repo,
+            settings,
+            truth_service,
+            DecisionEngine(settings),
+            versions=versions,
+            scheduler=scheduler,
+            pages=LivePageAccess(services.admission),
+            http=market_http,
         )
 
         await repo.put("ops.agent_sessions", "card-session", {"session_id": "card-session", "event_id": eid})

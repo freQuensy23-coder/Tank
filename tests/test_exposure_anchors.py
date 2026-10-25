@@ -5,9 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 from scheduling_support import RecordingReactionScheduling
-from source_support import fixture_versions
+from source_support import fixture_http_admission, fixture_versions
 
 import tank.event_tools as event_tools
+from tank.analysis.page_access import LivePageAccess
 from tank.storage import MemoryRepository
 
 
@@ -37,7 +38,13 @@ async def prepare(
         load_config=lambda name: copy.deepcopy(config[name]),
     )
     service = event_tools.EventToolService(
-        repo, settings, None, None, versions=fixture_versions(), scheduler=RecordingReactionScheduling()
+        repo,
+        settings,
+        None,
+        None,
+        versions=fixture_versions(),
+        scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
     await repo.put(
         "evt.events",
