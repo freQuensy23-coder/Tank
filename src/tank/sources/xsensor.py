@@ -1,16 +1,19 @@
 """Validated public-profile X collection through the configured Apify actor."""
 
+import base64
+import binascii
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Annotated, Literal, Self
-from urllib.parse import urlsplit
+from urllib.parse import unquote_plus, urlsplit
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.http_policy import HttpAdmission, HttpRefused
+from tank.contracts.json import JsonDocument, decode_json
 from tank.contracts.source_items import DiscoveryEnvelope, DiscoveryObservation, SocialDiscovery
 from tank.contracts.sources import HttpFetchPlan
 from tank.logging import redact_text
@@ -28,6 +31,68 @@ def account_key(handle: str) -> str:
     if HANDLE.fullmatch(handle) is None:
         raise ValueError("X account requires a declared profile handle")
     return handle.lstrip("@").lower()
+
+
+def sensitive_text(value: str, secrets: Sequence[str]) -> bool:
+    if any(secret in value or secret in unquote_plus(value) for secret in secrets):
+        return True
+    try:
+        decoded = base64.b64decode(value, validate=True)
+    except (ValueError, binascii.Error):
+        return False
+    return any(secret.encode() in decoded for secret in secrets)
+
+
+def contains_credential(value: JsonValue, secrets: Sequence[str]) -> bool:
+    if isinstance(value, str):
+        return sensitive_text(value, secrets)
+    if isinstance(value, list):
+        return any(contains_credential(child, secrets) for child in value)
+    if isinstance(value, dict):
+        return any(
+            sensitive_text(name, secrets) or contains_credential(child, secrets)
+            for name, child in value.items()
+        )
+    return False
+
+
+def redacted_projection(value: JsonValue, secrets: Sequence[str]) -> JsonValue:
+    if isinstance(value, str):
+        return "[REDACTED]" if sensitive_text(value, secrets) else value
+    if isinstance(value, list):
+        return [redacted_projection(child, secrets) for child in value]
+    if isinstance(value, dict):
+        return {
+            "[REDACTED]" if sensitive_text(name, secrets) else name: redacted_projection(child, secrets)
+            for name, child in value.items()
+        }
+    return value
+
+
+def diagnostic_projection(value: JsonValue, *, token: str, secrets: Sequence[str]) -> JsonValue:
+    projected = redacted_projection(value, secrets)
+    if not isinstance(value, dict) or not isinstance(projected, dict):
+        return projected
+    if "accounts" not in value or "accounts" not in projected:
+        return projected
+    originals = value["accounts"]
+    replacements = projected["accounts"]
+    if not isinstance(originals, list) or not isinstance(replacements, list):
+        return projected
+    for original, replacement in zip(originals, replacements, strict=True):
+        if not isinstance(original, dict) or not isinstance(replacement, dict):
+            continue
+        if "diagnostics" not in original or original["diagnostics"] is None:
+            continue
+        raw_diagnostics = original["diagnostics"]
+        if not isinstance(raw_diagnostics, dict):
+            raise ValueError("X response contains credential material")
+        approved = XDiagnostics.model_validate(sanitize(raw_diagnostics, token))
+        wire = JsonDocument.validate_value(approved.model_dump(mode="json"))
+        if contains_credential(wire, secrets):
+            raise ValueError("X response contains credential material")
+        replacement["diagnostics"] = wire
+    return projected
 
 
 class XPostObservation(DiscoveryEnvelope):
@@ -194,6 +259,7 @@ def scan(
     raw: bytes,
     *,
     token: str | None = None,
+    retain_posts: bool = True,
 ) -> Scan:
     """Advance an existing boundary only after the requested account reports a complete range.
 
@@ -222,7 +288,8 @@ def scan(
     rows = [
         post.row(raw)
         for post in run.posts
-        if account_key(post.author) in requested
+        if retain_posts
+        and account_key(post.author) in requested
         and account_key(post.author) in previous
         and int(post.id) > int(previous[account_key(post.author)])
     ]
@@ -245,7 +312,7 @@ def scan(
         if account is None:
             failures.append(AccountFailure(account=handle, reason="MISSING_FROM_RUN"))
             continue
-        if isinstance(account, ApifyFailedAccount) or run.health == "failed":
+        if isinstance(account, ApifyFailedAccount) or run.health == "failed" or not retain_posts:
             continue
         next_cursor = run.next_cursors.get(key)
         if next_cursor is None:
@@ -335,8 +402,19 @@ class XSensor:
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise RuntimeError(f"Apify X run request failed: {redact_text(str(exc), secrets)}") from None
-        contains_token = len(self.token) >= 8 and self.token.encode() in response.content
-        run = ApifyRun.model_validate_json(response.content)
+        decoded = decode_json(response.content)
+        contains_token = any(
+            secret.encode() in response.content for secret in secrets
+        ) or contains_credential(decoded, secrets)
+        if contains_token:
+            try:
+                run = ApifyRun.model_validate(
+                    diagnostic_projection(decoded, token=self.token, secrets=secrets)
+                )
+            except ValueError:
+                raise ValueError("Apify X response contains credential material") from None
+        else:
+            run = ApifyRun.model_validate(decoded)
         requested = {account_key(account) for account in accounts}
         has_diagnostics = any(
             isinstance(account, ApifyFailedAccount)
@@ -347,7 +425,14 @@ class XSensor:
         if contains_token and not has_diagnostics:
             raise ValueError("Apify X response contains credential material")
         try:
-            result = scan(run, accounts, previous, response.content, token=self.token)
+            result = scan(
+                run,
+                accounts,
+                previous,
+                response.content,
+                token=self.token,
+                retain_posts=not contains_token,
+            )
         except RuntimeError as exc:
             raise RuntimeError(redact_text(str(exc), secrets)) from None
         failures = [

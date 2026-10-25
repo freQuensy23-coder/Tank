@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
 if TYPE_CHECKING:
     from scripts.ci import check_go_results as gate
@@ -63,3 +63,9 @@ def test_report_cannot_hide_unsuccessful_test(tmp_path: Path, action: str) -> No
 def test_report_rejects_invalid_execution_evidence(tmp_path: Path, event: dict[str, JsonValue]) -> None:
     with pytest.raises(ValueError):
         gate.verify(report(tmp_path, [event]))
+
+
+@pytest.mark.parametrize("raw", ["false", "true", "0.0", "1.0", "1", "null", '"0"'])
+def test_report_summary_refuses_boolean_or_noninteger_skip_counts(raw: str) -> None:
+    with pytest.raises(ValidationError):
+        gate.TestSummary.model_validate_json('{"cases":1,"passed":1,"skipped":' + raw + "}")

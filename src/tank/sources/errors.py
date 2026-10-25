@@ -170,8 +170,50 @@ class AccountEntryError(ErrorEvidence):
     account: str | None
     diagnostics: XDiagnostics | None = None
 
-    def identity(self) -> AccountIdentity:
-        return AccountIdentity(account=self.account.lower() if self.account is not None else "")
+    def identity(self) -> AccountIdentity | AccountDiagnosticIdentity:
+        account = self.account.lower() if self.account is not None else ""
+        if self.diagnostics is None:
+            return AccountIdentity(account=account)
+        diagnostics = self.diagnostics
+        attempts: list[DiagnosticAttemptIdentity] = []
+        for attempt in diagnostics.attempts:
+            response = attempt.response
+            attempts.append(
+                DiagnosticAttemptIdentity(
+                    attempt=attempt.attempt,
+                    error=attempt.error,
+                    status=attempt.status,
+                    response=NoDiagnosticResponseIdentity()
+                    if response is None
+                    else DiagnosticResponseIdentity(
+                        status=response.status,
+                        bodyEncoding=response.bodyEncoding,
+                        bodyBytes=response.bodyBytes,
+                        bodySha256=response.bodySha256,
+                        bodyTruncated=response.bodyTruncated,
+                        omittedWireBytes=response.omittedWireBytes,
+                        wireBytes=response.wireBytes,
+                        captureLimitBytes=response.captureLimitBytes,
+                        serializedBodyLimitBytes=response.serializedBodyLimitBytes,
+                        readError=response.readError,
+                        decodeError=response.decodeError,
+                        redacted=response.redacted,
+                    ),
+                    headers={}
+                    if response is None
+                    else {
+                        name: value
+                        for name, value in response.headers.items()
+                        if name not in {"date", "x-request-id", "x-transaction-id", "cf-ray"}
+                    },
+                )
+            )
+        return AccountDiagnosticIdentity(
+            account=account,
+            evidence=DiagnosticEvidenceIdentity(
+                request=diagnostics.request, outcome=diagnostics.outcome, attempts=attempts
+            ),
+        )
 
 
 class DocumentEntryError(ErrorEvidence):

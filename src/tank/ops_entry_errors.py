@@ -14,15 +14,10 @@ from tank.ops_cards import plain
 from tank.ops_progress import enabled
 from tank.settings import Settings
 from tank.sources.errors import (
-    AccountDiagnosticIdentity,
     AccountEntryError,
-    DiagnosticAttemptIdentity,
-    DiagnosticEvidenceIdentity,
-    DiagnosticResponseIdentity,
     EntryErrorMarker,
     EntryErrorNotice,
     EntryIdentity,
-    NoDiagnosticResponseIdentity,
     SourceEntryError,
     SourceErrorIdentity,
     XDiagnostics,
@@ -66,47 +61,6 @@ class EntryNoticeRepository(Protocol):
 
 
 def identity(error: SourceEntryError) -> SourceErrorIdentity:
-    if isinstance(error, AccountEntryError) and error.diagnostics is not None:
-        diagnostics = error.diagnostics
-        attempts: list[DiagnosticAttemptIdentity] = []
-        for attempt in diagnostics.attempts:
-            response = attempt.response
-            attempts.append(
-                DiagnosticAttemptIdentity(
-                    attempt=attempt.attempt,
-                    error=attempt.error,
-                    status=attempt.status,
-                    response=NoDiagnosticResponseIdentity()
-                    if response is None
-                    else DiagnosticResponseIdentity(
-                        status=response.status,
-                        bodyEncoding=response.bodyEncoding,
-                        bodyBytes=response.bodyBytes,
-                        bodySha256=response.bodySha256,
-                        bodyTruncated=response.bodyTruncated,
-                        omittedWireBytes=response.omittedWireBytes,
-                        wireBytes=response.wireBytes,
-                        captureLimitBytes=response.captureLimitBytes,
-                        serializedBodyLimitBytes=response.serializedBodyLimitBytes,
-                        readError=response.readError,
-                        decodeError=response.decodeError,
-                        redacted=response.redacted,
-                    ),
-                    headers={}
-                    if response is None
-                    else {
-                        name: value
-                        for name, value in response.headers.items()
-                        if name not in {"date", "x-request-id", "x-transaction-id", "cf-ray"}
-                    },
-                )
-            )
-        return AccountDiagnosticIdentity(
-            account=error.account.lower() if error.account is not None else "",
-            evidence=DiagnosticEvidenceIdentity(
-                request=diagnostics.request, outcome=diagnostics.outcome, attempts=attempts
-            ),
-        )
     return error.identity()
 
 
