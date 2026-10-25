@@ -419,10 +419,10 @@ def sources():
 @click.option("--accounts", is_flag=True, help="Check configured X account identities.")
 def sources_check(probe, accounts):
     async def command(repo, settings):
-        from tank.request_budget import RequestLedger, shared_request_budgets
+        from tank.request_budget import build_budget_backend, shared_request_budgets
         from tank.sources import SourceService
 
-        binding = shared_request_budgets.bind(RequestLedger(repo.database_url, owner="tank-cli"))
+        binding = shared_request_budgets.bind(build_budget_backend(repo, owner="tank-cli"))
         try:
             service = SourceService(
                 repo, settings, versions=settings.require_versions(), budgets=shared_request_budgets
@@ -440,14 +440,25 @@ def sources_check(probe, accounts):
 @main.command()
 def coverage():
     async def command(repo, settings):
+        from tank.http_admission import ConfiguredHttpAdmission
         from tank.market.service import MarketService
+        from tank.request_budget import SharedRequestBudgets, build_budget_backend
 
-        service = MarketService(repo, settings, versions=settings.require_versions())
+        versions = settings.require_versions()
+        budgets = SharedRequestBudgets(build_budget_backend(repo, owner="tank-cli-market"))
         try:
-            return await service.coverage()
-        finally:
-            if hasattr(service, "close"):
+            admission = ConfiguredHttpAdmission(
+                SourceApiLimitsConfiguration.model_validate(settings.load_config("api_limits")),
+                versions,
+                budgets,
+            )
+            service = MarketService(repo, settings, versions=versions, admission=admission)
+            try:
+                return await service.coverage()
+            finally:
                 await service.close()
+        finally:
+            await budgets.shutdown()
 
     run_db(command)
 

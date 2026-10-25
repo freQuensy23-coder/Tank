@@ -469,8 +469,9 @@ physical acquisition keys come from the same validated canonical identity.
 
 `RequestBudgetScope._active=None` is solely the real before-bind/after-release
 resource state. Acquire, host wait and block all raise when unbound. `bind` returns
-the exact owned engine lease. Releasing an older lease closes its backend while
-preserving a newer binding, so reload cleanup cannot disable its replacement.
+the exact owned engine lease and refuses a second binding while that lease is
+active. After the old lease is released, a replacement can bind; stale repeated
+cleanup of the old lease cannot clear that replacement.
 Runtime composition must supply an explicit backend and inject the scope into its
 services; the core does not choose a backend by inspecting a structural repository.
 
@@ -638,3 +639,65 @@ live roundtrip, verified-body roundtrip and digest-conflict rejection are covere
 This additive checkpoint belongs only to the held HTTP cohort descended from
 4041eb68/477d58e. It does not activate HTTP consumers or alter the clean scheduling
 cohort or independent source-state branch.
+
+
+
+The independent required-scheduling caller companion now uses that real async
+composition for all owned EventToolService constructors. It retains the original
+extraction, publication, web evidence, watch-condition and source-cadence assertions.
+The MAJOR source-cadence case now uses actual tool dispatch with a schema-complete,
+explicitly unestimated impact horizon. It verifies ten durable benchmark POST
+reaction jobs for the event and the existing real 15-second source reads.
+Resources drain before repository shutdown.
+
+Scoped proof: 216 owned constructor/helper units pass in 3.84s, and both actual
+source-cadence integration cases pass in 2.45s. No external HTTP is allowed by the
+real composition fixture. Full pinned owned verification is the next gate; these
+results do not assert completed reaction measurement or full scheduler typing.
+
+
+### Held HTTP cohort: required owned consumer composition
+
+Owned MarketService constructors now receive the real configured admission port.
+The operational scheduling fixture constructs it from the actual settings policy,
+the same explicit version facet and an explicitly declared memory backend with
+isolated operational time. The resource container exposes that same port to each
+EventToolService's `LivePageAccess`; it does not fabricate admission or page data.
+Fixture version override is a legitimate choice between the declared synthetic
+default and an explicitly supplied captured facet.
+
+The standalone CLI market command owns a PostgreSQL RequestLedger, configured
+resolver, MarketService and shutdown lifetime. It never infers a memory backend
+from a missing capability or silently skips a required close. Source constructors
+retain their already-required budget port. The exact clean scheduling constructor
+companion was merged normally; source-budget fields were preserved in the owned
+merge conflicts, with both evidence ledgers retained.
+
+Proof: all 512 owned unit cases pass in 7.12s, zero skips. Four operational helper/
+page test modules pass strict mypy. Full physical/E2E qualification remains pending
+the corresponding runtime, recorded-read and quality-owned constructor companions;
+this checkpoint is not a claim that the held HTTP cohort is integrated.
+
+
+### Held HTTP lifetime follow-up
+
+`build_budget_backend(repo, *, owner)` centralizes explicit composition for the
+two supported concrete repository backends. PostgresRepository selects a real
+RequestLedger with its required database/owner; MemoryRepository explicitly selects
+the actual process-local implementation. Every other repository implementation
+raises TypeError, rather than being guessed to mean memory. The factory is a
+composition boundary, not an admission fallback. CLI source and market commands
+reuse it, so real isolated memory fixtures remain supported without accessing a
+nonexistent database_url.
+
+`RequestBudgetScope.bind` now refuses an already-active lease before replacing
+anything. The regression proves the first backend remains active and receives
+actual spend. After release, the replacement can bind, and stale old cleanup
+does not disable it. This preserves orderly reload ownership without silently
+abandoning a live backend.
+
+Proof: 29 admission/CLI cases pass in 1.64s, zero skips; engine/admission tests pass
+strict mypy and Ruff. Factory cases exercise explicit memory and unopened physical
+resources; unsupported repository rejection is an explicit closed runtime guard.
+Agents owns the CLI fake Source constructor update and production reuse of this
+common factory. Combined runtime/physical verification follows that exact pair.

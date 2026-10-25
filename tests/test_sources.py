@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import zstandard
+from scheduler_support import operational_reaction_services
 from source_support import (
     fetch_plan,
     fixture_request_budgets,
@@ -16,6 +17,7 @@ from source_support import (
     source_feed,
 )
 
+from tank.analysis.page_access import LivePageAccess
 from tank.contracts.source_items import SourceText, parse_feed_source_item
 from tank.sources import SourceService, parsers
 from tank.util import clock_iso, new_id, sha256
@@ -785,47 +787,60 @@ async def test_milestone_producer_drives_source_cadence_and_cancellation(
     service = SourceService(
         repo, SourceSettings(), http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
     )
-    tools = EventToolService(repo, settings_obj, None, None, versions=fixture_versions())
-    await repo.put("reg.sources", "S15", source)
-    await repo.put("evt.events", "cadence-event", {"event_id": "cadence-event"})
-    due = clock[0] + timedelta(hours=1)
-    await tools.schedule_milestone(
-        {"event_id": "cadence-event", "due_at": iso(due), "source_id": "S15", "milestone": "LAUNCH"}, {}
-    )
-    assert not await service.is_escalated("S15")
-    await service.control_once("S15")
-    assert len(calls) == 1
-    clock[0] += timedelta(seconds=15)
-    await service.control_once("S15")
-    assert len(calls) == 1
-    clock[0] = due - timedelta(minutes=5)
-    await service.control_once("S15")
-    assert len(calls) == 2 and await service.is_escalated("S15")
-    clock[0] += timedelta(seconds=14)
-    await service.control_once("S15")
-    assert len(calls) == 2
-    clock[0] += timedelta(seconds=1)
-    await service.control_once("S15")
-    assert len(calls) == 3
-    rows = await repo.list("ops.source_escalations", filters={"source_id": "S15"})
-    assert rows
-    for row in rows:
-        row["status"] = "CONFIRMED"
-        row["confirmed_at"] = iso(clock[0])
-        await repo.put(
-            "ops.source_escalations",
-            row.get("escalation_id")
-            or row.get("key")
-            or row["source_id"] + ":" + row["event_id"] + ":" + row["trigger"],
-            row,
+    reaction_settings = settings_obj
+    reaction_versions = fixture_versions()
+    async with operational_reaction_services(
+        repo, reaction_settings, versions=reaction_versions
+    ) as reaction_services:
+        tools = EventToolService(
+            repo,
+            reaction_settings,
+            reaction_services.truth,
+            None,
+            versions=reaction_versions,
+            scheduler=reaction_services.scheduler,
+            pages=LivePageAccess(reaction_services.admission),
         )
-    assert not await service.is_escalated("S15")
-    clock[0] += timedelta(seconds=15)
-    await service.control_once("S15")
-    assert len(calls) == 3
-    clock[0] = due + timedelta(hours=2)
-    assert not await service.is_escalated("S15")
-    await http.aclose()
+        await repo.put("reg.sources", "S15", source)
+        await repo.put("evt.events", "cadence-event", {"event_id": "cadence-event"})
+        due = clock[0] + timedelta(hours=1)
+        await tools.schedule_milestone(
+            {"event_id": "cadence-event", "due_at": iso(due), "source_id": "S15", "milestone": "LAUNCH"}, {}
+        )
+        assert not await service.is_escalated("S15")
+        await service.control_once("S15")
+        assert len(calls) == 1
+        clock[0] += timedelta(seconds=15)
+        await service.control_once("S15")
+        assert len(calls) == 1
+        clock[0] = due - timedelta(minutes=5)
+        await service.control_once("S15")
+        assert len(calls) == 2 and await service.is_escalated("S15")
+        clock[0] += timedelta(seconds=14)
+        await service.control_once("S15")
+        assert len(calls) == 2
+        clock[0] += timedelta(seconds=1)
+        await service.control_once("S15")
+        assert len(calls) == 3
+        rows = await repo.list("ops.source_escalations", filters={"source_id": "S15"})
+        assert rows
+        for row in rows:
+            row["status"] = "CONFIRMED"
+            row["confirmed_at"] = iso(clock[0])
+            await repo.put(
+                "ops.source_escalations",
+                row.get("escalation_id")
+                or row.get("key")
+                or row["source_id"] + ":" + row["event_id"] + ":" + row["trigger"],
+                row,
+            )
+        assert not await service.is_escalated("S15")
+        clock[0] += timedelta(seconds=15)
+        await service.control_once("S15")
+        assert len(calls) == 3
+        clock[0] = due + timedelta(hours=2)
+        assert not await service.is_escalated("S15")
+        await http.aclose()
     await repo.close()
 
 
@@ -955,30 +970,55 @@ async def test_major_assessment_producer_activates_15s_source_reads(
             "implementation",
         ]
     }
-    tools = EventToolService(repo, config, None, None, versions=fixture_versions())
-    result = await tools.set_assessment(
-        {
-            "event_id": event["event_id"],
-            "assessment": {
-                "class": "MAJOR",
-                "criterion": "M1",
-                "criterion_venue_id": "binance",
-                "criterion_claim_id": "major-proof",
-                "dims": dimensions,
+    reaction_settings = config
+    reaction_versions = fixture_versions()
+    async with operational_reaction_services(
+        repo, reaction_settings, versions=reaction_versions
+    ) as reaction_services:
+        tools = EventToolService(
+            repo,
+            reaction_settings,
+            reaction_services.truth,
+            None,
+            versions=reaction_versions,
+            scheduler=reaction_services.scheduler,
+            pages=LivePageAccess(reaction_services.admission),
+        )
+        result = await tools.dispatch(
+            "set_assessment",
+            {
+                "event_id": event["event_id"],
+                "assessment": {
+                    "class": "MAJOR",
+                    "criterion": "M1",
+                    "criterion_venue_id": "binance",
+                    "criterion_claim_id": "major-proof",
+                    "impact_horizon": {
+                        "impact_start": "UNKNOWN",
+                        "ramp_shape": "STEP",
+                        "dependencies": [],
+                        "time_to_materiality": "Not estimated by this source-cadence fixture",
+                        "timing_confidence": "LOW",
+                    },
+                    "dims": dimensions,
+                },
             },
-        },
-        {},
-    )
-    assert result["class"] == "MAJOR" and await service.is_escalated("S15")
-    clock[0] += timedelta(seconds=14)
-    await service.control_once("S15")
-    assert len(calls) == 1
-    clock[0] += timedelta(seconds=1)
-    await service.control_once("S15")
-    assert len(calls) == 2
-    clock[0] += timedelta(hours=2)
-    assert not await service.is_escalated("S15")
-    await http.aclose()
+            {"role": "system"},
+        )
+        reaction_jobs = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
+        assert len(reaction_jobs) == 10
+        assert all(job["payload"]["event_id"] == event["event_id"] for job in reaction_jobs)
+        assert all(job["payload"]["checkpoint"].startswith("POST_") for job in reaction_jobs)
+        assert result["class"] == "MAJOR" and await service.is_escalated("S15")
+        clock[0] += timedelta(seconds=14)
+        await service.control_once("S15")
+        assert len(calls) == 1
+        clock[0] += timedelta(seconds=1)
+        await service.control_once("S15")
+        assert len(calls) == 2
+        clock[0] += timedelta(hours=2)
+        assert not await service.is_escalated("S15")
+        await http.aclose()
     await repo.close()
 
 

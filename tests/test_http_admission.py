@@ -235,9 +235,16 @@ async def test_releasing_old_runtime_binding_preserves_replacement_ownership() -
     old_backend = MemoryBudgetBackend(FixtureBudgetClock())
     old = scope.bind(old_backend)
     new_backend = MemoryBudgetBackend(FixtureBudgetClock())
+    constraint = BudgetConstraint(key="configured", capacity=1, window_s=60, weight=1)
+    with pytest.raises(RuntimeError, match="already has an active binding"):
+        scope.bind(new_backend)
+    assert scope.require_binding() is old
+    await scope.acquire_many([constraint])
+    assert len(old_backend.windows[constraint.bucket()]) == 1
+    assert not new_backend.windows
+    await scope.release(old)
     replacement = scope.bind(new_backend)
     await scope.release(old)
-    constraint = BudgetConstraint(key="configured", capacity=1, window_s=60, weight=1)
     await scope.acquire_many([constraint])
     assert old_backend.closed
     assert len(new_backend.windows[constraint.bucket()]) == 1
@@ -317,3 +324,17 @@ async def test_postgres_host_block_is_visible_without_any_provider_quota(
         finally:
             await writer.shutdown()
             await reader.shutdown()
+
+
+def test_budget_composition_preserves_explicit_memory_and_unopened_postgres_resources() -> None:
+    from tank.request_budget import build_budget_backend
+    from tank.storage import MemoryRepository, PostgresRepository
+
+    memory = build_budget_backend(MemoryRepository(), owner="synthetic-memory")
+    assert isinstance(memory, MemoryBudgetBackend)
+    physical = build_budget_backend(
+        PostgresRepository("postgresql://synthetic:synthetic@127.0.0.1/tank_test_unopened"),
+        owner="synthetic-postgres",
+    )
+    assert isinstance(physical, RequestLedger)
+    assert physical.connection is None
