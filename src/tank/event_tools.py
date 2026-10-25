@@ -23,6 +23,7 @@ from tank.analysis.identity import (
 from tank.analysis.identity import (
     resolve_token as resolve_token,
 )
+from tank.analysis.reaction_scheduling import AssessmentFreeDiagnosticScheduling, ReactionScheduling
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.analysis.watch_contracts import WatchCondition
 from tank.contracts.provenance import ResolvedVersionIdentity
@@ -373,6 +374,7 @@ class EventToolService:
         decision_engine,
         *,
         versions: ResolvedVersionIdentity,
+        scheduler: ReactionScheduling,
         http=None,
         search=None,
         reference_clock=None,
@@ -382,7 +384,13 @@ class EventToolService:
         self.source_extraction = SourceExtractionRepository(repo)
         self.http = http
         self.search_service = search
-        self.scheduler = None
+        if not isinstance(scheduler, ReactionScheduling):
+            raise TypeError("Event tools require a reaction scheduling port")
+        self.scheduler = (
+            AssessmentFreeDiagnosticScheduling.model_validate(scheduler)
+            if isinstance(scheduler, AssessmentFreeDiagnosticScheduling)
+            else scheduler
+        )
         if reference_clock is not None:
             from tank.fixture_reference import TrustedFixtureClock
 
@@ -434,6 +442,8 @@ class EventToolService:
         }
 
     async def dispatch(self, tool, arguments, context):
+        if tool == "set_assessment" and isinstance(self.scheduler, AssessmentFreeDiagnosticScheduling):
+            self.scheduler.refuse_assessment()
         if tool not in self.TOOLS:
             raise ValueError(f"Unknown Tank tool: {tool}")
         if not isinstance(arguments, dict):
@@ -561,8 +571,8 @@ class EventToolService:
                     result = await getattr(self, tool)(arguments, ctx)
                     await tool_progress(self.repo, self.settings, tool, arguments, ctx, result)
 
-            if tool == "set_assessment" and self.scheduler is not None:
-                await self.scheduler.ensure_reactions(await self.require("evt.events", event_id))
+            if tool == "set_assessment":
+                await self.scheduler.ensure_event_reactions(event_id)
             return fit_result(result) if tool in READ_TOOLS else result
         result = await getattr(self, tool)(arguments, ctx)
         await tool_progress(self.repo, self.settings, tool, arguments, ctx, result)
