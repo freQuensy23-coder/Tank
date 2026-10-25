@@ -1153,6 +1153,7 @@ x-reader = [
     { name = "apify" },
     { name = "beautifulsoup4" },
     { name = "httpx" },
+    { name = "pydantic" },
 ]
 
 [package.metadata]
@@ -1189,6 +1190,7 @@ x-reader = [
     { name = "apify", specifier = "==4.1.0" },
     { name = "beautifulsoup4", specifier = "==4.15.0" },
     { name = "httpx", specifier = "==0.28.1" },
+    { name = "pydantic", specifier = "==2.14.1" },
 ]
 
 [[package]]
