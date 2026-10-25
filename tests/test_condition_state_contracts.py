@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 import pytest
 from pydantic import ValidationError
 
@@ -131,3 +133,33 @@ def test_triggered_evaluation_cannot_omit_untestable_families() -> None:
         ConditionDivergenceEvaluation.model_validate(
             evaluation.model_copy(update={"candidates": evaluation.candidates[:2]})
         )
+
+
+@pytest.mark.parametrize(
+    ("current", "previous"),
+    [("1e1000", "1"), ("1e-1000", "1")],
+)
+def test_unrepresentable_depth_ratio_preserves_unknown_instead_of_infinity_or_zero(
+    current: str,
+    previous: str,
+) -> None:
+    from tank.analysis.condition_graph_contracts import ConditionDepthValues, UnavailableConditionRatio
+
+    result = ConditionDepthValues(
+        aggregate_depth_p1_usd=Decimal(current),
+        pre_event_depth_p1_usd=Decimal(previous),
+        spread_ratio=None,
+    ).comparison()
+    assert isinstance(result, UnavailableConditionRatio)
+    assert result.value is None and result.reason == "NOT_ESTIMABLE"
+
+
+def test_depth_ratio_preserves_actual_zero_numerator() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionDepthValues, ObservedConditionRatio
+
+    result = ConditionDepthValues(
+        aggregate_depth_p1_usd=Decimal(0),
+        pre_event_depth_p1_usd=Decimal(2),
+        spread_ratio=None,
+    ).comparison()
+    assert isinstance(result, ObservedConditionRatio) and result.value == 0

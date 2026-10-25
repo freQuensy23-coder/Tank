@@ -130,7 +130,7 @@ class ObservedConditionRatio(DomainModel):
 class UnavailableConditionRatio(DomainModel):
     status: Literal["UNAVAILABLE"]
     value: None
-    reason: Literal["INCOMPLETE", "ZERO_BASELINE"]
+    reason: Literal["INCOMPLETE", "ZERO_BASELINE", "NOT_ESTIMABLE"]
 
 
 type ConditionRatio = ObservedConditionRatio | UnavailableConditionRatio
@@ -149,7 +149,10 @@ class ConditionDepthValues(DomainModel):
             return UnavailableConditionRatio(status="UNAVAILABLE", value=None, reason="ZERO_BASELINE")
         with localcontext() as context:
             context.prec = max(128, context.prec)
-            ratio = float(values.aggregate_depth_p1_usd / values.pre_event_depth_p1_usd)
+            native_ratio = values.aggregate_depth_p1_usd / values.pre_event_depth_p1_usd
+            ratio = float(native_ratio)
+        if not isfinite(ratio) or native_ratio != 0 and ratio == 0:
+            return UnavailableConditionRatio(status="UNAVAILABLE", value=None, reason="NOT_ESTIMABLE")
         return ObservedConditionRatio(status="OBSERVED", value=ratio)
 
 
