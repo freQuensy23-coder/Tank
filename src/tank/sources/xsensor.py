@@ -184,7 +184,11 @@ def cursor_state(cursors: Mapping[str, str]) -> dict[str, str]:
 
 
 def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: bytes) -> Scan:
-    """Bind every cursor advance to a requested successful account report."""
+    """Advance an existing boundary only after the requested account reports a complete range.
+
+    A first observed head establishes the explicit monitoring baseline; no prior
+    cursor exists whose historical range could be acknowledged by that read.
+    """
     if run.health == "failed":
         reason = (
             run.error
@@ -227,6 +231,8 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
             continue
         if key in previous and int(next_cursor) < int(previous[key]):
             failures.append(AccountFailure(account=handle, reason="CURSOR_REGRESSION"))
+            continue
+        if account.history_gap and key in previous:
             continue
         updated[key] = next_cursor
     gaps = [
