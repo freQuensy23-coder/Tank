@@ -6,7 +6,9 @@ from pydantic import ConfigDict, Field, JsonValue, RootModel, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.provenance import ResolvedVersionIdentity
-from tank.util import sha256
+from tank.contracts.repository import Collection
+from tank.contracts.sources import SourceFeed
+from tank.util import parse_iso_time, sha256
 
 
 class ReadCounter(DomainModel):
@@ -83,10 +85,123 @@ class InstrumentSnapshot(RootModel[dict[str, InstrumentRecord]]):
         }
 
 
+class InstrumentAcquisitionScope(DomainModel):
+    venue: Literal["binance", "coinbase", "kraken", "okx", "bybit", "hyperliquid"]
+    market_type: Literal["SPOT", "PERP_LINEAR"]
+    method: Literal["GET", "POST"]
+    url: str = Field(min_length=1)
+    body_sha256: str | None = Field(pattern=r"^[a-f0-9]{64}$")
+    form_sha256: str | None = Field(pattern=r"^[a-f0-9]{64}$")
+    headers_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @classmethod
+    def from_feed(cls, feed: SourceFeed) -> "InstrumentAcquisitionScope":
+        if feed.venue is None or feed.market_type is None:
+            raise ValueError("Instrument acquisition requires a venue and market type")
+        return cls(
+            venue=feed.venue,
+            market_type=feed.market_type,
+            method=feed.method,
+            url=feed.url,
+            body_sha256=None if feed.body is None else sha256(feed.body),
+            form_sha256=None if feed.form is None else sha256(feed.form),
+            headers_sha256=sha256(feed.headers),
+        )
+
+    @property
+    def digest(self) -> str:
+        return sha256(self.model_dump(mode="json"))
+
+
+class ScopedInstrumentBaseline(DomainModel):
+    source_id: Literal["S14"]
+    acquisition_scope: InstrumentAcquisitionScope
+    instruments: InstrumentSnapshot
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    config_version: str = Field(min_length=1)
+    code_version: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def actual_observations(self) -> Self:
+        ResolvedVersionIdentity(config_version=self.config_version, code_version=self.code_version)
+        if self.sha256 != sha256(self.instruments.storage_record()):
+            raise ValueError("Instrument baseline digest does not match its observations")
+        return self
+
+    @classmethod
+    def from_document(cls, value: dict[str, JsonValue]) -> "ScopedInstrumentBaseline":
+        return cls.model_validate({name: value[name] for name in cls.model_fields if name in value})
+
+
+class InstrumentBaselineArchive(DomainModel):
+    checkpoint_kind: Literal["INSTRUMENT_BASELINE_ARCHIVE"]
+    source_id: Literal["S14"]
+    original_checkpoint_key: str = Field(min_length=1)
+    original_record: dict[str, JsonValue]
+    original_record_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    original_scope: InstrumentAcquisitionScope | None
+    scope_declaration: Literal["RECORDED", "NOT_RECORDED"]
+    captured_at: str
+    captured_at_prec: Literal["COLLECTION_ONLY"]
+    capture_versions: ResolvedVersionIdentity
+
+    @model_validator(mode="after")
+    def preserve_actual_scope_declaration(self) -> Self:
+        parse_iso_time(self.captured_at)
+        if self.original_record_sha256 != sha256(self.original_record):
+            raise ValueError("Archived baseline digest does not match its original record")
+        if "acquisition_scope" in self.original_record:
+            declared = InstrumentAcquisitionScope.model_validate(self.original_record["acquisition_scope"])
+            if self.scope_declaration != "RECORDED" or self.original_scope != declared:
+                raise ValueError("Archived baseline scope conflicts with its actual declaration")
+        elif self.scope_declaration != "NOT_RECORDED" or self.original_scope is not None:
+            raise ValueError("Historical baseline has no declared acquisition scope")
+        return self
+
+    @property
+    def storage_key(self) -> str:
+        return "instrument-baseline-archive:" + sha256(
+            {
+                "checkpoint_key": self.original_checkpoint_key,
+                "record_sha256": self.original_record_sha256,
+            }
+        )
+
+    @classmethod
+    def capture(
+        cls,
+        checkpoint_key: str,
+        record: dict[str, JsonValue],
+        *,
+        captured_at: str,
+        versions: ResolvedVersionIdentity,
+    ) -> "InstrumentBaselineArchive":
+        known = "acquisition_scope" in record
+        return cls(
+            checkpoint_kind="INSTRUMENT_BASELINE_ARCHIVE",
+            source_id="S14",
+            original_checkpoint_key=checkpoint_key,
+            original_record=record,
+            original_record_sha256=sha256(record),
+            original_scope=InstrumentAcquisitionScope.model_validate(record["acquisition_scope"])
+            if known
+            else None,
+            scope_declaration="RECORDED" if known else "NOT_RECORDED",
+            captured_at=captured_at,
+            captured_at_prec="COLLECTION_ONLY",
+            capture_versions=versions,
+        )
+
+
+INSTRUMENT_BASELINE_ARCHIVES = Collection("ops.source_checkpoints", InstrumentBaselineArchive)
+
+
 class InstrumentSnapshotUpdate(DomainModel):
     source_id: Literal["S14"]
     checkpoint_key: str = Field(min_length=1)
     snapshot: InstrumentSnapshot
+    acquisition_scope: InstrumentAcquisitionScope
+    archives: list[InstrumentBaselineArchive]
     sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     versions: ResolvedVersionIdentity
 
@@ -101,5 +216,10 @@ class InstrumentSnapshotUpdate(DomainModel):
             "source_id": self.source_id,
             "sha256": self.sha256,
             "instruments": self.snapshot.storage_record(),
+            "acquisition_scope": self.acquisition_scope.model_dump(mode="json"),
             **self.versions.model_dump(mode="json"),
         }
+
+    @property
+    def scoped_checkpoint_key(self) -> str:
+        return self.checkpoint_key + ":scope:" + self.acquisition_scope.digest

@@ -17,7 +17,15 @@ import httpx
 from pydantic import JsonValue
 
 import tank.sources.parsers as parsers
-from tank.contracts.source_checkpoints import InstrumentSnapshot, InstrumentSnapshotUpdate
+from tank.contracts.repository import Repository as TypedRepository
+from tank.contracts.source_checkpoints import (
+    INSTRUMENT_BASELINE_ARCHIVES,
+    InstrumentAcquisitionScope,
+    InstrumentBaselineArchive,
+    InstrumentSnapshot,
+    InstrumentSnapshotUpdate,
+    ScopedInstrumentBaseline,
+)
 from tank.contracts.source_items import (
     DiscoveryEnvelope,
     PendingSourceItem,
@@ -218,6 +226,8 @@ class SourcePoller:
         sid = source.source_id
         kind = feed.kind
         snapshot_update: InstrumentSnapshotUpdate | None = None
+        acquisition_scope = InstrumentAcquisitionScope.from_feed(feed) if sid == "S14" else None
+        original_state = deepcopy(state) if sid == "S14" else None
         if sid == "S29":
             accounts = [account.handle.lstrip("@") for account in svc.accounts.values()]
             result = await svc.xsensor.posts(
@@ -239,6 +249,7 @@ class SourcePoller:
             key,
             persist_http_evidence=True,
             on_start=lambda: self.mark_request_start(source, key),
+            cache_scope=None if acquisition_scope is None else acquisition_scope.digest,
         )
         payload = _http_read.payload
         if isinstance(_http_read, NotModified):
@@ -258,7 +269,12 @@ class SourcePoller:
                         raise ValueError("Repeated Bybit instrument cursor")
                     cursors.add(cursor)
                     parts = urlsplit(feed.url)
-                    params = dict(parse_qsl(parts.query), cursor=cursor)
+                    params = [
+                        (name, value)
+                        for name, value in parse_qsl(parts.query, keep_blank_values=True)
+                        if name != "cursor"
+                    ]
+                    params.append(("cursor", cursor))
                     next_feed = feed.model_copy(
                         update={
                             "url": urlunsplit(
@@ -287,29 +303,55 @@ class SourcePoller:
                     pages.append(InstrumentPage(payload=page, observed_at=page_state["fetched_at"]))
                     cursor = parsed_page.next_cursor
 
+            if acquisition_scope is None:
+                raise ValueError("Instrument catalog has no acquisition scope")
             snapshot_key = key + ":instruments"
+            scope_key = snapshot_key + ":scope:" + acquisition_scope.digest
             stored = await self.state(snapshot_key)
-            previous = stored.get("instruments")
-            if previous is None:
-                previous = state.get("instruments")
-                for batch in state.get("pending_batches", []):
-                    if "instruments" in batch["coverage"]:
-                        previous = batch["coverage"]["instruments"]
+            scoped = await self.state(scope_key)
+            if "source_id" in stored and stored["source_id"] != sid:
+                raise ValueError("Instrument baseline owner conflicts with its operation")
+            pointer_scope = (
+                InstrumentAcquisitionScope.model_validate(stored["acquisition_scope"])
+                if "acquisition_scope" in stored
+                else None
+            )
+            baseline = ScopedInstrumentBaseline.from_document(scoped) if scoped else None
+            if baseline is None and pointer_scope == acquisition_scope:
+                baseline = ScopedInstrumentBaseline.from_document(stored)
+            if baseline is not None and baseline.acquisition_scope != acquisition_scope:
+                raise ValueError("Instrument baseline key conflicts with its acquisition scope")
             state["instrument_snapshot_schema_version"] = 2
+            state["cache_scope"] = acquisition_scope.digest
             rows, digest = await asyncio.to_thread(
                 instrument_changes,
                 snapshot,
-                None if previous is None else InstrumentSnapshot.model_validate(previous),
+                None if baseline is None else baseline.instruments,
                 feed,
                 pages,
                 found_on,
                 self.stamp(),
             )
-            if stored.get("sha256") != digest:
+            if baseline is None or baseline.sha256 != digest or pointer_scope != acquisition_scope:
+                archives: list[InstrumentBaselineArchive] = []
+                if stored and pointer_scope != acquisition_scope:
+                    archives.append(
+                        InstrumentBaselineArchive.capture(
+                            snapshot_key, stored, captured_at=pages[0].observed_at, versions=svc.versions
+                        )
+                    )
+                if original_state is not None and "instruments" in original_state:
+                    archives.append(
+                        InstrumentBaselineArchive.capture(
+                            key, original_state, captured_at=pages[0].observed_at, versions=svc.versions
+                        )
+                    )
                 snapshot_update = InstrumentSnapshotUpdate(
                     source_id="S14",
                     checkpoint_key=snapshot_key,
                     snapshot=snapshot,
+                    acquisition_scope=acquisition_scope,
+                    archives=archives,
                     sha256=digest,
                     versions=svc.versions,
                 )
@@ -550,6 +592,7 @@ class SourcePoller:
                             field: acquired[field]
                             for field in (
                                 "instrument_snapshot_schema_version",
+                                "cache_scope",
                                 "pending_proposals",
                                 "discovery_checkpoint",
                                 "etag",
@@ -612,6 +655,15 @@ class SourcePoller:
                                 raise ValueError(
                                     "Prepared snapshot conflicts with its actual source operation"
                                 )
+                            archives = TypedRepository(self.service.repo, INSTRUMENT_BASELINE_ARCHIVES)
+                            for archive in snapshot_update.archives:
+                                if await archives.get(archive.storage_key) is None:
+                                    await archives.put(archive.storage_key, archive, immutable=True)
+                            await self.save(
+                                source,
+                                snapshot_update.scoped_checkpoint_key,
+                                snapshot_update.storage_record(),
+                            )
                             await self.save(
                                 source, snapshot_update.checkpoint_key, snapshot_update.storage_record()
                             )
@@ -879,6 +931,8 @@ class SourcePoller:
                 while current.get("pending_batches") and not current["pending_batches"][0]["rows"]:
                     batch = current["pending_batches"].pop(0)
                     current.update(batch["coverage"])
+                    if batch["kind"] == "instruments" and "cache_scope" not in batch["coverage"]:
+                        current["cache_scope"] = None
                     current.pop("instruments", None)
                 current["article_errors"] = article_errors
                 if duplicates:

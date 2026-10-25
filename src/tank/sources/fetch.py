@@ -17,6 +17,7 @@ from tank.util import iso, parse_iso_time, sha256
 
 
 class ConditionalCheckpointWire(DomainModel):
+    cache_scope: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     etag: str | None = None
     last_modified: str | None = None
     article_errors: dict[str, JsonValue] = Field(default_factory=dict)
@@ -24,6 +25,7 @@ class ConditionalCheckpointWire(DomainModel):
 
 
 class HttpCheckpointProjection(DomainModel):
+    cache_scope: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     etag: str | None = None
     last_modified: str | None = None
     blocked_by_processing_errors: bool = False
@@ -36,6 +38,7 @@ class HttpCheckpointProjection(DomainModel):
             {key: value[key] for key in ConditionalCheckpointWire.model_fields if key in value}
         )
         return cls(
+            cache_scope=wire.cache_scope,
             etag=wire.etag,
             last_modified=wire.last_modified,
             blocked_by_processing_errors=bool(wire.article_errors or wire.entry_errors),

@@ -38,7 +38,13 @@ from tank.http_admission import ConfiguredHttpAdmission
 from tank.ops_progress import RepositorySourceProgress
 from tank.request_budget import BudgetConstraint, RequestBudgets
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
-from tank.sources.fetch import FetchEvidence, FetchResult, HttpCheckpointProjection, SourceHttpReader
+from tank.sources.fetch import (
+    FetchEvidence,
+    FetchResult,
+    HttpCheckpointProjection,
+    NotModified,
+    SourceHttpReader,
+)
 from tank.sources.http_client import RequestStarted, SourceHttpTransport
 from tank.sources.ingestion import SourceIngestion
 from tank.sources.raw_store import RawItemStorage
@@ -190,6 +196,7 @@ class SourceService:
         *,
         persist_http_evidence: bool,
         on_start: RequestStarted | None = None,
+        cache_scope: str | None = None,
     ) -> FetchResult:
         checkpoint = await self.repo.get("ops.source_checkpoints", key)
         if (
@@ -199,6 +206,14 @@ class SourceService:
         ):
             raise ValueError("Checkpoint owner conflicts with the actual source operation")
         cache = HttpCheckpointProjection.from_document(checkpoint)
+        matching_scope = cache_scope is None or cache.cache_scope == cache_scope
+        if not matching_scope:
+            cache = HttpCheckpointProjection(
+                cache_scope=cache.cache_scope,
+                etag=cache.etag,
+                last_modified=cache.last_modified,
+                blocked_by_processing_errors=True,
+            )
 
         async def send(
             plan: HttpFetchPlan,
@@ -211,9 +226,12 @@ class SourceService:
         async def record(target: str, receipt: FetchEvidence) -> None:
             await self._record_fetch(source, target, receipt)
 
-        return await SourceHttpReader(send, record if persist_http_evidence else None, self.now).read(
+        result = await SourceHttpReader(send, record if persist_http_evidence else None, self.now).read(
             feed, key, cache, on_start
         )
+        if cache_scope is not None and not matching_scope and isinstance(result, NotModified):
+            raise ValueError("Instrument scope returned 304 without matching committed coverage")
+        return result
 
     def _ingestion(self) -> SourceIngestion:
         return SourceIngestion(
