@@ -500,8 +500,9 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
     config.mkdir()
     backup = tmp_path / "backup"
     backup.mkdir()
+    baseline = Settings()
     for name in ("registry", "semantics", "dependency_map", "exchange_addresses"):
-        (config / f"{name}.yaml").write_text("{}\n")
+        (config / f"{name}.yaml").write_bytes(baseline.read_config_bytes(name + ".yaml"))
     import yaml
 
     (config / "sources.yaml").write_text(
@@ -585,15 +586,18 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
         await asyncio.sleep(0.01)
         assert len(started) == 2 and supervisor.settings.load_config("thresholds")["filter_cutoff"] == 0.8
         write_thresholds(0.8)
-        (config / "registry.yaml").write_text(
-            "entities:\n- entity_id: broken\n  aliases: [Valid]\n"
-            "  qualified_aliases:\n  - alias: Generic\n    requires_any: []\n"
-        )
+        broken_registry = baseline.load_config("registry")
+        entities = broken_registry["entities"]
+        assert isinstance(entities, list)
+        entity = entities[0]
+        assert isinstance(entity, dict)
+        entity["qualified_aliases"] = [{"alias": "Generic", "requires_any": []}]
+        (config / "registry.yaml").write_text(yaml.safe_dump(broken_registry))
         reload_event.set()
         await until(lambda: len(loads) == 3)
         await asyncio.sleep(0.01)
         assert len(started) == 2 and not task.done()
-        assert supervisor.settings.load_config("registry") == {}
+        assert supervisor.settings.load_config("registry") == baseline.load_config("registry")
     finally:
         stop.set()
         await task

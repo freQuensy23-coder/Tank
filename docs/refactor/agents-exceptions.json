@@ -1,0 +1,580 @@
+{
+  "scope": "Validated completed bootstrap/registry/historical-source families; this does not approve unfinished session/runtime/context/OpenMA maps or defaults",
+  "entries": [
+    {
+      "sites": [
+        {
+          "path": "src/tank/bootstrap.py",
+          "symbol": "_entity_record",
+          "line": 266
+        }
+      ],
+      "kind": "display-only absence",
+      "reason": "Only an absent name is projected from declared names or the explicit identity; this never creates an alias/authority. Explicit nullable name remains unchanged.",
+      "validation": [
+        "test_alias_projection_never_promotes_display_names_or_drops_qualifiers",
+        "test_canonical_registry_bootstrap_and_idempotence"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/bootstrap.py",
+          "symbol": "validate_registry",
+          "line": 273
+        },
+        {
+          "path": "src/tank/bootstrap.py",
+          "symbol": "_key",
+          "line": 216
+        }
+      ],
+      "kind": "natural identity and immutable model construction",
+      "reason": "Optional explicit basket/edge IDs have documented natural keys; nullable token/chain is an actual missing association. Temporary update dictionaries are immediately validated into closed typed models.",
+      "validation": [
+        "test_canonical_registry_bootstrap_and_idempotence",
+        "test_duplicate_source_ids_fail_before_any_mutation"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/bootstrap.py",
+          "symbol": "_routing_aliases",
+          "line": 220
+        }
+      ],
+      "kind": "optional qualification",
+      "reason": "Unqualified aliases have no requires_any rules. Optional qualified_aliases omission is not an inferred display-name alias.",
+      "validation": [
+        "test_alias_projection_never_promotes_display_names_or_drops_qualifiers",
+        "test_removing_configured_qualifier_clears_owned_state_without_erasing_discovery"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/bootstrap.py",
+          "symbol": "_document",
+          "line": 410
+        },
+        {
+          "path": "src/tank/bootstrap.py",
+          "symbol": "_config_timestamp_metadata",
+          "line": 202
+        }
+      ],
+      "kind": "JSON serialization boundary",
+      "reason": "Dictionaries represent registry documents and explicit legacy clock declarations only at serialization; required config records are closed domain models.",
+      "validation": [
+        "test_static_config_clocks_preserve_declared_precision_and_unknown_legacy",
+        "test_conflicting_static_clock_precision_refused_before_registry_mutation"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/bootstrap.py",
+          "symbol": "_sync_rows",
+          "line": 455
+        }
+      ],
+      "kind": "persistence absence and unowned extension merge",
+      "reason": "None means no stored row. Only genuinely unowned discovery fields survive replacement of all closed table-family/provenance-owned fields, including fields of old valid variants; no required identity fallback exists.",
+      "validation": [
+        "test_sync_removes_configured_tail_and_preserves_discovery",
+        "test_removing_configured_qualifier_clears_owned_state_without_erasing_discovery",
+        "test_corrupt_managed_identity_rolls_back_all_preceding_registry_writes",
+        "test_metric_family_replacement_removes_all_old_family_fields_and_preserves_discovery"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/bootstrap.py",
+          "symbol": "RegistrySyncResult.to_wire",
+          "line": 179
+        }
+      ],
+      "kind": "report serialization",
+      "reason": "The model has nine required count fields; this dictionary names physical tables only when reporting.",
+      "validation": [
+        "test_canonical_registry_bootstrap_and_idempotence"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/source_repository.py",
+          "symbol": "_state",
+          "line": 36
+        }
+      ],
+      "kind": "genuine optional outcome annotations",
+      "reason": "Only extraction_decision/reason use get; absent metadata is unrecorded, while identity and prior status are required.",
+      "validation": [
+        "test_historical_projection_requires_declared_lifecycle",
+        "test_historical_transition_preserves_unrelated_serialized_data_and_clears_old_rejection"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/source_repository.py",
+          "symbol": "SourceExtractionRepository.get",
+          "line": 52
+        },
+        {
+          "path": "src/tank/contracts/source_repository.py",
+          "symbol": "SourceExtractionRepository.transition",
+          "line": 56
+        },
+        {
+          "path": "src/tank/contracts/source_repository.py",
+          "symbol": "SourceExtractionRepository.complete",
+          "line": 73
+        }
+      ],
+      "kind": "retention/deletion absence",
+      "reason": "None means the actual source is absent; no row is reconstructed. complete consumes only identity and declares authoritative DONE; guarded transitions require actual prior status.",
+      "validation": [
+        "test_terminal_guard_and_missing_record_do_not_manufacture_updates",
+        "test_authoritative_completion_needs_only_identity_and_minimal_persistence_port"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/source_repository.py",
+          "symbol": "SourceExtractionRepository._write",
+          "line": 89
+        }
+      ],
+      "kind": "owned lifecycle patch boundary",
+      "reason": "The JSON patch validates named lifecycle fields and preserves unrelated retained data at the document adapter.",
+      "validation": [
+        "test_historical_transition_preserves_unrelated_serialized_data_and_clears_old_rejection",
+        "test_transition_reloads_under_capture_lock_and_preserves_concurrent_metadata"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "TokenContract.chain_id",
+          "line": 30
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "TokenContract.decimals",
+          "line": 31
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "TokenContract.chain_id_evidence",
+          "line": 32
+        }
+      ],
+      "kind": "explicit valid absence",
+      "reason": "Unknown chain/decimal identity is explicit; optional chain evidence has not been provided.",
+      "validation": [
+        "test_actual_configuration_loader_roundtrips_all_declared_fields",
+        "test_canonical_registry_bootstrap_and_idempotence"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "FundamentalsEvidence.summary_id",
+          "line": 43
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "FundamentalsEvidence.reason",
+          "line": 46
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "FundamentalsEvidence.verified_at_prec",
+          "line": 47
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "FundamentalsEvidence.verified_at_precision",
+          "line": 48
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "FundamentalsEvidence.verified_at_prec_reason",
+          "line": 49
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "FundamentalsEvidence.verified_at_precision_reason",
+          "line": 50
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "FundamentalsEvidence.verified_at_reason",
+          "line": 51
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "FundamentalsEvidence.verified_at_bucket_size_s",
+          "line": 52
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "FundamentalsEvidence.verified_at_bucket_anchor",
+          "line": 53
+        }
+      ],
+      "kind": "explicit valid absence",
+      "reason": "Unsupported/unavailable provider summary/reason and omitted clock declaration facets remain explicit unknowns; no numeric or confidence value is invented.",
+      "validation": [
+        "test_actual_configuration_loader_roundtrips_all_declared_fields",
+        "test_canonical_registry_bootstrap_and_idempotence"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryToken.unlock_slug",
+          "line": 83
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryToken.supply_unavailable_reason",
+          "line": 84
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryToken.defillama_protocol_slug",
+          "line": 88
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryToken.fee_protocol_slug",
+          "line": 89
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryToken.native_chain_id",
+          "line": 95
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryToken.defillama_chain_name",
+          "line": 96
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryToken.chain_identity_evidence",
+          "line": 97
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryToken.fundamentals_inference_limits",
+          "line": 98
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryToken.supplementary_chain_fee_slug",
+          "line": 99
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryToken.supplementary_chain_fee_warning",
+          "line": 100
+        }
+      ],
+      "kind": "explicit valid absence",
+      "reason": "Unavailable provider slugs/chain identities and omitted supplemental descriptors reflect the captured config, not zero or fabricated exposure.",
+      "validation": [
+        "test_actual_configuration_loader_roundtrips_all_declared_fields",
+        "test_canonical_registry_bootstrap_and_idempotence"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryInstrument.contract_multiplier",
+          "line": 111
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryInstrument.tick_size",
+          "line": 112
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryInstrument.lot_size",
+          "line": 113
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryInstrument.funding_interval_h",
+          "line": 114
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryInstrument.resolved_at",
+          "line": 116
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryInstrument.resolved_at_prec",
+          "line": 119
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryInstrument.resolved_at_precision",
+          "line": 120
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryInstrument.resolved_at_prec_reason",
+          "line": 121
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryInstrument.resolved_at_precision_reason",
+          "line": 122
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryInstrument.resolved_at_reason",
+          "line": 123
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryInstrument.resolved_at_bucket_size_s",
+          "line": 124
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryInstrument.resolved_at_bucket_anchor",
+          "line": 125
+        }
+      ],
+      "kind": "explicit valid absence",
+      "reason": "Undiscovered multiplier/tick/lot/funding/resolution values are explicit nulls. Optional clock facets declare precision only when supplied.",
+      "validation": [
+        "test_actual_configuration_loader_roundtrips_all_declared_fields",
+        "test_canonical_registry_bootstrap_and_idempotence"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryEntity.name",
+          "line": 177
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryEntity.chains",
+          "line": 178
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryEntity.qualified_aliases",
+          "line": 179
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryEntity.authority_evidence",
+          "line": 180
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryEntity.identity_basis",
+          "line": 181
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryEntity.identity_evidence",
+          "line": 182
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryEntity.identity_reviewed_at",
+          "line": 183
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryEntity.source_mapping_basis",
+          "line": 184
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryEntity.identity_reviewed_at_prec",
+          "line": 186
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryEntity.identity_reviewed_at_precision",
+          "line": 187
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryEntity.identity_reviewed_at_prec_reason",
+          "line": 188
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryEntity.identity_reviewed_at_precision_reason",
+          "line": 189
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryEntity.identity_reviewed_at_reason",
+          "line": 190
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryEntity.identity_reviewed_at_bucket_size_s",
+          "line": 191
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryEntity.identity_reviewed_at_bucket_anchor",
+          "line": 192
+        }
+      ],
+      "kind": "explicit valid absence",
+      "reason": "Display and positive authority/alias/review/source metadata may be absent. Required entity identity/kind/declared collections remain mandatory.",
+      "validation": [
+        "test_actual_configuration_loader_roundtrips_all_declared_fields",
+        "test_canonical_registry_bootstrap_and_idempotence"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistrySectorBasket.basket_id",
+          "line": 222
+        }
+      ],
+      "kind": "explicit valid absence",
+      "reason": "An explicit basket ID may be omitted because the required sector is its natural identity.",
+      "validation": [
+        "test_actual_configuration_loader_roundtrips_all_declared_fields",
+        "test_canonical_registry_bootstrap_and_idempotence"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryDependency.token_id",
+          "line": 265
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryDependency.edge_id",
+          "line": 271
+        }
+      ],
+      "kind": "explicit valid absence",
+      "reason": "An edge may target an entity with no token; an omitted explicit edge ID uses its declared entity/token natural key.",
+      "validation": [
+        "test_actual_configuration_loader_roundtrips_all_declared_fields",
+        "test_canonical_registry_bootstrap_and_idempotence"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "DepthSemantics.current_doc_ref",
+          "line": 316
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "DepthSemantics.endpoint_change_evidence",
+          "line": 317
+        }
+      ],
+      "kind": "explicit valid absence",
+      "reason": "Only relevant venues declare documentation/endpoint-change descriptors.",
+      "validation": [
+        "test_actual_configuration_loader_roundtrips_all_declared_fields",
+        "test_canonical_registry_bootstrap_and_idempotence"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "OpenInterestSemantics.publish_lag_basis",
+          "line": 339
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "OpenInterestSemantics.publish_lag_s",
+          "line": 340
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "OpenInterestSemantics.source_interval_s",
+          "line": 341
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "OpenInterestSemantics.timestamp_semantics_detail",
+          "line": 342
+        },
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "OpenInterestSemantics.timestamp_semantics_reason",
+          "line": 343
+        }
+      ],
+      "kind": "explicit valid absence",
+      "reason": "Lag/cadence/clock-detail metadata is provider-specific and is never inferred when absent.",
+      "validation": [
+        "test_actual_configuration_loader_roundtrips_all_declared_fields",
+        "test_canonical_registry_bootstrap_and_idempotence"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/registry.py",
+          "symbol": "RegistryWalletList.chain",
+          "line": 380
+        }
+      ],
+      "kind": "explicit valid absence",
+      "reason": "The captured EVM wallet list does not assign a specific chain; no network is guessed.",
+      "validation": [
+        "test_actual_configuration_loader_roundtrips_all_declared_fields",
+        "test_canonical_registry_bootstrap_and_idempotence"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/bootstrap.py",
+          "symbol": "_schema_fields",
+          "line": 419
+        },
+        {
+          "path": "src/tank/bootstrap.py",
+          "symbol": "_owned_fields",
+          "line": 423
+        }
+      ],
+      "kind": "closed table-family field ownership",
+      "reason": "Only Pydantic schema metadata is reflected; the complete valid family union prevents old variant fields masquerading as opaque discovery extensions. No domain object is treated as a mapping.",
+      "validation": [
+        "test_metric_family_replacement_removes_all_old_family_fields_and_preserves_discovery"
+      ]
+    }
+  ]
+}
