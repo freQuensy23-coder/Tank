@@ -2873,7 +2873,13 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
                     assert result["class"] == "STRUCTURAL_SHOCK", result
                     await tool(
                         "publish_card",
-                        {"event_id": event_id, "kind": "PARTIAL", "what": body, "verdict": body, "why": []},
+                        {
+                            "event_id": event_id,
+                            "kind": "PARTIAL",
+                            "what": body,
+                            "verdict": body,
+                            "why": [body, "The publication does not quantify price or liquidity effects."],
+                        },
                         identity,
                     )
                 elif stage == 3:

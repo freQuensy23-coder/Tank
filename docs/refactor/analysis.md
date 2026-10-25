@@ -442,3 +442,14 @@ with zero skips, retaining all original classifier-output reset, policy rederiva
 and imported-source assertions. This is an authored fixture change; no production
 fallback or frozen data is altered. This follow-up remains a clean fd077 descendant
 without held HTTP ancestry.
+
+### Clean authored PARTIAL narrative fixture
+
+The native replay publication fixture now supplies two actual factual WHY bullets
+for every kind, matching the strengthened public skill/schema. It authors the captured
+World-approval text and the fact that that publication does not quantify price or
+liquidity effects. It does not synthesize prose from a renderer fallback or claim an
+unmeasured economic effect. The first-reference QUEUED/unsent intent and ordinary
+missing-SENT refusal oracles remain unchanged. Both actual integration profiles pass
+in2.89s with zero skips. This companion is clean3e26558b + exact485 schema ancestry;
+held HTTP and decision/card renderer activation are excluded.
