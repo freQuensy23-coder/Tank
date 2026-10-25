@@ -159,8 +159,12 @@ def program_inventory(root: Path, archive: Path, node: Path) -> VendorInventory:
         caller_ledger: str | None = None
         if name in agents:
             owner, caller_ledger = "agents", "docs/refactor/agents-openma-provenance.json:" + name
-        elif name == "vendor/openma/tank-deploy/openma_entrypoint.mjs":
+        elif name in {
+            "vendor/openma/tank-deploy/openma_entrypoint.mjs",
+            "vendor/openma/tank-deploy/openma_entrypoint.mts",
+        }:
             owner = "quality"
+            caller_ledger = "docs/refactor/quality.md:Typed OpenMA deployment entrypoint"
         programs.append(
             Program(
                 path=name,
