@@ -597,7 +597,7 @@ class FlowAggregateEvidenceRef(DomainModel):
     source_evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
-class ConditionFlowAggregateProjection(DomainModel):
+class ConditionFlowCaptureProjection(DomainModel):
     token_id: str = Field(min_length=1, pattern=r"\S")
     venue: str = Field(min_length=1, pattern=r"\S")
     market_type: Literal["SPOT", "PERP"]
@@ -605,6 +605,20 @@ class ConditionFlowAggregateProjection(DomainModel):
     start: datetime
     end: datetime
     complete: TrueFlag
+
+    @field_validator("start", "end")
+    @classmethod
+    def aware_bounds(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_capture_interval(self) -> Self:
+        if self.start >= self.end:
+            raise ValueError("A capture witness requires its actual positive interval")
+        return self
+
+
+class ConditionFlowAggregateProjection(ConditionFlowCaptureProjection):
     buy_qty: Decimal = Field(ge=0)
     sell_qty: Decimal = Field(ge=0)
     sum_sq_qty: Decimal = Field(ge=0)
@@ -615,15 +629,8 @@ class ConditionFlowAggregateProjection(DomainModel):
     low_reason: Literal["INCOMPLETE", "EMPTY_INTERVAL"] | None
     counts: ConditionTradeCounts
 
-    @field_validator("start", "end")
-    @classmethod
-    def aware_bounds(cls, value: datetime) -> datetime:
-        return parse_iso_time(value)
-
     @model_validator(mode="after")
     def actual_calculation_facets(self) -> Self:
-        if self.start >= self.end:
-            raise ValueError("A selected aggregate requires its actual positive interval")
         missing_usd = self.buy_notional is None or self.sell_notional is None
         if missing_usd != (self.notional_reason == "INCOMPLETE"):
             raise ValueError("Flow notional absence requires its actual incomplete declaration")
@@ -640,6 +647,15 @@ class ConditionFlowAggregateProjection(DomainModel):
         if (volume == 0) != (self.sum_sq_qty == 0):
             raise ValueError("Flow squared quantity cannot invent or erase observed native flow")
         return self
+
+
+class FlowCaptureEvidenceRef(DomainModel):
+    projection_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ConditionFlowCaptureWitness(ConditionFlowCaptureProjection):
+    evidence: FlowCaptureEvidenceRef
 
 
 class ConditionFlowAggregate(ConditionFlowAggregateProjection):
@@ -4368,7 +4384,7 @@ class ConditionFundingConfirmationGraph(DomainModel):
 
 class ConditionFlowCapturePiece(DomainModel):
     basis: Literal["FULL_MINUTE", "BOUNDARY"]
-    aggregate: ConditionFlowAggregate
+    aggregate: ConditionFlowCaptureWitness
     visibility: ConditionReceiptVisibility
 
 
@@ -4465,6 +4481,46 @@ class ConditionFlowWindowQualification(DomainModel):
         return ConditionObservedPredicate(status="OBSERVED", value=True)
 
 
+class ConditionVenueFlowWindowQualification(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    venue: str = Field(min_length=1, pattern=r"\S")
+    market_type: Literal["SPOT"]
+    interval: ConditionInterval
+    required_instrument_ids: tuple[str, ...] = Field(min_length=1)
+    captures: tuple[ConditionFlowWindowQualification, ...]
+
+    @model_validator(mode="after")
+    def actual_required_instrument_scope(self) -> Self:
+        required = set(self.required_instrument_ids)
+        if len(required) != len(self.required_instrument_ids) or any(
+            not identity.strip() for identity in required
+        ):
+            raise ValueError("Venue capture requires distinct actual monitored instrument identities")
+        captured: set[str] = set()
+        for capture in self.captures:
+            if capture.instrument_id not in required or capture.instrument_id in captured:
+                raise ValueError(
+                    "Venue capture cannot duplicate or borrow an instrument outside its required scope"
+                )
+            captured.add(capture.instrument_id)
+            if (capture.token_id, capture.venue, capture.market_type, capture.interval) != (
+                self.token_id,
+                self.venue,
+                self.market_type,
+                self.interval,
+            ):
+                raise ValueError("Venue capture must preserve its actual token/venue/market/window")
+        return self
+
+    def complete(self) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        if {capture.instrument_id for capture in validated.captures} != set(
+            validated.required_instrument_ids
+        ):
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        return condition_predicates_all(tuple(capture.complete() for capture in validated.captures))
+
+
 class ConditionFragmentationPriceConfirmation(DomainModel):
     left_instrument_id: str = Field(min_length=1, pattern=r"\S")
     right_instrument_id: str = Field(min_length=1, pattern=r"\S")
@@ -4549,7 +4605,8 @@ class ConditionFragmentationGraph(DomainModel):
     top_sign_history: ConditionTopVenueSignHistory
     price_confirmations: tuple[ConditionFragmentationPriceConfirmation, ...]
     funding: ConditionFundingConfirmationGraph
-    flow_capture: tuple[ConditionFlowWindowQualification, ...]
+    spot_capture: tuple[ConditionVenueFlowWindowQualification, ...]
+    perp_capture: tuple[ConditionFlowWindowQualification, ...]
 
     @model_validator(mode="after")
     def actual_fragmentation_scopes(self) -> Self:
@@ -4631,35 +4688,65 @@ class ConditionFragmentationGraph(DomainModel):
             or self.funding.assembled_at != self.assembled_at
         ):
             raise ValueError("Funding fragmentation must preserve actual token and cutoff")
-        captures: set[str] = set()
-        known_venues: dict[str, tuple[str, Literal["SPOT", "PERP"]]] = {}
-        for pair in self.price_pairs:
-            known_venues[pair.left_instrument_id] = (pair.left_venue, "SPOT")
-            known_venues[pair.right_instrument_id] = (pair.right_venue, "SPOT")
-        for rate in self.funding.primary:
-            prior = known_venues.get(rate.instrument_id)
-            if prior is not None and prior != (rate.venue, "PERP"):
-                raise ValueError("A fragmentation instrument cannot change venue between source families")
-            known_venues[rate.instrument_id] = (rate.venue, "PERP")
-        for capture in self.flow_capture:
-            if capture.assembled_at != self.assembled_at:
-                raise ValueError("Flow qualification cannot borrow another snapshot assembly clock")
-            if (
-                capture.instrument_id in captures
-                or capture.token_id != self.token_id
-                or capture.interval != self.interval
+        spot_ids = {
+            identity
+            for pair in self.price_pairs
+            for identity in (pair.left_instrument_id, pair.right_instrument_id)
+        }
+        spot_ids.update(
+            identity for capture in self.spot_capture for identity in capture.required_instrument_ids
+        )
+        if any(rate.instrument_id in spot_ids for rate in self.funding.primary):
+            raise ValueError("A fragmentation instrument cannot change between spot and perp markets")
+        venues: set[str] = set()
+        for capture in self.spot_capture:
+            if capture.venue in venues or (capture.token_id, capture.interval) != (
+                self.token_id,
+                self.interval,
             ):
-                raise ValueError("Flow capture qualification requires a distinct actual token/window scope")
-            captures.add(capture.instrument_id)
-            if known_venues.get(capture.instrument_id) != (capture.venue, capture.market_type):
+                raise ValueError("Spot capture requires distinct actual token/venue/window scope")
+            venues.add(capture.venue)
+            for proof in capture.captures:
+                if proof.assembled_at != self.assembled_at:
+                    raise ValueError("Spot capture cannot borrow another snapshot assembly clock")
+            for pair in self.price_pairs:
+                for venue, instrument in (
+                    (pair.left_venue, pair.left_instrument_id),
+                    (pair.right_venue, pair.right_instrument_id),
+                ):
+                    if capture.venue == venue and instrument not in capture.required_instrument_ids:
+                        raise ValueError(
+                            "Price confirmation requires its actual book instrument in monitored spot scope"
+                        )
+        captures: set[str] = set()
+        known_perp = {rate.instrument_id: rate.venue for rate in self.funding.primary}
+        for perp in self.perp_capture:
+            if perp.assembled_at != self.assembled_at:
+                raise ValueError("Flow qualification cannot borrow another snapshot assembly clock")
+            if perp.instrument_id in captures or (
+                perp.token_id,
+                perp.market_type,
+                perp.interval,
+            ) != (self.token_id, "PERP", self.interval):
+                raise ValueError(
+                    "Perp capture qualification requires distinct actual token/market/window scope"
+                )
+            captures.add(perp.instrument_id)
+            if known_perp.get(perp.instrument_id) != perp.venue:
                 raise ValueError("Flow capture cannot qualify an unrelated fragmentation instrument")
         return self
 
-    def _capture(self, instrument: str) -> ConditionPredicate:
-        for capture in self.flow_capture:
+    def _perp_complete(self, instrument: str) -> ConditionPredicate:
+        for capture in self.perp_capture:
             if capture.assembled_at != self.assembled_at:
                 raise ValueError("Flow qualification cannot borrow another snapshot assembly clock")
             if capture.instrument_id == instrument:
+                return capture.complete()
+        return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+
+    def _spot_complete(self, venue: str) -> ConditionPredicate:
+        for capture in self.spot_capture:
+            if capture.venue == venue:
                 return capture.complete()
         return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
 
@@ -4695,8 +4782,8 @@ class ConditionFragmentationGraph(DomainModel):
                     (
                         pair.persistent_gap(),
                         secondary,
-                        validated._capture(pair.left_instrument_id),
-                        validated._capture(pair.right_instrument_id),
+                        validated._spot_complete(pair.left_venue),
+                        validated._spot_complete(pair.right_venue),
                     )
                 )
             )
@@ -4706,7 +4793,7 @@ class ConditionFragmentationGraph(DomainModel):
 
     def funding_path_validated(self) -> ConditionPredicate:
         validated = type(self).model_validate(self)
-        captures = tuple(validated._capture(row.instrument_id) for row in validated.funding.primary)
+        captures = tuple(validated._perp_complete(row.instrument_id) for row in validated.funding.primary)
         capture = (
             condition_predicates_all(captures)
             if captures

@@ -163,3 +163,35 @@ def test_proof_serialization_preserves_effective_wire_and_does_not_mutate_eviden
     assert lookup.calls == 1 and wire == lookup.wire
     wire["provider_note"] = {"unchanged": False}
     assert lookup.wire["provider_note"] == {"unchanged": True}
+
+
+def test_capture_geometry_binds_actual_scope_without_dummy_financial_totals() -> None:
+    from tank.analysis.condition_graph_codec import (
+        bind_flow_capture_evidence,
+        flow_capture_projection_sha256,
+        validate_flow_capture_evidence,
+    )
+    from tank.analysis.condition_graph_contracts import ConditionFlowCaptureProjection, FlowCaptureEvidenceRef
+
+    source = projection()
+    geometry = ConditionFlowCaptureProjection(
+        token_id=source.token_id,
+        venue=source.venue,
+        market_type=source.market_type,
+        instrument_id=source.instrument_id,
+        start=source.start,
+        end=source.end,
+        complete=True,
+    )
+    digest = flow_capture_projection_sha256(geometry)
+    assert digest != flow_aggregate_projection_sha256(source)
+    reference = FlowCaptureEvidenceRef(
+        projection_sha256=digest, source_evidence_sha256=EvidenceLookup(source).source_identity
+    )
+    witness = bind_flow_capture_evidence(geometry, reference)
+    validate_flow_capture_evidence(witness)
+    assert witness.start == geometry.start and witness.complete is True
+    with pytest.raises(ValueError, match="does not match"):
+        bind_flow_capture_evidence(
+            witness.model_copy(update={"end": witness.end + timedelta(seconds=1)}), reference
+        )

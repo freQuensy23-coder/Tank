@@ -9,7 +9,10 @@ from pydantic import JsonValue
 from tank.analysis.condition_graph_contracts import (
     ConditionFlowAggregate,
     ConditionFlowAggregateProjection,
+    ConditionFlowCaptureProjection,
+    ConditionFlowCaptureWitness,
     FlowAggregateEvidenceRef,
+    FlowCaptureEvidenceRef,
 )
 from tank.contracts.json import JsonDocument
 from tank.util import sha256
@@ -108,3 +111,61 @@ def flow_aggregate_evidence_wire(
     if not isinstance(checked, dict):
         raise ValueError("Flow aggregate proof serialization requires an object")
     return deepcopy(checked)
+
+
+def _checked_capture_projection(value: ConditionFlowCaptureProjection) -> ConditionFlowCaptureProjection:
+    if type(value) not in (
+        ConditionFlowCaptureProjection,
+        ConditionFlowCaptureWitness,
+        ConditionFlowAggregateProjection,
+        ConditionFlowAggregate,
+    ):
+        raise TypeError("A declared flow capture projection is required")
+    validated = type(value).model_validate(value)
+    if isinstance(validated, ConditionFlowAggregate):
+        validate_flow_aggregate_evidence(validated)
+    return ConditionFlowCaptureProjection(
+        token_id=validated.token_id,
+        venue=validated.venue,
+        market_type=validated.market_type,
+        instrument_id=validated.instrument_id,
+        start=validated.start,
+        end=validated.end,
+        complete=validated.complete,
+    )
+
+
+def flow_capture_projection_sha256(value: ConditionFlowCaptureProjection) -> str:
+    projection = _checked_capture_projection(value)
+    serialized = JsonDocument.model_validate(projection.model_dump(mode="json"), strict=True).root
+    envelope: dict[str, JsonValue] = {"schema": "tank.condition.flow-capture.v1", "projection": serialized}
+    return sha256(envelope)
+
+
+def validate_flow_capture_evidence(value: ConditionFlowCaptureWitness) -> None:
+    if type(value) is not ConditionFlowCaptureWitness:
+        raise TypeError("A bound flow capture witness is required")
+    validated = ConditionFlowCaptureWitness.model_validate(value)
+    if validated.evidence.projection_sha256 != flow_capture_projection_sha256(validated):
+        raise ValueError("Flow capture evidence does not match its declared projection")
+
+
+def bind_flow_capture_evidence(
+    value: ConditionFlowCaptureProjection, reference: FlowCaptureEvidenceRef
+) -> ConditionFlowCaptureWitness:
+    projection = _checked_capture_projection(value)
+    if isinstance(value, ConditionFlowCaptureWitness):
+        validate_flow_capture_evidence(value)
+    checked_reference = FlowCaptureEvidenceRef.model_validate(reference)
+    if checked_reference.projection_sha256 != flow_capture_projection_sha256(projection):
+        raise ValueError("Flow capture evidence does not match its declared projection")
+    return ConditionFlowCaptureWitness(
+        token_id=projection.token_id,
+        venue=projection.venue,
+        market_type=projection.market_type,
+        instrument_id=projection.instrument_id,
+        start=projection.start,
+        end=projection.end,
+        complete=projection.complete,
+        evidence=checked_reference,
+    )
