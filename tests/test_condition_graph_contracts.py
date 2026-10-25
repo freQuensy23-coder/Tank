@@ -10,6 +10,7 @@ from tank.analysis.condition_graph_contracts import (
     BasicConditionLiquidity,
     BasicConditionSpot,
     CapturedConditionHoldersRevenue,
+    CapturedConditionWalletFlows,
     ComparableConditionExchangeInventory,
     ConditionBookDepthBounds,
     ConditionCadenceScope,
@@ -3392,3 +3393,104 @@ def test_inventory_zero_baseline_and_empty_comparable_cohort_are_distinct() -> N
     assert missing.native_change().reason == "INCOMPLETE"
     assert missing.fractional_change().reason == "INCOMPLETE"
     assert inventory_comparison(Decimal(110), Decimal(100)).fractional_change().value == pytest.approx(0.1)
+
+
+def wallet_flows() -> CapturedConditionWalletFlows:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionUnprovenWalletCoverage,
+        ConditionWalletFlow,
+        ConditionWalletFlowEvidenceRef,
+    )
+
+    assembled = Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY")
+    visibility = ConditionReceiptVisibility(
+        received_at=Timestamp(value="2026-10-17T11:59:59Z", precision="COLLECTION_ONLY"),
+        assembled_at=assembled,
+    )
+    flow = ConditionWalletFlow(
+        token_id="T",
+        observed_at=Timestamp(value="2026-10-17T11:59:00Z", precision="EXACT"),
+        visibility=visibility,
+        classification="AMBIGUOUS",
+        classification_reason=None,
+        quantity_native=Decimal(10),
+        quantity_reason=None,
+        reaches_exchange=True,
+        destination_reason=None,
+        evidence=ConditionWalletFlowEvidenceRef(source_observation_sha256="b" * 64, flow_index=0),
+    )
+    return CapturedConditionWalletFlows(
+        status="CAPTURED_RECORDS",
+        token_id="T",
+        interval=ConditionInterval(window="W15M", start=AT - timedelta(minutes=15), cutoff=AT),
+        assembled_at=assembled,
+        flows=(flow,),
+        successful_queries=1,
+        query_visibility=visibility,
+        coverage=ConditionUnprovenWalletCoverage(status="UNAVAILABLE", reason="QUERY_SCOPE_NOT_CAPTURED"),
+        coverage_errors=(),
+    )
+
+
+def test_wallet_flow_observation_does_not_turn_partial_no_positive_into_proven_absence() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionNoPositiveSupplyObservation,
+        ConditionPositiveSupplyObservation,
+        ConditionUnavailablePredicate,
+    )
+
+    graph = wallet_flows()
+    assert isinstance(graph.flows[0].positive_supply_witness(), ConditionUnavailablePredicate)
+    result = graph.observed_evidence()
+    assert isinstance(result, ConditionNoPositiveSupplyObservation) and result.observation_count == 1
+    assert graph.coverage.status == "UNAVAILABLE"
+    positive = type(graph).model_validate(
+        graph.model_copy(
+            update={"flows": (graph.flows[0].model_copy(update={"classification": "TREASURY_INTERNAL"}),)}
+        )
+    )
+    observed = positive.observed_evidence()
+    assert isinstance(observed, ConditionPositiveSupplyObservation) and observed.evidence == (
+        graph.flows[0].evidence,
+    )
+    zero = type(graph.flows[0]).model_validate(
+        positive.flows[0].model_copy(update={"quantity_native": Decimal(0)})
+    )
+    from tank.analysis.condition_graph_contracts import ConditionObservedPredicate
+
+    no_positive = zero.positive_supply_witness()
+    assert isinstance(no_positive, ConditionObservedPredicate) and no_positive.value is False
+
+
+def test_wallet_query_counter_does_not_prove_visibility_or_expand_the_occurrence_window() -> None:
+    from tank.analysis.condition_graph_contracts import UnavailableConditionSupplyObservation
+
+    graph = wallet_flows()
+    unknown_visibility = ConditionReceiptVisibility(
+        received_at=Timestamp(value=None, precision=None, precision_reason="NOT_CAPTURED"),
+        assembled_at=graph.assembled_at,
+    )
+    invisible = type(graph).model_validate(
+        graph.model_copy(
+            update={
+                "query_visibility": unknown_visibility,
+                "flows": (graph.flows[0].model_copy(update={"visibility": unknown_visibility}),),
+            }
+        )
+    )
+    assert invisible.successful_queries == 1
+    assert isinstance(invisible.observed_evidence(), UnavailableConditionSupplyObservation)
+    with pytest.raises(ValidationError, match="half-open"):
+        type(graph).model_validate(
+            graph.model_copy(
+                update={
+                    "flows": (
+                        graph.flows[0].model_copy(
+                            update={
+                                "observed_at": Timestamp(value="2026-10-17T12:00:00Z", precision="EXACT"),
+                            }
+                        ),
+                    )
+                }
+            )
+        )

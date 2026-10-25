@@ -5192,3 +5192,155 @@ class ComparableConditionExchangeInventory(DomainModel):
 
 
 type ConditionExchangeInventory = ComparableConditionExchangeInventory | UnavailableConditionExchangeInventory
+
+
+class ConditionWalletFlowEvidenceRef(DomainModel):
+    source_observation_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    flow_index: int | None = Field(ge=0)
+
+
+class ConditionWalletFlow(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    observed_at: Timestamp
+    visibility: ConditionReceiptVisibility
+    classification: (
+        Literal[
+            "UNLOCK_DISTRIBUTION", "TREASURY_INTERNAL", "MM_INVENTORY", "CEX_CUSTODY_MIGRATION", "AMBIGUOUS"
+        ]
+        | None
+    )
+    classification_reason: Literal["CLASSIFICATION_NOT_CAPTURED"] | None
+    quantity_native: Decimal | None = Field(ge=0)
+    quantity_reason: Literal["INCOMPLETE"] | None
+    reaches_exchange: bool | None
+    destination_reason: Literal["DESTINATION_NOT_CAPTURED"] | None
+    evidence: ConditionWalletFlowEvidenceRef
+
+    @model_validator(mode="after")
+    def actual_transfer_facets(self) -> Self:
+        if self.observed_at.value is None:
+            raise ValueError("An observed wallet flow requires its actual source occurrence timestamp")
+        for absent, reason in (
+            (self.classification is None, self.classification_reason),
+            (self.quantity_native is None, self.quantity_reason),
+            (self.reaches_exchange is None, self.destination_reason),
+        ):
+            if absent != (reason is not None):
+                raise ValueError("Missing wallet-flow facets require their actual capture-gap reason")
+        return self
+
+    def positive_supply_witness(self) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        visibility = validated.visibility.eligible()
+        if not isinstance(visibility, ConditionObservedPredicate) or not visibility.value:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        if (
+            validated.reaches_exchange is False
+            or validated.quantity_native == 0
+            or validated.classification == "CEX_CUSTODY_MIGRATION"
+        ):
+            return ConditionObservedPredicate(status="OBSERVED", value=False)
+        if (
+            validated.classification in (None, "AMBIGUOUS")
+            or validated.reaches_exchange is None
+            or validated.quantity_native is None
+        ):
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        return ConditionObservedPredicate(status="OBSERVED", value=True)
+
+
+class ConditionUnprovenWalletCoverage(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["QUERY_SCOPE_NOT_CAPTURED", "PAGINATION_COMPLETENESS_NOT_CAPTURED"]
+
+
+class ConditionPositiveSupplyObservation(DomainModel):
+    status: Literal["OBSERVED_POSITIVE"]
+    evidence: tuple[ConditionWalletFlowEvidenceRef, ...] = Field(min_length=1)
+
+
+class ConditionNoPositiveSupplyObservation(DomainModel):
+    status: Literal["NO_POSITIVE_OBSERVATION"]
+    observation_count: int = Field(ge=0)
+
+
+class UnavailableConditionSupplyObservation(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["INCOMPLETE"]
+
+
+type ConditionWalletSupplyObservation = (
+    ConditionPositiveSupplyObservation
+    | ConditionNoPositiveSupplyObservation
+    | UnavailableConditionSupplyObservation
+)
+
+
+class CapturedConditionWalletFlows(DomainModel):
+    status: Literal["CAPTURED_RECORDS"]
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    interval: ConditionInterval
+    assembled_at: Timestamp
+    flows: tuple[ConditionWalletFlow, ...]
+    successful_queries: int | None = Field(ge=0)
+    query_visibility: ConditionReceiptVisibility
+    coverage: ConditionUnprovenWalletCoverage
+    coverage_errors: tuple[ConditionInventoryCaptureError, ...]
+
+    @model_validator(mode="after")
+    def actual_flow_scope(self) -> Self:
+        if self.query_visibility.assembled_at != self.assembled_at:
+            raise ValueError("Wallet query visibility requires the actual snapshot assembly clock")
+        identities: set[tuple[str, int | None]] = set()
+        for flow in self.flows:
+            stamp = flow.observed_at.value
+            if (
+                flow.token_id != self.token_id
+                or stamp is None
+                or not self.interval.start <= parse_iso_time(stamp) < self.interval.cutoff
+            ):
+                raise ValueError(
+                    "Wallet flows must preserve their actual token and half-open occurrence window"
+                )
+            if flow.visibility.assembled_at != self.assembled_at:
+                raise ValueError("Wallet flows cannot borrow another snapshot assembly clock")
+            key = (flow.evidence.source_observation_sha256, flow.evidence.flow_index)
+            if key in identities:
+                raise ValueError("Wallet flow evidence cannot be duplicated in the selected observation set")
+            identities.add(key)
+        return self
+
+    def observed_evidence(self) -> ConditionWalletSupplyObservation:
+        validated = type(self).model_validate(self)
+        positive: list[ConditionWalletFlowEvidenceRef] = []
+        visible_count = 0
+        for flow in validated.flows:
+            visibility = flow.visibility.eligible()
+            if not isinstance(visibility, ConditionObservedPredicate) or not visibility.value:
+                continue
+            visible_count += 1
+            result = flow.positive_supply_witness()
+            if isinstance(result, ConditionObservedPredicate) and result.value:
+                positive.append(flow.evidence)
+        if positive:
+            return ConditionPositiveSupplyObservation(status="OBSERVED_POSITIVE", evidence=tuple(positive))
+        query_visibility = validated.query_visibility.eligible()
+        observed_query = (
+            isinstance(query_visibility, ConditionObservedPredicate)
+            and query_visibility.value
+            and validated.successful_queries is not None
+            and validated.successful_queries > 0
+        )
+        if visible_count or observed_query:
+            return ConditionNoPositiveSupplyObservation(
+                status="NO_POSITIVE_OBSERVATION", observation_count=visible_count
+            )
+        return UnavailableConditionSupplyObservation(status="UNAVAILABLE", reason="INCOMPLETE")
+
+
+class UnavailableConditionWalletFlows(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: str = Field(min_length=1, pattern=r"\S")
+
+
+type ConditionWalletFlows = CapturedConditionWalletFlows | UnavailableConditionWalletFlows
