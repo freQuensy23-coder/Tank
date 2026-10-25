@@ -87,7 +87,7 @@ async def test_actual_producer_consumer_workflow(tmp_path: Path, backend, case, 
                     },
                 )
             if request.url.path.endswith("/events"):
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "next_page": None})
             if request.url.path.endswith("/sessions/s"):
                 return httpx.Response(
                     200,
@@ -293,7 +293,7 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
                     ]
                 },
             )
-        return httpx.Response(200, json={"data": []})
+        return httpx.Response(200, json={"data": [], "next_page": None})
 
     async def dispatch(*args):
         return {"ok": True}

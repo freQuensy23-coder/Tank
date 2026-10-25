@@ -7,7 +7,7 @@ stream ignores Last-Event-ID, while the native Node transport honors it.
 import asyncio
 import base64
 import copy
-import json
+import logging
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import AsyncExitStack, suppress
@@ -23,6 +23,7 @@ from tank.agents.admission import SessionAdmission
 from tank.agents.admission_repository import admission_candidate, build_admission
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
 from tank.agents.context_binding import ContextBinding
+from tank.agents.input_ownership import JournalInputLineage, NativeInputOwner, ToolInputLineage
 from tank.agents.native_inputs import (
     AcceptedNativeInput,
     NativeInput,
@@ -32,6 +33,12 @@ from tank.agents.native_inputs import (
     parse_native_input,
 )
 from tank.agents.native_readback import NativeSessionMissing, NativeSessionReader
+from tank.agents.native_retry import (
+    PendingNativeRetry,
+    UnknownNativeRetryState,
+    UnknownRetryState,
+    retry_state,
+)
 from tank.agents.native_sessions import (
     NativeOpeningSource,
     NativeSessionCreate,
@@ -42,6 +49,28 @@ from tank.agents.native_sessions import (
     NativeSessionResolution,
     NativeStoredSessionBinding,
     native_role_for_message,
+)
+from tank.agents.native_transport import (
+    ManagedEventCursor,
+    NativeEventCursor,
+    NativeEventObserved,
+    NativeEventOutcome,
+    NativeEventRetryRefused,
+    NativeFrameIdentity,
+    NativeRetryRefusalJournal,
+    NativeStoredCursor,
+    NodeEventCursor,
+    decode_native_page,
+    decode_native_stream,
+    native_event_sequence,
+    next_native_cursor,
+)
+from tank.agents.outbound_inputs import (
+    AcceptedOutboundInput,
+    initial_input_definition,
+    outbound_message_record,
+    parse_outbound_input,
+    recoverable_outbound_inputs,
 )
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.provenance import resolve_agent_provenance
@@ -57,7 +86,7 @@ from tank.agents.session_contracts import (
     SessionPromptState,
     SessionToolBoundaryState,
 )
-from tank.agents.session_ownership import put_owned_session
+from tank.agents.session_ownership import put_owned_session, require_owned_session_identity
 from tank.agents.tool_contracts import (
     CapturedToolResult,
     FailedToolResponse,
@@ -69,7 +98,8 @@ from tank.agents.tool_contracts import (
 )
 from tank.agents.wire import tool_wire_result
 from tank.agents.workflow import SOURCE_COMPLETION_VERSION
-from tank.contracts.json import decode_json
+from tank.contracts.json import decode_json, decode_unique_json
+from tank.contracts.native_readback import NativeSessionReference
 from tank.contracts.openma import (
     ManagedAgentName,
     ManagedToolManifest,
@@ -89,7 +119,9 @@ from tank.ops_progress import session_progress
 from tank.runtime_contracts import ScoutMessage, ScoutReviewJob, UserQuestionMessage
 from tank.telegram_inbox import DOCUMENT_LIMIT, GONE_TEXT, closed_reason, question_message, record_answer
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
-from tank.util import canonical_json, parse_time, sha256, utcnow
+from tank.util import canonical_json, jsonable, parse_time, sha256, utcnow
+
+log = logging.getLogger(__name__)
 
 REST_TIMEOUT_S = 30
 
@@ -122,18 +154,24 @@ SESSION_FOLLOW_FIELDS = (
 )
 
 
-def seen_key(event):
-    """Identity of a handled stream event, including the execution correlation it carried."""
-    return event["id"] + "|" + str(event.get("execution_id") or "")
+def seen_key(event: dict[str, JsonValue]) -> str:
+    """Exact native identity and optional execution correlation, without delimiter collisions."""
+    return NativeFrameIdentity.from_wire(event).cache_key()
 
 
-def material_event(event):
-    """Whether a stream event can change Tank state (a refusal can arrive in any message)."""
-    if event.get("type") in MATERIAL_EVENT_TYPES or event.get("finish_reason") == "content-filter":
+def material_event(event: dict[str, JsonValue]) -> bool:
+    """Whether a native event can change state, including a refusal inside a message."""
+    kind = event.get("type")
+    if (
+        isinstance(kind, str)
+        and kind in MATERIAL_EVENT_TYPES
+        or event.get("finish_reason") == "content-filter"
+    ):
         return True
-    return any(
-        isinstance(block, dict) and block.get("type") == "refusal" for block in event.get("content") or []
-    )
+    content = event.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(isinstance(block, dict) and block.get("type") == "refusal" for block in content)
 
 
 class SessionFileSender(Protocol):
@@ -154,6 +192,7 @@ class SessionService:
         self.versions = ResolvedVersionIdentity.model_validate(versions)
         self.repo, self.settings, self.tool_dispatch = repo, settings, tool_dispatch
         self.source_extraction = SourceExtractionRepository(repo)
+        self.retry_refusals = NativeRetryRefusalJournal(repo, self.versions, self.clock_timestamp)
         self.http = httpx.AsyncClient(timeout=REST_TIMEOUT_S) if http is None else http
         self.owns_http = http is None
 
@@ -239,7 +278,7 @@ class SessionService:
             timeout=REST_TIMEOUT_S,
         )
         response.raise_for_status()
-        payload = decode_json(response.content)
+        payload = decode_unique_json(response.content)
         if not isinstance(payload, dict):
             raise ValueError("Native endpoint returned a non-object JSON response")
         return payload
@@ -673,57 +712,103 @@ class SessionService:
         self.start_stream(sid)
         return session
 
-    async def post_message_intent(self, sid, key):
+    async def post_message_intent(self, sid: str, key: str) -> dict[str, JsonValue]:
         session = await self.repo.get("ops.agent_sessions", sid)
-        intent = next(row for row in session["message_log"] if row["message_id"] == key)
-        if intent.get("remote_event_id"):
+        if session is None:
+            raise KeyError(sid)
+        require_owned_session_identity(sid, session)
+        ContextBinding.from_session(session)
+        pending = parse_outbound_input(outbound_message_record(session, key))
+        if isinstance(pending, AcceptedOutboundInput):
             return session
-        accepted = await self.post_input(sid, parse_native_input(intent["body"]), idem="message:" + key)
-        accepted_at, identity = self.clock_timestamp(), self.accepted_input_id(accepted)
+        receipt = await self.post_input(sid, pending.body, idem="message:" + key)
+        accepted_at = self.clock_timestamp()
+        accepted = pending.accepted(receipt, accepted_at)
         async with self.repo.lock("session:" + sid):
-            session = await self.repo.get("ops.agent_sessions", sid)
-            intent = next(row for row in session["message_log"] if row["message_id"] == key)
-            if intent.get("remote_event_id") and intent["remote_event_id"] != identity:
-                raise ValueError("Idempotent message acceptance changed native input identity")
-            if identity:
-                intent.setdefault("native_input_attempts", {})[identity] = intent.get("retry_count", 0)
+            current = await self.repo.get("ops.agent_sessions", sid)
+            if current is None:
+                raise KeyError(sid)
+            require_owned_session_identity(sid, current)
+            intent = outbound_message_record(current, key)
+            durable = parse_outbound_input(intent)
+            if isinstance(durable, AcceptedOutboundInput):
+                if (
+                    durable.event_id is not None
+                    and accepted.event_id is not None
+                    and durable.event_id != accepted.event_id
+                ):
+                    raise ValueError("Idempotent message acceptance changed native input identity")
+                if durable.event_id is None and accepted.event_id is not None:
+                    if initial_input_definition(intent) != pending.definition():
+                        raise ValueError("Outbound input advanced before acknowledgment refinement")
+                    lineage = JournalInputLineage.from_record(intent)
+                    intent["native_input_attempts"] = {
+                        **(lineage.attempts if lineage.attempts is not None else {}),
+                        accepted.event_id: pending.attempt,
+                    }
+                    intent["remote_event_id"] = accepted.event_id
+                    intent["initial_input_acceptance"] = jsonable(receipt)
+                    await put_owned_session(self.repo, sid, current)
+                return current
+            if durable != pending:
+                raise ValueError("Outbound input intent changed before acceptance committed")
+            identity = accepted.event_id
+            if identity is not None:
+                attempts = JournalInputLineage.from_record(intent).attempts
+                intent["native_input_attempts"] = {
+                    **(attempts if attempts is not None else {}),
+                    identity: pending.attempt,
+                }
             intent.update(
                 **accepted_at.fields("sent_at"),
                 remote_event_id=identity,
-                turn_status="PENDING"
-                if intent.get("turn_status") == "ACCEPTING"
-                else intent.get("turn_status", "PENDING"),
+                initial_input_acceptance=jsonable(receipt),
+                turn_status="PENDING",
             )
-            if key not in session.setdefault("messages", []):
-                session["messages"].append(key)
-            session["status"] = "OPEN"
-            if intent["payload"].get("item_id"):
-                session.update(accepted_at.fields("last_item_at"))
-                session.update(
-                    propagate_timestamp(intent, "item_observed_at").fields("last_item_observed_at")
-                )
-                session.get("missing_fields", {}).pop("last_item_at", None)
-                session["last_item_at_reason"] = None
-            await put_owned_session(self.repo, sid, session)
-            await session_progress(self.repo, self.settings, session)
-            return session
+            messages = current.setdefault("messages", [])
+            if not isinstance(messages, list):
+                raise ValueError("Accepted session message identities must be an array")
+            if key not in messages:
+                messages.append(key)
+            current["status"] = "OPEN"
+            if pending.source.item_id is not None:
+                current.update(accepted_at.fields("last_item_at"))
+                current.update(pending.source.observed_at.fields("last_item_observed_at"))
+                missing = current.get("missing_fields")
+                if isinstance(missing, dict):
+                    missing.pop("last_item_at", None)
+                elif missing is not None:
+                    raise ValueError("Session missing-field provenance must be an object")
+                current["last_item_at_reason"] = None
+            await put_owned_session(self.repo, sid, current)
+            await session_progress(self.repo, self.settings, current)
+            return current
 
-    async def recover_outbound_inputs(self, sid):
+    async def recover_outbound_inputs(self, sid: str) -> None:
         async with self.send_locks.setdefault(sid, asyncio.Lock()):
             session = await self.repo.get("ops.agent_sessions", sid)
-            for message in session.get("message_log", []):
-                if message.get("turn_status") == "ACCEPTING" and not message.get("sent_at"):
-                    await self.post_message_intent(sid, message["message_id"])
+            if session is None:
+                raise KeyError(sid)
+            require_owned_session_identity(sid, session)
+            for message in recoverable_outbound_inputs(session):
+                await self.post_message_intent(sid, message.message_id)
         session = await self.repo.get("ops.agent_sessions", sid)
+        if session is None:
+            raise KeyError(sid)
+        require_owned_session_identity(sid, session)
         await session_progress(self.repo, self.settings, session)
-        if session.get("pending_retry_event"):
-            await self.process_event(sid, session["pending_retry_event"])
+        pending_retry = session.get("pending_retry_event")
+        if pending_retry is not None:
+            if not isinstance(pending_retry, dict):
+                raise ValueError("Retained native retry event must be an object")
+            await self.observe_native_event(sid, pending_retry, native_event_sequence(pending_retry))
 
     async def post_input(self, sid: str, body: NativeInput, *, idem: str) -> NativeInputAcknowledgment:
+        receiver = NativeSessionReference(session_id=sid)
         response = await self.request(
             "POST",
-            f"sessions/{sid}/events",
-            json=NativeInputRequest(events=[body]).model_dump(mode="json", exclude_none=True),
+            f"sessions/{quote(receiver.session_id, safe='')}/events",
+            json=decode_json(NativeInputRequest(events=[body]).model_dump_json(exclude_none=True)),
             idem=idem,
         )
         return observe_native_input(response, body)
@@ -733,27 +818,38 @@ class SessionService:
         """Only a validated reported input establishes native execution ownership."""
         return response.event_id if isinstance(response, AcceptedNativeInput) else None
 
-    async def native_input_owner(self, session, execution_id):
-        """Resolve exact accepted-input lineage, including tool-result continuations."""
-        if not execution_id:
+    async def native_input_owner(
+        self, session: dict[str, JsonValue], execution_id: str | None
+    ) -> NativeInputOwner | None:
+        """Resolve only actual recorded accepted-input lineage, including tool continuations."""
+        if execution_id is None:
             return None
-        messages = {row["message_id"]: row for row in session.get("message_log", [])}
-        for message in messages.values():
-            if execution_id == message.get("remote_event_id") or execution_id in message.get(
-                "superseded_native_input_ids", []
-            ):
-                attempt = message.get("native_input_attempts", {}).get(execution_id)
-                if attempt is None:
-                    attempt = (
-                        message.get("retry_count", 0)
-                        if execution_id == message.get("remote_event_id")
-                        else message.get("superseded_native_input_ids", []).index(execution_id)
-                    )
-                return message["message_id"], attempt
-        async for call in self.repo.iter_all("ops.tool_calls", filters={"session_id": session["session_id"]}):
-            if call.get("remote_event_id") == execution_id and call.get("native_turn_message_id") in messages:
-                return call["native_turn_message_id"], call.get("native_turn_retry_count", 0)
-        return None
+        if not execution_id:
+            raise ValueError("Native execution identity must be nonempty")
+        journal = session.get("message_log", [])
+        if not isinstance(journal, list):
+            raise ValueError("Native input journal must be an array")
+        lineages: dict[str, JournalInputLineage] = {}
+        for raw in journal:
+            if not isinstance(raw, dict):
+                raise ValueError("Native input journal message must be an object")
+            lineage = JournalInputLineage.from_record(raw)
+            if lineage.message_id in lineages:
+                raise ValueError("Native input journal repeats a message identity")
+            lineages[lineage.message_id] = lineage
+        owners = {
+            owner for lineage in lineages.values() if (owner := lineage.owner(execution_id)) is not None
+        }
+        sid = NativeSessionReference.model_validate({"session_id": session["session_id"]}).session_id
+        async for call in self.repo.iter_all("ops.tool_calls", filters={"session_id": sid}):
+            if call.get("remote_event_id") != execution_id:
+                continue
+            owner = ToolInputLineage.from_record(call).owner(execution_id, frozenset(lineages))
+            if owner is not None:
+                owners.add(owner)
+        if len(owners) > 1:
+            raise ValueError("Native input has conflicting journal ownership")
+        return next(iter(owners)) if owners else None
 
     async def execution_barrier(self, session, calls=None, *, verify_remote=False):
         """Correlate accepted inputs with native execution receipts, never idle timing."""
@@ -954,7 +1050,7 @@ class SessionService:
             owner = await self.native_input_owner(session, execution_id)
             if not owner:
                 continue
-            message_id, attempt = owner
+            message_id, attempt = owner.message_id, owner.attempt
             if attempt < attempts.get(message_id, attempt):
                 continue
             if attempt > attempts.get(message_id, attempt):
@@ -1645,6 +1741,9 @@ class SessionService:
         key = sid + ":" + event["id"]
         async with self.event_locks.setdefault(sid, asyncio.Lock()):
             session = await self.repo.get("ops.agent_sessions", sid)
+            if session is None:
+                raise KeyError(sid)
+            require_owned_session_identity(sid, session)
             if session.get("status") in ("FAILED", "ENDED"):
                 return
             before = copy.deepcopy(session)
@@ -1750,9 +1849,11 @@ class SessionService:
             }:
                 owner = await self.native_input_owner(session, event["execution_id"])
                 if owner:
-                    session["active_message_id"] = owner[0]
+                    session["active_message_id"] = owner.message_id
                     ContextBinding.from_session(session)
-                    event = dict(event, _host_turn_message_id=owner[0], _host_turn_retry_count=owner[1])
+                    event = dict(
+                        event, _host_turn_message_id=owner.message_id, _host_turn_retry_count=owner.attempt
+                    )
                 elif kind in {
                     "agent.custom_tool_use",
                     "session.error",
@@ -1836,35 +1937,46 @@ class SessionService:
                     ),
                     None,
                 )
-                body = active["body"] if active else session.get("last_message")
-                retry = active.get("retry_count", 0) if active else session.get("retry_count", 0)
-                if retry < 1 and body:
-                    message_id = active["message_id"] if active else "legacy"
-
+                state = retry_state(session, active)
+                if isinstance(state, UnknownRetryState):
+                    raise UnknownNativeRetryState(state.reason)
+                retry = state.attempt
+                if retry == 0:
+                    if state.body is None:
+                        raise UnknownNativeRetryState("RETRY_BODY_NOT_RETAINED")
                     async with self.repo.lock("session:" + sid):
                         durable = await self.repo.get("ops.agent_sessions", sid)
-                        event = dict(event)
-                        event.setdefault(
-                            "_host_retry_call_ordinal_cutoff", durable.get("next_tool_call_ordinal", 0)
+                        if durable is None:
+                            raise KeyError(sid)
+                        plan = PendingNativeRetry.model_validate(
+                            {
+                                "phase": "PENDING",
+                                "owner": state.owner,
+                                "body": state.body,
+                                "previous_input_id": state.previous_input_id,
+                                "previous_attempt": retry,
+                                "next_attempt": 1,
+                                "failure_event_id": event["id"],
+                            }
                         )
+                        retained = durable.get("pending_retry_intent")
+                        if retained is not None and PendingNativeRetry.model_validate(retained) != plan:
+                            raise ValueError("Pending native retry intent changed before posting")
+                        event = dict(event)
                         durable["pending_retry_event"] = copy.deepcopy(event)
+                        durable["pending_retry_intent"] = jsonable(plan)
                         await put_owned_session(self.repo, sid, durable)
-                    accepted = await self.post_input(
-                        sid,
-                        parse_native_input(body),
-                        idem="turn-retry:" + sid + ":" + message_id,
-                    )
+                    accepted = await self.post_input(sid, plan.body, idem=plan.idempotency_key(sid))
+                    receipt = plan.accepted(accepted, self.clock_timestamp())
                     if active:
-                        active.setdefault("retry_call_ordinal_cutoffs", {})[str(retry)] = event[
-                            "_host_retry_call_ordinal_cutoff"
-                        ]
                         previous_input = active.get("remote_event_id")
                         if previous_input:
                             active.setdefault("native_input_attempts", {})[previous_input] = retry
                         replacement_input = self.accepted_input_id(accepted)
                         if replacement_input:
                             active.setdefault("native_input_attempts", {})[replacement_input] = retry + 1
-                        active.setdefault("superseded_native_input_ids", []).append(previous_input)
+                        if previous_input is not None:
+                            active.setdefault("superseded_native_input_ids", []).append(previous_input)
                         if previous_input:
                             session.setdefault("superseded_native_inputs", {})[previous_input] = {
                                 "reason": "TURN_FAILED_AND_RETRIED",
@@ -1875,10 +1987,13 @@ class SessionService:
                             retry_count=retry + 1,
                             turn_status="RUNNING",
                             remote_event_id=self.accepted_input_id(accepted),
+                            retry_acceptance=jsonable(receipt),
                         )
                     else:
                         session["retry_count"] = retry + 1
+                        session["retry_acceptance"] = jsonable(receipt)
                     session["pending_retry_event"] = None
+                    session["pending_retry_intent"] = None
                     session["runtime_status"] = "RUNNING"
                 else:
                     session["status"] = "FAILED"
@@ -1968,40 +2083,80 @@ class SessionService:
             ):
                 await self.deliver_answers(sid)
 
-    async def catch_up(self, sid):
+    async def observe_native_event(
+        self, sid: str, event: dict[str, JsonValue], sequence: int | None = None
+    ) -> NativeEventOutcome:
+        sequence = NativeStoredCursor.model_validate({"value": sequence}).value
+        if (
+            event.get("type") in ("event_start", "event_delta")
+            or not event.get("id")
+            or not material_event(event)
+        ):
+            await self.process_event(sid, event, sequence)
+            return NativeEventObserved(status="OBSERVED")
+        frame = NativeFrameIdentity.from_wire(event)
+        recorded = await self.retry_refusals.find(sid, frame)
+        if recorded is not None:
+            self.seen_events.setdefault(sid, set()).add(seen_key(event))
+            return NativeEventRetryRefused(status="RETRY_REFUSED", receipt=recorded)
+        try:
+            await self.process_event(sid, event, sequence)
+        except UnknownNativeRetryState as refused:
+            receipt = await self.retry_refusals.record(sid, frame, refused.reason, sequence)
+            self.seen_events.setdefault(sid, set()).add(seen_key(event))
+            log.warning("Native host retry refused: %s", receipt.reason)
+            return NativeEventRetryRefused(status="RETRY_REFUSED", receipt=receipt)
+        return NativeEventObserved(status="OBSERVED")
 
-        page = None
+    async def catch_up(self, sid: str) -> None:
+        cursor: NativeEventCursor | None = None
+        visited: set[str] = set()
         while True:
-            params = {"limit": 100, "order": "asc"}
-            if page:
-                params["page"] = page
-            data = await self.request("GET", f"sessions/{sid}/events", params=params)
-            for event in data.get("data", []):
-                await self.process_event(sid, event)
-            page = data.get("next_page")
-            if not page:
-                break
+            params: dict[str, str | int] = {"limit": 100, "order": "asc"}
+            if isinstance(cursor, ManagedEventCursor):
+                params["page"] = cursor.page
+            elif isinstance(cursor, NodeEventCursor):
+                params["after_seq"] = cursor.after_seq
+            page = decode_native_page(
+                await self.request("GET", f"sessions/{quote(sid, safe='')}/events", params=params)
+            )
+            following = next_native_cursor(page, cursor)
+            if following is not None:
+                key = canonical_json(following)
+                if key in visited:
+                    raise ValueError("Native event paging repeated its cursor")
+                visited.add(key)
+            for event in page.data:
+                await self.observe_native_event(sid, event, native_event_sequence(event))
+            if following is None:
+                return
+            cursor = following
 
-    async def stream(self, sid):
+    async def stream(self, sid: str) -> None:
         session = await self.repo.get("ops.agent_sessions", sid)
+        if session is None:
+            raise KeyError(sid)
+        require_owned_session_identity(sid, session)
         headers = self.headers()
-        headers["Last-Event-ID"] = str(session.get("last_event_seq", 0))
+        cursor = session.get("last_event_seq")
+        if cursor is not None:
+            observed = NativeStoredCursor.model_validate({"value": cursor}).value
+            if observed is not None:
+                headers["Last-Event-ID"] = str(observed)
         async with aconnect_sse(
-            self.stream_http, "GET", self.url(f"sessions/{sid}/events/stream"), headers=headers
+            self.stream_http,
+            "GET",
+            self.url(f"sessions/{quote(sid, safe='')}/events/stream"),
+            headers=headers,
         ) as source:
             source.response.raise_for_status()
             async for message in source.aiter_sse():
                 if self.closed:
                     return
-                if message.event == "ping":
+                if message.event == "ping" or message.event == "message" and message.data == "":
                     continue
-                data = json.loads(message.data)
-
-                event = data.get("event", data) if "seq" in data else data
-                seq = data.get("seq")
-                if seq is None and message.id and message.id.isdigit():
-                    seq = int(message.id)
-                await self.process_event(sid, event, seq)
+                frame = decode_native_stream(message.data, message.id)
+                await self.observe_native_event(sid, frame.event, frame.sequence)
 
     async def can_archive(self, session, event):
         """Terminal domain state cannot preempt a pending denial/EXIT turn."""

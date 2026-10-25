@@ -179,7 +179,7 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
                     },
                 )
             if request.url.path.endswith("/events"):
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "next_page": None})
             if request.method == "GET" and request.url.path.endswith("/sessions/s"):
                 return httpx.Response(
                     200,
@@ -376,7 +376,7 @@ async def test_ignored_item_keeps_event_and_call_for_next_native_update(
                     },
                 )
             if request.url.path.endswith("/events"):
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "next_page": None})
             raise AssertionError(request.url)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
