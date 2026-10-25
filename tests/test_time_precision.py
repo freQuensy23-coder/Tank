@@ -225,3 +225,12 @@ def test_calendar_precision_metadata_does_not_require_or_invent_an_instant() -> 
     assert reconcile_precision(["BUCKET(1d)", "BUCKET(86400s)"], field="identity_reviewed_at") == "BUCKET(1d)"
     with pytest.raises(ValueError, match="Conflicting"):
         reconcile_precision(["EXACT", "BUCKET(1d)"], field="identity_reviewed_at")
+
+
+def test_explicit_empty_precision_field_is_not_replaced_by_a_canonical_default() -> None:
+    stamp = collection_clock("2026-10-18T00:00:00Z")
+    with pytest.raises(ValueError, match="nonempty name"):
+        stamp.fields("ts", precision_field="")
+    assert stamp.fields("ts", precision_field="observed_precision")["observed_precision"] == (
+        "COLLECTION_ONLY"
+    )

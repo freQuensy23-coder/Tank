@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, JsonValue
 
+from tank.agents.context_binding import ContextBinding
 from tank.agents.context_registry import ContextRegistry
 from tank.contracts import DomainModel
 from tank.contracts.tool_schema import SCOPED_TOOLS, parse_tool_definitions, validate_schema
@@ -374,7 +375,8 @@ def claim_reference(row):
 class ModelContext:
     def __init__(self, repo, settings, session):
         self.repo, self.settings, self.session = repo, settings, session
-        self.scout = bool(session.get("proposal_id"))
+        self.binding = ContextBinding.from_session(session)
+        self.scout = self.binding.proposal_id is not None
         self.registry = ContextRegistry.from_configuration(settings)
         self.tokens = {row.token_id: row for row in self.registry.tokens}
         self.entities = {row.entity_id: row for row in self.registry.entities}
@@ -644,20 +646,9 @@ class ModelContext:
                 )
             raise ValueError(text) from None
 
-    def trigger(self):
-        active = next(
-            (
-                row
-                for row in self.session.get("message_log", [])
-                if row.get("message_id") == self.session.get("active_message_id")
-            ),
-            {},
-        )
-        return active, (active.get("payload") if active else self.session.get("last_payload")) or {}
-
     def bind(self, tool, result):
         """Fill the implicit records: the current event, the incoming source and the current proposal."""
-        current = self.session.get("event_id")
+        current = self.binding.event_id
         if tool in SCOPED_TOOLS:
             if not current:
                 raise ValueError(f"{tool} works on the current event; record it with record_event first")
@@ -682,11 +673,8 @@ class ModelContext:
                     "that covers the same development. " + self.lookup("event")
                 )
         if tool in {"record_event", "add_observation", "get_item"}:
-            active, trigger = self.trigger()
             if tool == "add_observation":
-                source = trigger.get("item_id") or (
-                    self.session.get("item_id") if not active and not trigger else None
-                )
+                source = self.binding.observation_source()
                 if source and result.get("item_id", source) != source:
                     raise ValueError(
                         "$.item_id: this observation is bound to the incoming source; "
@@ -701,18 +689,18 @@ class ModelContext:
                         + self.lookup("item")
                     )
             elif tool == "record_event":
-                result["item_id"] = trigger.get("item_id") or self.session.get("item_id")
+                result["item_id"] = self.binding.incoming_source()
                 if not result["item_id"]:
                     raise ValueError("record_event records the incoming source; this session has none")
             else:
-                result.setdefault("item_id", trigger.get("item_id") or self.session.get("item_id"))
+                result.setdefault("item_id", self.binding.incoming_source())
                 if not result["item_id"]:
                     raise ValueError(
                         "$.item_id: there is no incoming source; pass the item_id to read. "
                         + self.lookup("item")
                     )
         if tool == "record_review":
-            result["proposal_id"] = self.session.get("proposal_id")
+            result["proposal_id"] = self.binding.proposal_id
 
     async def check(self, tool, path, kind, value):
         """One record ID: it exists, has the expected kind and lies in the tool's scope."""
@@ -739,7 +727,7 @@ class ModelContext:
                     + self.lookup(kind)
                 )
             raise ValueError(f"{path}: no {label} has this ID. {self.lookup(kind)}")
-        current = self.session.get("event_id")
+        current = self.binding.event_id
         if kind == "claim" and tool not in PATTERN_TOOLS and row.get("event_id") != current:
             raise ValueError(f"{path}: this is not a claim of the current event. {self.lookup('claim')}")
         if kind == "condition" and row.get("event_id") != current:
@@ -751,7 +739,7 @@ class ModelContext:
                 f"$.event_id: that event is {row['lifecycle']}; merge into an open event. {self.lookup('event')}"
             )
         if tool == "record_review" and path == "$.duplicate_of":
-            if value == self.session.get("proposal_id"):
+            if value == self.binding.proposal_id:
                 raise ValueError(
                     "$.duplicate_of: this is the current proposal; name the earlier one, or null"
                 )
