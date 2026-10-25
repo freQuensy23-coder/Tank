@@ -2,6 +2,7 @@ import json
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Literal
 
 import httpx
 import pytest
@@ -11,9 +12,11 @@ from agent_source_fixtures import (
     source_record_fixture,
 )
 from scheduling_support import RecordingReactionScheduling
+from source_support import fixture_http_admission
 
 from tank.agents import ConfigurationError, Pipeline, SessionService
 from tank.agents.context import CONTEXT_VERSION
+from tank.analysis.page_access import LivePageAccess
 from tank.contracts.source_items import parse_feed_source_item
 from tank.ops_progress import DisabledSourceProgress
 from tank.storage import MemoryRepository
@@ -524,6 +527,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
         DecisionEngine(opts),
         versions=declared_versions_fixture(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
     now = clock_iso()
     await repo.put(
@@ -1253,3 +1257,62 @@ def test_jev_source_view_does_not_substitute_internal_source_codes() -> None:
     )
     assert view.source == "Synthetic Publisher"
     assert "S29" not in json.dumps(view.to_wire()) and "item_id" not in view.to_wire()
+
+
+@pytest.mark.parametrize(
+    "defect", ["empty_verdict", "blank_verdict", "empty_why", "single_why", "blank_bullet"]
+)
+async def test_publish_card_requires_declared_verdict_and_two_factual_bullets(
+    defect: Literal["empty_verdict", "blank_verdict", "empty_why", "single_why", "blank_bullet"],
+) -> None:
+    from pydantic import JsonValue
+
+    from tank.contracts.json import decode_json
+
+    repo = MemoryRepository()
+    await seed_session(repo)
+    opts, _ = settings()
+    arguments: dict[str, JsonValue] = {
+        "kind": "PARTIAL",
+        "what": "A synthetic product shipped.",
+        "verdict": "Synthetic launch confirmed.",
+        "why": ["The release is published.", "The feature is available."],
+    }
+    if defect == "empty_verdict":
+        arguments["verdict"] = ""
+    elif defect == "blank_verdict":
+        arguments["verdict"] = "   "
+    elif defect == "empty_why":
+        arguments["why"] = []
+    elif defect == "single_why":
+        arguments["why"] = ["One fact."]
+    else:
+        arguments["why"] = ["First fact.", "   "]
+    dispatched: list[str] = []
+    responses: list[JsonValue] = []
+
+    async def dispatch(tool: str, payload: dict[str, JsonValue], context: dict[str, JsonValue]) -> JsonValue:
+        dispatched.append(tool)
+        return {"published": True}
+
+    def native(request: httpx.Request) -> httpx.Response:
+        responses.append(decode_json(request.content))
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(native)) as client:
+        service = SessionService(
+            repo, opts, dispatch, http=client, stream_http=client, versions=declared_versions_fixture()
+        )
+        await service.process_event(
+            "ses_1",
+            {
+                "id": "publish-structure",
+                "type": "agent.custom_tool_use",
+                "name": "publish_card",
+                "input": arguments,
+            },
+        )
+    capture = await repo.get("ops.tool_calls", "ses_1:publish-structure")
+    assert capture is not None and capture["status"] == "REFUSED"
+    assert capture["is_error"] is True and capture["returned_at"]
+    assert dispatched == [] and len(responses) == 1
