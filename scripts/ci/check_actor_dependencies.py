@@ -2,9 +2,11 @@
 
 import argparse
 import hashlib
+import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from typing import Annotated
 
@@ -29,6 +31,31 @@ class CheckRequest(BaseModel):
     root: Path
 
 
+class ActorDependencyGroup(BaseModel):
+    model_config = ConfigDict(strict=True, extra="ignore")
+    x_reader: list[str] = Field(alias="x-reader")
+
+
+class ProjectDependencyGroups(BaseModel):
+    model_config = ConfigDict(strict=True, extra="ignore")
+    dependency_groups: ActorDependencyGroup = Field(alias="dependency-groups")
+
+
+def require_direct_actor_dependencies(root: Path) -> None:
+    metadata = ProjectDependencyGroups.model_validate(tomllib.loads((root / "pyproject.toml").read_text()))
+    declared: set[str] = set()
+    for requirement in metadata.dependency_groups.x_reader:
+        match = re.fullmatch(r"([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;]+)", requirement)
+        if match is None:
+            raise ActorDependencyError("Actor direct dependencies require exact version pins")
+        name = re.sub(r"[-_.]+", "-", match[1]).lower()
+        if name in declared:
+            raise ActorDependencyError("Actor direct dependency is declared more than once")
+        declared.add(name)
+    if not {"apify", "beautifulsoup4", "httpx", "pydantic"} <= declared:
+        raise ActorDependencyError("Actor direct runtime dependency declaration is missing")
+
+
 def locate_uv() -> Path:
     executable = shutil.which("uv")
     if executable is None:
@@ -47,6 +74,7 @@ def frozen_actor_requirements(root: Path, uv: Path) -> bytes:
     version = tool_output([str(uv), "--version"], root).decode().split()
     if version[:2] != ["uv", "0.11.7"]:
         raise ActorDependencyError("Actor dependency export requires uv 0.11.7")
+    require_direct_actor_dependencies(root)
     tool_output(
         [str(uv), "lock", "--offline", "--check", "--python", sys.executable],
         root,
