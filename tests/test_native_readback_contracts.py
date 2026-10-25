@@ -4,6 +4,7 @@ from typing import Literal
 
 import httpx
 import pytest
+from agent_source_fixtures import declared_versions_fixture
 from native_session_fixtures import native_session_record
 from pydantic import JsonValue, ValidationError
 
@@ -14,7 +15,11 @@ from tank.agents.native_readback import (
     NativeSessionState,
     observe_native_state,
 )
+from tank.agents.sessions import SessionService
 from tank.contracts.json import decode_json
+from tank.runtime_contracts import UserQuestionMessage
+from tank.settings import Settings
+from tank.storage import MemoryRepository
 
 
 class HttpEndpoint:
@@ -160,3 +165,58 @@ async def test_partial_nested_tool_report_cannot_verify_prompt_provenance() -> N
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         with pytest.raises(ValueError, match="incomplete"):
             await NativeSessionReader(HttpEndpoint(http)).prompt("session", prompt_label=None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("archive", [None, "2026-10-25T19:00:00Z", "2026-10-25T21:00:00+02:00"])
+async def test_actual_archive_clock_keeps_nullable_or_aware_wire_observation(archive: str | None) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        return httpx.Response(200, json={"id": "session", "status": "idle", "archived_at": archive})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        observed = await NativeSessionReader(HttpEndpoint(http)).state("session")
+    assert isinstance(observed, NativeSessionState)
+    assert observed.archived_at == archive
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("archive", ["", "malformed", "2026-10-25T19:00:00", "2026-10-25"])
+async def test_invalid_archive_clock_cannot_claim_live_or_archived_lifecycle(archive: str) -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.method)
+        return httpx.Response(200, json={"id": "session", "status": "idle", "archived_at": archive})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        with pytest.raises(ValidationError):
+            await NativeSessionReader(HttpEndpoint(http)).state("session")
+    assert calls == ["GET"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_archive_clock_refuses_actual_followup_before_local_or_input_effects() -> None:
+    repo = MemoryRepository()
+    original: dict[str, JsonValue] = {"session_id": "session", "status": "OPEN"}
+    await repo.put("ops.agent_sessions", "session", original)
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.method)
+        return httpx.Response(200, json={"id": "session", "status": "idle", "archived_at": ""})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(
+            repo,
+            Settings(openma_url="http://native", _env_file=None),
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+        )
+        with pytest.raises(ValidationError):
+            await service.continuable(
+                UserQuestionMessage(kind="USER_QUESTION", session_id="session", question_id="question")
+            )
+    assert calls == ["GET"]
+    assert await repo.get("ops.agent_sessions", "session") == original
