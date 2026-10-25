@@ -803,6 +803,70 @@ async def test_transcript_web_reads_use_only_captured_results(
         await replay_bundle(packet, MemoryRepository(), settings())
 
 
+@pytest.mark.parametrize("matching_arguments", [True, False])
+async def test_recorded_fetch_result_never_spends_live_quota_or_builds_http(
+    packet: Path, matching_arguments: bool
+) -> None:
+    from unittest.mock import AsyncMock, patch
+
+    from tank.contracts.json import decode_json
+    from tank.event_tools import EventToolService
+    from tank.http_admission import ConfiguredHttpAdmission
+    from tank.request_budget import RequestBudgetScope, SystemBudgetClock
+    from tank.util import canonical_json
+
+    data = decode_json(packet.read_bytes())
+    assert isinstance(data, dict)
+    config = data["config"]
+    assert isinstance(config, dict)
+    arguments = {"url": "https://api.etherscan.io/v2/api?chainid=1"}
+    result = {"item_id": "captured-page", "text": "The captured publication states approval."}
+    config["replay_tool_calls"] = [
+        {
+            "call_id": "captured-fetch",
+            "tool": "fetch_page",
+            "arguments": arguments,
+            "available_at": data["cutoff"],
+        }
+    ]
+    data["tool_results"] = [
+        {
+            "call_id": "captured-fetch",
+            "tool": "fetch_page",
+            "arguments": arguments if matching_arguments else {"url": "https://example.org/different"},
+            "available_at": data["cutoff"],
+            "result": result,
+        }
+    ]
+    packet.write_text(canonical_json(data))
+    admission = AsyncMock(side_effect=AssertionError("Live admission is forbidden"))
+    acquire = AsyncMock(side_effect=AssertionError("Live quota acquisition is forbidden"))
+    feedback = AsyncMock(side_effect=AssertionError("Live feedback is forbidden"))
+    wait = AsyncMock(side_effect=AssertionError("Provider wait is forbidden"))
+    raw_fetch = AsyncMock(side_effect=AssertionError("Captured tool result must bypass raw page fetching"))
+    repo = MemoryRepository()
+    with (
+        patch.object(ConfiguredHttpAdmission, "admit", admission),
+        patch.object(RequestBudgetScope, "acquire_many", acquire),
+        patch.object(ConfiguredHttpAdmission, "block", feedback),
+        patch.object(SystemBudgetClock, "sleep", wait),
+        patch.object(EventToolService, "fetch_page", raw_fetch),
+        patch("httpx.AsyncClient", side_effect=AssertionError("Live HTTP client is forbidden")) as clients,
+    ):
+        if matching_arguments:
+            report = await replay_bundle(packet, repo, settings())
+            assert report["output"]["tool_calls"] == [
+                {"call_id": "captured-fetch", "tool": "fetch_page", "result": result}
+            ]
+        else:
+            with pytest.raises(ReplayError, match="exact captured pre-cutoff external tool arguments"):
+                await replay_bundle(packet, repo, settings())
+    for trap in (admission, acquire, feedback, wait, raw_fetch):
+        trap.assert_not_awaited()
+    clients.assert_not_called()
+    assert await repo.list("ingest.source_items") == []
+
+
 def test_late_market_capture_requires_assembly_and_preserves_real_receipt(packet) -> None:
     data = json.loads(packet.read_text())
     received = "2026-10-17T00:00:00Z"

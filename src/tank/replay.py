@@ -24,6 +24,8 @@ from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.source_items import SourceRelevance
+from tank.fixture_reference_code import CURRENT_PROJECTION_CODE, ProjectionCodeEvidence
+from tank.fixture_reference_sources import FILESYSTEM_RETAINED_SOURCES, RetainedSourceReader
 from tank.market_schema import MARKET_COLUMNS
 from tank.time_precision import Timestamp, interval_bounds, propagate_timestamp
 from tank.util import canonical_json, iso, parse_time
@@ -391,7 +393,13 @@ class ReplayClock:
         return self.current
 
 
-def load_inputs(path, settings):
+def load_inputs(
+    path,
+    settings,
+    *,
+    raw_sources: RetainedSourceReader = FILESYSTEM_RETAINED_SOURCES,
+    projection_code: ProjectionCodeEvidence = CURRENT_PROJECTION_CODE,
+):
     packet = json.loads(Path(path).read_text())
     if packet.get("fixture_status") == "INSUFFICIENT_FIXTURE":
         missing = packet.get("missing")
@@ -442,6 +450,8 @@ def load_inputs(path, settings):
             _market_record,
             private_mask_path=getattr(settings, "replay_private_mask_path", None),
             input_path=path,
+            raw_sources=raw_sources,
+            projection_code=projection_code,
         )
     except (ValueError, KeyError, TypeError, OSError) as error:
         raise ReplayError("insufficient_fixture: " + str(error)) from error

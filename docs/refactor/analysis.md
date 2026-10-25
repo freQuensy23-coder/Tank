@@ -583,3 +583,53 @@ private map, sealed outcome or credential was read. F02 remains excluded for its
 manifest mismatch. The generation scratch script is data/qa/inventory-retained-http-raw.py.
 An explicit resolver must accept only these verified staged originals; no global
 /data alias or production path access is proposed.
+
+### Exact retained-body and captured-code resource boundaries
+
+fixture_reference_sources owns a precise RetainedSourceReader port. The stateless
+filesystem reader preserves ordinary saved-capture behavior. VerifiedRetainedSources
+accepts the owned required-reference inventory plus the parent's staging manifest;
+it validates the inventory binding and exact reference set, then checks root
+containment, transport bytes/hash and decompressed payload bytes/hash on every read.
+Unlisted paths refuse before filesystem access; no historical /data alias is created.
+Zstd/gzip magic denotes actual retained wire formats; bare bytes remain bare bytes.
+Zstd streaming also preserves frames whose header omits decoded-size metadata.
+Source_candidate is audit metadata only and is never opened by this reader.
+
+load_inputs passes its explicit raw_sources and projection_code through normal
+fixture_reference validation. The original body, time, derivation and host-mask checks
+remain. CurrentProjectionCode retains the normal exact-current-file check; the
+explicit ArchivedProjectionCodes path only accepts an allowlisted recorded SHA with
+actual fixed-path Git evidence. It rechecks archive length/SHA256/Git object identity,
+commit→src/tank/fixture_reference.py→blob binding and actual Git blob bytes. It never
+executes/imports archived code. Unknown digests refuse. Infrastructure resource handles
+remain outside Pydantic; manifests and all structured origin records use strict models.
+
+analysis-captured-projection-code.json inventories5 recorded module hashes at14sites.
+One has exact archived bytes at Git e5a1cef / blob28e8928, independently verified by the
+parent; four remain unresolved. The immutable .source archive under docs/verification
+is evidence, not a restored implementation. Neither its Git origin nor a recorded
+module hash claims that code was deployed. Parent independently showed that main's
+fixture_reference bytes match none of the five hashes, so these are pre-existing
+availability limits rather than a refactor hash regression.
+
+Actual retained proof (analysis-recorded-http-evidence.json) rechecks25 frozen input
+hashes, all38 staged raw bodies and the known code artifact. Eight packets pass all
+normal loader checks and five actual captured results are selected through the
+production reader; all admission/acquisition/block/provider-sleep traps remain zero,
+and no live client is created. Eleven packets authentically refuse unavailable
+captured code, and six require the deliberately unsupplied host-only identity map.
+No validation check is skipped, no private map/sealed outcome is opened, no frozen
+bytes change and F02 remains excluded. This is an eligible-reader/no-live-effect
+proof, not a claim of full agent acceptance for the refused fixtures.
+
+Eight independent resource cases pass in1.48s, proving unknown-path/hash refusal,
+post-construction transport tampering, payload tampering despite matching transport
+metadata, root escape, owner-inventory binding, actual Git provenance and non-execution.
+Together with replay/reference behavior,134 units pass in1.90s. Four resource source/
+test targets pass strict mypy; default source mypy again reports only the independently
+reserved whole condition cache. Required preserved cutoff literals now explicitly
+reject absent/nontext values; day/exact/minute parser locals remain distinct types,
+and publication interval checks require both genuine bounds. Declared UTC and every
+frozen literal remain unchanged. The remaining legacy fixture_reference domain-map
+migration is still open; these resource ports do not claim to complete that module.
