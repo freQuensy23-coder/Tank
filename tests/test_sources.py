@@ -790,7 +790,7 @@ async def test_milestone_producer_drives_source_cadence_and_cancellation(
     reaction_settings = settings_obj
     reaction_versions = fixture_versions()
     async with operational_reaction_services(
-        repo, reaction_settings, versions=reaction_versions
+        repo, reaction_settings, versions=reaction_versions, budgets=service.budgets
     ) as reaction_services:
         tools = EventToolService(
             repo,
@@ -973,7 +973,7 @@ async def test_major_assessment_producer_activates_15s_source_reads(
     reaction_settings = config
     reaction_versions = fixture_versions()
     async with operational_reaction_services(
-        repo, reaction_settings, versions=reaction_versions
+        repo, reaction_settings, versions=reaction_versions, budgets=service.budgets
     ) as reaction_services:
         tools = EventToolService(
             repo,

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic_settings import SettingsConfigDict
 from scheduler_support import operational_reaction_services
-from source_support import fixture_versions
+from source_support import fixture_request_budgets, fixture_versions
 
 from tank.analysis.truth import MarketTruthService
 from tank.market.service import MarketService
@@ -31,7 +31,7 @@ async def test_operational_reaction_fixture_owns_actual_services_and_drains_task
             finished.set()
 
     async with operational_reaction_services(
-        MemoryRepository(), settings, versions=fixture_versions()
+        MemoryRepository(), settings, versions=fixture_versions(), budgets=fixture_request_budgets()
     ) as services:
         assert isinstance(services.market, MarketService)
         assert isinstance(services.truth, MarketTruthService)
