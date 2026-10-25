@@ -6,8 +6,9 @@ import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture
 from native_input_fixtures import acknowledge_native_input
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
+from tank.agents.native_inputs import NativeUserMessage, UnreportedNativeInput
 from tank.agents.outbound_inputs import (
     AcceptedOutboundInput,
     LegacyUnreportedAcceptance,
@@ -237,3 +238,82 @@ async def test_concurrent_receipts_preserve_or_refine_actual_acknowledgment_with
     assert result["messages"] == ["message"]
     if not already_reported:
         assert result_journal[0]["native_input_attempts"] == {"native-input": 0}
+
+
+@pytest.mark.asyncio
+async def test_outbound_row_identity_must_match_native_receiver_before_posting() -> None:
+    repo = MemoryRepository()
+    malformed = {**session_record(), "session_id": "different-session"}
+    await repo.put("ops.agent_sessions", "session", malformed)
+    calls: list[str] = []
+
+    def forbidden(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        raise AssertionError("A different stored owner must not receive native input")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(forbidden)) as http:
+        service = SessionService(
+            repo,
+            Settings(openma_url="http://native", ops_progress_enabled=False, _env_file=None),
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+        )
+        with pytest.raises(ValueError, match="identity differs"):
+            await service.post_message_intent("session", "message")
+    assert calls == []
+    assert await repo.get("ops.agent_sessions", "session") == malformed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity", ["", "session/with?delimiter"])
+async def test_native_input_receiver_is_required_and_encoded_as_one_path_segment(identity: str) -> None:
+    paths: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.raw_path)
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(
+            MemoryRepository(),
+            Settings(openma_url="http://native", _env_file=None),
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+        )
+        body = NativeUserMessage(type="user.message", content=[])
+        if identity:
+            observed = await service.post_input(identity, body, idem="message:declared-intent")
+            assert observed == UnreportedNativeInput(status="UNREPORTED")
+        else:
+            with pytest.raises(ValidationError):
+                await service.post_input(identity, body, idem="message:declared-intent")
+    assert paths == ([b"/v1/sessions/session%2Fwith%3Fdelimiter/events"] if identity else [])
+
+
+@pytest.mark.asyncio
+async def test_recovery_refuses_unmatched_active_owner_before_posting_an_otherwise_valid_intent() -> None:
+    repo = MemoryRepository()
+    malformed = {**session_record(), "active_message_id": "missing-owner"}
+    await repo.put("ops.agent_sessions", "session", malformed)
+    calls: list[str] = []
+
+    def forbidden(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        raise AssertionError("An inconsistent active pointer cannot authorize recovery")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(forbidden)) as http:
+        service = SessionService(
+            repo,
+            Settings(openma_url="http://native", ops_progress_enabled=False, _env_file=None),
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+        )
+        with pytest.raises(ValueError, match="authoritative journal owner"):
+            await service.recover_outbound_inputs("session")
+        with pytest.raises(ValueError, match="authoritative journal owner"):
+            await service.post_message_intent("session", "message")
+    assert calls == []
+    assert await repo.get("ops.agent_sessions", "session") == malformed

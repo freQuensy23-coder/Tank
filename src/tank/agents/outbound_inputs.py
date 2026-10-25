@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import Field, JsonValue
 
+from tank.agents.context_binding import ContextBinding
 from tank.agents.native_inputs import (
     AcceptedNativeInput,
     NativeInputAcknowledgment,
@@ -22,7 +23,7 @@ class OutboundSource(DomainModel):
 
 class InitialInputDefinition(DomainModel):
     message_id: str = Field(min_length=1)
-    body: NativeUserMessage
+    body: NativeUserMessage = Field(repr=False)
     attempt: ZeroInt
     source: OutboundSource
 
@@ -148,6 +149,7 @@ class RecordedInputIdentity(DomainModel):
 
 
 def recoverable_outbound_inputs(session: dict[str, JsonValue]) -> tuple[PendingOutboundInput, ...]:
+    ContextBinding.from_session(session)
     journal = session.get("message_log", [])
     if not isinstance(journal, list):
         raise ValueError("Outbound input journal must be an array")

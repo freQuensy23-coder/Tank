@@ -1946,6 +1946,157 @@
       "validation": [
         "test_tool_update_requires_readback_and_recovers_lost_acceptance_without_republication"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/input_ownership.py",
+          "symbol": "JournalInputLineage"
+        },
+        {
+          "path": "src/tank/agents/input_ownership.py",
+          "symbol": "ToolInputLineage"
+        }
+      ],
+      "kind": "retained acknowledgment and retry-lineage absence",
+      "reason": "Required nullable fields represent genuine unreported input IDs or missing historical attempt evidence. Current ID plus recorded current count or an explicit input-to-attempt entry establishes ownership. Superseded array position and missing tool attempt never supply a guessed count. Legacy null supersession markers remain unreported identities; new writers do not append them.",
+      "validation": [
+        "test_actual_service_resolves_recorded_current_superseded_and_tool_input_owners",
+        "test_historical_unknown_retry_attempt_cannot_be_invented_from_position_or_zero",
+        "test_two_actual_messages_cannot_claim_one_native_input"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/input_ownership.py",
+          "symbol": "JournalInputLineage.attempts"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.native_input_owner"
+        }
+      ],
+      "kind": "actual identifier-indexed collections",
+      "reason": "Attempt maps are dynamic native input ID to nonnegative integer indexes, not structured record payloads. The owner set rejects multiple actual message/attempt claims. An empty set returns genuine no matching accepted owner; it never substitutes the active or last input.",
+      "validation": [
+        "test_two_actual_messages_cannot_claim_one_native_input",
+        "test_acknowledged_execution_can_rebind_only_to_its_actual_journal_owner"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/outbound_inputs.py",
+          "symbol": "AcceptedOutboundInput"
+        },
+        {
+          "path": "src/tank/agents/outbound_inputs.py",
+          "symbol": "LegacyUnreportedAcceptance"
+        },
+        {
+          "path": "src/tank/agents/outbound_inputs.py",
+          "symbol": "parse_outbound_input"
+        }
+      ],
+      "kind": "phase-specific retained acceptance evidence",
+      "reason": "An omitted or empty provider receipt is a named observed outcome. Historical receipts that were not retained have a separate explicit reason. Absent historical acceptance clock remains None; an explicitly present clock preserves its timestamp provenance. A current retry input ID cannot impersonate the unknown original receipt. Accepted input needs no reconstituted original body merely to avoid reposting.",
+      "validation": [
+        "test_actual_initial_acceptance_preserves_reported_or_unreported_receipt_once",
+        "test_retained_retry_identity_does_not_fabricate_the_initial_receipt",
+        "test_concurrent_receipts_preserve_or_refine_actual_acknowledgment_without_losing_lineage"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/outbound_inputs.py",
+          "symbol": "OutboundSource"
+        },
+        {
+          "path": "src/tank/agents/outbound_inputs.py",
+          "symbol": "initial_input_definition"
+        }
+      ],
+      "kind": "non-source input and unreported source observation",
+      "reason": "User questions and other non-source intents genuinely have no source item. A missing source observation remains an explicit Timestamp with unavailable value/provenance; actual local acceptance time is not substituted for it. Pending initial bodies and attempt zero are required and strictly validated before posting.",
+      "validation": [
+        "test_actual_initial_acceptance_preserves_reported_or_unreported_receipt_once",
+        "test_invalid_retained_intent_refuses_before_any_native_post"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/outbound_inputs.py",
+          "symbol": "outbound_message_record"
+        },
+        {
+          "path": "src/tank/agents/outbound_inputs.py",
+          "symbol": "recoverable_outbound_inputs"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.post_message_intent"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.recover_outbound_inputs"
+        }
+      ],
+      "kind": "private journal storage adapters under bounded migration",
+      "reason": "Raw dictionaries are confined to loading/patching the existing private document while preserving unrelated retained fields. Services consume Pending/Accepted definitions. No Mapping-compatible model or permissive extras were introduced. Absent journal means a genuine pre-input/origin-only record only when the ownership guard permits it. Full SessionService journal aggregation remains open, not a blanket map exception.",
+      "validation": [
+        "test_new_service_recovers_lost_initial_response_with_same_durable_input_and_key",
+        "test_changed_durable_body_refuses_acceptance_commit_after_http_response",
+        "test_recovery_refuses_unmatched_active_owner_before_posting_an_otherwise_valid_intent"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_retry.py",
+          "symbol": "KnownRetryState"
+        },
+        {
+          "path": "src/tank/agents/native_retry.py",
+          "symbol": "UnknownRetryState"
+        },
+        {
+          "path": "src/tank/agents/native_retry.py",
+          "symbol": "retry_state"
+        }
+      ],
+      "kind": "explicit historical retry refusal",
+      "reason": "Missing budget/count or current owner cannot authorize automatic posting and cannot become zero or last_message ownership. A missing original body refuses when retry would otherwise be allowed. Declared zero remains valid. Origin-only records can use their actual retained body/count; stale journal history cannot impersonate an origin-only input. Unreported prior input IDs remain None rather than invented superseded IDs.",
+      "validation": [
+        "test_unknown_historical_retry_state_refuses_before_posting_and_preserves_retained_row",
+        "test_new_declared_input_budget_is_not_blocked_by_unknown_origin_history",
+        "test_restart_keeps_native_retry_execution_and_does_not_post_again"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/native_retry.py",
+          "symbol": "PendingNativeRetry"
+        },
+        {
+          "path": "src/tank/agents/native_retry.py",
+          "symbol": "AcceptedNativeRetry"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.process_event"
+        }
+      ],
+      "kind": "closed retry intent plus retained native wire evidence",
+      "reason": "The new retry intent/receipt are closed models, serialized at the existing private storage adapter. The original pending native failure event is retained as wire evidence for recovery through the still-open native event adapter. No new cutoff is written or required; old captured cutoff/index fields remain untouched. New receipt identity cannot be the prior attempt's accepted input. Full process_event domain migration remains open.",
+      "validation": [
+        "test_retry_lost_ack_recovers_durable_failure_intent_without_second_retry",
+        "test_retained_unused_cutoff_and_index_metadata_are_preserved_without_authorizing_retry",
+        "test_retry_cannot_reassign_the_original_native_input_to_a_new_attempt"
+      ]
     }
   ]
 }

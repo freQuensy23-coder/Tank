@@ -1,10 +1,10 @@
 """Declared host retry budgets and durable native retry phases."""
 
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field, JsonValue
+from pydantic import Field, JsonValue, model_validator
 
-from tank.agents.native_inputs import NativeInputAcknowledgment, NativeUserMessage
+from tank.agents.native_inputs import AcceptedNativeInput, NativeInputAcknowledgment, NativeUserMessage
 from tank.contracts import DomainModel
 from tank.contracts.scalars import OneInt, ZeroInt
 from tank.time_precision import Timestamp
@@ -13,7 +13,6 @@ type UnknownRetryReason = Literal[
     "RETRY_COUNT_NOT_RETAINED",
     "CURRENT_INPUT_OWNER_NOT_RETAINED",
     "RETRY_BODY_NOT_RETAINED",
-    "TOOL_ORDINAL_NOT_RETAINED",
 ]
 
 
@@ -61,9 +60,10 @@ class PendingNativeRetry(DomainModel):
     previous_attempt: ZeroInt
     next_attempt: OneInt
     failure_event_id: str = Field(min_length=1)
-    tool_call_ordinal_cutoff: int = Field(ge=0)
 
     def idempotency_key(self, session_id: str) -> str:
+        if isinstance(self.owner, OriginRetryOwner) and self.owner.session_id != session_id:
+            raise ValueError("Origin retry belongs to a different session")
         selector = self.owner.message_id if isinstance(self.owner, JournalRetryOwner) else "legacy"
         return "turn-retry:" + session_id + ":" + selector
 
@@ -76,6 +76,16 @@ class AcceptedNativeRetry(DomainModel):
     intent: PendingNativeRetry
     receipt: NativeInputAcknowledgment
     accepted_at: Timestamp
+
+    @model_validator(mode="after")
+    def replacement_has_its_own_input_identity(self) -> Self:
+        if (
+            isinstance(self.receipt, AcceptedNativeInput)
+            and self.intent.previous_input_id is not None
+            and self.receipt.event_id == self.intent.previous_input_id
+        ):
+            raise ValueError("Native retry reused the prior accepted input identity")
+        return self
 
 
 def retry_state(

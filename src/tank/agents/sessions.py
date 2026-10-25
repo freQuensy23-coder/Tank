@@ -71,7 +71,7 @@ from tank.agents.session_contracts import (
     SessionPromptState,
     SessionToolBoundaryState,
 )
-from tank.agents.session_ownership import put_owned_session
+from tank.agents.session_ownership import put_owned_session, require_owned_session_identity
 from tank.agents.tool_contracts import (
     CapturedToolResult,
     FailedToolResponse,
@@ -104,7 +104,7 @@ from tank.ops_progress import session_progress
 from tank.runtime_contracts import ScoutMessage, ScoutReviewJob, UserQuestionMessage
 from tank.telegram_inbox import DOCUMENT_LIMIT, GONE_TEXT, closed_reason, question_message, record_answer
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
-from tank.util import canonical_json, parse_time, sha256, utcnow
+from tank.util import canonical_json, jsonable, parse_time, sha256, utcnow
 
 REST_TIMEOUT_S = 30
 
@@ -692,6 +692,8 @@ class SessionService:
         session = await self.repo.get("ops.agent_sessions", sid)
         if session is None:
             raise KeyError(sid)
+        require_owned_session_identity(sid, session)
+        ContextBinding.from_session(session)
         pending = parse_outbound_input(outbound_message_record(session, key))
         if isinstance(pending, AcceptedOutboundInput):
             return session
@@ -702,6 +704,7 @@ class SessionService:
             current = await self.repo.get("ops.agent_sessions", sid)
             if current is None:
                 raise KeyError(sid)
+            require_owned_session_identity(sid, current)
             intent = outbound_message_record(current, key)
             durable = parse_outbound_input(intent)
             if isinstance(durable, AcceptedOutboundInput):
@@ -720,7 +723,7 @@ class SessionService:
                         accepted.event_id: pending.attempt,
                     }
                     intent["remote_event_id"] = accepted.event_id
-                    intent["initial_input_acceptance"] = receipt.model_dump(mode="json")
+                    intent["initial_input_acceptance"] = jsonable(receipt)
                     await put_owned_session(self.repo, sid, current)
                 return current
             if durable != pending:
@@ -735,7 +738,7 @@ class SessionService:
             intent.update(
                 **accepted_at.fields("sent_at"),
                 remote_event_id=identity,
-                initial_input_acceptance=receipt.model_dump(mode="json"),
+                initial_input_acceptance=jsonable(receipt),
                 turn_status="PENDING",
             )
             messages = current.setdefault("messages", [])
@@ -762,11 +765,13 @@ class SessionService:
             session = await self.repo.get("ops.agent_sessions", sid)
             if session is None:
                 raise KeyError(sid)
+            require_owned_session_identity(sid, session)
             for message in recoverable_outbound_inputs(session):
                 await self.post_message_intent(sid, message.message_id)
         session = await self.repo.get("ops.agent_sessions", sid)
         if session is None:
             raise KeyError(sid)
+        require_owned_session_identity(sid, session)
         await session_progress(self.repo, self.settings, session)
         pending_retry = session.get("pending_retry_event")
         if pending_retry is not None:
@@ -775,10 +780,11 @@ class SessionService:
             await self.process_event(sid, pending_retry)
 
     async def post_input(self, sid: str, body: NativeInput, *, idem: str) -> NativeInputAcknowledgment:
+        receiver = NativeSessionReference(session_id=sid)
         response = await self.request(
             "POST",
-            f"sessions/{sid}/events",
-            json=NativeInputRequest(events=[body]).model_dump(mode="json", exclude_none=True),
+            f"sessions/{quote(receiver.session_id, safe='')}/events",
+            json=decode_json(NativeInputRequest(events=[body]).model_dump_json(exclude_none=True)),
             idem=idem,
         )
         return observe_native_input(response, body)
@@ -1711,6 +1717,9 @@ class SessionService:
         key = sid + ":" + event["id"]
         async with self.event_locks.setdefault(sid, asyncio.Lock()):
             session = await self.repo.get("ops.agent_sessions", sid)
+            if session is None:
+                raise KeyError(sid)
+            require_owned_session_identity(sid, session)
             if session.get("status") in ("FAILED", "ENDED"):
                 return
             before = copy.deepcopy(session)
@@ -1915,13 +1924,6 @@ class SessionService:
                         durable = await self.repo.get("ops.agent_sessions", sid)
                         if durable is None:
                             raise KeyError(sid)
-                        cutoff = (
-                            event["_host_retry_call_ordinal_cutoff"]
-                            if "_host_retry_call_ordinal_cutoff" in event
-                            else durable.get("next_tool_call_ordinal")
-                        )
-                        if cutoff is None:
-                            raise UnknownNativeRetryState("TOOL_ORDINAL_NOT_RETAINED")
                         plan = PendingNativeRetry.model_validate(
                             {
                                 "phase": "PENDING",
@@ -1931,22 +1933,18 @@ class SessionService:
                                 "previous_attempt": retry,
                                 "next_attempt": 1,
                                 "failure_event_id": event["id"],
-                                "tool_call_ordinal_cutoff": cutoff,
                             }
                         )
                         retained = durable.get("pending_retry_intent")
                         if retained is not None and PendingNativeRetry.model_validate(retained) != plan:
                             raise ValueError("Pending native retry intent changed before posting")
-                        event = dict(event, _host_retry_call_ordinal_cutoff=plan.tool_call_ordinal_cutoff)
+                        event = dict(event)
                         durable["pending_retry_event"] = copy.deepcopy(event)
-                        durable["pending_retry_intent"] = plan.model_dump(mode="json")
+                        durable["pending_retry_intent"] = jsonable(plan)
                         await put_owned_session(self.repo, sid, durable)
                     accepted = await self.post_input(sid, plan.body, idem=plan.idempotency_key(sid))
                     receipt = plan.accepted(accepted, self.clock_timestamp())
                     if active:
-                        active.setdefault("retry_call_ordinal_cutoffs", {})[str(retry)] = event[
-                            "_host_retry_call_ordinal_cutoff"
-                        ]
                         previous_input = active.get("remote_event_id")
                         if previous_input:
                             active.setdefault("native_input_attempts", {})[previous_input] = retry
@@ -1965,11 +1963,11 @@ class SessionService:
                             retry_count=retry + 1,
                             turn_status="RUNNING",
                             remote_event_id=self.accepted_input_id(accepted),
-                            retry_acceptance=receipt.model_dump(mode="json"),
+                            retry_acceptance=jsonable(receipt),
                         )
                     else:
                         session["retry_count"] = retry + 1
-                        session["retry_acceptance"] = receipt.model_dump(mode="json")
+                        session["retry_acceptance"] = jsonable(receipt)
                     session["pending_retry_event"] = None
                     session["pending_retry_intent"] = None
                     session["runtime_status"] = "RUNNING"

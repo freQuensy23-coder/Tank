@@ -786,16 +786,29 @@ storage adapter remains a boundary under migration; these models do not pretend
 to be a full SessionService aggregate. The retry writer still requires its
 separate pending/reported/unknown-budget conversion before outbound release.
 
-Retry-phase activation is an unqualified work checkpoint. KnownRetryState,
-UnknownRetryState, PendingNativeRetry and AcceptedNativeRetry retain the actual
-budget, input definition, owner, failure identity and callback ordinal fence.
-Missing counts, missing owner/body or missing cutoff refuse before posting,
-without fabricating a terminal native event. The first focused run has 59 passes
-and 11 expected fixture-fact failures after removal of the ordinal-zero guess;
-synthetic known-budget controls and explicit unknown-state regressions are still
-being completed. Fresh provisioning versus native discovery/adoption must be
-distinguished before any initial ordinal zero is assigned. No retry release or
-whole-session completion is claimed.
+Retry phase models now retain the declared budget, actual input definition,
+verified owner and real failure identity. Missing counts, missing current owner
+or missing original body refuse before posting without fabricating terminal
+native events. Declared legacy zero remains valid; a fresh journal input uses
+its own count even when unrelated origin history lacks that fact.
+
+The diagnostic cutoff requirement was removed after the complete consumer
+inventory proved the fields were write-only. No fixture was padded to satisfy
+it. The 642-case diagnostic (629 passes and 13 cutoff refusals) remains preserved
+in agents-outbound-diagnostic-unit.log/XML. Existing captured cutoff/index
+metadata remains unchanged. Operational late callback fencing continues to use
+message IDs and actual retry attempt identities. Optional replay ordinal
+reporting and the old tool ordering counter are separate open tool-ledger work;
+no discovery API or new sequence epoch was introduced for retry.
+
+Seventy phase/lineage/retry cases initially passed; the subsequent affected
+workflow selection passes all 127 cases after retiring the unused dependency.
+The actual missing-budget/owner tests prove zero HTTP, unchanged retained rows
+and no fabricated terminal failure. A new declared input is not blocked by
+unknown origin history. The behavior tests that call process_event remain
+outside independent strict enforcement until that legacy boundary is migrated;
+no suppression or protocol facade hides this open work.
+
 ## Native archive-clock companion
 
 NativeSessionState.actual_archive_clock uses the shared aware timestamp parser
@@ -821,3 +834,18 @@ native_turn_call_index is reported as optional replay checkpoint metadata.
 Operational late callback supersession compares actual message and retry
 attempt identities. The WIP cutoff requirement therefore remains under review
 and must not be used to justify padding retained fixture metadata.
+
+
+Outbound receiver and recovery guards now verify the stored session identity
+before native effects, and refuse unmatched active pointers before reposting an
+otherwise valid pending intent. Native input resource IDs are required and
+encoded as one path segment. Acceptance cannot assign a prior native input ID
+to a different host retry attempt. Reported receipts preserve or refine existing
+evidence without discarding known IDs when a concurrent response omits them.
+Private initial/retry bodies are hidden from model representations; the actual
+wire is serialized through the typed JSON codec only at HTTP/storage boundaries.
+
+Owner-wide unit/integration qualification for the complete outbound increment
+is pending. The remaining full-session and runtime-worker annotation inventory
+is recorded separately; this bounded migration does not approve their generic
+maps or remaining fallbacks.

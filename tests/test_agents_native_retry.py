@@ -292,3 +292,64 @@ async def test_malformed_acknowledgment_cannot_commit_input_ownership(stage: str
     finally:
         await service.close()
         await http.aclose()
+
+
+async def test_retained_unused_cutoff_and_index_metadata_are_preserved_without_authorizing_retry() -> None:
+    repo, service, http, states, posts, history = await setup()
+    current = await repo.get("ops.agent_sessions", "s")
+    assert current is not None
+    journal = current["message_log"]
+    assert isinstance(journal, list) and isinstance(journal[0], dict)
+    journal[0]["retry_call_ordinal_cutoffs"] = {"0": 17}
+    current["next_tool_call_ordinal"] = 31
+    await repo.put("ops.agent_sessions", "s", current)
+    call = await repo.get("ops.tool_calls", "s:original-tool")
+    assert call is not None
+    call["native_turn_call_index"] = 19
+    await repo.put("ops.tool_calls", "s:original-tool", call)
+    failure = error("failure-with-retained-metadata", CALLBACK, "exhausted")
+    failure["_host_retry_call_ordinal_cutoff"] = 23
+    original_failure = copy.deepcopy(failure)
+    try:
+        await service.process_event("s", failure)
+        after = await repo.get("ops.agent_sessions", "s")
+        assert after is not None and after["next_tool_call_ordinal"] == 31
+        after_journal = after["message_log"]
+        assert isinstance(after_journal, list) and isinstance(after_journal[0], dict)
+        assert after_journal[0]["retry_call_ordinal_cutoffs"] == {"0": 17}
+        assert after_journal[0]["retry_count"] == 1
+        after_call = await repo.get("ops.tool_calls", "s:original-tool")
+        assert after_call is not None and after_call["native_turn_call_index"] == 19
+        assert failure == original_failure
+        assert len(posts) == 1 and posts[0]["key"] == "turn-retry:s:message"
+    finally:
+        await service.close()
+        await http.aclose()
+
+
+async def test_retry_cannot_reassign_the_original_native_input_to_a_new_attempt() -> None:
+    acknowledgment: dict[str, JsonValue] = {
+        "data": [
+            {
+                "id": INITIAL,
+                "type": "user.message",
+                "content": [{"type": "text", "text": "original input"}],
+            }
+        ]
+    }
+    repo, service, http, states, posts, history = await setup(acknowledgment)
+    try:
+        with pytest.raises(ValidationError, match="reused the prior accepted input"):
+            await service.process_event("s", error("exhausted", CALLBACK, "exhausted"))
+        current = await repo.get("ops.agent_sessions", "s")
+        assert current is not None
+        journal = current["message_log"]
+        assert isinstance(journal, list) and isinstance(journal[0], dict)
+        assert journal[0]["remote_event_id"] == INITIAL and journal[0]["retry_count"] == 0
+        assert "superseded_native_inputs" not in current
+        assert "retry_acceptance" not in journal[0]
+        assert current["pending_retry_intent"] is not None
+        assert len(posts) == 1
+    finally:
+        await service.close()
+        await http.aclose()
