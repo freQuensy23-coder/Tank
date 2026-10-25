@@ -58,6 +58,7 @@ from tank.contracts.page_evidence import (
     PageReadProvenance,
     RecordedBodyProvenance,
 )
+from tank.contracts.progress import PublicationReceipt
 from tank.contracts.provenance import GenerationProvenance, ResolvedVersionIdentity
 from tank.contracts.source_repository import SourceExtractionRepository
 from tank.contracts.tool_schema import SCOPED_TOOLS as SCOPED_TOOLS
@@ -2657,7 +2658,7 @@ class EventToolService:
         publication_state = {
             "contract_version": 1,
             "event_id": eid,
-            "kind": a.get("kind"),
+            "kind": narrative.kind,
             "ems_id": assessment["ems_id"],
             "ems_class": assessment["class"],
             "lifecycle": event["lifecycle"],
@@ -2672,7 +2673,7 @@ class EventToolService:
         }
 
         def publication_outcome(result):
-            reason = result.get("reason") or ("GENERATED" if result.get("published") else "UNKNOWN")
+            reason = result["reason"]
             suppressed = reason in {
                 "TERMINAL_EVENT",
                 "FIRST_CARD_ALREADY_GENERATED",
@@ -2685,16 +2686,17 @@ class EventToolService:
             }
             receipt = copy.deepcopy(publication_state)
             receipt.update(
-                disposition="PUBLISHED"
-                if result.get("published")
-                else "SUPPRESSED"
-                if suppressed
-                else "REFUSED",
+                disposition="PUBLISHED" if result["published"] else "SUPPRESSED" if suppressed else "REFUSED",
                 reason=reason,
-                alert_id=result.get("alert_id"),
-                alert_version=result.get("version"),
+                alert_id=result["alert_id"] if result["published"] else None,
+                alert_version=result["version"] if result["published"] else None,
             )
-            return dict(result, publication_receipt=receipt)
+            return dict(
+                result,
+                publication_receipt=PublicationReceipt.model_validate(receipt).model_dump(
+                    mode="json", exclude_unset=True
+                ),
+            )
 
         if event["lifecycle"] in {"CLOSED", "MERGED"}:
             return publication_outcome({"published": False, "reason": "TERMINAL_EVENT"})
@@ -2725,13 +2727,7 @@ class EventToolService:
                 decisions.append(decision)
         publication_state.update(
             decision_ids=[row["dec_id"] for row in decisions],
-            market_truth_ids=sorted(
-                {
-                    row.get("market_truth_id") or row.get("mta_id")
-                    for row in decisions
-                    if row.get("market_truth_id") or row.get("mta_id")
-                }
-            ),
+            market_truth_ids=sorted({row["market_truth_id"] for row in decisions}),
         )
         event["claims"] = await self.rows("evt.claims", eid)
         event["contradictions"] = await self.rows("ana.contradictions", eid)
