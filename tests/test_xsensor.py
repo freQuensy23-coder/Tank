@@ -9,8 +9,9 @@ import pytest
 import zstandard
 from test_sources import Repo, settings
 
+from tank.agents.pipeline import Pipeline
 from tank.sources import SourceService
-from tank.sources.xsensor import AccountFailure, XSensor
+from tank.sources.xsensor import AccountFailure, ApifyPost, XSensor
 
 URL = "https://api.apify.com/v2/actors/actor/run-sync?build=direct&memory=256&timeout=110"
 
@@ -224,3 +225,72 @@ async def test_s29_poll_stores_new_posts_and_moves_cursors_only_after_them(tmp_p
     state = await checkpoint()
     assert result["status"] == "DEGRADED" and "PUBLIC_SOURCE_UNAVAILABLE" in state["acquisition_error"]
     assert state["account_cursors"] == {"official_org": "105", "other_account": "102"}
+
+
+@pytest.mark.asyncio
+async def test_referenced_posts_reach_the_item_with_their_origin(tmp_path):
+    references = [
+        {
+            "relation": "quoted",
+            "id": "50",
+            "author": "KeystoneWallet",
+            "url": "https://x.com/KeystoneWallet/status/50",
+            "publishedAt": "2026-10-24T17:59:04+00:00",
+            "text": "We detected unauthorized access to our website.",
+        },
+        {
+            "relation": "replied_to",
+            "id": "40",
+            "author": None,
+            "url": "https://x.com/i/status/40",
+            "publishedAt": None,
+            "text": None,
+            "error": "PUBLIC_POST_HTTP_404",
+        },
+        {
+            "relation": "linked",
+            "id": "30",
+            "author": "aave",
+            "url": "https://x.com/aave/status/30",
+            "publishedAt": "not a time",
+            "text": "",
+        },
+    ]
+    source = {"source_id": "S29", "name": "X", "feeds": [{"kind": "x", "url": URL}]}
+    config = settings(tmp_path, [source])
+    config.apify_api_token = "FAKE-token"
+    actor = Actor(
+        (201, run([post("100", "cz_binance")], [account("cz_binance")], {"cz_binance": "100"})),
+        (
+            201,
+            run(
+                [
+                    {**post("105", "cz_binance", "Stay SAFU!"), "referencedPosts": references},
+                    post("100", "cz_binance"),
+                ],
+                [account("cz_binance")],
+                {"cz_binance": "105"},
+            ),
+        ),
+    )
+    repo = Repo()
+    svc = SourceService(repo, config, http=httpx.AsyncClient(transport=httpx.MockTransport(actor)))
+    svc.accounts = {"cz_binance": {"handle": "cz_binance", "role": "FOUNDER_C_LEVEL", "entity_id": "binance"}}
+    await svc.poll_once("S29")
+    await svc.poll_once("S29")
+    [item] = [v for (c, _), v in repo.rows.items() if c == "ingest.source_items"]
+    assert item["text"] == "Stay SAFU!" and item["author"] == "cz_binance"
+    assert item["quoted"] == (
+        "@cz_binance quoted a post by @KeystoneWallet "
+        "(https://x.com/KeystoneWallet/status/50, published 2026-10-24T17:59:04Z):\n"
+        "We detected unauthorized access to our website.\n\n"
+        "@cz_binance replied to a post by an unknown account (https://x.com/i/status/40):\n"
+        "[text unavailable: PUBLIC_POST_HTTP_404]\n\n"
+        "@cz_binance linked a post by @aave (https://x.com/aave/status/30):\n"
+        "[the post has no text]"
+    )
+    assert Pipeline.item_view(item)["quoted"].startswith(
+        "@cz_binance quoted a post by @KeystoneWallet (https://x.com/KeystoneWallet/status/50"
+    )
+    assert [args[0] for args, _ in repo.jobs] == ["FILTER_ITEM"]
+    assert "quoted" not in ApifyPost.model_validate(post("1")).row(b"{}")

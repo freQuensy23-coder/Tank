@@ -868,8 +868,9 @@ sources:
     interval_s: 120
   priority: SECONDARY
   terms_notes: The Apify actor fdfsfsdfasfa/tank-x-notifier (build direct) reads the public profile
-    pages of the registry x_accounts, usually the latest five own posts each, no reposts. One run per
-    pass; Apify bills compute and storage per run.
+    pages of the registry x_accounts, usually the latest five own posts each, with the text of the
+    posts they quote, reply to or link; signed-out profiles show no reposts and no replies to other
+    accounts. One run per pass; Apify bills compute and storage per run.
   limits:
     rate_per_min: null
     budget_fraction: 0.5
