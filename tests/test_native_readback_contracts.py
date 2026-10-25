@@ -4,6 +4,7 @@ from typing import Literal
 
 import httpx
 import pytest
+from native_session_fixtures import native_session_record
 from pydantic import JsonValue, ValidationError
 
 from tank.agents.native_readback import (
@@ -109,3 +110,53 @@ async def test_lookup_encodes_a_resource_id_as_one_path_segment() -> None:
 def test_missing_lookup_identifier_is_not_replaced_by_an_empty_path() -> None:
     with pytest.raises(ValidationError):
         NativeSessionReference(session_id="")
+
+
+@pytest.mark.asyncio
+async def test_prompt_recovery_uses_the_exact_native_session_snapshot() -> None:
+    paths: list[str] = []
+    wire = native_session_record(
+        "session",
+        agent_id="observed-agent",
+        environment_id="environment",
+        metadata={},
+        model_id="observed-model",
+        agent_snapshot={"version": 9, "system": "Frozen observed session instructions"},
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return httpx.Response(200, json=wire)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        found = await NativeSessionReader(HttpEndpoint(http)).prompt(
+            "session", prompt_label="legacy-declaration"
+        )
+    assert not isinstance(found, NativeSessionMissing)
+    descriptor = found.observation.provenance
+    assert descriptor.agent_id == "observed-agent" and descriptor.agent_version == "9"
+    assert descriptor.model_id == "observed-model"
+    assert descriptor.prompt_label == "legacy-declaration"
+    assert descriptor.prompt_version is not None
+    assert paths == ["/v1/sessions/session"]
+
+
+@pytest.mark.asyncio
+async def test_partial_nested_tool_report_cannot_verify_prompt_provenance() -> None:
+    wire = native_session_record(
+        "session",
+        agent_id="agent",
+        environment_id="environment",
+        metadata={},
+        model_id="model",
+    )
+    agent = wire["agent"]
+    assert isinstance(agent, dict)
+    agent["tools"] = [{"type": "agent_toolset_20260401", "default_config": {"enabled": True}}]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=wire)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        with pytest.raises(ValueError, match="incomplete"):
+            await NativeSessionReader(HttpEndpoint(http)).prompt("session", prompt_label=None)

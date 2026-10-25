@@ -36,6 +36,11 @@ class NativeSessionPrompt(NativeSessionReference):
     observation: NativePromptObservation
 
 
+class NativeSessionSnapshot(NativeSessionReference):
+    state: NativeSessionState
+    observation: NativePromptObservation
+
+
 def observe_native_state(wire: dict[str, JsonValue], requested: NativeSessionReference) -> NativeSessionState:
     observed = NativeSessionState.model_validate(
         {
@@ -81,5 +86,18 @@ class NativeSessionReader:
             raise ValueError("Native prompt lookup returned a different session identity")
         return NativeSessionPrompt(
             session_id=requested.session_id,
+            observation=observe_resolved_native_prompt(wire, prompt_label=prompt_label),
+        )
+
+    async def snapshot(
+        self, session_id: str, *, prompt_label: str | None
+    ) -> NativeSessionSnapshot | NativeSessionMissing:
+        requested = NativeSessionReference(session_id=session_id)
+        wire = await self._lookup(requested)
+        if isinstance(wire, NativeSessionMissing):
+            return wire
+        return NativeSessionSnapshot(
+            session_id=requested.session_id,
+            state=observe_native_state(wire, requested),
             observation=observe_resolved_native_prompt(wire, prompt_label=prompt_label),
         )
