@@ -6,6 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 from pydantic import JsonValue, ValidationError
+from scheduler_support import operational_reaction_services
 from source_support import fixture_request_budgets, fixture_versions
 
 from tank.sources.capture_fetch import (
@@ -359,25 +360,35 @@ async def test_real_web_evidence_record_roundtrips_without_feed_source_assumptio
     from tank.settings import Settings
 
     repo = MemoryRepository()
-    service = EventToolService(
-        repo, Settings(data_dir=tmp_path, ops_progress_enabled=False), None, None, versions=fixture_versions()
-    )
-    record = await service.save_web(
-        "https://example.org/evidence",
-        "Verified public document text",
-        "Public document",
-        {},
-        raw_bytes=b"<article>Verified public document text</article>",
-        media_type="text/html",
-    )
-    item = parse_source_item(record)
-    assert isinstance(item, WebEvidenceItem)
-    assert item.storage_record() == record
-    from tank.contracts.source_items import SourceItemDocument
+    reaction_settings = Settings(data_dir=tmp_path, ops_progress_enabled=False)
+    reaction_versions = fixture_versions()
+    async with operational_reaction_services(
+        repo, reaction_settings, versions=reaction_versions
+    ) as reaction_services:
+        service = EventToolService(
+            repo,
+            reaction_settings,
+            reaction_services.truth,
+            None,
+            versions=reaction_versions,
+            scheduler=reaction_services.scheduler,
+        )
+        record = await service.save_web(
+            "https://example.org/evidence",
+            "Verified public document text",
+            "Public document",
+            {},
+            raw_bytes=b"<article>Verified public document text</article>",
+            media_type="text/html",
+        )
+        item = parse_source_item(record)
+        assert isinstance(item, WebEvidenceItem)
+        assert item.storage_record() == record
+        from tank.contracts.source_items import SourceItemDocument
 
-    assert SourceItemDocument(item).model_dump(mode="json") == record
-    assert item.raw_size_bytes == len(b"<article>Verified public document text</article>")
-    assert item.with_extraction(CompletedExtraction(status="DONE")).raw_sha256 == item.raw_sha256
+        assert SourceItemDocument(item).model_dump(mode="json") == record
+        assert item.raw_size_bytes == len(b"<article>Verified public document text</article>")
+        assert item.with_extraction(CompletedExtraction(status="DONE")).raw_sha256 == item.raw_sha256
 
 
 @pytest.mark.parametrize("identity", ["", " ", "event id"])
@@ -443,47 +454,59 @@ async def test_feed_duplicate_of_web_evidence_counts_feeds_without_replacing_ori
 
     repo = MemoryRepository()
     settings = Settings(data_dir=tmp_path, ops_progress_enabled=False)
-    tools = EventToolService(repo, settings, None, None, versions=fixture_versions())
-    original = await tools.save_web(
-        "https://example.org/original",
-        "Shared independently observed facts",
-        "",
-        {},
-        raw_bytes=b"<article>Shared independently observed facts</article>",
-        media_type="text/html",
-    )
-    original_raw = Path(original["raw_ref"])
-    original_bytes = original_raw.read_bytes()
-    async with httpx.AsyncClient() as http:
-        service = SourceService(
-            repo, settings, http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
+    reaction_settings = settings
+    reaction_versions = fixture_versions()
+    async with operational_reaction_services(
+        repo, reaction_settings, versions=reaction_versions
+    ) as reaction_services:
+        tools = EventToolService(
+            repo,
+            reaction_settings,
+            reaction_services.truth,
+            None,
+            versions=reaction_versions,
+            scheduler=reaction_services.scheduler,
         )
-        for external_id in ("feed-first", "feed-repeat"):
-            incoming = captured(
-                service,
-                "S30",
-                {
-                    "external_id": external_id,
-                    "title": "",
-                    "text": "Shared independently observed facts",
-                    "feed": "https://example.org/independent-feed",
-                },
+        original = await tools.save_web(
+            "https://example.org/original",
+            "Shared independently observed facts",
+            "",
+            {},
+            raw_bytes=b"<article>Shared independently observed facts</article>",
+            media_type="text/html",
+        )
+        original_raw = Path(original["raw_ref"])
+        original_bytes = original_raw.read_bytes()
+        async with httpx.AsyncClient() as http:
+            service = SourceService(
+                repo, settings, http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
             )
-            candidate_raw = Path(incoming["raw_ref"])
-            result = await service.ingest(service.sources["S30"], incoming)
-            assert result["item_id"] == original["item_id"]
-            assert not candidate_raw.exists()
-    stored = await repo.get("ingest.source_items", original["item_id"])
-    assert stored is not None
-    web = parse_source_item(stored)
-    assert isinstance(web, WebEvidenceItem)
-    assert web.observation_count == 2
-    assert web.observed_feeds == ["web:page", "https://example.org/independent-feed"]
-    assert web.feed == "web:page" and web.raw_ref == str(original_raw)
-    assert web.raw_sha256 == original["raw_sha256"]
-    assert original_raw.read_bytes() == original_bytes
-    assert await repo.list("ops.jobs") == []
-    assert len(await repo.list("ingest.source_items")) == 1
+            for external_id in ("feed-first", "feed-repeat"):
+                incoming = captured(
+                    service,
+                    "S30",
+                    {
+                        "external_id": external_id,
+                        "title": "",
+                        "text": "Shared independently observed facts",
+                        "feed": "https://example.org/independent-feed",
+                    },
+                )
+                candidate_raw = Path(incoming["raw_ref"])
+                result = await service.ingest(service.sources["S30"], incoming)
+                assert result["item_id"] == original["item_id"]
+                assert not candidate_raw.exists()
+        stored = await repo.get("ingest.source_items", original["item_id"])
+        assert stored is not None
+        web = parse_source_item(stored)
+        assert isinstance(web, WebEvidenceItem)
+        assert web.observation_count == 2
+        assert web.observed_feeds == ["web:page", "https://example.org/independent-feed"]
+        assert web.feed == "web:page" and web.raw_ref == str(original_raw)
+        assert web.raw_sha256 == original["raw_sha256"]
+        assert original_raw.read_bytes() == original_bytes
+        assert await repo.list("ops.jobs") == []
+        assert len(await repo.list("ingest.source_items")) == 1
 
 
 @pytest.mark.asyncio

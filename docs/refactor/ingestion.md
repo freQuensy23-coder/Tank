@@ -638,3 +638,18 @@ live roundtrip, verified-body roundtrip and digest-conflict rejection are covere
 This additive checkpoint belongs only to the held HTTP cohort descended from
 4041eb68/477d58e. It does not activate HTTP consumers or alter the clean scheduling
 cohort or independent source-state branch.
+
+
+
+The independent required-scheduling caller companion now uses that real async
+composition for all owned EventToolService constructors. It retains the original
+extraction, publication, web evidence, watch-condition and source-cadence assertions.
+The MAJOR source-cadence case now uses actual tool dispatch with a schema-complete,
+explicitly unestimated impact horizon. It verifies ten durable benchmark POST
+reaction jobs for the event and the existing real 15-second source reads.
+Resources drain before repository shutdown.
+
+Scoped proof: 216 owned constructor/helper units pass in 3.84s, and both actual
+source-cadence integration cases pass in 2.45s. No external HTTP is allowed by the
+real composition fixture. Full pinned owned verification is the next gate; these
+results do not assert completed reaction measurement or full scheduler typing.

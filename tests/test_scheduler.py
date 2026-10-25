@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from scheduler_support import operational_reaction_services
 from source_support import fixture_versions
 
 from tank.scheduler import Scheduler
@@ -401,14 +402,26 @@ async def real_decision_watch_conditions(monkeypatch: pytest.MonkeyPatch, tmp_pa
     await repo.put("evt.beneficiary_maps", "map", {"event_id": "e", "map_version": 1, "analysis_set": ["T"]})
     await repo.put("evt.beneficiary_edges", "edge", beneficiary)
     await repo.put("ana.market_truth", "truth", market)
-    service = EventToolService(repo, settings, None, DecisionEngine(settings), versions=fixture_versions())
-    decision = await service.get_decision(
-        {"event_id": "e", "token_id": "T"}, {"session_id": "session", "call_id": "decision"}
-    )
-    assert decision["action"] == "WATCH_TO_START"
-    conditions = await repo.list("ana.watch_conditions")
-    assert conditions and all(c.get("created_at") and c.get("expires_at") for c in conditions)
-    return repo, settings, created, conditions
+    reaction_settings = settings
+    reaction_versions = fixture_versions()
+    async with operational_reaction_services(
+        repo, reaction_settings, versions=reaction_versions
+    ) as reaction_services:
+        service = EventToolService(
+            repo,
+            reaction_settings,
+            reaction_services.truth,
+            DecisionEngine(settings),
+            versions=reaction_versions,
+            scheduler=reaction_services.scheduler,
+        )
+        decision = await service.get_decision(
+            {"event_id": "e", "token_id": "T"}, {"session_id": "session", "call_id": "decision"}
+        )
+        assert decision["action"] == "WATCH_TO_START"
+        conditions = await repo.list("ana.watch_conditions")
+        assert conditions and all(c.get("created_at") and c.get("expires_at") for c in conditions)
+        return repo, settings, created, conditions
 
 
 @pytest.mark.asyncio

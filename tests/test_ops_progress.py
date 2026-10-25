@@ -9,6 +9,7 @@ import pytest
 from agent_source_fixtures import source_item_fixture
 from delivery_support import delivery_job
 from pydantic import JsonValue
+from scheduler_support import operational_reaction_services
 from source_support import fixture_request_budgets, fixture_versions, source_definition
 from test_agents_pipeline_audit import options
 from test_event_tools import seed
@@ -160,39 +161,53 @@ async def test_filter_outcomes_and_routing_are_visible_without_publishing(
 @pytest.mark.parametrize("is_event", [False, True])
 async def test_agent_extraction_and_publication_gate_explain_silence(tmp_path: Path, is_event) -> None:
     repo = MemoryRepository()
-    service = EventToolService(repo, Settings(data_dir=tmp_path), None, None, versions=fixture_versions())
-    extraction = await seed(service)
-    extraction.update(
-        is_event=is_event,
-        certainty_reason="Official source",
-        no_event_reason="No relevant event in this material",
-    )
-    result = await service.dispatch("record_event", extraction, {})
-    if not is_event:
-        rows = await notices(repo)
-        assert rows[0]["stage"] == "AGENT_REJECTED"
-        assert rows[0]["reason"] == "No relevant event in this material"
-    else:
-        eid = result["event_id"]
-        event = await repo.get("evt.events", eid)
-        await repo.put("evt.events", eid, {**event, "current_ems_id": "ems"})
-        await repo.put("evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": eid, "class": "LOW"})
-        result = await service.dispatch(
-            "publish_card",
-            {
-                "event_id": eid,
-                "kind": "FULL",
-                "what": "Low significance",
-                "verdict": "Low significance",
-                "why": ["Below threshold"],
-            },
-            {"event_id": eid, "role": "system"},
+    reaction_settings = Settings(data_dir=tmp_path)
+    reaction_versions = fixture_versions()
+    async with operational_reaction_services(
+        repo, reaction_settings, versions=reaction_versions
+    ) as reaction_services:
+        service = EventToolService(
+            repo,
+            reaction_settings,
+            reaction_services.truth,
+            None,
+            versions=reaction_versions,
+            scheduler=reaction_services.scheduler,
         )
-        assert result["published"] is False and result["reason"] == "BELOW_MAJOR"
-        rows = await notices(repo)
-        assert {row["stage"] for row in rows} == {"EVENT_RECORDED", "PUBLICATION_BLOCKED"}
-        assert next(row["reason"] for row in rows if row["stage"] == "PUBLICATION_BLOCKED") == "BELOW_MAJOR"
-    assert await repo.list("out.alerts") == []
+        extraction = await seed(service)
+        extraction.update(
+            is_event=is_event,
+            certainty_reason="Official source",
+            no_event_reason="No relevant event in this material",
+        )
+        result = await service.dispatch("record_event", extraction, {})
+        if not is_event:
+            rows = await notices(repo)
+            assert rows[0]["stage"] == "AGENT_REJECTED"
+            assert rows[0]["reason"] == "No relevant event in this material"
+        else:
+            eid = result["event_id"]
+            event = await repo.get("evt.events", eid)
+            await repo.put("evt.events", eid, {**event, "current_ems_id": "ems"})
+            await repo.put("evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": eid, "class": "LOW"})
+            result = await service.dispatch(
+                "publish_card",
+                {
+                    "event_id": eid,
+                    "kind": "FULL",
+                    "what": "Low significance",
+                    "verdict": "Low significance",
+                    "why": ["Below threshold"],
+                },
+                {"event_id": eid, "role": "system"},
+            )
+            assert result["published"] is False and result["reason"] == "BELOW_MAJOR"
+            rows = await notices(repo)
+            assert {row["stage"] for row in rows} == {"EVENT_RECORDED", "PUBLICATION_BLOCKED"}
+            assert (
+                next(row["reason"] for row in rows if row["stage"] == "PUBLICATION_BLOCKED") == "BELOW_MAJOR"
+            )
+        assert await repo.list("out.alerts") == []
 
 
 @pytest.mark.parametrize("success", [True, False])
@@ -202,61 +217,73 @@ async def test_generated_card_only_becomes_sent_after_telegram_receipt(
     import tank.analysis.cards as cards
 
     repo = MemoryRepository()
-    service = EventToolService(repo, Settings(data_dir=tmp_path), None, None, versions=fixture_versions())
-    extraction = await seed(service)
-    eid = (await service.dispatch("record_event", extraction, {}))["event_id"]
-    event = await repo.get("evt.events", eid)
-    await repo.put("evt.events", eid, {**event, "current_ems_id": "ems"})
-    await repo.put(
-        "evt.ems_assessments",
-        "ems",
-        {
-            "ems_id": "ems",
-            "event_id": eid,
-            "class": "STRUCTURAL_SHOCK",
-            "dims": {name: {"value": None, "reason": "NOT_ESTIMABLE"} for _, name in SCORE_DIMENSIONS},
-        },
-    )
-    monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
-    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[1]))
-    result = await service.dispatch(
-        "publish_card",
-        {
-            "event_id": eid,
-            "kind": "PARTIAL",
-            "what": "A material event",
-            "verdict": "A material event",
-            "why": ["Official release"],
-        },
-        {"event_id": eid, "role": "system"},
-    )
-    assert "ALERT_QUEUED" in {row["stage"] for row in await notices(repo)}
-    assert "ALERT_SENT" not in {row["stage"] for row in await notices(repo)}
-    payload = {"alert_id": result["alert_id"], "version": result["version"]}
-    requests = []
-
-    def respond(request: httpx.Request):
-        requests.append(json.loads(request.content))
-        return (
-            httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
-            if success
-            else httpx.Response(500, json={"ok": False})
+    reaction_settings = Settings(data_dir=tmp_path)
+    reaction_versions = fixture_versions()
+    async with operational_reaction_services(
+        repo, reaction_settings, versions=reaction_versions
+    ) as reaction_services:
+        service = EventToolService(
+            repo,
+            reaction_settings,
+            reaction_services.truth,
+            None,
+            versions=reaction_versions,
+            scheduler=reaction_services.scheduler,
         )
+        extraction = await seed(service)
+        eid = (await service.dispatch("record_event", extraction, {}))["event_id"]
+        event = await repo.get("evt.events", eid)
+        await repo.put("evt.events", eid, {**event, "current_ems_id": "ems"})
+        await repo.put(
+            "evt.ems_assessments",
+            "ems",
+            {
+                "ems_id": "ems",
+                "event_id": eid,
+                "class": "STRUCTURAL_SHOCK",
+                "dims": {name: {"value": None, "reason": "NOT_ESTIMABLE"} for _, name in SCORE_DIMENSIONS},
+            },
+        )
+        monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
+        monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[1]))
+        result = await service.dispatch(
+            "publish_card",
+            {
+                "event_id": eid,
+                "kind": "PARTIAL",
+                "what": "A material event",
+                "verdict": "A material event",
+                "why": ["Official release"],
+            },
+            {"event_id": eid, "role": "system"},
+        )
+        assert "ALERT_QUEUED" in {row["stage"] for row in await notices(repo)}
+        assert "ALERT_SENT" not in {row["stage"] for row in await notices(repo)}
+        payload = {"alert_id": result["alert_id"], "version": result["version"]}
+        requests = []
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
-        delivery = DeliveryService(repo, delivery_settings(), http=http)
-        if success:
-            await delivery.deliver(delivery_job(payload))
-            await delivery.deliver(delivery_job(payload))
-        else:
-            for _ in range(5):
-                with pytest.raises(DeliveryError):
-                    await delivery.deliver(delivery_job(payload))
-            await delivery.terminal_failure(delivery_job(payload), "EXPIRED", 5)
-    stages = [row["stage"] for row in await notices(repo)]
-    assert stages.count("ALERT_SENT" if success else "ALERT_FAILED") == 1
-    assert ("ALERT_FAILED" if success else "ALERT_SENT") not in stages
-    assert all(request["chat_id"] == "alerts" for request in requests)
+        def respond(request: httpx.Request):
+            requests.append(json.loads(request.content))
+            return (
+                httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
+                if success
+                else httpx.Response(500, json={"ok": False})
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+            delivery = DeliveryService(repo, delivery_settings(), http=http)
+            if success:
+                await delivery.deliver(delivery_job(payload))
+                await delivery.deliver(delivery_job(payload))
+            else:
+                for _ in range(5):
+                    with pytest.raises(DeliveryError):
+                        await delivery.deliver(delivery_job(payload))
+                await delivery.terminal_failure(delivery_job(payload), "EXPIRED", 5)
+        stages = [row["stage"] for row in await notices(repo)]
+        assert stages.count("ALERT_SENT" if success else "ALERT_FAILED") == 1
+        assert ("ALERT_FAILED" if success else "ALERT_SENT") not in stages
+        assert all(request["chat_id"] == "alerts" for request in requests)
 
 
 async def test_agent_acceptance_completion_and_failure_are_not_confused_with_approval() -> None:
