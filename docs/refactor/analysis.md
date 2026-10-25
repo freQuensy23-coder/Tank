@@ -412,3 +412,26 @@ There are no approximate assertions. Together with beta, condition calculations,
 START fixtures and formula vectors,59 unit cases pass in7.68s; the new regression
 module passes strict mypy and Ruff/format. HTTP work remains preserved separately
 at immutable stash55c26d818e567184ecf101c9b5a1ca2e8ebd6733.
+
+### Clean scheduling policy fixtures and stale-sector negative oracle
+
+The generic authored test_replay packet now explicitly captures the complete known
+fixture Thresholds. The one reference operational-composition unit authors the same
+policy before hashing its packet. The real scheduler still refuses a packet whose
+required reaction policy is absent; no packaged-policy fallback is restored and no
+frozen input bytes change. The earlier339unit result preceded the final strict
+captured-policy precondition; this broader fixture check closes that verification gap.
+
+The comparator fixture's invalid_peer_close branch intentionally corrupts the two
+latest PEER1 close values and marks its15-minute bar incomplete. An independent
+raw-row calculation now proves its latest valid completed close is15minutes stale,
+against the actual declared60-second cadence. The preferred historical series can
+no longer contribute a fabricated fresh sector return. The test preserves the full
+dense-vs-compact equality oracle and actual available raw return, asserts unavailable
+sector adjustment/reason for that negative branch, and retains the positive sector
+adjustment assertions on all valid-peer cases. This is not a restored gap-derived
+freshness allowance or an alternative venue fabricated for the fixture.
+
+All132 unit cases in test_replay/test_fixture_reference/test_market_snapshot_comparators
+pass in3.24s with zero skips. Ruff/format pass. This companion descends clean26862f39;
+held HTTP caller work remains isolated at immutable e68ab1f1dbe749b934182165618791eb811d85b2.
