@@ -552,6 +552,11 @@ class Scheduler:
                 cond = await self.repo.get("ana.watch_conditions", cond["cond_id"])
                 if cond["status"] != "ARMED":
                     continue
+                if "review_at" in cond["expr"]:
+                    outcome = await self.eval_timed_review(cond, cutoff_stamp)
+                    if outcome:
+                        outcomes[outcome].append(cond["cond_id"])
+                    continue
                 if not cond.get("expires_at"):
                     log.error(
                         "Watch condition %s has no expiry; requires decision reconciliation", cond["cond_id"]
@@ -563,54 +568,6 @@ class Scheduler:
                     )
                     continue
                 expr = cond["expr"]
-                if "review_at" in expr:
-                    event = await self.repo.get("evt.events", cond["event_id"])
-                    updated = {**cond, **cutoff_stamp.fields("last_evaluated_at")}
-                    if not event or event.get("lifecycle") in {"CLOSED", "MERGED", "INVALIDATED"}:
-                        updated.update(status="CANCELLED", cancelled_by="EVENT_TERMINAL")
-                    elif parse_time(cutoff) >= parse_time(expr["review_at"]):
-                        updated.update(status="FIRED", **cutoff_stamp.fields("fired_at"))
-                        async with self.repo.lock("event:" + cond["event_id"]), self.repo.transaction():
-                            current_event = await self.repo.get("evt.events", cond["event_id"])
-                            if not current_event or current_event.get("lifecycle") in {
-                                "CLOSED",
-                                "MERGED",
-                                "INVALIDATED",
-                            }:
-                                await self.repo.put(
-                                    "ana.watch_conditions",
-                                    cond["cond_id"],
-                                    {
-                                        **updated,
-                                        "status": "CANCELLED",
-                                        "cancelled_by": "EVENT_TERMINAL",
-                                    },
-                                )
-                                outcomes["evaluated"].append(cond["cond_id"])
-                                continue
-                            await self.repo.put(
-                                "evt.events",
-                                cond["event_id"],
-                                {
-                                    **current_event,
-                                    **cutoff_stamp.fields("review_requested_at"),
-                                },
-                            )
-                            await self.repo.put("ana.watch_conditions", cond["cond_id"], updated)
-                            await self.message(
-                                "CONDITION_FIRED",
-                                cond["event_id"],
-                                cond["cond_id"],
-                                condition=updated,
-                                review_at=expr["review_at"],
-                                review_question=expr["review_question"],
-                                **({"session_id": cond["session_id"]} if cond.get("session_id") else {}),
-                            )
-                        outcomes["fired"].append(cond["cond_id"])
-                        continue
-                    await self.repo.put("ana.watch_conditions", cond["cond_id"], updated)
-                    outcomes["evaluated"].append(cond["cond_id"])
-                    continue
                 if "milestone" in expr:
                     continue
                 if cond["event_id"] not in event_cache:
@@ -839,6 +796,47 @@ class Scheduler:
                 outcomes["fired" if fired else "evaluated"].append(cond["cond_id"])
 
         return outcomes
+
+    async def eval_timed_review(self, condition, cutoff_stamp):
+        async with self.repo.lock("event:" + condition["event_id"]), self.repo.transaction():
+            current = await self.repo.get("ana.watch_conditions", condition["cond_id"])
+            if not current or current.get("status") != "ARMED":
+                return None
+            if not current.get("expires_at"):
+                log.error("Timed review %s has no expiry", current["cond_id"])
+                return None
+            cutoff = parse_time(cutoff_stamp.value)
+            updated = {**current, **cutoff_stamp.fields("last_evaluated_at")}
+            fired = False
+            if parse_time(current["expires_at"]) <= cutoff:
+                updated["status"] = "EXPIRED"
+            else:
+                event = await self.repo.get("evt.events", current["event_id"])
+                if not event or event.get("lifecycle") in {"CLOSED", "MERGED", "INVALIDATED"}:
+                    updated.update(status="CANCELLED", cancelled_by="EVENT_TERMINAL")
+                elif parse_time(current["expr"]["review_at"]) <= cutoff:
+                    fired = True
+                    updated.update(status="FIRED", **cutoff_stamp.fields("fired_at"))
+                    await self.repo.put(
+                        "evt.events",
+                        current["event_id"],
+                        {
+                            **event,
+                            **cutoff_stamp.fields("review_requested_at"),
+                        },
+                    )
+            await self.repo.put("ana.watch_conditions", current["cond_id"], updated)
+            if fired:
+                await self.message(
+                    "CONDITION_FIRED",
+                    current["event_id"],
+                    current["cond_id"],
+                    condition=updated,
+                    review_at=current["expr"]["review_at"],
+                    review_question=current["expr"]["review_question"],
+                    **({"session_id": current["session_id"]} if current.get("session_id") else {}),
+                )
+            return "fired" if fired else "evaluated"
 
     async def milestone_check(self, payload):
         event = await self.repo.get("evt.events", payload["event_id"])

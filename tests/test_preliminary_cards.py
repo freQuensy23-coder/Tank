@@ -581,3 +581,48 @@ async def test_postgres_preliminary_and_timed_review_roundtrip(tmp_path, postgre
         assert (await repo.get("ana.watch_conditions", cid))["status"] == "FIRED"
         jobs = await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
         assert any(job["payload"].get("review_question") for job in jobs)
+
+
+@pytest.mark.parametrize("phase", ["before_due", "due", "expired"])
+async def test_disarm_wins_while_timed_review_waits_for_event_lock(service, monkeypatch, phase):
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    args = await lead(service)
+    eid = args["event_id"]
+    now = utcnow()
+    result = await arm(service, eid, now + timedelta(hours=1), expires_in_hours=2)
+    cid = result["condition"]["cond_id"]
+    waiting, resume = asyncio.Event(), asyncio.Event()
+    original_lock = service.repo.lock
+
+    @asynccontextmanager
+    async def pause_review(key):
+        if key == "event:" + eid and asyncio.current_task().get_name() == "timed-review":
+            waiting.set()
+            await resume.wait()
+        async with original_lock(key):
+            yield
+
+    monkeypatch.setattr(service.repo, "lock", pause_review)
+    scheduler = Scheduler(service.repo, service.settings, None, None)
+    cutoff = now + timedelta(hours={"before_due": 0, "due": 1, "expired": 3}[phase])
+    task = asyncio.create_task(scheduler.eval_conditions({"cutoff": iso(cutoff)}), name="timed-review")
+    try:
+        await asyncio.wait_for(waiting.wait(), timeout=2)
+        cancelled = await service.dispatch(
+            "set_watch_condition",
+            {
+                "event_id": eid,
+                "action": "DISARM",
+                "cond_id": cid,
+            },
+            {},
+        )
+        assert cancelled["accepted"] and cancelled["status"] == "CANCELLED"
+    finally:
+        resume.set()
+        await asyncio.wait_for(task, timeout=2)
+    assert (await service.repo.get("ana.watch_conditions", cid))["status"] == "CANCELLED"
+    assert not await service.repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
+    assert not (await service.repo.get("evt.events", eid)).get("review_requested_at")
