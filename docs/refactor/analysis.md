@@ -397,6 +397,46 @@ calculation input maps, configurable-policy fallbacks and sibling reference-cloc
 precision defaults remain on the broad owned migration inventory. This tranche
 completes the statistical baseline/declared-freshness layer, not the full Truth module.
 
+### Additive admitted-HTTP/page boundary (held activation)
+
+`http_transport.send_admitted` takes actual built requests, a required admission
+port and a required per-request guard. It admits every actual attempt/redirect,
+checks the admitted host matches the transport destination, runs a declared
+first-request accounting hook only after admission, and explicitly disables
+HTTPX's implicit redirects. Intermediate responses close. UNCONFIGURED retains
+its explicit generic-site meaning; it does not fabricate a provider quota.
+`retry_after_deadline` accepts only actual nonnegative finite Retry-After seconds
+or a valid aware HTTP date; missing/invalid instructions remain unavailable and
+no sixty-second value/clamp is synthesized.
+
+`contracts.page_evidence.PageRead` validates binary bytes against their actual
+computed digest and the two-megabyte bound. An original recorded-body claim must
+match its recorded digest. Live receipt and verified original-body provenance are distinct named records.
+Unknown source Content-Type remains None. No reconstruction variant is introduced
+without an actual consumer. Infrastructure
+handles are precise protocol/dataclass composition objects in analysis.page_access,
+not Pydantic arbitrary types. `LivePageAccess` requires admission; `RecordedPageAccess`
+requires its recorded reader. The live reader owns only a client it constructs and
+closes all response streams, preserving a borrowed client's lifetime.
+
+Six independent boundary cases pass in1.35s; all five new source/test modules pass
+independent strict mypy and Ruff/format. Tests prove actual client query credentials
+reach configured admission, configured waits occur, unconfigured redirects invent
+no waits, refused destinations never reach transport, accounting hook ordering,
+binary digest fidelity, unknown media and client lifetime. These are additive
+contracts; Market/Event activation and actual verified offline reader proof remain
+held for the companion cohort. The verified replay inventory already substitutes
+complete captured external tool results; raw response reconstruction is not assumed.
+
+
+Actual caller inventory correction: run_captured_tools already intercepts external
+web_search/fetch_page through exact captured call identity, arguments and availability;
+native replay uses CapturedToolResult. Its old captured_http callback reconstructing
+JSON response bytes is unused by those reads and is removed during activation.
+RecordedResultsOnlyPageReader binds the verified packet/result catalog and refuses
+raw-page requests because this input format retains complete tool results rather
+than original response bytes. This refusal occurs before admission/client creation.
+No speculative reconstruction model/reader is retained.
 ### Exact Decimal interpolation repair
 
 Independent review identified that the statistical typing change constructed the
@@ -412,3 +452,89 @@ There are no approximate assertions. Together with beta, condition calculations,
 START fixtures and formula vectors,59 unit cases pass in7.68s; the new regression
 module passes strict mypy and Ruff/format. HTTP work remains preserved separately
 at immutable stash55c26d818e567184ecf101c9b5a1ca2e8ebd6733.
+
+### Required Python HTTP/page activation API (held for caller cohort)
+
+MarketService now requires admission: HttpAdmission. Every actual built request,
+redirect and retry passes that port through send_admitted, and provider feedback
+calls the same injected port.block with the actual request and actual Retry-After
+deadline. The old shared-global backend inspection and undocumented generic0.08s/
+Etherscan0.35s local pacing are removed. The existing priority/in-flight gate remains
+an operational concurrency bound. Go-owned exchange URLs still refuse Python I/O,
+including redirects; Go transport is never inferred merely from a host label.
+A missing/invalid Retry-After refuses the retry instead of inventing60s; an actual
+120s instruction is retained without a60s clamp. Generic418 does not invent an
+exchange ban classification; its actual instruction can block the host and its
+status remains an error.
+
+EventToolService now requires pages: LivePageAccess | RecordedPageAccess. A live
+composition requires actual admission; a recorded composition requires its explicit
+reader. Recorded fetch refusal happens before any Go enqueue or Python client
+creation. FetchPageRequest validates URL and the actual published optional20s
+budget default with positive/max20 constraints; explicit invalid zero is not replaced
+by20. The retired untyped borrowed-client facade is removed. Actual outgoing client
+query credentials participate in admission but never replace the safe persisted
+incoming evidence URL. Live errors expose host/status/type, not credential URLs.
+The live page receipt requires a real COLLECTION_ONLY instant. Unknown Content-Type
+remains None at the read boundary; application/octet-stream is only the explicit
+storage format for absent header metadata. Go capture remains its existing separate
+queue/result provenance path and does not claim a Python live-page receipt.
+
+New Python page rows retain typed page_read_provenance; source model historical
+omission remains omitted. Recorded original-body provenance must match both actual
+read bytes and stored raw_sha256. Search results and the separate Go path legitimately
+lack this Python-page provenance. No missing source header or occurrence clock is
+reconstructed. Complete external captured tool results remain the existing offline
+replay input: recorded_page_access binds verified input/result-catalog identity and
+refuses unavailable original page bytes. The unused diagnostic JSON-response callback
+and its HTTP client are removed; native replay verifies the supplied results-only
+reader matches its actual input before proceeding.
+
+Twelve admitted-transport/page/actual-caller cases pass in1.62s, including actual
+Market120s feedback wait, missing-instruction refusal, actual EventTool Etherscan
+client credential admission and safe stored URL, recorded raw-byte refusal with
+live admission/block/wait/client traps, actual binary digest/lifetime and credential-
+safe HTTP error behavior. Five new helper/domain/test modules remain independently
+strict-clean. Existing constructor consumers and actual retained-reader proof are
+still being migrated/qualified; parent must hold this activation until companions.
+The clean b123/1459 scheduling/statistical boundary remains independently mergeable.
+### Clean scheduling policy fixtures and stale-sector negative oracle
+
+The generic authored test_replay packet now explicitly captures the complete known
+fixture Thresholds. The one reference operational-composition unit authors the same
+policy before hashing its packet. The real scheduler still refuses a packet whose
+required reaction policy is absent; no packaged-policy fallback is restored and no
+frozen input bytes change. The earlier339unit result preceded the final strict
+captured-policy precondition; this broader fixture check closes that verification gap.
+
+The comparator fixture's invalid_peer_close branch intentionally corrupts the two
+latest PEER1 close values and marks its15-minute bar incomplete. An independent
+raw-row calculation now proves its latest valid completed close is15minutes stale,
+against the actual declared60-second cadence. The preferred historical series can
+no longer contribute a fabricated fresh sector return. The test preserves the full
+dense-vs-compact equality oracle and actual available raw return, asserts unavailable
+sector adjustment/reason for that negative branch, and retains the positive sector
+adjustment assertions on all valid-peer cases. This is not a restored gap-derived
+freshness allowance or an alternative venue fabricated for the fixture.
+
+All132 unit cases in test_replay/test_fixture_reference/test_market_snapshot_comparators
+pass in3.24s with zero skips. Ruff/format pass. This companion descends clean26862f39;
+held HTTP caller work remains isolated at immutable e68ab1f1dbe749b934182165618791eb811d85b2.
+
+The separate replay_ingest_policy operational fixture now explicitly captures its
+complete known Thresholds as well. Both actual memory/PostgreSQL cases pass in1.94s
+with zero skips, retaining all original classifier-output reset, policy rederivation
+and imported-source assertions. This is an authored fixture change; no production
+fallback or frozen data is altered. This follow-up remains a clean fd077 descendant
+without held HTTP ancestry.
+
+Page provenance now requires the actual content_type_header value or explicit None
+on both live and original recorded-body variants. PageRead validates this matches
+its read media_type. Thus an absent source header remains visible even when the
+existing raw-byte storage format uses application/octet-stream. Live receipts refuse
+missing/unknown instants. Live HTTP status/transport exceptions retain their HTTPX
+categories/types with bounded credential-free messages, preserving SessionService's
+SOURCE_HTTP/SOURCE_TRANSPORT protocol instead of relabeling them tool execution errors.
+Twelve page/admission boundary cases pass in1.73s; three tightened source/test modules
+pass strict mypy. Backend quota-history identity changes remain a separate held team
+prerequisite; these results do not claim the current backend is final.

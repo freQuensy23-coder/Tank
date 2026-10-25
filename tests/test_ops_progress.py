@@ -10,7 +10,7 @@ from agent_source_fixtures import source_item_fixture
 from delivery_support import delivery_job
 from pydantic import JsonValue
 from scheduler_support import operational_reaction_services
-from source_support import fixture_versions, source_definition
+from source_support import fixture_request_budgets, fixture_versions, source_definition
 from test_agents_pipeline_audit import options
 from test_event_tools import seed
 from test_session_binding_concurrency import fixture_repo
@@ -18,6 +18,7 @@ from test_sources import captured
 from test_sources import settings as source_settings
 
 from tank.agents.pipeline import Pipeline
+from tank.analysis.page_access import LivePageAccess
 from tank.delivery import DeliveryError, DeliveryService
 from tank.event_tools import EventToolService
 from tank.ops_progress import RepositorySourceProgress, item_progress, session_progress
@@ -54,7 +55,7 @@ async def test_every_ingested_material_reaches_ops_before_filtering_and_duplicat
     settings = source_settings(tmp_path, [source])
     settings.ops_progress_enabled = True
     settings.replay = False
-    service = SourceService(repo, settings, versions=fixture_versions())
+    service = SourceService(repo, settings, versions=fixture_versions(), budgets=fixture_request_budgets())
     try:
         item = captured(
             service,
@@ -173,6 +174,7 @@ async def test_agent_extraction_and_publication_gate_explain_silence(tmp_path: P
             None,
             versions=reaction_versions,
             scheduler=reaction_services.scheduler,
+            pages=LivePageAccess(reaction_services.admission),
         )
         extraction = await seed(service)
         extraction.update(
@@ -229,6 +231,7 @@ async def test_generated_card_only_becomes_sent_after_telegram_receipt(
             None,
             versions=reaction_versions,
             scheduler=reaction_services.scheduler,
+            pages=LivePageAccess(reaction_services.admission),
         )
         extraction = await seed(service)
         eid = (await service.dispatch("record_event", extraction, {}))["event_id"]

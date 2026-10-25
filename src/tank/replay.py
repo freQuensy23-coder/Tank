@@ -19,6 +19,7 @@ from typing import Self
 
 from pydantic import JsonValue
 
+from tank.analysis.page_access import RecordedPageAccess, RecordedResultsOnlyPageReader
 from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
 from tank.contracts.provenance import ResolvedVersionIdentity
@@ -655,12 +656,21 @@ class ReplayMarketReader:
         return result
 
 
+def recorded_page_access(inputs: ReplayInputs) -> RecordedPageAccess:
+    if inputs.input_sha256 is None:
+        raise ReplayError("Recorded page composition requires its verified input identity")
+    return RecordedPageAccess(
+        RecordedResultsOnlyPageReader(
+            input_sha256=inputs.input_sha256,
+            captured_result_catalog_sha256=digest(inputs._tool_results),
+        )
+    )
+
+
 async def run_captured_tools(inputs, repo):
     """Execute captured analyst tool calls through production validation and rules."""
     from contextlib import AsyncExitStack, ExitStack
     from unittest.mock import patch
-
-    import httpx
 
     from tank import event_tools, storage, util
     from tank.analysis import cards, decisions, truth
@@ -722,16 +732,6 @@ async def run_captured_tools(inputs, repo):
         counter += 1
         return original_new_id(prefix, timestamp=clock.now(), entropy=counter)
 
-    async def captured_http(request):
-        for row in inputs._tool_results:
-            if (
-                row.get("method", "GET") == request.method
-                and row.get("url") == str(request.url)
-                and parse_time(row["available_at"]) <= clock.now()
-            ):
-                return httpx.Response(row.get("status_code", 200), json=row["result"])
-        raise ReplayError(f"Uncaptured replay network request: {request.method} {request.url}")
-
     clock = ReplayClock(min(c["available_at"] for c in calls), inputs.cutoff)
     results = []
     identities = {}
@@ -767,9 +767,6 @@ async def run_captured_tools(inputs, repo):
             if hasattr(module, "utcnow"):
                 stack.enter_context(patch.object(module, "utcnow", clock.now))
         async with AsyncExitStack() as resources:
-            http = await resources.enter_async_context(
-                httpx.AsyncClient(transport=httpx.MockTransport(captured_http))
-            )
             market_reader = ReplayMarketReader(inputs, evidence)
             market_truth = truth.MarketTruthService(repo, settings, market_reader, versions=versions)
             scheduling: ReactionScheduling
@@ -795,7 +792,7 @@ async def run_captured_tools(inputs, repo):
                 DecisionEngine(settings),
                 versions=versions,
                 scheduler=scheduling,
-                http=http,
+                pages=recorded_page_access(inputs),
             )
             seeded = set()
             for call in calls:
@@ -1323,6 +1320,7 @@ async def run_operational_replay(bundle_path, repo, settings, *, http=None):
         DecisionEngine(settings),
         versions=versions,
         scheduler=scheduler,
+        pages=recorded_page_access(inputs),
         reference_clock=TrustedFixtureClock(inputs) if inputs.fixture_reference else None,
     )
     client = http or httpx.AsyncClient(timeout=httpx.Timeout(30, read=None))
@@ -1464,6 +1462,12 @@ async def replay_agent_session(
     inputs = load_inputs(bundle_path, settings)
     if not settings.replay or not isinstance(event_tools, EventToolService) or event_tools.repo is not repo:
         raise ReplayError("fresh replay requires the real EventToolService on an isolated replay repository")
+    if (
+        not isinstance(event_tools.pages, RecordedPageAccess)
+        or not isinstance(event_tools.pages.reader, RecordedResultsOnlyPageReader)
+        or event_tools.pages.reader != recorded_page_access(inputs).reader
+    ):
+        raise ReplayError("fresh replay requires its verified results-only page boundary")
     if (
         event_tools.settings is not settings
         or not isinstance(event_tools.truth, MarketTruthService)

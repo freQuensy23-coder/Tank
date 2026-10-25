@@ -7,11 +7,13 @@ import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture
 from scheduling_support import RecordingReactionScheduling
+from source_support import fixture_http_admission
 from test_agents_execution_barrier import config, idle
 from test_event_tools import unknown_assessment
 from test_session_binding_concurrency import fixture_repo, seed
 
 from tank.agents.sessions import SessionService
+from tank.analysis.page_access import LivePageAccess
 from tank.event_tools import EventToolService
 from tank.settings import Settings
 from tank.util import iso, utcnow
@@ -108,6 +110,7 @@ async def test_actual_producer_consumer_workflow(tmp_path: Path, backend, case, 
             None,
             versions=declared_versions_fixture(),
             scheduler=RecordingReactionScheduling(),
+            pages=LivePageAccess(fixture_http_admission()),
         )
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             session_settings = config()
@@ -175,7 +178,7 @@ async def test_actual_producer_consumer_workflow(tmp_path: Path, backend, case, 
                             "kind": "PARTIAL",
                             "what": "Product announced",
                             "verdict": "Product announced",
-                            "why": ["Official primary fact"],
+                            "why": ["Official primary fact", "The source publication time is recorded."],
                         },
                     )
                     assert partial["result"]["published"]
@@ -214,7 +217,7 @@ async def test_actual_producer_consumer_workflow(tmp_path: Path, backend, case, 
                             "kind": "FULL",
                             "what": "No retained market claim",
                             "verdict": "No retained market claim",
-                            "why": [],
+                            "why": ["The fixture event is stale.", "The source is retained in the fixture."],
                         },
                     )
                     assert publication["result"]["publication_receipt"]["reason"] == "STALE"

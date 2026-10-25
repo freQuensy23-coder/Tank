@@ -38,9 +38,9 @@ async def probe_feeds(service):
         lock = host_locks.setdefault(host, asyncio.Lock())
         async with semaphore, lock:
             try:
-                await service.acquire_budget(feed.request_plan(source.limits))
                 post = feed.method.upper() == "POST"
                 if is_exchange_url(feed.url):
+                    await service.acquire_budget(feed.request_plan(source.limits))
                     response = await capture_fetch(
                         service.repo,
                         feed.method,
@@ -49,12 +49,10 @@ async def probe_feeds(service):
                         source_id=sid,
                     )
                 else:
-                    response = await service.http.request(
-                        feed.method,
-                        feed.url,
-                        json=feed.body if post else None,
-                        data=feed.form if post else None,
-                        timeout=20,
+                    response = await service.transport.request(
+                        feed.request_plan(source.limits),
+                        feed.headers,
+                        None,
                     )
                 result["http_status"] = response.status_code
                 result["response_content_type"] = response.headers.get("content-type")

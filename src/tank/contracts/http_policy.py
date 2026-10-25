@@ -1,5 +1,6 @@
 """Explicit outcomes for configured admission immediately before Python HTTP I/O."""
 
+from datetime import datetime
 from typing import Literal, Protocol
 
 import httpx
@@ -32,4 +33,5 @@ type HttpAdmissionDecision = HttpAdmitted | HttpUnconfigured | HttpRefused
 
 
 class HttpAdmission(Protocol):
+    async def block(self, request: httpx.Request, until: datetime, reason: str) -> None: ...
     async def admit(self, request: httpx.Request) -> HttpAdmissionDecision: ...

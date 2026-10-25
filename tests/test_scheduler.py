@@ -7,6 +7,7 @@ import pytest
 from scheduler_support import operational_reaction_services
 from source_support import fixture_versions
 
+from tank.analysis.page_access import LivePageAccess
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -414,6 +415,7 @@ async def real_decision_watch_conditions(monkeypatch: pytest.MonkeyPatch, tmp_pa
             DecisionEngine(settings),
             versions=reaction_versions,
             scheduler=reaction_services.scheduler,
+            pages=LivePageAccess(reaction_services.admission),
         )
         decision = await service.get_decision(
             {"event_id": "e", "token_id": "T"}, {"session_id": "session", "call_id": "decision"}
