@@ -113,7 +113,15 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 		s.registerBoundaries(ids, cutoff, &begin)
 	}
 
-	benchmarks := s.backfillBenchmarkKlines(ctx, anchor)
+	benchmarks, err := s.backfillBenchmarkKlines(ctx, anchor)
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		s.log.Warn("benchmark capture unavailable", "backfill_id", row["backfill_id"], "error", err)
+		fail("BENCHMARK_CAPTURE_FAILED")
+		return
+	}
 	var wg sync.WaitGroup
 	for _, inst := range instruments {
 		wg.Add(1)
@@ -139,16 +147,24 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 		fail("REPAIR_FAILED")
 		return
 	}
-	coverage := make([]map[string]any, len(instruments))
+	coverage := make([]InstrumentCaptureCoverage, len(instruments))
 	for i, inst := range instruments {
-		coverage[i] = s.captureWindowCoverage(ctx, inst, anchor)
+		coverage[i], err = s.captureWindowCoverage(ctx, inst, anchor)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			s.log.Warn("capture coverage unavailable", "backfill_id", row["backfill_id"], "instrument", inst.ID, "error", err)
+			fail("COVERAGE_READ_FAILED")
+			return
+		}
 	}
 	ready := len(coverage) > 0
 	for _, c := range coverage {
-		ready = ready && c["complete"] == true
+		ready = ready && c.Complete
 	}
 	for _, b := range benchmarks {
-		ready = ready && b["complete"] == true
+		ready = ready && b.Complete
 	}
 	row["status"], row["finished_at"], row["reason"] = "PARTIAL", pytime.ISO(s.clock.Now()), "INCOMPLETE_VENUE_WINDOWS_EXCLUDED"
 	if ready {
@@ -156,11 +172,11 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 	}
 	instrumentsResult := make([]any, len(coverage))
 	for i, c := range coverage {
-		instrumentsResult[i] = c
+		instrumentsResult[i] = c.storageValue()
 	}
 	benchResult := make([]any, len(benchmarks))
 	for i, b := range benchmarks {
-		benchResult[i] = b
+		benchResult[i] = b.storageValue()
 	}
 	row["result"] = map[string]any{"instruments": instrumentsResult, "benchmark_klines": benchResult}
 	s.putRun(ctx, row)
@@ -462,15 +478,33 @@ func (s *Service) repairInstrument(ctx context.Context, inst *venue.Instrument, 
 	return RepairCoverage{IncompleteBefore: before, IncompleteAfter: minutesIn(runs)}, nil
 }
 
-func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, start, end time.Time, includeReference bool, kind string) (map[string]any, error) {
+type KlineCoverage struct {
+	InstrumentID        string
+	Start               string
+	End                 string
+	ExpectedMinutes     int64
+	CompleteMinutes     int64
+	Complete            bool
+	IncludesAnchorClose bool
+}
+
+func (r KlineCoverage) storageValue() map[string]any {
+	return map[string]any{
+		"instrument_id": r.InstrumentID, "start": r.Start, "end": r.End,
+		"expected_minutes": r.ExpectedMinutes, "complete_minutes": r.CompleteMinutes,
+		"complete": r.Complete, "includes_anchor_close": r.IncludesAnchorClose,
+	}
+}
+
+func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, start, end time.Time, includeReference bool, kind string) (KlineCoverage, error) {
 	first, last := start, pytime.MinuteFloor(end)
 	if includeReference {
 		first = pytime.MinuteFloor(start).Add(-time.Minute)
 	}
 	iid := inst.ID
 	expected := int(last.Sub(first) / time.Minute)
-	if expected < 0 {
-		expected = 0
+	if expected < 0 || end.Before(start) {
+		return KlineCoverage{}, errors.New("capture kline interval end precedes start")
 	}
 	observed := func() (map[int64]bool, error) {
 		rows, err := s.store.Projection(ctx, "mkt.klines_1m", []string{"open_time", "complete"}, "open_time", first, last, []string{iid})
@@ -488,7 +522,7 @@ func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, st
 	}
 	points, err := observed()
 	if err != nil {
-		return nil, err
+		return KlineCoverage{}, err
 	}
 	v := s.venues.Venue(inst, 1)
 	for offset := 0; offset < expected; offset += 240 {
@@ -507,7 +541,7 @@ func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, st
 		rows, err := v.Klines(ctx, &lo, &hi)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, ErrStopped
+				return KlineCoverage{}, ErrStopped
 			}
 			s.gap(inst, kind, err.Error(), &lo, &hi)
 			continue
@@ -526,7 +560,7 @@ func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, st
 	s.flush(ctx)
 	points, err = observed()
 	if err != nil {
-		return nil, err
+		return KlineCoverage{}, err
 	}
 	complete := 0
 	all := expected > 0
@@ -537,15 +571,15 @@ func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, st
 			all = false
 		}
 	}
-	return map[string]any{
-		"instrument_id": iid, "start": pytime.ISO(first), "end": pytime.ISO(last),
-		"expected_minutes": int64(expected), "complete_minutes": int64(complete),
-		"complete": all, "includes_anchor_close": includeReference,
+	return KlineCoverage{
+		InstrumentID: iid, Start: pytime.ISO(first), End: pytime.ISO(last),
+		ExpectedMinutes: int64(expected), CompleteMinutes: int64(complete),
+		Complete: all, IncludesAnchorClose: includeReference,
 	}, nil
 }
 
-func (s *Service) backfillBenchmarkKlines(ctx context.Context, anchor time.Time) []map[string]any {
-	var result []map[string]any
+func (s *Service) backfillBenchmarkKlines(ctx context.Context, anchor time.Time) ([]KlineCoverage, error) {
+	var result []KlineCoverage
 	for _, symbol := range []string{"BTC", "ETH"} {
 		tokens := map[string]bool{}
 		for id, token := range s.opt.Tokens {
@@ -570,11 +604,11 @@ func (s *Service) backfillBenchmarkKlines(ctx context.Context, anchor time.Time)
 		row, err := s.backfillKlines(ctx, best, anchor.Add(-24*time.Hour), anchor, true, "PRE_EVENT_KLINES")
 		unlock()
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("%s benchmark capture unavailable: %w", symbol, err)
 		}
 		result = append(result, row)
 	}
-	return result
+	return result, nil
 }
 
 func benchmarkLess(a, b *venue.Instrument) bool {
@@ -585,11 +619,11 @@ func benchmarkLess(a, b *venue.Instrument) bool {
 	return a.ID < b.ID
 }
 
-func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrument, anchor time.Time) map[string]any {
+func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrument, anchor time.Time) (InstrumentCaptureCoverage, error) {
 	end := anchor
-	windows := map[string]any{}
+	var windows [3]CaptureWindowCoverage
 	allComplete := true
-	for _, hours := range []int{1, 4, 24} {
+	for index, hours := range []int{1, 4, 24} {
 		start := end.Add(-time.Duration(hours) * time.Hour)
 		lo := pytime.MinuteFloor(start)
 		if start.After(lo) {
@@ -598,67 +632,80 @@ func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrum
 		hi := pytime.MinuteFloor(end)
 		expected := int64(hi.Sub(lo) / time.Minute)
 		if expected < 0 {
-			expected = 0
+			return InstrumentCaptureCoverage{}, errors.New("capture coverage interval end precedes start")
 		}
-		metrics := map[string]any{}
+		var metrics [2]CoverageMinutes
 		windowComplete := true
-		for _, spec := range [][3]string{{"flow", "mkt.flow_bars_1m", "minute_start"}, {"klines", "mkt.klines_1m", "open_time"}} {
+		for metricIndex, spec := range [][3]string{{"flow", "mkt.flow_bars_1m", "minute_start"}, {"klines", "mkt.klines_1m", "open_time"}} {
 			rows, err := s.store.Range(ctx, spec[1], spec[2], lo, hi, map[string]any{"instrument_id": inst.ID})
-			var complete int64
-			if err == nil {
-				for _, r := range rows {
-					if pyval.Truthy(r["complete"]) {
-						complete++
-					}
-				}
+			if err != nil {
+				return InstrumentCaptureCoverage{}, fmt.Errorf("%s %s coverage unavailable: %w", inst.ID, spec[0], err)
 			}
-			ok := complete == expected && expected > 0
-			windowComplete = windowComplete && ok
-			metrics[spec[0]] = map[string]any{
-				"expected_minutes": expected, "complete_minutes": complete,
-				"missing_or_incomplete_minutes": max(int64(0), expected-complete), "complete": ok,
+			metric, err := decodeCoverageMinutes(rows, spec[2], lo, hi)
+			if err != nil {
+				return InstrumentCaptureCoverage{}, err
 			}
+			windowComplete = windowComplete && metric.Complete
+			metrics[metricIndex] = metric
 		}
 		unresolved := lo.Sub(start).Seconds() + end.Sub(hi).Seconds()
-		w := map[string]any{
-			"start": pytime.ISO(start), "end": pytime.ISO(end), "observed_bucket_start": pytime.ISO(lo),
-			"observed_bucket_end": pytime.ISO(hi), "timestamp_precision": "BUCKET",
-			"unresolved_boundary_seconds": unresolved,
+		windows[index] = CaptureWindowCoverage{
+			Start: pytime.ISO(start), End: pytime.ISO(end), ObservedBucketStart: pytime.ISO(lo),
+			ObservedBucketEnd: pytime.ISO(hi), UnresolvedBoundarySeconds: unresolved,
+			Flow: metrics[0], Klines: metrics[1],
 		}
-		for k, v := range metrics {
-			w[k] = v
-		}
-		windows[fmt.Sprintf("W%dH", hours)] = w
 		allComplete = allComplete && windowComplete && unresolved == 0
 	}
-	result := map[string]any{"instrument_id": inst.ID, "windows": windows, "complete": allComplete}
+	result := InstrumentCaptureCoverage{
+		InstrumentID: inst.ID, Windows: CaptureWindows{W1H: windows[0], W4H: windows[1], W24H: windows[2]}, Complete: allComplete,
+	}
 	if inst.Spot() {
 		boundary := end.Add(-24 * time.Hour)
-		bars, _ := s.store.Range(ctx, "mkt.flow_bars_1m", "minute_start", pytime.MinuteFloor(boundary).Add(-time.Minute), pytime.MinuteFloor(boundary).Add(time.Minute), map[string]any{"instrument_id": inst.ID})
+		bars, err := s.store.Range(ctx, "mkt.flow_bars_1m", "minute_start", pytime.MinuteFloor(boundary).Add(-time.Minute), pytime.MinuteFloor(boundary).Add(time.Minute), map[string]any{"instrument_id": inst.ID})
+		if err != nil {
+			return InstrumentCaptureCoverage{}, fmt.Errorf("%s pre24 reference unavailable: %w", inst.ID, err)
+		}
 		var reference map[string]any
 		var referenceTS time.Time
 		for _, bar := range bars {
-			for _, p := range pyval.List(bar["reference_points"]) {
-				point := pyval.Map(p)
+			for _, raw := range pyval.List(bar["reference_points"]) {
+				point := pyval.Map(raw)
 				at, err := pytime.Parse(point["boundary"])
 				if point["complete"] != true || err != nil || !at.Equal(boundary) {
 					continue
 				}
-				lt := pyval.Map(point["last_trade"])
-				ts, err := pytime.Parse(lt["ts"])
+				trade := pyval.Map(point["last_trade"])
+				ts, err := pytime.Parse(trade["ts"])
 				if err == nil && (reference == nil || ts.After(referenceTS)) {
-					reference, referenceTS = lt, ts
+					reference, referenceTS = trade, ts
 				}
 			}
 		}
-		pre := map[string]any{"available": reference != nil, "trade_id": nil, "ts": nil, "ts_prec": nil, "reason": "INCOMPLETE"}
+		reason := "INCOMPLETE"
+		pre := Pre24Reference{Reason: &reason}
 		if reference != nil {
-			pre["trade_id"], pre["ts"], pre["ts_prec"], pre["reason"] = reference["trade_id"], reference["ts"], reference["ts_prec"], nil
+			identity, err := decodeReferenceTradeIdentity(reference["trade_id"])
+			if err != nil {
+				return InstrumentCaptureCoverage{}, err
+			}
+			ts, ok := reference["ts"].(string)
+			if !ok {
+				return InstrumentCaptureCoverage{}, errors.New("reference trade requires a JSON timestamp string")
+			}
+			var precision *string
+			if raw := reference["ts_prec"]; raw != nil {
+				value, ok := raw.(string)
+				if !ok {
+					return InstrumentCaptureCoverage{}, errors.New("reference trade precision requires text or null")
+				}
+				precision = &value
+			}
+			pre = Pre24Reference{Available: true, TradeID: &identity, TS: &ts, Precision: precision}
 		}
-		result["pre24_reference"] = pre
-		result["complete"] = allComplete && reference != nil
+		result.Pre24Reference = &pre
+		result.Complete = allComplete && pre.Available
 	}
-	return result
+	return result, nil
 }
 
 func (s *Service) startupRepairs(ctx context.Context, hot []map[string]any, started time.Time) {
