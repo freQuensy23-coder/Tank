@@ -1,6 +1,6 @@
 import base64
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from email import policy
 from email.parser import BytesParser
@@ -96,6 +96,24 @@ def telegram_settings(tmp_path: Path) -> Settings:
 
 def diagnostic_source():
     return source_definition({"source_id": "S29", "name": "X", "feeds": [{"kind": "x", "url": URL}]})
+
+
+def telegram_transport(
+    handler: Callable[[httpx.Request], httpx.Response],
+) -> httpx.MockTransport:
+    def guarded(request: httpx.Request) -> httpx.Response:
+        if (
+            request.method != "POST"
+            or request.url.scheme != "https"
+            or request.url.host != "api.telegram.org"
+            or request.url.port not in (None, 443)
+            or request.url.userinfo
+            or request.url.path not in {"/bottest/sendMessage", "/bottest/sendDocument"}
+        ):
+            raise AssertionError("Diagnostic fixture refuses undeclared HTTP")
+        return handler(request)
+
+    return httpx.MockTransport(guarded)
 
 
 @asynccontextmanager
@@ -235,7 +253,7 @@ async def test_actual_document_upload_preserves_every_response_byte_and_receipt(
         sent.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent), "date": 1}})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+    async with httpx.AsyncClient(transport=telegram_transport(send)) as http:
         delivery = DeliveryService(repo, telegram_settings(tmp_path), http=http)
         payload = {"notice_id": notice["notice_id"], "channel": "telegram:ops"}
         await delivery.deliver(payload)
@@ -264,7 +282,7 @@ async def test_empty_http_response_body_is_delivered_explicitly_without_invalid_
         captured.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": len(captured)}})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+    async with httpx.AsyncClient(transport=telegram_transport(send)) as http:
         await DeliveryService(repo, telegram_settings(tmp_path), http=http).deliver(
             {"notice_id": notice["notice_id"], "channel": "telegram:ops"}
         )
@@ -291,7 +309,7 @@ async def test_oversized_response_uploads_bounded_prefix_and_explicit_truncation
         captured.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": len(captured)}})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+    async with httpx.AsyncClient(transport=telegram_transport(send)) as http:
         await DeliveryService(repo, telegram_settings(tmp_path), http=http).deliver(
             {"notice_id": notice["notice_id"], "channel": "telegram:ops"}
         )
@@ -322,7 +340,7 @@ async def test_partial_document_delivery_retry_does_not_duplicate_successful_mes
         return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent)}})
 
     payload = {"notice_id": notice["notice_id"], "channel": "telegram:ops"}
-    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+    async with httpx.AsyncClient(transport=telegram_transport(send)) as http:
         delivery = DeliveryService(repo, telegram_settings(tmp_path), http=http)
         with pytest.raises(DeliveryError) as failure:
             await delivery.deliver(payload)
@@ -438,7 +456,7 @@ async def test_job_runner_preserves_independent_document_retry_budgets(
         return httpx.Response(200, json={"ok": True, "result": {"message_id": message_count + len(sent)}})
 
     async with (
-        httpx.AsyncClient(transport=httpx.MockTransport(send)) as http,
+        httpx.AsyncClient(transport=telegram_transport(send)) as http,
         delivery_runtime(repo, telegram_settings(tmp_path), http, monkeypatch) as runtime,
     ):
         for _ in range(30):
@@ -513,7 +531,7 @@ async def test_job_runner_defers_large_successful_document_batches_without_spend
         return httpx.Response(200, json={"ok": True, "result": {"message_id": messages + len(sent)}})
 
     async with (
-        httpx.AsyncClient(transport=httpx.MockTransport(send)) as http,
+        httpx.AsyncClient(transport=telegram_transport(send)) as http,
         delivery_runtime(repo, telegram_settings(tmp_path), http, monkeypatch) as runtime,
     ):
         for _ in range(50):
