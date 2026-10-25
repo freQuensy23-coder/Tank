@@ -1,6 +1,6 @@
 # Tank operations — Linux Compose / ChatGPT subscription
 
-Production runs five Compose services on openclaw-dp: `tank`, `tank-capture` (exchange capture, [capture/README.md](../capture/README.md)), `openma`, PostgreSQL16 `postgres` and `clickhouse`. Tank includes its Codex OAuth gateway in the same process on internal port8790; no service publishes a host port. Analyst model requests use the operator's ChatGPT subscription. Filtering and routing use the separately billed Foundry Decision-1 deployment. Token and spending caps and budget notices are outside V0; usage remains recorded. No actual sign-in or private browser state is needed for offline builds and synthetic tests.
+Production runs five Compose services on `oracle-vps`, an Oracle Cloud VM.Standard.E5.Flex in eu-amsterdam-1 at `84.235.183.96` (SSH user `ubuntu`, deployment directory `/srv/tank-deploy`; the Deploy workflow reaches it through the `production` environment secrets `PROD_SSH_HOST` and `PROD_SSH_KNOWN_HOSTS`): `tank`, `tank-capture` (exchange capture, [capture/README.md](../capture/README.md)), `openma`, PostgreSQL16 `postgres` and `clickhouse`. Tank includes its Codex OAuth gateway in the same process on internal port8790; no service publishes a host port. Analyst model requests use the operator's ChatGPT subscription. Filtering and routing use the separately billed Foundry Decision-1 deployment. Token and spending caps and budget notices are outside V0; usage remains recorded. No actual sign-in or private browser state is needed for offline builds and synthetic tests.
 
 ## Deployment
 
@@ -83,7 +83,7 @@ S08 reads DTCC's official `/press-releases` HTML, discovers matching article lin
 
 ## V0-B calibration workflow
 
-User decision 2026-10-20: there is no offline calibration before launch. `filter_cutoff` and `routing_cutoff` stay 0.5 (the uncalibrated midpoint) until Tank has collected real news to label (`/srv/tank/todo.md`).
+User decision 2026-10-20: there is no offline calibration before launch. `filter_cutoff` and `routing_cutoff` stay 0.5 (the uncalibrated midpoint) until Tank has collected real news to label ([todo.md](../todo.md)).
 
 To calibrate later, run `docker exec tank-tank-1 tank calibrate packet.json --output-dir runs/<name>`.
 - It calls only Foundry's Decision API through the service's Pipeline, with the same state, questions and candidate builder, at each item's historical clock. It starts no service.
