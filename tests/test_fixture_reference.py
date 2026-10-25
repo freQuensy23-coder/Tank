@@ -302,6 +302,7 @@ async def test_operational_runner_injects_only_exact_preregistered_reference_clo
     from tank.storage import MemoryRepository
 
     path, packet = reference_packet
+    packet["config"]["thresholds"] = Settings(_env_file=None).load_config("thresholds")
     save(path, packet)
     options = settings().model_copy(update={"data_dir": tmp_path / "runtime"})
     called = []
