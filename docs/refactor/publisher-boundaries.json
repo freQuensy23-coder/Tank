@@ -1,6 +1,6 @@
 {
   "status": "HELD_NOT_ACTIVATED",
-  "implementation_revision": "2f69f903",
+  "implementation_revision": "af7daaa3",
   "not_a_lint_exclusion": true,
   "entries": [
     {
@@ -309,6 +309,24 @@
       "reason": "Unrelated host dotenv lines are intentionally ignored. Exactly one supported APIFY_API_TOKEN assignment is required; environment values cannot supply a missing assignment.",
       "evidence": [
         "quality-publisher-credential-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/source_runtime.py",
+      "symbol": "archive_sources, verify_source_archive",
+      "site": "actual Git-tree records and exact source-path membership sets",
+      "reason": "The variable Git filename set is foreign repository evidence, decoded into named GitSource records. Required runtime files, every source blob, regular-entry constraints, all expected archive paths and absence of extra or symbolic entries are checked. No missing metadata or selected-release source substitutes for the orchestrator archive.",
+      "evidence": [
+        "quality-publisher-source-runtime-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/runtime_contracts.py",
+      "symbol": "RuntimeDescriptor, RuntimeEvidence, SourceArchiveEvidence",
+      "site": "separate declaration and named observation origins",
+      "reason": "Package declarations identify required image/metadata coordinates. IMAGE_RUNTIME verifies the declared image identity before runtime probes; SOURCE_ARCHIVE proves explicit orchestrator Git bytes without borrowing TANK_BUILD_SHA or claiming an executed image.",
+      "evidence": [
+        "quality-publisher-source-runtime-unit.log"
       ]
     }
   ],
