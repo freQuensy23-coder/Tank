@@ -156,3 +156,22 @@ limits:
   inference_limits:
   - Free access supports selected chains only; rejected chain responses are unavailable,
     never zero.
+
+- provider: binance.www
+  host: www.binance.com
+  policy_kind: CLIENT_PROTECTION
+  documentation_status: NOT_CAPTURED
+  documented_requests: null
+  tank_request_budget: 60
+  period_s: 60
+  scope: IP
+  basis: Existing internal capture-client protection at 60 requests per minute; no provider-documented quota has been captured.
+- provider: binance.vision
+  host: data.binance.vision
+  policy_kind: CLIENT_PROTECTION
+  documentation_status: NOT_CAPTURED
+  documented_requests: null
+  tank_request_budget: 10
+  period_s: 1
+  scope: IP
+  basis: Existing internal capture-client protection at 10 requests per second; no provider-documented quota has been captured.

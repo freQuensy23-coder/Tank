@@ -7,7 +7,8 @@ from urllib.parse import urlsplit
 from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
-from tank.time_precision import propagate_timestamp
+from tank.time_precision import normalize_precision, propagate_timestamp
+from tank.util import iso, parse_iso_time, parse_utc_time
 
 type SourceAuthorRole = Literal["ORGANIZATION", "FOUNDER_C_LEVEL", "PERSON", "OTHER"]
 
@@ -36,8 +37,33 @@ class EndpointVerification(DomainModel):
 
     @model_validator(mode="after")
     def declared_clock_facets(self) -> Self:
-        if any(name.startswith("checked_at_") for name in self.model_fields_set):
-            propagate_timestamp(self.model_dump(mode="json", exclude_unset=True), "checked_at")
+        facets = (
+            self.checked_at_prec,
+            self.checked_at_precision,
+            self.checked_at_prec_reason,
+            self.checked_at_precision_reason,
+            self.checked_at_reason,
+            self.checked_at_bucket_size_s,
+            self.checked_at_bucket_anchor,
+        )
+        if not any(value is not None for value in facets):
+            return self
+        declared = self.model_dump(mode="json", exclude_unset=True)
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", self.checked_at):
+            precisions = [
+                value for value in (self.checked_at_prec, self.checked_at_precision) if value is not None
+            ]
+            if not precisions:
+                if self.checked_at_bucket_size_s is not None or self.checked_at_bucket_anchor is not None:
+                    raise ValueError("Verification bucket metadata requires declared precision")
+                return self
+            size = (self.checked_at_bucket_size_s, "s") if self.checked_at_bucket_size_s is not None else None
+            if any(normalize_precision(value, bucket_size=size) != "BUCKET(1d)" for value in precisions):
+                raise ValueError("Calendar verification date requires a day-bucket declaration")
+            declared["checked_at"] = iso(parse_utc_time(self.checked_at))
+        else:
+            parse_iso_time(self.checked_at)
+        propagate_timestamp(declared, "checked_at")
         return self
 
 
@@ -348,6 +374,25 @@ class SourceEtherscanBudget(SourceBudgetEvidence, DocumentedRequestBudget):
         return self
 
 
+class SourceClientProtectionBudget(SourceBudgetEvidence):
+    provider: Literal["binance.www", "binance.vision"]
+    host: Literal["www.binance.com", "data.binance.vision"]
+    policy_kind: Literal["CLIENT_PROTECTION"]
+    documentation_status: Literal["NOT_CAPTURED"]
+    documented_requests: None
+    basis: str = Field(min_length=1)
+    scope: Literal["IP"]
+    period_s: int = Field(gt=0)
+    tank_request_budget: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def exact_public_host(self) -> Self:
+        expected = "www.binance.com" if self.provider == "binance.www" else "data.binance.vision"
+        if self.host != expected:
+            raise ValueError("Client protection provider must match its declared public host")
+        return self
+
+
 type SourceProviderBudget = Annotated[
     SourceSecBudget
     | SourceUncapturedRpsBudget
@@ -356,7 +401,8 @@ type SourceProviderBudget = Annotated[
     | SourceBybitBudget
     | SourceHyperliquidBudget
     | SourceDuckDuckGoBudget
-    | SourceEtherscanBudget,
+    | SourceEtherscanBudget
+    | SourceClientProtectionBudget,
     Field(discriminator="provider"),
 ]
 
