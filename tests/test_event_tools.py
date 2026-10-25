@@ -6,6 +6,7 @@ import httpx
 import pytest
 from pydantic import JsonValue
 from score_fixtures import unassessed_score_dimensions
+from source_support import fixture_versions
 
 from tank.agents.context import CONTEXT_VERSION
 from tank.contracts.json import JsonDocument
@@ -632,7 +633,7 @@ async def test_assessment_escalates_all_official_sources_in_consumer_table(servi
     expected = next(
         e for e in service.settings.load_config("registry")["entities"] if e["entity_id"] == "world"
     )["official_sources"]
-    sources = SourceService(service.repo, service.settings)
+    sources = SourceService(service.repo, service.settings, versions=fixture_versions())
     for source_id in expected:
         assert await sources.is_escalated(source_id)
     assert not await sources.is_escalated("S01")
@@ -739,7 +740,7 @@ async def test_real_session_tool_refuses_cross_event_mutation(service) -> None:
         "item_id": "i",
     }
     await service.repo.put("ops.agent_sessions", session["session_id"], session)
-    sessions = SessionService(service.repo, service.settings, service.dispatch)
+    sessions = SessionService(service.repo, service.settings, service.dispatch, versions=fixture_versions())
     replies = []
 
     async def request(*args, **kwargs):
@@ -795,7 +796,7 @@ async def test_novel_layer_proposal_survives_real_session_transaction(service) -
         "item_id": "i",
     }
     await service.repo.put("ops.agent_sessions", session["session_id"], session)
-    sessions = SessionService(service.repo, service.settings, service.dispatch)
+    sessions = SessionService(service.repo, service.settings, service.dispatch, versions=fixture_versions())
 
     async def request(*args, **kwargs):
         if args and args[0] == "GET":
@@ -1124,7 +1125,7 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(
         stale_event = await service.repo.get("evt.events", eid)
         stale_event["freshness"] = freshness
         await service.repo.put("evt.events", eid, stale_event)
-        scheduler = Scheduler(service.repo, service.settings, None, None)
+        scheduler = Scheduler(service.repo, service.settings, None, None, versions=fixture_versions())
         await scheduler.expire_calls(now)
         assert (await service.repo.get("evt.events", eid))["call_expired"]
         lifecycle = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
@@ -1885,7 +1886,7 @@ async def test_other_tank_item_quote_read_through_real_session_is_admissible(ser
         "item_id": "i",
     }
     await service.repo.put("ops.agent_sessions", session["session_id"], session)
-    sessions = SessionService(service.repo, service.settings, service.dispatch)
+    sessions = SessionService(service.repo, service.settings, service.dispatch, versions=fixture_versions())
 
     async def request(*a, **kw):
         if a and a[0] == "GET":
@@ -3643,7 +3644,7 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
             item = await service.dispatch(
                 "fetch_page", {"url": "https://www.sec.gov/news/native-provenance-fixture"}, {}
             )
-            native = SessionService(repo, service.settings, dispatch, http=http)
+            native = SessionService(repo, service.settings, dispatch, http=http, versions=fixture_versions())
             session = await native.resolve({"kind": "NEW_ITEM", "item_id": item["item_id"]})
 
             assert session["prompt_version"] is None and session["prompt_label"] == config["prompt_version"]
@@ -3785,7 +3786,9 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
     async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
         service.http = http
         service.engine = DecisionEngine()
-        first = SessionService(service.repo, service.settings, service.dispatch, http=http)
+        first = SessionService(
+            service.repo, service.settings, service.dispatch, http=http, versions=fixture_versions()
+        )
         first.start_stream = lambda session_id: None
         session = await first.send_message({"kind": "NEW_ITEM", "item_id": iid})
         failed_call = {
@@ -3798,7 +3801,9 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
             await first.process_event(sid, failed_call)
         ledger = await service.repo.get("ops.tool_calls", sid + ":http-failure")
         assert ledger["status"] == "ERROR" and not ledger.get("returned_at")
-        resumed = SessionService(service.repo, service.settings, service.dispatch, http=http)
+        resumed = SessionService(
+            service.repo, service.settings, service.dispatch, http=http, versions=fixture_versions()
+        )
         resumed.start_stream = lambda session_id: None
         await resumed.process_event(sid, failed_call)
         await resumed.process_event(sid, failed_call)
@@ -3814,7 +3819,9 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
         assert len(await service.repo.list("ingest.source_items")) == 1
         assert (await service.repo.get("ops.agent_sessions", sid))["status"] == "OPEN"
         replay_options = service.settings.model_copy(update={"replay": True})
-        replay = SessionService(service.repo, replay_options, service.dispatch, http=http)
+        replay = SessionService(
+            service.repo, replay_options, service.dispatch, http=http, versions=fixture_versions()
+        )
         replay.start_stream = lambda session_id: None
         await replay.send_message(
             {
@@ -5630,7 +5637,7 @@ async def test_accepted_completion_and_native_failure_preserve_done_without_dead
         raise AssertionError("Native terminal failure must not retry the provider")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(no_network)) as http:
-        native = SessionService(repo, service.settings, None, http=http)
+        native = SessionService(repo, service.settings, None, http=http, versions=fixture_versions())
 
         async def accept_fact() -> JsonValue:
             return JsonDocument.validate_value(

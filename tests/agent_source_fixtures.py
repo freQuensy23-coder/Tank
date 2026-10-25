@@ -8,6 +8,7 @@ from pydantic import JsonValue
 from pydantic_settings import SettingsConfigDict
 
 from tank.contracts.configuration import Thresholds
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.source_items import FeedSourceItem, parse_feed_source_item
 from tank.settings import Settings
 from tank.sources.policy import initial_relevance, is_filtered_source
@@ -131,3 +132,10 @@ def pipeline_settings_fixture(
 ) -> PipelineFixtureSettings:
     """Declare complete synthetic test settings without changing runtime configuration policy."""
     return PipelineFixtureSettings(configurations, opencode_api_key, replay, config_version, code_version)
+
+
+def declared_versions_fixture(
+    config_version: str = "test", code_version: str = "test"
+) -> ResolvedVersionIdentity:
+    """Declare the synthetic producer identity instead of reading runtime marker defaults."""
+    return ResolvedVersionIdentity(config_version=config_version, code_version=code_version)

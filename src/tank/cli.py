@@ -11,7 +11,7 @@ from pydantic import Field
 
 from tank.contracts import DomainModel
 from tank.contracts.configuration import DeliveryConfiguration
-from tank.contracts.sources import SourceConfiguration
+from tank.contracts.sources import SourceApiLimitsConfiguration, SourceConfiguration
 from tank.logging import configure_logging
 from tank.settings import Settings, configured_values, resolve_versions
 from tank.time_precision import collection_clock
@@ -363,7 +363,7 @@ def sources_check(probe, accounts):
     async def command(repo, settings):
         from tank.sources import SourceService
 
-        service = SourceService(repo, settings)
+        service = SourceService(repo, settings, versions=settings.require_versions())
         try:
             return await service.check(probe=probe, check_accounts=accounts)
         finally:
@@ -461,12 +461,23 @@ def readiness_checks(settings: Settings) -> list[ReadinessCheck]:
     import re
 
     checks: list[ReadinessCheck] = []
-    for name in ("sources", "delivery", "registry", "semantics", "dependency_map", "thresholds", "openma"):
+    for name in (
+        "sources",
+        "delivery",
+        "api_limits",
+        "registry",
+        "semantics",
+        "dependency_map",
+        "thresholds",
+        "openma",
+    ):
         try:
             if name == "sources":
                 settings.load_config_as("sources", SourceConfiguration)
             elif name == "delivery":
                 settings.load_config_as("delivery", DeliveryConfiguration)
+            elif name == "api_limits":
+                settings.load_config_as("api_limits", SourceApiLimitsConfiguration)
             elif name == "registry":
                 settings.registry()
             elif name == "semantics":
@@ -620,7 +631,9 @@ def backup(force, prune):
         from tank.scheduler import Scheduler
         from tank.util import utcnow
 
-        return await Scheduler(repo, settings, None, None).maintenance(utcnow(), force=force, prune=prune)
+        return await Scheduler(repo, settings, None, None, versions=settings.require_versions()).maintenance(
+            utcnow(), force=force, prune=prune
+        )
 
     run_db(command)
 

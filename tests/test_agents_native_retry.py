@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from agent_source_fixtures import source_record_fixture
+from agent_source_fixtures import declared_versions_fixture, source_record_fixture
 
 from tank.agents.sessions import SessionService
 from tank.storage import MemoryRepository
@@ -112,7 +112,14 @@ async def setup():
         load_config=lambda name: {},
     )
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    return repo, SessionService(repo, settings, None, http=http), http, states, posts, history
+    return (
+        repo,
+        SessionService(repo, settings, None, http=http, versions=declared_versions_fixture()),
+        http,
+        states,
+        posts,
+        history,
+    )
 
 
 @pytest.mark.parametrize("outcome", ["COMPLETED", "EXHAUSTED", "QUEUE_FAILED", "TERMINATED"])
@@ -184,7 +191,7 @@ async def test_restart_keeps_native_retry_execution_and_does_not_post_again() ->
         await service.process_event("s", event("rescheduled", "session.status_rescheduled", RETRY))
         settings = service.settings
         await service.close()
-        service = SessionService(repo, settings, None, http=http)
+        service = SessionService(repo, settings, None, http=http, versions=declared_versions_fixture())
         await service.process_event("s", error("native-retrying", RETRY, "retrying"))
         assert not (await service.completed_turn("s"))["complete"]
         current = await repo.get("ops.agent_sessions", "s")

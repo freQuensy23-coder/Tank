@@ -9,7 +9,7 @@ import pytest
 from agent_source_fixtures import source_item_fixture
 from delivery_support import delivery_job
 from pydantic import JsonValue
-from source_support import source_definition
+from source_support import fixture_versions, source_definition
 from test_agents_pipeline_audit import options
 from test_event_tools import seed
 from test_session_binding_concurrency import fixture_repo
@@ -53,7 +53,7 @@ async def test_every_ingested_material_reaches_ops_before_filtering_and_duplicat
     settings = source_settings(tmp_path, [source])
     settings.ops_progress_enabled = True
     settings.replay = False
-    service = SourceService(repo, settings)
+    service = SourceService(repo, settings, versions=fixture_versions())
     try:
         item = captured(
             service,

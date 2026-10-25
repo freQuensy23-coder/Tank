@@ -20,6 +20,7 @@ from typing import Self
 from pydantic import JsonValue
 
 from tank.contracts import DomainModel
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.source_items import SourceRelevance
 from tank.market_schema import MARKET_COLUMNS
 from tank.time_precision import Timestamp, interval_bounds, propagate_timestamp
@@ -1702,7 +1703,10 @@ async def replay_agent_session(
             )
             return CapturedToolResult.from_record(capture["record"])
 
-    service = CapturedExternalSessionService(repo, settings, event_tools.dispatch, http=http)
+    versions = ResolvedVersionIdentity(config_version=inputs.config_version, code_version=inputs.code_version)
+    service = CapturedExternalSessionService(
+        repo, settings, event_tools.dispatch, http=http, versions=versions
+    )
     delivery_receipts = []
     active_delivery_receipt = None
 
@@ -1815,7 +1819,7 @@ async def replay_agent_session(
         )
         return {"captured_delivery": True}
 
-    scheduler = Scheduler(repo, settings, event_tools.truth.market, event_tools.truth)
+    scheduler = Scheduler(repo, settings, event_tools.truth.market, event_tools.truth, versions=versions)
     timer_receipts = []
     selected_timer_timestamp = None
 

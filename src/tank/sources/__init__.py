@@ -21,17 +21,23 @@ from pydantic import JsonValue
 
 import tank.sources.parsers as parsers
 from tank.contracts.configuration import Thresholds
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.source_items import SourceText, captured_item
 from tank.contracts.sources import (
     HttpFetchPlan,
     SourceAccountRegistryView,
     SourceApiLimitsConfiguration,
+    SourceBinanceBudget,
     SourceConfiguration,
     SourceDefinition,
+    SourceEtherscanBudget,
+    SourceHyperliquidBudget,
+    SourceSecBudget,
+    SourceUncapturedRpsBudget,
 )
 from tank.ops_progress import RepositorySourceProgress
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
-from tank.sources.ingestion import IngestionVersions, SourceIngestion
+from tank.sources.ingestion import SourceIngestion
 from tank.sources.rate_limits import shared_request_budgets
 from tank.sources.raw_store import RawItemStorage
 from tank.sources.xsensor import XSensor
@@ -50,7 +56,8 @@ def tls_context():
 
 
 class SourceService:
-    def __init__(self, repo, settings, *, http=None):
+    def __init__(self, repo, settings, *, versions: ResolvedVersionIdentity, http=None) -> None:
+        self.versions = ResolvedVersionIdentity.model_validate(versions)
         cfg = SourceConfiguration.model_validate(settings.load_config("sources"))
         registry = settings.load_config("registry")
         account_registry = SourceAccountRegistryView.model_validate(
@@ -77,7 +84,7 @@ class SourceService:
         self.xsensor = XSensor(self.http, getattr(settings, "apify_api_token", None))
         self.configuration = cfg
         self.sources = {source.source_id: source for source in cfg.sources}
-        self.source_host_limits = {}
+        self.source_host_limits: dict[str, int] = {}
         for source in cfg.sources:
             per_min = source.limits.rate_per_min
             if per_min is None:
@@ -92,7 +99,6 @@ class SourceService:
         self.accounts = {
             account.handle.lower().lstrip("@"): account for account in account_registry.x_accounts
         }
-        self.locks = {}
         from tank.sources.polling import SourcePoller
 
         self.poller = SourcePoller(self)
@@ -119,9 +125,9 @@ class SourceService:
         for rule in self.api_limits:
             if rule.provider != provider or is_exchange_url(feed.url):
                 continue
-            if rule.tank_max_requests_per_s is not None:
+            if isinstance(rule, (SourceSecBudget, SourceUncapturedRpsBudget, SourceEtherscanBudget)):
                 await shared_request_budgets.acquire(provider, rule.tank_max_requests_per_s, 1, host=host)
-            if rule.tank_max_weight_per_min is not None:
+            elif isinstance(rule, (SourceBinanceBudget, SourceHyperliquidBudget)):
                 await shared_request_budgets.acquire(
                     provider, rule.tank_max_weight_per_min, 60, weight=weight, host=host
                 )
@@ -223,9 +229,7 @@ class SourceService:
     def _ingestion(self) -> SourceIngestion:
         return SourceIngestion(
             self.repo,
-            IngestionVersions(
-                config_version=self.settings.config_version, code_version=self.settings.code_version
-            ),
+            self.versions,
             self.accounts,
             RawItemStorage(self.settings.data_dir),
             RepositorySourceProgress(self.repo, self.settings),
@@ -254,7 +258,7 @@ class SourceService:
     def _filing_pattern(self):
         """One compiled pattern of registry names per configuration version (S02 filter)."""
         cached = getattr(self, "_filing_cache", None)
-        if cached and cached[0] == self.settings.config_version:
+        if cached and cached[0] == self.versions.config_version:
             return cached[1]
         registry = self.settings.load_config("registry")
         ambiguous = {"near", "world", "curve", "quant", "cow", "lit", "lighter", "plasma"}
@@ -293,7 +297,7 @@ class SourceService:
             {n.casefold() for n in candidates if n and n.casefold() not in ambiguous}, key=len, reverse=True
         )
         pattern = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(n) for n in names) + r")(?!\w)")
-        self._filing_cache = (self.settings.config_version, pattern)
+        self._filing_cache = (self.versions.config_version, pattern)
         return pattern
 
     def filing_matches(self, item: SourceText) -> bool:

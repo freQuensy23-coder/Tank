@@ -7,6 +7,7 @@ from pydantic import Field, field_validator, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.sources import SourceAccount, SourceAccountRegistryView
+from tank.time_precision import propagate_timestamp
 
 type RegistryVenue = Literal["binance", "coinbase", "okx", "bybit", "kraken", "hyperliquid"]
 type RegistryMarketType = Literal["SPOT", "PERP_LINEAR"]
@@ -43,6 +44,30 @@ class FundamentalsEvidence(DomainModel):
     verified_at: str
     metrics: FundamentalsMetrics
     reason: str | None
+    verified_at_prec: str | None = None
+    verified_at_precision: str | None = None
+    verified_at_prec_reason: str | None = None
+    verified_at_precision_reason: str | None = None
+    verified_at_reason: str | None = None
+    verified_at_bucket_size_s: str | int | float | None = None
+    verified_at_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
+
+    @model_validator(mode="after")
+    def declared_clock(self) -> Self:
+        propagate_timestamp(
+            {
+                "verified_at": self.verified_at,
+                "verified_at_prec": self.verified_at_prec,
+                "verified_at_precision": self.verified_at_precision,
+                "verified_at_prec_reason": self.verified_at_prec_reason,
+                "verified_at_precision_reason": self.verified_at_precision_reason,
+                "verified_at_reason": self.verified_at_reason,
+                "verified_at_bucket_size_s": self.verified_at_bucket_size_s,
+                "verified_at_bucket_anchor": self.verified_at_bucket_anchor,
+            },
+            "verified_at",
+        )
+        return self
 
 
 class RegistryToken(DomainModel):
@@ -91,6 +116,31 @@ class RegistryInstrument(DomainModel):
     resolved_at: str | None
     coverage_verified_date: str
 
+    resolved_at_prec: str | None = None
+    resolved_at_precision: str | None = None
+    resolved_at_prec_reason: str | None = None
+    resolved_at_precision_reason: str | None = None
+    resolved_at_reason: str | None = None
+    resolved_at_bucket_size_s: str | int | float | None = None
+    resolved_at_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
+
+    @model_validator(mode="after")
+    def declared_clock(self) -> Self:
+        propagate_timestamp(
+            {
+                "resolved_at": self.resolved_at,
+                "resolved_at_prec": self.resolved_at_prec,
+                "resolved_at_precision": self.resolved_at_precision,
+                "resolved_at_prec_reason": self.resolved_at_prec_reason,
+                "resolved_at_precision_reason": self.resolved_at_precision_reason,
+                "resolved_at_reason": self.resolved_at_reason,
+                "resolved_at_bucket_size_s": self.resolved_at_bucket_size_s,
+                "resolved_at_bucket_anchor": self.resolved_at_bucket_anchor,
+            },
+            "resolved_at",
+        )
+        return self
+
     @field_validator("contract_multiplier", "tick_size", "lot_size", mode="before")
     @classmethod
     def declared_decimal(cls, value: Decimal | str | None) -> Decimal | None:
@@ -132,6 +182,31 @@ class RegistryEntity(DomainModel):
     identity_evidence: list[str] | None = None
     identity_reviewed_at: str | None = None
     source_mapping_basis: str | None = None
+
+    identity_reviewed_at_prec: str | None = None
+    identity_reviewed_at_precision: str | None = None
+    identity_reviewed_at_prec_reason: str | None = None
+    identity_reviewed_at_precision_reason: str | None = None
+    identity_reviewed_at_reason: str | None = None
+    identity_reviewed_at_bucket_size_s: str | int | float | None = None
+    identity_reviewed_at_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
+
+    @model_validator(mode="after")
+    def declared_clock(self) -> Self:
+        propagate_timestamp(
+            {
+                "identity_reviewed_at": self.identity_reviewed_at,
+                "identity_reviewed_at_prec": self.identity_reviewed_at_prec,
+                "identity_reviewed_at_precision": self.identity_reviewed_at_precision,
+                "identity_reviewed_at_prec_reason": self.identity_reviewed_at_prec_reason,
+                "identity_reviewed_at_precision_reason": self.identity_reviewed_at_precision_reason,
+                "identity_reviewed_at_reason": self.identity_reviewed_at_reason,
+                "identity_reviewed_at_bucket_size_s": self.identity_reviewed_at_bucket_size_s,
+                "identity_reviewed_at_bucket_anchor": self.identity_reviewed_at_bucket_anchor,
+            },
+            "identity_reviewed_at",
+        )
+        return self
 
     @model_validator(mode="after")
     def nonempty_aliases(self) -> Self:
