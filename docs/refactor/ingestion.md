@@ -429,3 +429,17 @@ both helper/test modules pass strict mypy and Ruff. Constructor consumer migrati
 will be paired with analysis' exact required ReactionScheduling activation.
 This clean branch is based on parent 95ce994 and does not include the held
 admission/7af27d3 cohort or the independent polling-state WIP.
+
+
+The independent required-scheduling caller companion now uses that real async
+composition for all owned EventToolService constructors. It retains the original
+extraction, publication, web evidence, watch-condition and source-cadence assertions.
+The MAJOR source-cadence case now uses actual tool dispatch with a schema-complete,
+explicitly unestimated impact horizon. It verifies ten durable benchmark POST
+reaction jobs for the event and the existing real 15-second source reads.
+Resources drain before repository shutdown.
+
+Scoped proof: 216 owned constructor/helper units pass in 3.84s, and both actual
+source-cadence integration cases pass in 2.45s. No external HTTP is allowed by the
+real composition fixture. Full pinned owned verification is the next gate; these
+results do not assert completed reaction measurement or full scheduler typing.
