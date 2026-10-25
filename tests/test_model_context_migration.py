@@ -7,6 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture, source_record_fixture
+from scheduling_support import RecordingReactionScheduling
 
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
 from tank.agents.sessions import SessionService
@@ -106,7 +107,14 @@ async def test_legacy_callbacks_upgrade_before_delivery_and_new_turns_reject_ids
         service = SessionService(
             repo,
             settings,
-            EventToolService(repo, settings, None, None, versions=declared_versions_fixture()).dispatch,
+            EventToolService(
+                repo,
+                settings,
+                None,
+                None,
+                versions=declared_versions_fixture(),
+                scheduler=RecordingReactionScheduling(),
+            ).dispatch,
             http=http,
             versions=declared_versions_fixture(),
         )
@@ -156,7 +164,14 @@ async def test_old_description_call_in_a_legacy_turn_is_refused_once_and_the_id_
     await repo.put("evt.events", event["event_id"], event)
     await repo.put("ops.agent_sessions", session["session_id"], session)
     count = 0
-    domain = EventToolService(repo, settings, None, None, versions=declared_versions_fixture())
+    domain = EventToolService(
+        repo,
+        settings,
+        None,
+        None,
+        versions=declared_versions_fixture(),
+        scheduler=RecordingReactionScheduling(),
+    )
 
     async def dispatch(*args):
         nonlocal count

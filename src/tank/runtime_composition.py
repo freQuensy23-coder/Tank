@@ -71,14 +71,15 @@ def build_runtime(repo: Repository, settings: Settings) -> Runtime:
     truth = MarketTruthService(repo, settings, market, versions=versions)
     sources = SourceService(repo, settings, versions=versions)
     pipeline = Pipeline(repo, settings, progress=RepositorySourceProgress(repo, settings), versions=versions)
-    tools = EventToolService(repo, settings, truth, DecisionEngine(settings), versions=versions)
+    scheduler = Scheduler(repo, settings, market, truth, thresholds=settings.thresholds(), versions=versions)
+    tools = EventToolService(
+        repo, settings, truth, DecisionEngine(settings), versions=versions, scheduler=scheduler
+    )
     inbox = TelegramInbox(repo, settings)
     sessions = SessionService(repo, settings, tools.dispatch, versions=versions)
     delivery = DeliveryService(repo, settings)
-    scheduler = Scheduler(repo, settings, market, truth, thresholds=settings.thresholds(), versions=versions)
     gateway = CodexGateway(settings)
     sessions.telegram = inbox
-    tools.scheduler = scheduler
 
     async def bootstrap_registry() -> None:
         await sync_registry(repo, settings, versions=versions)
