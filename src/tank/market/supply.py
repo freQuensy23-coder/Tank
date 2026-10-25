@@ -8,7 +8,7 @@ from tank.market.cadences import supply_cadences as supply_cadences
 from tank.market.errors import SemanticError
 from tank.market.precision import async_precise, precise
 from tank.time_precision import collection_clock, propagate_timestamp
-from tank.util import iso, parse_time, sha256, utcnow
+from tank.util import clock_iso, iso, parse_iso_time, parse_time, sha256, utcnow
 
 CHAIN_IDS = {
     "Ethereum": 1,
@@ -45,7 +45,7 @@ def refresh_due(age_s, cadence_s, cycle_s):
 
 @precise
 def unlock_schedule(payload, *, now=None):
-    now = parse_time(now or iso())
+    now = utcnow() if now is None else parse_iso_time(now)
     end = now + timedelta(days=14)
     result = []
     documented = payload.get("documentedData", {}).get("data")
@@ -86,7 +86,7 @@ class SupplyCapture:
                 k: (v.replace(self.settings.etherscan_api_key, "[REDACTED]") if isinstance(v, str) else v)
                 for k, v in fields.items()
             }
-        observed = iso()
+        observed = clock_iso()
         row = dict(
             token_id=token["token_id"],
             **collection_clock(observed).fields("ts"),
@@ -154,7 +154,7 @@ class SupplyCapture:
         raw = await self.request(token, "unlocks", "https://defillama-datasets.llama.fi/emissions/" + slug)
         schedule = unlock_schedule(raw)
         for point in schedule:
-            row = dict(token_id=token["token_id"], observed_at=iso(), **point)
+            row = dict(token_id=token["token_id"], observed_at=clock_iso(), **point)
             await self.market._put(
                 "mkt.unlocks", token["token_id"] + ":" + point["date"] + ":" + point["label"], row
             )

@@ -38,7 +38,7 @@ from tank.market_storage import (
 )
 from tank.sources.capture_fetch import is_exchange_url
 from tank.time_precision import Timestamp, chosen_boundary, collection_clock, propagate_timestamp
-from tank.util import iso, jsonable, new_id, parse_time, sha256, utcnow
+from tank.util import clock_iso, iso, jsonable, new_id, parse_time, sha256, utcnow
 
 REACTION_BOUND_MARGIN = timedelta(minutes=5)
 REACTION_NEWEST_MARGIN = timedelta(minutes=15)
@@ -342,7 +342,7 @@ class MarketService:
             if collection in TANK_CAPTURE_TABLES:
                 raise ValueError(collection + " is written by tank-capture only")
             row = self.provenance(jsonable(row))
-            row.setdefault("recorded_at", iso())
+            row.setdefault("recorded_at", clock_iso())
             row.update(collection_clock(row["recorded_at"]).fields("recorded_at"))
             self._pending_market.setdefault(collection, {})[str(key)] = row
             return row
@@ -597,7 +597,7 @@ class MarketService:
                 "recorded_at",
                 semantic_field,
                 since=start,
-                end=end or iso(),
+                end=clock_iso() if end is None else end,
                 market_end=max_cutoff - timedelta(seconds=offset),
                 batch_size=1000,
             ):
@@ -1856,7 +1856,7 @@ class MarketService:
         }
         result.update(requested.fields("cutoff"))
         result.update(requested.fields("requested_cutoff"))
-        result.update(collection_clock(iso()).fields("assembled_at"))
+        result.update(collection_clock(utcnow()).fields("assembled_at"))
         if domains & {"spot", "close", "dc"}:
             duration = max(durations or [3600])
             if domains & {"close", "dc"}:
@@ -2240,7 +2240,7 @@ class MarketService:
         counts = dict(self._kline_day_counts)
         payload = {
             "version": 1,
-            "saved_at": iso(),
+            "saved_at": clock_iso(),
             "counts": [[iid, iso(day), count] for (iid, day), count in counts.items()],
         }
         path = self._day_counts_path()
@@ -2268,7 +2268,9 @@ class MarketService:
             if self._stop is not None and self._stop.is_set():
                 return
             try:
-                await self._series_counts(spot[offset : offset + 4], end - timedelta(days=90), end, iso())
+                await self._series_counts(
+                    spot[offset : offset + 4], end - timedelta(days=90), end, clock_iso()
+                )
             except Exception as exc:
                 log.warning("series count warm-up failed: %s", type(exc).__name__)
                 return
@@ -2692,7 +2694,7 @@ class MarketService:
             if t.get("symbol") in ("BTC", "ETH") or t["token_id"] in same_sector
         } - {token_id}
         shared = _SHARED_READS.get()
-        assembled = shared.setdefault("assembled", iso()) if shared is not None else iso()
+        assembled = shared.setdefault("assembled", clock_iso()) if shared is not None else clock_iso()
 
         rolling = "LIVE_SNAPSHOT" if cutoff_dt >= utcnow() - timedelta(hours=1) else None
         captured_klines = None
@@ -2911,7 +2913,7 @@ class MarketService:
             "status": latest["status"] if latest else "NOT_REQUESTED",
             "reason": latest.get("reason") if latest else "NO_DURABLE_CAPTURE_REQUEST",
             "backfill_id": latest.get("backfill_id") if latest else None,
-            "observed_at": iso(),
+            "observed_at": clock_iso(),
             "bounded_wait_s": 0,
             "incomplete_windows_excluded": True,
         }
@@ -2936,7 +2938,7 @@ class MarketService:
         )
         result["capture_tier"] = result["capture_metadata"]["tier"]
         self._snapshot_heads(result, cutoff_dt)
-        result.update(collection_clock(iso()).fields("assembled_at"))
+        result.update(collection_clock(utcnow()).fields("assembled_at"))
         return result
 
     @staticmethod
@@ -3048,7 +3050,7 @@ class MarketService:
         path = Path(self.settings.data_dir) / "market" / "coverage" / "latest.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         temp = path.with_suffix(".tmp")
-        temp.write_text(json.dumps({"assembled_at": iso(), "matrix": matrix}, indent=2))
+        temp.write_text(json.dumps({"assembled_at": clock_iso(), "matrix": matrix}, indent=2))
         temp.replace(path)
         return result
 

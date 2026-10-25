@@ -39,7 +39,7 @@ from tank.analysis.positioning import (
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.market.capture import event_anchor
 from tank.time_precision import Timestamp, chosen_boundary, offset_schedule, propagate_timestamp
-from tank.util import iso, jsonable, new_id, parse_time
+from tank.util import iso, jsonable, new_id, parse_time, utcnow
 
 WINDOWS = {"W15M": 900, "W1H": 3600, "W4H": 14400, "W24H": 86400}
 RISK_ORDER = [
@@ -5689,7 +5689,7 @@ class MarketTruthService:
     async def assess(self, event_id, token_id, cutoff=None):
         event = await self.repo.get("evt.events", event_id) if event_id else None
         event = event or {}
-        cutoff = cutoff or iso(parse_time(iso()).replace(second=0, microsecond=0))
+        cutoff = iso(utcnow().replace(second=0, microsecond=0)) if cutoff is None else cutoff
         anchor = None
         if event:
             anchor = event_anchor(event).to_wire()
