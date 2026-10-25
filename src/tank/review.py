@@ -1,8 +1,13 @@
 """Offline shadow review. Outcomes describe frozen calls; they never calibrate rules."""
 
+from collections.abc import Mapping
 from datetime import timedelta
 from decimal import Decimal, localcontext
+from math import isfinite
 from statistics import median
+from typing import Literal
+
+from pydantic import JsonValue
 
 from tank.time_precision import (
     chosen_boundary,
@@ -14,6 +19,37 @@ from tank.time_precision import (
 from tank.util import iso, parse_time, sha256, utcnow
 
 HOURS = {"H1": 1, "H4": 4, "H12": 12, "H24": 24, "D3": 72, "D7": 168}
+
+type FrozenBetaUnavailableReason = Literal[
+    "BETA_ESTIMATION_PROVENANCE_NOT_CAPTURED",
+    "INSUFFICIENT_HISTORY",
+    "NOT_ESTIMABLE",
+    "BETA_VALUE_UNAVAILABLE",
+    "BETA_VALUE_INVALID",
+]
+
+
+def frozen_beta_unavailable_reason(relative: Mapping[str, JsonValue]) -> FrozenBetaUnavailableReason | None:
+    flags = relative.get("beta_flags")
+    if not isinstance(flags, dict) or "btc" not in flags:
+        return "BETA_ESTIMATION_PROVENANCE_NOT_CAPTURED"
+    flag = flags["btc"]
+    if flag in ("INSUFFICIENT_HISTORY", "NOT_ESTIMABLE"):
+        return "INSUFFICIENT_HISTORY" if flag == "INSUFFICIENT_HISTORY" else "NOT_ESTIMABLE"
+    if flag is not None:
+        return "BETA_ESTIMATION_PROVENANCE_NOT_CAPTURED"
+    value = relative.get("beta_btc")
+    if value is None:
+        return "BETA_VALUE_UNAVAILABLE"
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return "BETA_VALUE_INVALID"
+    try:
+        beta = Decimal(str(value))
+    except (ArithmeticError, ValueError):
+        return "BETA_VALUE_INVALID"
+    return None if beta.is_finite() and isfinite(float(beta)) else "BETA_VALUE_INVALID"
+
+
 CHECKS = {
     "state_overstated",
     "usd_oi_new_positions",
@@ -394,51 +430,74 @@ class ReviewService:
             if r.get("fired_at")
         ]
 
-        window = relative.get("windows", {}).get(
-            {"H1": "W1H", "H4": "W4H", "H12": "W12H", "H24": "W24H", "D3": "W3D", "D7": "W7D"}[horizon], {}
-        )
-        nr = (
-            relative.get("normal_ranges", {})
-            .get(
-                {"H1": "W1H", "H4": "W4H", "H12": "W12H", "H24": "W24H", "D3": "W3D", "D7": "W7D"}[horizon],
-                {},
-            )
-            .get("value", window.get("normal_range"))
-        )
-        beta = relative.get("beta_btc")
-        result["direction_reason"] = "FROZEN_BTC_ENDPOINTS_OR_HORIZON_NORMAL_RANGE_UNAVAILABLE"
-        btc = relative.get("outcome_btc_reference", {})
-        if (
-            result["realized_return"] is not None
-            and nr is not None
-            and beta is not None
-            and btc.get("instrument_id")
-            and btc.get("entry_ref_price")
-        ):
-            benchmark = await self.horizon_series(btc["instrument_id"], start, end, now, extrema=False)
-            result["btc_coverage"] = benchmark["coverage"]
-            result["btc_market_evidence_hash"] = benchmark["evidence_hash"]
-            if benchmark["coverage"]["exact"]:
-                with localcontext() as context:
-                    context.prec = 80
-                    adjusted = raw_return_decimal - Decimal(str(beta)) * price_return(
-                        benchmark["endpoint"], btc["entry_ref_price"]
-                    )
+        name = {"H1": "W1H", "H4": "W4H", "H12": "W12H", "H24": "W24H", "D3": "W3D", "D7": "W7D"}[horizon]
+        window = relative.get("windows", {}).get(name, {})
+        frozen_range = relative.get("normal_ranges", {}).get(name, {})
+        nr = frozen_range.get("value", window.get("normal_range"))
+        measure = frozen_range.get("relative_measure", window.get("relative_measure"))
+        result["direction_measure"] = measure
+        result["direction_reason"] = "FROZEN_RELATIVE_MEASUREMENT_UNAVAILABLE"
+        if measure == "R_RAW":
+            result["direction_reason"] = "FROZEN_HORIZON_NORMAL_RANGE_UNAVAILABLE"
+            if result["realized_return"] is not None and nr is not None:
                 bias = decision.get("outlook", {}).get("direction")
                 realized = (
                     "BULLISH"
-                    if adjusted > Decimal(str(nr[1]))
+                    if raw_return_decimal > Decimal(str(nr[1]))
                     else "BEARISH"
-                    if adjusted < Decimal(str(nr[0]))
+                    if raw_return_decimal < Decimal(str(nr[0]))
                     else "NEUTRAL"
                 )
                 result.update(
-                    btc_adjusted_return=float(adjusted),
+                    direction_return=float(raw_return_decimal),
                     direction_correct=bias == realized if bias in ("BULLISH", "BEARISH", "NEUTRAL") else None,
                     direction_reason=None,
-                    frozen_beta=beta,
                     frozen_normal_range=nr,
                 )
+        elif measure == "R_BTC_ADJ":
+            beta_reason = frozen_beta_unavailable_reason(relative)
+            result["direction_reason"] = (
+                "FROZEN_BETA_UNAVAILABLE"
+                if beta_reason is not None
+                else "FROZEN_BTC_ENDPOINTS_OR_HORIZON_NORMAL_RANGE_UNAVAILABLE"
+            )
+            result["beta_unavailable_reason"] = beta_reason
+            beta = relative.get("beta_btc")
+            btc = relative.get("outcome_btc_reference", {})
+            if (
+                beta_reason is None
+                and result["realized_return"] is not None
+                and nr is not None
+                and btc.get("instrument_id")
+                and btc.get("entry_ref_price")
+            ):
+                benchmark = await self.horizon_series(btc["instrument_id"], start, end, now, extrema=False)
+                result["btc_coverage"] = benchmark["coverage"]
+                result["btc_market_evidence_hash"] = benchmark["evidence_hash"]
+                if benchmark["coverage"]["exact"]:
+                    with localcontext() as context:
+                        context.prec = 80
+                        adjusted = raw_return_decimal - Decimal(str(beta)) * price_return(
+                            benchmark["endpoint"], btc["entry_ref_price"]
+                        )
+                    bias = decision.get("outlook", {}).get("direction")
+                    realized = (
+                        "BULLISH"
+                        if adjusted > Decimal(str(nr[1]))
+                        else "BEARISH"
+                        if adjusted < Decimal(str(nr[0]))
+                        else "NEUTRAL"
+                    )
+                    result.update(
+                        btc_adjusted_return=float(adjusted),
+                        direction_return=float(adjusted),
+                        direction_correct=bias == realized
+                        if bias in ("BULLISH", "BEARISH", "NEUTRAL")
+                        else None,
+                        direction_reason=None,
+                        frozen_beta=beta,
+                        frozen_normal_range=nr,
+                    )
         return result
 
     async def report(self, start, end, *, checks=None, now=None):
