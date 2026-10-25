@@ -53,7 +53,7 @@ def test_realized_zero_funding_is_preserved_instead_of_replaced_by_forecast():
         {"realizedRate": 0, "fundingRate": "0.001", "fundingTime": 1781654400000},
         kind="SETTLED",
         interval_h=4,
-        received_ts=1781654400012,
+        received_ts="2026-06-17T00:00:00.012Z",
     )
     assert Decimal(result["rate"]) == 0
     assert Decimal(result["rate_8h_eq"]) == 0
@@ -116,15 +116,17 @@ def test_order_book_preserves_decimal_checksum_spelling_and_unavailable_usd():
             "quote_asset": "USDT",
         }
     )
-    book.snapshot([["99", "2"], ["95", "3"]], [["101", "4"], ["105", "5"]], sequence=1, ts=1781654400000)
-    summary = book.summary(received_ts=1781654400012)
+    book.snapshot(
+        [["99", "2"], ["95", "3"]], [["101", "4"], ["105", "5"]], sequence=1, ts="2026-06-17T00:00:00Z"
+    )
+    summary = book.summary(received_ts="2026-06-17T00:00:00.012Z")
     assert summary["quote_usd_rate"] is None
     assert summary["depth"]["bid"]["p1"]["native"] == "2"
     assert summary["depth"]["bid"]["p1"]["usd"] is None
     frozen = book.frozen()
-    book.update([["99", "0"]], [], sequence=2, ts=1781654400013)
-    assert frozen.summary()["best_bid"] == "99"
-    assert book.summary()["best_bid"] == "95"
+    book.update([["99", "0"]], [], sequence=2, ts="2026-06-17T00:00:00.013Z")
+    assert frozen.summary(received_ts="2026-06-17T00:00:00.020Z")["best_bid"] == "99"
+    assert book.summary(received_ts="2026-06-17T00:00:00.020Z")["best_bid"] == "95"
 
 
 @pytest.mark.parametrize(
