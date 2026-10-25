@@ -5,6 +5,7 @@ import copy
 import json
 import os
 import re
+from collections.abc import Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -14,6 +15,8 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from native_input_fixtures import acknowledge_native_input
+from pydantic import JsonValue
 from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_http_admission, fixture_versions
 from test_agents_session_audit import settings as session_settings
@@ -23,16 +26,19 @@ from test_session_binding_concurrency import seed as seed_typed_session
 from test_truth_start_fixture import compact_start_snapshot
 
 from tank.agents import SessionService
+from tank.analysis.decision_codec import decision_inputs_from_records
+from tank.analysis.decision_contracts import DecisionCallContext, DecisionInputs
 from tank.analysis.decisions import DecisionEngine
 from tank.analysis.page_access import LivePageAccess
 from tank.analysis.truth import MarketTruthService
+from tank.analysis.watch_contracts import WatchCondition
 from tank.event_tools import EventToolService
 from tank.market.capture_contracts import CaptureReadiness, RepairCompleted
 from tank.runtime import Runtime
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.time_precision import chosen_boundary
+from tank.time_precision import chosen_boundary, collection_clock
 from tank.util import clock_iso, iso, parse_time, utcnow
 
 
@@ -254,7 +260,7 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
             body = json.loads(request.content)
             if body["events"][0]["type"] == "user.message":
                 native_messages.append(json.loads(body["events"][0]["content"][0]["text"]))
-                return httpx.Response(200, json={"data": [{"id": "accepted-condition"}]})
+                return httpx.Response(200, json=acknowledge_native_input(request, "accepted-condition"))
             sent.append(body)
             if len(sent) == 1:
                 raise httpx.ReadError("Synthetic lost ACK", request=request)
@@ -277,6 +283,7 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
                     repo, session_settings(), tools.dispatch, http=http, versions=fixture_versions()
                 )
                 sessions.start_stream = lambda sid: None
+                runtime.sessions = sessions
                 runtime.handlers["AGENT_MESSAGE"] = sessions.send_message
                 worker = asyncio.create_task(runtime.worker(stop))
                 async with asyncio.timeout(20):
@@ -284,6 +291,10 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
                         await sessions.process_event("s", event, 7)
                 ledger = await repo.get("ops.tool_calls", "s:decision")
                 assert ledger["status"] == "DONE" and not ledger.get("returned_at")
+                assert native_messages, [
+                    {field: row.get(field) for field in ("type", "status", "last_error")}
+                    async for row in repo.iter_all("ops.jobs")
+                ]
                 assert native_messages[0]["message"]["kind"] == "CONDITION_FIRED"
                 assert "cond_id" not in native_messages[0]["message"]["condition"]
                 assert native_messages[0]["message"]["condition"]["expr"] == watch["expr"]
@@ -470,7 +481,7 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
 )
 @pytest.mark.integration
 async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_refresh(
-    tmp_path: Path, backend, postgres_template
+    tmp_path: Path, backend, postgres_template, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async with _refresh_repository(backend, postgres_template) as repo:
         settings = Settings(data_dir=tmp_path, _env_file=None)
@@ -519,14 +530,28 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
             return await original_assess(*args, **kwargs)
 
         truth.assess = held
-        evaluated = []
-        original_evaluate = engine.evaluate
+        evaluated: list[list[str]] = []
 
-        def observe(*args, **kwargs):
-            evaluated.append([row["cond_id"] for row in kwargs.get("conditions", [])])
-            return original_evaluate(*args, **kwargs)
+        def observe(
+            event_record: Mapping[str, JsonValue],
+            assessment_record: Mapping[str, JsonValue],
+            beneficiary_record: Mapping[str, JsonValue],
+            market_record: Mapping[str, JsonValue],
+            *,
+            open_call: DecisionCallContext | None,
+            conditions: Sequence[WatchCondition],
+        ) -> DecisionInputs:
+            evaluated.append([row.cond_id for row in conditions])
+            return decision_inputs_from_records(
+                event_record,
+                assessment_record,
+                beneficiary_record,
+                market_record,
+                open_call=open_call,
+                conditions=conditions,
+            )
 
-        engine.evaluate = observe
+        monkeypatch.setattr("tank.event_tools.decision_inputs_from_records", observe)
         market.released = True
         runtime = object.__new__(Runtime)
         runtime.repo, runtime.market, runtime.truth = repo, market, truth
@@ -554,14 +579,28 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
                 release.set()
                 async with asyncio.timeout(20):
                     await pending
-                assert evaluated[-1] == [condition["cond_id"]]
-                assert (await repo.get("ana.watch_conditions", condition["cond_id"])).get("consumed_by")
+                assert evaluated[-1] == [condition["cond_id"]], {
+                    "result": (await repo.get("ops.tool_calls", "s:first-condition"))["result"],
+                    "first": await repo.get("ana.watch_conditions", condition["cond_id"]),
+                    "second": await repo.get("ana.watch_conditions", second["cond_id"]),
+                }
+                first_result = (await repo.get("ops.tool_calls", "s:first-condition"))["result"]
+                assert (await repo.get("ana.watch_conditions", condition["cond_id"]))[
+                    "consumed_by"
+                ] == first_result["dec_id"]
                 deferred = await repo.get("ana.watch_conditions", second["cond_id"])
                 assert deferred["status"] == "FIRED" and not deferred.get("consumed_by")
                 before = len(await repo.list("ana.market_truth"))
                 await sessions.process_event("s", {**event, "id": "second-condition"}, 9)
                 assert evaluated[-1] == [second["cond_id"]]
-                assert (await repo.get("ana.watch_conditions", second["cond_id"])).get("consumed_by")
+                second_result = (await repo.get("ops.tool_calls", "s:second-condition"))["result"]
+                assert (await repo.get("ana.watch_conditions", second["cond_id"]))[
+                    "consumed_by"
+                ] == second_result["dec_id"]
+                assert (await repo.get("ana.watch_conditions", condition["cond_id"]))[
+                    "consumed_by"
+                ] == first_result["dec_id"]
+                assert second_result["dec_id"] != first_result["dec_id"]
                 assert len(await repo.list("ana.market_truth")) == before + 1
             finally:
                 release.set()
@@ -612,21 +651,29 @@ async def test_event_only_risk_watch_never_waits_for_market_refresh(
             "invalidation_price": "90",
         },
     )
-    await repo.put(
-        "ana.watch_conditions",
-        "risk",
+    risk = WatchCondition.model_validate(
         {
+            **tools.provenance({}),
             "cond_id": "risk",
             "event_id": "e",
             "token_id": "T",
             "role": role,
             "status": "FIRED",
-            "expr": {"metric": metric, "op": "==", "value": value},
-            "created_at": clock_iso(),
-            "fired_at": clock_iso(),
-            "expires_at": iso(end + timedelta(days=1)),
-        },
+            "created_by": "authored-risk-watch",
+            "human_text": "The authored event risk changed",
+            "expr": {
+                "metric": metric,
+                "window": "EVENT",
+                "op": "==",
+                "value": value,
+                "persist": {"count": 1, "unit": "consecutive_windows"},
+            },
+            **collection_clock().fields("created_at"),
+            **collection_clock().fields("fired_at"),
+            **collection_clock(end + timedelta(days=1)).fields("expires_at"),
+        }
     )
+    await repo.put("ana.watch_conditions", "risk", risk.model_dump(mode="json", exclude_unset=True))
     tools.get_market_truth = AsyncMock(
         side_effect=AssertionError("Event risk cannot depend on unavailable market")
     )
