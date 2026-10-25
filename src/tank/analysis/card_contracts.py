@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from tank.analysis.decision_contracts import (
     Action,
@@ -546,8 +546,10 @@ class CardLengthSection(DomainModel):
 
 
 class CardLengthDiagnostics(DomainModel):
+    model_config = ConfigDict(validate_by_name=True)
+
     actual: int = Field(ge=0)
-    max_chars: int = Field(gt=0, serialization_alias="max")
+    max_chars: int = Field(gt=0, alias="max")
     excess: int = Field(gt=0)
     sections: tuple[CardLengthSection, ...]
     newline_chars: int = Field(ge=0)
