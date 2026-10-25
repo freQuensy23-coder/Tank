@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Annotated, Literal, Self
 
-from pydantic import ConfigDict, Field, field_validator, model_validator
+from pydantic import BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
 from tank.analysis.decision_contracts import (
     Action,
@@ -22,6 +22,7 @@ from tank.analysis.decision_contracts import (
 from tank.analysis.statistics_contracts import DecimalBounds
 from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
+from tank.contracts.scalars import require_integer
 from tank.contracts.score import ScoreAssessmentView
 from tank.time_precision import Timestamp
 from tank.util import parse_iso_time
@@ -449,9 +450,12 @@ class CardDerivatives(DomainModel):
     synchronized: CardSynchronizedOi | None
 
 
+type CardSpotSign = Annotated[Literal[-1, 0, 1], BeforeValidator(require_integer)]
+
+
 class CardSpotVenue(DomainModel):
     venue: str = Field(min_length=1)
-    sign: Literal[-1, 0, 1]
+    sign: CardSpotSign
     volume_share: Decimal | None = Field(ge=0, le=1)
 
     @model_validator(mode="after")

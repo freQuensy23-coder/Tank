@@ -820,3 +820,10 @@ BestMeasuredRouting.automatic_apply and CapturedProjectionCodeInventory.archived
 SavedKlineDayCounts.version uses canonical OneInt for the integer cache format identifier. This site already had an explicit integer prevalidator; consolidation preserves that behavior and removes the duplicate check. Integral floats and booleans remain invalid identifiers, while no financial quantity/rate numeric policy is changed. All retained/raw evidence bytes are unchanged.
 
 Twenty new wire-boundary cases reject numeric/bool confusion and preserve valid booleans/default policy/version roundtrips. The four source modules and new test pass independent strict mypy; 46 related calibration/code-evidence/cache/capture units pass2.41s. This companion is based on canonical24 and has no held decision/card ancestry.
+
+### Discrete spot sign scalar
+
+CardSpotVenue.sign now uses an integer-only -1/0/1 classification alias with require_integer. This is a discrete classification, not a numeric multiplier or financial coefficient: the actual truth.spot_truth venue producer chooses integer literals1,-1,0 (truth.py708), as does flow_core at458. Known zero remains a real neutral class with an unavailable volume share when that ratio is undefined; no share is filled. Valid financial Decimal volume_share values and serialization remain unchanged. Booleans and integral floats cannot impersonate this integer class.
+
+Twelve new sign wire/roundtrip cases and the existing presentation/registry/ranking cohort pass89/0skips in3.15s; independent strict source/test typing passes. The clean scalar4 companion729d953f is normally joined atc6faa7f2; its only append conflict preserved both analysis ledger sections.
+
