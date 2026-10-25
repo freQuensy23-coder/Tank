@@ -13,7 +13,6 @@ from psycopg import AsyncConnection, OperationalError
 from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
-from tank.settings import Settings
 from tank.storage import Repository
 
 LEDGER_MAX_WAIT_S = 5.0
@@ -182,9 +181,7 @@ class SharedRequestBudgets:
         self.urgent: dict[BudgetBucket, int] = {}
         self.ledger: RequestLedger | None = None
 
-    def configure(
-        self, repo: Repository, settings: Settings, *, owner: str = "tank-core"
-    ) -> RequestLedger | None:
+    def configure(self, repo: Repository, *, owner: str) -> RequestLedger | None:
         """Admit from the PostgreSQL ledger shared with tank-capture; an in-memory repository
         (tests) keeps budgets in memory."""
         from tank.storage import PostgresRepository

@@ -412,3 +412,10 @@ and optional head-refresh 304 outcomes retain their explicit no-content branch.
 Required receipt digest/status/response URL/fetch clock accesses no longer use
 empty receipt maps or invented current-time fallbacks. Strict reader/test mypy
 and touched Ruff checks pass. Full pinned services verification follows the commit.
+
+
+`SharedRequestBudgets.configure` no longer takes the unused Settings object or
+imports application configuration. Its owner label is required explicitly and
+remains observability only, never a quota partition. Runtime's owner must pair
+the configure call with the existing release lifetime before integration; this
+small API companion does not alter memory/physical repository selection.
