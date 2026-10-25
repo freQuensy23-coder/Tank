@@ -5,7 +5,6 @@ import pytest
 from pydantic import ValidationError
 
 from tank.analysis.statistics_contracts import (
-    AssumedBeta,
     BaselineCache,
     BitcoinContextHistory,
     DecimalBounds,
@@ -17,6 +16,7 @@ from tank.analysis.statistics_contracts import (
     NativeVolumeIndex,
     RelativeHistory,
     StatisticalPopulation,
+    UnavailableBeta,
 )
 
 
@@ -65,11 +65,15 @@ def test_ranges_distinguish_unavailable_float_statistics_and_exact_decimal_const
         DecimalBounds(lower=Decimal("NaN"), upper=Decimal(1))
 
 
-def test_assumed_beta_requires_actual_reason_and_unit_assumption() -> None:
-    assumed = AssumedBeta(kind="ASSUMED", value=1.0, reason="NOT_ESTIMABLE", paired_sample_count=200)
-    assert assumed.value == 1.0 and assumed.reason == "NOT_ESTIMABLE"
+def test_unavailable_beta_has_no_numeric_assumption() -> None:
+    unavailable = UnavailableBeta(
+        kind="UNAVAILABLE", value=None, reason="NOT_ESTIMABLE", paired_sample_count=200
+    )
+    assert unavailable.value is None and unavailable.reason == "NOT_ESTIMABLE"
     with pytest.raises(ValidationError):
-        AssumedBeta(kind="ASSUMED", value=0.0, reason="NOT_ESTIMABLE", paired_sample_count=200)
+        UnavailableBeta.model_validate(
+            {"kind": "UNAVAILABLE", "value": 1.0, "reason": "NOT_ESTIMABLE", "paired_sample_count": 200}
+        )
 
 
 def test_empty_history_has_explicit_unmeasured_endpoints_and_matching_sample_count() -> None:

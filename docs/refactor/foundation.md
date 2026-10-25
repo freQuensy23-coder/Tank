@@ -214,3 +214,8 @@ At exact `b7e35f8da98f4e86ad5888db18ba17d32b2d681a`, the full `pytest -n auto -m
 
 
 Timestamp fallback closeout: `Timestamp.fields(precision_field=...)` now distinguishes an omitted override from an explicitly empty invalid name; the latter refuses rather than silently selecting a canonical field. `propagate_timestamp` uses explicit absence checks for uncertainty-reason precedence and unknown-evidence labeling, preserving the documented selected-reason policy and valid serialized bytes. These are actual absent metadata branches, not truthiness defaults. All 32 precision tests pass, including explicit-name refusal; independent strict source/test mypy and Ruff pass.
+
+
+### Beta policy resolved: unavailable regression stays unavailable
+
+Analysis audited `relative_truth` and `ReviewService.outcome`: generic beta 1.0 created adjusted returns/history/runup without a proven regression, and review could classify direction while ignoring beta flags. No necessary fallback policy was found. `AssumedBeta` is therefore removed before consumer activation; `UnavailableBeta` requires `value=None`, the actual `INSUFFICIENT_HISTORY`/`NOT_ESTIMABLE` reason and paired sample count. `BetaEstimate` is now exactly `EstimatedBeta | UnavailableBeta`. Raw returns and independently frozen `R_RAW` benchmark directions remain separate from regression availability. Analysis owns producer guards and review provenance gating; the contract never fabricates a numeric beta or adjusted direction. The prior OPEN policy section records the review history and is closed by this removal, not by relabeling the fallback. Eleven contract tests and independent strict source/test typing continue to pass.

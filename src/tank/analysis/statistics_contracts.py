@@ -133,18 +133,14 @@ class EstimatedBeta(DomainModel):
     paired_sample_count: int = Field(ge=1)
 
 
-class AssumedBeta(DomainModel):
-    kind: Literal["ASSUMED"]
-    value: float
+class UnavailableBeta(DomainModel):
+    kind: Literal["UNAVAILABLE"]
+    value: None
     reason: Literal["INSUFFICIENT_HISTORY", "NOT_ESTIMABLE"]
     paired_sample_count: int = Field(ge=0)
 
-    @field_validator("value")
-    @classmethod
-    def declared_assumption(cls, value: float) -> float:
-        if value != 1.0:
-            raise ValueError("Unavailable regression uses the explicit unit-beta assumption")
-        return value
+
+type BetaEstimate = EstimatedBeta | UnavailableBeta
 
 
 class DurationBounds(DomainModel):
@@ -277,7 +273,7 @@ class BaselineCaches:
     open_interest: BaselineCache[OpenInterestBaseline]
     funding: BaselineCache[FundingBaseline]
     hourly_returns: BaselineCache[HourlyReturns]
-    beta: BaselineCache[EstimatedBeta | AssumedBeta]
+    beta: BaselineCache[BetaEstimate]
     relative_history: BaselineCache[RelativeHistory]
     bitcoin_context: BaselineCache[BitcoinContextHistory]
     native_volume: BaselineCache[NativeVolumeIndex]
