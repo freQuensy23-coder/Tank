@@ -558,6 +558,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
             "ems_id": "ems",
             "event_id": "evt_1",
             "class": "MAJOR",
+            "criterion": "A deployed product announcement is the recorded synthetic major event.",
             "impact_horizon": {"impact_start": "UNKNOWN"},
             "all_dependencies_within_24h": None,
             "dims": {
@@ -575,7 +576,25 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
         },
     )
     await repo.put(
-        "evt.beneficiary_maps", "map", {"event_id": "evt_1", "map_version": 1, "analysis_set": ["world:WLD"]}
+        "evt.beneficiary_maps",
+        "map",
+        {
+            "event_id": "evt_1",
+            "map_version": 1,
+            "analysis_set": ["world:WLD"],
+            "least_repriced_edge": None,
+            "no_credible_secondary_reason": "The synthetic announcement names only the product issuer.",
+            "layers": {
+                "ISSUER_PRODUCT": {"note": "Only the named product issuer is identified."},
+                "VENUE_DEX": {"note": "The announcement identifies no venue relationship."},
+                "SETTLEMENT_L1_L2": {"note": "The announcement identifies no settlement relationship."},
+                "LIQUIDITY_EXECUTION": {"note": "The announcement identifies no liquidity relationship."},
+                "LENDING_COLLATERAL": {"note": "The announcement identifies no lending relationship."},
+                "ORACLE_DATA": {"note": "The announcement identifies no oracle relationship."},
+                "INTEROPERABILITY": {"note": "The announcement identifies no interoperability relationship."},
+                "CUSTODY_COMPLIANCE": {"note": "The announcement identifies no custody relationship."},
+            },
+        },
     )
     await repo.put(
         "evt.beneficiary_edges",
@@ -590,6 +609,9 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
             "capture_class": "UNKNOWN",
             "exposure_score": None,
             "thesis_link_credible": None,
+            "evidence": [],
+            "layer": "ISSUER_PRODUCT",
+            "causal_chain": "The announced product belongs to the named issuer.",
             "map_version": 1,
         },
     )
@@ -601,7 +623,8 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
             "event_id": "evt_1",
             "token_id": "world:WLD",
             "cutoff": now,
-            "data_confidence": {"class": "LOW"},
+            "data_confidence": {"class": "LOW", "limiting": None},
+            "decisive_facts": [],
             "class_confidence": "LOW",
             "move_class": "UNKNOWN",
             "primary_window": "EVENT",
@@ -610,18 +633,27 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
                 "market_context": None,
                 "entry_ref_price": None,
                 "anchor": {"ref_price": None},
-                "windows": {"EVENT": {"r_btc_adj": None}},
+                "windows": {"EVENT": {"r_raw": None, "r_btc_adj": None}},
+                "context_inputs": {"return_normal_range": None, "btc_return_24h": None},
             },
             "liquidity": {"window": "EVENT", "start": None, "cutoff": now, "reason": "INCOMPLETE"},
             "spot": {
                 "EVENT": {
+                    "window": "EVENT",
                     "direction": None,
                     "classification": None,
                     "exact_majority": {"sell": None},
-                    "coverage": {"n_complete": None},
+                    "coverage": {"n_complete": None, "excluded": []},
+                    "venues": [],
                 }
             },
-            "derivatives": {"windows": {"W4H": {"synchronized": None, "per_venue": []}}},
+            "derivatives": {
+                "window": "W4H",
+                "synchronized": None,
+                "per_venue": [],
+                "windows": {"W4H": {"synchronized": None, "per_venue": []}},
+            },
+            "supply": {"holders_revenue": {"protocols": []}},
             "divergence": {"state": "UNKNOWN", "unresolved": []},
             "alternatives": [],
         },
