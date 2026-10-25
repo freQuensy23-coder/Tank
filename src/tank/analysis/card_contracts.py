@@ -67,6 +67,20 @@ class PublicationPolicy(DomainModel):
         )
 
 
+class PublicationPriorFacts(DomainModel):
+    state: EventState
+    state_verified: bool
+    negative_marker: NegativeEventMarker | None
+    active_fatal_ids: frozenset[str]
+
+    @field_validator("active_fatal_ids")
+    @classmethod
+    def actual_fatal_identities(cls, values: frozenset[str]) -> frozenset[str]:
+        if any(not value.strip() for value in values):
+            raise ValueError("Fatal publication facts require actual contradiction identities")
+        return values
+
+
 class PublicationEventFacts(DomainModel):
     state: EventState
     state_verified: bool
@@ -86,6 +100,14 @@ class PublicationEventFacts(DomainModel):
         if any(not value.strip() for value in values):
             raise ValueError("Fatal publication facts require actual contradiction identities")
         return values
+
+    def previous_facts(self) -> PublicationPriorFacts:
+        return PublicationPriorFacts(
+            state=self.state,
+            state_verified=self.state_verified,
+            negative_marker=self.negative_marker,
+            active_fatal_ids=self.active_fatal_ids,
+        )
 
 
 class PublicationDecisionStatus(DomainModel):
@@ -120,7 +142,7 @@ class AcknowledgedPublicationClock(DomainModel):
 
 class PublicationBaseline(DomainModel):
     assessment_class: AssessmentClass
-    event: PublicationEventFacts
+    event: PublicationPriorFacts
     actions_by_token: dict[str, Action]
     acknowledged_send: AcknowledgedPublicationClock | None
 

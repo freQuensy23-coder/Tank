@@ -740,7 +740,9 @@ def test_trade_base_a_reason_is_preserved() -> None:
 def test_persistent_safety_is_silent_but_new_fatal_and_action_transition_are_immediate() -> None:
     case = publication_case()
     event = case.event.model_copy(update={"freshness": "NORMAL", "active_fatal_ids": frozenset({"fatal-1"})})
-    previous = present(case.previous).model_copy(update={"event": event, "actions_by_token": {"T": "EXIT"}})
+    previous = present(case.previous).model_copy(
+        update={"event": event.previous_facts(), "actions_by_token": {"T": "EXIT"}}
+    )
     exit_status = PublicationDecisionStatus(token_id="T", action="EXIT", active=True)
     case = case.model_copy(update={"event": event, "previous": previous, "decisions": (exit_status,)})
     assert alert_gate(case).reason == "NO_MATERIAL_CHANGE"

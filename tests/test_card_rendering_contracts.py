@@ -404,3 +404,19 @@ def test_missing_no_secondary_layer_fact_is_refused_instead_of_padded() -> None:
     mapping = inputs.mapping.model_copy(update={"layer_explanations": notes})
     with pytest.raises(ValidationError, match="actual eight layer assessments"):
         compose_card(inputs.model_copy(update={"mapping": mapping}))
+
+
+def test_prior_gate_projection_does_not_require_unused_current_state_facts() -> None:
+    from tank.analysis.card_codec import publication_baseline_from_records
+
+    alert: dict[str, JsonValue] = {
+        "alert_id": "older-card",
+        "version": 1,
+        "card_struct": {
+            "event": {"event_state": "APPROVED", "state_verified": True, "contradictions": []},
+            "assessment": {"class": "MAJOR", "contradictions": []},
+        },
+    }
+    baseline = publication_baseline_from_records(alert, [], sent_delivery=None)
+    assert baseline.event.state == "APPROVED" and baseline.event.state_verified
+    assert baseline.acknowledged_send is None

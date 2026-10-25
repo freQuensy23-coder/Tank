@@ -38,7 +38,7 @@ def event_facts() -> PublicationEventFacts:
 def baseline() -> PublicationBaseline:
     return PublicationBaseline(
         assessment_class="MAJOR",
-        event=event_facts(),
+        event=event_facts().previous_facts(),
         actions_by_token={"T": "WATCH_TO_START"},
         acknowledged_send=AcknowledgedPublicationClock(stamp=collection_clock(AT)),
     )
@@ -101,7 +101,7 @@ def test_only_new_safety_and_start_exit_transitions_bypass_cooldown() -> None:
     assert alert_gate(inputs.model_copy(update={"decisions": (inactive,)})).reason == "NO_MATERIAL_CHANGE"
     fatal = inputs.event.model_copy(update={"active_fatal_ids": frozenset({"fatal-1"})})
     assert publication_immediate(PublicationChangeInputs(event=fatal, decisions=(), previous=inputs.previous))
-    prior = baseline().model_copy(update={"event": fatal})
+    prior = baseline().model_copy(update={"event": fatal.previous_facts()})
     assert not publication_immediate(PublicationChangeInputs(event=fatal, decisions=(), previous=prior))
 
 

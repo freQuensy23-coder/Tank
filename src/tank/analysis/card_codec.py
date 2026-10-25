@@ -53,6 +53,7 @@ from tank.analysis.card_contracts import (
     PublicationGateInputs,
     PublicationNarrative,
     PublicationPolicy,
+    PublicationPriorFacts,
     UnavailableRevenueProtocol,
 )
 from tank.analysis.decision_contracts import (
@@ -656,9 +657,7 @@ class CardBeneficiaryHeader(DomainModel):
     causal_chain: str
 
 
-def _publication_facts(
-    event: Mapping[str, JsonValue], assessment: Mapping[str, JsonValue]
-) -> PublicationEventFacts:
+def _active_fatal_ids(event: Mapping[str, JsonValue], assessment: Mapping[str, JsonValue]) -> frozenset[str]:
     fatal_ids: set[str] = set()
     for row in (event, assessment):
         for contradiction in _records(_field(row, "contradictions"), "contradictions"):
@@ -667,6 +666,13 @@ def _publication_facts(
                 parse_iso_time(_text(resolved_at, "resolved_at"))
             elif _text(_field(contradiction, "type"), "contradiction.type") == "FATAL":
                 fatal_ids.add(_text(_field(contradiction, "contradiction_id"), "contradiction_id"))
+    return frozenset(fatal_ids)
+
+
+def _publication_facts(
+    event: Mapping[str, JsonValue], assessment: Mapping[str, JsonValue]
+) -> PublicationEventFacts:
+    fatal_ids = _active_fatal_ids(event, assessment)
     facts = _project(
         PublicationEventFactsWire,
         {
@@ -724,7 +730,14 @@ def publication_baseline_from_records(
     classification = _project(CardAssessmentClass, {"value": _field(assessment, "class")}).value
     return PublicationBaseline(
         assessment_class=classification,
-        event=_publication_facts(event, assessment),
+        event=PublicationPriorFacts(
+            state=_project(CardEventState, {"value": _field(event, "event_state")}).value,
+            state_verified=_boolean(_field(event, "state_verified"), "state_verified"),
+            negative_marker=_project(
+                PublicationNegativeMarker, {"value": event.get("negative_marker")}
+            ).value,
+            active_fatal_ids=_active_fatal_ids(event, assessment),
+        ),
         actions_by_token=actions,
         acknowledged_send=acknowledged,
     )
@@ -778,3 +791,7 @@ class CardAction(DomainModel):
 
 class CardAssessmentClass(DomainModel):
     value: AssessmentClass
+
+
+class PublicationNegativeMarker(DomainModel):
+    value: NegativeEventMarker | None
