@@ -498,3 +498,32 @@ safe HTTP error behavior. Five new helper/domain/test modules remain independent
 strict-clean. Existing constructor consumers and actual retained-reader proof are
 still being migrated/qualified; parent must hold this activation until companions.
 The clean b123/1459 scheduling/statistical boundary remains independently mergeable.
+### Clean scheduling policy fixtures and stale-sector negative oracle
+
+The generic authored test_replay packet now explicitly captures the complete known
+fixture Thresholds. The one reference operational-composition unit authors the same
+policy before hashing its packet. The real scheduler still refuses a packet whose
+required reaction policy is absent; no packaged-policy fallback is restored and no
+frozen input bytes change. The earlier339unit result preceded the final strict
+captured-policy precondition; this broader fixture check closes that verification gap.
+
+The comparator fixture's invalid_peer_close branch intentionally corrupts the two
+latest PEER1 close values and marks its15-minute bar incomplete. An independent
+raw-row calculation now proves its latest valid completed close is15minutes stale,
+against the actual declared60-second cadence. The preferred historical series can
+no longer contribute a fabricated fresh sector return. The test preserves the full
+dense-vs-compact equality oracle and actual available raw return, asserts unavailable
+sector adjustment/reason for that negative branch, and retains the positive sector
+adjustment assertions on all valid-peer cases. This is not a restored gap-derived
+freshness allowance or an alternative venue fabricated for the fixture.
+
+All132 unit cases in test_replay/test_fixture_reference/test_market_snapshot_comparators
+pass in3.24s with zero skips. Ruff/format pass. This companion descends clean26862f39;
+held HTTP caller work remains isolated at immutable e68ab1f1dbe749b934182165618791eb811d85b2.
+
+The separate replay_ingest_policy operational fixture now explicitly captures its
+complete known Thresholds as well. Both actual memory/PostgreSQL cases pass in1.94s
+with zero skips, retaining all original classifier-output reset, policy rederivation
+and imported-source assertions. This is an authored fixture change; no production
+fallback or frozen data is altered. This follow-up remains a clean fd077 descendant
+without held HTTP ancestry.

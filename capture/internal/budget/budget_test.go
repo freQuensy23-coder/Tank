@@ -1,39 +1,56 @@
 package budget
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/freQuensy23-coder/Tank/capture/internal/pyval"
+	"github.com/freQuensy23-coder/Tank/capture/internal/budgetpolicy"
 )
 
+type vectorBucket struct {
+	Key      string
+	Name     string
+	Capacity float64
+	WindowS  float64 `json:"window_s"`
+	Weight   float64
+}
+
+type vectorPlan struct {
+	Host    string
+	Path    string
+	Params  map[string]string
+	Payload json.RawMessage
+	Buckets []vectorBucket
+	Error   string
+}
+
+type vectorWeight struct {
+	Host   string
+	Path   string
+	Params map[string]string
+	Weight *float64
+	Error  string
+}
+
+type vectorName struct {
+	Key      string
+	Capacity float64
+	WindowS  float64 `json:"window_s"`
+	Name     string
+}
+
 type vectors struct {
-	Weights []struct {
-		Host, Path string
-		Params     map[string]string
-		Weight     *float64
-		Error      string
-	}
-	Plans []struct {
-		Host, Path string
-		Params     map[string]string
-		Payload    map[string]any
-		Buckets    []struct {
-			Key, Name                 string
-			Capacity, WindowS, Weight float64
-		}
-		Error string
-	}
-	Names []struct {
-		Key               string
-		WindowS, Capacity float64
-		Name              string
-	}
+	Weights []vectorWeight
+	Plans   []vectorPlan
+	Names   []vectorName
 }
 
 func loadVectors(t *testing.T) vectors {
@@ -42,78 +59,27 @@ func loadVectors(t *testing.T) vectors {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	raw, err := pyval.Decode(data)
-	if err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var result vectors
+	if err := decoder.Decode(&result); err != nil {
 		t.Fatal(err)
 	}
-	var v vectors
-	root := raw.(map[string]any)
-	for _, item := range root["weights"].([]any) {
-		m := item.(map[string]any)
-		w := struct {
-			Host, Path string
-			Params     map[string]string
-			Weight     *float64
-			Error      string
-		}{Host: m["host"].(string), Path: m["path"].(string), Params: stringMap(m["params"])}
-		if e, ok := m["error"].(string); ok {
-			w.Error = e
-		} else {
-			f := number(m["weight"])
-			w.Weight = &f
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		t.Fatal("vector fixture must contain one JSON document")
+	}
+	for _, weight := range result.Weights {
+		if (weight.Weight == nil) == (weight.Error == "") {
+			t.Fatal("vector requires either expected weight or error")
 		}
-		v.Weights = append(v.Weights, w)
 	}
-	for _, item := range root["plans"].([]any) {
-		m := item.(map[string]any)
-		p := struct {
-			Host, Path string
-			Params     map[string]string
-			Payload    map[string]any
-			Buckets    []struct {
-				Key, Name                 string
-				Capacity, WindowS, Weight float64
-			}
-			Error string
-		}{Host: m["host"].(string), Path: m["path"].(string), Params: stringMap(m["params"]), Payload: m["payload"].(map[string]any)}
-		if e, ok := m["error"].(string); ok {
-			p.Error = e
+	for _, plan := range result.Plans {
+		if len(plan.Payload) == 0 || plan.Params == nil {
+			t.Fatal("vector requires raw request payload and query mapping")
 		}
-		for _, b := range pyval.List(m["buckets"]) {
-			bm := b.(map[string]any)
-			p.Buckets = append(p.Buckets, struct {
-				Key, Name                 string
-				Capacity, WindowS, Weight float64
-			}{bm["key"].(string), bm["name"].(string), number(bm["capacity"]), number(bm["window_s"]), number(bm["weight"])})
-		}
-		v.Plans = append(v.Plans, p)
 	}
-	for _, item := range root["names"].([]any) {
-		m := item.(map[string]any)
-		v.Names = append(v.Names, struct {
-			Key               string
-			WindowS, Capacity float64
-			Name              string
-		}{m["key"].(string), number(m["window_s"]), number(m["capacity"]), m["name"].(string)})
-	}
-	return v
-}
-
-func stringMap(v any) map[string]string {
-	out := map[string]string{}
-	for k, x := range v.(map[string]any) {
-		out[k] = x.(string)
-	}
-	return out
-}
-
-func number(v any) float64 {
-	d, err := pyval.Decimal(v)
-	if err != nil {
-		panic(err)
-	}
-	return d.Float64()
+	return result
 }
 
 func TestBinanceWeightMatchesPython(t *testing.T) {
@@ -125,6 +91,12 @@ func TestBinanceWeightMatchesPython(t *testing.T) {
 			}
 			continue
 		}
+		if w.Host == "fapi.binance.com" && w.Path == "/fapi/v1/depth" && len(w.Params) == 0 {
+			if w.Weight == nil || *w.Weight != 5 || err != nil || got != 10 {
+				t.Fatalf("retained wrong default5 must become documented500-depth weight10: retained=%v got=%v err=%v", w.Weight, got, err)
+			}
+			continue
+		}
 		if err != nil || got != *w.Weight {
 			t.Errorf("%s %s %v: %v %v, want %v", w.Host, w.Path, w.Params, got, err, *w.Weight)
 		}
@@ -132,8 +104,17 @@ func TestBinanceWeightMatchesPython(t *testing.T) {
 }
 
 func TestConstraintsMatchPython(t *testing.T) {
+	policies := fixturePolicies(t)
 	for _, p := range loadVectors(t).Plans {
-		got, err := Constraints(p.Host, p.Path, p.Params, p.Payload)
+		body := p.Payload
+		method := "GET"
+		if p.Host == "api.hyperliquid.xyz" {
+			method = "POST"
+		}
+		got, err := policies.Plan(budgetpolicy.Request{Method: method, Host: p.Host, Path: p.Path, Query: p.Params, Body: body})
+		if assertDocumentedPlanTransition(t, p, got, err, body) {
+			continue
+		}
 		if p.Error != "" {
 			if err == nil || err.Error() != p.Error {
 				t.Errorf("%s %s: error %v, want %q", p.Host, p.Path, err, p.Error)
@@ -228,8 +209,8 @@ func TestMemoryLedgerHostBlocks(t *testing.T) {
 	}
 }
 
-func testGate(l Ledger, c *clock) (*Gate, *[]time.Duration) {
-	g := NewGate(l, "test")
+func testGate(t *testing.T, l Ledger, c *clock) (*Gate, *[]time.Duration) {
+	g := NewGate(l, "test", fixturePolicies(t))
 	var mu sync.Mutex
 	var slept []time.Duration
 	g.now = c.now
@@ -249,24 +230,24 @@ func testGate(l Ledger, c *clock) (*Gate, *[]time.Duration) {
 func TestGateAdmitWaitsForTheLedger(t *testing.T) {
 	c := &clock{t: time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)}
 	l := NewMemoryLedger(c.now)
-	g, slept := testGate(l, c)
+	g, slept := testGate(t, l, c)
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {
-		if err := g.Admit(ctx, "api.kraken.com", "/0/public/Trades", nil, nil, 0); err != nil {
+		if err := g.Admit(ctx, "GET", "api.kraken.com", "/0/public/Trades", nil, nil, 0); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if len(*slept) != 2 || (*slept)[0] != time.Second || (*slept)[1] != time.Second {
 		t.Fatalf("slept %v, want two 1 s waits", *slept)
 	}
-	if err := g.Admit(ctx, "fapi.binance.com", "/fapi/v1/unknown", nil, nil, 0); err == nil {
+	if err := g.Admit(ctx, "GET", "fapi.binance.com", "/fapi/v1/unknown", nil, nil, 0); err == nil {
 		t.Fatal("an unconfigured Binance endpoint must fail closed")
 	}
 	if used := l.Used("binance.usdm.funding|300.0|250.0", 300); used != 0 {
 		t.Fatal(used)
 	}
-	if err := g.Admit(ctx, "fapi.binance.com", "/fapi/v1/fundingInfo", nil, nil, 0); err != nil {
+	if err := g.Admit(ctx, "GET", "fapi.binance.com", "/fapi/v1/fundingInfo", nil, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	if used := l.Used("binance.usdm.funding|300.0|250.0", 300); used != 1 {
@@ -280,7 +261,7 @@ func TestGateAdmitWaitsForTheLedger(t *testing.T) {
 func TestGateUrgentYielding(t *testing.T) {
 	c := &clock{t: time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)}
 	l := NewMemoryLedger(c.now)
-	g, slept := testGate(l, c)
+	g, slept := testGate(t, l, c)
 	b := Bucket{"kraken", 1, 1, 1}
 	g.urgent[b.Name()] = 1
 	ctx, cancel := context.WithCancel(context.Background())
@@ -318,7 +299,7 @@ func TestGateUrgentYielding(t *testing.T) {
 }
 
 func TestGatePriorityOrder(t *testing.T) {
-	g := NewGate(NewMemoryLedger(nil), "test")
+	g := NewGate(NewMemoryLedger(nil), "test", fixturePolicies(t))
 	g.Interval = func(string) time.Duration { return 0 }
 	ctx := context.Background()
 	hold, err := g.Enter(ctx, "api.kraken.com", 0)
@@ -365,7 +346,7 @@ func TestGatePriorityOrder(t *testing.T) {
 }
 
 func TestGateEnterCancelledFreesTheSlot(t *testing.T) {
-	g := NewGate(NewMemoryLedger(nil), "test")
+	g := NewGate(NewMemoryLedger(nil), "test", fixturePolicies(t))
 	g.Interval = func(string) time.Duration { return 0 }
 	hold, _ := g.Enter(context.Background(), "api.kraken.com", 0)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
@@ -387,7 +368,7 @@ func TestGateEnterCancelledFreesTheSlot(t *testing.T) {
 
 func TestGateStartSpacing(t *testing.T) {
 	c := &clock{t: time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)}
-	g, slept := testGate(NewMemoryLedger(c.now), c)
+	g, slept := testGate(t, NewMemoryLedger(c.now), c)
 	ctx := context.Background()
 
 	first, _ := g.Enter(ctx, "api.exchange.coinbase.com", 0)
@@ -420,7 +401,7 @@ func TestObserve429RetriesAfterRetryAfter(t *testing.T) {
 	}{{"5", 5 * time.Second}, {"0", time.Second}, {"120", 60 * time.Second}, {"", 60 * time.Second}, {"soon", 60 * time.Second}} {
 		c := &clock{t: time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)}
 		l := NewMemoryLedger(nil)
-		g, slept := testGate(l, c)
+		g, slept := testGate(t, l, c)
 		header := http.Header{}
 		if tc.header != "" {
 			header.Set("Retry-After", tc.header)
@@ -448,7 +429,7 @@ func TestObserve418IsNeverRetried(t *testing.T) {
 		want   time.Duration
 	}{{"", 120 * time.Second}, {"300", 300 * time.Second}, {"10", 60 * time.Second}} {
 		l := NewMemoryLedger(nil)
-		g := NewGate(l, "test")
+		g := NewGate(l, "test", fixturePolicies(t))
 		header := http.Header{}
 		if tc.header != "" {
 			header.Set("Retry-After", tc.header)
@@ -463,13 +444,13 @@ func TestObserve418IsNeverRetried(t *testing.T) {
 			t.Fatalf("Retry-After %q: blocked %v", tc.header, left)
 		}
 
-		err = g.Admit(context.Background(), "api.binance.com", "/api/v3/klines", map[string]string{"limit": "3"}, nil, 0)
+		err = g.Admit(context.Background(), "GET", "api.binance.com", "/api/v3/klines", map[string]string{"limit": "3"}, nil, 0)
 		if !errors.As(err, &banned) {
 			t.Fatalf("admitted during a ban: %v", err)
 		}
-		other := NewGate(l, "core")
+		other := NewGate(l, "core", fixturePolicies(t))
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-		err = other.Admit(ctx, "api.binance.com", "/api/v3/klines", map[string]string{"limit": "3"}, nil, 0)
+		err = other.Admit(ctx, "GET", "api.binance.com", "/api/v3/klines", map[string]string{"limit": "3"}, nil, 0)
 		cancel()
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("another process admitted during a ban: %v", err)
@@ -487,7 +468,7 @@ func TestObserveUsedWeightHeader(t *testing.T) {
 		{"api.binance.com", "6000", true}, {"api.binance.com", "5999", false}, {"api.binance.com", "", false},
 	} {
 		l := NewMemoryLedger(nil)
-		g := NewGate(l, "test")
+		g := NewGate(l, "test", fixturePolicies(t))
 		header := http.Header{}
 		if tc.used != "" {
 			header.Set("X-MBX-USED-WEIGHT-1M", tc.used)

@@ -34,7 +34,7 @@ async def test_fresh_import_rederives_policy_without_old_classifier_outputs(
         at = "2026-09-21T15:02:00Z"
         cfg = {
             "registry": {},
-            "thresholds": {},
+            "thresholds": Settings(_env_file=None).load_config("thresholds"),
             "semantics": {},
             "dependency_map": {},
             "openma": {

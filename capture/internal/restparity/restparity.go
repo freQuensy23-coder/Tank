@@ -170,7 +170,7 @@ func (noStore) ClaimRequest(context.Context, string, time.Time) (map[string]any,
 }
 func (noStore) FinishRequest(context.Context, map[string]any) error { return nil }
 
-func Run(p *Payload) (*parity.Output, error) {
+func Run(p *Payload, policies budget.Policies) (*parity.Output, error) {
 	meta := map[string]any{"instruments": p.Instruments, "recorded_at": p.RecordedAt}
 	instruments := parity.Instruments(meta)
 	if len(instruments) == 0 {
@@ -183,7 +183,7 @@ func Run(p *Payload) (*parity.Output, error) {
 		key := Match(ex.Method, ex.URL, ex.Params, ex.JSON)
 		tr.byKey[key] = append(tr.byKey[key], ex)
 	}
-	client := rest.NewClient("TankV0/1.0 (parity)", budget.NewGate(budget.NewMemoryLedger(time.Now), "parity"), clock.Now)
+	client := rest.NewClient("TankV0/1.0 (parity)", budget.NewGate(budget.NewMemoryLedger(time.Now), "parity", policies), clock.Now)
 	client.HTTP = &http.Client{Transport: tr}
 	venues := capture.RESTVenues(client)
 	out := &parity.Output{Fingerprints: map[string]string{}, Watermarks: map[string]any{}, Trades: []map[string]any{}, Rows: []parity.RowOut{}, Bars: []map[string]any{}, Errors: [][]any{}}

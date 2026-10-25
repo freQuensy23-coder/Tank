@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from datetime import timedelta
+from decimal import Decimal
 
 import pytest
 import yaml
@@ -126,7 +127,24 @@ async def test_comparator_projection_matches_dense_reader_with_sparse_boundaries
         expected = relative_truth(dense, start, end)
         actual = relative_truth(current, start, end)
         assert actual == expected
-        assert actual["windows"]["W4H"]["r_sector_adj"] is not None
+        compared = actual["windows"]["W4H"]
+        if invalid_peer_close:
+            valid_peer_closes = [
+                parse_time(row["open_time"]) + timedelta(seconds=row["interval_s"])
+                for row in rows
+                if row["instrument_id"] == "binance:spot:PEER1"
+                and row["complete"] is True
+                and row["c"] is not None
+                and Decimal(row["c"]) > 0
+                and parse_time(row["open_time"]) + timedelta(seconds=row["interval_s"]) <= end
+            ]
+            assert max(valid_peer_closes) == end - timedelta(minutes=15)
+            assert compared["r_raw"] is not None
+            assert compared["r_sector_adj"] is None
+            assert compared["sector_reason"] == "NOT_ESTIMABLE"
+        else:
+            assert compared["r_sector_adj"] is not None
+            assert compared["sector_reason"] is None
         if target_gap:
             assert actual["close_1h_price"] is not None
         peers = {
