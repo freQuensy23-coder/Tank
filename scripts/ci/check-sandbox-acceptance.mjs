@@ -4,9 +4,11 @@ import { lstat, readFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const requiredNativeCases = Object.freeze(['managed-api-A-to-B-1', 'managed-api-A-to-B-2', 'writable-memory-restart-A-to-B', 'legacy-native-publication', 'metadata-only-native-rebuild', 'interrupted-native-transfer', 'interrupted-native-publication', 'lease-loss-concurrent-native-resume', 'native-archive-publication-race', 'security-mismatch-native-refusal']);
+export const requiredNativeCases = Object.freeze(['managed-api-A-to-B-1', 'managed-api-A-to-B-2', 'writable-memory-restart-A-to-B', 'metadata-only-native-rebuild', 'interrupted-native-transfer', 'interrupted-native-publication', 'lease-loss-concurrent-native-resume', 'native-archive-publication-race', 'security-mismatch-native-refusal']);
 export function verifyAcceptance(summary, expected) {
-  assert.equal(summary.schema, 'tank.native-managed-upgrade.v1');
+  assert.equal(summary.schema, 'tank.native-managed-upgrade.v2');
+  assert.equal(summary.scope, 'candidate-native-upgrade');
+  assert.equal(summary.historicalImageQualification, 'not-exercised', 'candidate qualification cannot claim historical-image execution');
   assert.equal(summary.sourceSha, expected.sourceSha, 'evidence belongs to a different source head');
   assert.equal(summary.runId, expected.runId, 'evidence belongs to a different workflow run');
   assert.ok(Array.isArray(summary.cases));
@@ -40,6 +42,6 @@ async function main() {
     assert.equal(receipt.case, row.case);
     assert.equal(receipt.status, 'PASS');
   }
-  console.log(JSON.stringify({ sourceSha: summary.sourceSha, runId: summary.runId, cases: summary.cases.length, status: 'PASS' }));
+  console.log(JSON.stringify({ sourceSha: summary.sourceSha, runId: summary.runId, scope: summary.scope, historicalImageQualification: summary.historicalImageQualification, cases: summary.cases.length, status: 'PASS' }));
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

@@ -63,16 +63,23 @@ test('shared runtime composition shadows the SDK inherited read-only factory wit
 });
 
 const expected = { sourceSha: 'a'.repeat(40), runId: '123' };
-const fixture = () => ({ schema: 'tank.native-managed-upgrade.v1', ...expected, cases: requiredNativeCases.map(name => ({ case: name, status: 'PASS', receipt: name + '.json', receiptSha256: 'c'.repeat(64) })), unproved: [], fullyQualified: true });
+const fixture = () => ({ schema: 'tank.native-managed-upgrade.v2', scope: 'candidate-native-upgrade', historicalImageQualification: 'not-exercised', ...expected, cases: requiredNativeCases.map(name => ({ case: name, status: 'PASS', receipt: name + '.json', receiptSha256: 'c'.repeat(64) })), unproved: [], fullyQualified: true });
 test('qualification gate accepts only the complete exact-head native inventory', () => {
   assert.doesNotThrow(() => verifyAcceptance(fixture(), expected));
   for (const alter of [
+    row => { row.schema = 'tank.native-managed-upgrade.v1'; },
+    row => { delete row.scope; },
+    row => { row.scope = 'historical-image-upgrade'; },
+    row => { delete row.historicalImageQualification; },
+    row => { row.historicalImageQualification = 'PASS'; },
     row => { row.sourceSha = 'b'.repeat(40); },
     row => { row.runId = '124'; },
     row => { row.cases.pop(); },
     row => { row.cases.push(row.cases[0]); },
+    row => { row.cases.push({ ...row.cases[0], case: 'legacy-native-publication', receipt: 'legacy-native-publication.json' }); },
     row => { row.cases[0].status = 'SKIP'; },
     row => { row.cases[0].status = 'FAIL'; },
+    row => { row.cases[0].status = 'NOT_RUN'; },
     row => { row.cases[0].receipt = '../wrong.json'; },
     row => { delete row.cases[0].receiptSha256; },
     row => { row.fullyQualified = false; },
@@ -80,5 +87,20 @@ test('qualification gate accepts only the complete exact-head native inventory',
   ]) {
     const row = fixture(); alter(row);
     assert.throws(() => verifyAcceptance(row, expected));
+  }
+});
+
+test('candidate qualification requires every upgrade and durability case independently', () => {
+  const names = ['managed-api-A-to-B-1', 'managed-api-A-to-B-2', 'writable-memory-restart-A-to-B', 'metadata-only-native-rebuild', 'interrupted-native-transfer', 'interrupted-native-publication', 'lease-loss-concurrent-native-resume', 'native-archive-publication-race', 'security-mismatch-native-refusal'];
+  assert.deepEqual([...requiredNativeCases].sort(), names.sort());
+  for (const name of names) {
+    const missing = fixture();
+    missing.cases = missing.cases.filter(row => row.case !== name);
+    assert.throws(() => verifyAcceptance(missing, expected), /missing or unexpected native evidence cases/);
+    for (const status of ['FAIL', 'SKIP', 'NOT_RUN']) {
+      const failed = fixture();
+      failed.cases.find(row => row.case === name).status = status;
+      assert.throws(() => verifyAcceptance(failed, expected), /native case failed or skipped/);
+    }
   }
 });

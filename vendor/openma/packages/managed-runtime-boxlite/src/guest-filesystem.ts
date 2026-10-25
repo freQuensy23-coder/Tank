@@ -64,13 +64,15 @@ export class BoxLiteFilesystemDurability {
   }
 
   async #quiesce(assertCurrent: () => Promise<void>, stop: boolean): Promise<void> {
-    this.assertUsable();
+    if (this.#busy) throw Error('retained_runtime_quiescing');
+    if (!stop) this.assertUsable();
     this.#busy = true;
     try {
       await this.#flush(assertCurrent, stop);
       if (stop) {
         await assertCurrent();
         if (this.#box.info().state.running) await this.#box.stop();
+        this.#unsafe = false;
       }
     } catch (error) {
       this.#unsafe = true;
