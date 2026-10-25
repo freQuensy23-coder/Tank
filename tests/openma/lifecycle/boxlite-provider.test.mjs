@@ -1,19 +1,46 @@
 const openmaSource = process.env.TANK_AUDIT_OPENMA_ROOT ? pathToFileURL(process.env.TANK_AUDIT_OPENMA_ROOT.replace(/\/?$/, '/')) : new URL('../../../vendor/openma/', import.meta.url);
 import { pathToFileURL } from 'node:url';
+import { BoxLiteFilesystemDurability } from '../../../vendor/openma/packages/managed-runtime-boxlite/src/guest-filesystem.ts';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { Readable, Writable } from 'node:stream';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp,readFile,writeFile,rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { imageRecoveryRetryBoundary } from '../../../vendor/openma/packages/session-runtime-contract/src/continuation.ts';
 const { pinnedBoxLiteProvider, RetainedBoxOperations } = await import(new URL('packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts', openmaSource));
 const scope={workspaceId:'w',environmentId:'production',sessionId:'session',workId:'tank-retained-session-v1'};
 const fence={...scope,ownerId:'owner',generation:1,token:'FAKE_FENCE',expiresAt:'2099-01-01T00:00:00Z'};
 const signal=()=>new AbortController().signal;
+test('retained writable-memory resume proves every native host binding before opening the old runtime', async () => {
+  const name = 'oma-' + createHash('sha256').update(`litebox:${scope.sessionId}`).digest('hex').slice(0, 32);
+  const allocation = { image: 'pinned', volumes: [
+    { hostPath: '/owned/.openma-managed-memory-workspaces/w/session/generation/store/data', guestPath: '/mnt/memory/notes', readOnly: false },
+    { hostPath: '/owned/outputs', guestPath: '/mnt/session/outputs', readOnly: false },
+  ] };
+  const record = { id: 'owned', name, options: { volumes: allocation.volumes.map(volume => ({ host_path: volume.hostPath, guest_path: volume.guestPath, read_only: volume.readOnly })) } };
+  let resumes = 0;
+  const module = { BoxLiteFilesystemDurability, createBoxLiteProvider() { return { async resume() { resumes++; return { runtimeHandle: () => ({ provider: 'litebox', runtimeId: 'owned' }) }; } }; },
+    createBoxLiteManagedRuntime() { return { sandbox: {} }; } };
+  const provider = pinnedBoxLiteProvider({ module, allocation, leaseTtlMs: 30000,
+    client: { async getInfo() { return { id: 'owned', name, state: { running: false } }; } }, readLegacyConfiguration: async () => record, isCurrent: async () => true });
+  await provider.resume({ provider: 'litebox', runtimeId: 'owned' }, scope, fence, signal());
+  assert.equal(resumes, 1);
+  for (const index of [0, 1]) {
+    record.options.volumes[index].host_path += '-foreign';
+    await assert.rejects(provider.resume({ provider: 'litebox', runtimeId: 'owned' }, scope, fence, signal()), /retained_memory_binding_unproven/);
+    record.options.volumes[index].host_path = allocation.volumes[index].hostPath;
+  }
+  record.options.volumes[0].read_only = true;
+  await assert.rejects(provider.resume({ provider: 'litebox', runtimeId: 'owned' }, scope, fence, signal()), /retained_memory_binding_unproven/);
+  assert.equal(resumes, 1);
+});
 test('public provider bridge resumes a fresh handle and reaps without resume or allocating secret env',async()=>{
   const calls=[];
   const module={
+    BoxLiteFilesystemDurability,
     createBoxLiteProvider(options){calls.push(['options',options]);return {
       async create(...args){calls.push(['create',...args]);return {runtimeHandle:()=>({provider:'litebox',runtimeId:'box'})};},
       async resume(...args){calls.push(['resume',...args]);return {runtimeHandle:()=>({provider:'litebox',runtimeId:'box'})};},
@@ -72,9 +99,61 @@ test('command timeout kills the native process rather than leaving background wo
   await assert.rejects(box.exec('blocked',[],{}, {timeoutSecs:0.005}),/retained_exec_timeout/);assert.equal(killed,true);
 });
 
+test('replacement normalizes a real guest timeout only inside preflight and retains no-effects retry proof', async (t) => {
+  let killed = 0, stopped = 0, timedOutOperations;
+  const runtime = {
+    runtimeHandle: () => ({ provider: 'litebox', runtimeId: 'source' }),
+    async suspend() { stopped++; },
+    async spawnDuplexProcess(spec) {
+      if (spec.command === 'rm') return {
+        stdin: new WritableStream(), stdout: new Response('').body, stderr: new Response('').body,
+        exited: Promise.resolve({ code: 0, signal: null }), async kill() {},
+      };
+      return { stdin: new WritableStream(), stdout: new ReadableStream(), stderr: new ReadableStream(),
+        exited: new Promise(() => {}), async kill(signal) { assert.equal(signal, 'SIGKILL'); killed++; } };
+    },
+  };
+  const originalExec = RetainedBoxOperations.prototype.exec;
+  t.mock.method(RetainedBoxOperations.prototype, 'exec', function(command, args, env, options) {
+    if (command !== 'rm') timedOutOperations = this;
+    return originalExec.call(this, command, args, env, { ...options, timeoutSecs: 0.005 });
+  });
+  const module = {
+    BoxLiteFilesystemDurability,
+    createBoxLiteProvider() { return { async resume() { return runtime; }, async create() { assert.fail('timeout must precede replacement allocation'); } }; },
+    createBoxLiteManagedRuntime() { return { sandbox: { async reap() { assert.fail('source must remain published'); } } }; },
+  };
+  const provider = pinnedBoxLiteProvider({ module, allocation: { image: 'new' }, leaseTtlMs: 30000, isCurrent: async () => true,
+    client: { async getInfo(id) { return id === 'source' ? { id, state: { running: false } } : null; } } });
+  const source = { provider: 'litebox', runtimeId: 'source' };
+  const target = await provider.replacementIntent(source, {}, scope, fence, signal());
+  let failure;
+  await assert.rejects(provider.replace({ source, target }, scope, fence, signal(), async () => {}), error => {
+    failure = error.message;
+    return failure === 'retained_upgrade_transfer_failed:guest_timeout';
+  });
+  assert.equal(killed, 1);
+  assert.equal(stopped, 1);
+  await assert.rejects(timedOutOperations.exec('overlap', []), /retained_runtime_requires_stop/);
+  const events = [
+    { id: 'old-error', type: 'session.error', error: { message: 'retained_configuration_changed' } },
+    { id: 'old-idle', type: 'session.status_idle', stopReason: { type: 'retries_exhausted' } },
+    { id: 'timeout-error', type: 'session.error', error: { message: failure, retryStatus: 'exhausted' } },
+    { id: 'timeout-idle', type: 'session.status_idle', stopReason: { type: 'retries_exhausted' } },
+  ];
+  const snapshot = { revision: 4, executions: [{ id: 'original', laneId: 'sthr_primary', state: 'running', revision: 2,
+    events: [{ id: 'original', type: 'user.message', content: [{ type: 'text', text: 'pending' }] }],
+    attemptCount: 1, interruptRequestedAt: null, imageRecoveryAfterEventId: 'old-idle', imageRecoveryInterruptRequestedAt: null }],
+    orderedEvents: events.map((event, index) => ({ event, executionId: 'original', position: { revision: index + 1, index: 0 } })) };
+  assert.equal(imageRecoveryRetryBoundary(snapshot, 'original'), 'timeout-idle');
+  snapshot.orderedEvents.push({ event: { id: 'effect', type: 'span.model_request_start' }, executionId: 'original', position: { revision: 5, index: 0 } });
+  assert.equal(imageRecoveryRetryBoundary(snapshot, 'original'), null);
+});
+
 test('crash recovery quiesces orphan processes then resumes using a second fresh native handle',async()=>{
   const calls=[];
   const module={
+    BoxLiteFilesystemDurability,
     createBoxLiteProvider(){return {async create(){throw Error('never allocate');},async resume(){calls.push('fresh-resume');return {async suspend(){calls.push('owned-stop');}};}};},
     createBoxLiteManagedRuntime(){return {sandbox:{async reap(){throw Error('never remove retained disk');}}};},
   };
@@ -85,7 +164,7 @@ test('crash recovery quiesces orphan processes then resumes using a second fresh
 
 test('unpublished existing native disk and missing published disk fail closed without provider allocation',async()=>{
   let effects=0;
-  const module={createBoxLiteProvider(){return {async create(){effects++;},async resume(){effects++;}};},createBoxLiteManagedRuntime(){return {sandbox:{async reap(){effects++;}}};}};
+  const module={BoxLiteFilesystemDurability,createBoxLiteProvider(){return {async create(){effects++;},async resume(){effects++;}};},createBoxLiteManagedRuntime(){return {sandbox:{async reap(){effects++;}}};}};
   const existing=pinnedBoxLiteProvider({module,client:{async getInfo(){return {state:{running:false}};}},allocation:{image:'pinned'},leaseTtlMs:30000});
   await assert.rejects(existing.create(scope,fence,signal()),/retained_unpublished_runtime_exists/);
   const missing=pinnedBoxLiteProvider({module,client:{async getInfo(){return null;}},allocation:{image:'pinned'},leaseTtlMs:30000});

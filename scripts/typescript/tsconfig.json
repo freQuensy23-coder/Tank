@@ -8,9 +8,21 @@
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
     "skipLibCheck": false,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "noUnusedLocals": true,
-    "noUnusedParameters": true
+    "noUnusedParameters": true,
+    "paths": {
+      "@open-managed-agents/managed-runtime-boxlite": [
+        "../../vendor/openma/packages/managed-runtime-boxlite/src/guest-filesystem.ts"
+      ]
+    }
   },
-  "include": ["*.mts", "../../deploy/**/*.mts", "../../tests/openma/**/*.mts", "../../vendor/openma/tank-deploy/*.mts"]
+  "include": [
+    "*.mts",
+    "../../deploy/**/*.mts",
+    "../../tests/openma/**/*.mts",
+    "../../vendor/openma/tank-deploy/*.mts"
+  ]
 }
