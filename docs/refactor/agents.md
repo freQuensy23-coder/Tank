@@ -896,3 +896,11 @@ plus behavior test pass independent strict mypy. The earlier 93 existing caller
 cases pass after authoring the already-declared Node seq in its SSE fixture and
 an explicit terminal managed cursor for the complete synthetic history page.
 Full owner and peer qualification remains pending.
+
+The first full 671-case owner diagnostic had 634 passes and 37 failures, all
+exactly the missing paging-contract error in five authored HTTP fixture families.
+Each handler returns its complete available history snapshot; those responses
+now declare terminal next_page=None. Frozen payloads, budgets, deadlines and
+behavior assertions were not changed. The 75 affected transport/workflow cases
+pass in 19.11 seconds after that correction. Full combined qualification is
+still pending.

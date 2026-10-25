@@ -116,7 +116,7 @@ async def setup(
                 },
             )
         assert request.url.path.endswith("/events")
-        return httpx.Response(200, json={"data": history})
+        return httpx.Response(200, json={"data": history, "next_page": None})
 
     settings = SimpleNamespace(
         ops_progress_enabled=False,
