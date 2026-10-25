@@ -1,7 +1,7 @@
 """Validated publisher configuration, independent of polling and presentation."""
 
 import re
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 from urllib.parse import urlsplit
 
 from pydantic import Field, JsonValue, model_validator
@@ -195,87 +195,170 @@ class SourceEndpointBudget(DomainModel):
 
     @model_validator(mode="after")
     def half_documented_capacity(self) -> Self:
-        if self.tank_request_budget > self.documented_requests / 2:
+        if 2 * self.tank_request_budget > self.documented_requests:
             raise ValueError("Endpoint budget exceeds half the documented capacity")
         return self
 
 
-class SourceProviderBudget(DomainModel):
-    provider: str = Field(min_length=1)
+class SourceBudgetEvidence(DomainModel):
     basis: str | None = Field(default=None, min_length=1)
-    documented_requests_per_s: int | None = Field(default=None, gt=0)
-    documented_requests_per_day: int | None = Field(default=None, gt=0)
-    documented_weight_per_min: int | None = Field(default=None, gt=0)
-    tank_max_requests_per_s: int | float | None = Field(default=None, gt=0, allow_inf_nan=False)
-    tank_max_requests_per_day: int | None = Field(default=None, gt=0)
-    tank_max_weight_per_min: int | None = Field(default=None, gt=0)
-    documented_requests: int | None = Field(default=None, gt=0)
-    period_s: int | None = Field(default=None, gt=0)
-    tank_request_budget: int | None = Field(default=None, gt=0)
-    minimum_request_spacing_s: int | None = Field(default=None, ge=0)
-    observed_header: str | None = None
-    source_ref: str | None = None
+    source_ref: str | None = Field(default=None, min_length=1)
     source_content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    verified_at: str | None = None
-    endpoint_limits: list[SourceEndpointBudget] | None = None
-    request_weights: dict[str, int] | None = None
-    response_size_extra_weights: dict[str, str] | None = None
+    verified_at: str | None = Field(default=None, min_length=1)
     inference_limits: list[str] | None = None
-    retry_delays_s: list[int] | None = None
-    api_key_required: bool | None = None
-    backend: str | None = None
-    client: str | None = None
-    cost_usd: int | None = Field(default=None, ge=0)
-    scope: str | None = None
-    tier: str | None = None
 
     @model_validator(mode="after")
-    def documented_policy(self) -> Self:
-        if self.basis is None and self.source_ref is None:
-            raise ValueError("A provider budget requires declared policy or official source evidence")
-        if (
-            self.provider in {"sec.gov", "coinbase", "kraken", "etherscan"}
-            and self.tank_max_requests_per_s is None
+    def declared_evidence(self) -> Self:
+        if not (
+            self.basis is not None
+            and self.basis.strip()
+            or self.source_ref is not None
+            and self.source_ref.strip()
         ):
-            raise ValueError("This provider requires an explicit per-second request budget")
-        if (
-            self.provider in {"binance.spot", "binance.usdm", "hyperliquid"}
-            and self.tank_max_weight_per_min is None
-        ):
-            raise ValueError("This provider requires an explicit per-minute weight budget")
-        if self.provider == "okx" and not self.endpoint_limits:
-            raise ValueError("OKX requires its endpoint-specific budgets")
-        if self.provider == "bybit" and (
-            self.documented_requests is None
-            or self.period_s is None
-            or self.tank_request_budget is None
-            or self.scope is None
-        ):
-            raise ValueError("Bybit requires declared capacity, period, request budget and scope")
-        if self.provider == "duckduckgo" and (
-            self.client is None
-            or self.backend is None
-            or self.minimum_request_spacing_s is None
-            or self.retry_delays_s is None
-            or self.cost_usd is None
-            or self.api_key_required is None
-        ):
-            raise ValueError(
-                "Search provider requires its explicit backend, spacing, retry and access policy"
-            )
-        for documented, assigned in (
-            (self.documented_requests_per_s, self.tank_max_requests_per_s),
-            (self.documented_requests_per_day, self.tank_max_requests_per_day),
-            (self.documented_weight_per_min, self.tank_max_weight_per_min),
-            (self.documented_requests, self.tank_request_budget),
-        ):
-            if documented is not None and assigned is not None and assigned > documented / 2:
-                raise ValueError("Provider budget exceeds half the documented capacity")
-        if self.request_weights is not None and any(weight <= 0 for weight in self.request_weights.values()):
-            raise ValueError("Documented operation request weights must be positive")
-        if self.retry_delays_s is not None and any(delay <= 0 for delay in self.retry_delays_s):
-            raise ValueError("Provider retry delays must be positive")
+            raise ValueError("Provider budget requires declared policy or official source evidence")
         return self
+
+
+class DocumentedRequestBudget(DomainModel):
+    documented_requests_per_s: int = Field(gt=0)
+    tank_max_requests_per_s: int | float = Field(gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def within_documented_request_capacity(self) -> Self:
+        if 2 * self.tank_max_requests_per_s > self.documented_requests_per_s:
+            raise ValueError("Provider budget exceeds half the documented capacity")
+        return self
+
+
+class DocumentedWeightBudget(DomainModel):
+    documented_weight_per_min: int = Field(gt=0)
+    tank_max_weight_per_min: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def within_documented_weight_capacity(self) -> Self:
+        if 2 * self.tank_max_weight_per_min > self.documented_weight_per_min:
+            raise ValueError("Provider budget exceeds half the documented capacity")
+        return self
+
+
+class SourceSecBudget(SourceBudgetEvidence, DocumentedRequestBudget):
+    provider: Literal["sec.gov"]
+    basis: str = Field(min_length=1)
+
+
+class SourceUncapturedRpsBudget(SourceBudgetEvidence):
+    provider: Literal["coinbase", "kraken"]
+    basis: str = Field(min_length=1)
+    tank_max_requests_per_s: int | float = Field(gt=0, allow_inf_nan=False)
+    documented_requests_per_s: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def compare_only_declared_documentation(self) -> Self:
+        if (
+            self.documented_requests_per_s is not None
+            and 2 * self.tank_max_requests_per_s > self.documented_requests_per_s
+        ):
+            raise ValueError("Provider budget exceeds half the documented capacity")
+        return self
+
+
+class SourceBinanceBudget(SourceBudgetEvidence, DocumentedWeightBudget):
+    provider: Literal["binance.spot", "binance.usdm"]
+    basis: str = Field(min_length=1)
+    observed_header: str | None = Field(default=None, min_length=1)
+
+
+class SourceOkxBudget(SourceBudgetEvidence):
+    provider: Literal["okx"]
+    basis: str = Field(min_length=1)
+    source_ref: str = Field(min_length=1)
+    source_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    verified_at: str = Field(min_length=1)
+    endpoint_limits: list[SourceEndpointBudget] = Field(min_length=1)
+
+
+class SourceBybitBudget(SourceBudgetEvidence):
+    provider: Literal["bybit"]
+    basis: str = Field(min_length=1)
+    source_ref: str = Field(min_length=1)
+    verified_at: str = Field(min_length=1)
+    documented_requests: int = Field(gt=0)
+    period_s: int = Field(gt=0)
+    tank_request_budget: int = Field(gt=0)
+    scope: Literal["IP"]
+
+    @model_validator(mode="after")
+    def within_documented_period_capacity(self) -> Self:
+        if 2 * self.tank_request_budget > self.documented_requests:
+            raise ValueError("Provider budget exceeds half the documented capacity")
+        return self
+
+
+class SourceHyperliquidBudget(SourceBudgetEvidence, DocumentedWeightBudget):
+    provider: Literal["hyperliquid"]
+    basis: str = Field(min_length=1)
+    source_ref: str = Field(min_length=1)
+    verified_at: str = Field(min_length=1)
+    scope: Literal["IP"]
+    request_weights: dict[str, int] = Field(min_length=1)
+    response_size_extra_weights: dict[str, str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def usable_operation_weights(self) -> Self:
+        if any(not operation.strip() or weight <= 0 for operation, weight in self.request_weights.items()):
+            raise ValueError("Documented operation request weights must have names and positive values")
+        if any(
+            not operation.strip() or not rule.strip()
+            for operation, rule in self.response_size_extra_weights.items()
+        ):
+            raise ValueError("Response size weight rules require operation names and declarations")
+        return self
+
+
+class SourceDuckDuckGoBudget(SourceBudgetEvidence):
+    provider: Literal["duckduckgo"]
+    basis: str = Field(min_length=1)
+    client: str = Field(min_length=1)
+    backend: Literal["duckduckgo"]
+    minimum_request_spacing_s: int = Field(ge=0)
+    retry_delays_s: list[Annotated[int, Field(gt=0)]] = Field(min_length=1)
+    cost_usd: int = Field(ge=0, le=0)
+    api_key_required: bool
+
+    @model_validator(mode="after")
+    def free_keyless_backend(self) -> Self:
+        if self.api_key_required:
+            raise ValueError("Configured free search backend cannot require an API key")
+        return self
+
+
+class SourceEtherscanBudget(SourceBudgetEvidence, DocumentedRequestBudget):
+    provider: Literal["etherscan"]
+    source_ref: str = Field(min_length=1)
+    verified_at: str = Field(min_length=1)
+    tier: Literal["FREE"]
+    scope: Literal["API_KEY"]
+    documented_requests_per_day: int = Field(gt=0)
+    tank_max_requests_per_day: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def within_documented_daily_capacity(self) -> Self:
+        if 2 * self.tank_max_requests_per_day > self.documented_requests_per_day:
+            raise ValueError("Provider budget exceeds half the documented capacity")
+        return self
+
+
+type SourceProviderBudget = Annotated[
+    SourceSecBudget
+    | SourceUncapturedRpsBudget
+    | SourceBinanceBudget
+    | SourceOkxBudget
+    | SourceBybitBudget
+    | SourceHyperliquidBudget
+    | SourceDuckDuckGoBudget
+    | SourceEtherscanBudget,
+    Field(discriminator="provider"),
+]
 
 
 class SourceApiLimitsConfiguration(DomainModel):

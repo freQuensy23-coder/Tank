@@ -72,7 +72,7 @@ def test_readiness_requires_declared_openma_identity_keys() -> None:
 
 @pytest.mark.parametrize(
     "configuration_name,required_field",
-    [("registry", "tokens"), ("semantics", "metrics"), ("dependency_map", "edges")],
+    [("registry", "tokens"), ("semantics", "metrics"), ("dependency_map", "edges"), ("api_limits", "limits")],
 )
 def test_readiness_validates_structural_configuration_not_only_yaml(
     tmp_path: Path, configuration_name: str, required_field: str

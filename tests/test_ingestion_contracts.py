@@ -658,7 +658,77 @@ async def test_source_service_rejects_missing_or_excessive_known_provider_budget
 
     repo = MemoryRepository()
     async with httpx.AsyncClient() as http:
-        with pytest.raises(ValidationError, match="explicit per-second|half the documented"):
+        with pytest.raises(ValidationError, match="tank_max_requests_per_s|half the documented"):
             SourceService(repo, InvalidProviderBudget(data_dir=tmp_path), http=http)
     assert await repo.list("ops.jobs") == []
     assert await repo.list("ingest.source_items") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider,missing_fields,assigned_field",
+    [
+        ("sec.gov", ("documented_requests_per_s",), "tank_max_requests_per_s"),
+        ("binance.spot", ("documented_weight_per_min",), "tank_max_weight_per_min"),
+        ("binance.usdm", ("documented_weight_per_min",), "tank_max_weight_per_min"),
+        ("hyperliquid", ("documented_weight_per_min",), "tank_max_weight_per_min"),
+        ("etherscan", ("documented_requests_per_s",), "tank_max_requests_per_s"),
+        ("etherscan", ("documented_requests_per_day",), "tank_max_requests_per_day"),
+        ("etherscan", ("tank_max_requests_per_day",), None),
+        ("etherscan", ("documented_requests_per_day", "tank_max_requests_per_day"), None),
+    ],
+)
+async def test_required_documented_provider_capacity_cannot_be_omitted(
+    tmp_path: Path, provider: str, missing_fields: tuple[str, ...], assigned_field: str | None
+) -> None:
+    from tank.settings import Settings
+    from tank.sources import SourceService
+
+    class MissingDocumentedCapacity(Settings):
+        def load_config(self, name: str) -> dict[str, JsonValue]:
+            configuration = super().load_config(name)
+            if name == "api_limits":
+                rows = configuration["limits"]
+                assert isinstance(rows, list)
+                rule = next(row for row in rows if isinstance(row, dict) and row["provider"] == provider)
+                assert isinstance(rule, dict)
+                for field in missing_fields:
+                    del rule[field]
+                if assigned_field is not None:
+                    rule[assigned_field] = 1_000_000
+            return configuration
+
+    repo = MemoryRepository()
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(ValidationError):
+            SourceService(repo, MissingDocumentedCapacity(data_dir=tmp_path), http=http)
+    assert await repo.list("ops.jobs") == []
+    assert await repo.list("ingest.source_items") == []
+
+
+def test_coinbase_and_kraken_keep_uncaptured_documented_capacity_explicit() -> None:
+    from tank.contracts.sources import SourceApiLimitsConfiguration, SourceUncapturedRpsBudget
+    from tank.settings import Settings
+
+    configuration = SourceApiLimitsConfiguration.model_validate(Settings().load_config("api_limits"))
+    rules = [rule for rule in configuration.limits if isinstance(rule, SourceUncapturedRpsBudget)]
+    assert {rule.provider for rule in rules} == {"coinbase", "kraken"}
+    for rule in rules:
+        assert rule.documented_requests_per_s is None
+        assert "documented_requests_per_s" not in rule.model_dump(mode="json", exclude_unset=True)
+        assert rule.tank_max_requests_per_s > 0 and rule.basis
+
+
+@pytest.mark.parametrize("key_policy", [0, True])
+def test_search_budget_does_not_coerce_boolean_access_policy(key_policy: int | bool) -> None:
+    from tank.contracts.sources import SourceApiLimitsConfiguration
+    from tank.settings import Settings
+
+    configuration = Settings().load_config("api_limits")
+    rules = configuration["limits"]
+    assert isinstance(rules, list)
+    search = next(rule for rule in rules if isinstance(rule, dict) and rule["provider"] == "duckduckgo")
+    assert isinstance(search, dict)
+    search["api_key_required"] = key_policy
+    with pytest.raises(ValidationError):
+        SourceApiLimitsConfiguration.model_validate(configuration)
