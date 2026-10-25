@@ -1,16 +1,20 @@
+from collections.abc import Mapping
 from datetime import timedelta
 from pathlib import Path
 
 import httpx
 import pytest
+from pydantic import JsonValue
 from score_fixtures import unassessed_score_dimensions
+from source_support import fixture_versions
 
 from tank.agents.context import CONTEXT_VERSION
+from tank.contracts.json import JsonDocument
 from tank.event_tools import EventToolService, freshness, validate_schema
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.telegram_rich import score_summary
-from tank.util import iso, utcnow
+from tank.util import JsonInput, canonical_json, iso, utcnow
 
 
 @pytest.fixture
@@ -48,7 +52,7 @@ def truth_job_enqueued(service, monkeypatch: pytest.MonkeyPatch):
     return ready
 
 
-def extraction():
+def extraction() -> dict[str, JsonValue]:
     now = iso()
     return dict(
         item_id="i",
@@ -79,7 +83,7 @@ def extraction():
     )
 
 
-async def seed(service):
+async def seed(service: EventToolService) -> dict[str, JsonValue]:
     x = extraction()
     await service.repo.put(
         "ingest.source_items",
@@ -629,7 +633,7 @@ async def test_assessment_escalates_all_official_sources_in_consumer_table(servi
     expected = next(
         e for e in service.settings.load_config("registry")["entities"] if e["entity_id"] == "world"
     )["official_sources"]
-    sources = SourceService(service.repo, service.settings)
+    sources = SourceService(service.repo, service.settings, versions=fixture_versions())
     for source_id in expected:
         assert await sources.is_escalated(source_id)
     assert not await sources.is_escalated("S01")
@@ -736,7 +740,7 @@ async def test_real_session_tool_refuses_cross_event_mutation(service) -> None:
         "item_id": "i",
     }
     await service.repo.put("ops.agent_sessions", session["session_id"], session)
-    sessions = SessionService(service.repo, service.settings, service.dispatch)
+    sessions = SessionService(service.repo, service.settings, service.dispatch, versions=fixture_versions())
     replies = []
 
     async def request(*args, **kwargs):
@@ -792,7 +796,7 @@ async def test_novel_layer_proposal_survives_real_session_transaction(service) -
         "item_id": "i",
     }
     await service.repo.put("ops.agent_sessions", session["session_id"], session)
-    sessions = SessionService(service.repo, service.settings, service.dispatch)
+    sessions = SessionService(service.repo, service.settings, service.dispatch, versions=fixture_versions())
 
     async def request(*args, **kwargs):
         if args and args[0] == "GET":
@@ -1121,7 +1125,7 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(
         stale_event = await service.repo.get("evt.events", eid)
         stale_event["freshness"] = freshness
         await service.repo.put("evt.events", eid, stale_event)
-        scheduler = Scheduler(service.repo, service.settings, None, None)
+        scheduler = Scheduler(service.repo, service.settings, None, None, versions=fixture_versions())
         await scheduler.expire_calls(now)
         assert (await service.repo.get("evt.events", eid))["call_expired"]
         lifecycle = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
@@ -1882,7 +1886,7 @@ async def test_other_tank_item_quote_read_through_real_session_is_admissible(ser
         "item_id": "i",
     }
     await service.repo.put("ops.agent_sessions", session["session_id"], session)
-    sessions = SessionService(service.repo, service.settings, service.dispatch)
+    sessions = SessionService(service.repo, service.settings, service.dispatch, versions=fixture_versions())
 
     async def request(*a, **kw):
         if a and a[0] == "GET":
@@ -2138,8 +2142,15 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
     if not url:
         pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
     repo = await repository_lifetime.enter_async_context(postgres_template.repository(url))
-    service.repo = repo
-    service.engine = DecisionEngine()
+    service = EventToolService(
+        repo,
+        service.settings,
+        service.truth,
+        DecisionEngine(),
+        http=service.http,
+        search=service.search_service,
+        reference_clock=service.reference_clock,
+    )
     item_id = new_id("item")
     stamp = iso()
     quote = "World access approved"
@@ -3571,12 +3582,20 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
     from tank.agents import SessionService
     from tank.util import new_id
 
-    original_repo = service.repo
     if backend == "postgres":
         url = os.getenv("TANK_TEST_DATABASE_URL")
         if not url:
             pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
-        service.repo = await repository_lifetime.enter_async_context(postgres_template.repository(url))
+        repo = await repository_lifetime.enter_async_context(postgres_template.repository(url))
+        service = EventToolService(
+            repo,
+            service.settings,
+            service.truth,
+            service.engine,
+            http=service.http,
+            search=service.search_service,
+            reference_clock=service.reference_clock,
+        )
     repo = service.repo
     sid = new_id("native-session")
     stamp = iso()
@@ -3625,7 +3644,7 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
             item = await service.dispatch(
                 "fetch_page", {"url": "https://www.sec.gov/news/native-provenance-fixture"}, {}
             )
-            native = SessionService(repo, service.settings, dispatch, http=http)
+            native = SessionService(repo, service.settings, dispatch, http=http, versions=fixture_versions())
             session = await native.resolve({"kind": "NEW_ITEM", "item_id": item["item_id"]})
 
             assert session["prompt_version"] is None and session["prompt_label"] == config["prompt_version"]
@@ -3699,7 +3718,6 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
     finally:
         if backend == "postgres":
             await repo.close()
-            service.repo = original_repo
 
 
 @pytest.mark.integration
@@ -3768,7 +3786,9 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
     async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
         service.http = http
         service.engine = DecisionEngine()
-        first = SessionService(service.repo, service.settings, service.dispatch, http=http)
+        first = SessionService(
+            service.repo, service.settings, service.dispatch, http=http, versions=fixture_versions()
+        )
         first.start_stream = lambda session_id: None
         session = await first.send_message({"kind": "NEW_ITEM", "item_id": iid})
         failed_call = {
@@ -3781,7 +3801,9 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
             await first.process_event(sid, failed_call)
         ledger = await service.repo.get("ops.tool_calls", sid + ":http-failure")
         assert ledger["status"] == "ERROR" and not ledger.get("returned_at")
-        resumed = SessionService(service.repo, service.settings, service.dispatch, http=http)
+        resumed = SessionService(
+            service.repo, service.settings, service.dispatch, http=http, versions=fixture_versions()
+        )
         resumed.start_stream = lambda session_id: None
         await resumed.process_event(sid, failed_call)
         await resumed.process_event(sid, failed_call)
@@ -3797,7 +3819,9 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
         assert len(await service.repo.list("ingest.source_items")) == 1
         assert (await service.repo.get("ops.agent_sessions", sid))["status"] == "OPEN"
         replay_options = service.settings.model_copy(update={"replay": True})
-        replay = SessionService(service.repo, replay_options, service.dispatch, http=http)
+        replay = SessionService(
+            service.repo, replay_options, service.dispatch, http=http, versions=fixture_versions()
+        )
         replay.start_stream = lambda session_id: None
         await replay.send_message(
             {
@@ -5551,3 +5575,120 @@ async def test_successful_extraction_clears_prior_no_event_metadata(service, ope
     assert completed["extraction_status"] == "DONE"
     assert completed.get("extraction_decision") is None
     assert completed.get("extraction_reason") is None
+
+
+async def test_accepted_completion_and_native_failure_preserve_done_without_deadlock(
+    service: EventToolService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from tank.agents import SessionService
+
+    arguments = await seed(service)
+    repo = service.repo
+    assert isinstance(repo, MemoryRepository)
+    original = await repo.get("ingest.source_items", "i")
+    assert original is not None
+    original.update(
+        extraction_status="PENDING",
+        retained_capture={"origin": "explicit historical fixture", "lexical": "0001", "flags": [False, None]},
+    )
+    await repo.put("ingest.source_items", "i", original)
+    await repo.put(
+        "ops.agent_sessions",
+        "completion-race",
+        {
+            "session_id": "completion-race",
+            "status": "OPEN",
+            "runtime_status": "RUNNING",
+            "active_message_id": "turn",
+            "message_log": [
+                {
+                    "message_id": "turn",
+                    "turn_status": "RUNNING",
+                    "retry_count": 1,
+                    "payload": {"kind": "NEW_ITEM", "item_id": "i"},
+                    "remote_event_id": "accepted-execution",
+                    "body": {"type": "user.message"},
+                }
+            ],
+        },
+    )
+    entered, release, native_started, start_native = (asyncio.Event() for _ in range(4))
+    put = repo.put
+
+    async def held_event_write(
+        collection: str,
+        key: str,
+        document: Mapping[str, JsonInput],
+        *,
+        immutable: bool = False,
+    ) -> dict[str, JsonValue]:
+        result = await put(collection, key, document, immutable=immutable)
+        if collection == "evt.events":
+            entered.set()
+            await release.wait()
+        return result
+
+    monkeypatch.setattr(repo, "put", held_event_write)
+
+    def no_network(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("Native terminal failure must not retry the provider")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(no_network)) as http:
+        native = SessionService(repo, service.settings, None, http=http, versions=fixture_versions())
+
+        async def accept_fact() -> JsonValue:
+            return JsonDocument.validate_value(
+                await service.dispatch("record_event", arguments, {"session_id": "completion-race"})
+            )
+
+        async def fail_native() -> None:
+            await start_native.wait()
+            native_started.set()
+            await native.process_event(
+                "completion-race",
+                {
+                    "id": "concurrent-native-failure",
+                    "type": "session.error",
+                    "execution_id": "accepted-execution",
+                    "reason": "Actual concurrent terminal fixture",
+                },
+            )
+
+        accepted, failed = asyncio.create_task(accept_fact()), asyncio.create_task(fail_native())
+        try:
+            async with asyncio.timeout(2):
+                await entered.wait()
+            start_native.set()
+            await native_started.wait()
+            await asyncio.sleep(0)
+            assert not failed.done()
+            release.set()
+            async with asyncio.timeout(2):
+                result, _ = await asyncio.gather(accepted, failed)
+            assert isinstance(result, dict)
+            event_id = result["event_id"]
+            assert isinstance(event_id, str)
+            current = await repo.get("ingest.source_items", "i")
+            assert current is not None and current["extraction_status"] == "DONE"
+            assert "url" not in current and "author" not in current
+            owned = {"extraction_status", "extraction_decision", "extraction_reason"}
+            assert canonical_json(
+                {key: value for key, value in current.items() if key not in owned}
+            ) == canonical_json({key: value for key, value in original.items() if key not in owned})
+            assert await repo.get("evt.events", event_id) is not None
+            assert len(await repo.list("evt.event_observations")) == 1
+            final = await repo.get("ops.agent_sessions", "completion-race")
+            assert final is not None and final["status"] == "FAILED"
+            terminal = final["terminal_failure"]
+            assert isinstance(terminal, dict) and terminal["reason"] == "Actual concurrent terminal fixture"
+        finally:
+            release.set()
+            start_native.set()
+            for task in (accepted, failed):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(accepted, failed, return_exceptions=True)
+            await native.close()

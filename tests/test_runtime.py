@@ -1,19 +1,35 @@
 import asyncio
+from collections.abc import Awaitable, Callable
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from agent_source_fixtures import declared_versions_fixture
+from pydantic import JsonValue
 
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.contracts.progress import ProgressPreferences
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.market.capture_contracts import CaptureReadiness
 from tank.runtime import Runtime
 from tank.runtime_contracts import MarketTruthJob
-from tank.settings import Settings
-from tank.storage import MemoryRepository
+from tank.settings import Settings, resolve_versions
+from tank.storage import MemoryRepository, Repository
 from tank.time_precision import Timestamp
-from tank.util import clock_iso, parse_time
+from tank.util import JsonInput, clock_iso, parse_time
+
+
+def run_fixture_database(operation: Callable[[Repository, Settings], Awaitable[JsonInput]]) -> None:
+    async def invoke() -> None:
+        repo = MemoryRepository()
+        try:
+            await operation(repo, resolve_versions(Settings()))
+        finally:
+            await repo.close()
+
+    asyncio.run(invoke())
 
 
 @pytest.mark.asyncio
@@ -126,21 +142,23 @@ def test_source_check_network_probes_are_explicit(monkeypatch: pytest.MonkeyPatc
     import tank.sources
     from tank import cli
 
-    calls = []
+    calls: list[dict[str, bool]] = []
 
     class Source:
-        def __init__(self, *args) -> None:
+        def __init__(
+            self, repo: Repository, settings: Settings, *, versions: ResolvedVersionIdentity
+        ) -> None:
             pass
 
-        async def check(self, **kwargs):
-            calls.append(kwargs)
+        async def check(self, *, probe: bool, check_accounts: bool) -> list[JsonValue]:
+            calls.append({"probe": probe, "check_accounts": check_accounts})
             return []
 
         async def close(self) -> None:
             pass
 
     monkeypatch.setattr(tank.sources, "SourceService", Source)
-    monkeypatch.setattr(cli, "run_db", lambda fn: asyncio.run(fn(None, None)))
+    monkeypatch.setattr(cli, "run_db", run_fixture_database)
     assert CliRunner().invoke(cli.main, ["sources", "check"]).exit_code == 0
     assert calls[-1] == {"probe": False, "check_accounts": False}
     assert CliRunner().invoke(cli.main, ["sources", "check", "--probe", "--accounts"]).exit_code == 0
@@ -153,18 +171,26 @@ def test_manual_backup_defaults_to_no_retention_and_forwards_force(monkeypatch: 
     import tank.scheduler
     from tank import cli
 
-    calls = []
+    calls: list[dict[str, bool]] = []
 
     class Scheduler:
-        def __init__(self, *args) -> None:
+        def __init__(
+            self,
+            repo: Repository,
+            settings: Settings,
+            market: None,
+            truth: None,
+            *,
+            versions: ResolvedVersionIdentity,
+        ) -> None:
             pass
 
-        async def maintenance(self, now, **kwargs):
-            calls.append(kwargs)
+        async def maintenance(self, now: datetime, *, force: bool, prune: bool) -> dict[str, JsonValue]:
+            calls.append({"force": force, "prune": prune})
             return {"status": "created"}
 
     monkeypatch.setattr(tank.scheduler, "Scheduler", Scheduler)
-    monkeypatch.setattr(cli, "run_db", lambda fn: asyncio.run(fn(None, None)))
+    monkeypatch.setattr(cli, "run_db", run_fixture_database)
     assert CliRunner().invoke(cli.main, ["backup", "--force"]).exit_code == 0
     assert calls[-1] == {"force": True, "prune": False}
     assert CliRunner().invoke(cli.main, ["backup", "--prune"]).exit_code == 0
@@ -500,8 +526,9 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
     config.mkdir()
     backup = tmp_path / "backup"
     backup.mkdir()
+    baseline = Settings()
     for name in ("registry", "semantics", "dependency_map", "exchange_addresses"):
-        (config / f"{name}.yaml").write_text("{}\n")
+        (config / f"{name}.yaml").write_bytes(baseline.read_config_bytes(name + ".yaml"))
     import yaml
 
     (config / "sources.yaml").write_text(
@@ -585,15 +612,18 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
         await asyncio.sleep(0.01)
         assert len(started) == 2 and supervisor.settings.load_config("thresholds")["filter_cutoff"] == 0.8
         write_thresholds(0.8)
-        (config / "registry.yaml").write_text(
-            "entities:\n- entity_id: broken\n  aliases: [Valid]\n"
-            "  qualified_aliases:\n  - alias: Generic\n    requires_any: []\n"
-        )
+        broken_registry = baseline.load_config("registry")
+        entities = broken_registry["entities"]
+        assert isinstance(entities, list)
+        entity = entities[0]
+        assert isinstance(entity, dict)
+        entity["qualified_aliases"] = [{"alias": "Generic", "requires_any": []}]
+        (config / "registry.yaml").write_text(yaml.safe_dump(broken_registry))
         reload_event.set()
         await until(lambda: len(loads) == 3)
         await asyncio.sleep(0.01)
         assert len(started) == 2 and not task.done()
-        assert supervisor.settings.load_config("registry") == {}
+        assert supervisor.settings.load_config("registry") == baseline.load_config("registry")
     finally:
         stop.set()
         await task
@@ -917,7 +947,7 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
         runtime.handlers = {
             "RUN_MARKET_TRUTH": runtime.assess_wire,
             "EVAL_CONDITIONS": __import__("tank.scheduler", fromlist=["Scheduler"])
-            .Scheduler(repo, settings, market, truth)
+            .Scheduler(repo, settings, market, truth, versions=declared_versions_fixture())
             .eval_conditions,
         }
         runtime.active_jobs = set()

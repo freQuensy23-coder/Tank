@@ -9,7 +9,12 @@ from typing import Literal
 
 import httpx
 import pytest
-from agent_source_fixtures import pipeline_settings_fixture, source_item_fixture, source_record_fixture
+from agent_source_fixtures import (
+    declared_versions_fixture,
+    pipeline_settings_fixture,
+    source_item_fixture,
+    source_record_fixture,
+)
 from postgres_helpers import PostgresTemplate
 from pydantic import JsonValue
 
@@ -110,7 +115,7 @@ async def test_independent_routing_calls_overlap_preserve_source_updates_and_ded
             "last_event_seq": 0,
         },
     )
-    pipe = Pipeline(repo, opts, progress=DisabledSourceProgress())
+    pipe = Pipeline(repo, opts, progress=DisabledSourceProgress(), versions=declared_versions_fixture())
     arrived, release, both_blocked = set(), asyncio.Event(), asyncio.Event()
 
     async def score(item: FeedSourceItem, name: ClassificationName, state: JevState) -> float:
@@ -253,7 +258,9 @@ async def test_parallel_candidate_scores_survive_retry_without_partial_winner(
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-        pipe = Pipeline(repo, opts, progress=DisabledSourceProgress(), http=http)
+        pipe = Pipeline(
+            repo, opts, progress=DisabledSourceProgress(), http=http, versions=declared_versions_fixture()
+        )
 
         async def fixed_candidates(identities: set[str], since: str, now: datetime) -> list[RoutingCandidate]:
             return candidates
@@ -368,9 +375,9 @@ async def test_candidate_window_equal_batch_clock_is_inclusive_without_future_ro
                 },
             )
         opts = pipeline_settings_fixture({"registry": {}, "thresholds": {}})
-        events = await Pipeline(repo, opts, progress=DisabledSourceProgress())._candidate_events(
-            {marker}, iso(since), now
-        )
+        events = await Pipeline(
+            repo, opts, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
+        )._candidate_events({marker}, iso(since), now)
         assert [event.event_id for event in events] == [marker + "a_lower", marker + "z_equal"]
     finally:
         await repo.close()
@@ -403,7 +410,9 @@ async def test_jev_billed_cost_or_explicit_unknown_persists_under_sql_contract(
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-        pipeline = Pipeline(repo, opts, progress=DisabledSourceProgress(), http=http)
+        pipeline = Pipeline(
+            repo, opts, progress=DisabledSourceProgress(), http=http, versions=declared_versions_fixture()
+        )
         assert await pipeline.score(item, "relevant", pipeline.state(item)) == 0.9
         assert await pipeline.score(item, "relevant", pipeline.state(item)) == 0.9
     assert len(calls) == 1

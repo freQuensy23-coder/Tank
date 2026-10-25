@@ -3,14 +3,16 @@
 import os
 from contextlib import AsyncExitStack
 from datetime import timedelta
+from decimal import Decimal
 
 import pytest
 
 from tank.market import normalize
 from tank.market.flow import FlowAccumulator
+from tank.market.trade_contracts import FlowInstrument, QuoteUsdValuation
 from tank.review import ReviewService, price_return
 from tank.storage import MemoryRepository
-from tank.util import iso, new_id, utcnow
+from tank.util import clock_iso, iso, new_id, utcnow
 
 
 @pytest.mark.integration
@@ -36,17 +38,20 @@ async def test_actual_flow_batch_producer_to_stored_review(subminute, backend, p
         if subminute:
             start += timedelta(seconds=30)
         end = start + timedelta(hours=1)
-        instrument = {
-            "instrument_id": prefix,
-            "token_id": "T",
-            "venue": "binance",
-            "market_type": "SPOT",
-            "venue_symbol": "TUSDT",
-            "quote_asset": "USDT",
-            "quote_usd_rate": "1",
-            "contract_multiplier": "1",
-        }
-        accumulator = FlowAccumulator()
+        instrument = FlowInstrument(
+            instrument_id=prefix,
+            token_id="T",
+            venue="binance",
+            market_type="SPOT",
+            venue_symbol="TUSDT",
+            quote_asset="USDT",
+            contract_multiplier=None,
+        )
+        valuation = QuoteUsdValuation(
+            rate=Decimal("1"), as_of=None, basis="EXPLICIT_UNCLOCKED_INPUT", unavailable_reason=None
+        )
+        observed = end + timedelta(minutes=1)
+        accumulator = FlowAccumulator(now=lambda: observed)
         first_price = "10000000000000000.01"
         entry = "10000000000000000.00"
         close = "10000000000000000.02"
@@ -61,16 +66,30 @@ async def test_actual_flow_batch_producer_to_stored_review(subminute, backend, p
                     "T": int((floor + timedelta(minutes=minute, seconds=second)).timestamp() * 1000),
                     "m": False,
                 }
-                accumulator.add(normalize.trade(instrument, raw))
+                received = floor + timedelta(minutes=minute, seconds=second, milliseconds=1)
+                accumulator.add(
+                    normalize.trade(instrument, raw, valuation=valuation, received_ts=received, source="REST")
+                )
         accumulator.prove_range(
-            prefix, floor, floor + timedelta(minutes=count), complete=True, source="EXHAUSTED_REST_RANGE"
+            prefix,
+            floor,
+            floor + timedelta(minutes=count),
+            complete=True,
+            source="EXHAUSTED_REST_RANGE",
+            observed_at=observed,
         )
         records = [accumulator.record(key, complete=True) for key in accumulator.bars]
         assert all(
-            row["first_trade"]["price"] == first_price and row["last_trade"]["price"] == close
+            row.first_trade is not None
+            and row.last_trade is not None
+            and row.first_trade.price == Decimal(first_price)
+            and row.last_trade.price == Decimal(close)
             for row in records
         )
-        changed = await repo.put_market_batch("mkt.flow_bars_1m", records)
+        changed = await repo.put_market_batch(
+            "mkt.flow_bars_1m",
+            [row.model_dump(mode="json", by_alias=True, exclude_unset=True) for row in records],
+        )
         assert len(changed) == count
         stored = await repo.list_latest(
             "mkt.flow_bars_1m", "minute_start", filters={"instrument_id": prefix}, limit=1
@@ -86,7 +105,7 @@ async def test_actual_flow_batch_producer_to_stored_review(subminute, backend, p
                 "outlook": {"best_horizon": "H1"},
             },
             {"relative": {"ref_venue": prefix, "entry_ref_price": entry}},
-            now=iso(),
+            now=clock_iso(),
         )
         assert result["status"] == "COMPLETED"
         assert result["coverage"]["endpoint_source"] == "TYPED_LAST_TRADE"

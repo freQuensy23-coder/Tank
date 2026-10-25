@@ -39,7 +39,6 @@ def complete_fixture_record(collection: str, record: Record) -> Record:
     templates: dict[str, Record] = {
         "ingest.source_items": {
             "feed": "test:fixture",
-            "external_id": record.get("item_id"),
             "published_prec": "COLLECTION_ONLY",
             "observed_at": at,
             "raw_ref": "/test/raw",
@@ -127,7 +126,11 @@ def complete_fixture_record(collection: str, record: Record) -> Record:
         ),
         "out.ops_notices": {"text": "Synthetic notice.", "created_at": at, "created_by": "scheduler"},
     }
-    defaults = templates.get(collection, {})
+    if collection not in templates:
+        return record
+    defaults = templates[collection]
+    if collection == "ingest.source_items":
+        defaults["external_id"] = text_field(record, "item_id")
     for key, value in defaults.items():
         record.setdefault(key, value)
     return record

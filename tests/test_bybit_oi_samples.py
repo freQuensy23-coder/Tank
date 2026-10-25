@@ -11,7 +11,7 @@ from test_market_normalize import TS, instrument
 from tank.analysis.truth import _oi_stats, oi_temporally_admissible, synchronized_oi
 from tank.market.normalize import SemanticError, oi
 from tank.time_precision import interval_bounds, propagate_timestamp
-from tank.util import iso, parse_time
+from tank.util import iso, parse_epoch, parse_time
 
 
 @pytest.mark.parametrize("period", [300, 900, 3600])
@@ -20,23 +20,29 @@ def test_sample_time_is_exact_without_rounding_or_request_bucket_invention(perio
     timestamp = TS + 1234
     raw = {"singleOpenInterest": "123.456789", "openInterest": "246.913578", "timestamp": str(timestamp)}
     original = deepcopy(raw)
-    row = oi(inst, raw, bucket_size_s=period, received_ts=timestamp + 4000)
+    row = oi(inst, raw, bucket_size_s=period, received_ts=parse_epoch(timestamp + 4000, unit="ms"))
     stamp = propagate_timestamp(row, "ts")
     assert raw == original and stamp.precision == row["timestamp_precision"] == "EXACT"
-    assert stamp.value == iso(timestamp) and interval_bounds(stamp) == (parse_time(timestamp),) * 2
+    assert (
+        stamp.value == iso(parse_epoch(timestamp, unit="ms"))
+        and interval_bounds(stamp) == (parse_epoch(timestamp, unit="ms"),) * 2
+    )
     assert row["ts_bucket_size_s"] is None and "ts_bucket_anchor" not in row
     assert row["raw_value"] == row["oi_native"] == "123.456789"
     assert row["sidedness"] == "SINGLE_SIDED" and row["raw_unit"] == "BASE_QTY"
     assert "semantic_confidence" not in row and row["synchronized_eligible"] is True
-    assert row["received_ts"] == iso(timestamp + 4000) and row["received_ts_prec"] == "COLLECTION_ONLY"
+    assert (
+        row["received_ts"] == iso(parse_epoch(timestamp + 4000, unit="ms"))
+        and row["received_ts_prec"] == "COLLECTION_ONLY"
+    )
 
 
 def test_current_period_sample_is_eligible_but_future_sample_is_not_selected() -> None:
     inst = instrument("bybit", "PERP_LINEAR")
-    start = parse_time(TS)
+    start = parse_epoch(TS, unit="ms")
     end = start + timedelta(minutes=4)
     rows = [
-        oi(inst, {"singleOpenInterest": value, "timestamp": iso(ts)})
+        oi(inst, {"singleOpenInterest": value, "timestamp": int(ts.timestamp() * 1000)})
         for ts, value in [(start, "100"), (end, "105"), (end + timedelta(seconds=30), "99999")]
     ]
     assert all(oi_temporally_admissible(r) for r in rows)
@@ -61,7 +67,12 @@ def test_missing_timestamp_bothsided_only_and_unaligned_mark_remain_unavailable(
         oi(inst, {"singleOpenInterest": "100"})
     with pytest.raises(SemanticError, match="cannot substitute"):
         oi(inst, {"openInterest": "200", "timestamp": TS})
-    row = oi(inst, {"singleOpenInterest": "100", "timestamp": TS}, mark="2", mark_ts=TS + 61000)
+    row = oi(
+        inst,
+        {"singleOpenInterest": "100", "timestamp": TS},
+        mark="2",
+        mark_ts=parse_epoch(TS + 61000, unit="ms"),
+    )
     assert row["mark_price"] is None and row["oi_usd"] is None
     assert "semantic_confidence" not in row
 
@@ -91,7 +102,7 @@ def test_actual_retained_f11_endpoint_values_reach_production_oi_math_without_re
             venue_symbol="WLDUSDT",
         )
 
-        rows = [oi(inst, r, bucket_size_s=300) for r in raw if parse_time(r["timestamp"]) <= end]
+        rows = [oi(inst, r, bucket_size_s=300) for r in raw if parse_epoch(r["timestamp"], unit="ms") <= end]
         groups.append((inst, rows, "BASE_QTY_SINGLE_SIDED"))
     result = synchronized_oi(groups, start, end)
     assert result is not None

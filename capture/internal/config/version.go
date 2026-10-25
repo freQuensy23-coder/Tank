@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -124,6 +125,9 @@ func fullCommit(commit string) bool {
 }
 
 func ConfigVersion(root string) (string, error) {
+	if Build != "" && Build != "dev" && !fullCommit(Build) {
+		return "", errors.New("build identity must be a full lowercase commit SHA or explicit dev")
+	}
 	captured, err := CaptureTree(root)
 	if err != nil {
 		return "", err

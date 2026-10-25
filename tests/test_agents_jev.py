@@ -4,7 +4,12 @@ import json
 
 import httpx
 import pytest
-from agent_source_fixtures import PipelineFixtureSettings, pipeline_settings_fixture, source_item_fixture
+from agent_source_fixtures import (
+    PipelineFixtureSettings,
+    declared_versions_fixture,
+    pipeline_settings_fixture,
+    source_item_fixture,
+)
 from pydantic import JsonValue
 
 from tank.agents import Pipeline
@@ -49,7 +54,13 @@ async def test_free_tier_without_key_sends_no_authorization_and_caches() -> None
         return httpx.Response(200, json=response())
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(fake)) as http:
-        pipeline = Pipeline(repo, settings(), progress=DisabledSourceProgress(), http=http)
+        pipeline = Pipeline(
+            repo,
+            settings(),
+            progress=DisabledSourceProgress(),
+            http=http,
+            versions=declared_versions_fixture(),
+        )
         assert await pipeline.score(ITEM, "relevant", pipeline.state(ITEM)) == 0.97
         assert await pipeline.score(ITEM, "relevant", pipeline.state(ITEM)) == 0.97
     assert len(calls) == 1
@@ -77,7 +88,11 @@ async def test_opencode_key_selects_paid_model_with_bearer_header() -> None:
     repo = MemoryRepository()
     async with httpx.AsyncClient(transport=httpx.MockTransport(fake)) as http:
         pipeline = Pipeline(
-            repo, settings(opencode_api_key="FAKE_OPENCODE_KEY"), progress=DisabledSourceProgress(), http=http
+            repo,
+            settings(opencode_api_key="FAKE_OPENCODE_KEY"),
+            progress=DisabledSourceProgress(),
+            http=http,
+            versions=declared_versions_fixture(),
         )
         assert await pipeline.score(ITEM, "relevant", pipeline.state(ITEM)) == 0.97
     row = (await repo.list("ops.llm_usage"))[0]
@@ -92,9 +107,13 @@ async def test_resolved_model_cannot_silently_change(resolved: str) -> None:
         transport=httpx.MockTransport(lambda request: httpx.Response(200, json=response(model=resolved)))
     ) as http:
         with pytest.raises(ValueError, match="unexpected resolved model"):
-            await Pipeline(repo, settings(), progress=DisabledSourceProgress(), http=http).score(
-                ITEM, "relevant", JevState(item=JevItem(source="Fixture", text="data"))
-            )
+            await Pipeline(
+                repo,
+                settings(),
+                progress=DisabledSourceProgress(),
+                http=http,
+                versions=declared_versions_fixture(),
+            ).score(ITEM, "relevant", JevState(item=JevItem(source="Fixture", text="data")))
     assert await repo.list("ops.llm_usage") == []
 
 
@@ -113,7 +132,13 @@ async def test_filter_item_records_actual_model_provenance_on_first_and_cached_c
         return httpx.Response(200, json=response())
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(fake)) as http:
-        pipeline = Pipeline(repo, settings(), progress=DisabledSourceProgress(), http=http)
+        pipeline = Pipeline(
+            repo,
+            settings(),
+            progress=DisabledSourceProgress(),
+            http=http,
+            versions=declared_versions_fixture(),
+        )
         first = await pipeline.filter_item_wire({"item_id": "i"})
         second = await pipeline.filter_item_wire({"item_id": "i"})
     assert len(calls) == 1 and first["relevance"] == second["relevance"]
