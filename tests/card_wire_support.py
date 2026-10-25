@@ -127,7 +127,7 @@ def wire_card_inputs() -> tuple[WireRecord, WireRecord, WireRecord, WireRecord, 
         "alternatives": [],
         "derivatives": {"window": "W4H", "per_venue": [], "synchronized": None},
         "spot": {"W4H": {"window": "W4H", "venues": [], "coverage": {"excluded": []}}},
-        "supply": {"holders_revenue": {"protocols": []}},
+        "supply": {"holders_revenue": None},
         "primary_window": "W4H",
         "decisive_facts": [
             "4h: price 5.00%",
