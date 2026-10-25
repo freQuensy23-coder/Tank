@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 from tank.analysis.card_contracts import (
     ActiveCardDecision,
+    BeneficiaryLayer,
     CardDataConfidence,
     CardDecision,
     CardExclusion,
@@ -383,7 +384,7 @@ def _who(inputs: CardInputs) -> list[str]:
         who.append("secondary none" + (" — " + reason if reason is not None else ""))
     lines = ["", "WHO: " + (" · ".join(who) if who else "n/a (no beneficiary recorded)")]
     if not any(edge.role == "SECONDARY" for edge in edges):
-        names = {
+        names: dict[BeneficiaryLayer, str] = {
             "ISSUER_PRODUCT": "Issuer / product",
             "VENUE_DEX": "Exchanges / DEX",
             "SETTLEMENT_L1_L2": "Settlement L1 / L2",
@@ -393,8 +394,8 @@ def _who(inputs: CardInputs) -> list[str]:
             "INTEROPERABILITY": "Interoperability",
             "CUSTODY_COMPLIANCE": "Custody / compliance",
         }
-        for layer, explanation in inputs.mapping.layer_explanations.items():
-            lines.append("• " + names[layer] + ": " + explanation)
+        for layer, label in names.items():
+            lines.append("• " + label + ": " + inputs.mapping.layer_explanations[layer])
     return lines
 
 
