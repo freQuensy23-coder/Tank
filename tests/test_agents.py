@@ -10,6 +10,7 @@ from agent_source_fixtures import (
     native_tool_arguments_fixture,
     source_record_fixture,
 )
+from scheduling_support import RecordingReactionScheduling
 
 from tank.agents import ConfigurationError, Pipeline, SessionService
 from tank.agents.context import CONTEXT_VERSION
@@ -516,7 +517,14 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
 
     repo = MemoryRepository()
     opts = Settings(data_dir=tmp_path)
-    tools = EventToolService(repo, opts, None, DecisionEngine(opts), versions=declared_versions_fixture())
+    tools = EventToolService(
+        repo,
+        opts,
+        None,
+        DecisionEngine(opts),
+        versions=declared_versions_fixture(),
+        scheduler=RecordingReactionScheduling(),
+    )
     now = clock_iso()
     await repo.put(
         "evt.events",

@@ -3,6 +3,7 @@ package rest
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/freQuensy23-coder/Tank/capture/internal/budget"
+	"github.com/freQuensy23-coder/Tank/capture/internal/budgetpolicy"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyjson"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyval"
@@ -30,7 +32,7 @@ type canned struct {
 type recorded struct {
 	Method, URL string
 	Params      map[string]string
-	JSON        any
+	JSON        json.RawMessage
 	UserAgent   string
 }
 
@@ -48,9 +50,12 @@ func (e *exchange) RoundTrip(req *http.Request) (*http.Response, error) {
 		r.Params[k] = v[0]
 	}
 	if req.Body != nil {
-		data, _ := io.ReadAll(req.Body)
+		data, err := io.ReadAll(req.Body)
+		if err != nil {
+			return nil, err
+		}
 		if len(data) > 0 {
-			r.JSON, _ = pyval.Decode(data)
+			r.JSON = data
 		}
 	}
 	e.requests = append(e.requests, r)
@@ -78,7 +83,7 @@ var now = time.Date(2026, 10, 21, 12, 34, 56, 789012000, time.UTC)
 func newClient(t *testing.T, responses ...canned) (*Client, *exchange, *budget.MemoryLedger) {
 	t.Helper()
 	ledger := budget.NewMemoryLedger(nil)
-	gate := budget.NewGate(ledger, "test")
+	gate := budget.NewGate(ledger, "test", fixturePolicies(t))
 	gate.Interval = func(string) time.Duration { return 0 }
 	c := NewClient("TankV0/1.0 (test)", gate, func() time.Time { return now })
 	ex := &exchange{responses: responses}
@@ -203,16 +208,21 @@ func TestAdaptersMatchPython(t *testing.T) {
 				if got.Method != w["method"] || got.URL != w["url"] || params2(got.Params) != params2(params) {
 					t.Errorf("request %d: %s %s %v, want %s %s %v", i, got.Method, got.URL, got.Params, w["method"], w["url"], params)
 				}
-				if pyjson.Canonical(got.JSON) != pyjson.Canonical(w["json"]) {
-					t.Errorf("request %d json %s, want %s", i, pyjson.Canonical(got.JSON), pyjson.Canonical(w["json"]))
+				observedJSON, err := canonicalRequestJSON(got.JSON)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if observedJSON != pyjson.Canonical(w["json"]) {
+					t.Errorf("request %d json %s, want %s", i, observedJSON, pyjson.Canonical(w["json"]))
 				}
 				if got.UserAgent != "TankV0/1.0 (test)" {
 					t.Errorf("User-Agent %q", got.UserAgent)
 				}
 				host := strings.SplitN(strings.TrimPrefix(got.URL, "https://"), "/", 2)[0]
 				path := "/" + strings.SplitN(strings.TrimPrefix(got.URL, "https://"), "/", 2)[1]
-				payload, _ := got.JSON.(map[string]any)
-				buckets, err := budget.Constraints(host, path, got.Params, payload)
+				rawPayload := got.JSON
+				policies := fixturePolicies(t)
+				buckets, err := policies.Plan(budgetpolicy.Request{Method: got.Method, Host: host, Path: path, Query: got.Params, Body: rawPayload})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -493,4 +503,15 @@ func params2(m map[string]string) string {
 		out[k] = v
 	}
 	return pyjson.Canonical(out)
+}
+
+func canonicalRequestJSON(body json.RawMessage) (string, error) {
+	if len(body) == 0 {
+		return "null", nil
+	}
+	value, err := pyval.Decode(body)
+	if err != nil {
+		return "", err
+	}
+	return pyjson.Canonical(value), nil
 }

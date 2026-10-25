@@ -412,3 +412,34 @@ and optional head-refresh 304 outcomes retain their explicit no-content branch.
 Required receipt digest/status/response URL/fetch clock accesses no longer use
 empty receipt maps or invented current-time fallbacks. Strict reader/test mypy
 and touched Ruff checks pass. Full pinned services verification follows the commit.
+
+
+### Independent clean scheduling companion: operational test composition
+
+`scheduler_support.operational_reaction_services` constructs the real MarketService,
+MarketTruthService and Scheduler with the actual threshold configuration and an
+explicit version facet. Its async exit stack closes scheduler tasks before market
+flush and client cleanup. It supplies a real HTTP client whose transport refuses
+undeclared external requests, rather than a no-op scheduler or fabricated capture
+answer. The small dataclass contains resource handles, not serialized domain
+records.
+
+The helper's actual background-task lifetime proof passes with zero skips, and
+both helper/test modules pass strict mypy and Ruff. Constructor consumer migration
+will be paired with analysis' exact required ReactionScheduling activation.
+This clean branch is based on parent 95ce994 and does not include the held
+admission/7af27d3 cohort or the independent polling-state WIP.
+
+
+The independent required-scheduling caller companion now uses that real async
+composition for all owned EventToolService constructors. It retains the original
+extraction, publication, web evidence, watch-condition and source-cadence assertions.
+The MAJOR source-cadence case now uses actual tool dispatch with a schema-complete,
+explicitly unestimated impact horizon. It verifies ten durable benchmark POST
+reaction jobs for the event and the existing real 15-second source reads.
+Resources drain before repository shutdown.
+
+Scoped proof: 216 owned constructor/helper units pass in 3.84s, and both actual
+source-cadence integration cases pass in 2.45s. No external HTTP is allowed by the
+real composition fixture. Full pinned owned verification is the next gate; these
+results do not assert completed reaction measurement or full scheduler typing.

@@ -85,7 +85,7 @@ type Config struct {
 	SectorBaskets []map[string]any
 	Semantics     []map[string]any
 	Thresholds    map[string]any
-	APILimits     []map[string]any
+	APILimits     validatedBudgetDocument
 }
 
 func ReadYAML(dir, name string) (map[string]any, error) {
@@ -179,12 +179,12 @@ func Load(s Settings) (*Config, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	if limits, err := ReadYAML(s.ConfigDir, "api_limits"); err == nil {
-		if c.APILimits, err = mappings(limits["limits"], "api_limits limits"); err != nil {
-			return nil, err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+	limitBytes, err := os.ReadFile(filepath.Join(s.ConfigDir, "api_limits.yaml"))
+	if err != nil {
 		return nil, err
+	}
+	if c.APILimits, err = parseAPILimits(limitBytes); err != nil {
+		return nil, fmt.Errorf("invalid configured API request budgets: %w", err)
 	}
 	if sources, err := ReadYAML(s.ConfigDir, "sources"); err == nil {
 		if contact := sources["contact_email"]; pyval.Truthy(contact) {

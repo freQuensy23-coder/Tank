@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_versions
 from test_agents_session_audit import settings as session_settings
 from test_event_tools import complete_assessment_fixture, complete_event_fixture
@@ -79,7 +80,14 @@ def shifted_snapshot(end, *, full_flow_history=True):
             return iso(parse_time(value) + delta)
         return value
 
-    return shift(source)
+    shifted = shift(source)
+    hourly_adjustment = end.replace(minute=0, second=0, microsecond=0) - end
+    for row in shifted["klines"]:
+        if row["interval_s"] == 3600:
+            for field in ("open_time", "close_time"):
+                if field in row and row[field] is not None:
+                    row[field] = iso(parse_time(row[field]) + hourly_adjustment)
+    return shifted
 
 
 class ReleasedMarket:
@@ -208,7 +216,14 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
         monkeypatch.setattr("tank.event_tools.utcnow", lambda: logical_now[0])
         market = ReleasedMarket(shifted_snapshot(end, full_flow_history=True))
         truth = MarketTruthService(repo, settings, market, versions=fixture_versions())
-        tools = EventToolService(repo, settings, truth, DecisionEngine(), versions=fixture_versions())
+        tools = EventToolService(
+            repo,
+            settings,
+            truth,
+            DecisionEngine(),
+            versions=fixture_versions(),
+            scheduler=RecordingReactionScheduling(),
+        )
         scheduler = Scheduler(repo, settings, market, truth, versions=fixture_versions())
         await seed_domain(repo, settings, end)
         first = await truth.assess(
@@ -275,6 +290,8 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
                 fresh = await repo.get("ana.market_truth", decision["mta_id"])
                 assert fresh["cutoff"] == iso(end)
                 assert fresh["data_confidence"]["class"] == "HIGH"
+                assert fresh["relative"]["beta_btc"] is not None
+                assert fresh["relative"]["beta_flags"]["btc"] is None
                 assert decision["action"] == "START"
                 assert (await repo.get("ana.watch_conditions", watch["cond_id"]))["consumed_by"] == decision[
                     "dec_id"
@@ -372,7 +389,14 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
         end = utcnow().replace(second=0, microsecond=0)
         market = ReleasedMarket(shifted_snapshot(end, full_flow_history=False))
         truth = MarketTruthService(repo, settings, market, versions=fixture_versions())
-        tools = EventToolService(repo, settings, truth, DecisionEngine(), versions=fixture_versions())
+        tools = EventToolService(
+            repo,
+            settings,
+            truth,
+            DecisionEngine(),
+            versions=fixture_versions(),
+            scheduler=RecordingReactionScheduling(),
+        )
         await seed_domain(repo, settings, end)
         first = await truth.assess(
             "e", "T", chosen_boundary(end - timedelta(minutes=1), precision="BUCKET(1m)")
@@ -464,7 +488,14 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
         )
         truth = MarketTruthService(repo, settings, market, versions=fixture_versions())
         engine = DecisionEngine()
-        tools = EventToolService(repo, settings, truth, engine, versions=fixture_versions())
+        tools = EventToolService(
+            repo,
+            settings,
+            truth,
+            engine,
+            versions=fixture_versions(),
+            scheduler=RecordingReactionScheduling(),
+        )
         await seed_domain(repo, settings, end)
         await truth.assess("e", "T", chosen_boundary(end - timedelta(minutes=1), precision="BUCKET(1m)"))
         decision = await tools.dispatch("get_decision", {"event_id": "e", "token_id": "T"}, {})
@@ -553,7 +584,14 @@ async def test_event_only_risk_watch_never_waits_for_market_refresh(
     end = utcnow().replace(second=0, microsecond=0)
     market = ReleasedMarket(shifted_snapshot(end, full_flow_history=False))
     truth = MarketTruthService(repo, settings, market, versions=fixture_versions())
-    tools = EventToolService(repo, settings, truth, DecisionEngine(), versions=fixture_versions())
+    tools = EventToolService(
+        repo,
+        settings,
+        truth,
+        DecisionEngine(),
+        versions=fixture_versions(),
+        scheduler=RecordingReactionScheduling(),
+    )
     await seed_domain(repo, settings, end)
     first = await truth.assess("e", "T", chosen_boundary(end - timedelta(minutes=1), precision="BUCKET(1m)"))
     await repo.put(
@@ -593,3 +631,16 @@ async def test_event_only_risk_watch_never_waits_for_market_refresh(
     tools.get_market_truth.assert_not_called()
     assert (await repo.get("ana.watch_conditions", "risk"))["consumed_by"] == result["dec_id"]
     assert not await repo.list("ops.jobs")
+
+
+def test_authored_current_minute_retains_estimable_hourly_benchmark_history() -> None:
+    from tank.analysis.truth import compute_market_truth
+
+    end = parse_time("2026-10-16T12:37:00Z")
+    snapshot = shifted_snapshot(end)
+    result = compute_market_truth(snapshot)
+    assert result["cutoff"] == iso(end)
+    assert result["relative"]["beta_btc"] is not None
+    assert result["relative"]["beta_flags"]["btc"] is None
+    assert result["relative"]["windows"]["EVENT"]["r_raw"] == pytest.approx(0.011)
+    assert result["move_class"] == "SPOT_LED_ACCUMULATION"

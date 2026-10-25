@@ -114,9 +114,11 @@ host for every process for `Retry-After`; a 418 closes it and is never retried; 
 ## Tests
 
 ```
-cd capture && go vet ./... && go test ./...
-uv run python scripts/capture/parity.py --check --go capture/bin/capture-parity
+(cd capture && go build -o bin/capture-parity ./cmd/capture-parity && go vet ./... && go test ./...)
+PYTHONPATH=src uv run --frozen --extra dev python scripts/capture/parity.py --check --go capture/bin/capture-parity
 ```
+
+Run from the repository root with pinned Go 1.25.14, Python 3.13.13, uv 0.11.7 and the declared test-service environment. Direct REST replay requires an explicit --api-policy PATH; the harness supplies config/api_limits.yaml from its executing checkout.
 
 The parity harness feeds recorded frames and REST polls through the Go port and
 compares full outputs with the frozen Python-reference goldens and digests. The retired

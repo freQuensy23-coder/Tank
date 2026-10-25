@@ -472,7 +472,7 @@ class Runtime:
                         )
                 await self.close()
 
-    async def close(self):
+    async def close(self) -> None:
         for service in (
             self.scheduler,
             self.sources,

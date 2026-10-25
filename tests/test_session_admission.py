@@ -10,14 +10,18 @@ import os
 import uuid
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from types import SimpleNamespace
 
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture
+from pydantic import JsonValue
+from pydantic_settings import SettingsConfigDict
 
 from tank.agents import SessionService
+from tank.agents.context import CONTEXT_VERSION
+from tank.openma_sync import agent_tools
 from tank.runtime import Runtime
+from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.time_precision import collection_clock
 from tank.util import clock_iso, parse_time, sha256, utcnow
@@ -36,25 +40,38 @@ async def fixture_repo(backend, postgres_template):
         yield repo
 
 
-def settings(cap=2):
-    config = {
-        "openma": {
-            "agent_id": "agt",
-            "scout_agent_id": "agt_s",
-            "environment_id": "env",
-            "prompt_version": "test",
-            "max_running_sessions": cap,
-        }
-    }
-    return SimpleNamespace(
+class AdmissionSettings(Settings):
+    model_config = SettingsConfigDict(env_file=None)
+    admission_cap: int
+
+    def load_config(self, name: str) -> dict[str, JsonValue]:
+        if name == "registry":
+            return {"tokens": [], "entities": [], "instruments": []}
+        if name == "sources":
+            return {"sources": [{"source_id": "S01", "name": "Synthetic admission source"}]}
+        configuration = super().load_config(name)
+        if name == "openma":
+            configuration.update(
+                agent_id="agt",
+                scout_agent_id="agt_s",
+                environment_id="env",
+                replay_environment_id="env_replay",
+                max_running_sessions=self.admission_cap,
+            )
+        return configuration
+
+
+def settings(cap: int = 2) -> AdmissionSettings:
+    return AdmissionSettings(
+        admission_cap=cap,
         ops_progress_enabled=False,
-        openma_api_key="test",
+        openma_api_key="synthetic-admission-oma-key",
         openma_url="http://openma:8787",
         openma_model="gpt-6.1-sol",
+        database_url="postgresql://fixture:synthetic-admission-db-key@database/fixture",
         config_version="test",
         code_version="test",
         replay=False,
-        load_config=lambda name: config[name],
     )
 
 
@@ -112,6 +129,8 @@ async def seed(repo) -> None:
             sid,
             {
                 "session_id": sid,
+                "model_context_version": CONTEXT_VERSION,
+                "tools_sha256": sha256(agent_tools(settings(), "tank-event-analyst")),
                 "event_id": eid,
                 "status": "OPEN",
                 "runtime_status": state,
@@ -158,13 +177,27 @@ async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasse
         before_items = {row["item_id"]: row["observed_at"] for row in await repo.list("ingest.source_items")}
         before_known = {row["event_id"]: row["known_to_us_at"] for row in await repo.list("evt.events")}
         posted = []
+        opts = settings()
 
-        def openma(request: pytest.FixtureRequest):
+        def openma(request: httpx.Request) -> httpx.Response:
             if request.method == "GET":
                 return httpx.Response(200, json={"data": [], "next_page": None})
             body = json.loads(request.content)
             if request.url.path == "/v1/sessions":
-                return httpx.Response(200, json={"id": "s_new"})
+                return httpx.Response(
+                    200,
+                    json={
+                        "id": "s_new",
+                        "agent": {
+                            "id": "agt",
+                            "version": 1,
+                            "model": {"id": opts.openma_model},
+                            "system": "Synthetic admission prompt",
+                            "skills": [],
+                            "tools": agent_tools(opts, "tank-event-analyst"),
+                        },
+                    },
+                )
             sid = request.url.path.split("/")[3]
             text = json.loads(body["events"][0]["content"][0]["text"])
             posted.append((sid, text["item"]["text"].removeprefix("Item ")))
@@ -188,10 +221,11 @@ async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasse
         expiries = {name: (await repo.get("ops.jobs", job))["expires_at"] for name, job in jobs.items()}
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(openma)) as http:
-            sessions = SessionService(repo, settings(), None, http=http, versions=declared_versions_fixture())
+            sessions = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
             sessions.start_stream = lambda sid: None
             runtime = object.__new__(Runtime)
             runtime.repo, runtime.sessions, runtime.active_jobs = repo, sessions, set()
+            runtime.settings = opts
             runtime.handlers = {"AGENT_MESSAGE": sessions.send_message}
 
             inspected_after_new = asyncio.Event()
