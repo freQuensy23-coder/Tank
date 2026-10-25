@@ -1721,6 +1721,10 @@ class ConditionUnavailablePredicate(DomainModel):
         "NOT_SUPPORTED",
         "ZERO_TOTAL_VOLUME",
         "ZERO_BASELINE",
+        "ZERO_NOTIONAL",
+        "ZERO_NET_FLOW",
+        "NO_EVENT_ANCHOR",
+        "NO_VENUES",
     ]
 
 
@@ -2735,3 +2739,261 @@ class ObservedConditionDepthCohort(DomainModel):
 class UnavailableConditionDepthCohort(DomainModel):
     status: Literal["UNAVAILABLE"]
     reason: Literal["NO_COMMON_VENUES", "NO_EVENT_ANCHOR"]
+
+
+class ObservedConditionLiquidityFlow(DomainModel):
+    status: Literal["OBSERVED"]
+    unit: Literal["NATIVE", "USD"]
+    value: Decimal
+
+    def hit_side(self) -> Literal["bid", "ask"] | None:
+        validated = type(self).model_validate(self)
+        return "ask" if validated.value > 0 else "bid" if validated.value < 0 else None
+
+
+class UnavailableConditionLiquidityFlow(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    value: None
+    reason: Literal["INCOMPLETE"]
+
+
+class ConditionLiquidityNetFlow(DomainModel):
+    native: Decimal | None
+    native_reason: Literal["INCOMPLETE"] | None
+    usd: Decimal | None
+    usd_reason: Literal["INCOMPLETE"] | None
+
+    @model_validator(mode="after")
+    def actual_units(self) -> Self:
+        if (self.native is None) != (self.native_reason is not None) or (self.usd is None) != (
+            self.usd_reason is not None
+        ):
+            raise ValueError("Missing net flow requires the actual unavailable unit cause")
+        return self
+
+    def comparison_flow(self) -> ObservedConditionLiquidityFlow | UnavailableConditionLiquidityFlow:
+        validated = type(self).model_validate(self)
+        if validated.native is not None:
+            return ObservedConditionLiquidityFlow(status="OBSERVED", unit="NATIVE", value=validated.native)
+        if validated.usd is not None:
+            return ObservedConditionLiquidityFlow(status="OBSERVED", unit="USD", value=validated.usd)
+        return UnavailableConditionLiquidityFlow(status="UNAVAILABLE", value=None, reason="INCOMPLETE")
+
+
+class ConditionDepthLowerBound(DomainModel):
+    unit: Literal["NATIVE", "USD"]
+    value: Decimal | None = Field(ge=0)
+    reason: Literal["INCOMPLETE", "NO_VENUES"] | None
+    considered_venues: tuple[Annotated[str, Field(min_length=1, pattern=r"\S")], ...]
+    covered_venues: tuple[Annotated[str, Field(min_length=1, pattern=r"\S")], ...]
+
+    @model_validator(mode="after")
+    def actual_covered_set(self) -> Self:
+        if len(self.considered_venues) != len(set(self.considered_venues)) or len(self.covered_venues) != len(
+            set(self.covered_venues)
+        ):
+            raise ValueError("A depth lower bound cannot duplicate a considered or covered venue")
+        if not set(self.covered_venues) <= set(self.considered_venues):
+            raise ValueError("A depth lower bound cannot borrow an unconsidered venue")
+        if (self.value is not None) != bool(self.covered_venues):
+            raise ValueError("A known depth lower bound requires actual covered venue amounts")
+        if self.value is not None and self.reason is not None:
+            raise ValueError("An observed depth lower bound cannot carry an absent-value reason")
+        if self.value is None and self.reason != ("INCOMPLETE" if self.considered_venues else "NO_VENUES"):
+            raise ValueError("Missing lower bound must distinguish absent venues from uncovered data")
+        return self
+
+    def fully_covered(self) -> bool:
+        validated = type(self).model_validate(self)
+        return bool(validated.considered_venues) and set(validated.covered_venues) == set(
+            validated.considered_venues
+        )
+
+    def thinness(self, notional_usd: Decimal | None) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        if validated.unit != "USD":
+            raise ValueError("A USD thinness test requires actual USD depth")
+        if notional_usd is not None and (not notional_usd.is_finite() or notional_usd < 0):
+            raise ValueError("A thinness test notional must be finite and nonnegative")
+        if notional_usd == 0:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="ZERO_NOTIONAL")
+        if validated.value is None or notional_usd is None:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        if validated.value >= notional_usd:
+            return ConditionObservedPredicate(status="OBSERVED", value=False)
+        if validated.fully_covered():
+            return ConditionObservedPredicate(status="OBSERVED", value=True)
+        return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+
+
+class ConditionBookSideBounds(DomainModel):
+    usd: ConditionDepthLowerBound
+    native: ConditionDepthLowerBound
+
+    @model_validator(mode="after")
+    def actual_units_and_venues(self) -> Self:
+        if self.usd.unit != "USD" or self.native.unit != "NATIVE":
+            raise ValueError("Book side bounds must preserve their actual monetary and native units")
+        if set(self.usd.considered_venues) != set(self.native.considered_venues):
+            raise ValueError("Monetary and native side bounds must use the same actual considered venues")
+        return self
+
+
+class ConditionBookDepthBounds(DomainModel):
+    bid: ConditionBookSideBounds
+    ask: ConditionBookSideBounds
+
+    @model_validator(mode="after")
+    def actual_book_set(self) -> Self:
+        if set(self.bid.usd.considered_venues) != set(self.ask.usd.considered_venues):
+            raise ValueError("Bid and ask bounds must preserve the same actual considered books")
+        return self
+
+
+class UnavailableConditionPreDepthBounds(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["NO_EVENT_ANCHOR"]
+
+
+class ObservedConditionElasticity(DomainModel):
+    status: Literal["OBSERVED"]
+    bps_per_depth_unit: float
+
+
+class UnavailableConditionElasticity(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    bps_per_depth_unit: None
+    reason: Literal["INCOMPLETE", "ZERO_NET_FLOW", "ZERO_BASELINE", "NOT_ESTIMABLE"]
+
+
+class ConditionElasticityInputs(DomainModel):
+    flow: ConditionLiquidityNetFlow
+    raw_return: ConditionRelativeReturn
+    price_beyond_normal: ConditionPredicate
+    measurement_band_percent: float = Field(gt=0)
+    current: ConditionBookDepthBounds
+    previous: ConditionBookDepthBounds | UnavailableConditionPreDepthBounds
+    average_hit_side_depth_usd: ConditionUSDDepthAmount
+
+    def bps_per_depth_unit(self) -> ObservedConditionElasticity | UnavailableConditionElasticity:
+        validated = type(self).model_validate(self)
+        net, price, depth = (
+            validated.flow.usd,
+            validated.raw_return.value,
+            validated.average_hit_side_depth_usd.value,
+        )
+        if net is None or price is None or depth is None:
+            return UnavailableConditionElasticity(
+                status="UNAVAILABLE", bps_per_depth_unit=None, reason="INCOMPLETE"
+            )
+        if net == 0:
+            return UnavailableConditionElasticity(
+                status="UNAVAILABLE", bps_per_depth_unit=None, reason="ZERO_NET_FLOW"
+            )
+        if depth == 0:
+            return UnavailableConditionElasticity(
+                status="UNAVAILABLE", bps_per_depth_unit=None, reason="ZERO_BASELINE"
+            )
+        with localcontext() as context:
+            context.prec = 128
+            denominator = float(net.copy_abs() / depth)
+        if not isfinite(denominator) or denominator == 0:
+            return UnavailableConditionElasticity(
+                status="UNAVAILABLE", bps_per_depth_unit=None, reason="NOT_ESTIMABLE"
+            )
+        result = price * 10000 / denominator
+        if not isfinite(result):
+            return UnavailableConditionElasticity(
+                status="UNAVAILABLE", bps_per_depth_unit=None, reason="NOT_ESTIMABLE"
+            )
+        return ObservedConditionElasticity(status="OBSERVED", bps_per_depth_unit=result)
+
+    def weak_response(self) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        flow = validated.flow.comparison_flow()
+        if isinstance(flow, UnavailableConditionLiquidityFlow):
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        side = flow.hit_side()
+        if side is None:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="ZERO_NET_FLOW")
+        sides = validated.current.ask if side == "ask" else validated.current.bid
+        bound = sides.native if flow.unit == "NATIVE" else sides.usd
+        enough: ConditionPredicate
+        if bound.value is None:
+            enough = ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        elif flow.value.copy_abs() < bound.value:
+            enough = ConditionObservedPredicate(status="OBSERVED", value=False)
+        elif bound.fully_covered():
+            enough = ConditionObservedPredicate(status="OBSERVED", value=True)
+        else:
+            enough = ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        raw = validated.raw_return.value
+        small: ConditionPredicate = (
+            ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+            if raw is None
+            else ConditionObservedPredicate(
+                status="OBSERVED",
+                value=(raw if flow.value > 0 else -raw) < validated.measurement_band_percent / 100,
+            )
+        )
+        return condition_predicates_all((enough, small))
+
+    def excess_response(self) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        beyond = validated.price_beyond_normal
+        if isinstance(beyond, ConditionObservedPredicate) and not beyond.value:
+            return ConditionObservedPredicate(status="OBSERVED", value=False)
+        if isinstance(validated.previous, UnavailableConditionPreDepthBounds):
+            return condition_predicates_all(
+                (beyond, ConditionUnavailablePredicate(status="UNAVAILABLE", reason="NO_EVENT_ANCHOR"))
+            )
+        flow = validated.flow.comparison_flow()
+        if isinstance(flow, UnavailableConditionLiquidityFlow):
+            return condition_predicates_all(
+                (beyond, ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE"))
+            )
+        side = flow.hit_side()
+        if side is None:
+            return condition_predicates_all(
+                (beyond, ConditionUnavailablePredicate(status="UNAVAILABLE", reason="ZERO_NET_FLOW"))
+            )
+        sides = validated.previous.ask if side == "ask" else validated.previous.bid
+        bound = sides.native if flow.unit == "NATIVE" else sides.usd
+        comparison: ConditionPredicate
+        if bound.value is None:
+            comparison = ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        elif flow.value.copy_abs() < bound.value:
+            comparison = ConditionObservedPredicate(status="OBSERVED", value=True)
+        elif bound.fully_covered():
+            comparison = ConditionObservedPredicate(status="OBSERVED", value=False)
+        else:
+            comparison = ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        return condition_predicates_all((beyond, comparison))
+
+
+def condition_predicates_all(predicates: tuple[ConditionPredicate, ...]) -> ConditionPredicate:
+    """Only an observed false necessary condition concludes a partial conjunction."""
+    if not predicates:
+        raise ValueError("A financial conjunction requires actual evaluated component predicates")
+    validated = tuple(type(predicate).model_validate(predicate) for predicate in predicates)
+    if any(
+        isinstance(predicate, ConditionObservedPredicate) and not predicate.value for predicate in validated
+    ):
+        return ConditionObservedPredicate(status="OBSERVED", value=False)
+    for predicate in validated:
+        if isinstance(predicate, ConditionUnavailablePredicate):
+            return predicate
+    return ConditionObservedPredicate(status="OBSERVED", value=True)
+
+
+def condition_predicates_any(predicates: tuple[ConditionPredicate, ...]) -> ConditionPredicate:
+    """Only an observed true sufficient condition concludes a partial disjunction."""
+    if not predicates:
+        raise ValueError("A financial disjunction requires actual evaluated component predicates")
+    validated = tuple(type(predicate).model_validate(predicate) for predicate in predicates)
+    if any(isinstance(predicate, ConditionObservedPredicate) and predicate.value for predicate in validated):
+        return ConditionObservedPredicate(status="OBSERVED", value=True)
+    for predicate in validated:
+        if isinstance(predicate, ConditionUnavailablePredicate):
+            return predicate
+    return ConditionObservedPredicate(status="OBSERVED", value=False)

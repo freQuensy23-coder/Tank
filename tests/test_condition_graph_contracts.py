@@ -8,10 +8,12 @@ from pydantic import ValidationError
 from tank.analysis.condition_graph_contracts import (
     AvailableConditionFunding,
     BasicConditionSpot,
+    ConditionBookDepthBounds,
     ConditionCadenceScope,
     ConditionCollection,
     ConditionDepthValues,
     ConditionDerivativeSupportFeatures,
+    ConditionElasticityInputs,
     ConditionFieldObservation,
     ConditionFlowAggregate,
     ConditionFundingObservation,
@@ -1696,3 +1698,155 @@ def test_book_depth_does_not_replace_unknown_conversion_with_zero() -> None:
         ConditionBookSideDepth.model_validate(
             partial.model_copy(update={"usd": ConditionUSDDepthAmount(value=Decimal(0), reason=None)})
         )
+
+
+def two_venue_depth_bounds(value: Decimal, covered: tuple[str, ...]) -> ConditionBookDepthBounds:
+    from tank.analysis.condition_graph_contracts import ConditionBookSideBounds, ConditionDepthLowerBound
+
+    sides = ConditionBookSideBounds(
+        usd=ConditionDepthLowerBound(
+            unit="USD", value=value, reason=None, considered_venues=("a", "b"), covered_venues=covered
+        ),
+        native=ConditionDepthLowerBound(
+            unit="NATIVE", value=value, reason=None, considered_venues=("a", "b"), covered_venues=covered
+        ),
+    )
+    return ConditionBookDepthBounds(bid=sides, ask=sides)
+
+
+def elasticity_inputs() -> ConditionElasticityInputs:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionLiquidityNetFlow,
+        ConditionRelativeReturn,
+        ConditionUnavailablePredicate,
+        ConditionUSDDepthAmount,
+        UnavailableConditionPreDepthBounds,
+    )
+
+    return ConditionElasticityInputs(
+        flow=ConditionLiquidityNetFlow(
+            native=Decimal(10), native_reason=None, usd=Decimal(10), usd_reason=None
+        ),
+        raw_return=ConditionRelativeReturn(value=0.001, reason=None),
+        price_beyond_normal=ConditionUnavailablePredicate(
+            status="UNAVAILABLE", reason="INSUFFICIENT_HISTORY"
+        ),
+        measurement_band_percent=1.0,
+        current=two_venue_depth_bounds(Decimal(1), ("a",)),
+        previous=UnavailableConditionPreDepthBounds(status="UNAVAILABLE", reason="NO_EVENT_ANCHOR"),
+        average_hit_side_depth_usd=ConditionUSDDepthAmount(value=Decimal(10), reason=None),
+    )
+
+
+def test_partial_depth_proves_only_a_conclusive_lower_bound_and_zero_order_is_not_a_test() -> None:
+    partial = two_venue_depth_bounds(Decimal(10), ("a",)).bid.usd
+    known_not_thin = partial.thinness(Decimal(5))
+    assert known_not_thin.status == "OBSERVED" and known_not_thin.value is False
+    assert partial.thinness(Decimal(20)).status == "UNAVAILABLE"
+    fully_thin = two_venue_depth_bounds(Decimal(10), ("a", "b")).bid.usd.thinness(Decimal(20))
+    assert fully_thin.status == "OBSERVED" and fully_thin.value is True
+    assert partial.thinness(Decimal(0)).status == "UNAVAILABLE"
+
+
+def test_financial_predicate_logic_keeps_unknown_without_inventing_empty_truth() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionObservedPredicate,
+        ConditionUnavailablePredicate,
+        condition_predicates_all,
+        condition_predicates_any,
+    )
+
+    known_true = ConditionObservedPredicate(status="OBSERVED", value=True)
+    known_false = ConditionObservedPredicate(status="OBSERVED", value=False)
+    unknown = ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+    assert condition_predicates_all((known_false, unknown)) == known_false
+    assert condition_predicates_all((known_true, unknown)) == unknown
+    assert condition_predicates_any((known_true, unknown)) == known_true
+    assert condition_predicates_any((known_false, unknown)) == unknown
+    with pytest.raises(ValueError, match="actual evaluated component"):
+        condition_predicates_all(())
+    with pytest.raises(ValueError, match="actual evaluated component"):
+        condition_predicates_any(())
+
+
+def test_elasticity_preserves_native_zero_and_requires_actual_usd_flow_for_bps() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionLiquidityNetFlow
+
+    inputs = elasticity_inputs().model_copy(
+        update={
+            "flow": ConditionLiquidityNetFlow(
+                native=Decimal(0), native_reason=None, usd=Decimal(1), usd_reason=None
+            )
+        }
+    )
+    selected = inputs.flow.comparison_flow()
+    assert selected.status == "OBSERVED" and selected.unit == "NATIVE" and selected.value == 0
+    weak = inputs.weak_response()
+    assert weak.status == "UNAVAILABLE" and weak.reason == "ZERO_NET_FLOW"
+    response = inputs.bps_per_depth_unit()
+    assert response.status == "OBSERVED" and response.bps_per_depth_unit == 100.0
+    unconverted = inputs.model_copy(
+        update={
+            "flow": ConditionLiquidityNetFlow(
+                native=Decimal(10), native_reason=None, usd=None, usd_reason="INCOMPLETE"
+            )
+        }
+    ).bps_per_depth_unit()
+    assert unconverted.status == "UNAVAILABLE" and unconverted.reason == "INCOMPLETE"
+
+
+def test_weak_and_excess_response_require_actual_tested_flow_depth_and_price() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionObservedPredicate
+
+    inputs = elasticity_inputs()
+    assert inputs.weak_response().status == "UNAVAILABLE"
+    complete = inputs.model_copy(update={"current": two_venue_depth_bounds(Decimal(1), ("a", "b"))})
+    weak = complete.weak_response()
+    assert weak.status == "OBSERVED" and weak.value is True
+    no_beyond = inputs.model_copy(
+        update={"price_beyond_normal": ConditionObservedPredicate(status="OBSERVED", value=False)}
+    )
+    excess_false = no_beyond.excess_response()
+    assert excess_false.status == "OBSERVED" and excess_false.value is False
+    proven = inputs.model_copy(
+        update={
+            "price_beyond_normal": ConditionObservedPredicate(status="OBSERVED", value=True),
+            "previous": two_venue_depth_bounds(Decimal(20), ("a",)),
+        }
+    )
+    excess = proven.excess_response()
+    assert excess.status == "OBSERVED" and excess.value is True
+
+
+def test_depth_ratio_failure_preserves_exact_inputs_and_never_returns_infinity_or_zero() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionLiquidityNetFlow, ConditionUSDDepthAmount
+
+    inputs = elasticity_inputs().model_copy(
+        update={
+            "flow": ConditionLiquidityNetFlow(
+                native=Decimal("1e-300"), native_reason=None, usd=Decimal("1e-300"), usd_reason=None
+            ),
+            "average_hit_side_depth_usd": ConditionUSDDepthAmount(value=Decimal("1e300"), reason=None),
+        }
+    )
+    result = inputs.bps_per_depth_unit()
+    assert result.status == "UNAVAILABLE" and result.reason == "NOT_ESTIMABLE"
+    assert inputs.flow.usd == Decimal("1e-300") and inputs.average_hit_side_depth_usd.value == Decimal(
+        "1e300"
+    )
+
+
+def test_native_depth_comparison_retains_quantity_differences_beyond_default_decimal_precision() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionLiquidityNetFlow
+
+    flow = Decimal("1" + "0" * 99 + "2")
+    bound = Decimal("1" + "0" * 99 + "1")
+    inputs = elasticity_inputs().model_copy(
+        update={
+            "flow": ConditionLiquidityNetFlow(native=flow, native_reason=None, usd=flow, usd_reason=None),
+            "current": two_venue_depth_bounds(bound, ("a",)),
+        }
+    )
+    assert flow > bound
+    result = inputs.weak_response()
+    assert result.status == "UNAVAILABLE" and result.reason == "INCOMPLETE"
