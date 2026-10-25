@@ -9,11 +9,7 @@ from typing import Protocol, Self
 
 from pydantic import JsonValue
 
-from tank.contracts.sources import SourceDefinition, SourceFeed
-from tank.ops_cards import plain
-from tank.ops_progress import enabled
-from tank.settings import Settings
-from tank.sources.errors import (
+from tank.contracts.source_errors import (
     AccountEntryError,
     EntryErrorMarker,
     EntryErrorNotice,
@@ -22,7 +18,11 @@ from tank.sources.errors import (
     SourceErrorIdentity,
     parse_entry_error,
 )
-from tank.sources.x_diagnostics import documents, sanitize
+from tank.contracts.sources import SourceDefinition, SourceFeed
+from tank.diagnostic_documents import documents
+from tank.ops_cards import plain
+from tank.ops_progress import enabled
+from tank.settings import Settings
 from tank.time_precision import Timestamp, collection_clock, offset_schedule
 from tank.util import TimeInput, clock_iso, parse_time, sha256
 
@@ -96,7 +96,7 @@ def entry_block(number: int, error: SourceEntryError, payload_shown: bool) -> st
         if value:
             parts.append(plain(value, 200))
     error_identity = error.identity()
-    from tank.sources.errors import ProposalIdentity
+    from tank.contracts.source_errors import ProposalIdentity
 
     if isinstance(error_identity, ProposalIdentity):
         parts.append("предложение " + plain(error_identity.proposal_id, 120))
@@ -108,7 +108,7 @@ def entry_block(number: int, error: SourceEntryError, payload_shown: bool) -> st
         lines.append("Фрагмент: " + plain(entry.excerpt, 200))
     if error.error:
         lines.append("Ошибка: " + plain(error.error, 300))
-    from tank.sources.errors import DigestIdentity
+    from tank.contracts.source_errors import DigestIdentity
 
     if isinstance(error_identity, DigestIdentity):
         lines.append("sha256 записи: " + error_identity.entry_sha256)
@@ -167,7 +167,7 @@ async def report_entry_errors(
     settings: Settings,
     source: SourceDefinition,
     feed: SourceFeed,
-    errors: Sequence[SourceEntryError | Mapping[str, JsonValue]],
+    errors: Sequence[SourceEntryError],
     seen_at: str,
 ) -> str | None:
     if not enabled(settings) or not errors:
@@ -176,21 +176,8 @@ async def report_entry_errors(
     pending: dict[str, SourceEntryError] = {}
     for error in errors:
         if isinstance(error, Mapping):
-            wire = dict(error)
-            if "diagnostics" in wire and wire["diagnostics"] is not None:
-                diagnostics = wire["diagnostics"]
-                if not isinstance(diagnostics, dict):
-                    raise ValueError("X diagnostics require a recorded object")
-                wire["diagnostics"] = sanitize(diagnostics, settings.apify_api_token).model_dump(mode="json")
-            parsed = parse_entry_error(wire)
-        else:
-            parsed = parse_entry_error(error)
-            if isinstance(parsed, AccountEntryError) and parsed.diagnostics is not None:
-                parsed = AccountEntryError.model_validate(
-                    parsed.model_copy(
-                        update={"diagnostics": sanitize(parsed.diagnostics, settings.apify_api_token)}
-                    )
-                )
+            raise ValueError("Source error reporting requires admitted named records")
+        parsed = parse_entry_error(error)
         pending.setdefault(error_key(source_id, feed_url, parsed), parsed)
     async with repo.lock(f"ops-entry-errors:{source_id}:{sha256(feed_url)}"), repo.transaction():
         fresh: dict[str, SourceEntryError] = {}

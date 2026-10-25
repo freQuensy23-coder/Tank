@@ -22,11 +22,12 @@ from test_xsensor import URL, run
 from tank import runtime_composition
 from tank.contracts.sources import SourceAccount
 from tank.delivery import DeliveryError, DeliveryService
+from tank.diagnostic_documents import documents
 from tank.ops_entry_errors import report_entry_errors
 from tank.runtime import Runtime
 from tank.settings import Settings, resolve_versions
 from tank.sources import SourceService
-from tank.sources.x_diagnostics import documents, sanitize
+from tank.sources.x_diagnostics import admit_source_errors, sanitize
 from tank.sources.xsensor import XSensor
 from tank.storage import MemoryRepository
 from tank.util import sha256
@@ -156,7 +157,10 @@ async def notice_for(repo, evidence, tmp_path: Path):
         telegram_settings(tmp_path),
         diagnostic_source(),
         diagnostic_source().feeds[0],
-        [{"account": "alice", "reason": "PUBLIC_PROFILE_HTTP_503", "diagnostics": evidence}],
+        admit_source_errors(
+            [{"account": "alice", "reason": "PUBLIC_PROFILE_HTTP_503", "diagnostics": evidence}],
+            "apify-secret",
+        ),
         "2026-10-24T12:00:00Z",
     )
     return await repo.get("out.ops_notices", notice_id)
@@ -242,7 +246,12 @@ async def test_same_body_deduplicates_despite_new_attempt_time_and_request_id_bu
         "reason": "PUBLIC_PROFILE_HTTP_503",
         "diagnostics": diagnostics("first", at="2026-10-24T12:05:00Z", request_id="two"),
     }
-    assert await report_entry_errors(repo, settings, source, feed, [error], "2026-10-24T12:05:00Z") is None
+    assert (
+        await report_entry_errors(
+            repo, settings, source, feed, admit_source_errors([error], "apify-secret"), "2026-10-24T12:05:00Z"
+        )
+        is None
+    )
     second = await notice_for(repo, diagnostics("second"), tmp_path)
     assert second["notice_id"] != first["notice_id"]
     assert len(await repo.list("out.ops_notices", filters={"kind": "ENTRY_ERRORS"})) == 2
@@ -525,10 +534,17 @@ async def test_job_runner_defers_large_successful_document_batches_without_spend
         telegram_settings(tmp_path),
         diagnostic_source(),
         diagnostic_source().feeds[0],
-        [
-            {"account": f"account{index}", "reason": "PUBLIC_PROFILE_HTTP_503", "diagnostics": diagnostics()}
-            for index in range(86)
-        ],
+        admit_source_errors(
+            [
+                {
+                    "account": f"account{index}",
+                    "reason": "PUBLIC_PROFILE_HTTP_503",
+                    "diagnostics": diagnostics(),
+                }
+                for index in range(86)
+            ],
+            "apify-secret",
+        ),
         "2026-10-24T12:00:00Z",
     )
     notice = await repo.get("out.ops_notices", notice_id)

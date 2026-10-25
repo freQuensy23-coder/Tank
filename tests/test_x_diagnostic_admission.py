@@ -9,16 +9,17 @@ from pydantic import JsonValue, ValidationError
 from source_support import fixture_request_budgets, fixture_versions, source_definition
 from test_xsensor_wire_privacy import TOKEN, URL, PrivacyFixtureSettings, healthy_reply
 
-from tank.contracts.sources import SourceAccount
-from tank.sources import SourceService
-from tank.sources.errors import (
+from tank.contracts.source_errors import (
     AccountEntryError,
     XDiagnosticAttempt,
     XDiagnosticRequest,
     XDiagnosticResponse,
     XDiagnostics,
 )
-from tank.sources.x_diagnostics import documents, sanitize
+from tank.contracts.sources import SourceAccount
+from tank.diagnostic_documents import documents
+from tank.sources import SourceService
+from tank.sources.x_diagnostics import sanitize
 from tank.storage import MemoryRepository
 from tank.util import sha256
 

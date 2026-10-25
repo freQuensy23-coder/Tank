@@ -11,9 +11,9 @@ import httpx
 from pydantic import JsonValue
 
 from tank.analysis.cards import telegram_card_html
+from tank.diagnostic_documents import documents
 from tank.ops_progress import event_progress
 from tank.runtime_contracts import AlertDeliveryJob, DeliveryJob, NoticeDeliveryJob, parse_delivery_job
-from tank.sources.x_diagnostics import documents
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import new_id, parse_time, sha256, utcnow
 

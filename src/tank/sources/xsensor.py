@@ -14,10 +14,10 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, m
 from tank.contracts import DomainModel
 from tank.contracts.http_policy import HttpAdmission, HttpRefused
 from tank.contracts.json import JsonDocument, decode_unique_json
+from tank.contracts.source_errors import XDiagnostics
 from tank.contracts.source_items import DiscoveryEnvelope, DiscoveryObservation, SocialDiscovery
 from tank.contracts.sources import HttpFetchPlan
 from tank.logging import redact_text
-from tank.sources.errors import XDiagnostics
 from tank.sources.http_client import RequestStarted, SourceHttpTransport
 from tank.sources.x_diagnostics import sanitize
 from tank.util import iso
