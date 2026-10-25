@@ -13,6 +13,7 @@ from tank.analysis.condition_input_codec import (
     source_descriptor_digest,
 )
 from tank.analysis.condition_inputs import SpotCalculationPolicy
+from tank.settings import Settings
 from tank.time_precision import Timestamp
 from tank.util import JsonInput
 
@@ -217,3 +218,12 @@ def test_actual_late_receipt_is_not_relabelled_visible_by_the_source_clock() -> 
     result = decoded([row])
     assert result.inputs.minutes[0].visible_at(result.inputs.assembled_at) is False
     assert result.inputs.minutes[0].start == AT
+
+
+def test_spot_policy_uses_actual_captured_threshold_values_without_numeric_defaults() -> None:
+    thresholds = Settings().thresholds()
+    declared = thresholds.model_copy(update={"significant_flow_sigma": 3.0, "min_spot_venues": 4})
+    policy = SpotCalculationPolicy.from_thresholds(declared)
+    assert policy.significant_flow_sigma == Decimal("3.0") and policy.min_spot_venues == 4
+    with pytest.raises(ValidationError):
+        SpotCalculationPolicy.model_validate({"significant_flow_sigma": Decimal(2)})

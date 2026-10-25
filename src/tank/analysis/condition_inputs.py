@@ -7,6 +7,7 @@ from typing import Literal, Self
 from pydantic import Field, field_validator, model_validator
 
 from tank.contracts import DomainModel
+from tank.contracts.configuration import Thresholds
 from tank.time_precision import Timestamp
 from tank.util import parse_iso_time
 
@@ -107,6 +108,14 @@ class SpotTickerObservation(DomainModel):
 class SpotCalculationPolicy(DomainModel):
     significant_flow_sigma: Decimal = Field(gt=0)
     min_spot_venues: int = Field(ge=1)
+
+    @classmethod
+    def from_thresholds(cls, thresholds: Thresholds) -> Self:
+        actual = Thresholds.model_validate(thresholds)
+        return cls(
+            significant_flow_sigma=Decimal(str(actual.significant_flow_sigma)),
+            min_spot_venues=actual.min_spot_venues,
+        )
 
 
 class SpotCalculationInputs(DomainModel):
