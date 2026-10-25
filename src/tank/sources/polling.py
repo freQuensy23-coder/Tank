@@ -17,6 +17,7 @@ import httpx
 from pydantic import JsonValue
 
 import tank.sources.parsers as parsers
+from tank.contracts.source_checkpoints import InstrumentSnapshot
 from tank.contracts.source_items import (
     DiscoveryEnvelope,
     PendingSourceItem,
@@ -34,7 +35,7 @@ from tank.contracts.sources import (
 )
 from tank.ops_entry_errors import report_entry_errors
 from tank.sources.fetch import FetchedContent, NotModified
-from tank.sources.instrument_flags import CoinbaseRestrictionFlags
+from tank.sources.instruments import InstrumentPage, instrument_changes
 from tank.util import TimeInput, new_id, parse_time, sha256
 
 log = logging.getLogger(__name__)
@@ -45,113 +46,6 @@ def count_read(state, name, *, ok, n=1):
     """Cumulative per-feed read counters for the V0-A failed-read rate (01 §10)."""
     counters = state.setdefault(name, {"ok": 0, "failed": 0})
     counters["ok" if ok else "failed"] += n
-
-
-def instrument_changes(snapshot, previous, feed, pages, found_on, completed_at):
-    """S14 diff against the previous snapshot and the snapshot digest (CPU-bound, runs in a thread).
-
-    Symbols that made the same move in one poll of a venue list form one item: one status
-    transition (a venue-wide delisting reaches routing and the analyst once, not once per pair)
-    or one newly listed base asset. Independent moves stay separate items.
-    """
-    digest = sha256(snapshot)
-    if previous is None:
-        return [], digest
-
-    def differs(current, old):
-        if feed.venue != "coinbase" or current is None or old is None:
-            return current != old
-        if {key: value for key, value in current.items() if key != "status_flags"} != {
-            key: value for key, value in old.items() if key != "status_flags"
-        }:
-            return True
-        return bool(
-            CoinbaseRestrictionFlags.from_snapshot(old).known_changes(
-                CoinbaseRestrictionFlags.from_snapshot(current)
-            )
-        )
-
-    def evidence(record):
-        if record is not None and feed.venue == "coinbase" and "status_flags" not in record:
-            return {**record, "status_flags": None}
-        return record
-
-    changed = [
-        (symbol, snapshot.get(symbol), previous.get(symbol))
-        for symbol in sorted(set(snapshot) | set(previous))
-        if differs(snapshot.get(symbol), previous.get(symbol))
-    ]
-    if not changed:
-        return [], digest
-
-    def kind(current, old):
-        return "REMOVED" if current is None else "ADDED" if old is None else "STATE_UPDATE"
-
-    def status(entry):
-        return (entry or {}).get("status")
-
-    def action(change):
-        _, current, old = change
-        if old is None:
-            return ("ADDED", (current or {}).get("base"))
-        return (kind(current, old), status(old), status(current))
-
-    venue, market_type = feed.venue, feed.market_type
-    groups = {}
-    for change in changed:
-        groups.setdefault(action(change), []).append(change)
-    rows = []
-    for key, group in groups.items():
-        on_pages = {found_on[symbol] for symbol, _, _ in group if symbol in found_on}
-        if len(on_pages) == 1 and all(symbol in found_on for symbol, _, _ in group):
-            payload, observed_at = pages[on_pages.pop()]
-        else:
-            payload, observed_at = b"\n".join(p for p, _ in pages), completed_at
-        row = {
-            "url": feed.url,
-            "published_at": None,
-            "observed_at": observed_at,
-            "_payload": payload,
-            "change": key[0],
-        }
-        if len(group) == 1:
-            symbol, current, old = group[0]
-            rows.append(
-                {
-                    **row,
-                    "external_id": f"{venue}|{market_type}|{symbol}|{sha256(current)}",
-                    "title": f"{symbol} instrument change",
-                    "text": json.dumps({"before": evidence(old), "after": evidence(current)}, sort_keys=True),
-                }
-            )
-            continue
-        what = (
-            f"{key[1]} instruments ADDED"
-            if key[0] == "ADDED"
-            else f"instruments {key[0]} {key[1]} → {key[2]}"
-        )
-        rows.append(
-            {
-                **row,
-                "external_id": f"{venue}|{market_type}|changes|{sha256(group)}",
-                "title": f"{venue} {market_type}: {len(group)} {what}",
-                "text": json.dumps(
-                    {
-                        "changes": [
-                            {
-                                "symbol": symbol,
-                                "change": key[0],
-                                "before": evidence(old),
-                                "after": evidence(current),
-                            }
-                            for symbol, current, old in group
-                        ]
-                    },
-                    sort_keys=True,
-                ),
-            }
-        )
-    return rows, digest
 
 
 class SourcePoller:
@@ -352,9 +246,11 @@ class SourcePoller:
         state.update(_http_read.receipt.storage_record())
         state["entry_errors"] = []
         if sid == "S14":
-            snapshot = await asyncio.to_thread(parsers.instruments, payload, feed)
-            pages = [(payload, state["fetched_at"])]
-            found_on = dict.fromkeys(snapshot, 0)
+            snapshot = InstrumentSnapshot.model_validate(
+                await asyncio.to_thread(parsers.instruments, payload, feed)
+            )
+            pages = [InstrumentPage(payload=payload, observed_at=state["fetched_at"])]
+            found_on = dict.fromkeys(snapshot.root, 0)
             if feed.venue == "bybit":
                 cursor = json.loads(payload).get("result", {}).get("nextPageCursor")
                 cursors = set()
@@ -385,10 +281,12 @@ class SourcePoller:
                     page_state = _http_read.receipt.storage_record()
                     if page is None:
                         raise ValueError("Unexpected conditional paginated response")
-                    page_snapshot = await asyncio.to_thread(parsers.instruments, page, feed)
-                    snapshot.update(page_snapshot)
-                    found_on.update(dict.fromkeys(page_snapshot, len(pages)))
-                    pages.append((page, page_state["fetched_at"]))
+                    page_snapshot = InstrumentSnapshot.model_validate(
+                        await asyncio.to_thread(parsers.instruments, page, feed)
+                    )
+                    snapshot = InstrumentSnapshot(root={**snapshot.root, **page_snapshot.root})
+                    found_on.update(dict.fromkeys(page_snapshot.root, len(pages)))
+                    pages.append(InstrumentPage(payload=page, observed_at=page_state["fetched_at"]))
                     cursor = json.loads(page).get("result", {}).get("nextPageCursor")
 
             snapshot_key = key + ":instruments"
@@ -401,10 +299,18 @@ class SourcePoller:
                         previous = batch["coverage"]["instruments"]
             state["instrument_snapshot_schema_version"] = 2
             rows, digest = await asyncio.to_thread(
-                instrument_changes, snapshot, previous, feed, pages, found_on, self.stamp()
+                instrument_changes,
+                snapshot,
+                None if previous is None else InstrumentSnapshot.model_validate(previous),
+                feed,
+                pages,
+                found_on,
+                self.stamp(),
             )
             if stored.get("sha256") != digest:
-                await self.save(source, snapshot_key, {"sha256": digest, "instruments": snapshot})
+                await self.save(
+                    source, snapshot_key, {"sha256": digest, "instruments": snapshot.storage_record()}
+                )
         elif kind in {"rss", "atom", "feed"}:
             rows = await asyncio.to_thread(parsers.feeds, payload, sid, feed)
             state["entry_errors"] = [

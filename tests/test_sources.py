@@ -2978,7 +2978,9 @@ async def test_instrument_snapshot_written_only_when_it_changes(tmp_path: Path, 
 
 
 def test_one_poll_of_a_venue_list_groups_symbols_that_made_the_same_move() -> None:
-    from tank.sources.polling import instrument_changes
+    from source_support import instrument_snapshot_fixture
+
+    from tank.sources.instruments import InstrumentPage, instrument_changes
 
     feed = {"url": "https://api.kraken.com/0/public/AssetPairs", "venue": "kraken", "market_type": "SPOT"}
     pages = [(b"page", "2026-10-23T14:00:00Z")]
@@ -2995,24 +2997,35 @@ def test_one_poll_of_a_venue_list_groups_symbols_that_made_the_same_move() -> No
         "OTHUSD": {"base": "OTH", "status": "online"},
     }
     rows, _ = instrument_changes(
-        snapshot, previous, source_feed(feed), pages, dict.fromkeys(snapshot, 0), "2026-10-23T14:00:05Z"
+        instrument_snapshot_fixture(snapshot, venue="kraken"),
+        instrument_snapshot_fixture(previous, venue="kraken"),
+        source_feed(feed),
+        [InstrumentPage(payload=payload, observed_at=observed_at) for payload, observed_at in pages],
+        dict.fromkeys(snapshot, 0),
+        "2026-10-23T14:00:05Z",
     )
-    by_title = {row["title"]: row for row in rows}
+    by_title = {row.discovery.title: row for row in rows}
     assert sorted(by_title) == [
         "OTHUSD instrument change",
         "kraken SPOT: 2 NEW instruments ADDED",
         "kraken SPOT: 3 instruments STATE_UPDATE online → cancel_only",
     ]
     delisting = by_title["kraken SPOT: 3 instruments STATE_UPDATE online → cancel_only"]
-    assert delisting["change"] == "STATE_UPDATE"
-    assert delisting["observed_at"] == "2026-10-23T14:00:00Z" and delisting["_payload"] == b"page"
-    assert [c["symbol"] for c in json.loads(delisting["text"])["changes"]] == ["ABCEUR", "ABCUSD", "DEFUSD"]
-    assert by_title["kraken SPOT: 2 NEW instruments ADDED"]["change"] == "ADDED"
-    assert json.loads(by_title["OTHUSD instrument change"]["text"])["before"] is None
+    assert delisting.discovery.change == "STATE_UPDATE"
+    assert delisting.observation.observed_at == "2026-10-23T14:00:00Z" and delisting.payload == b"page"
+    assert [c["symbol"] for c in json.loads(delisting.discovery.text)["changes"]] == [
+        "ABCEUR",
+        "ABCUSD",
+        "DEFUSD",
+    ]
+    assert by_title["kraken SPOT: 2 NEW instruments ADDED"].discovery.change == "ADDED"
+    assert json.loads(by_title["OTHUSD instrument change"].discovery.text)["before"] is None
 
 
 def test_a_grouped_change_keeps_its_own_identity_when_the_list_returns_to_an_earlier_snapshot() -> None:
-    from tank.sources.polling import instrument_changes
+    from source_support import instrument_snapshot_fixture
+
+    from tank.sources.instruments import InstrumentPage, instrument_changes
 
     feed = {"url": "https://api.kraken.com/0/public/AssetPairs", "venue": "kraken", "market_type": "SPOT"}
     pages = [(b"page", "2026-10-23T14:00:00Z")]
@@ -3023,9 +3036,14 @@ def test_a_grouped_change_keeps_its_own_identity_when_the_list_returns_to_an_ear
 
     def ids(snapshot, previous):
         rows, digest = instrument_changes(
-            snapshot, previous, source_feed(feed), pages, dict.fromkeys(snapshot, 0), "x"
+            instrument_snapshot_fixture(snapshot, venue="kraken"),
+            instrument_snapshot_fixture(previous, venue="kraken"),
+            source_feed(feed),
+            [InstrumentPage(payload=payload, observed_at=observed_at) for payload, observed_at in pages],
+            dict.fromkeys(snapshot, 0),
+            "2026-10-23T14:00:05Z",
         )
-        return [row["external_id"] for row in rows], digest
+        return [row.discovery.external_id for row in rows], digest
 
     forward, at_second = ids(second, first)
     other, _ = ids(third, second)
@@ -3068,33 +3086,35 @@ def test_binance_zero_epoch_precedes_alternate_publication_field() -> None:
 def test_coinbase_missing_prior_flags_remain_unknown_in_real_status_change_evidence() -> None:
     from copy import deepcopy
 
-    from tank.sources.polling import instrument_changes
+    from source_support import instrument_snapshot_fixture
+
+    from tank.sources.instruments import InstrumentPage, instrument_changes
 
     previous = {"ETH-USD": {"status": "online", "base": "ETH"}}
     original = deepcopy(previous)
     current = {"ETH-USD": {"status": "offline", "base": "ETH", "status_flags": {"cancel_only": True}}}
     rows, _ = instrument_changes(
-        current,
-        previous,
+        instrument_snapshot_fixture(current, venue="coinbase"),
+        instrument_snapshot_fixture(previous, venue="coinbase"),
         source_feed(
             {"url": "https://api.exchange.coinbase.com/products", "venue": "coinbase", "market_type": "SPOT"}
         ),
-        [(b"actual current response", "2026-10-25T00:00:00Z")],
+        [InstrumentPage(payload=b"actual current response", observed_at="2026-10-25T00:00:00Z")],
         {"ETH-USD": 0},
         "2026-10-25T00:00:01Z",
     )
     [row] = rows
-    evidence = json.loads(row["text"])
+    evidence = json.loads(row.discovery.text)
     assert evidence["before"]["status_flags"] is None
     assert evidence["after"]["status_flags"] == {"cancel_only": True}
     assert previous == original
 
 
 def test_coinbase_unknown_flag_observation_is_not_a_proven_transition() -> None:
-    from tank.sources.instrument_flags import CoinbaseRestrictionFlags
+    from tank.contracts.source_checkpoints import CoinbaseRestrictionFlags
 
-    unknown = CoinbaseRestrictionFlags.from_snapshot({"status": "online"})
-    observed = CoinbaseRestrictionFlags.from_snapshot({"status_flags": {"cancel_only": True}})
+    unknown = CoinbaseRestrictionFlags()
+    observed = CoinbaseRestrictionFlags(cancel_only=True)
     assert unknown.known_changes(observed) == ()
     assert observed.known_changes(CoinbaseRestrictionFlags()) == ()
     assert observed.known_changes(CoinbaseRestrictionFlags(cancel_only=False)) == ("cancel_only",)

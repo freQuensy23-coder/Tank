@@ -837,3 +837,49 @@ and new structured callers contend on one canonical lock; capacity remains each
 caller's explicit policy input. Distinct periods retain distinct constraints.
 There is no claim of an authoritative minimum capacity across stale deployments
 or continuity when a configured period is changed.
+
+## Instrument snapshot ownership migration
+
+contracts.source_checkpoints now owns the required instrument observation
+schema, associative symbol-indexed snapshot, observed Coinbase restriction flags,
+and the inward ReadCounter. read_report.ReadCounter is a temporary import
+reexport; the source-only flag implementation is retired. Snapshot validation
+rejects missing observation fields and mismatched symbol keys, hides raw inputs
+in validation errors, and verifies venue/market ownership against the actual feed
+before decisions.
+
+InstrumentObservation.base, quote, and contract_type are required nullable
+facts: OKX swap observations omit the base/quote projection, Hyperliquid
+universe rows omit an explicit quote, and spot listings omit contract type.
+InstrumentObservation.status is required nonempty text; an omitted provider
+status fails validation instead of becoming an unknown healthy snapshot. They are not filled from symbol spelling or
+market assumptions. CoinbaseInstrument.status_flags=None means no historical
+flag collection; each nullable flag means that specific flag was absent. Only
+two known observations of the same flag establish a flag change. Unknown prior
+flags remain explicitly unknown in event evidence.
+
+The pure sources.instruments.instrument_changes consumes validated snapshots
+and actual InstrumentPage evidence and returns typed instrument discoveries.
+It refuses an owner mismatch or a change without response evidence. Composite
+action tuples group equivalent transitions; symbol maps retain associative
+identity, and symbol-to-page-index maps preserve the actual supporting response.
+JSON dictionaries exist only when hashing the established serialized identity or
+rendering before/after evidence. The grouping digest and external identity retain
+the existing canonical algorithm, including a dedicated parity assertion.
+
+The poller validates both newly parsed and persisted instrument snapshots before
+comparison and serializes models only at checkpoint storage. It no longer mutates
+or copies current restriction flags into prior history. Tests declare synthetic
+unknown currencies/contract metadata explicitly; this fixture constructor is not
+a production source fallback. The selected source/contract cohort passes 152
+unit cases; the new contract, pure comparison, fixture helper, and behavioral
+tests pass strict typing. Full feed lifecycle checkpoints, pending batches,
+parser wire variants, and recursive clock annotation remain open and are not
+claimed complete by this instrument slice.
+
+The actual source workflow regression additionally admits a valid mocked provider
+response, stores its baseline, then observes a response missing required status.
+The result is DEGRADED with no new source item; the prior instrument checkpoint
+is byte-for-byte equal as a stored document, and the validation report omits an
+unrelated private raw field. Twelve focused instrument cases now cover this
+workflow alongside identity/parity, required fields, and actual page ownership.

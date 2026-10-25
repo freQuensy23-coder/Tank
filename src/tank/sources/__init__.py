@@ -348,7 +348,7 @@ class SourceService:
                 results.append(AccountProbeFailure(handle=handle, error=type(exc).__name__))
         return results
 
-    async def close(self):
+    async def close(self) -> None:
         if self.owns_http:
             await self.http.aclose()
 

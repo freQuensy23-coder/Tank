@@ -232,6 +232,10 @@ class DiscoveryEnvelope(DomainModel):
     payload: bytes | None
 
 
+class InstrumentDiscoveryEnvelope(DiscoveryEnvelope):
+    discovery: InstrumentDiscovery
+
+
 def discovered_item(source_id: str, wire: Mapping[str, JsonValue | bytes]) -> DiscoveryEnvelope:
     """Decode a publisher material separately from local clock and raw transport bytes."""
     if "source_id" in wire and wire["source_id"] != source_id:
