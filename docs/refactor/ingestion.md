@@ -913,3 +913,51 @@ bytes remain attached to the respective post observations.
 All 20 X adapter cases pass with zero skips, including both new boundary/baseline
 cases; source and tests pass strict typing and Ruff. This is independent of the
 unactivated pending checkpoint/quarantine work.
+
+## Atomic instrument snapshot and pending capture
+
+SourcePoller._fetch_rows now prepares an InstrumentSnapshotUpdate without writing
+the comparison baseline. Raw item bytes are made durable while preparing pending
+rows. SourcePoller.acquire then writes the pending checkpoint and the prepared
+snapshot in the same repository transaction. A raw capture failure leaves the old
+baseline intact; a failure after either actual database put rolls both puts back.
+The independently recorded HTTP receipt remains truthful I/O evidence and does
+not acknowledge instrument coverage.
+
+InstrumentSnapshotUpdate requires the actual S14 owner, checkpoint key, validated
+snapshot/digest and captured version facet. Snapshot writes record those real
+config/code versions. No-change snapshots still avoid redundant writes, and the
+initial snapshot remains a baseline rather than a generated business event.
+
+The real PostgreSQL oracle exposed missing publication precision in S14
+discoveries. The producer now explicitly declares published_at=None and
+COLLECTION_ONLY/INCOMPLETE, retaining its separate actual observed_at collection
+clock. Snapshot comparison establishes when a change was observed, not when it
+happened. No observation is substituted as a publication or transition time.
+
+The bounded proof includes three actual MemoryRepository cases (raw failure and
+failure after either checkpoint put), plus three PostgreSQL cases. Both SQL put
+faults preserve the prior baseline across service restart and then emit the
+Trading-to-Settling change. A separate later-ingest fault proves that an already
+durable pending capture keeps its original item ID, observation clock and raw
+bytes across restart. The source/instrument unit selection passes all 94 cases;
+all three PostgreSQL cases pass, with zero skips. Three focused source/test
+targets pass strict typing. Envelope success-code validation and the unfinished
+quarantine workflow remain separate workstreams.
+
+
+### Instrument protocol envelopes after snapshot durability
+
+The new `sources.instrument_adapters.parse_instrument_page` validates named strict Pydantic success envelopes before producing `InstrumentSnapshot`; polling consumes the typed cursor directly. `parsers.instruments` is an explicit serialization adapter retained for probe/test callers that consume the existing wire snapshot. External provider objects are projected at this boundary because their additional descriptive fields are not workflow facts; canonical instrument observations are fully validated before leaving it. Snapshot maps are associative by provider symbol; Kraken's result keys remain the native identifiers. Duplicate symbols within a response refuse rather than silently replace an observation.
+
+Required facts: Bybit `retCode` must be an integer zero (booleans/strings/null/missing refuse), `result.list` must exist; OKX `code` must be string zero and `data` must exist; Kraken requires both `error` and `result`, with a nonempty error list refusing. Binance requires `symbols` and refuses an error-code envelope. Coinbase requires its actual array response, Hyperliquid its `universe` array. Empty declared arrays/maps remain valid successful catalogs. Explicit declared null/wrong-type cursor, text and restriction flags refuse. Provider payloads are excluded from validation exception text.
+
+Retained optional sites: `BybitResult.nextPageCursor=""` represents documented absence in spot responses and the empty end-of-pagination value, both mapped to `InstrumentPageResult.next_cursor=None`; it never supplies a success code. [Bybit instruments](https://bybit-exchange.github.io/docs/v5/market/instrument). `optional_text` returns None for uncaptured/nonapplicable base, quote and contract metadata (notably OKX derivative base/quote and Hyperliquid's absent quote); present text must actually be text. Empty `contractType` retains the existing alternative `ctType` projection; neither creates a contract type. [OKX instruments](https://www.okx.com/docs-v5/trick_en/).
+
+`parse_instrument_page` retains the Hyperliquid sparse `isDelisted` omission rule: absent means the existing catalog label TRADING (not marked delisted), not a captured false flag or proof of execution availability. Official metadata examples omit it for BTC/ETH and supply true for a delisted asset; the official SDK's AssetInfo does not require it. Explicit null/string/numeric flags refuse. Raw response bytes preserve whether the flag was absent. This current protocol rule does not backfill historical snapshot flags. [Hyperliquid perpetual metadata](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/perpetuals), [official SDK metadata types](https://github.com/hyperliquid-dex/hyperliquid-python-sdk/blob/master/hyperliquid/utils/types.py).
+
+Coinbase flag omission remains an unknown observation, serialized only for actually declared booleans; no old snapshot receives today's flags. Existing trading_disabled=true overrides the catalog status. [Coinbase product schema](https://docs.cdp.coinbase.com/api-reference/exchange-api/rest-api/products/get-all-known-trading-pairs). Kraken's error list is an explicit success fact, not truthiness of a missing value. [Kraken asset pairs](https://docs.kraken.com/api-reference/market-data/get-tradable-asset-pairs).
+
+Behavior evidence: the new strict test module exercises all six successful empty envelopes, malformed/missing/null/wrong-type envelopes and flags, sparse Hyperliquid metadata, cursor semantics and safe errors. Actual SourceService/MemoryRepository tests for Bybit and OKX seed a live snapshot, replay missing-code empty responses through restart, and prove DEGRADED/no removals/no baseline advance. A subsequent explicit successful empty response correctly emits REMOVED. The existing raw-failure/transaction-rollback/PostgreSQL restart oracle remains unchanged. The broader pending/quarantine migration remains separate and unfinished.
+
+Pinned envelope qualification: exact 2bcc6374e93cec496701b31a633699aefb83c1ca remained unchanged and tracked-clean before/after the complete owned cohort: 570 unit cases passed in 8.07s and all 37 collected actual integration cases passed in 14.15s, zero skips. Evidence: instrument-envelope-owned-unit.xml, instrument-envelope-owned-integration.xml, instrument-envelope-owned-cohort.log in the isolated evidence directory. Independent strict adapter/test proof and affected-source default mypy passed; Ruff check/format passed for src/tests/scripts (372 files). Broad polling/parsers strict closure and the pending/quarantine workflow remain open.
