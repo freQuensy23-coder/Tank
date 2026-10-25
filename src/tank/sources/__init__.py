@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from contextlib import suppress
 from copy import deepcopy
 from datetime import datetime
+from functools import cached_property
 from urllib.parse import urlsplit
 
 import certifi
@@ -30,6 +31,7 @@ from tank.contracts.sources import (
     SourceApiLimitsConfiguration,
     SourceConfiguration,
     SourceDefinition,
+    SourceFilingRegistryView,
 )
 from tank.http_admission import ConfiguredHttpAdmission
 from tank.ops_progress import RepositorySourceProgress
@@ -42,7 +44,7 @@ from tank.sources.xsensor import XSensor
 from tank.util import iso, parse_iso_time, parse_time, sha256, utcnow
 
 
-def tls_context():
+def tls_context() -> ssl.SSLContext:
     """The TLS hello of Python's standard HTTPS client (http.client sets post_handshake_auth).
 
     WordPress.com's bot check (S12 blog.kraken.com) answers httpx's default hello with
@@ -250,12 +252,10 @@ class SourceService:
     async def poll_once(self, source_id, *, due_only=False, escalated=False):
         return await self.poller.poll_once(source_id, due_only=due_only, escalated=escalated)
 
-    def _filing_pattern(self):
-        """One compiled pattern of registry names per configuration version (S02 filter)."""
-        cached = getattr(self, "_filing_cache", None)
-        if cached and cached[0] == self.versions.config_version:
-            return cached[1]
-        registry = self.settings.load_config("registry")
+    @cached_property
+    def _filing_registry_pattern(self) -> re.Pattern[str]:
+        """One immutable registry-label pattern for the service's captured configuration."""
+        registry = SourceFilingRegistryView.from_document(self.settings.load_config("registry"))
         ambiguous = {"near", "world", "curve", "quant", "cow", "lit", "lighter", "plasma"}
         candidates = [
             "Curve Finance",
@@ -279,20 +279,19 @@ class SourceService:
             "World ID",
             "Tools for Humanity",
         ]
-        for token in registry.get("tokens", []):
-            candidates.extend([token.get("name", ""), token.get("symbol", "")])
-        for entity in registry.get("entities", []):
-            if entity.get("kind") == "REGULATOR":
+        for token in registry.tokens:
+            candidates.extend([token.name, token.symbol])
+        for entity in registry.entities:
+            if entity.kind == "REGULATOR":
                 continue
-            candidates.extend(entity.get("names", []) or [entity.get("name", "")])
-            candidates.extend(
-                alias for alias in entity.get("aliases", []) if '"' not in alias and " only " not in alias
-            )
+            candidates.extend(entity.names)
+            if not entity.names and entity.name is not None:
+                candidates.append(entity.name)
+            candidates.extend(alias for alias in entity.aliases if '"' not in alias and " only " not in alias)
         names = sorted(
             {n.casefold() for n in candidates if n and n.casefold() not in ambiguous}, key=len, reverse=True
         )
         pattern = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(n) for n in names) + r")(?!\w)")
-        self._filing_cache = (self.versions.config_version, pattern)
         return pattern
 
     def filing_matches(self, item: SourceText) -> bool:
@@ -301,7 +300,7 @@ class SourceService:
             return True
         if re.search(r"\bplasma\b", value) and re.search(r"\bxpl\b", value):
             return True
-        if self._filing_pattern().search(value):
+        if self._filing_registry_pattern.search(value):
             return True
         crypto_context = re.search(
             r"\b(?:crypto(?:currency|currencies|assets?)?|digital\s+assets?|bitcoin|ether(?:eum)?|blockchain|tokens?|tokenized|stablecoins?|defi|decentralized)\b",

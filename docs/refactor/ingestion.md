@@ -342,3 +342,24 @@ than mocking an acquire call echo. Strict mypy passes the transport, policy and
 admission tests; Ruff passes all touched source/tests. Existing source checkpoint
 mapping/workflow and the remaining SourceService methods still require their full
 domain migration and typing; this activation does not claim that work complete.
+
+
+### Filing label projection
+
+`SourceFilingRegistryView.from_document` now validates required token names/symbols
+and entity kinds/names/aliases before the filing decision. Missing namespaces or
+labels cannot quietly produce an incomplete relevance pattern. Its
+`FilingRegistryDocument.tokens/entities` maps exist solely at the named external
+configuration projection boundary; the actual pattern algorithm consumes strict
+`FilingTokenLabel` and `FilingEntityLabel` objects. The entity's secondary
+`name: str | None` is genuinely optional in the canonical registry. It is consulted
+only when the required names list is explicitly empty. Regulators remain excluded
+and ambiguous bare names retain the original context policy. The compiled pattern
+uses a cached property bound to the service's captured immutable configuration;
+the old dynamic getattr tuple/version cache has been removed.
+
+Evidence: 136 source/contract units pass in 2.51s, zero skips, including missing
+required namespaces/token labels/entity names and existing real SEC identity/date
+boundary tests. The contracts module is strict-mypy clean; Ruff passes touched
+source/tests. This narrow projection does not claim to replace the canonical
+aggregate registry schema or resolution algorithms.

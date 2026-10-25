@@ -915,3 +915,37 @@ def test_usdm_protection_cannot_be_dropped_or_reused_for_other_routes(change: st
         rules[0]["documented_requests"] = 500
     with pytest.raises(ValidationError):
         SourceBinanceUsdmBudget.model_validate(raw)
+
+
+def test_filing_registry_projection_rejects_missing_authority_labels() -> None:
+    from pydantic import ValidationError
+
+    from tank.contracts.sources import SourceFilingRegistryView
+
+    with pytest.raises(ValidationError):
+        SourceFilingRegistryView.from_document({"entities": []})
+    with pytest.raises(ValidationError):
+        SourceFilingRegistryView.from_document({"tokens": [{"symbol": "BTC"}], "entities": []})
+    with pytest.raises(ValidationError):
+        SourceFilingRegistryView.from_document(
+            {
+                "tokens": [],
+                "entities": [{"kind": "PROTOCOL", "aliases": []}],
+            }
+        )
+
+
+def test_filing_registry_projection_keeps_genuine_optional_secondary_name() -> None:
+    from tank.contracts.sources import SourceFilingRegistryView
+
+    labels = SourceFilingRegistryView.from_document(
+        {
+            "tokens": [
+                {"name": "Example Protocol", "symbol": "EX", "unrelated_metadata": "ignored by projection"}
+            ],
+            "entities": [{"kind": "PROTOCOL", "names": ["Example Protocol"], "aliases": ["Example"]}],
+        }
+    )
+    assert labels.tokens[0].name == "Example Protocol"
+    assert labels.entities[0].names == ["Example Protocol"]
+    assert labels.entities[0].name is None
