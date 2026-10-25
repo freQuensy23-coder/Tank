@@ -7,6 +7,7 @@ from pydantic import Field, field_validator, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.provenance import ResolvedVersionIdentity
+from tank.contracts.scalars import FalseFlag
 from tank.contracts.source_items import SourceIdentityHints
 from tank.contracts.sources import SourceAuthorRole
 
@@ -288,7 +289,7 @@ class FilterMetrics(DomainModel):
 class BestMeasuredRouting(DomainModel):
     cutoff: Probability
     metrics: RoutingMetrics
-    automatic_apply: Literal[False]
+    automatic_apply: FalseFlag
 
 
 type CalibrationRejection = Literal[
