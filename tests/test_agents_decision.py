@@ -237,7 +237,7 @@ async def test_replay_never_calls_foundry_without_exact_saved_score():
             await Pipeline(repo, opts, http=http).score(ITEM, "relevant", Pipeline.state(ITEM))
 
 
-def test_compose_wires_foundry_and_preserves_old_image_rollback_key():
+def test_compose_wires_foundry_without_opencode_credentials():
     from pathlib import Path
 
     import yaml
@@ -245,7 +245,8 @@ def test_compose_wires_foundry_and_preserves_old_image_rollback_key():
     config = yaml.safe_load(Path("compose.yaml").read_text())
     environment = config["services"]["tank"]["environment"]
     assert environment["TANK_FOUNDRY_API_KEY"] == "${TANK_FOUNDRY_API_KEY:?}"
-    assert environment["OPENCODE_API_KEY"] == "${OPENCODE_API_KEY:-}"
+    assert "OPENCODE_API_KEY" not in environment
+    assert "OPENCODE_API_KEY" not in Path(".env.example").read_text()
     assert "TANK_FOUNDRY_API_KEY" not in config["services"]["openma"]["environment"]
 
 

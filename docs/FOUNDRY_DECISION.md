@@ -24,5 +24,3 @@ Scores are cached by provider, resource, deployment, prompt version and exact qu
 The 0.5 filter/router cutoffs remain explicitly uncalibrated. Prior Jev scores and quality measurements do not validate this model. Use [offline calibration](OFFLINE_CALIBRATION.md) to propose model-specific cutoffs from labeled real news; no thresholds are automatically changed.
 
 Official API guide: https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-microsoft-decision
-
-Compose retains optional `OPENCODE_API_KEY` passthrough only because rollback starts a previous image with the current Compose file. Preserve its existing value for that rollback window. Current code never reads it and cannot fall back to Jev. The mandatory Foundry key must be provisioned before selecting this release.
