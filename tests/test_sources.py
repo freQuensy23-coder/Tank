@@ -218,7 +218,18 @@ def test_json_contracts() -> None:
         ),
         (
             "coinbase",
-            [{"id": "ABC-USD", "base_currency": "ABC", "quote_currency": "USD", "status": "online"}],
+            [
+                {
+                    "id": "ABC-USD",
+                    "base_currency": "ABC",
+                    "quote_currency": "USD",
+                    "status": "online",
+                    "post_only": False,
+                    "limit_only": False,
+                    "cancel_only": False,
+                    "auction_mode": False,
+                }
+            ],
             "ABC-USD",
         ),
         (
@@ -228,17 +239,29 @@ def test_json_contracts() -> None:
         ),
         (
             "okx",
-            {"code": "0", "data": [{"instId": "ABC-USDT-SWAP", "state": "live", "ctType": "linear"}]},
-            "ABC-USDT-SWAP",
+            {
+                "code": "0",
+                "data": [
+                    {
+                        "instId": "ABC-USDT",
+                        "state": "live",
+                        "ctType": "",
+                        "baseCcy": "ABC",
+                        "quoteCcy": "USDT",
+                    }
+                ],
+            },
+            "ABC-USDT",
         ),
         (
             "bybit",
             {
                 "retCode": 0,
                 "result": {
+                    "category": "spot",
                     "list": [
                         {"symbol": "ABCUSDT", "baseCoin": "ABC", "quoteCoin": "USDT", "status": "Trading"}
-                    ]
+                    ],
                 },
             },
             "ABCUSDT",
@@ -248,7 +271,12 @@ def test_json_contracts() -> None:
 )
 def test_instrument_adapters(venue, payload, symbol) -> None:
     assert parsers.instruments(
-        payload, {"url": "https://example.org/instruments", "venue": venue, "market_type": "SPOT"}
+        payload,
+        {
+            "url": "https://example.org/instruments",
+            "venue": venue,
+            "market_type": "PERP_LINEAR" if venue == "hyperliquid" else "SPOT",
+        },
     )[symbol]["status"]
 
 
@@ -427,7 +455,15 @@ async def test_instrument_baseline_diff_and_bybit_cursor(tmp_path: Path, collect
         calls.append(str(request.url))
         cursor = request.url.params.get("cursor")
         if cursor:
-            rows = [{"symbol": "DEFUSDT", "baseCoin": "DEF", "quoteCoin": "USDT", "status": "Trading"}]
+            rows = [
+                {
+                    "symbol": "DEFUSDT",
+                    "baseCoin": "DEF",
+                    "quoteCoin": "USDT",
+                    "contractType": "LinearPerpetual",
+                    "status": "Trading",
+                }
+            ]
             next_cursor = ""
         else:
             rows = [
@@ -435,12 +471,17 @@ async def test_instrument_baseline_diff_and_bybit_cursor(tmp_path: Path, collect
                     "symbol": "ABCUSDT",
                     "baseCoin": "ABC",
                     "quoteCoin": "USDT",
+                    "contractType": "LinearPerpetual",
                     "status": "Trading" if phase[0] == 0 else "Settling",
                 }
             ]
             next_cursor = "next"
         return httpx.Response(
-            200, json={"retCode": 0, "result": {"list": rows, "nextPageCursor": next_cursor}}
+            200,
+            json={
+                "retCode": 0,
+                "result": {"category": "linear", "list": rows, "nextPageCursor": next_cursor},
+            },
         )
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
@@ -1502,8 +1543,15 @@ async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path: Pat
             json={
                 "retCode": 0,
                 "result": {
+                    "category": "linear",
                     "list": [
-                        {"symbol": "ABCUSDT", "baseCoin": "ABC", "quoteCoin": "USDT", "status": phase[0]}
+                        {
+                            "symbol": "ABCUSDT",
+                            "baseCoin": "ABC",
+                            "quoteCoin": "USDT",
+                            "contractType": "LinearPerpetual",
+                            "status": phase[0],
+                        }
                     ],
                     "nextPageCursor": "",
                 },
@@ -2238,12 +2286,17 @@ async def test_paginated_instrument_change_uses_actual_page_time_and_raw_evidenc
                     "symbol": symbol,
                     "baseCoin": "DEF" if cursor else "ABC",
                     "quoteCoin": "USDT",
+                    "contractType": "LinearPerpetual",
                     "status": "Settling" if cursor and phase[0] == 1 else "Trading",
                 }
             ]
         )
         return httpx.Response(
-            200, json={"retCode": 0, "result": {"list": rows, "nextPageCursor": "" if cursor else "next"}}
+            200,
+            json={
+                "retCode": 0,
+                "result": {"category": "linear", "list": rows, "nextPageCursor": "" if cursor else "next"},
+            },
         )
 
     source = {
@@ -2428,6 +2481,10 @@ async def test_new_coinbase_flag_observation_does_not_fabricate_historical_statu
         "quote_currency": "USD",
         "status": "online",
         "trading_disabled": False,
+        "post_only": False,
+        "limit_only": False,
+        "cancel_only": False,
+        "auction_mode": False,
     }
     previous = parsers.instruments([original], source["feeds"][0])
     previous["ETH-USD"].pop("status_flags")

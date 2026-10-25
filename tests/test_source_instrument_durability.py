@@ -37,6 +37,7 @@ class VenueResponse:
         return {
             "retCode": 0,
             "result": {
+                "category": "linear",
                 "list": [
                     {
                         "symbol": "BTCUSDT",

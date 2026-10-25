@@ -74,15 +74,28 @@ def evidence(record: InstrumentRecord | None) -> dict[str, JsonValue] | None:
 def differs(current: InstrumentRecord | None, previous: InstrumentRecord | None) -> bool:
     if current is None or previous is None:
         return current != previous
-    if not isinstance(current, CoinbaseInstrument) or not isinstance(previous, CoinbaseInstrument):
-        return current != previous
-    if current.model_copy(update={"status_flags": None}) != previous.model_copy(
-        update={"status_flags": None}
+    if (
+        current.venue != previous.venue
+        or current.market_type != previous.market_type
+        or current.symbol != previous.symbol
+        or current.status != previous.status
     ):
         return True
-    before = CoinbaseRestrictionFlags() if previous.status_flags is None else previous.status_flags
-    after = CoinbaseRestrictionFlags() if current.status_flags is None else current.status_flags
-    return bool(before.known_changes(after))
+    optional_metadata = (
+        (previous.base, current.base),
+        (previous.quote, current.quote),
+        (previous.contract_type, current.contract_type),
+    )
+    if any(
+        before not in (None, "") and after not in (None, "") and before != after
+        for before, after in optional_metadata
+    ):
+        return True
+    if isinstance(current, CoinbaseInstrument) and isinstance(previous, CoinbaseInstrument):
+        before_flags = CoinbaseRestrictionFlags() if previous.status_flags is None else previous.status_flags
+        after_flags = CoinbaseRestrictionFlags() if current.status_flags is None else current.status_flags
+        return bool(before_flags.known_changes(after_flags))
+    return False
 
 
 def instrument_changes(

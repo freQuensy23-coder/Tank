@@ -59,7 +59,10 @@ class Catalog:
             for symbol, status in self.statuses.items()
             if selected is None or selected == symbol
         ]
-        payload: dict[str, JsonValue] = {"retCode": 0, "result": {"list": entries, "nextPageCursor": ""}}
+        payload: dict[str, JsonValue] = {
+            "retCode": 0,
+            "result": {"category": "linear", "list": entries, "nextPageCursor": ""},
+        }
         return httpx.Response(200, json=payload, headers={"etag": sha256(payload)})
 
 
@@ -358,11 +361,13 @@ async def test_pagination_preserves_the_declared_query_scope_including_blank_val
             json={
                 "retCode": 0,
                 "result": {
+                    "category": "linear",
                     "list": [
                         {
                             "symbol": symbol,
                             "baseCoin": symbol.removesuffix("USDT"),
                             "quoteCoin": "USDT",
+                            "contractType": "LinearPerpetual",
                             "status": "Trading",
                         }
                     ],

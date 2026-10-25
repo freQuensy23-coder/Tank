@@ -18,7 +18,11 @@ type Venue = Literal["binance", "coinbase", "kraken", "okx", "bybit", "hyperliqu
 
 
 def feed(venue: Venue) -> FeedParsingSpec:
-    return FeedParsingSpec(url="https://synthetic.example/catalog", venue=venue, market_type="SPOT")
+    return FeedParsingSpec(
+        url="https://synthetic.example/catalog",
+        venue=venue,
+        market_type="PERP_LINEAR" if venue == "hyperliquid" else "SPOT",
+    )
 
 
 @pytest.mark.parametrize(
@@ -28,7 +32,7 @@ def feed(venue: Venue) -> FeedParsingSpec:
         ("coinbase", []),
         ("kraken", {"error": [], "result": {}}),
         ("okx", {"code": "0", "data": []}),
-        ("bybit", {"retCode": 0, "result": {"list": []}}),
+        ("bybit", {"retCode": 0, "result": {"category": "spot", "list": []}}),
         ("hyperliquid", {"universe": []}),
     ],
 )
@@ -39,13 +43,13 @@ def test_explicit_successful_empty_catalogs(venue: Venue, payload: JsonValue) ->
 @pytest.mark.parametrize(
     ("venue", "payload"),
     [
-        ("bybit", {"result": {"list": []}}),
-        ("bybit", {"retCode": None, "result": {"list": []}}),
-        ("bybit", {"retCode": False, "result": {"list": []}}),
-        ("bybit", {"retCode": "0", "result": {"list": []}}),
-        ("bybit", {"retCode": 1, "result": {"list": []}}),
+        ("bybit", {"result": {"category": "spot", "list": []}}),
+        ("bybit", {"retCode": None, "result": {"category": "spot", "list": []}}),
+        ("bybit", {"retCode": False, "result": {"category": "spot", "list": []}}),
+        ("bybit", {"retCode": "0", "result": {"category": "spot", "list": []}}),
+        ("bybit", {"retCode": 1, "result": {"category": "spot", "list": []}}),
         ("bybit", {"retCode": 0, "result": {}}),
-        ("bybit", {"retCode": 0, "result": {"list": [], "nextPageCursor": None}}),
+        ("bybit", {"retCode": 0, "result": {"category": "spot", "list": [], "nextPageCursor": None}}),
         ("okx", {"data": []}),
         ("okx", {"code": None, "data": []}),
         ("okx", {"code": 0, "data": []}),
@@ -84,6 +88,10 @@ def test_declared_boolean_flags_must_be_actual_booleans(value: JsonValue) -> Non
                     "base_currency": "BTC",
                     "quote_currency": "USD",
                     "status": "online",
+                    "post_only": False,
+                    "limit_only": False,
+                    "cancel_only": False,
+                    "auction_mode": False,
                     "trading_disabled": value,
                 }
             ],
@@ -117,9 +125,18 @@ async def test_missing_protocol_fact_cannot_remove_catalog_or_advance_snapshot(
         if venue == "bybit":
             payload: dict[str, JsonValue] = {
                 "result": {
+                    "category": "spot" if market_type == "SPOT" else "linear",
                     "list": []
                     if invalid or valid_empty
-                    else [{"symbol": "BTCUSDT", "baseCoin": "BTC", "quoteCoin": "USDT", "status": "Trading"}]
+                    else [
+                        {
+                            "symbol": "BTCUSDT",
+                            "baseCoin": "BTC",
+                            "quoteCoin": "USDT",
+                            "status": "Trading",
+                            **({"contractType": "LinearPerpetual"} if market_type == "PERP_LINEAR" else {}),
+                        }
+                    ],
                 }
             }
             if not invalid or missing_fact != "CODE":
@@ -192,13 +209,13 @@ def test_bybit_cursor_is_preserved_and_empty_or_absent_means_no_next_page() -> N
     )
     assert (
         parse_instrument_page(
-            {"retCode": 0, "result": {"list": [], "nextPageCursor": "next"}}, declared
+            {"retCode": 0, "result": {"category": "linear", "list": [], "nextPageCursor": "next"}}, declared
         ).next_cursor
         == "next"
     )
     assert (
         parse_instrument_page(
-            {"retCode": 0, "result": {"list": [], "nextPageCursor": ""}}, declared
+            {"retCode": 0, "result": {"category": "linear", "list": [], "nextPageCursor": ""}}, declared
         ).next_cursor
         is None
     )
@@ -207,7 +224,7 @@ def test_bybit_cursor_is_preserved_and_empty_or_absent_means_no_next_page() -> N
 def test_protocol_validation_does_not_expose_raw_provider_payload() -> None:
     with pytest.raises(ValidationError) as failure:
         parse_instrument_page(
-            {"retCode": {"secret": "provider-payload-private"}, "result": {"list": []}},
+            {"retCode": {"secret": "provider-payload-private"}, "result": {"category": "spot", "list": []}},
             feed("bybit"),
         )
     assert "provider-payload-private" not in str(failure.value)
@@ -218,10 +235,10 @@ def test_bybit_perpetual_cursor_is_required_even_for_an_empty_successful_page() 
         url="https://synthetic.example/catalog", venue="bybit", market_type="PERP_LINEAR"
     )
     with pytest.raises(ValidationError):
-        parse_instrument_page({"retCode": 0, "result": {"list": []}}, perpetual)
+        parse_instrument_page({"retCode": 0, "result": {"category": "linear", "list": []}}, perpetual)
     assert (
         parse_instrument_page(
-            {"retCode": 0, "result": {"list": [], "nextPageCursor": ""}}, perpetual
+            {"retCode": 0, "result": {"category": "linear", "list": [], "nextPageCursor": ""}}, perpetual
         ).next_cursor
         is None
     )
@@ -229,13 +246,13 @@ def test_bybit_perpetual_cursor_is_required_even_for_an_empty_successful_page() 
 
 def test_spot_cursor_is_absent_or_explicitly_empty_never_a_followup_page() -> None:
     terminal_results: tuple[dict[str, JsonValue], ...] = (
-        {"list": []},
-        {"list": [], "nextPageCursor": ""},
+        {"category": "spot", "list": []},
+        {"category": "spot", "list": [], "nextPageCursor": ""},
     )
     for result in terminal_results:
         assert parse_instrument_page({"retCode": 0, "result": result}, feed("bybit")).next_cursor is None
     with pytest.raises(ValidationError):
         parse_instrument_page(
-            {"retCode": 0, "result": {"list": [], "nextPageCursor": "unexpected"}},
+            {"retCode": 0, "result": {"category": "spot", "list": [], "nextPageCursor": "unexpected"}},
             feed("bybit"),
         )
