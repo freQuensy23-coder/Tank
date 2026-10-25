@@ -10,6 +10,8 @@ import pytest
 from configuration_support import captured_fixture_settings
 from delivery_support import delivery_job
 from http_support import owned_http_admission
+from native_session_fixtures import created_native_session
+from pydantic import JsonValue
 from scheduler_support import operational_reaction_services
 from score_fixtures import unassessed_score_dimensions
 from source_support import FixtureBudgetClock, source_configuration, source_definition
@@ -37,19 +39,17 @@ from tank.telegram_rich import rich_message_text
 pytestmark = [pytest.mark.integration]
 
 
-def _native_session(session_id, agent_id="synthetic"):
-    """Native OpenMA session response with its resolved, versioned agent bytes."""
-    return {
-        "id": session_id,
-        "agent": {
-            "id": agent_id,
-            "version": "synthetic-agent-v1",
+def _native_session(request: httpx.Request, session_id: str) -> dict[str, JsonValue]:
+    """Complete synthetic provider resource bound to its actual creation request."""
+    return created_native_session(
+        request,
+        session_id,
+        agent_snapshot={
             "system": "Synthetic offline analyst fixture instructions",
             "skills": [{"type": "custom", "skill_id": "synthetic-analyst", "version": "1"}],
             "tools": [],
-            "model": {"id": "gpt-6.1-sol"},
         },
-    }
+    )
 
 
 def _fixture_api_limits():
@@ -148,7 +148,9 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
     failures = [True]
     tool_event = {"id": "tool1", "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
 
-    def transport(request: httpx.Request):
+    native_sessions: dict[str, dict[str, JsonValue]] = {}
+
+    def transport(request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if request.url.host == "opencode.ai":
             body = json.loads(request.content)
@@ -162,12 +164,16 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
                 },
             )
         if path.endswith("/sessions"):
-            return httpx.Response(
-                200,
-                json={"data": []} if request.method == "GET" else _native_session("s1", "synthetic-agent"),
-            )
+            if request.method == "GET":
+                return httpx.Response(200, json={"data": list(native_sessions.values())})
+            if request.method != "POST":
+                raise AssertionError(f"Unexpected native session method: {request.method}")
+            created = _native_session(request, "s1")
+            if "s1" not in native_sessions:
+                native_sessions["s1"] = created
+            return httpx.Response(200, json=native_sessions["s1"])
         if request.method == "GET" and path.endswith("/sessions/s1"):
-            return httpx.Response(200, json=_native_session("s1", "synthetic-agent"))
+            return httpx.Response(200, json=native_sessions["s1"])
         if path.endswith("/events/stream"):
             return httpx.Response(
                 200,
@@ -404,7 +410,9 @@ async def test_full_sse_pipeline_postgres(
     posted = []
     sends = []
 
-    def transport(req):
+    native_sessions: dict[str, dict[str, JsonValue]] = {}
+
+    def transport(req: httpx.Request) -> httpx.Response:
         path = req.url.path
         if req.url.host == "synthetic.invalid":
             rss = f'<rss version="2.0"><channel><title>Synthetic</title><item><guid>{feed_guid}</guid><title>Synthetic listing approval</title><description>{text}</description><pubDate>{now}</pubDate><link>https://synthetic.invalid/{sid}</link></item></channel></rss>'
@@ -432,9 +440,16 @@ async def test_full_sse_pipeline_postgres(
                 },
             )
         if path.endswith("/sessions"):
-            return httpx.Response(200, json={"data": []} if req.method == "GET" else _native_session(sid))
+            if req.method == "GET":
+                return httpx.Response(200, json={"data": list(native_sessions.values())})
+            if req.method != "POST":
+                raise AssertionError(f"Unexpected native session method: {req.method}")
+            created = _native_session(req, sid)
+            if sid not in native_sessions:
+                native_sessions[sid] = created
+            return httpx.Response(200, json=native_sessions[sid])
         if req.method == "GET" and path.endswith("/sessions/" + sid):
-            return httpx.Response(200, json=_native_session(sid))
+            return httpx.Response(200, json=native_sessions[sid])
         if path.endswith("/events/stream"):
             return httpx.Response(
                 200,
@@ -1049,7 +1064,9 @@ async def test_runtime_autonomous_source_to_telegram(
         wire.append(body)
         await queue.put({"seq": stage, "body": body})
 
-    async def transport(request: httpx.Request):
+    native_sessions: dict[str, dict[str, JsonValue]] = {}
+
+    async def transport(request: httpx.Request) -> httpx.Response:
         nonlocal stage
         path = request.url.path
         if request.url.host == "synthetic.invalid":
@@ -1068,11 +1085,16 @@ async def test_runtime_autonomous_source_to_telegram(
                 },
             )
         if path.endswith("/sessions"):
-            return httpx.Response(
-                200, json={"data": []} if request.method == "GET" else _native_session("autonomous-session")
-            )
+            if request.method == "GET":
+                return httpx.Response(200, json={"data": list(native_sessions.values())})
+            if request.method != "POST":
+                raise AssertionError(f"Unexpected native session method: {request.method}")
+            created = _native_session(request, "autonomous-session")
+            if "autonomous-session" not in native_sessions:
+                native_sessions["autonomous-session"] = created
+            return httpx.Response(200, json=native_sessions["autonomous-session"])
         if request.method == "GET" and path.endswith("/sessions/autonomous-session"):
-            return httpx.Response(200, json=_native_session("autonomous-session"))
+            return httpx.Response(200, json=native_sessions["autonomous-session"])
         if path.endswith("/events/stream"):
             return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=SSE())
         if path.endswith("/events"):
