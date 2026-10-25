@@ -2522,3 +2522,83 @@ def test_volatility_absence_and_missing_baseline_do_not_become_normal_state() ->
                 }
             )
         )
+
+
+def test_fragmentation_history_replays_actual_quote_changes_and_terminal_gap_closure() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionBookPairHistory, ConditionObservedPredicate
+    from tank.util import iso
+
+    valuation = QuoteUsdValuation(rate=Decimal(1), basis="USD_UNIT", as_of=None, unavailable_reason=None)
+    left, right = (
+        primary_quote("a", "USD", Decimal(103), valuation),
+        primary_quote("b", "USD", Decimal(100), valuation),
+    )
+    start = AT - timedelta(minutes=15)
+    left_rows: list[ConditionPrimaryBookQuote] = []
+    right_rows: list[ConditionPrimaryBookQuote] = []
+    for index in range(91):
+        clock = Timestamp(
+            value=iso(start + timedelta(seconds=index * 10)), precision=None, precision_reason="NOT_CAPTURED"
+        )
+        left_rows.append(
+            ConditionPrimaryBookQuote.model_validate(
+                left.model_copy(
+                    update={"observed_at": clock, "mid_quote": Decimal(100) if index == 90 else Decimal(103)}
+                )
+            )
+        )
+        right_rows.append(
+            ConditionPrimaryBookQuote.model_validate(right.model_copy(update={"observed_at": clock}))
+        )
+    history = ConditionBookPairHistory(
+        token_id="T",
+        left_venue="a",
+        right_venue="b",
+        left_instrument_id=left.instrument_id,
+        right_instrument_id=right.instrument_id,
+        left_metric_key=None,
+        right_metric_key=None,
+        interval=ConditionInterval(window="W15M", start=start, cutoff=AT),
+        left=tuple(left_rows),
+        right=tuple(right_rows),
+        left_cadence=cadence_for_book(left.instrument_id),
+        right_cadence=cadence_for_book(right.instrument_id),
+        quote_conversion_uncertainty_bps=Decimal(2),
+    )
+    assert len(history.gap_series()) == 91
+    persistent, closed = history.persistent_gap(), history.gap_closed_quickly()
+    assert isinstance(persistent, ConditionObservedPredicate) and persistent.value is True
+    assert isinstance(closed, ConditionObservedPredicate) and closed.value is True
+    with pytest.raises(ValidationError, match="ordered, distinct"):
+        ConditionBookPairHistory.model_validate(
+            history.model_copy(update={"left": (left_rows[1], left_rows[0])})
+        )
+
+
+def test_missing_fragmentation_quotes_are_unavailable_not_a_negative_gap_witness() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionBookPairHistory,
+        ConditionUnavailablePredicate,
+    )
+
+    history = ConditionBookPairHistory(
+        token_id="T",
+        left_venue="a",
+        right_venue="b",
+        left_instrument_id="a:spot:T",
+        right_instrument_id="b:spot:T",
+        left_metric_key=None,
+        right_metric_key=None,
+        interval=ConditionInterval(window="W15M", start=AT - timedelta(minutes=15), cutoff=AT),
+        left=(),
+        right=(),
+        left_cadence=cadence_for_book("a:spot:T"),
+        right_cadence=cadence_for_book("b:spot:T"),
+        quote_conversion_uncertainty_bps=Decimal(2),
+    )
+    assert isinstance(history.persistent_gap(), ConditionUnavailablePredicate)
+    assert isinstance(history.gap_closed_quickly(), ConditionUnavailablePredicate)
+    with pytest.raises(ValidationError, match="instrument"):
+        ConditionBookPairHistory.model_validate(
+            history.model_copy(update={"left_cadence": cadence_for_book("wrong")})
+        )

@@ -3988,3 +3988,131 @@ class ConditionVolatilityCompression(DomainModel):
             "COMPRESSED" if measured < bounds.lower else "EXPANDED" if measured > bounds.upper else "NORMAL"
         )
         return ObservedConditionVolatilityState(status="OBSERVED", value=state)
+
+
+class ConditionTimedBookGap(DomainModel):
+    evaluated_at: datetime
+    gap: ConditionPredicate
+
+    @field_validator("evaluated_at")
+    @classmethod
+    def aware_evaluation(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+
+class ConditionBookPairHistory(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    left_venue: str = Field(min_length=1, pattern=r"\S")
+    right_venue: str = Field(min_length=1, pattern=r"\S")
+    left_instrument_id: str = Field(min_length=1, pattern=r"\S")
+    right_instrument_id: str = Field(min_length=1, pattern=r"\S")
+    left_metric_key: str | None = Field(min_length=1, pattern=r"\S")
+    right_metric_key: str | None = Field(min_length=1, pattern=r"\S")
+    interval: ConditionInterval
+    left: tuple[ConditionPrimaryBookQuote, ...]
+    right: tuple[ConditionPrimaryBookQuote, ...]
+    left_cadence: ConditionCadence
+    right_cadence: ConditionCadence
+    quote_conversion_uncertainty_bps: Decimal = Field(ge=0)
+
+    @model_validator(mode="after")
+    def actual_pair_history(self) -> Self:
+        if (
+            self.interval.window != "W15M"
+            or (self.interval.cutoff - self.interval.start).total_seconds() != 900
+        ):
+            raise ValueError("Fragmentation history requires the actual fifteen-minute evaluation interval")
+        if self.left_venue == self.right_venue or self.left_instrument_id == self.right_instrument_id:
+            raise ValueError("Fragmentation history requires distinct scoped venue instruments")
+        for rows, venue, instrument, metric, cadence in (
+            (self.left, self.left_venue, self.left_instrument_id, self.left_metric_key, self.left_cadence),
+            (
+                self.right,
+                self.right_venue,
+                self.right_instrument_id,
+                self.right_metric_key,
+                self.right_cadence,
+            ),
+        ):
+            _bind_cadence_scope(
+                cadence.scope,
+                collection="books",
+                token_id=self.token_id,
+                instrument_id=instrument,
+                metric_key=metric,
+                observation_kind=None,
+                chain=None,
+            )
+            previous: datetime | None = None
+            for row in rows:
+                if (row.token_id, row.venue, row.instrument_id, row.metric_key) != (
+                    self.token_id,
+                    venue,
+                    instrument,
+                    metric,
+                ):
+                    raise ValueError("Fragmentation history cannot mix token or venue instrument scopes")
+                stamp = row.observed_at.value
+                if stamp is None:
+                    raise ValueError("A historical primary book requires its actual source clock")
+                at = parse_iso_time(stamp)
+                if at > self.interval.cutoff or (previous is not None and at <= previous):
+                    raise ValueError("Historical primary book clocks must be ordered, distinct and nonfuture")
+                previous = at
+        return self
+
+    def gap_series(self) -> tuple[ConditionTimedBookGap, ...]:
+        validated = type(self).model_validate(self)
+        start, cutoff = validated.interval.start, validated.interval.cutoff
+        times = {start, cutoff}
+        for row in (*validated.left, *validated.right):
+            stamp = row.observed_at.value
+            if stamp is None:
+                raise ValueError("A historical primary book requires its actual source clock")
+            at = parse_iso_time(stamp)
+            if start <= at < cutoff:
+                times.add(at)
+        observations: list[ConditionTimedBookGap] = []
+        for at in sorted(times):
+            left = validated.latest_at(validated.left, at)
+            right = validated.latest_at(validated.right, at)
+            gap: ConditionPredicate
+            if left is None or right is None:
+                gap = ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+            else:
+                gap = ConditionBookPairSample(
+                    left=left,
+                    right=right,
+                    left_cadence=validated.left_cadence,
+                    right_cadence=validated.right_cadence,
+                    evaluated_at=at,
+                    quote_conversion_uncertainty_bps=validated.quote_conversion_uncertainty_bps,
+                ).gap()
+            observations.append(ConditionTimedBookGap(evaluated_at=at, gap=gap))
+        return tuple(observations)
+
+    @staticmethod
+    def latest_at(
+        rows: tuple[ConditionPrimaryBookQuote, ...], at: datetime
+    ) -> ConditionPrimaryBookQuote | None:
+        for row in reversed(rows):
+            stamp = row.observed_at.value
+            if stamp is None:
+                raise ValueError("A historical primary book requires its actual source clock")
+            if parse_iso_time(stamp) <= at:
+                return row
+        return None
+
+    def persistent_gap(self) -> ConditionPredicate:
+        return condition_predicates_all(tuple(point.gap for point in self.gap_series()[:-1]))
+
+    def gap_closed_quickly(self) -> ConditionPredicate:
+        points = self.gap_series()
+        previous, current = points[-2].gap, points[-1].gap
+        if isinstance(current, ConditionObservedPredicate):
+            closed: ConditionPredicate = ConditionObservedPredicate(
+                status="OBSERVED", value=not current.value
+            )
+        else:
+            closed = current
+        return condition_predicates_all((previous, closed))
