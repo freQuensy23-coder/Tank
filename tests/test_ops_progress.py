@@ -1,5 +1,4 @@
 import asyncio
-import json
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,8 +7,10 @@ import httpx
 import pytest
 from agent_source_fixtures import source_item_fixture
 from delivery_support import delivery_job
+from foundation_helpers import text_field
 from pydantic import JsonValue
 from scheduler_support import operational_reaction_services
+from score_fixtures import unassessed_score_dimensions
 from source_support import fixture_request_budgets, fixture_versions, source_definition
 from test_agents_pipeline_audit import options
 from test_event_tools import seed
@@ -19,6 +20,8 @@ from test_sources import settings as source_settings
 
 from tank.agents.pipeline import Pipeline
 from tank.analysis.page_access import LivePageAccess
+from tank.contracts.json import decode_json
+from tank.contracts.progress import PublicationReceipt
 from tank.delivery import DeliveryError, DeliveryService
 from tank.event_tools import EventToolService
 from tank.ops_progress import RepositorySourceProgress, item_progress, session_progress
@@ -27,7 +30,6 @@ from tank.runtime_contracts import ItemJob
 from tank.settings import Settings
 from tank.sources import SourceService
 from tank.storage import MemoryRepository
-from tank.telegram_rich import SCORE_DIMENSIONS, score_summary
 from tank.util import clock_iso, iso, utcnow
 
 
@@ -213,11 +215,7 @@ async def test_agent_extraction_and_publication_gate_explain_silence(tmp_path: P
 
 
 @pytest.mark.parametrize("success", [True, False])
-async def test_generated_card_only_becomes_sent_after_telegram_receipt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, success
-) -> None:
-    import tank.analysis.cards as cards
-
+async def test_generated_card_only_becomes_sent_after_telegram_receipt(tmp_path: Path, success: bool) -> None:
     repo = MemoryRepository()
     reaction_settings = Settings(data_dir=tmp_path)
     reaction_versions = fixture_versions()
@@ -236,6 +234,7 @@ async def test_generated_card_only_becomes_sent_after_telegram_receipt(
         extraction = await seed(service)
         eid = (await service.dispatch("record_event", extraction, {}))["event_id"]
         event = await repo.get("evt.events", eid)
+        assert event is not None
         await repo.put("evt.events", eid, {**event, "current_ems_id": "ems"})
         await repo.put(
             "evt.ems_assessments",
@@ -244,11 +243,10 @@ async def test_generated_card_only_becomes_sent_after_telegram_receipt(
                 "ems_id": "ems",
                 "event_id": eid,
                 "class": "STRUCTURAL_SHOCK",
-                "dims": {name: {"value": None, "reason": "NOT_ESTIMABLE"} for _, name in SCORE_DIMENSIONS},
+                "criterion": "SYNTHETIC_STRUCTURAL_SHOCK",
+                "dims": unassessed_score_dimensions(),
             },
         )
-        monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
-        monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[1]))
         result = await service.dispatch(
             "publish_card",
             {
@@ -260,17 +258,31 @@ async def test_generated_card_only_becomes_sent_after_telegram_receipt(
             },
             {"event_id": eid, "role": "system"},
         )
+        assert result["published"] is True
+        receipt = PublicationReceipt.model_validate(result["publication_receipt"])
+        assert receipt.disposition == "PUBLISHED" and receipt.gate_reason == "INITIAL"
+        assert receipt.alert_id is not None and receipt.alert_version is not None
+        stored_card = await repo.get("out.alerts", f"{receipt.alert_id}:{receipt.alert_version}")
+        assert stored_card is not None and "Market analysis pending" in text_field(stored_card, "card_text")
+        assert not await repo.list("ana.market_truth") and not await repo.list("ana.decisions")
         assert "ALERT_QUEUED" in {row["stage"] for row in await notices(repo)}
         assert "ALERT_SENT" not in {row["stage"] for row in await notices(repo)}
-        payload = {"alert_id": result["alert_id"], "version": result["version"]}
-        requests = []
+        payload = {"alert_id": receipt.alert_id, "version": receipt.alert_version}
+        requests: list[dict[str, JsonValue]] = []
 
-        def respond(request: httpx.Request):
-            requests.append(json.loads(request.content))
+        def respond(request: httpx.Request) -> httpx.Response:
+            body = decode_json(request.content)
+            assert isinstance(body, dict)
+            requests.append(body)
             return (
-                httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
+                httpx.Response(
+                    200, json={"ok": True, "result": {"message_id": 42, "date": int(utcnow().timestamp())}}
+                )
                 if success
-                else httpx.Response(500, json={"ok": False})
+                else httpx.Response(
+                    500,
+                    json={"ok": False, "error_code": 500, "description": "Synthetic Telegram unavailable"},
+                )
             )
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:

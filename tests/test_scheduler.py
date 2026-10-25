@@ -1,16 +1,21 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from foundation_helpers import object_field
 from scheduler_support import operational_reaction_services
 from source_support import fixture_request_budgets, fixture_versions
 
 from tank.analysis.page_access import LivePageAccess
+from tank.analysis.watch_contracts import WatchCondition, WatchLeaf
+from tank.models import Record
+from tank.runtime_contracts import ConditionFiredMessage, parse_agent_message
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
+from tank.time_precision import Timestamp
 from tank.util import clock_iso, iso, utcnow
 
 
@@ -379,7 +384,9 @@ async def test_relocated_backup_recovers_source_web_replay_config_logs_and_both_
     repo.prune_market.assert_awaited_once()
 
 
-async def real_decision_watch_conditions(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+async def real_decision_watch_conditions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[MemoryRepository, Settings, datetime, list[WatchCondition]]:
     """Use real EventToolService persistence and real DecisionEngine condition generation."""
     from test_decisions import inputs
 
@@ -397,7 +404,7 @@ async def real_decision_watch_conditions(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assessment.update(ems_id="ems", event_id="e")
     beneficiary.update(edge_id="edge", event_id="e", map_version=1)
     market.update(mta_id="truth", event_id="e", cutoff=iso(created))
-    market["data_confidence"]["class"] = "MEDIUM"
+    object_field(market, "data_confidence")["class"] = "MEDIUM"
     await repo.put("evt.events", "e", event)
     await repo.put("evt.ems_assessments", "ems", assessment)
     await repo.put("evt.beneficiary_maps", "map", {"event_id": "e", "map_version": 1, "analysis_set": ["T"]})
@@ -412,7 +419,7 @@ async def real_decision_watch_conditions(monkeypatch: pytest.MonkeyPatch, tmp_pa
             repo,
             reaction_settings,
             reaction_services.truth,
-            DecisionEngine(settings),
+            DecisionEngine(),
             versions=reaction_versions,
             scheduler=reaction_services.scheduler,
             pages=LivePageAccess(reaction_services.admission),
@@ -421,8 +428,8 @@ async def real_decision_watch_conditions(monkeypatch: pytest.MonkeyPatch, tmp_pa
             {"event_id": "e", "token_id": "T"}, {"session_id": "session", "call_id": "decision"}
         )
         assert decision["action"] == "WATCH_TO_START"
-        conditions = await repo.list("ana.watch_conditions")
-        assert conditions and all(c.get("created_at") and c.get("expires_at") for c in conditions)
+        conditions = [WatchCondition.model_validate(row) for row in await repo.list("ana.watch_conditions")]
+        assert conditions and all(condition.created_at and condition.expires_at for condition in conditions)
         return repo, settings, created, conditions
 
 
@@ -433,10 +440,11 @@ async def test_real_generated_conditions_use_two_closed_nonoverlapping_hours(
     from tank.util import parse_time
 
     repo, settings, created, conditions = await real_decision_watch_conditions(monkeypatch, tmp_path)
-    calls = []
+    calls: list[Timestamp] = []
 
-    async def assess(event_id, token_id, cutoff):
+    async def assess(event_id: str, token_id: str, cutoff: Timestamp) -> Record:
         calls.append(cutoff)
+        assert cutoff.value is not None
         stamp = parse_time(cutoff.value)
         assert cutoff.precision == ("EXACT" if stamp.minute == 0 and stamp.second == 0 else None)
 
@@ -452,23 +460,35 @@ async def test_real_generated_conditions_use_two_closed_nonoverlapping_hours(
         settings,
         None,
         SimpleNamespace(assess=assess),
-        thresholds=Settings(_env_file=None).thresholds(),
+        thresholds=settings.thresholds(),
         versions=fixture_versions(),
     )
-    upgrade = next(c for c in conditions if c["role"] == "UPGRADE")
+    upgrade = next(condition for condition in conditions if condition.role == "UPGRADE")
     await scheduler.eval_conditions({"cutoff": iso(created.replace(hour=12, minute=7))})
-    first = await repo.get("ana.watch_conditions", upgrade["cond_id"])
-    assert first["status"] == "ARMED"
-    assert first["counters"]["root0"]["count"] == 1
-    assert first["counters"]["root0"]["cutoff"] == iso(created.replace(hour=12, minute=0))
+    first = WatchCondition.model_validate(await repo.get("ana.watch_conditions", upgrade.cond_id))
+    assert first.status == "ARMED"
+    assert first.counters["root0"].count == 1
+    assert first.counters["root0"].cutoff == iso(created.replace(hour=12, minute=0))
     await scheduler.eval_conditions({"cutoff": iso(created.replace(hour=12, minute=59))})
-    assert (await repo.get("ana.watch_conditions", upgrade["cond_id"]))["counters"]["root0"]["count"] == 1
+    assert (
+        WatchCondition.model_validate(await repo.get("ana.watch_conditions", upgrade.cond_id))
+        .counters["root0"]
+        .count
+        == 1
+    )
     await scheduler.eval_conditions({"cutoff": iso(created.replace(hour=13, minute=1))})
-    final = await repo.get("ana.watch_conditions", upgrade["cond_id"])
-    assert final["status"] == "FIRED" and final["counters"]["root0"]["count"] == 2
-    assert final["counters"]["root0"]["cutoff"] == iso(created.replace(hour=13, minute=0))
+    final = WatchCondition.model_validate(await repo.get("ana.watch_conditions", upgrade.cond_id))
+    assert final.status == "FIRED" and final.counters["root0"].count == 2
+    assert final.counters["root0"].cutoff == iso(created.replace(hour=13, minute=0))
     fired = await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
-    assert sum(j["payload"].get("condition", {}).get("cond_id") == upgrade["cond_id"] for j in fired) == 1
+    messages = [parse_agent_message(object_field(job, "payload")) for job in fired]
+    assert (
+        sum(
+            isinstance(message, ConditionFiredMessage) and message.condition.cond_id == upgrade.cond_id
+            for message in messages
+        )
+        == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -482,12 +502,18 @@ async def test_real_generated_fatal_condition_fires_next_minute_without_hour_thr
         settings,
         None,
         truth,
-        thresholds=Settings(_env_file=None).thresholds(),
+        thresholds=settings.thresholds(),
         versions=fixture_versions(),
     )
-    fatal = next(c for c in conditions if c["expr"].get("metric") == "event.contradiction_fatal")
+    fatal = next(
+        condition
+        for condition in conditions
+        if isinstance(condition.expr, WatchLeaf) and condition.expr.metric == "event.contradiction_fatal"
+    )
     await scheduler.eval_conditions({"cutoff": iso(created.replace(hour=12, minute=0))})
-    assert (await repo.get("ana.watch_conditions", fatal["cond_id"]))["status"] == "ARMED"
+    assert (
+        WatchCondition.model_validate(await repo.get("ana.watch_conditions", fatal.cond_id)).status == "ARMED"
+    )
     await repo.put(
         "ana.contradictions",
         "fatal",
@@ -499,7 +525,9 @@ async def test_real_generated_fatal_condition_fires_next_minute_without_hour_thr
         },
     )
     await scheduler.eval_conditions({"cutoff": iso(created.replace(hour=12, minute=1))})
-    assert (await repo.get("ana.watch_conditions", fatal["cond_id"]))["status"] == "FIRED"
+    assert (
+        WatchCondition.model_validate(await repo.get("ana.watch_conditions", fatal.cond_id)).status == "FIRED"
+    )
 
 
 def test_condition_derivatives_use_requested_window_without_primary_fallback() -> None:

@@ -18,12 +18,15 @@ from source_support import FixtureBudgetClock, source_configuration, source_defi
 
 from tank.agents.pipeline import Pipeline
 from tank.agents.sessions import SessionService
+from tank.analysis.card_codec import card_inputs_from_records, card_registry_from_record
+from tank.analysis.card_contracts import PublicationNarrative, PublicationPolicy
 from tank.analysis.cards import compose_card
+from tank.analysis.decision_codec import decision_inputs_from_records, decode_decision
 from tank.analysis.decisions import DecisionEngine
 from tank.analysis.page_access import LivePageAccess
 from tank.contracts.sources import SourceApiLimitsConfiguration
 from tank.delivery import DeliveryError, DeliveryService
-from tank.event_tools import EventToolService
+from tank.event_tools import LAYERS, EventToolService
 from tank.http_admission import ConfiguredHttpAdmission
 from tank.market.capture_contracts import RepairOutcome
 from tank.market.service import MarketService
@@ -118,8 +121,24 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
         "exchange_addresses": {"version": "synthetic-fixture", "wallet_lists": []},
         "registry": {
             "tokens": [{"token_id": "T", "symbol": "T"}],
-            "entities": [],
-            "instruments": [],
+            "entities": [
+                {"entity_id": "binance", "name": "Binance", "names": ["Binance"], "aliases": []},
+                {
+                    "entity_id": "synthetic-venue",
+                    "name": "Synthetic venue",
+                    "names": ["Synthetic venue"],
+                    "aliases": [],
+                },
+            ],
+            "instruments": [
+                {
+                    "instrument_id": "mock:spot:T",
+                    "token_id": "T",
+                    "venue": "mock",
+                    "market_type": "SPOT",
+                    "venue_symbol": "TUSDT",
+                }
+            ],
             "x_accounts": [],
         },
         "thresholds": _fixture_thresholds(),
@@ -199,8 +218,12 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
     ):
         source = SourceService(repo, settings, versions=versions, budgets=admission.budgets, http=http)
         item_id, seen = "item-e2e-one", "2026-10-17T00:00:01Z"
+        approval_text = (
+            "Synthetic Binance listing approval for T announced at 2026-10-17T00:00:00Z. "
+            "The synthetic venue actively burns T from trading fees."
+        )
         raw, sha = source.raw(
-            b"Synthetic integration item", source_id="S30", item_id=item_id, observed_at=seen
+            approval_text.encode("utf-8"), source_id="S30", item_id=item_id, observed_at=seen
         )
         item = await source.ingest(
             source_definition({"source_id": "S30"}),
@@ -215,7 +238,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
                 "discovery_config_version": versions.config_version,
                 "discovery_code_version": versions.code_version,
                 "title": "Synthetic",
-                "text": "Synthetic crypto T approval",
+                "text": approval_text,
                 "published_at": "2026-10-17T00:00:00Z",
             },
         )
@@ -227,7 +250,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
             repo,
             settings,
             reactions.truth,
-            DecisionEngine(settings),
+            DecisionEngine(),
             versions=versions,
             scheduler=reactions.scheduler,
             pages=LivePageAccess(reactions.admission),
@@ -245,35 +268,170 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
         await resumed.stream("s1")
         assert len(event_posts) == before
 
-        event = {"event_id": "e", "event_state": "APPROVED", "state_verified": True, "freshness": "FRESH"}
-        assessment = {
-            "dims": unassessed_score_dimensions(),
-            "class": "MAJOR",
-            "certainty": "HIGH",
-            "impact_horizon": {
-                "impact_start": "UNKNOWN",
-                "ramp_shape": "STEP",
-                "dependencies": [],
-                "time_to_materiality": "not estimable",
-                "timing_confidence": "LOW",
+        session_row = await repo.get("ops.agent_sessions", "s1")
+        assert session_row is not None
+        context = session.tool_context(session_row, "source-e2e-produced-decision")
+        extracted = await toolservice.record_event(
+            {
+                "extraction": {
+                    "item_id": item["item_id"],
+                    "is_event": True,
+                    "statement": approval_text,
+                    "certainty": "HIGH",
+                    "certainty_reason": "Synthetic primary-source approval document",
+                    "entities": [],
+                    "token_ids": ["T"],
+                    "event_time": {
+                        "value": "2026-10-17T00:00:00Z",
+                        "precision": "EXACT",
+                        "precision_reason": None,
+                        "quote": approval_text,
+                    },
+                    "public_at": {
+                        "value": "2026-10-17T00:00:00Z",
+                        "precision": "EXACT",
+                        "precision_reason": None,
+                        "basis": "SOURCE_METADATA",
+                        "quote": approval_text,
+                    },
+                    "freshness": "FRESH",
+                    "claims": [
+                        {
+                            "type": "STATE",
+                            "state_claim": "APPROVED",
+                            "subject": "Binance",
+                            "predicate": "approved the listing of",
+                            "object": "T",
+                            "verified": True,
+                            "quote": approval_text,
+                            "evidence": [{"item_id": item["item_id"], "quote": approval_text}],
+                        },
+                        {
+                            "type": "MECHANISM",
+                            "subject": "Synthetic venue",
+                            "predicate": "actively burns fees denominated in",
+                            "object": "T",
+                            "verified": True,
+                            "quote": approval_text,
+                            "evidence": [{"item_id": item["item_id"], "quote": approval_text}],
+                        },
+                    ],
+                    "next_milestone": None,
+                    "checked_sources": [],
+                }
             },
-        }
-        edge = {"token_id": "T", "role": "PRIMARY", "credible": True, "capture_class": "DIRECT"}
-        market = {
-            "token_id": "T",
-            "move_class": "UNKNOWN",
-            "data_confidence": {"class": "LOW"},
-            "relative": {},
-            "liquidity": {},
-            "spot": {},
-            "derivatives": {},
-        }
-        decision = DecisionEngine(settings).evaluate(event, assessment, edge, market)
-        assert decision["action"] == "WAIT"
-        card = compose_card(
-            event, assessment, [edge], [decision], [market], verdict="Synthetic integration test."
+            context,
         )
-        alert = {"alert_id": "a", "version": 1, "event_id": "e", "card_text": card, "decisions": []}
+        eid = extracted["event_id"]
+        claim_id = extracted["accepted_claims"][0]["claim_id"]
+        mechanism_claim_id = extracted["accepted_claims"][1]["claim_id"]
+        session_row = await repo.get("ops.agent_sessions", "s1")
+        assert session_row is not None
+        context = session.tool_context(session_row, "source-e2e-produced-decision")
+        assessment = await toolservice.set_assessment(
+            {
+                "event_id": eid,
+                "assessment": {
+                    "class": "MAJOR",
+                    "criterion": "M1",
+                    "criterion_venue_id": "binance",
+                    "criterion_claim_id": claim_id,
+                    "dims": unassessed_score_dimensions(),
+                    "capture_chains": [
+                        {
+                            "token_id": "T",
+                            "capture_score": 7,
+                            "headline_activity": None,
+                            "eligible_activity": None,
+                            "effective_fees": None,
+                            "protocol_capture": None,
+                            "token_mechanism": {
+                                "type": "BURN",
+                                "active": True,
+                                "evidence": [mechanism_claim_id],
+                            },
+                        }
+                    ],
+                    "impact_horizon": {
+                        "impact_start": "UNKNOWN",
+                        "ramp_shape": "STEP",
+                        "dependencies": [],
+                        "time_to_materiality": "not estimable",
+                        "timing_confidence": "LOW",
+                    },
+                },
+            },
+            context,
+        )
+        mapping = await toolservice.set_beneficiaries(
+            {
+                "event_id": eid,
+                "edges": [
+                    {
+                        "token_id": "T",
+                        "layer": "VENUE_DEX",
+                        "role": "PRIMARY",
+                        "entity_id": "synthetic-venue",
+                        "direction": "POSITIVE",
+                        "directionality": "NONE",
+                        "evidence": [claim_id],
+                        "causal_chain": "The synthetic listing approval expands T market access",
+                        "exposure_score": 6,
+                        "edge_certainty": "HIGH",
+                    }
+                ],
+                "layer_reasons": {layer: "No other synthetic evidence" for layer in LAYERS},
+            },
+            context,
+        )
+        market = await reactions.truth.assess(eid, "T", "2026-10-17T00:01:00Z")
+        event = await repo.get("evt.events", eid)
+        assert event is not None
+        edges = await repo.list("evt.beneficiary_edges", filters={"event_id": eid, "token_id": "T"})
+        assert len(edges) == 1
+        edge = edges[0]
+        assert event["event_state"] == "APPROVED" and event["state_verified"] is True
+        assert assessment["class"] == "MAJOR"
+        assert edge["capture_class"] == "DIRECT" and edge["credible"] is True
+        event["contradictions"] = await repo.list("ana.contradictions", filters={"event_id": eid})
+        inputs = decision_inputs_from_records(event, assessment, edge, market, open_call=None, conditions=())
+        evaluation = DecisionEngine().evaluate(inputs)
+        assert evaluation.action == "WAIT"
+        assert market["move_class"] == "UNKNOWN"
+        assert market["data_confidence"]["class"] == "LOW"
+        decision = await toolservice.get_decision({"event_id": eid, "token_id": "T"}, context)
+        persisted = await repo.get("ana.decisions", decision["dec_id"])
+        assert persisted is not None
+        decoded = decode_decision(persisted)
+        assert decoded.calculation.action == evaluation.action
+        assert decoded.metadata.identity.assessment_id == assessment["ems_id"]
+        assert decoded.metadata.identity.market_truth_id == market["mta_id"]
+        event["claims"] = await repo.list("evt.claims", filters={"event_id": eid})
+        event["beneficiary_map"] = mapping
+        event["beneficiary_edges"] = edges
+        event["token_labels"] = {"T": config["registry"]["tokens"][0]["symbol"]}
+        event["evidence_labels"] = {item["item_id"]: source_definition({"source_id": "S30"}).name}
+        card = compose_card(
+            card_inputs_from_records(
+                event,
+                assessment,
+                [edge],
+                [persisted],
+                [market],
+                registry=card_registry_from_record(settings.load_config("registry")),
+                narrative=PublicationNarrative(
+                    kind="FULL",
+                    what=approval_text,
+                    why=(
+                        "The synthetic primary source states a listing approval.",
+                        "No eligible captured market windows are available.",
+                    ),
+                    verdict="Synthetic integration test.",
+                ),
+                policy=PublicationPolicy.from_thresholds(settings.thresholds()),
+            )
+        )
+        alert = {"alert_id": "a", "version": 1, "event_id": eid, "card_text": card, "decisions": []}
         await repo.put("out.alerts", "a:1", alert, immutable=True)
         with pytest.raises(ImmutableRecordError):
             await repo.put("out.alerts", "a:1", dict(alert, card_text="changed"), immutable=True)
@@ -546,7 +704,7 @@ async def test_full_sse_pipeline_postgres(
                 repo,
                 settings,
                 truth_service,
-                DecisionEngine(settings),
+                DecisionEngine(),
                 http=http,
                 versions=versions,
                 scheduler=scheduler,
@@ -814,7 +972,7 @@ async def test_full_sse_pipeline_postgres(
                 repo,
                 settings,
                 truth_service,
-                DecisionEngine(settings),
+                DecisionEngine(),
                 http=http,
                 versions=versions,
                 scheduler=scheduler,
@@ -1406,7 +1564,7 @@ async def test_runtime_autonomous_source_to_telegram(
                 repo,
                 settings,
                 truth,
-                DecisionEngine(settings),
+                DecisionEngine(),
                 versions=versions,
                 scheduler=scheduler,
                 pages=LivePageAccess(admission),
