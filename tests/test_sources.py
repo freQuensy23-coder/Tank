@@ -2858,7 +2858,9 @@ def test_article_text_without_site_boilerplate() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pending_rows_without_item_id_are_dropped_and_rediscovered(tmp_path: Path) -> None:
+async def test_unknown_historical_pending_metadata_is_retained_while_new_rows_are_observed(
+    tmp_path: Path,
+) -> None:
     source = {"source_id": "S30", "feeds": [{"url": "https://example.org/rss", "kind": "rss"}]}
     repo = Repo()
     old_row = {"external_id": "release-42", "url": "https://example.org/a", "title": "Old", "text": "Old"}
@@ -2881,8 +2883,18 @@ async def test_pending_rows_without_item_id_are_dropped_and_rediscovered(tmp_pat
             budgets=fixture_request_budgets(),
         )
         await svc.poller.drain(source_definition(source), 0, force=True)
-        assert not (await repo.get("ops.source_checkpoints", "S30:0"))["pending_batches"]
-        assert (await svc.poll_once("S30")).items == 1
+        state = await repo.get("ops.source_checkpoints", "S30:0")
+        assert state["status"] == "DEGRADED"
+        [quarantined] = state["pending_batches"]
+        [evidence] = quarantined["quarantines"]
+        assert evidence["raw_batch"]["rows"] == [old_row]
+        assert evidence["origin"]["declared_batch_id"] == "old"
+        assert evidence["issues"][0]["reason"] == "MISSING_BATCH_METADATA"
+        observed = await svc.poll_once("S30")
+        assert observed.items == 1 and observed.status == "DEGRADED"
+        latest = await repo.get("ops.source_checkpoints", "S30:0")
+        assert latest["pending_batches"][0] == quarantined
+        assert latest.get("etag") is None
 
 
 @pytest.mark.asyncio

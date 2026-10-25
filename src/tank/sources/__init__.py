@@ -8,7 +8,7 @@ persists probability/model provenance; source ingestion never guesses relevance.
 import asyncio
 import re
 import ssl
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from functools import cached_property
 from urllib.parse import urlsplit
@@ -20,7 +20,7 @@ from pydantic import JsonValue
 from tank.contracts.configuration import Thresholds
 from tank.contracts.http_policy import HttpRefused
 from tank.contracts.provenance import ResolvedVersionIdentity
-from tank.contracts.source_items import SourceText, captured_item
+from tank.contracts.source_items import CapturedItem, SourceItem, SourceText, captured_item
 from tank.contracts.sources import (
     AccountProbeFailure,
     AccountProbeResponse,
@@ -31,6 +31,7 @@ from tank.contracts.sources import (
     SourceConfiguration,
     SourceDefinition,
     SourceEscalationControlView,
+    SourceFeed,
     SourceFilingRegistryView,
     SourcePollOutcome,
 )
@@ -38,6 +39,7 @@ from tank.http_admission import ConfiguredHttpAdmission
 from tank.ops_progress import RepositorySourceProgress
 from tank.request_budget import BudgetConstraint, RequestBudgets
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
+from tank.sources.errors import SourceEntryError
 from tank.sources.fetch import (
     FetchEvidence,
     FetchResult,
@@ -183,7 +185,7 @@ class SourceService:
         return await self.transport.request(feed, headers, on_start)
 
     async def _record_fetch(self, source: SourceDefinition, key: str, receipt: FetchEvidence) -> None:
-        async with self.poller.lock(self.poller.state_locks, key):
+        async with self.poller.state_change(key):
             evidence = await self.poller.state(key)
             evidence.update(receipt.storage_record())
             await self.poller.save(source, key, evidence)
@@ -214,6 +216,15 @@ class SourceService:
                 last_modified=cache.last_modified,
                 blocked_by_processing_errors=True,
             )
+        if checkpoint is not None:
+            pending = await self.poller.pending(source, key, checkpoint)
+            if pending.unresolved_quarantines:
+                cache = HttpCheckpointProjection(
+                    cache_scope=cache.cache_scope,
+                    etag=cache.etag,
+                    last_modified=cache.last_modified,
+                    blocked_by_processing_errors=True,
+                )
 
         async def send(
             plan: HttpFetchPlan,
@@ -256,8 +267,22 @@ class SourceService:
     async def ingest(self, source: SourceDefinition, item: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
         """Decode the flat capture wire and serialize the typed ingestion result."""
         captured = captured_item(source.source_id, item)
-        stored = await self._ingestion().ingest(source, captured)
+        stored = await self.ingest_captured(source, captured)
         return stored.storage_record()
+
+    async def ingest_captured(self, source: SourceDefinition, item: CapturedItem) -> SourceItem:
+        return await self._ingestion().ingest(source, item)
+
+    async def report_errors(
+        self,
+        source: SourceDefinition,
+        feed: SourceFeed,
+        errors: Sequence[SourceEntryError],
+        seen_at: str,
+    ) -> None:
+        from tank.ops_entry_errors import report_entry_errors
+
+        await report_entry_errors(self.repo, self.settings, source, feed, errors, seen_at)
 
     async def poll_once(
         self, source_id: str, *, due_only: bool = False, escalated: bool = False
