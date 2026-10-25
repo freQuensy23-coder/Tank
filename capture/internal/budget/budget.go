@@ -33,10 +33,17 @@ func floatRepr(f float64) string {
 var ErrInvalidBudget = errors.New("Invalid configured request budget")
 
 func valid(capacity, weight float64) error {
-	if capacity <= 0 || weight <= 0 || weight > capacity || math.IsNaN(capacity) || math.IsNaN(weight) {
+	if capacity <= 0 || weight <= 0 || weight > capacity || math.IsNaN(capacity) || math.IsNaN(weight) || math.IsInf(capacity, 0) || math.IsInf(weight, 0) {
 		return ErrInvalidBudget
 	}
 	return nil
+}
+
+func (b Bucket) Validate() error {
+	if b.Key == "" || b.WindowS <= 0 || math.IsNaN(b.WindowS) || math.IsInf(b.WindowS, 0) || b.WindowS > float64(math.MaxInt64)/1e9 {
+		return ErrInvalidBudget
+	}
+	return valid(b.Capacity, b.Weight)
 }
 
 func BinanceWeight(host, path string, params map[string]string) (float64, error) {

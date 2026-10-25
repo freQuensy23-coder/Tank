@@ -129,7 +129,7 @@ func (g *Gate) AdmitBuckets(ctx context.Context, host string, buckets []Bucket, 
 }
 
 func (g *Gate) acquire(ctx context.Context, host string, b Bucket, priority int) error {
-	if err := valid(b.Capacity, b.Weight); err != nil {
+	if err := b.Validate(); err != nil {
 		return err
 	}
 	name := b.Name()
