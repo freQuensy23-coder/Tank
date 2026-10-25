@@ -1,0 +1,3024 @@
+{
+  "snapshot_parent": "a97bde8",
+  "scope": "Owned active source only; tests/config/shared contracts additionally remain in scope.",
+  "modules": [
+    {
+      "path": "src/tank/sources/__init__.py",
+      "lines": 391,
+      "missing_signature_sites": [
+        {
+          "line": 59,
+          "symbol": "__init__",
+          "untyped_parameters": [
+            "repo",
+            "settings",
+            "http"
+          ],
+          "missing_return": false
+        },
+        {
+          "line": 150,
+          "symbol": "fetch",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 252,
+          "symbol": "poll_once",
+          "untyped_parameters": [
+            "source_id",
+            "due_only",
+            "escalated"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 311,
+          "symbol": "check",
+          "untyped_parameters": [
+            "probe",
+            "check_accounts"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 322,
+          "symbol": "_saved_health",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 343,
+          "symbol": "_account_checks",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 362,
+          "symbol": "close",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 366,
+          "symbol": "is_escalated",
+          "untyped_parameters": [
+            "source_id",
+            "now"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 379,
+          "symbol": "control_once",
+          "untyped_parameters": [
+            "source_id"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 383,
+          "symbol": "run",
+          "untyped_parameters": [
+            "stop"
+          ],
+          "missing_return": true
+        }
+      ],
+      "get_lookup_sites": [
+        97,
+        133,
+        151,
+        153,
+        153,
+        153,
+        155,
+        155,
+        155,
+        192,
+        193,
+        207,
+        326,
+        335,
+        337,
+        347,
+        370,
+        371,
+        372,
+        373,
+        374
+      ],
+      "or_empty_sites": [
+        151
+      ],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/sources/capture_fetch.py",
+      "lines": 180,
+      "missing_signature_sites": [],
+      "get_lookup_sites": [
+        132
+      ],
+      "or_empty_sites": [],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/sources/errors.py",
+      "lines": 126,
+      "missing_signature_sites": [],
+      "get_lookup_sites": [
+        77,
+        79
+      ],
+      "or_empty_sites": [],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/sources/http_client.py",
+      "lines": 42,
+      "missing_signature_sites": [],
+      "get_lookup_sites": [],
+      "or_empty_sites": [],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/sources/ingestion.py",
+      "lines": 207,
+      "missing_signature_sites": [],
+      "get_lookup_sites": [
+        80,
+        126,
+        128
+      ],
+      "or_empty_sites": [],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/sources/organization.py",
+      "lines": 117,
+      "missing_signature_sites": [],
+      "get_lookup_sites": [
+        115
+      ],
+      "or_empty_sites": [],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/sources/parsers.py",
+      "lines": 693,
+      "missing_signature_sites": [
+        {
+          "line": 20,
+          "symbol": "text",
+          "untyped_parameters": [
+            "html"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 103,
+          "symbol": "entry_identity",
+          "untyped_parameters": [
+            "entry"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 130,
+          "symbol": "feeds",
+          "untyped_parameters": [
+            "payload",
+            "source_id",
+            "feed"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 175,
+          "symbol": "publisher_cms_entries",
+          "untyped_parameters": [
+            "payload"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 215,
+          "symbol": "_dtcc_release_url",
+          "untyped_parameters": [
+            "url"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 226,
+          "symbol": "article_links",
+          "untyped_parameters": [
+            "payload",
+            "feed"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 305,
+          "symbol": "contentful_text",
+          "untyped_parameters": [
+            "node"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 316,
+          "symbol": "article",
+          "untyped_parameters": [
+            "payload",
+            "source_id"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 442,
+          "symbol": "json_items",
+          "untyped_parameters": [
+            "payload",
+            "source_id"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 515,
+          "symbol": "_json_items",
+          "untyped_parameters": [
+            "payload",
+            "source_id"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 622,
+          "symbol": "instruments",
+          "untyped_parameters": [
+            "payload",
+            "feed"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 679,
+          "symbol": "binance_body",
+          "untyped_parameters": [
+            "value"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 89,
+          "symbol": "__init__",
+          "untyped_parameters": [
+            "rows",
+            "wire_count"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 182,
+          "symbol": "visit",
+          "untyped_parameters": [
+            "value"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 363,
+          "symbol": "publication_nodes",
+          "untyped_parameters": [
+            "value"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 249,
+          "symbol": "visit",
+          "untyped_parameters": [
+            "value"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 274,
+          "symbol": "bind",
+          "untyped_parameters": [
+            "value"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 447,
+          "symbol": "single",
+          "untyped_parameters": [
+            "row"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 457,
+          "symbol": "single",
+          "untyped_parameters": [
+            "row"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 464,
+          "symbol": "single",
+          "untyped_parameters": [
+            "row"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 471,
+          "symbol": "single",
+          "untyped_parameters": [
+            "row"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 476,
+          "symbol": "single",
+          "untyped_parameters": [
+            "row"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 483,
+          "symbol": "single",
+          "untyped_parameters": [
+            "row"
+          ],
+          "missing_return": true
+        }
+      ],
+      "get_lookup_sites": [
+        114,
+        141,
+        142,
+        142,
+        142,
+        143,
+        143,
+        151,
+        154,
+        155,
+        156,
+        156,
+        184,
+        186,
+        187,
+        187,
+        257,
+        276,
+        277,
+        277,
+        278,
+        279,
+        279,
+        291,
+        308,
+        309,
+        310,
+        311,
+        328,
+        328,
+        328,
+        330,
+        330,
+        335,
+        335,
+        368,
+        371,
+        383,
+        391,
+        411,
+        422,
+        450,
+        453,
+        454,
+        455,
+        460,
+        461,
+        462,
+        467,
+        468,
+        479,
+        495,
+        523,
+        523,
+        525,
+        526,
+        527,
+        528,
+        533,
+        536,
+        537,
+        538,
+        543,
+        546,
+        546,
+        552,
+        553,
+        554,
+        559,
+        562,
+        563,
+        568,
+        569,
+        574,
+        577,
+        577,
+        579,
+        580,
+        596,
+        612,
+        634,
+        639,
+        644,
+        656,
+        658,
+        659,
+        665,
+        666,
+        668,
+        668,
+        689,
+        691,
+        691
+      ],
+      "or_empty_sites": [
+        330,
+        335
+      ],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/sources/policy.py",
+      "lines": 22,
+      "missing_signature_sites": [],
+      "get_lookup_sites": [],
+      "or_empty_sites": [],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/sources/polling.py",
+      "lines": 1010,
+      "missing_signature_sites": [
+        {
+          "line": 34,
+          "symbol": "count_read",
+          "untyped_parameters": [
+            "state",
+            "name",
+            "ok",
+            "n"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 40,
+          "symbol": "instrument_changes",
+          "untyped_parameters": [
+            "snapshot",
+            "previous",
+            "feed",
+            "pages",
+            "found_on",
+            "completed_at"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 63,
+          "symbol": "kind",
+          "untyped_parameters": [
+            "current",
+            "old"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 66,
+          "symbol": "status",
+          "untyped_parameters": [
+            "entry"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 69,
+          "symbol": "action",
+          "untyped_parameters": [
+            "change"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 129,
+          "symbol": "__init__",
+          "untyped_parameters": [
+            "service"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 145,
+          "symbol": "lock",
+          "untyped_parameters": [
+            "mapping",
+            "key"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 154,
+          "symbol": "state",
+          "untyped_parameters": [
+            "key"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 158,
+          "symbol": "save",
+          "untyped_parameters": [
+            "key",
+            "state"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 205,
+          "symbol": "needs_detail",
+          "untyped_parameters": [
+            "sid",
+            "kind"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 209,
+          "symbol": "queue_rows",
+          "untyped_parameters": [
+            "current",
+            "coverage"
+          ],
+          "missing_return": false
+        },
+        {
+          "line": 277,
+          "symbol": "retain_page",
+          "untyped_parameters": [
+            "key",
+            "source",
+            "feed",
+            "rows",
+            "page_state",
+            "kind"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 294,
+          "symbol": "mark_request_start",
+          "untyped_parameters": [
+            "key"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 300,
+          "symbol": "_fetch_rows",
+          "untyped_parameters": [
+            "source",
+            "feed",
+            "key",
+            "state"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 379,
+          "symbol": "_json_history",
+          "untyped_parameters": [
+            "source",
+            "feed",
+            "key",
+            "payload",
+            "state"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 561,
+          "symbol": "acquire",
+          "untyped_parameters": [
+            "source",
+            "index",
+            "due_only",
+            "escalated"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 663,
+          "symbol": "report_entry_errors",
+          "untyped_parameters": [
+            "key",
+            "source",
+            "feed",
+            "errors",
+            "seen_at"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 691,
+          "symbol": "_empty_body",
+          "untyped_parameters": [
+            "url",
+            "detail_state"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 701,
+          "symbol": "_article",
+          "untyped_parameters": [
+            "source",
+            "feed",
+            "key",
+            "item"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 749,
+          "symbol": "_item",
+          "untyped_parameters": [
+            "source",
+            "feed",
+            "key",
+            "batch",
+            "original"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 800,
+          "symbol": "drain",
+          "untyped_parameters": [
+            "source",
+            "index",
+            "force",
+            "escalated"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 920,
+          "symbol": "poll_once",
+          "untyped_parameters": [
+            "source_id",
+            "due_only",
+            "escalated"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 940,
+          "symbol": "loop",
+          "untyped_parameters": [
+            "source",
+            "stop"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 994,
+          "symbol": "run",
+          "untyped_parameters": [
+            "stop"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 161,
+          "symbol": "annotate",
+          "untyped_parameters": [
+            "value"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 923,
+          "symbol": "one_feed",
+          "untyped_parameters": [
+            "index"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 405,
+          "symbol": "identity",
+          "untyped_parameters": [
+            "row"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 840,
+          "symbol": "process",
+          "untyped_parameters": [
+            "row",
+            "current_batch"
+          ],
+          "missing_return": true
+        }
+      ],
+      "get_lookup_sites": [
+        51,
+        56,
+        56,
+        58,
+        58,
+        67,
+        72,
+        156,
+        173,
+        183,
+        188,
+        200,
+        224,
+        235,
+        289,
+        290,
+        306,
+        323,
+        326,
+        326,
+        349,
+        350,
+        350,
+        354,
+        356,
+        357,
+        364,
+        388,
+        397,
+        398,
+        406,
+        410,
+        430,
+        439,
+        440,
+        441,
+        442,
+        444,
+        491,
+        513,
+        516,
+        544,
+        552,
+        566,
+        566,
+        601,
+        613,
+        627,
+        632,
+        633,
+        634,
+        635,
+        641,
+        659,
+        659,
+        672,
+        694,
+        695,
+        710,
+        711,
+        718,
+        733,
+        765,
+        765,
+        770,
+        788,
+        789,
+        807,
+        808,
+        814,
+        818,
+        822,
+        823,
+        827,
+        828,
+        829,
+        830,
+        855,
+        856,
+        865,
+        882,
+        887,
+        893,
+        909,
+        910,
+        911,
+        912,
+        914,
+        935,
+        948,
+        948,
+        958,
+        967,
+        968
+      ],
+      "or_empty_sites": [
+        67,
+        72,
+        156,
+        659,
+        672
+      ],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/sources/probe.py",
+      "lines": 100,
+      "missing_signature_sites": [
+        {
+          "line": 14,
+          "symbol": "probe_feeds",
+          "untyped_parameters": [
+            "service"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 18,
+          "symbol": "probe",
+          "untyped_parameters": [
+            "source",
+            "index",
+            "feed"
+          ],
+          "missing_return": true
+        }
+      ],
+      "get_lookup_sites": [
+        60
+      ],
+      "or_empty_sites": [],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/sources/rate_limits.py",
+      "lines": 21,
+      "missing_signature_sites": [],
+      "get_lookup_sites": [],
+      "or_empty_sites": [],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/sources/raw_store.py",
+      "lines": 102,
+      "missing_signature_sites": [],
+      "get_lookup_sites": [],
+      "or_empty_sites": [],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/sources/read_report.py",
+      "lines": 199,
+      "missing_signature_sites": [],
+      "get_lookup_sites": [
+        88,
+        98,
+        99,
+        99
+      ],
+      "or_empty_sites": [],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/sources/xsensor.py",
+      "lines": 281,
+      "missing_signature_sites": [],
+      "get_lookup_sites": [
+        214,
+        220
+      ],
+      "or_empty_sites": [],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/delivery.py",
+      "lines": 680,
+      "missing_signature_sites": [
+        {
+          "line": 67,
+          "symbol": "__init__",
+          "untyped_parameters": [
+            "repo",
+            "settings",
+            "http"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 76,
+          "symbol": "_all",
+          "untyped_parameters": [
+            "collection",
+            "filters"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 190,
+          "symbol": "_deliver_progress",
+          "untyped_parameters": [
+            "notice"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 638,
+          "symbol": "_activate_calls",
+          "untyped_parameters": [
+            "alert",
+            "sent_at"
+          ],
+          "missing_return": true
+        }
+      ],
+      "get_lookup_sites": [
+        99,
+        117,
+        129,
+        135,
+        170,
+        171,
+        200,
+        201,
+        206,
+        206,
+        211,
+        232,
+        235,
+        239,
+        244,
+        250,
+        263,
+        268,
+        275,
+        298,
+        300,
+        302,
+        305,
+        305,
+        323,
+        393,
+        402,
+        412,
+        428,
+        430,
+        430,
+        432,
+        432,
+        432,
+        436,
+        446,
+        476,
+        487,
+        488,
+        488,
+        493,
+        494,
+        497,
+        550,
+        551,
+        558,
+        561,
+        561,
+        563,
+        564,
+        565,
+        572,
+        577,
+        589,
+        590,
+        606,
+        607,
+        608,
+        614,
+        615,
+        616,
+        616,
+        616,
+        620,
+        621,
+        630,
+        640,
+        641,
+        644,
+        644,
+        651,
+        652
+      ],
+      "or_empty_sites": [
+        305,
+        432,
+        432,
+        432,
+        494,
+        561,
+        561,
+        614,
+        616,
+        616
+      ],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/scheduler.py",
+      "lines": 2004,
+      "missing_signature_sites": [
+        {
+          "line": 55,
+          "symbol": "field",
+          "untyped_parameters": [
+            "record",
+            "path"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 64,
+          "symbol": "same",
+          "untyped_parameters": [
+            "actual",
+            "target"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 75,
+          "symbol": "compare",
+          "untyped_parameters": [
+            "actual",
+            "op",
+            "target"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1860,
+          "symbol": "metric_value",
+          "untyped_parameters": [
+            "truth",
+            "event",
+            "metric",
+            "window"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1901,
+          "symbol": "depth_ratio",
+          "untyped_parameters": [
+            "liquidity"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1919,
+          "symbol": "funding_state",
+          "untyped_parameters": [
+            "derivatives"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1926,
+          "symbol": "file_digest",
+          "untyped_parameters": [
+            "path",
+            "cancelled"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1938,
+          "symbol": "verify_backup",
+          "untyped_parameters": [
+            "directory",
+            "require_complete",
+            "protected",
+            "cancelled"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1967,
+          "symbol": "resolve_backup_reference",
+          "untyped_parameters": [
+            "directory",
+            "reference",
+            "manifest"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1989,
+          "symbol": "protected_evidence_paths",
+          "untyped_parameters": [
+            "settings"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 2000,
+          "symbol": "is_protected_evidence_path",
+          "untyped_parameters": [
+            "path",
+            "protected"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 120,
+          "symbol": "__init__",
+          "untyped_parameters": [
+            "repo",
+            "market",
+            "truth"
+          ],
+          "missing_return": false
+        },
+        {
+          "line": 171,
+          "symbol": "run",
+          "untyped_parameters": [
+            "stop"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 183,
+          "symbol": "tick",
+          "untyped_parameters": [
+            "now"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 256,
+          "symbol": "ensure_reactions",
+          "untyped_parameters": [
+            "event",
+            "now"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 355,
+          "symbol": "expire_milestone",
+          "untyped_parameters": [
+            "event_id",
+            "now"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 385,
+          "symbol": "record_capture_gap",
+          "untyped_parameters": [
+            "event_id",
+            "token_id",
+            "label",
+            "anchor",
+            "expiry",
+            "now",
+            "job"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 415,
+          "symbol": "active_events",
+          "untyped_parameters": [
+            "now",
+            "states",
+            "include_recent_terminal"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 434,
+          "symbol": "analysis_tokens",
+          "untyped_parameters": [
+            "event"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 438,
+          "symbol": "analysis_set",
+          "untyped_parameters": [
+            "event"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 460,
+          "symbol": "latest_assessment",
+          "untyped_parameters": [
+            "event"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 471,
+          "symbol": "expire_calls",
+          "untyped_parameters": [
+            "now"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 508,
+          "symbol": "message",
+          "untyped_parameters": [
+            "kind",
+            "event_id",
+            "key",
+            "extra"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 518,
+          "symbol": "condition_requirements",
+          "untyped_parameters": [
+            "expression"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 526,
+          "symbol": "condition_truth",
+          "untyped_parameters": [
+            "event_id",
+            "token_id",
+            "cutoff",
+            "requirements"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 539,
+          "symbol": "eval_conditions",
+          "untyped_parameters": [
+            "payload"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 836,
+          "symbol": "milestone_check",
+          "untyped_parameters": [
+            "payload"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 862,
+          "symbol": "_reaction_window",
+          "untyped_parameters": [
+            "payload"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 876,
+          "symbol": "_benchmark_only",
+          "untyped_parameters": [
+            "payload"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 882,
+          "symbol": "reaction_capture",
+          "untyped_parameters": [
+            "payload",
+            "wait_for_slot"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 918,
+          "symbol": "detect_late_data",
+          "untyped_parameters": [
+            "now"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 988,
+          "symbol": "reaction_pack_id",
+          "untyped_parameters": [
+            "event_id",
+            "token_id"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1001,
+          "symbol": "_latest_reaction_revision",
+          "untyped_parameters": [
+            "payload"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1031,
+          "symbol": "_reaction_plan",
+          "untyped_parameters": [
+            "payload"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1071,
+          "symbol": "_yield_to_market_truth",
+          "untyped_parameters": [
+            "payload",
+            "checkpoint"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1093,
+          "symbol": "_measure_reaction",
+          "untyped_parameters": [
+            "payload"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1161,
+          "symbol": "_measure_benchmark",
+          "untyped_parameters": [
+            "payload",
+            "captured_stamp",
+            "start",
+            "end",
+            "start_stamp",
+            "end_stamp"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1209,
+          "symbol": "_commit_reaction",
+          "untyped_parameters": [
+            "plan",
+            "measured"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1265,
+          "symbol": "scout_proposal",
+          "untyped_parameters": [
+            "hook",
+            "concept",
+            "evidence",
+            "explanation",
+            "now"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1316,
+          "symbol": "detect_scout_hooks",
+          "untyped_parameters": [
+            "now"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1487,
+          "symbol": "demote",
+          "untyped_parameters": [
+            "now"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1509,
+          "symbol": "heartbeat",
+          "untyped_parameters": [
+            "now"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1603,
+          "symbol": "maintenance",
+          "untyped_parameters": [
+            "now",
+            "force",
+            "prune"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1745,
+          "symbol": "prune_snapshots",
+          "untyped_parameters": [
+            "target"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1756,
+          "symbol": "retention",
+          "untyped_parameters": [
+            "now",
+            "backup"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1788,
+          "symbol": "lifecycle",
+          "untyped_parameters": [
+            "now"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1799,
+          "symbol": "_advance_lifecycle",
+          "untyped_parameters": [
+            "event",
+            "now"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1870,
+          "symbol": "cohort_share",
+          "untyped_parameters": [
+            "side"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 286,
+          "symbol": "capture_job",
+          "untyped_parameters": [
+            "key"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 566,
+          "symbol": "bounded_truth",
+          "untyped_parameters": [
+            "key",
+            "requirements"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1329,
+          "symbol": "ref",
+          "untyped_parameters": [
+            "row"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1379,
+          "symbol": "candidates",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 1636,
+          "symbol": "dump_database",
+          "untyped_parameters": [
+            "url",
+            "name"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1681,
+          "symbol": "copy_evidence",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 348,
+          "symbol": "capture_pre",
+          "untyped_parameters": [
+            "payloads"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 630,
+          "symbol": "window_seconds",
+          "untyped_parameters": [
+            "expression"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 634,
+          "symbol": "persistence_windows",
+          "untyped_parameters": [
+            "expression"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 658,
+          "symbol": "evaluate",
+          "untyped_parameters": [
+            "expr",
+            "path"
+          ],
+          "missing_return": true
+        }
+      ],
+      "get_lookup_sites": [
+        78,
+        81,
+        141,
+        158,
+        196,
+        199,
+        200,
+        205,
+        205,
+        208,
+        219,
+        225,
+        230,
+        246,
+        265,
+        327,
+        358,
+        359,
+        362,
+        363,
+        369,
+        379,
+        379,
+        387,
+        404,
+        405,
+        430,
+        441,
+        441,
+        444,
+        452,
+        453,
+        456,
+        456,
+        461,
+        462,
+        467,
+        467,
+        480,
+        483,
+        524,
+        540,
+        556,
+        556,
+        557,
+        593,
+        596,
+        611,
+        623,
+        624,
+        625,
+        631,
+        639,
+        639,
+        655,
+        666,
+        666,
+        671,
+        673,
+        693,
+        699,
+        699,
+        700,
+        701,
+        701,
+        707,
+        721,
+        722,
+        730,
+        730,
+        755,
+        759,
+        759,
+        760,
+        761,
+        761,
+        770,
+        774,
+        774,
+        778,
+        809,
+        809,
+        810,
+        826,
+        826,
+        837,
+        842,
+        843,
+        843,
+        844,
+        844,
+        851,
+        853,
+        854,
+        855,
+        879,
+        883,
+        889,
+        890,
+        890,
+        891,
+        891,
+        891,
+        919,
+        923,
+        923,
+        923,
+        927,
+        932,
+        933,
+        934,
+        942,
+        942,
+        950,
+        951,
+        971,
+        971,
+        991,
+        1017,
+        1018,
+        1019,
+        1019,
+        1022,
+        1027,
+        1027,
+        1034,
+        1037,
+        1044,
+        1048,
+        1050,
+        1050,
+        1055,
+        1061,
+        1087,
+        1088,
+        1089,
+        1132,
+        1133,
+        1133,
+        1134,
+        1134,
+        1135,
+        1135,
+        1135,
+        1136,
+        1138,
+        1139,
+        1140,
+        1141,
+        1141,
+        1142,
+        1143,
+        1144,
+        1145,
+        1146,
+        1147,
+        1148,
+        1149,
+        1150,
+        1173,
+        1227,
+        1228,
+        1245,
+        1278,
+        1281,
+        1324,
+        1330,
+        1339,
+        1340,
+        1340,
+        1343,
+        1355,
+        1356,
+        1356,
+        1374,
+        1393,
+        1402,
+        1403,
+        1404,
+        1406,
+        1407,
+        1409,
+        1411,
+        1414,
+        1423,
+        1423,
+        1437,
+        1439,
+        1439,
+        1449,
+        1455,
+        1455,
+        1455,
+        1458,
+        1459,
+        1460,
+        1463,
+        1502,
+        1511,
+        1518,
+        1542,
+        1795,
+        1796,
+        1810,
+        1811,
+        1823,
+        1824,
+        1829,
+        1861,
+        1861,
+        1862,
+        1864,
+        1864,
+        1868,
+        1871,
+        1871,
+        1872,
+        1878,
+        1879,
+        1880,
+        1880,
+        1881,
+        1884,
+        1885,
+        1886,
+        1887,
+        1889,
+        1890,
+        1890,
+        1891,
+        1891,
+        1892,
+        1892,
+        1893,
+        1893,
+        1894,
+        1894,
+        1894,
+        1894,
+        1895,
+        1896,
+        1896,
+        1898,
+        1902,
+        1902,
+        1920,
+        1920,
+        1950
+      ],
+      "or_empty_sites": [
+        359,
+        1136,
+        1141,
+        1172,
+        1340,
+        1356,
+        1423,
+        1868,
+        1880
+      ],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/telegram_inbox.py",
+      "lines": 1291,
+      "missing_signature_sites": [
+        {
+          "line": 76,
+          "symbol": "days_text",
+          "untyped_parameters": [
+            "days"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 82,
+          "symbol": "closed_reason",
+          "untyped_parameters": [
+            "session"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 98,
+          "symbol": "not_received_reason",
+          "untyped_parameters": [
+            "item",
+            "history"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 111,
+          "symbol": "plain",
+          "untyped_parameters": [
+            "text"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 115,
+          "symbol": "utf16_length",
+          "untyped_parameters": [
+            "text"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 120,
+          "symbol": "utf16_prefix",
+          "untyped_parameters": [
+            "text",
+            "limit"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 132,
+          "symbol": "chunks",
+          "untyped_parameters": [
+            "text",
+            "limit"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 155,
+          "symbol": "question_message",
+          "untyped_parameters": [
+            "question"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 180,
+          "symbol": "media",
+          "untyped_parameters": [
+            "message"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 209,
+          "symbol": "question_id_for",
+          "untyped_parameters": [
+            "chat_id",
+            "message_id"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 213,
+          "symbol": "record_answer",
+          "untyped_parameters": [
+            "repo",
+            "question_id",
+            "text",
+            "status"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 244,
+          "symbol": "__init__",
+          "untyped_parameters": [
+            "repo",
+            "settings",
+            "http"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 255,
+          "symbol": "enabled",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 260,
+          "symbol": "url",
+          "untyped_parameters": [
+            "method"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 263,
+          "symbol": "call",
+          "untyped_parameters": [
+            "method",
+            "body"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 274,
+          "symbol": "download",
+          "untyped_parameters": [
+            "file_id"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 291,
+          "symbol": "run",
+          "untyped_parameters": [
+            "stop"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 316,
+          "symbol": "prune_files",
+          "untyped_parameters": [
+            "now"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 341,
+          "symbol": "close",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 345,
+          "symbol": "legacy_chat",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 357,
+          "symbol": "bot",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 362,
+          "symbol": "poll",
+          "untyped_parameters": [
+            "timeout"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 385,
+          "symbol": "store",
+          "untyped_parameters": [
+            "message",
+            "update_id"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 405,
+          "symbol": "mark",
+          "untyped_parameters": [
+            "row",
+            "status",
+            "extra"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 411,
+          "symbol": "sweep",
+          "untyped_parameters": [
+            "now"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 433,
+          "symbol": "defer",
+          "untyped_parameters": [
+            "row",
+            "error",
+            "now"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 450,
+          "symbol": "ops_chat",
+          "untyped_parameters": [
+            "chat_id"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 457,
+          "symbol": "authorized",
+          "untyped_parameters": [
+            "message"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 483,
+          "symbol": "handle",
+          "untyped_parameters": [
+            "row",
+            "now"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 575,
+          "symbol": "companion",
+          "untyped_parameters": [
+            "row",
+            "forwarded"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 601,
+          "symbol": "pair",
+          "untyped_parameters": [
+            "forward"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 609,
+          "symbol": "sent",
+          "untyped_parameters": [
+            "channel",
+            "filters"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 618,
+          "symbol": "sent_between",
+          "untyped_parameters": [
+            "channel",
+            "start",
+            "end"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 627,
+          "symbol": "card_target",
+          "untyped_parameters": [
+            "delivery"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 654,
+          "symbol": "answer_target",
+          "untyped_parameters": [
+            "delivery"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 667,
+          "symbol": "reply_target",
+          "untyped_parameters": [
+            "chat_id",
+            "reply"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 688,
+          "symbol": "message_target",
+          "untyped_parameters": [
+            "row"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 701,
+          "symbol": "ops_message_target",
+          "untyped_parameters": [
+            "chat_id",
+            "ref"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 717,
+          "symbol": "item_session",
+          "untyped_parameters": [
+            "item_id",
+            "events"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 736,
+          "symbol": "item_events",
+          "untyped_parameters": [
+            "item_id"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 756,
+          "symbol": "ops_question",
+          "untyped_parameters": [
+            "row",
+            "target"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 792,
+          "symbol": "forwarded_target",
+          "untyped_parameters": [
+            "message",
+            "bot"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 850,
+          "symbol": "send",
+          "untyped_parameters": [
+            "chat_id",
+            "text",
+            "reply_to"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 856,
+          "symbol": "send_document",
+          "untyped_parameters": [
+            "chat_id",
+            "filename",
+            "content",
+            "caption",
+            "reply_to"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 874,
+          "symbol": "send_session_file",
+          "untyped_parameters": [
+            "question_id",
+            "call_id",
+            "filename",
+            "content",
+            "caption"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 968,
+          "symbol": "notice",
+          "untyped_parameters": [
+            "row",
+            "text",
+            "status",
+            "also",
+            "subject",
+            "extra"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1026,
+          "symbol": "prompt",
+          "untyped_parameters": [
+            "row",
+            "target"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1101,
+          "symbol": "attachments",
+          "untyped_parameters": [
+            "row",
+            "question_id",
+            "session_id",
+            "messages"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 1139,
+          "symbol": "question",
+          "untyped_parameters": [
+            "row",
+            "target",
+            "forwarded"
+          ],
+          "missing_return": true
+        }
+      ],
+      "get_lookup_sites": [
+        84,
+        86,
+        87,
+        87,
+        89,
+        89,
+        91,
+        91,
+        93,
+        93,
+        101,
+        101,
+        157,
+        158,
+        160,
+        162,
+        164,
+        165,
+        167,
+        183,
+        189,
+        189,
+        189,
+        194,
+        195,
+        200,
+        202,
+        204,
+        220,
+        223,
+        266,
+        267,
+        267,
+        281,
+        283,
+        322,
+        332,
+        333,
+        334,
+        347,
+        363,
+        364,
+        369,
+        370,
+        370,
+        387,
+        395,
+        395,
+        397,
+        398,
+        407,
+        416,
+        418,
+        420,
+        439,
+        442,
+        461,
+        463,
+        463,
+        466,
+        473,
+        474,
+        474,
+        492,
+        506,
+        507,
+        508,
+        518,
+        548,
+        559,
+        559,
+        566,
+        577,
+        593,
+        593,
+        597,
+        615,
+        624,
+        628,
+        631,
+        636,
+        648,
+        650,
+        655,
+        659,
+        661,
+        663,
+        663,
+        664,
+        672,
+        681,
+        681,
+        682,
+        684,
+        690,
+        696,
+        697,
+        698,
+        709,
+        712,
+        712,
+        713,
+        713,
+        714,
+        722,
+        727,
+        727,
+        728,
+        728,
+        729,
+        742,
+        749,
+        751,
+        752,
+        774,
+        776,
+        794,
+        795,
+        795,
+        795,
+        796,
+        799,
+        801,
+        802,
+        802,
+        805,
+        805,
+        812,
+        813,
+        829,
+        831,
+        842,
+        842,
+        868,
+        870,
+        870,
+        876,
+        919,
+        953,
+        1016,
+        1035,
+        1063,
+        1088,
+        1098,
+        1109,
+        1145,
+        1152,
+        1161,
+        1177,
+        1185,
+        1188,
+        1190,
+        1192,
+        1192,
+        1203,
+        1203,
+        1205,
+        1251,
+        1257,
+        1266,
+        1267,
+        1283
+      ],
+      "or_empty_sites": [
+        86,
+        101,
+        157,
+        165,
+        267,
+        363,
+        395,
+        463,
+        506,
+        559,
+        698,
+        727,
+        728,
+        795,
+        802,
+        805,
+        870,
+        991
+      ],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/telegram_rich.py",
+      "lines": 272,
+      "missing_signature_sites": [],
+      "get_lookup_sites": [
+        160,
+        168
+      ],
+      "or_empty_sites": [],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/ops_cards.py",
+      "lines": 548,
+      "missing_signature_sites": [
+        {
+          "line": 54,
+          "symbol": "plain",
+          "untyped_parameters": [
+            "value",
+            "limit"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 64,
+          "symbol": "source_summary",
+          "untyped_parameters": [
+            "item"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 103,
+          "symbol": "time_of",
+          "untyped_parameters": [
+            "record",
+            "field"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 108,
+          "symbol": "reason_text",
+          "untyped_parameters": [
+            "reason"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 112,
+          "symbol": "telegram_link",
+          "untyped_parameters": [
+            "chat",
+            "message"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 121,
+          "symbol": "safe_link",
+          "untyped_parameters": [
+            "value"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 138,
+          "symbol": "snapshot",
+          "untyped_parameters": [
+            "repo",
+            "item_id"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 226,
+          "symbol": "outcome",
+          "untyped_parameters": [
+            "data"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 510,
+          "symbol": "render",
+          "untyped_parameters": [
+            "data"
+          ],
+          "missing_return": true
+        }
+      ],
+      "get_lookup_sites": [
+        65,
+        66,
+        66,
+        66,
+        72,
+        72,
+        75,
+        76,
+        77,
+        78,
+        86,
+        86,
+        86,
+        86,
+        86,
+        86,
+        88,
+        88,
+        104,
+        109,
+        139,
+        153,
+        153,
+        156,
+        156,
+        157,
+        159,
+        162,
+        163,
+        228,
+        229,
+        232,
+        233,
+        236,
+        241,
+        242,
+        242,
+        245,
+        247,
+        267,
+        270,
+        272,
+        285,
+        285,
+        295,
+        298,
+        310,
+        313,
+        313,
+        317,
+        319,
+        344,
+        370,
+        371,
+        371,
+        371,
+        372,
+        393,
+        394,
+        397,
+        401,
+        414,
+        427,
+        455,
+        456,
+        514,
+        514,
+        525,
+        527,
+        527,
+        527,
+        528,
+        537,
+        540,
+        542
+      ],
+      "or_empty_sites": [
+        160,
+        228,
+        245,
+        371,
+        394
+      ],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/ops_entry_errors.py",
+      "lines": 211,
+      "missing_signature_sites": [],
+      "get_lookup_sites": [
+        86,
+        165
+      ],
+      "or_empty_sites": [],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/ops_progress.py",
+      "lines": 364,
+      "missing_signature_sites": [],
+      "get_lookup_sites": [
+        88,
+        101,
+        305
+      ],
+      "or_empty_sites": [],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/cli.py",
+      "lines": 639,
+      "missing_signature_sites": [
+        {
+          "line": 23,
+          "symbol": "output",
+          "untyped_parameters": [
+            "value"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 27,
+          "symbol": "run_db",
+          "untyped_parameters": [
+            "fn",
+            "database_url",
+            "replay"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 62,
+          "symbol": "main",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 67,
+          "symbol": "serve",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 96,
+          "symbol": "db",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 101,
+          "symbol": "migrate",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 115,
+          "symbol": "clickhouse_schema",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 131,
+          "symbol": "review",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 135,
+          "symbol": "page_cursor",
+          "untyped_parameters": [
+            "value"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 154,
+          "symbol": "review_list",
+          "untyped_parameters": [
+            "limit",
+            "event_id",
+            "since",
+            "until",
+            "after"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 174,
+          "symbol": "review_show",
+          "untyped_parameters": [
+            "subject",
+            "since",
+            "until",
+            "limit",
+            "after"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 192,
+          "symbol": "review_metrics",
+          "untyped_parameters": [
+            "since",
+            "until",
+            "checks_file"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 232,
+          "symbol": "review_label",
+          "untyped_parameters": [
+            "subject",
+            "label",
+            "miss_reason",
+            "notes",
+            "reviewer",
+            "version"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 278,
+          "symbol": "reaction",
+          "untyped_parameters": [
+            "event_id",
+            "token_id",
+            "recapture",
+            "reason"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 325,
+          "symbol": "scout",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 330,
+          "symbol": "scout_list",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 340,
+          "symbol": "scout_decide",
+          "untyped_parameters": [
+            "prp_id",
+            "action"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 355,
+          "symbol": "sources",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 362,
+          "symbol": "sources_check",
+          "untyped_parameters": [
+            "probe",
+            "accounts"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 377,
+          "symbol": "coverage",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 396,
+          "symbol": "replay",
+          "untyped_parameters": [
+            "fixture_id",
+            "database_url"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 408,
+          "symbol": "bundle",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 423,
+          "symbol": "bundle_reproduce",
+          "untyped_parameters": [
+            "sha",
+            "database_url",
+            "mode"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 624,
+          "symbol": "backup",
+          "untyped_parameters": [
+            "force",
+            "prune"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 28,
+          "symbol": "execute",
+          "untyped_parameters": [],
+          "missing_return": true
+        },
+        {
+          "line": 71,
+          "symbol": "launch",
+          "untyped_parameters": [
+            "repo",
+            "settings"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 102,
+          "symbol": "command",
+          "untyped_parameters": [
+            "repo",
+            "settings"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 118,
+          "symbol": "command",
+          "untyped_parameters": [
+            "repo",
+            "settings"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 158,
+          "symbol": "command",
+          "untyped_parameters": [
+            "repo",
+            "settings"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 178,
+          "symbol": "command",
+          "untyped_parameters": [
+            "repo",
+            "settings"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 199,
+          "symbol": "command",
+          "untyped_parameters": [
+            "repo",
+            "settings"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 236,
+          "symbol": "command",
+          "untyped_parameters": [
+            "repo",
+            "settings"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 282,
+          "symbol": "command",
+          "untyped_parameters": [
+            "repo",
+            "settings"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 331,
+          "symbol": "command",
+          "untyped_parameters": [
+            "repo",
+            "settings"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 341,
+          "symbol": "command",
+          "untyped_parameters": [
+            "repo",
+            "settings"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 363,
+          "symbol": "command",
+          "untyped_parameters": [
+            "repo",
+            "settings"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 378,
+          "symbol": "command",
+          "untyped_parameters": [
+            "repo",
+            "settings"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 399,
+          "symbol": "command",
+          "untyped_parameters": [
+            "repo",
+            "settings"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 424,
+          "symbol": "command",
+          "untyped_parameters": [
+            "repo",
+            "settings"
+          ],
+          "missing_return": true
+        },
+        {
+          "line": 627,
+          "symbol": "command",
+          "untyped_parameters": [
+            "repo",
+            "settings"
+          ],
+          "missing_return": true
+        }
+      ],
+      "get_lookup_sites": [
+        237,
+        342
+      ],
+      "or_empty_sites": [],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/request_budget.py",
+      "lines": 280,
+      "missing_signature_sites": [],
+      "get_lookup_sites": [
+        235,
+        238,
+        261
+      ],
+      "or_empty_sites": [],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    },
+    {
+      "path": "src/tank/http_admission.py",
+      "lines": 134,
+      "missing_signature_sites": [],
+      "get_lookup_sites": [],
+      "or_empty_sites": [],
+      "review_status": "Signature sites require full domain/caller review; lookup inventory is not an assertion that every associative lookup is unjustified."
+    }
+  ]
+}

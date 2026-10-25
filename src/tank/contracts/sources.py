@@ -461,3 +461,47 @@ class SourceApiLimitsConfiguration(DomainModel):
         if len(providers) != len(set(providers)):
             raise ValueError("API limit configuration requires distinct provider rules")
         return self
+
+
+class FilingTokenLabel(DomainModel):
+    name: str
+    symbol: str = Field(min_length=1)
+
+
+class FilingEntityLabel(DomainModel):
+    kind: Literal["PROTOCOL", "OTHER", "EXCHANGE", "COMPANY", "REGULATOR"]
+    names: list[str]
+    aliases: list[str]
+    name: str | None
+
+
+class FilingRegistryDocument(DomainModel):
+    """Only the two external JSON namespaces needed to project filing labels."""
+
+    tokens: list[dict[str, JsonValue]]
+    entities: list[dict[str, JsonValue]]
+
+
+class SourceFilingRegistryView(DomainModel):
+    tokens: list[FilingTokenLabel]
+    entities: list[FilingEntityLabel]
+
+    @classmethod
+    def from_document(cls, document: dict[str, JsonValue]) -> Self:
+        wire = FilingRegistryDocument.model_validate(
+            {key: document[key] for key in ("tokens", "entities") if key in document}
+        )
+        token_labels = [
+            FilingTokenLabel.model_validate({key: token[key] for key in ("name", "symbol") if key in token})
+            for token in wire.tokens
+        ]
+        entity_labels = [
+            FilingEntityLabel.model_validate(
+                {
+                    **{key: entity[key] for key in ("kind", "names", "aliases") if key in entity},
+                    "name": entity.get("name"),
+                }
+            )
+            for entity in wire.entities
+        ]
+        return cls(tokens=token_labels, entities=entity_labels)

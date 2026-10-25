@@ -342,3 +342,73 @@ than mocking an acquire call echo. Strict mypy passes the transport, policy and
 admission tests; Ruff passes all touched source/tests. Existing source checkpoint
 mapping/workflow and the remaining SourceService methods still require their full
 domain migration and typing; this activation does not claim that work complete.
+
+
+### Filing label projection
+
+`SourceFilingRegistryView.from_document` now validates required token names/symbols
+and entity kinds/names/aliases before the filing decision. Missing namespaces or
+labels cannot quietly produce an incomplete relevance pattern. Its
+`FilingRegistryDocument.tokens/entities` maps exist solely at the named external
+configuration projection boundary; the actual pattern algorithm consumes strict
+`FilingTokenLabel` and `FilingEntityLabel` objects. The entity's secondary
+`name: str | None` is genuinely optional in the canonical registry. It is consulted
+only when the required names list is explicitly empty. Regulators remain excluded
+and ambiguous bare names retain the original context policy. The compiled pattern
+uses a cached property bound to the service's captured immutable configuration;
+the old dynamic getattr tuple/version cache has been removed.
+
+Evidence: 136 source/contract units pass in 2.51s, zero skips, including missing
+required namespaces/token labels/entity names and existing real SEC identity/date
+boundary tests. The contracts module is strict-mypy clean; Ruff passes touched
+source/tests. This narrow projection does not claim to replace the canonical
+aggregate registry schema or resolution algorithms.
+
+
+### Typed HTTP reader and conditional checkpoint boundary
+
+`SourceHttpReader.read` returns the closed `FetchedContent | NotModified` outcome,
+rather than a copied whole checkpoint dictionary. All polling/article/CMS callers
+now consume its explicit payload and immutable receipt; serialization is confined
+to their still-existing checkpoint persistence adapter. `FetchEvidence` contains
+the actual response digest, status, URL and collection clock. `FetchReceipt` adds
+optional HTTP cache validators. Only the evidence projection may be persisted
+before parsing. ETag/Last-Modified commit remains governed by successful acquisition
+and processing, preserving malformed-entry retry/dedup behavior. A 304 is an
+explicit no-new-content outcome and creates no invented response receipt.
+
+`ConditionalCheckpointWire` validates the narrow storage-wire fields before
+projecting `HttpCheckpointProjection`; generic error-record JSON exists only in
+that storage adapter and is reduced to a typed processing-error disposition.
+The reader's application state contains no generic error records or workflow
+checkpoint map. Absent ETag/Last-Modified are genuine optional response headers;
+absent article/entry error collections are the actual fresh/transport-only
+checkpoint phase. Their defaults never fabricate source identity, time or content.
+The core projection's empty defaults represent a fresh conditional-cache state.
+
+`SourceHttpReader.error` is absent until an actual failed attempt; reaching retry
+exhaustion without an error is an explicit invariant failure. The four-attempt
+retry cap and 2/4/8-second backoff remain unchanged. Retry-After can be absent,
+an explicit finite nonnegative duration, or a valid publication-format HTTP date;
+invalid values retain backoff rather than invent a date. Header lookups are
+optional HTTP protocol fields. Request-start callbacks remain genuinely optional
+for detail reads. Fixed HTTP/network failure messages keep query credentials out
+of persisted/logged error text while retaining the actual HTTP response for the
+existing verified 404-only CMS recovery path.
+
+Evidence: 172 source/contract units passed in 4.28s before the final wire/core
+projection split, including real CMS recovery, malformed siblings, conditional
+GET and retry evidence tests. New reader/tests are strict-mypy clean; final scoped
+verification follows this split. The exact pre-reader missing-signature/lookup
+inventory is retained in ingestion-open-inventory.json (snapshot a97bde8); its
+lookup counts are review candidates, not blanket defect classifications.
+Full polling checkpoint/domain migration remains open.
+
+
+Final reader activation proof: 172 source/contract units pass in 3.19s after the
+wire/core split and explicit NotModified branches. Detail/history reads reject
+unexpected 304 outcomes before accessing a required receipt. Initial acquisition
+and optional head-refresh 304 outcomes retain their explicit no-content branch.
+Required receipt digest/status/response URL/fetch clock accesses no longer use
+empty receipt maps or invented current-time fallbacks. Strict reader/test mypy
+and touched Ruff checks pass. Full pinned services verification follows the commit.
