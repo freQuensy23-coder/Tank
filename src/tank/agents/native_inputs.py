@@ -54,11 +54,11 @@ type NativeSentInput = Annotated[NativeSentUserMessage | NativeSentToolResult, F
 class NativeInputResponse(DomainModel):
     data: list[NativeSentInput] | None = None
 
-    @classmethod
-    def from_wire(cls, payload: dict[str, JsonValue]) -> Self:
-        if "data" in payload and payload["data"] is None:
+    @model_validator(mode="after")
+    def reported_data_is_not_null(self) -> Self:
+        if "data" in self.model_fields_set and self.data is None:
             raise ValueError("Native input acknowledgment data cannot be null")
-        return cls.model_validate(payload)
+        return self
 
 
 class AcceptedNativeInput(DomainModel):
@@ -78,7 +78,7 @@ def parse_native_input(payload: dict[str, JsonValue]) -> NativeInput:
 
 
 def observe_native_input(payload: dict[str, JsonValue], expected: NativeInput) -> NativeInputAcknowledgment:
-    response = NativeInputResponse.from_wire(payload)
+    response = NativeInputResponse.model_validate(payload)
     if response.data is None:
         return UnreportedNativeInput(status="UNREPORTED")
     if not response.data:

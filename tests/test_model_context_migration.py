@@ -8,10 +8,12 @@ import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture, source_record_fixture
 from native_input_fixtures import acknowledge_native_input
+from native_session_fixtures import created_native_session, native_session_record
 from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_http_admission
 
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
+from tank.agents.native_sessions import NativeSessionResolution
 from tank.agents.sessions import SessionService
 from tank.analysis.page_access import LivePageAccess
 from tank.delivery import DeliveryDeferred
@@ -293,19 +295,27 @@ async def test_old_remote_snapshot_is_not_recovered_as_a_new_context(legacy) -> 
                 200,
                 json={
                     "data": [
-                        {
-                            "id": "old_remote",
-                            "metadata": {"tank_identity": sha256({"identity": item_id, "scout": False})},
-                        }
-                    ]
+                        native_session_record(
+                            "old_remote",
+                            agent_id=settings.openma().agent_id,
+                            environment_id=settings.openma().environment_id,
+                            metadata={"tank_identity": sha256({"identity": item_id, "scout": False})},
+                            model_id=settings.openma_model,
+                        )
+                    ],
+                    "next_page": None,
                 },
             )
         requests.append(json.loads(request.content))
-        return httpx.Response(200, json={"id": "new_remote"})
+        return httpx.Response(200, json=created_native_session(request, "new_remote"))
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         current = await SessionService(
             repo, settings, None, http=http, versions=declared_versions_fixture()
-        ).resolve({"kind": "NEW_ITEM", "item_id": item_id})
+        ).resolve(
+            NativeSessionResolution.from_wire(
+                {"kind": "NEW_ITEM", "item_id": item_id}, role="ANALYST", replay=False
+            )
+        )
     assert current["session_id"] == "new_remote" and current["model_context_version"] == CONTEXT_VERSION
     assert len(requests) == 1

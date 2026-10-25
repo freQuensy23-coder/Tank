@@ -8,6 +8,7 @@ from pydantic import JsonValue, ValidationError
 from tank.agents.native_inputs import (
     AcceptedNativeInput,
     NativeInputRequest,
+    NativeInputResponse,
     NativeUserMessage,
     UnreportedNativeInput,
     observe_native_input,
@@ -122,3 +123,9 @@ def test_one_executable_input_is_serialized_without_invented_optional_fields() -
         NativeInputRequest(events=[])
     with pytest.raises(ValidationError):
         NativeInputRequest(events=[posted, posted])
+
+
+def test_acknowledgment_model_itself_rejects_reported_null_but_accepts_omission() -> None:
+    assert NativeInputResponse().data is None
+    with pytest.raises(ValidationError, match="cannot be null"):
+        NativeInputResponse(data=None)

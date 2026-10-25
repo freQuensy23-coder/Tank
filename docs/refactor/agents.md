@@ -614,3 +614,51 @@ id-only endpoint; after that fixture was corrected, its actual PostgreSQL case
 passed independently. Default mypy accepts sessions.py; whole SessionService and
 the legacy consumer test modules are not independent strict-complete. Discovery,
 creation, native history and complete durable session/journal typing remain open.
+
+## Native discovery, creation and input acknowledgment qualification
+
+SessionService.resolve now consumes NativeSessionResolution. The required
+NativeSessionEndpoint port, NativeSessionDiscovery coordinator and closed
+deployment/create/page/observation models separate HTTP wire handling from service
+facts. Native identity config validates the consumed deployment fields; admission
+capacity remains a Runtime/admission responsibility. Cached historical sessions
+retain genuinely missing replay metadata without reconstruction. Live lookup skips
+known replay sessions, and explicit recorded bindings must match their run,
+evidence digest, source session and cutoff before reuse. Opening-source lookup
+cannot borrow an undeclared replay lineage for live input; an explicit cutoff
+stays bound even without an evidence digest. These are caller identity labels,
+not a grant of recording or network authority.
+
+Discovery validates consumed page and native prompt facts, scans actual cursors,
+and refuses ambiguous identities/cursors. A recovered or newly created resource
+must confirm its requested agent/environment and every managed identity/replay
+metadata value before local session storage or initial input. Provider metadata
+extensions remain honest observations. Actual prompt JSON stays inside the adapter
+for canonical fingerprinting, preserving extension values and numeric types;
+services receive AgentProvenance rather than a remote dictionary. A typed identity
+marker preserves the prior live/replay canonical wire hashes exactly.
+
+Configured effort is recorded as configured_effort. effort comes only from the
+optional native model.effort observation, with explicit absence reason/basis.
+Malformed reported effort or extension shapes refuse; configured intent cannot
+become observed confirmation. Real write-boundary tests prove wrong agent,
+environment, identity and replay readbacks leave local sessions/tool calls absent
+and the source record unchanged. Omitted input acknowledgments remain explicit,
+while malformed reports cannot commit acceptance or retry lineage.
+
+Final owner proof: 472 unit cases passed in 26.84 seconds, p90 0.494 seconds,
+maximum 4.898 seconds; all 78 actual integrations passed in 38.91 seconds, with
+zero skips. Six new native model/test/helper targets pass independent strict mypy
+with both src and tests on MYPYPATH and the official Pydantic plugin. Ruff,
+formatting and the source-comment policy pass. Configured whole-source mypy has
+one existing analysis-owned truth cache annotation error; native/session consumers
+default-check clean. The exact logs are agents-native-ready2-{unit,integration}
+and metrics JSON in the owned worktree.
+
+This is a complete bounded native client increment, not a whole SessionService
+completion. Private session/journal state still uses repository JSON, and native
+GET/readback, history/execution lifecycle, usage, tool orchestration and stream
+state still need their full typed domain migration. The refreshed inventory
+records every remaining unannotated owned function; maps/defaults there remain
+implementation work rather than approved exceptions. The 42 assigned OpenMA
+vendor programs remain a separate implementation backlog.

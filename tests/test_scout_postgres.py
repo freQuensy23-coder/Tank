@@ -14,12 +14,15 @@ import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture
 from native_input_fixtures import acknowledge_native_input
+from native_session_fixtures import created_native_session
+from pydantic import JsonValue
 from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_http_admission
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
 from tank.analysis.page_access import LivePageAccess
+from tank.contracts.json import decode_json
 from tank.event_tools import EventToolService
 from tank.runtime_contracts import ScoutReviewJob
 from tank.settings import Settings
@@ -66,33 +69,24 @@ async def snapshot(dsn):
         return state
 
 
-def native_session(session_id):
-    return {
-        "id": session_id,
-        "agent": {
-            "id": "native-scout-fixture",
-            "version": 1,
-            "system": "Resolved synthetic instructions",
-            "skills": [],
-            "tools": [],
-            "model": {"id": "gpt-6.1-sol"},
-        },
-    }
-
-
 class FakeOpenMA:
     def __init__(self) -> None:
-        self.posted = []
+        self.posted: list[tuple[str, dict[str, JsonValue]]] = []
+        self.sessions: dict[str, dict[str, JsonValue]] = {}
 
-    def __call__(self, request: pytest.FixtureRequest):
+    def __call__(self, request: httpx.Request) -> httpx.Response:
         if request.method == "GET" and request.url.path == "/v1/sessions":
-            return httpx.Response(200, json={"data": [], "next_page": None})
+            return httpx.Response(200, json={"data": list(self.sessions.values()), "next_page": None})
         if request.method == "GET":
-            return httpx.Response(200, json=native_session(request.url.path.split("/")[3]))
-        body = json.loads(request.content)
+            return httpx.Response(200, json=self.sessions[request.url.path.split("/")[3]])
+        body = decode_json(request.content)
+        assert isinstance(body, dict)
         self.posted.append((request.url.path, body))
         if request.url.path == "/v1/sessions":
-            return httpx.Response(200, json={"id": "ses_scout_" + uuid.uuid4().hex[:8]})
+            identity = "ses_scout_" + uuid.uuid4().hex[:8]
+            observed = created_native_session(request, identity)
+            self.sessions[identity] = observed
+            return httpx.Response(200, json=observed)
         return httpx.Response(200, json=acknowledge_native_input(request, "in_" + uuid.uuid4().hex[:8]))
 
 
@@ -108,6 +102,7 @@ def scout_settings(tmp_path: Path):
                 "environment_id": "env_analysis",
                 "max_running_sessions": 2,
                 "prompt_version": "test",
+                "reasoning_effort": "medium",
             }
         return config(name)
 
