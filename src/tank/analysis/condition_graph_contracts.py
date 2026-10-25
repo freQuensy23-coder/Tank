@@ -22,7 +22,7 @@ from tank.analysis.statistics_contracts import (
 )
 from tank.contracts import DomainModel
 from tank.contracts.provenance import ResolvedVersionIdentity
-from tank.contracts.registry import FundamentalsEvidence
+from tank.contracts.registry import FundamentalsEvidence, LendingPool
 from tank.contracts.scalars import TrueFlag, require_integer, require_number
 from tank.market.book_contracts import BookLevel
 from tank.market.trade_contracts import QuoteUsdValuation
@@ -5344,3 +5344,168 @@ class UnavailableConditionWalletFlows(DomainModel):
 
 
 type ConditionWalletFlows = CapturedConditionWalletFlows | UnavailableConditionWalletFlows
+
+
+class ConditionLendingCatalogue(DomainModel):
+    source_url: str = Field(min_length=1, pattern=r"\S")
+    captured_at_label: str = Field(min_length=1, pattern=r"\S")
+    source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class RegisteredConditionLendingIdentity(DomainModel):
+    status: Literal["REGISTERED"]
+    pool: LendingPool
+    catalogue: ConditionLendingCatalogue
+    capture_identity: RecordedConditionCaptureIdentity
+
+    @model_validator(mode="after")
+    def actual_pool_identity(self) -> Self:
+        if (
+            not self.pool.project.strip()
+            or not self.pool.chain.strip()
+            or not self.pool.underlying_tokens
+            or any(not contract.strip() for contract in self.pool.underlying_tokens)
+        ):
+            raise ValueError(
+                "Registered lending identity requires actual project/chain/underlying contract scope"
+            )
+        return self
+
+
+class UnrecordedConditionLendingIdentity(DomainModel):
+    status: Literal["UNRECORDED"]
+    reason: Literal["REGISTRY_POOL_IDENTITY_NOT_CAPTURED"]
+
+
+class ConditionLendingUtilization(DomainModel):
+    value: Decimal | None = Field(ge=0)
+    reason: Literal["INCOMPLETE", "ZERO_SUPPLY"] | None
+
+    @model_validator(mode="after")
+    def actual_utilization(self) -> Self:
+        if (self.value is None) != (self.reason is not None):
+            raise ValueError("Unavailable lending utilization requires actual missing/zero supply inputs")
+        return self
+
+
+class ConditionLendingUtilizationChange(DomainModel):
+    value: float | None
+    reason: Literal["INCOMPLETE", "ZERO_SUPPLY", "NOT_ESTIMABLE"] | None
+
+    @model_validator(mode="after")
+    def actual_change(self) -> Self:
+        if (self.value is None) != (self.reason is not None):
+            raise ValueError("Unavailable lending change requires the actual missing comparison cause")
+        return self
+
+
+class UnavailableConditionBorrowAPR(DomainModel):
+    value: None
+    reason: Literal["APY_IS_NOT_APR"]
+
+
+class ConditionLendingPoolCalculation(DomainModel):
+    pool_id: str = Field(min_length=1, pattern=r"\S")
+    identity: RegisteredConditionLendingIdentity | UnrecordedConditionLendingIdentity
+    total_supply_usd: Decimal | None = Field(ge=0)
+    total_borrow_usd: Decimal | None = Field(ge=0)
+    previous_utilization: Decimal | None = Field(ge=0)
+    borrow_apy: float | None
+
+    @model_validator(mode="after")
+    def actual_registered_pool(self) -> Self:
+        if (
+            isinstance(self.identity, RegisteredConditionLendingIdentity)
+            and self.identity.pool.pool_id != self.pool_id
+        ):
+            raise ValueError("Lending utilization cannot borrow another registered pool identity")
+        return self
+
+    def utilization(self) -> ConditionLendingUtilization:
+        validated = type(self).model_validate(self)
+        supply, borrowed = validated.total_supply_usd, validated.total_borrow_usd
+        if supply is None or borrowed is None:
+            return ConditionLendingUtilization(value=None, reason="INCOMPLETE")
+        if supply == 0:
+            return ConditionLendingUtilization(value=None, reason="ZERO_SUPPLY")
+        span = (
+            max(supply.adjusted(), borrowed.adjusted())
+            - min(int(supply.as_tuple().exponent), int(borrowed.as_tuple().exponent))
+            + 1
+        )
+        with localcontext() as context:
+            context.prec = max(128, 2 * span + 16)
+            value = borrowed / supply
+        return ConditionLendingUtilization(value=value, reason=None)
+
+    def change(self) -> ConditionLendingUtilizationChange:
+        validated = type(self).model_validate(self)
+        current = validated.utilization()
+        if current.value is None:
+            reason = current.reason
+            if reason is None:
+                raise ValueError("Unknown lending utilization requires its actual cause")
+            return ConditionLendingUtilizationChange(value=None, reason=reason)
+        previous = validated.previous_utilization
+        if previous is None:
+            return ConditionLendingUtilizationChange(value=None, reason="INCOMPLETE")
+        current_float, previous_float = float(current.value), float(previous)
+        if not isfinite(current_float) or not isfinite(previous_float):
+            return ConditionLendingUtilizationChange(value=None, reason="NOT_ESTIMABLE")
+        value = current_float - previous_float
+        if not isfinite(value):
+            return ConditionLendingUtilizationChange(value=None, reason="NOT_ESTIMABLE")
+        return ConditionLendingUtilizationChange(value=value, reason=None)
+
+    def borrow_apr(self) -> UnavailableConditionBorrowAPR:
+        type(self).model_validate(self)
+        return UnavailableConditionBorrowAPR(value=None, reason="APY_IS_NOT_APR")
+
+
+class CapturedConditionLending(DomainModel):
+    status: Literal["CAPTURED_POOLS"]
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    requested_window: Literal["W24H"]
+    cutoff: datetime
+    observed_at: Timestamp
+    previous_observed_at: Timestamp
+    current_visibility: ConditionReceiptVisibility
+    previous_visibility: ConditionReceiptVisibility
+    pools: tuple[ConditionLendingPoolCalculation, ...] = Field(min_length=1)
+    unmapped_pool_ids: tuple[str, ...]
+
+    @field_validator("cutoff")
+    @classmethod
+    def aware_cutoff(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_lending_scope(self) -> Self:
+        current, previous = self.observed_at.value, self.previous_observed_at.value
+        if current is None or parse_iso_time(current) > self.cutoff:
+            raise ValueError("Captured lending requires its actual nonfuture source timestamp")
+        if any(pool.previous_utilization is not None for pool in self.pools) and previous is None:
+            raise ValueError("Observed utilization change requires its actual prior capture timestamp")
+        if previous is not None and (
+            parse_iso_time(previous) > parse_iso_time(current)
+            or parse_iso_time(previous) > self.cutoff - timedelta(days=1)
+        ):
+            raise ValueError("Lending comparison cannot borrow a future prior/as-of observation")
+        if self.current_visibility.assembled_at != self.previous_visibility.assembled_at:
+            raise ValueError("Lending comparison requires one actual snapshot assembly clock")
+        keys = {pool.pool_id for pool in self.pools}
+        if len(keys) != len(self.pools) or keys.intersection(self.unmapped_pool_ids):
+            raise ValueError("Captured lending pool identities must be distinct from unmapped identities")
+        if len(set(self.unmapped_pool_ids)) != len(self.unmapped_pool_ids) or any(
+            not key.strip() for key in self.unmapped_pool_ids
+        ):
+            raise ValueError("Unmapped lending pool identities must preserve actual distinct identifiers")
+        return self
+
+
+class UnavailableConditionLending(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: str = Field(min_length=1, pattern=r"\S")
+
+
+type ConditionLending = CapturedConditionLending | UnavailableConditionLending

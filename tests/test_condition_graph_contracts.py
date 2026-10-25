@@ -25,6 +25,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionFundingObservation,
     ConditionIndependentRestQuote,
     ConditionInterval,
+    ConditionLendingPoolCalculation,
     ConditionPrimaryBookQuote,
     ConditionReceiptVisibility,
     ConditionRelativeGraph,
@@ -3493,4 +3494,110 @@ def test_wallet_query_counter_does_not_prove_visibility_or_expand_the_occurrence
                     )
                 }
             )
+        )
+
+
+def lending_pool() -> ConditionLendingPoolCalculation:
+    from tank.analysis.condition_graph_contracts import UnrecordedConditionLendingIdentity
+
+    return ConditionLendingPoolCalculation(
+        pool_id="fixture-pool",
+        identity=UnrecordedConditionLendingIdentity(
+            status="UNRECORDED", reason="REGISTRY_POOL_IDENTITY_NOT_CAPTURED"
+        ),
+        total_supply_usd=Decimal(100),
+        total_borrow_usd=Decimal(0),
+        previous_utilization=Decimal(0),
+        borrow_apy=7.0,
+    )
+
+
+def test_lending_known_zero_and_previous_zero_are_not_missing_or_an_apr() -> None:
+    pool = lending_pool()
+    assert pool.utilization().value == 0
+    assert pool.change().value == 0
+    assert pool.borrow_apr().value is None
+    assert pool.borrow_apr().reason == "APY_IS_NOT_APR"
+    over = type(pool).model_validate(pool.model_copy(update={"total_borrow_usd": Decimal(150)}))
+    assert over.utilization().value == Decimal("1.5")
+    assert over.change().value == 1.5
+    no_supply = type(pool).model_validate(pool.model_copy(update={"total_supply_usd": Decimal(0)}))
+    assert no_supply.utilization().reason == "ZERO_SUPPLY"
+    missing = type(pool).model_validate(pool.model_copy(update={"total_borrow_usd": None}))
+    assert missing.utilization().reason == "INCOMPLETE"
+    no_previous = type(pool).model_validate(pool.model_copy(update={"previous_utilization": None}))
+    assert no_previous.change().reason == "INCOMPLETE"
+
+
+def test_lending_pool_cannot_borrow_another_registered_identity() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionLendingCatalogue,
+        RecordedConditionCaptureIdentity,
+        RegisteredConditionLendingIdentity,
+    )
+    from tank.contracts.provenance import ResolvedVersionIdentity
+    from tank.contracts.registry import LendingPool
+
+    pool = lending_pool()
+    identity = RegisteredConditionLendingIdentity(
+        status="REGISTERED",
+        pool=LendingPool(
+            pool_id="other-pool",
+            project="fixture-project",
+            chain="fixture-chain",
+            underlying_tokens=["fixture-contract"],
+        ),
+        catalogue=ConditionLendingCatalogue(
+            source_url="https://example.test/catalogue",
+            captured_at_label="fixture-catalogue-v1",
+            source_sha256="c" * 64,
+        ),
+        capture_identity=RecordedConditionCaptureIdentity(
+            status="RECORDED",
+            versions=ResolvedVersionIdentity(
+                config_version="fixture-config-v1", code_version="fixture-code-v1"
+            ),
+        ),
+    )
+    with pytest.raises(ValidationError, match="another registered pool"):
+        type(pool).model_validate(pool.model_copy(update={"identity": identity}))
+
+
+def test_lending_observed_change_requires_actual_prior_timestamp_and_same_assembly() -> None:
+    from tank.analysis.condition_graph_contracts import CapturedConditionLending
+
+    visibility = wallet_flows().query_visibility
+    with pytest.raises(ValidationError, match="actual prior capture"):
+        CapturedConditionLending(
+            status="CAPTURED_POOLS",
+            token_id="T",
+            requested_window="W24H",
+            cutoff=AT,
+            observed_at=Timestamp(
+                value="2026-10-17T12:00:00Z", precision=None, precision_reason="NOT_CAPTURED"
+            ),
+            previous_observed_at=Timestamp(value=None, precision=None, precision_reason="NOT_CAPTURED"),
+            current_visibility=visibility,
+            previous_visibility=visibility,
+            pools=(lending_pool(),),
+            unmapped_pool_ids=(),
+        )
+    recorded = CapturedConditionLending(
+        status="CAPTURED_POOLS",
+        token_id="T",
+        requested_window="W24H",
+        cutoff=AT,
+        observed_at=Timestamp(value="2026-10-17T12:00:00Z", precision=None, precision_reason="NOT_CAPTURED"),
+        previous_observed_at=Timestamp(
+            value="2026-10-16T12:00:00Z", precision=None, precision_reason="NOT_CAPTURED"
+        ),
+        current_visibility=visibility,
+        previous_visibility=visibility,
+        pools=(lending_pool(),),
+        unmapped_pool_ids=(),
+    )
+    assert recorded.pools[0].change().value == 0
+    with pytest.raises(ValidationError, match="distinct from unmapped"):
+        type(recorded).model_validate(
+            recorded.model_copy(update={"unmapped_pool_ids": (recorded.pools[0].pool_id,)})
         )
