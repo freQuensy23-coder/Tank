@@ -796,3 +796,13 @@ synthetic known-budget controls and explicit unknown-state regressions are still
 being completed. Fresh provisioning versus native discovery/adoption must be
 distinguished before any initial ordinal zero is assigned. No retry release or
 whole-session completion is claimed.
+## Native archive-clock companion
+
+NativeSessionState.actual_archive_clock uses the shared aware timestamp parser
+for each non-null archived_at and returns the original wire string. None retains
+the provider's explicit unarchived fact. Empty, malformed, naive and calendar-only
+strings cannot be persisted or treated as either live or archived observations.
+Z and explicit-offset clocks retain their exact text. The actual continuation
+reader regression proves invalid input refuses before local state mutation or
+native input posting. All 27 reader/tool-boundary cases pass in 4.38 seconds;
+the inward model, HTTP adapter and test pass independent strict mypy.
