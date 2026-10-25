@@ -788,3 +788,10 @@ EventToolService.get_decision observes legacy state under the same scoped lock/t
 
 Fifteen strict repository cases plus two actual producer memory cases pass (17/17,3.20s). Two actual PostgreSQL producer cases pass7.40s. The older-input producer case deliberately uses an earlier as-of processing clock, so the real latest-before market query selects the older incoming MTA while a valid newer legacy financial row remains stored. The equal-clock case supplies two independent valid legacy decisions with no status lineage. Both prove no reconciliation invocation and no attempted watch/outlook/decision/head writes, and preserve complete pre-call table snapshots. Repository cases separately prove an omitted witness cannot bypass either predecessor and an unchanged ID cannot bypass a changed full-document hash. The original immutable d7 698-unit/55-integration evidence remains preserved; broader correction qualification follows.
 
+
+### Long-history steady-state proof after the first-head guard
+
+The first-head correction correctly refused the old long-history fixture because that fixture deliberately stores only native financial columns and does not capture historical write order. Those 1001 historical MTA/decision records retain their missing clocks and provenance. The test now creates the current head through the actual producer before appending the older immutable unindexed financial projections, then exercises the distinct steady-state bounded-selector path. It does not fabricate a revision, digest or historical timestamp.
+
+Both namespaces are still counted at 1003 records (1001 historical rows plus actual current/future MTA or the two actual indexed decisions). The second producer calculation retains the same financial cutoff and advances the real head from revision1 to2. Exact current MTA/decision bundle references, no heavy whole-history scan, and future-cutoff exclusion remain asserted. The separate headless older/ambiguous-history negative cases continue to refuse. Memory passes4.41s and actual PostgreSQL passes9.30s; diagnostic broad36 evidence (703/56 passing with only this fixture failure) remains untouched.
+

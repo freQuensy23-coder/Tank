@@ -1655,6 +1655,17 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
                 "integration_state_evidence": [],
             },
         )
+        truth = complete_truth_fixture(current, eid, token, iso(now))
+        await base.put("ana.market_truth", current, truth)
+        established = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
+        from tank.analysis.decision_state import DecisionScope, DecisionStateRepository
+
+        states = DecisionStateRepository(base)
+        indexed = await states.current(DecisionScope(event_id=eid, token_id=token))
+        assert indexed is not None and indexed[0].revision == 1
+        assert indexed[0].dec_id == established["dec_id"]
+        guarded.latest.clear()
+        guarded.exact.clear()
         historic_truth = complete_truth_fixture(eid + "-history", eid, token, iso(now - timedelta(days=2)))
         historic_decision = complete_decision_fixture(
             eid + "-history", eid, token, iso(now - timedelta(days=2)), eid + "-history"
@@ -1686,9 +1697,8 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
                         market_truth_id=key,
                         cutoff=iso(now - timedelta(days=2, seconds=index)),
                     ),
+                    immutable=True,
                 )
-        truth = complete_truth_fixture(current, eid, token, iso(now))
-        await base.put("ana.market_truth", current, truth)
         await base.put(
             "ana.market_truth",
             eid + "-future",
@@ -1698,6 +1708,17 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
         )
         decision = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
         assert decision["market_truth_id"] == current
+        assert decision["cutoff"] == established["cutoff"]
+        indexed = await states.current(DecisionScope(event_id=eid, token_id=token))
+        assert indexed is not None and indexed[0].revision == 2
+        assert indexed[0].dec_id == decision["dec_id"]
+        for table, identity_field in (("ana.market_truth", "mta_id"), ("ana.decisions", "dec_id")):
+            stored_count = 0
+            async for _ in base.iter_metadata(
+                table, (identity_field,), filters={"event_id": eid, "token_id": token}
+            ):
+                stored_count += 1
+            assert stored_count == 1003
         published = await service.dispatch(
             "publish_card",
             {
