@@ -6,8 +6,10 @@ import logging
 import traceback
 from datetime import timedelta
 
+from tank.agents.jev import JevHTTPError, JevRateLimited
 from tank.agents.sessions import ADMITTED_JOB_TYPES, AdmissionDeferred
 from tank.delivery import DeliveryDeferred, DeliveryService
+from tank.jev_recovery import defer_jev_job
 from tank.ops_progress import job_failure_progress
 from tank.scheduler import Scheduler
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
@@ -245,8 +247,19 @@ class Runtime:
                 async with asyncio.timeout(TIMEOUTS[kind]):
                     result = await self.handlers[kind](job["payload"])
                 async with self.repo.transaction():
-                    await self.repo.put("ops.jobs", job["job_id"], {**job, "result": result})
+                    completed = {**job, "result": result}
+                    if job.get("jev_rate_limit"):
+                        completed["last_error"] = None
+                    await self.repo.put("ops.jobs", job["job_id"], completed)
                     await self.repo.finish_job(job["job_id"])
+            except JevRateLimited as error:
+                try:
+                    current = await defer_jev_job(self.repo, job["job_id"], error)
+                    if current and current["status"] == "EXPIRED":
+                        await self.terminal_delivery_failure(current, current["last_error"])
+                except Exception:
+                    log.exception("Could not persist Jev rate-limit deferral: %s", job["job_id"])
+                    await self.pause(stop, 1)
             except DeliveryDeferred as deferred:
                 async with self.repo.transaction():
                     current = await self.repo.get("ops.jobs", job["job_id"])
@@ -286,18 +299,21 @@ class Runtime:
                     for frame in traceback.extract_tb(failure.__traceback__)
                 )
 
-                log.error(
-                    "Job %s (%s) failed: %s [%s]", job["job_id"], job["type"], type(exc).__name__, frames
+                reason = (
+                    f"JevHTTPError: HTTP {exc.http_status}"
+                    if isinstance(exc, JevHTTPError)
+                    else type(exc).__name__
                 )
+                log.error("Job %s (%s) failed: %s [%s]", job["job_id"], job["type"], reason, frames)
                 try:
                     await self.repo.fail_job(
                         job["job_id"],
-                        type(exc).__name__,
+                        reason,
                         retry_after=getattr(exc, "retry_after", min(60, 2 ** job.get("attempts", 1))),
                     )
                     current = await self.repo.get("ops.jobs", job["job_id"])
                     if current and current["status"] in {"FAILED", "EXPIRED"}:
-                        await self.terminal_delivery_failure(current, type(exc).__name__)
+                        await self.terminal_delivery_failure(current, reason)
                 except Exception:
                     log.exception("Could not persist job failure: %s", job["job_id"])
                     await self.pause(stop, 1)

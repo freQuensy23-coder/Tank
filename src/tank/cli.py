@@ -124,6 +124,24 @@ def clickhouse_schema():
 
 
 @main.group()
+def jobs():
+    """Inspect and recover durable processing jobs."""
+
+
+@jobs.command("retry-jev")
+@click.argument("job_id")
+def jobs_retry_jev(job_id):
+    """Requeue one failed Jev HTTP job, preserving its failure history and expiry."""
+
+    async def command(repo, settings):
+        from tank.jev_recovery import retry_jev_job
+
+        return await retry_jev_job(repo, job_id)
+
+    run_db(command)
+
+
+@main.group()
 def review():
     """Shadow review cards, delivery and outcomes."""
 
