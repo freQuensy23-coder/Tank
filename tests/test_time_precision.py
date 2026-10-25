@@ -5,7 +5,13 @@ import pytest
 from pydantic import JsonValue
 
 from tank.models import Record
-from tank.time_precision import chosen_boundary, collection_clock, offset_schedule, propagate_timestamp
+from tank.time_precision import (
+    chosen_boundary,
+    collection_clock,
+    offset_schedule,
+    propagate_timestamp,
+    reconcile_precision,
+)
 from tank.util import (
     EpochInput,
     EpochUnit,
@@ -212,3 +218,10 @@ def test_generic_iso_clock_is_required_and_aware() -> None:
 def test_generic_timestamp_wire_evidence_does_not_guess_epoch_units(value: JsonValue | Decimal) -> None:
     with pytest.raises(ValueError, match="requires ISO date-time"):
         propagate_timestamp({"ts": value, "ts_prec": "EXACT"}, "ts")
+
+
+def test_calendar_precision_metadata_does_not_require_or_invent_an_instant() -> None:
+    assert reconcile_precision([], field="identity_reviewed_at") is None
+    assert reconcile_precision(["BUCKET(1d)", "BUCKET(86400s)"], field="identity_reviewed_at") == "BUCKET(1d)"
+    with pytest.raises(ValueError, match="Conflicting"):
+        reconcile_precision(["EXACT", "BUCKET(1d)"], field="identity_reviewed_at")

@@ -104,6 +104,16 @@ def _equivalent(left: str | None, right: str | None) -> bool:
     return False
 
 
+def reconcile_precision(
+    declarations: Sequence[str], *, field: str, bucket_size: BucketSize | None = None
+) -> str | None:
+    """Validate metadata declarations independently of whether a field is an instant or calendar date."""
+    normalized = [normalize_precision(value, bucket_size=bucket_size) for value in declarations]
+    if normalized and any(not _equivalent(normalized[0], value) for value in normalized[1:]):
+        raise ValueError(f"Conflicting timestamp precision declarations for {field}")
+    return normalized[0] if normalized else None
+
+
 class Timestamp(DomainModel):
     value: str | None
     precision: str | None
@@ -236,10 +246,7 @@ def propagate_timestamp(
             if declaration is not None:
                 declarations.append(declaration)
         reason = reason or _text(record.get(name + "_reason"), name + "_reason")
-    normalized = [normalize_precision(item, bucket_size=bucket_size) for item in declarations]
-    if normalized and any(not _equivalent(normalized[0], item) for item in normalized[1:]):
-        raise ValueError(f"Conflicting timestamp precision declarations for {field}")
-    precision = normalized[0] if normalized else None
+    precision = reconcile_precision(declarations, field=field, bucket_size=bucket_size)
     if (
         bucket_anchor is None
         and precision
