@@ -10,6 +10,7 @@ from tank.analysis.condition_graph_contracts import (
     BasicConditionLiquidity,
     BasicConditionSpot,
     CapturedConditionHoldersRevenue,
+    ComparableConditionExchangeInventory,
     ConditionBookDepthBounds,
     ConditionCadenceScope,
     ConditionCollection,
@@ -3302,3 +3303,92 @@ def test_holders_revenue_provider_seconds_do_not_invent_a_day_period_or_accept_f
         ConditionHoldersRevenueChartPoint(
             provider_timestamp="NaN", value_usd=Decimal(0), provider_period="UNSPECIFIED"
         )
+
+
+def inventory_comparison(current: Decimal, previous: Decimal) -> ComparableConditionExchangeInventory:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionInventoryBalanceChange,
+        ConditionInventoryCoverage,
+    )
+
+    visibility = ConditionReceiptVisibility(
+        received_at=Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY"),
+        assembled_at=Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY"),
+    )
+    return ComparableConditionExchangeInventory(
+        status="COMPARABLE_BALANCES",
+        token_id="T",
+        requested_window="W24H",
+        cutoff=AT,
+        current_observed_at=Timestamp(
+            value="2026-10-17T12:00:00Z", precision=None, precision_reason="NOT_CAPTURED"
+        ),
+        previous_observed_at=Timestamp(
+            value="2026-10-16T12:00:00Z", precision=None, precision_reason="NOT_CAPTURED"
+        ),
+        current_visibility=visibility,
+        previous_visibility=visibility,
+        balances=(
+            ConditionInventoryBalanceChange(
+                venue="a",
+                chain_id=1,
+                contract="token-contract",
+                wallet_list_commit="captured-list-1",
+                current_qty_native=current,
+                previous_qty_native=previous,
+            ),
+        ),
+        coverage=ConditionInventoryCoverage(
+            complete_balances=1,
+            observed_balances=1,
+            comparable_balances=1,
+            coverage_errors=(),
+            unsupported_venues=(),
+        ),
+        normal_range=FloatRange(bounds=None, reason="INSUFFICIENT_HISTORY"),
+    )
+
+
+def test_inventory_comparison_preserves_exact_native_change_and_actual_cohort_identity() -> None:
+    graph = inventory_comparison(Decimal("1" + "0" * 100), Decimal("9" * 100))
+    assert graph.native_change().value == Decimal(1)
+    assert graph.balances[0].change() == Decimal(1)
+    assert graph.balances[0].wallet_list_commit == "captured-list-1"
+    with pytest.raises(ValidationError, match="distinct actual wallet-list"):
+        type(graph).model_validate(
+            graph.model_copy(update={"balances": (graph.balances[0], graph.balances[0])})
+        )
+    with pytest.raises(ValidationError, match="prior source clock"):
+        type(graph).model_validate(
+            graph.model_copy(
+                update={
+                    "previous_observed_at": Timestamp(
+                        value=None, precision=None, precision_reason="NOT_CAPTURED"
+                    )
+                }
+            )
+        )
+
+
+def test_inventory_zero_baseline_and_empty_comparable_cohort_are_distinct() -> None:
+    graph = inventory_comparison(Decimal(0), Decimal(0))
+    assert graph.native_change().value == Decimal(0)
+    assert graph.fractional_change().reason == "ZERO_BASELINE"
+    assert graph.fractional_change().value is None
+    empty_coverage = type(graph.coverage).model_validate(
+        graph.coverage.model_copy(update={"comparable_balances": 0})
+    )
+    missing = type(graph).model_validate(
+        graph.model_copy(
+            update={
+                "balances": (),
+                "coverage": empty_coverage,
+                "previous_observed_at": Timestamp(
+                    value=None, precision=None, precision_reason="NOT_CAPTURED"
+                ),
+            }
+        )
+    )
+    assert missing.native_change().reason == "INCOMPLETE"
+    assert missing.fractional_change().reason == "INCOMPLETE"
+    assert inventory_comparison(Decimal(110), Decimal(100)).fractional_change().value == pytest.approx(0.1)

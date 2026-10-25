@@ -5044,3 +5044,151 @@ class CapturedConditionHoldersRevenue(DomainModel):
 
 
 type ConditionHoldersRevenue = CapturedConditionHoldersRevenue | UnavailableConditionHoldersRevenue
+
+
+class ConditionInventoryBalanceChange(DomainModel):
+    venue: str = Field(min_length=1, pattern=r"\S")
+    chain_id: int = Field(gt=0)
+    contract: str = Field(min_length=1, pattern=r"\S")
+    wallet_list_commit: str = Field(min_length=1, pattern=r"\S")
+    current_qty_native: Decimal = Field(ge=0)
+    previous_qty_native: Decimal = Field(ge=0)
+
+    def change(self) -> Decimal:
+        validated = type(self).model_validate(self)
+        return _sum_native(validated.current_qty_native, validated.previous_qty_native.copy_negate())
+
+
+class ConditionInventoryCaptureError(DomainModel):
+    wallet: str = Field(min_length=1, pattern=r"\S")
+    chain_id: int = Field(gt=0)
+    reason: str = Field(min_length=1, pattern=r"\S")
+
+
+class ConditionInventoryCoverage(DomainModel):
+    complete_balances: int = Field(ge=0)
+    observed_balances: int = Field(ge=0)
+    comparable_balances: int = Field(ge=0)
+    coverage_errors: tuple[ConditionInventoryCaptureError, ...]
+    unsupported_venues: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def actual_balance_counts(self) -> Self:
+        if not self.comparable_balances <= self.complete_balances <= self.observed_balances:
+            raise ValueError("Inventory coverage requires actual nested comparable/complete/observed counts")
+        if len(set(self.unsupported_venues)) != len(self.unsupported_venues) or any(
+            not venue.strip() for venue in self.unsupported_venues
+        ):
+            raise ValueError("Unsupported inventory venues must preserve actual distinct identifiers")
+        return self
+
+
+class ConditionInventoryNativeChange(DomainModel):
+    value: Decimal | None
+    unit: Literal["NATIVE_TOKEN"]
+    reason: Literal["INCOMPLETE"] | None
+
+    @model_validator(mode="after")
+    def actual_change(self) -> Self:
+        if (self.value is None) != (self.reason is not None):
+            raise ValueError("Missing native inventory change requires actual incomplete comparison evidence")
+        return self
+
+
+class ConditionInventoryFractionalChange(DomainModel):
+    value: float | None
+    reason: Literal["INCOMPLETE", "ZERO_BASELINE", "NOT_ESTIMABLE"] | None
+
+    @model_validator(mode="after")
+    def actual_ratio(self) -> Self:
+        if (self.value is None) != (self.reason is not None):
+            raise ValueError(
+                "Missing fractional inventory change requires its actual missing/zero baseline cause"
+            )
+        return self
+
+
+class UnavailableConditionExchangeInventory(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: str = Field(min_length=1, pattern=r"\S")
+
+
+class ComparableConditionExchangeInventory(DomainModel):
+    status: Literal["COMPARABLE_BALANCES"]
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    requested_window: Literal["W24H"]
+    cutoff: datetime
+    current_observed_at: Timestamp
+    previous_observed_at: Timestamp
+    current_visibility: ConditionReceiptVisibility
+    previous_visibility: ConditionReceiptVisibility
+    balances: tuple[ConditionInventoryBalanceChange, ...]
+    coverage: ConditionInventoryCoverage
+    normal_range: FloatRange
+
+    @field_validator("cutoff")
+    @classmethod
+    def aware_cutoff(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_comparable_cohort(self) -> Self:
+        current = self.current_observed_at.value
+        previous = self.previous_observed_at.value
+        if current is None or parse_iso_time(current) > self.cutoff:
+            raise ValueError("Observed inventory requires the actual nonfuture current source clock")
+        if self.balances and previous is None:
+            raise ValueError("Comparable inventory balances require their actual prior source clock")
+        if previous is not None and (
+            parse_iso_time(previous) > parse_iso_time(current)
+            or parse_iso_time(previous) > self.cutoff - timedelta(days=1)
+        ):
+            raise ValueError(
+                "Inventory comparison cannot use a prior observation after its current sample or requested as-of target"
+            )
+        if self.current_visibility.assembled_at != self.previous_visibility.assembled_at:
+            raise ValueError(
+                "Inventory comparison visibility requires the same actual snapshot assembly clock"
+            )
+        keys = [(row.venue, row.chain_id, row.contract, row.wallet_list_commit) for row in self.balances]
+        if len(set(keys)) != len(keys) or self.coverage.comparable_balances != len(keys):
+            raise ValueError(
+                "Inventory comparison requires distinct actual wallet-list cohorts and matching coverage"
+            )
+        if not self.balances and self.normal_range.bounds is not None:
+            raise ValueError("An empty comparable wallet cohort cannot establish a historical range")
+        return self
+
+    def native_change(self) -> ConditionInventoryNativeChange:
+        validated = type(self).model_validate(self)
+        if not validated.balances:
+            return ConditionInventoryNativeChange(value=None, unit="NATIVE_TOKEN", reason="INCOMPLETE")
+        change = Decimal(0)
+        for balance in validated.balances:
+            change = _sum_native(change, balance.change())
+        return ConditionInventoryNativeChange(value=change, unit="NATIVE_TOKEN", reason=None)
+
+    def fractional_change(self) -> ConditionInventoryFractionalChange:
+        validated = type(self).model_validate(self)
+        change = validated.native_change().value
+        if change is None:
+            return ConditionInventoryFractionalChange(value=None, reason="INCOMPLETE")
+        previous = Decimal(0)
+        for balance in validated.balances:
+            previous = _sum_native(previous, balance.previous_qty_native)
+        if previous == 0:
+            return ConditionInventoryFractionalChange(value=None, reason="ZERO_BASELINE")
+        span = (
+            max(change.adjusted(), previous.adjusted())
+            - min(int(change.as_tuple().exponent), int(previous.as_tuple().exponent))
+            + 1
+        )
+        with localcontext() as context:
+            context.prec = max(128, 2 * span + 16)
+            value = float(change / previous)
+        if not isfinite(value):
+            return ConditionInventoryFractionalChange(value=None, reason="NOT_ESTIMABLE")
+        return ConditionInventoryFractionalChange(value=value, reason=None)
+
+
+type ConditionExchangeInventory = ComparableConditionExchangeInventory | UnavailableConditionExchangeInventory
