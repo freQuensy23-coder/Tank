@@ -30,6 +30,7 @@ from tank.contracts.registry import (
     RegistryVenue,
     RegistryWalletList,
     SemanticsConfiguration,
+    calendar_review_metadata,
 )
 from tank.contracts.sources import SourceConfiguration, SourceDefinition
 from tank.time_precision import propagate_timestamp
@@ -204,9 +205,13 @@ def _config_timestamp_metadata(value: JsonValue) -> JsonValue:
         return value
     result = {key: _config_timestamp_metadata(item) for key, item in value.items()}
     for field in CONFIG_TIMESTAMP_FIELDS.intersection(value):
-        metadata = propagate_timestamp(value, field).fields(field)
-        metadata.pop(field)
-        result.update(metadata)
+        calendar = calendar_review_metadata(value, field)
+        if calendar is None:
+            metadata = propagate_timestamp(value, field).fields(field)
+            metadata.pop(field)
+            result.update(metadata)
+        else:
+            result.update(calendar.fields(field))
     return result
 
 

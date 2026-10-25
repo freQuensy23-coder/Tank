@@ -10,7 +10,7 @@ from source_support import fixture_versions
 from tank.market.service import MarketService
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.util import iso, parse_time, utcnow
+from tank.util import clock_iso, iso, parse_time, utcnow
 
 
 def test_market_redaction_covers_nested_keys_and_values_and_current_credentials() -> None:
@@ -456,18 +456,19 @@ def test_missing_oi_field_is_data_error_without_runtime_semantic_promotion() -> 
 async def test_capture_wait_is_bounded_and_late_completion_supersedes_timeout(setup) -> None:
     import asyncio
 
-    from tank.util import iso
-
     repo, settings, inst = setup
     service = MarketService(repo, settings, versions=fixture_versions())
     from tank.market.capture import event_anchor
 
-    event = {"event_id": "E-wait", "public_at": iso(), "public_at_prec": "EXACT"}
+    event = {"event_id": "E-wait", "public_at": clock_iso(), "public_at_prec": "EXACT"}
     await repo.put("evt.events", "E-wait", event)
     run = await service._schedule_event_backfill("E-wait", inst["token_id"], event_anchor(event).timestamp)
     row = await repo.get("mkt.backfill_runs", run.backfill_id)
     row.update(
-        status="RUNNING", started_at=iso(), started_at_prec="COLLECTION_ONLY", started_at_prec_reason=None
+        status="RUNNING",
+        started_at=clock_iso(),
+        started_at_prec="COLLECTION_ONLY",
+        started_at_prec_reason=None,
     )
     await repo.put("mkt.backfill_runs", run.backfill_id, row)
     waited = await service.wait_capture("E-wait", inst["token_id"], timeout_s=0)
@@ -478,7 +479,7 @@ async def test_capture_wait_is_bounded_and_late_completion_supersedes_timeout(se
         row.update(
             status="COMPLETE",
             reason=None,
-            finished_at=iso(),
+            finished_at=clock_iso(),
             finished_at_prec="COLLECTION_ONLY",
             finished_at_prec_reason=None,
             result={"instruments": [], "benchmark_klines": []},
@@ -489,7 +490,7 @@ async def test_capture_wait_is_bounded_and_late_completion_supersedes_timeout(se
     done = await service.wait_capture("E-wait", inst["token_id"], timeout_s=1)
     await worker
     assert done.status == "COMPLETE" and done.reason is None
-    snapshot = await service.snapshot(inst["token_id"], iso())
+    snapshot = await service.snapshot(inst["token_id"], clock_iso())
     assert snapshot["capture_status"]["status"] == "COMPLETE"
     assert snapshot["capture_status"]["bounded_wait_s"] > 0
     await service.close()
@@ -507,7 +508,7 @@ async def test_hot_expiry_protection_is_scoped_to_event_and_token(setup) -> None
     await repo.put(
         "evt.events",
         "E-protected",
-        {"event_id": "E-protected", "known_to_us_at": iso(), "known_to_us_at_prec": "COLLECTION_ONLY"},
+        {"event_id": "E-protected", "known_to_us_at": clock_iso(), "known_to_us_at_prec": "COLLECTION_ONLY"},
     )
     await repo.put(
         "ana.calls",
@@ -698,7 +699,6 @@ async def test_series_counts_survive_an_import_evicting_a_counted_day(
     setup, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from tank.market import service as service_module
-    from tank.util import iso
 
     repo, settings, instrument = setup
     service = MarketService(repo, settings, versions=fixture_versions())
@@ -715,7 +715,7 @@ async def test_series_counts_survive_an_import_evicting_a_counted_day(
 
     monkeypatch.setattr(service_module, "market_series_day_counts", day_counts)
     monkeypatch.setattr(repo, "market_series_counts", edge_counts)
-    assert await service._series_counts([iid], start, cutoff, iso()) == {iid: 2 * 1440}
+    assert await service._series_counts([iid], start, cutoff, clock_iso()) == {iid: 2 * 1440}
     await service.close()
 
 
@@ -1103,24 +1103,28 @@ async def test_past_day_kline_counts_survive_a_restart_unless_their_day_was_rewr
     monkeypatch.setattr(service_module, "market_series_day_counts", counting)
     start = today - timedelta(days=3)
     first = MarketService(repo, settings, versions=fixture_versions())
-    assert (await first._series_counts([iid], start, utcnow(), iso()))[iid] == 15
+    assert (await first._series_counts([iid], start, utcnow(), clock_iso()))[iid] == 15
     assert counted == [(start, today)]
     await first._save_day_counts(force=True)
 
     rewritten = today - timedelta(days=2) + timedelta(minutes=10)
-    await repo.put_market_batch("mkt.klines_1m", [kline(rewritten, iso())], keys=[iid + ":" + iso(rewritten)])
+    await repo.put_market_batch(
+        "mkt.klines_1m", [kline(rewritten, clock_iso())], keys=[iid + ":" + iso(rewritten)]
+    )
     restarted = MarketService(repo, settings, versions=fixture_versions())
     assert await restarted._load_day_counts() == 2
     counted.clear()
-    assert (await restarted._series_counts([iid], start, utcnow(), iso()))[iid] == 16
+    assert (await restarted._series_counts([iid], start, utcnow(), clock_iso()))[iid] == 16
     assert counted == [(today - timedelta(days=2), today - timedelta(days=1))]
 
     checked = utcnow()
     appended = today - timedelta(days=1) + timedelta(minutes=10)
-    await repo.put_market_batch("mkt.klines_1m", [kline(appended, iso())], keys=[iid + ":" + iso(appended)])
+    await repo.put_market_batch(
+        "mkt.klines_1m", [kline(appended, clock_iso())], keys=[iid + ":" + iso(appended)]
+    )
     await restarted._evict_recorded_days(checked)
     assert (iid, today - timedelta(days=1)) not in restarted._kline_day_counts
-    assert (await restarted._series_counts([iid], start, utcnow(), iso()))[iid] == 17
+    assert (await restarted._series_counts([iid], start, utcnow(), clock_iso()))[iid] == 17
 
 
 @pytest.mark.asyncio
@@ -1141,7 +1145,7 @@ async def test_window_cache_reads_equal_fresh_reads_through_appends_rewrites_and
             "instrument_id": inst["instrument_id"],
             "token_id": inst["token_id"],
             field: iso(base + timedelta(minutes=minute)),
-            "recorded_at": recorded_at or iso(),
+            "recorded_at": clock_iso() if recorded_at is None else recorded_at,
         }
         if books:
             point.update(mid=value, integrity_ok=minute % 3 == 0, bids=[[value, "1"]], asks=[[value, "2"]])

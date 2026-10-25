@@ -100,7 +100,9 @@ async def test_actual_producer_consumer_workflow(tmp_path: Path, backend, case, 
                 )
             raise AssertionError(request.url)
 
-        tools = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+        tools = EventToolService(
+            repo, Settings(data_dir=tmp_path), None, None, versions=declared_versions_fixture()
+        )
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             session_settings = config()
             session_settings.ops_progress_enabled = True

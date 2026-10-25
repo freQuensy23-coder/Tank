@@ -40,7 +40,7 @@ from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.market.capture import event_anchor
 from tank.time_precision import Timestamp, chosen_boundary, offset_schedule, propagate_timestamp
-from tank.util import iso, jsonable, new_id, parse_time, utcnow
+from tank.util import iso, jsonable, new_id, parse_epoch, parse_time, utcnow
 
 WINDOWS = {"W15M": 900, "W1H": 3600, "W4H": 14400, "W24H": 86400}
 RISK_ORDER = [
@@ -3018,7 +3018,7 @@ def supply_truth(snapshot, start, end):
                         if isinstance(stamp, bool) or isinstance(raw_value, bool):
                             continue
                         value = decimal(raw_value)
-                        point_time = parse_time(stamp)
+                        point_time = parse_epoch(stamp, unit="s")
                         if point_time <= end and value is not None and value.is_finite():
                             chart_points.append(
                                 (

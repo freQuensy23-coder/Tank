@@ -14,7 +14,7 @@ from tank.event_tools import EventToolService, freshness, validate_schema
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.telegram_rich import score_summary
-from tank.util import JsonInput, canonical_json, iso, utcnow
+from tank.util import JsonInput, canonical_json, clock_iso, iso, utcnow
 
 
 @pytest.fixture
@@ -53,7 +53,7 @@ def truth_job_enqueued(service, monkeypatch: pytest.MonkeyPatch):
 
 
 def extraction() -> dict[str, JsonValue]:
-    now = iso()
+    now = clock_iso()
     return dict(
         item_id="i",
         is_event=True,
@@ -301,7 +301,9 @@ async def test_numeric_map_version_ten_removes_old_token(
             {"edge_id": edgeid, "event_id": eid, "map_version": 9, "token_id": "world:WLD"},
         )
         await service.repo.put(
-            "ana.market_truth", eid + "mta", complete_truth_fixture(eid + "mta", eid, "world:WLD", iso())
+            "ana.market_truth",
+            eid + "mta",
+            complete_truth_fixture(eid + "mta", eid, "world:WLD", clock_iso()),
         )
         with pytest.raises(ValueError, match="current-map"):
             await service.get_decision({"event_id": eid, "token_id": "world:WLD"}, {})
@@ -346,7 +348,7 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service) -> 
         "mta_id": "condition-truth",
         "event_id": eid,
         "token_id": token,
-        "cutoff": iso(),
+        "cutoff": clock_iso(),
         "cutoff_prec": "BUCKET(1m)",
         "move_class": "SPOT_LED_ACCUMULATION",
         "data_confidence": {"class": "HIGH", "critical_semantics_verified": True},
@@ -373,7 +375,7 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service) -> 
                 "event_id": eid,
                 "token_id": token,
                 "status": "OPEN",
-                "opened_at": iso(),
+                "opened_at": clock_iso(),
                 "opened_at_prec": "BUCKET(1h)",
                 "invalidation_price": "9",
             },
@@ -406,7 +408,7 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service) -> 
     same = next(c for c in second["conditions"] if c["role"] == "UPGRADE")
     assert same["cond_id"] == armed["cond_id"]
     assert same["counters"] == armed["counters"]
-    same.update(status="FIRED", fired_at=iso())
+    same.update(status="FIRED", fired_at=clock_iso())
     await service.repo.put("ana.watch_conditions", same["cond_id"], same)
 
     await service.repo.put(
@@ -427,7 +429,7 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service) -> 
     assert same["cond_id"] not in again["conditions_shown"]
     assert (await service.repo.get("ana.watch_conditions", same["cond_id"]))["status"] == "FIRED"
     assert len(await service.repo.list("ana.watch_conditions")) == len(first["conditions"]) + 1
-    rearmed.update(status="FIRED", fired_at=iso())
+    rearmed.update(status="FIRED", fired_at=clock_iso())
     await service.repo.put("ana.watch_conditions", rearmed["cond_id"], rearmed)
     await service.repo.put(
         "ana.market_truth",
@@ -481,7 +483,7 @@ async def test_start_condition_is_rearmed_for_the_open_call(service) -> None:
         "mta_id": "start-truth",
         "event_id": eid,
         "token_id": token,
-        "cutoff": iso(),
+        "cutoff": clock_iso(),
         "move_class": "ORGANIC_MIXED",
         "data_confidence": {"class": "MEDIUM"},
         "relative": {"repricing_band": "EARLY", "market_context": "NEUTRAL", "anchor": {"ref_price": "10"}},
@@ -491,12 +493,12 @@ async def test_start_condition_is_rearmed_for_the_open_call(service) -> None:
     watch = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
     assert watch["action"] == "WATCH_TO_START"
     upgrade = next(c for c in watch["conditions"] if c["role"] == "UPGRADE")
-    upgrade.update(status="FIRED", fired_at=iso())
+    upgrade.update(status="FIRED", fired_at=clock_iso())
     await service.repo.put("ana.watch_conditions", upgrade["cond_id"], upgrade)
     await service.repo.put(
         "ana.market_truth",
         "start-truth-2",
-        {**truth, "mta_id": "start-truth-2", "cutoff": iso(), "data_confidence": {"class": "HIGH"}},
+        {**truth, "mta_id": "start-truth-2", "cutoff": clock_iso(), "data_confidence": {"class": "HIGH"}},
     )
     start = await service.dispatch("get_decision", {"event_id": eid, "token_id": token}, {})
     assert start["action"] == "START"
@@ -508,7 +510,7 @@ async def test_start_condition_is_rearmed_for_the_open_call(service) -> None:
             "event_id": eid,
             "token_id": token,
             "status": "OPEN",
-            "opened_at": iso(),
+            "opened_at": clock_iso(),
             "invalidation_price": "9",
         },
     )
@@ -755,7 +757,7 @@ async def test_real_session_tool_refuses_cross_event_mutation(service) -> None:
         {
             "id": "scope-call",
             "name": "schedule_milestone",
-            "input": {"event_id": "B", "milestone": "Wrong event", "due_at": iso(), "source_id": "S01"},
+            "input": {"event_id": "B", "milestone": "Wrong event", "due_at": clock_iso(), "source_id": "S01"},
         },
     )
     assert await service.repo.get("evt.events", "B") == original
@@ -949,14 +951,20 @@ async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(
                 "mta_id": "truth-" + token,
                 "event_id": eid,
                 "token_id": token,
-                "cutoff": iso(),
+                "cutoff": clock_iso(),
                 "data_confidence": {"class": "LOW"},
             },
         )
         await service.repo.put(
             "ana.decisions",
             "dec-" + token,
-            {"dec_id": "dec-" + token, "event_id": eid, "token_id": token, "cutoff": iso(), "action": "WAIT"},
+            {
+                "dec_id": "dec-" + token,
+                "event_id": eid,
+                "token_id": token,
+                "cutoff": clock_iso(),
+                "action": "WAIT",
+            },
         )
     args = {
         "event_id": eid,
@@ -976,14 +984,14 @@ async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(
             "mta_id": "truth-L1",
             "event_id": eid,
             "token_id": "L1",
-            "cutoff": iso(),
+            "cutoff": clock_iso(),
             "data_confidence": {"class": "LOW"},
         },
     )
     await service.repo.put(
         "ana.decisions",
         "dec-L1",
-        {"dec_id": "dec-L1", "event_id": eid, "token_id": "L1", "cutoff": iso(), "action": "WAIT"},
+        {"dec_id": "dec-L1", "event_id": eid, "token_id": "L1", "cutoff": clock_iso(), "action": "WAIT"},
     )
     first = await service.dispatch("publish_card", args, {})
     alert = await service.repo.get("out.alerts", first["alert_id"] + ":1")
@@ -1294,7 +1302,7 @@ async def test_material_update_is_queued_once_and_delivered_after_window(
         low = dict(
             truth,
             mta_id="material-low",
-            cutoff=iso(),
+            cutoff=clock_iso(),
             data_confidence={"class": "LOW", "critical_semantics_verified": False},
         )
         await service.repo.put("ana.market_truth", "material-low", low)
@@ -1876,7 +1884,7 @@ async def test_other_tank_item_quote_read_through_real_session_is_admissible(ser
             "source_class": "PRIMARY",
             "text": "Fee switch approved.",
             "url": "https://example.org/fee-switch",
-            "observed_at": iso(),
+            "observed_at": clock_iso(),
         },
     )
     session = {
@@ -1914,7 +1922,7 @@ async def test_milestone_official_outcome_quote_clears_pending_and_preserves_his
     x = await seed(service)
     created = await service.dispatch("record_event", x, {})
     eid = created["event_id"]
-    due = iso()
+    due = clock_iso()
     await service.dispatch(
         "schedule_milestone",
         {"event_id": eid, "milestone": "Approval", "due_at": due, "source_id": "S01"},
@@ -2057,7 +2065,7 @@ async def test_snapshot_vote_end_creates_single_canonical_milestone_after_extrac
 
 
 def complete_event_fixture(event_id, **changes):
-    now = iso()
+    now = clock_iso()
     row = {
         "event_id": event_id,
         "statement": "Access approved",
@@ -2087,7 +2095,7 @@ def complete_assessment_fixture(ems_id, event_id, **changes):
         ems_id=ems_id,
         event_id=event_id,
         version=1,
-        cutoff=iso(),
+        cutoff=clock_iso(),
         structural_gates=[],
         class_reasons=["Synthetic fixture primary fact"],
         config_version="fixture",
@@ -2153,7 +2161,7 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
         versions=fixture_versions(),
     )
     item_id = new_id("item")
-    stamp = iso()
+    stamp = clock_iso()
     quote = "World access approved"
     raw = tmp_path / (item_id + ".txt")
     raw.write_text(quote)
@@ -2231,7 +2239,7 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
             },
             context,
         )
-        truth = compute_market_truth({"event_id": eid, "token_id": "world:WLD", "cutoff": iso()})
+        truth = compute_market_truth({"event_id": eid, "token_id": "world:WLD", "cutoff": clock_iso()})
         truth["mta_id"] = new_id("mta")
         await repo.put("ana.market_truth", truth["mta_id"], truth)
         decision = await service.dispatch("get_decision", {"event_id": eid, "token_id": "world:WLD"}, context)
@@ -2437,7 +2445,7 @@ async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(
             await base.put(
                 "evt.beneficiary_maps",
                 eid + ":1",
-                {"event_id": eid, "map_version": 1, "analysis_set": tokens, "cutoff": iso()},
+                {"event_id": eid, "map_version": 1, "analysis_set": tokens, "cutoff": clock_iso()},
             )
             started = utcnow()
             for call in ["model-call-one"]:
@@ -2484,7 +2492,7 @@ async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(
             await base.put(
                 "mkt.hot_tokens",
                 hot_key,
-                {"token_id": tokens[0], "event_id": eid, "priority": 1, "since": iso()},
+                {"token_id": tokens[0], "event_id": eid, "priority": 1, "since": clock_iso()},
             )
             await base.delete("mkt.hot_tokens", hot_key)
             reused = await service.dispatch(
@@ -2567,7 +2575,7 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(
             "freshness": "FRESH",
             "certainty": "HIGH",
             "lifecycle": "MONITORING",
-            "known_to_us_at": iso(),
+            "known_to_us_at": clock_iso(),
             "tokens_mentioned": ["T"],
         },
     )
@@ -2606,14 +2614,14 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(
             "mta_id": "repeat-truth",
             "event_id": eid,
             "token_id": "T",
-            "cutoff": iso(),
+            "cutoff": clock_iso(),
             "data_confidence": {"class": "LOW"},
         },
     )
     await service.repo.put(
         "ana.decisions",
         "repeat-wait",
-        {"dec_id": "repeat-wait", "event_id": eid, "token_id": "T", "action": "WAIT", "cutoff": iso()},
+        {"dec_id": "repeat-wait", "event_id": eid, "token_id": "T", "action": "WAIT", "cutoff": clock_iso()},
     )
     args = {
         "event_id": eid,
@@ -2651,7 +2659,13 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(
         await service.repo.put(
             "ana.decisions",
             "repeat-exit",
-            {"dec_id": "repeat-exit", "event_id": eid, "token_id": "T", "action": "EXIT", "cutoff": iso()},
+            {
+                "dec_id": "repeat-exit",
+                "event_id": eid,
+                "token_id": "T",
+                "action": "EXIT",
+                "cutoff": clock_iso(),
+            },
         )
         args["kind"] = "UPDATE"
         correction = await service.dispatch("publish_card", args, {})
@@ -2691,7 +2705,7 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(
                 "event_id": eid,
                 "token_id": "T",
                 "action": "START",
-                "cutoff": iso(),
+                "cutoff": clock_iso(),
                 "entry_ref_price": "10",
                 "invalidation_price": "9",
             },
@@ -2715,7 +2729,7 @@ async def seed_economic_event(service, *, capture_score=8, negative_relation=Tru
     dependency_quote = "World token demand depends on SEC application approval."
     text = " ".join([quote, mechanism_quote, relation_quote, dependency_quote])
     item_id = new_id("item")
-    stamp = iso()
+    stamp = clock_iso()
     await service.repo.put(
         "ingest.source_items",
         item_id,
@@ -2861,7 +2875,7 @@ async def test_produced_loser_has_supported_negative_grade_without_long_action(
     )
     produced = (await service.repo.list("evt.beneficiary_edges", filters={"event_id": eid}))[0]
     assert produced["credible"] is False and produced["thesis_link_credible"] is True
-    truth = complete_truth_fixture("loser-" + eid, eid, "world:WLD", iso())
+    truth = complete_truth_fixture("loser-" + eid, eid, "world:WLD", clock_iso())
     await service.repo.put("ana.market_truth", truth["mta_id"], truth)
     decision = await service.dispatch("get_decision", {"event_id": eid, "token_id": "world:WLD"}, {})
     assert decision["thesis_grade"] == expected_grade
@@ -2894,7 +2908,7 @@ async def test_loser_cannot_reuse_only_positive_capture_proof(service) -> None:
     )
     produced = (await service.repo.list("evt.beneficiary_edges", filters={"event_id": eid}))[0]
     assert produced["thesis_link_credible"] is False
-    truth = complete_truth_fixture("unsupported-loser-" + eid, eid, "world:WLD", iso())
+    truth = complete_truth_fixture("unsupported-loser-" + eid, eid, "world:WLD", clock_iso())
     await service.repo.put("ana.market_truth", truth["mta_id"], truth)
     assert (await service.dispatch("get_decision", {"event_id": eid, "token_id": "world:WLD"}, {}))[
         "thesis_grade"
@@ -2933,7 +2947,7 @@ async def test_rejected_approval_only_exits_call_with_explicit_evidenced_depende
     await service.dispatch(
         "set_beneficiaries", {"event_id": eid, "edges": [edge], "layer_reasons": notes}, {}
     )
-    truth = complete_truth_fixture("approval-" + eid, eid, "world:WLD", iso())
+    truth = complete_truth_fixture("approval-" + eid, eid, "world:WLD", clock_iso())
     await service.repo.put("ana.market_truth", truth["mta_id"], truth)
     await service.repo.put(
         "ana.calls",
@@ -2943,7 +2957,7 @@ async def test_rejected_approval_only_exits_call_with_explicit_evidenced_depende
             "event_id": eid,
             "token_id": "world:WLD",
             "status": "OPEN",
-            "opened_at": iso(),
+            "opened_at": clock_iso(),
             "entry_ref_price": "10",
             "invalidation_price": "9",
         },
@@ -2951,7 +2965,7 @@ async def test_rejected_approval_only_exits_call_with_explicit_evidenced_depende
     before = await service.dispatch("get_decision", {"event_id": eid, "token_id": "world:WLD"}, {})
 
     async def rejected(object_text, dependency=None):
-        stamp = iso()
+        stamp = clock_iso()
         item_id = new_id("item")
         quote = object_text + " was rejected."
         await service.repo.put(
@@ -3188,7 +3202,7 @@ async def test_proposed_timing_requires_primary_dated_decision(service) -> None:
 async def test_immediate_market_access_allows_effective_primary_change_without_prior_trade(service) -> None:
     from tank.util import new_id
 
-    stamp = iso()
+    stamp = clock_iso()
     quote = "World access approved and effective " + stamp + " for the World instrument."
     item_id = new_id("item")
     await service.repo.put(
@@ -3388,7 +3402,7 @@ async def test_market_analysis_boundary_rejects_collection_clock_precision(servi
             {
                 "event_id": made["event_id"],
                 "token_ids": ["world:WLD"],
-                "cutoff": iso(),
+                "cutoff": clock_iso(),
                 "cutoff_prec": "COLLECTION_ONLY",
             },
             {},
@@ -3445,7 +3459,7 @@ async def test_full_card_blocks_only_analysis_tokens_with_decisions(
                 "exposure_score": exposure,
             },
         )
-    truth = complete_truth_fixture("block-truth", eid, token, iso())
+    truth = complete_truth_fixture("block-truth", eid, token, clock_iso())
     await service.repo.put("ana.market_truth", "block-truth", truth)
     await service.repo.put(
         "ana.decisions",
@@ -3455,7 +3469,7 @@ async def test_full_card_blocks_only_analysis_tokens_with_decisions(
             "event_id": eid,
             "token_id": token,
             "action": "WAIT",
-            "cutoff": iso(),
+            "cutoff": clock_iso(),
             "market_truth_id": "block-truth",
         },
     )
@@ -3600,7 +3614,7 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
         )
     repo = service.repo
     sid = new_id("native-session")
-    stamp = iso()
+    stamp = clock_iso()
     quote = "SEC approved the World application at " + stamp + "."
     config = service.settings.load_config("openma")
     snapshot = {
@@ -3740,7 +3754,7 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
     sid = new_id("http-session")
     replay_sid = new_id("http-replay-session")
     iid = new_id("item")
-    stamp = iso()
+    stamp = clock_iso()
     approved = "World access approved."
     mechanism = "The World token is required to pay protocol gas fees."
     await service.repo.put(
@@ -4002,7 +4016,12 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
                 tool(
                     "market-truth",
                     "get_market_truth",
-                    {"event_id": eid, "token_ids": ["world:WLD"], "cutoff": iso(), "cutoff_prec": "EXACT"},
+                    {
+                        "event_id": eid,
+                        "token_ids": ["world:WLD"],
+                        "cutoff": clock_iso(),
+                        "cutoff_prec": "EXACT",
+                    },
                 )
             )
             market_worker = asyncio.create_task(settle_owned_missing_input_jobs())
@@ -4250,7 +4269,7 @@ async def test_quoted_proposal_requires_explicit_stage_claim_not_fact_keyword(
             source_id="S03",
             source_class="PRIMARY",
             text=quote,
-            observed_at=iso(),
+            observed_at=clock_iso(),
             observed_at_prec="COLLECTION_ONLY",
         ),
     )
@@ -4460,7 +4479,7 @@ async def test_explicit_agent_corroboration_updates_certainty(service) -> None:
 async def test_immediate_access_uses_agent_structured_fact_and_effective_time(service, case) -> None:
     from tank.util import new_id
 
-    stamp = iso()
+    stamp = clock_iso()
     quote = "World access approved and effective " + stamp + " for the World instrument."
     unrelated = "SEC registration approved and effective " + stamp + " for a different instrument."
     report_quote = "World published its annual report on " + stamp + "."
@@ -4576,7 +4595,7 @@ async def test_observation_explicit_claim_replacement_preserves_history(service,
             "item_id": "confirmation",
             "source_id": "S01",
             "text": "Confirmed",
-            "observed_at": iso(),
+            "observed_at": clock_iso(),
             "source_class": "PRIMARY",
         },
     )
@@ -4849,7 +4868,7 @@ async def test_old_trigger_updates_stage_but_does_not_publish_or_resurface_on_ti
     await service.repo.put(
         "ingest.source_items",
         "old-reprint",
-        {"item_id": "old-reprint", "source_id": "S01", "text": "Now live", "observed_at": iso()},
+        {"item_id": "old-reprint", "source_id": "S01", "text": "Now live", "observed_at": clock_iso()},
     )
     claim = dict(extracted["claims"][0], state_claim="LIVE", quote="Now live")
     await service.dispatch(
@@ -5041,7 +5060,7 @@ async def test_least_repriced_ranks_all_credible_tokens_on_partial_refresh(
 
     earlier = iso(utcnow() - timedelta(minutes=5))
     await service.repo.put("ana.market_truth", "mta-B", truth("B", "UNPRICED", 0.2, earlier))
-    fresh = truth("A", "HEAVY", 0.9, iso())
+    fresh = truth("A", "HEAVY", 0.9, clock_iso())
     task = asyncio.create_task(
         service.dispatch("get_market_truth", {"event_id": eid, "token_ids": ["A"]}, {})
     )
