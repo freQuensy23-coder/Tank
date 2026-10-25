@@ -683,3 +683,11 @@ identity-map refusals, all zero live effects. These are not acceptance waivers.
 No held decision755/renderer activation, production deployment or global completion
 is claimed. Whole Truth/Market/event-tools typing and the other owned module/fallback
 inventory remain active work after this coherent application boundary.
+
+### Strict fixed scalar adoption
+
+BestMeasuredRouting.automatic_apply and CapturedProjectionCodeInventory.archived_code_executed are required FalseFlag assertions, never numeric zero. CaptureWaitOutcome.incomplete_windows_excluded uses TrueFlag so numeric1 cannot impersonate its policy assertion. Its retained defaultTrue is a declared output-policy constant: wait results describe the application's exclusion of incomplete venue windows, not a default for uncaptured Go data. CaptureLifecycleCoordinator.wait_capture constructs this Python output on every terminal/bounded-wait path; the marker does not claim complete capture.
+
+SavedKlineDayCounts.version uses canonical OneInt for the integer cache format identifier. This site already had an explicit integer prevalidator; consolidation preserves that behavior and removes the duplicate check. Integral floats and booleans remain invalid identifiers, while no financial quantity/rate numeric policy is changed. All retained/raw evidence bytes are unchanged.
+
+Twenty new wire-boundary cases reject numeric/bool confusion and preserve valid booleans/default policy/version roundtrips. The four source modules and new test pass independent strict mypy; 46 related calibration/code-evidence/cache/capture units pass2.41s. This companion is based on canonical24 and has no held decision/card ancestry.

@@ -1,5 +1,6 @@
 """Closed OpenMA configuration and synchronization boundary contracts."""
 
+from collections.abc import Sequence
 from pathlib import PurePosixPath
 from typing import Literal, Protocol, Self
 
@@ -7,7 +8,7 @@ from pydantic import Field, JsonValue, SecretStr, field_validator, model_validat
 
 from tank.contracts import DomainModel
 from tank.contracts.provenance import ResolvedSkillVersion, ResolvedVersionIdentity
-from tank.contracts.tool_schema import ToolDefinition
+from tank.contracts.tool_schema import ToolDefinition, parse_tool_definitions
 
 type ManagedSkillName = Literal["tank-event-analyst", "tank-data", "tank-scout-reviewer"]
 type ManagedAgentName = Literal["tank-event-analyst", "tank-scout-reviewer"]
@@ -102,6 +103,43 @@ class ManagedCustomTool(ToolDefinition):
 
 
 type ManagedTool = ManagedBuiltinToolset | ManagedCustomTool
+
+
+class ManagedToolManifest(DomainModel):
+    agent: ManagedAgentName
+    tools: tuple[ManagedTool, ...] = Field(min_length=1)
+
+    @classmethod
+    def from_definitions(cls, agent: ManagedAgentName, value: JsonValue) -> Self:
+        definitions = parse_tool_definitions(value)
+        builtin = ManagedBuiltinToolset(
+            type="agent_toolset_20260401",
+            default_config=ToolEnablement(enabled=True),
+            configs=[ToolSwitch(name="browser", enabled=True)],
+        )
+        return cls(
+            agent=agent,
+            tools=(
+                builtin,
+                *(
+                    ManagedCustomTool(
+                        type="custom",
+                        name=definition.name,
+                        description=definition.description,
+                        input_schema=definition.input_schema,
+                    )
+                    for definition in definitions
+                ),
+            ),
+        )
+
+
+class NativeSessionToolOverride(DomainModel):
+    tools: tuple[ManagedTool, ...] = Field(min_length=1)
+
+
+class NativeSessionToolUpdate(DomainModel):
+    agent: NativeSessionToolOverride
 
 
 class ProviderSkillVersion(ResolvedSkillVersion):
@@ -234,7 +272,7 @@ class BuiltinToolObservation(DomainModel):
     kind: Literal["builtin"]
     type: Literal["agent_toolset_20260401"]
     default_enabled: bool | None
-    configs: list[ToolSwitchObservation]
+    configs: list[ToolSwitchObservation] | None
 
 
 class CustomToolObservation(DomainModel):
@@ -244,12 +282,22 @@ class CustomToolObservation(DomainModel):
     input_schema: dict[str, JsonValue] | None
 
 
+class McpToolObservation(DomainModel):
+    kind: Literal["mcp"]
+    type: Literal["mcp_toolset"]
+    mcp_server_name: str = Field(min_length=1)
+    default_enabled: bool | None
+    configs: list[ToolSwitchObservation] | None
+
+
 class UnsupportedToolObservation(DomainModel):
     kind: Literal["unsupported"]
     type: str = Field(min_length=1)
 
 
-type ToolObservation = BuiltinToolObservation | CustomToolObservation | UnsupportedToolObservation
+type ToolObservation = (
+    BuiltinToolObservation | CustomToolObservation | McpToolObservation | UnsupportedToolObservation
+)
 
 
 class ManagedAgentObservation(DomainModel):
@@ -370,3 +418,101 @@ class OpenMAOperations(Protocol):
         self, identity: str, version: int, wanted: ManagedAgentDefinition
     ) -> AgentUpdateReceipt: ...
     async def environment(self, identity: str) -> ManagedEnvironmentObservation: ...
+
+
+def observe_openma_tool(value: JsonValue) -> ToolObservation:
+    if not isinstance(value, dict):
+        raise OpenMAContractViolation("OpenMA tool observation must be an object")
+    kind = value["type"]
+    if kind == "custom":
+        return CustomToolObservation.model_validate(
+            {
+                "kind": "custom",
+                "name": value["name"],
+                "description": value.get("description"),
+                "input_schema": value.get("input_schema"),
+            }
+        )
+    if kind == "agent_toolset_20260401" or kind == "mcp_toolset":
+        default = value.get("default_config")
+        if default is not None and not isinstance(default, dict):
+            raise OpenMAContractViolation("OpenMA default tool configuration must be an object")
+        configs = value.get("configs")
+        switches: list[ToolSwitchObservation] | None = None
+        if configs is not None:
+            if not isinstance(configs, list):
+                raise OpenMAContractViolation("OpenMA tool configurations must be an array")
+            switches = []
+            for raw in configs:
+                if not isinstance(raw, dict):
+                    raise OpenMAContractViolation("OpenMA tool configuration must be an object")
+                switches.append(
+                    ToolSwitchObservation.model_validate({"name": raw["name"], "enabled": raw.get("enabled")})
+                )
+            switches.sort(key=lambda switch: switch.name)
+        if kind == "mcp_toolset":
+            return McpToolObservation.model_validate(
+                {
+                    "kind": "mcp",
+                    "type": "mcp_toolset",
+                    "mcp_server_name": value["mcp_server_name"],
+                    "default_enabled": None if default is None else default.get("enabled"),
+                    "configs": switches,
+                }
+            )
+        return BuiltinToolObservation.model_validate(
+            {
+                "kind": "builtin",
+                "type": "agent_toolset_20260401",
+                "default_enabled": None if default is None else default.get("enabled"),
+                "configs": switches,
+            }
+        )
+    if not isinstance(kind, str) or not kind:
+        raise OpenMAContractViolation("OpenMA tool observation requires its actual type")
+    return UnsupportedToolObservation(kind="unsupported", type=kind)
+
+
+def _indexed_openma_tools(tools: Sequence[ToolObservation]) -> dict[str, ToolObservation]:
+    indexed: dict[str, ToolObservation] = {}
+    for tool in tools:
+        if isinstance(tool, CustomToolObservation):
+            key = "custom:" + tool.name
+        elif isinstance(tool, McpToolObservation):
+            key = "mcp:" + tool.mcp_server_name
+        else:
+            key = "builtin:" + tool.type
+        if key in indexed:
+            raise OpenMAContractViolation("OpenMA tool observation repeats an identity")
+        indexed[key] = tool
+    return indexed
+
+
+def openma_tools_match(observed: Sequence[ToolObservation], desired: Sequence[ManagedTool]) -> bool:
+    expected: list[ToolObservation] = []
+    for tool in desired:
+        if isinstance(tool, ManagedCustomTool):
+            expected.append(
+                CustomToolObservation(
+                    kind="custom",
+                    name=tool.name,
+                    description=tool.description,
+                    input_schema=tool.input_schema,
+                )
+            )
+        else:
+            expected.append(
+                BuiltinToolObservation(
+                    kind="builtin",
+                    type=tool.type,
+                    default_enabled=tool.default_config.enabled,
+                    configs=sorted(
+                        (
+                            ToolSwitchObservation(name=switch.name, enabled=switch.enabled)
+                            for switch in tool.configs
+                        ),
+                        key=lambda switch: switch.name,
+                    ),
+                )
+            )
+    return _indexed_openma_tools(observed) == _indexed_openma_tools(expected)

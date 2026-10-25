@@ -9,6 +9,7 @@ from tank.contracts import DomainModel
 from tank.time_precision import Timestamp
 
 type AdmissionJobKind = Literal["AGENT_MESSAGE", "SCOUT_REVIEW"]
+type SessionRuntimeStatus = Literal["PENDING", "RUNNING", "REQUIRES_ACTION", "IDLE", "ENDED"]
 ADMITTED_JOB_TYPES: tuple[AdmissionJobKind, ...] = ("AGENT_MESSAGE", "SCOUT_REVIEW")
 BUSY_RUNTIME_STATES = frozenset({"PENDING", "RUNNING", "REQUIRES_ACTION"})
 SESSION_ADMISSION_FIELDS = ("session_id", "status", "runtime_status", "active_message_id")
@@ -42,7 +43,7 @@ class SessionTarget(DomainModel):
 class SessionAdmissionState(DomainModel):
     session_id: str = Field(min_length=1)
     status: Literal["OPEN", "FAILED", "ENDED"]
-    runtime_status: Literal["PENDING", "RUNNING", "REQUIRES_ACTION", "IDLE", "ENDED"] | None
+    runtime_status: SessionRuntimeStatus | None
     active_message_id: str | None = Field(min_length=1)
 
     def running(self) -> bool:
