@@ -7,6 +7,7 @@ import pytest
 from source_support import fixture_versions
 
 from tank.analysis.cards import compose_card
+from tank.util import clock_iso
 
 
 def card_inputs():
@@ -507,14 +508,13 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
     from tank.settings import Settings
     from tank.storage import MemoryRepository
     from tank.telegram_rich import rich_message_text
-    from tank.util import iso
 
     event, assessment, beneficiary, decision, truth = deepcopy(card_inputs())
     eid, token = "current-card-contract", "world:WLD"
     what = (
         "World approved access to its product. Approval permits the next step; availability is not confirmed."
     )
-    now = iso()
+    now = clock_iso()
     event.update(
         event_id=eid,
         lifecycle="MONITORING",
