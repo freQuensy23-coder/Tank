@@ -38,7 +38,7 @@ from tank.time_precision import (
     offset_schedule,
     propagate_timestamp,
 )
-from tank.util import canonical_json, iso, new_id, parse_time, sha256, utcnow
+from tank.util import canonical_json, clock_iso, iso, new_id, parse_time, sha256, utcnow
 
 STATES = ["RUMOR", "PROPOSED", "APPROVED", "SIGNED", "DEPLOYED", "LIVE", "MONEY_FLOWING"]
 INTEGRATION = [
@@ -2948,7 +2948,7 @@ class EventToolService:
             )
 
         delivery_not_before = delivery_stamp.value
-        cutoff = iso()
+        cutoff = clock_iso()
 
         claims = list(event["claims"])
         observations = list(observations)

@@ -60,12 +60,20 @@ def _digest(captured: dict[str, bytes]) -> str:
 
 def _config_version(build_sha: str | None, digest: str) -> str:
     """The commit the image was built from; a development checkout is identified by content."""
-    return build_sha if build_sha and re.fullmatch(r"[0-9a-f]{40}", build_sha) else f"dev.{digest}"
+    if build_sha is None or build_sha == "dev":
+        return f"dev.{digest}"
+    if re.fullmatch(r"[0-9a-f]{40}", build_sha) is None:
+        raise ValueError("Build identity requires dev or 40 lowercase hexadecimal characters")
+    return build_sha
 
 
 def _default_codex_auth_path() -> Path:
     root = os.environ.get("CODEX_HOME")
-    return Path(root).expanduser() / "auth.json" if root else Path.home() / ".codex" / "auth.json"
+    if root is None:
+        return Path.home() / ".codex" / "auth.json"
+    if root == "":
+        raise ValueError("CODEX_HOME must name a nonempty directory")
+    return Path(root).expanduser() / "auth.json"
 
 
 class ConfigOwnedSource(PydanticBaseSettingsSource):
@@ -80,7 +88,7 @@ class ConfigOwnedSource(PydanticBaseSettingsSource):
 
     def __call__(self) -> dict[str, JsonInput]:
         values = self.source()
-        present = sorted(name for name in CONFIG_OWNED_FIELDS if values.get(name))
+        present = sorted(name for name in CONFIG_OWNED_FIELDS if name in values)
         if present:
             logging.getLogger("tank.settings").warning(
                 "Ignoring %s from the environment: set sources.yaml contact_email and "
@@ -156,7 +164,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("TANK_APIFY_API_TOKEN", "APIFY_API_TOKEN", "apify_api_token"),
     )
     config_version: str = "unversioned"
-    build_sha: str | None = None
+    build_sha: str | None = Field(default=None, pattern=r"^(?:dev|[0-9a-f]{40})$")
     code_version: str = "0.1.0"
     workers: int = 8
     replay: bool = False
@@ -172,11 +180,11 @@ class Settings(BaseSettings):
     _version_identity: ResolvedVersionIdentity | None = PrivateAttr(default=None)
 
     def model_post_init(self, context: JsonValue) -> None:
-        if self.tank_db_password and "database_url" not in self.model_fields_set:
+        if self.tank_db_password is not None and "database_url" not in self.model_fields_set:
             self.database_url = (
                 f"postgresql://tank:{quote(self.tank_db_password, safe='')}@postgres:5432/tank"
             )
-        if self.oma_db_password and "openma_database_url" not in self.model_fields_set:
+        if self.oma_db_password is not None and "openma_database_url" not in self.model_fields_set:
             self.openma_database_url = (
                 f"postgresql://oma:{quote(self.oma_db_password, safe='')}@postgres:5432/oma"
             )
