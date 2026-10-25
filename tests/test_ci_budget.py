@@ -81,6 +81,35 @@ def test_union_rejects_different_collections(integration_checks, tmp_path):
         check.verify(paths, [manifest, other])
 
 
+@pytest.mark.parametrize("outcome", ["pass", "skipped", "missing"])
+def test_union_cli_needs_only_the_copied_script_and_standard_library(tmp_path, outcome):
+    import subprocess
+    import sys
+
+    manifest, paths = reports(tmp_path)
+    checker = tmp_path / "check_integration_results.py"
+    checker.write_bytes((CI_ROOT / "check_integration_results.py").read_bytes())
+    if outcome == "skipped":
+        root = ET.parse(paths[0])
+        ET.SubElement(root.getroot().find("testcase"), "skipped")
+        root.write(paths[0])
+    elif outcome == "missing":
+        paths = paths[:1]
+    result = subprocess.run(
+        [sys.executable, "-I", "-S", str(checker), *map(str, paths), "--collection", str(manifest)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if outcome == "pass":
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"cases": 2, "passed": 2, "skipped": 0}
+    else:
+        assert result.returncode != 0
+        assert ("zero failures" if outcome == "skipped" else "full collected") in result.stderr
+
+
 def passed_jobs(completed="2026-10-23T12:03:20Z"):
     names = sorted(BUDGET["REQUIRED_JOBS"])
     names += [f"image ({name}, ., Dockerfile)" for name in sorted(BUDGET["REQUIRED_IMAGES"])]
