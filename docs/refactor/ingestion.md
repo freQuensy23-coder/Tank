@@ -293,3 +293,13 @@ cross-chain scope and exact key hashing. Strict mypy passes the new engine,
 adapter, contract and test module; Ruff checks/format pass. Consumer injection
 into market/event workflows remains the corresponding owner's next activation;
 this checkpoint alone does not claim all external attempts use the port.
+
+
+The follow-up session fixture now declares the actual repository registry/source
+configuration and reads the real analyst tool schemas. Its mock transport handles
+the actual toolset-update operation separately from user-event submission; the
+failure injection targets the intended event submission. Existing answer/session,
+retry-barrier, attachment and prompt-provenance assertions remain intact.
+Combined Ops/Telegram follow-up cohort: 94 units passed in 2.58s, zero skips.
+This fixes required fixture inputs rather than restoring missing-config defaults.
+Full typing of these large preexisting test modules remains open.
