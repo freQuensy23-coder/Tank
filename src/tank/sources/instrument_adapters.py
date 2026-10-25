@@ -8,14 +8,24 @@ from tank.contracts.source_checkpoints import InstrumentSnapshot
 from tank.contracts.sources import FeedParsingSpec
 
 
-class BybitResult(DomainModel):
+class BybitSpotResult(DomainModel):
     list: list[JsonValue]
     nextPageCursor: str = ""
 
 
-class BybitEnvelope(DomainModel):
+class BybitPerpetualResult(DomainModel):
+    list: list[JsonValue]
+    nextPageCursor: str
+
+
+class BybitSpotEnvelope(DomainModel):
     retCode: int
-    result: BybitResult
+    result: BybitSpotResult
+
+
+class BybitPerpetualEnvelope(DomainModel):
+    retCode: int
+    result: BybitPerpetualResult
 
 
 class OkxEnvelope(DomainModel):
@@ -73,7 +83,11 @@ def parse_instrument_page(payload: bytes | JsonValue, feed: FeedParsingSpec) -> 
         outer = project(data, ("retCode", "result"))
         if "result" in outer:
             outer["result"] = project(outer["result"], ("list", "nextPageCursor"))
-        envelope = BybitEnvelope.model_validate(outer)
+        envelope = (
+            BybitSpotEnvelope.model_validate(outer)
+            if feed.market_type == "SPOT"
+            else BybitPerpetualEnvelope.model_validate(outer)
+        )
         if envelope.retCode != 0:
             raise ValueError("Bybit instrument API refused the request")
         entries = envelope.result.list
