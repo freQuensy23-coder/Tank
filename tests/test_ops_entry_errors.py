@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from delivery_support import delivery_job
-from source_support import fixture_versions, source_definition, source_feed
+from source_support import fixture_request_budgets, fixture_versions, source_definition, source_feed
 from test_session_binding_concurrency import fixture_repo
 from test_sources import RSS
 from test_sources import settings as source_settings
@@ -56,7 +56,9 @@ async def poll(repo, tmp_path: Path, payloads, *, enabled=True, replay=False, so
         return httpx.Response(200, content=next(feed))
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
-        service = SourceService(repo, settings, http=http, versions=fixture_versions())
+        service = SourceService(
+            repo, settings, http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
+        )
         results = [await service.poll_once(source["source_id"]) for _ in payloads]
     return results
 

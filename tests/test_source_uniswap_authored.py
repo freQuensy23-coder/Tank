@@ -8,7 +8,7 @@ import httpx
 import pytest
 import zstandard
 from selectolax.parser import HTMLParser
-from source_support import fixture_versions, source_configuration
+from source_support import fixture_request_budgets, fixture_versions, source_configuration
 
 from tank.settings import Settings
 from tank.sources import SourceService, parsers
@@ -154,7 +154,9 @@ async def test_normal_uniswap_poll_uses_retained_authored_body_and_never_fetches
     )
     repo = MemoryRepository()
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-        service = SourceService(repo, settings, http=http, versions=fixture_versions())
+        service = SourceService(
+            repo, settings, http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
+        )
         try:
             result = await service.poll_once("S15")
             assert result["status"] == ("DEGRADED" if malformed_sibling else "HEALTHY"), result

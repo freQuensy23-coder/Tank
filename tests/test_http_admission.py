@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+from datetime import timedelta
 from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,13 +11,21 @@ import httpx
 import pytest
 from postgres_helpers import PostgresTemplate
 from psycopg import AsyncConnection
-from source_support import fixture_versions
+from source_support import FixtureBudgetClock, fixture_versions
 
 import tank.request_budget as budget_module
 from tank.contracts.http_policy import HttpAdmitted, HttpRefused, HttpUnconfigured
 from tank.contracts.sources import HttpFetchPlan, SourceApiLimitsConfiguration
 from tank.http_admission import ConfiguredHttpAdmission
-from tank.request_budget import BudgetConstraint, RequestLedger, SharedRequestBudgets, normalized_constraints
+from tank.request_budget import (
+    BudgetConstraint,
+    MemoryBudgetBackend,
+    RequestBudgetScope,
+    RequestLedger,
+    SharedRequestBudgets,
+    SystemBudgetClock,
+    normalized_constraints,
+)
 from tank.sources.http_client import SourceHttpTransport
 
 
@@ -43,33 +52,35 @@ async def test_atomic_memory_group_does_not_spend_other_window_while_blocked(
 
     monkeypatch.setattr(budget_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     monkeypatch.setattr(asyncio, "sleep", pause)
-    engine = SharedRequestBudgets()
+    backend = MemoryBudgetBackend(SystemBudgetClock())
+    engine = SharedRequestBudgets(backend)
     long = BudgetConstraint(key="long", capacity=3, window_s=100, weight=1)
     short = BudgetConstraint(key="short", capacity=1, window_s=10, weight=1)
     await engine.acquire_many([short, long])
     pending = asyncio.create_task(engine.acquire_many([short, long]))
     try:
         await asyncio.wait_for(sleeping.wait(), timeout=1)
-        assert len(engine.windows[long.bucket()]) == 1
-        assert len(engine.windows[short.bucket()]) == 1
+        assert len(backend.windows[long.bucket()]) == 1
+        assert len(backend.windows[short.bucket()]) == 1
         clock[0] = 10.0
         release.set()
         await asyncio.wait_for(pending, timeout=1)
-        assert [row.at for row in engine.windows[long.bucket()]] == [0.0, 10.0]
-        assert [row.at for row in engine.windows[short.bucket()]] == [10.0]
+        assert [row.at for row in backend.windows[long.bucket()]] == [0.0, 10.0]
+        assert [row.at for row in backend.windows[short.bucket()]] == [10.0]
     finally:
         pending.cancel()
         await asyncio.gather(pending, return_exceptions=True)
 
 
-def configured_admission() -> tuple[ConfiguredHttpAdmission, SharedRequestBudgets]:
+def configured_admission() -> tuple[ConfiguredHttpAdmission, MemoryBudgetBackend]:
     import yaml
 
     policy = SourceApiLimitsConfiguration.model_validate(
         yaml.safe_load(Path("config/api_limits.yaml").read_text())
     )
-    engine = SharedRequestBudgets()
-    return ConfiguredHttpAdmission(policy, fixture_versions(), engine), engine
+    backend = MemoryBudgetBackend(SystemBudgetClock())
+    engine = SharedRequestBudgets(backend)
+    return ConfiguredHttpAdmission(policy, fixture_versions(), engine), backend
 
 
 @pytest.mark.asyncio
@@ -206,3 +217,103 @@ async def test_source_redirect_cannot_restore_python_exchange_transport() -> Non
         with pytest.raises(ValueError, match="exchange capture transport"):
             await transport.request(HttpFetchPlan(url="https://example.org/feed"), {}, None)
     assert seen == ["example.org"]
+
+
+@pytest.mark.asyncio
+async def test_unbound_scope_refuses_acquisition_and_blocking() -> None:
+    scope = RequestBudgetScope()
+    constraint = BudgetConstraint(key="configured", capacity=1, window_s=60, weight=1)
+    with pytest.raises(RuntimeError, match="has not been bound"):
+        await scope.acquire_many([constraint])
+    with pytest.raises(RuntimeError, match="has not been bound"):
+        await scope.block("api.example", FixtureBudgetClock().now(), "provider refusal")
+
+
+@pytest.mark.asyncio
+async def test_releasing_old_runtime_binding_preserves_replacement_ownership() -> None:
+    scope = RequestBudgetScope()
+    old_backend = MemoryBudgetBackend(FixtureBudgetClock())
+    old = scope.bind(old_backend)
+    new_backend = MemoryBudgetBackend(FixtureBudgetClock())
+    replacement = scope.bind(new_backend)
+    await scope.release(old)
+    constraint = BudgetConstraint(key="configured", capacity=1, window_s=60, weight=1)
+    await scope.acquire_many([constraint])
+    assert old_backend.closed
+    assert len(new_backend.windows[constraint.bucket()]) == 1
+    assert scope.require_binding() is replacement
+    await scope.release(replacement)
+    with pytest.raises(RuntimeError, match="has not been bound"):
+        await scope.acquire_many([constraint])
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_enforces_provider_host_block_without_spending_other_windows() -> None:
+    clock = FixtureBudgetClock()
+    backend = MemoryBudgetBackend(clock)
+    engine = SharedRequestBudgets(backend)
+    first = BudgetConstraint(key="first", capacity=2, window_s=60, weight=1, host="api.example")
+    second = BudgetConstraint(key="second", capacity=2, window_s=60, weight=1, host="api.example")
+    await engine.block("api.example", clock.now() + timedelta(seconds=10), "provider Retry-After")
+    assert await backend.wait_many([second, first], ready=lambda: True) == 10
+    assert not any(backend.windows.values())
+    await engine.acquire_many([second, first])
+    assert clock.monotonic() == 10
+    assert [row.at for row in backend.windows[first.bucket()]] == [10]
+    assert [row.at for row in backend.windows[second.bucket()]] == [10]
+
+
+@pytest.mark.asyncio
+async def test_invalid_constructed_constraint_cannot_bypass_required_capacity() -> None:
+    from pydantic import JsonValue, ValidationError
+
+    wire: dict[str, JsonValue] = {"key": "configured", "capacity": None, "window_s": 60, "weight": 1}
+    invalid = BudgetConstraint.model_construct(set(wire), **wire)
+    backend = MemoryBudgetBackend(FixtureBudgetClock())
+    engine = SharedRequestBudgets(backend)
+    with pytest.raises(ValidationError):
+        await engine.acquire_many([invalid])
+    assert not backend.windows
+
+
+@pytest.mark.asyncio
+async def test_unregistered_public_host_waits_for_empirical_block_without_invented_quota() -> None:
+    from source_support import fixture_http_admission, fixture_request_budgets
+
+    clock = FixtureBudgetClock()
+    engine = fixture_request_budgets(clock=clock)
+    assert isinstance(engine.backend, MemoryBudgetBackend)
+    admission = fixture_http_admission(budgets=engine)
+    request = httpx.Request("GET", "https://public.example/ordinary")
+    await admission.block(request, clock.now() + timedelta(seconds=12), "observed Retry-After")
+    result = await admission.admit(request)
+    assert isinstance(result, HttpUnconfigured)
+    assert clock.monotonic() == 12
+    assert not engine.backend.windows
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_postgres_host_block_is_visible_without_any_provider_quota(
+    postgres_template: PostgresTemplate,
+) -> None:
+    from tank.util import utcnow
+
+    database_url = os.environ["TANK_SOURCE_TEST_DATABASE_URL"]
+    async with postgres_template.repository(database_url) as repo:
+        writer = RequestLedger(repo.database_url, owner="synthetic-host-writer")
+        reader = RequestLedger(repo.database_url, owner="synthetic-host-reader")
+        try:
+            assert await reader.host_delay("public.example") == 0
+            await writer.block("public.example", utcnow() + timedelta(seconds=60), "observed Retry-After")
+            assert 0 < await reader.host_delay("public.example") <= 60
+            assert await reader.host_delay("other.example") == 0
+            async with await AsyncConnection.connect(repo.database_url) as connection:
+                row = await (
+                    await connection.execute("SELECT count(*) FROM ops.request_budget_ledger")
+                ).fetchone()
+            assert row == (0,)
+        finally:
+            await writer.shutdown()
+            await reader.shutdown()

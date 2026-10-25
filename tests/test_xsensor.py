@@ -10,7 +10,7 @@ import pydantic
 import pytest
 import zstandard
 from pydantic import JsonValue
-from source_support import fixture_versions
+from source_support import fixture_request_budgets, fixture_versions
 from test_sources import settings
 
 from tank.contracts.json import decode_json
@@ -219,6 +219,7 @@ async def test_s29_poll_stores_new_posts_and_moves_cursors_only_after_them(tmp_p
         config,
         http=httpx.AsyncClient(transport=httpx.MockTransport(actor)),
         versions=fixture_versions(),
+        budgets=fixture_request_budgets(),
     )
     svc.accounts = {
         "official_org": SourceAccount(
@@ -372,7 +373,9 @@ async def test_configured_founder_role_survives_real_source_capture_and_domain_d
     )
     repo = MemoryRepository()
     async with httpx.AsyncClient(transport=httpx.MockTransport(actor)) as http:
-        service = SourceService(repo, configuration, http=http, versions=fixture_versions())
+        service = SourceService(
+            repo, configuration, http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
+        )
         declared_account = SourceAccount.model_validate(configured)
         assert declared_account.official_authorities is not None
         assert {authority.entity_id for authority in declared_account.official_authorities} == {

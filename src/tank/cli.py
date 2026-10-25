@@ -361,14 +361,20 @@ def sources():
 @click.option("--accounts", is_flag=True, help="Check configured X account identities.")
 def sources_check(probe, accounts):
     async def command(repo, settings):
+        from tank.request_budget import RequestLedger, shared_request_budgets
         from tank.sources import SourceService
 
-        service = SourceService(repo, settings, versions=settings.require_versions())
+        binding = shared_request_budgets.bind(RequestLedger(repo.database_url, owner="tank-cli"))
         try:
-            return await service.check(probe=probe, check_accounts=accounts)
-        finally:
-            if hasattr(service, "close"):
+            service = SourceService(
+                repo, settings, versions=settings.require_versions(), budgets=shared_request_budgets
+            )
+            try:
+                return await service.check(probe=probe, check_accounts=accounts)
+            finally:
                 await service.close()
+        finally:
+            await shared_request_budgets.release(binding)
 
     run_db(command)
 

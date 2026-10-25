@@ -31,7 +31,7 @@ from tank.contracts.sources import (
 )
 from tank.http_admission import ConfiguredHttpAdmission
 from tank.ops_progress import RepositorySourceProgress
-from tank.request_budget import BudgetConstraint, shared_request_budgets
+from tank.request_budget import BudgetConstraint, RequestBudgets
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.sources.fetch import FetchEvidence, FetchResult, HttpCheckpointProjection, SourceHttpReader
 from tank.sources.http_client import RequestStarted, SourceHttpTransport
@@ -53,15 +53,18 @@ def tls_context() -> ssl.SSLContext:
 
 
 class SourceService:
-    def __init__(self, repo, settings, *, versions: ResolvedVersionIdentity, http=None) -> None:
+    def __init__(
+        self, repo, settings, *, versions: ResolvedVersionIdentity, budgets: RequestBudgets, http=None
+    ) -> None:
         self.versions = ResolvedVersionIdentity.model_validate(versions)
+        self.budgets = budgets
         cfg = SourceConfiguration.model_validate(settings.load_config("sources"))
         registry = settings.load_config("registry")
         account_registry = SourceAccountRegistryView.model_validate(
             {name: registry[name] for name in ("x_accounts",) if name in registry}
         )
         self.api_limits = SourceApiLimitsConfiguration.model_validate(settings.load_config("api_limits"))
-        self.http_admission = ConfiguredHttpAdmission(self.api_limits, self.versions, shared_request_budgets)
+        self.http_admission = ConfiguredHttpAdmission(self.api_limits, self.versions, self.budgets)
         self.thresholds = Thresholds.model_validate(settings.load_config("thresholds"))
         self.escalated_interval_s = self.thresholds.escalated_interval_s
         self.repo = repo
@@ -138,7 +141,7 @@ class SourceService:
         )
         if is_exchange_url(str(actual.url)):
             if constraints:
-                await shared_request_budgets.acquire_many(constraints)
+                await self.budgets.acquire_many(constraints)
             return
         result = await self.http_admission.admit_with_constraints(actual, constraints)
         if isinstance(result, HttpRefused):

@@ -157,7 +157,7 @@ EndpointVerification recognizes the existing optional checked_at clock declarati
 The same declared JSON-number preservation applies to SourceLimits.budget_fraction, SourceFeed/HttpFetchPlan request_weight/requests_per_minute and SourceProviderBudget.tank_max_requests_per_s. Their strict int|float forms represent genuine valid JSON numbers without coercing integer capacities/counts to float; existing bounds/nonfinite/bool checks remain. Actual api_limits.yaml canonical roundtrip and an explicit mixed integer-budget/fractional-cadence source configuration roundtrip provide behavior evidence. Runtime rolling-budget arithmetic still uses its precise numeric model.
 
 
-Known provider budgets now validate their actual required operational facets instead of accepting a nullable missing capacity: sec.gov/Coinbase/Kraken/Etherscan require RPS; Binance spot/usdm/Hyperliquid require per-minute weight; OKX requires endpoint budgets; Bybit requires period/capacity/budget/scope; DuckDuckGo requires declared client/backend/spacing/retry/access policy. A declared Tank capacity cannot exceed the existing api_limits.yaml half-documented-capacity policy, including endpoint budgets. Truly irrelevant facet fields remain optional for other provider kinds. Real SourceService startup regressions reject a missing SEC RPS or an excessive configured capacity before any source/job persistence, closing the nullable-capacity admission gap without guessing a fallback quota.
+Known provider budgets now validate their actual required operational facets instead of accepting a nullable missing capacity: sec.gov/Coinbase/Kraken/Etherscan require RPS; Binance spot/usdm/Hyperliquid require per-minute weight; OKX requires endpoint budgets; Bybit requires period/capacity/budget/scope; DuckDuckGo requires declared client/backend/spacing/retry/access policy. A declared Tank capacity cannot exceed the existing api_limits.yaml half-documented-capacity policy, including endpoint budgets. Closed provider variants omit unrelated facets entirely; only the genuinely uncaptured Coinbase/Kraken documented RPS remains optional. Real SourceService startup regressions reject a missing SEC RPS or an excessive configured capacity before any source/job persistence, closing the nullable-capacity admission gap without guessing a fallback quota.
 
 ## Retained source-item exceptions by exact symbol/site
 
@@ -269,9 +269,9 @@ sec.gov IP scope across subdomains. Unknown routes have an explicit unconfigured
 outcome, never a fabricated quota.
 
 `BudgetConstraint.host=None` means a primitive quota lacks a provider-block
-association; it does not suppress its quota. `SharedRequestBudgets.acquire`
-retains capacity=None only for existing explicitly unconfigured primitive callers;
-the configured adapter always supplies validated positive capacities. Priority=0
+association; it does not suppress its quota. `SharedRequestBudgets.acquire` requires a validated positive capacity.
+Unregistered public routes are explicit policy outcomes and never call an
+unlimited/missing-capacity primitive. Priority=0
 is the ordinary fairness class; negative priorities receive existing urgent
 precedence. Budget maps are associative indexes by validated complete quota
 identity; deques are rolling weighted admission histories. `RequestLedger.connection`
@@ -414,11 +414,10 @@ empty receipt maps or invented current-time fallbacks. Strict reader/test mypy
 and touched Ruff checks pass. Full pinned services verification follows the commit.
 
 
-`SharedRequestBudgets.configure` no longer takes the unused Settings object or
-imports application configuration. Its owner label is required explicitly and
-remains observability only, never a quota partition. Runtime's owner must pair
-the configure call with the existing release lifetime before integration; this
-small API companion does not alter memory/physical repository selection.
+The former `SharedRequestBudgets.configure(repo, settings)` capability guess
+and unused Settings dependency are removed. Backend selection now belongs to
+explicit composition, as described below. Owner labels remain observability only,
+never quota partitions.
 
 
 `ops_cards.plain` now takes an explicit scalar display value and handles only
@@ -431,3 +430,72 @@ identity by key presence; empty declared identity values therefore reach that
 variant's required validation rather than trying a different record shape.
 Evidence: 164 Ops/source units pass in 7.26s, including new zero/false/markup cases;
 Ruff passes touched source/tests. The rest of ops_cards remains open.
+
+
+### Explicit admission backend and lifetime activation
+
+`SharedRequestBudgets(backend)` requires the closed concrete choice
+`MemoryBudgetBackend | RequestLedger`; unsupported backend objects reject before
+binding. There is no repository-based fallback to memory and no capacity=None
+admission path. Every actual acquisition revalidates its complete constraints,
+including previously constructed model instances. Unknown public routes and
+genuinely absent additional caps remain explicit `HttpUnconfigured`/constraint-plan
+decisions at the caller boundary, not an unlimited engine operation.
+
+`MemoryBudgetBackend` requires its operational clock and enforces weighted windows,
+atomic groups and observed provider-host blocks. `RequestLedger` retains real
+PostgreSQL transactions and shared host-block storage; its database and owner are
+required. Both expose host-only block waiting without fabricating a provider quota.
+An unregistered public URL still waits for an actually observed host block while
+returning the explicit unconfigured-policy outcome. Host-block absence means
+unblocked, which is distinct from declaring any provider capacity. The old
+already-serialized single-window compatibility method has been removed; all
+physical acquisition keys come from the same validated canonical identity.
+
+`RequestBudgetScope._active=None` is solely the real before-bind/after-release
+resource state. Acquire, host wait and block all raise when unbound. `bind` returns
+the exact owned engine lease. Releasing an older lease closes its backend while
+preserving a newer binding, so reload cleanup cannot disable its replacement.
+Runtime composition must supply an explicit backend and inject the scope into its
+services; the core does not choose a backend by inspecting a structural repository.
+
+`SourceService(..., budgets:RequestBudgets)` now requires its port. It validates the
+actual source-configured API policy and constructs the configured resolver with
+that required engine. Direct operator source checks bind a PostgreSQL ledger for
+their exact command lifetime and release it even if service construction fails.
+`HttpAdmission.block(actual_request, until, reason)` uses the same injected engine
+as request admission; it never consults a global optional ledger flag. Live
+provider admission remains separate from verified recorded-evidence transport.
+
+Retained resource maps are genuinely associative: `windows` indexes weighted
+history by complete quota identity; `locks` indexes concurrency resources;
+`urgent.get(bucket, 0)` means no waiting urgent requests; `blocked_hosts.get(host)`
+means no observed host block. Empty history on a new configured bucket is actual
+absence of prior spend, not guessed capacity. `RequestLedger.connection=None`
+is lazy/closed connection state, never a missing backend. Its host-delay SQL
+zero for a missing block row represents the actual absence of a block. All clock
+values used for memory admission must be finite; block instants require aware
+timestamps. The production clock is real and the test clock is explicitly supplied.
+
+`source_support.fixture_request_budgets` creates the real memory implementation
+with an isolated virtual operational clock advancing only on waits.
+`fixture_http_admission` uses the actual configured resolver and declared synthetic
+version facet. It never fabricates an ADMITTED decision/provider or bypasses quota
+arithmetic. The synthetic operational clock is not event/publication provenance.
+Owned source fixtures explicitly choose this backend; cross-owner runtime/E2E/
+market callers must merge their paired constructor companion before activation.
+
+Evidence: 200 source/admission units pass in 3.34s; two actual PostgreSQL cases pass
+in 1.61s, zero skips. They prove all-or-none rollback and cross-owner host-block
+visibility with no quota-spend rows for unknown public routes. Memory cases prove
+unbound refusal, effective host blocking, no partial spend, required capacity
+revalidation and replacement lease ownership. Five engine/policy/helper/test
+modules pass strict mypy. Full combined constructor cohort remains pending the
+corresponding owners' canonical companions; prior ee97e89 remains the last pinned
+487-unit/33-integration green snapshot.
+
+
+The complete owned unit selection after this backend activation passes 496 cases
+in 6.33s, zero skips (owned-explicit-backend-unit.xml). The two actual PostgreSQL
+admission cases remain the focused physical proof; the full integration/E2E cohort
+must wait for the coordinated required constructor/resource companions.

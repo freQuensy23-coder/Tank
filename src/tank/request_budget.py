@@ -4,18 +4,35 @@ import asyncio
 import math
 import time
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
-from datetime import datetime
-from typing import Self
+from datetime import UTC, datetime
+from typing import Protocol, Self
 
 from psycopg import AsyncConnection, OperationalError
 from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
-from tank.storage import Repository
+from tank.util import parse_iso_time
 
 LEDGER_MAX_WAIT_S = 5.0
+
+
+class BudgetClock(Protocol):
+    def monotonic(self) -> float: ...
+    def now(self) -> datetime: ...
+    async def sleep(self, delay: float) -> None: ...
+
+
+class SystemBudgetClock:
+    def monotonic(self) -> float:
+        return time.monotonic()
+
+    def now(self) -> datetime:
+        return datetime.now(UTC)
+
+    async def sleep(self, delay: float) -> None:
+        await asyncio.sleep(delay)
 
 
 class BudgetBucket(DomainModel):
@@ -31,7 +48,7 @@ class BudgetAdmission(DomainModel):
 
 class BudgetConstraint(BudgetBucket):
     weight: float = Field(gt=0, allow_inf_nan=False)
-    host: str | None = None
+    host: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
     def usable_weight(self) -> Self:
@@ -78,7 +95,10 @@ class RequestLedger:
     admission is its own short transaction and no pooled connection waits on a budget."""
 
     def __init__(self, database_url: str, owner: str) -> None:
+        if not database_url.strip() or not owner.strip():
+            raise ValueError("PostgreSQL admission requires a database and explicit owner")
         self.database_url, self.owner = database_url, owner
+        self.clock = SystemBudgetClock()
         self.connection: AsyncConnection[tuple[JsonValue, ...]] | None = None
         self.closed = False
         self.lock = asyncio.Lock()
@@ -108,21 +128,11 @@ class RequestLedger:
 
         return await asyncio.shield(self._execute(query, args))
 
-    async def wait_s(
-        self, bucket: str, capacity: float, window_s: float, weight: float, host: str | None
-    ) -> float:
-        return await self.wait_many(
-            [BudgetConstraint(key=bucket, capacity=capacity, window_s=window_s, weight=weight, host=host)],
-            serialized_names=True,
-        )
-
-    async def wait_many(
-        self, constraints: Sequence[BudgetConstraint], *, serialized_names: bool = False
-    ) -> float:
+    async def wait_many(self, constraints: Sequence[BudgetConstraint]) -> float:
         values = normalized_constraints(constraints)
-        return await asyncio.shield(self._wait_many(values, serialized_names=serialized_names))
+        return await asyncio.shield(self._wait_many(values))
 
-    async def _wait_many(self, constraints: Sequence[BudgetConstraint], *, serialized_names: bool) -> float:
+    async def _wait_many(self, constraints: Sequence[BudgetConstraint]) -> float:
         async with self.lock:
             for attempt in range(2):
                 if self.closed:
@@ -134,7 +144,7 @@ class RequestLedger:
                     async with connection.transaction():
                         delay = 0.0
                         for constraint in constraints:
-                            name = constraint.key if serialized_names else ledger_key(constraint)
+                            name = ledger_key(constraint)
                             row = await (
                                 await connection.execute(
                                     "SELECT ops.request_budget_acquire(%s,%s::numeric,%s::float8,%s::numeric,%s,%s)",
@@ -160,7 +170,20 @@ class RequestLedger:
                         raise
         raise RuntimeError("Request ledger exhausted its grouped reconnect attempts")
 
+    async def host_delay(self, host: str) -> float:
+        if not host:
+            raise ValueError("Host waits require an actual destination")
+        row = await self.call(
+            "SELECT coalesce((SELECT greatest(0.0, extract(epoch FROM until - clock_timestamp())) "
+            "FROM ops.request_budget_blocks WHERE host = %s), 0.0)::float8",
+            (host,),
+        )
+        return admission_delay(row)
+
     async def block(self, host: str, until: datetime, reason: str) -> None:
+        if not host or not reason:
+            raise ValueError("Host blocks require a host and reason")
+        until = parse_iso_time(until)
         await self.call("SELECT ops.request_budget_block(%s,%s,%s,%s)", (host, until, reason, self.owner))
 
     async def close(self) -> None:
@@ -174,50 +197,113 @@ class RequestLedger:
             await self.close()
 
 
-class SharedRequestBudgets:
-    def __init__(self) -> None:
+class MemoryBudgetBackend:
+    """Explicit process-local backend; never selected from a missing database capability."""
+
+    def __init__(self, clock: BudgetClock) -> None:
+        self.clock = clock
         self.windows: dict[BudgetBucket, deque[BudgetAdmission]] = {}
         self.locks: dict[BudgetBucket, asyncio.Lock] = {}
-        self.urgent: dict[BudgetBucket, int] = {}
-        self.ledger: RequestLedger | None = None
+        self.blocked_hosts: dict[str, float] = {}
+        self.closed = False
 
-    def configure(self, repo: Repository, *, owner: str) -> RequestLedger | None:
-        """Admit from the PostgreSQL ledger shared with tank-capture; an in-memory repository
-        (tests) keeps budgets in memory."""
-        from tank.storage import PostgresRepository
+    async def wait_many(self, constraints: Sequence[BudgetConstraint], *, ready: Callable[[], bool]) -> float:
+        if self.closed:
+            raise RuntimeError("Memory request budget backend is closed")
+        values = normalized_constraints(constraints)
+        buckets = [value.bucket() for value in values]
+        async with AsyncExitStack() as stack:
+            for bucket in buckets:
+                await stack.enter_async_context(self.locks.setdefault(bucket, asyncio.Lock()))
+            if self.closed:
+                raise RuntimeError("Memory request budget backend is closed")
+            if not ready():
+                return min(0.05, *(bucket.window_s for bucket in buckets))
+            now = self.clock.monotonic()
+            if not math.isfinite(now):
+                raise ValueError("Memory admission requires a finite operational clock")
+            delay = 0.0
+            for constraint, bucket in zip(values, buckets, strict=True):
+                if constraint.host is not None:
+                    blocked_until = self.blocked_hosts.get(constraint.host)
+                    if blocked_until is not None:
+                        delay = max(delay, blocked_until - now)
+                history = self.windows.setdefault(bucket, deque())
+                while history and now - history[0].at >= bucket.window_s:
+                    history.popleft()
+                if sum(row.weight for row in history) + constraint.weight > bucket.capacity:
+                    delay = max(delay, max(0.001, bucket.window_s - (now - history[0].at)))
+            if delay <= 0:
+                for constraint, bucket in zip(values, buckets, strict=True):
+                    self.windows[bucket].append(BudgetAdmission(at=now, weight=constraint.weight))
+            return max(delay, 0.0)
 
-        if not isinstance(repo, PostgresRepository):
-            return None
-        self.ledger = RequestLedger(repo.database_url, owner)
-        return self.ledger
-
-    async def release(self, ledger: RequestLedger | None) -> None:
-        if ledger is None:
-            return
-        if self.ledger is ledger:
-            self.ledger = None
-        await ledger.shutdown()
+    async def host_delay(self, host: str) -> float:
+        if self.closed:
+            raise RuntimeError("Memory request budget backend is closed")
+        if not host:
+            raise ValueError("Host waits require an actual destination")
+        now = self.clock.monotonic()
+        if not math.isfinite(now):
+            raise ValueError("Memory admission requires a finite operational clock")
+        deadline = self.blocked_hosts.get(host)
+        return 0.0 if deadline is None else max(0.0, deadline - now)
 
     async def block(self, host: str, until: datetime, reason: str) -> None:
-        """Close a provider host for every process until `until` (ledger mode only)."""
-        ledger = self.ledger
-        if ledger is not None:
-            await ledger.block(host, until, reason)
+        if self.closed:
+            raise RuntimeError("Memory request budget backend is closed")
+        if not host or not reason:
+            raise ValueError("Host blocks require a host and reason")
+        duration = max(0.0, (parse_iso_time(until) - parse_iso_time(self.clock.now())).total_seconds())
+        now = self.clock.monotonic()
+        if not math.isfinite(now):
+            raise ValueError("Memory admission requires a finite operational clock")
+        deadline = now + duration
+        previous = self.blocked_hosts.get(host)
+        self.blocked_hosts[host] = deadline if previous is None else max(previous, deadline)
+
+    async def shutdown(self) -> None:
+        self.closed = True
+
+
+type BudgetBackend = MemoryBudgetBackend | RequestLedger
+
+
+class RequestBudgets(Protocol):
+    async def wait_host(self, host: str) -> None: ...
+    async def acquire_many(self, constraints: Sequence[BudgetConstraint], *, priority: int = 0) -> None: ...
+    async def block(self, host: str, until: datetime, reason: str) -> None: ...
+
+
+class SharedRequestBudgets:
+    """Fair admission against one explicitly chosen backend."""
+
+    def __init__(self, backend: BudgetBackend) -> None:
+        if not isinstance(backend, (MemoryBudgetBackend, RequestLedger)):
+            raise TypeError("Request admission requires an explicit supported backend")
+        self.backend = backend
+        self.urgent: dict[BudgetBucket, int] = {}
+
+    async def wait_host(self, host: str) -> None:
+        while True:
+            delay = await self.backend.host_delay(host)
+            if delay <= 0:
+                return
+            await self.backend.clock.sleep(min(delay, LEDGER_MAX_WAIT_S))
+
+    async def block(self, host: str, until: datetime, reason: str) -> None:
+        await self.backend.block(host, until, reason)
 
     async def acquire(
         self,
         key: str,
-        capacity: float | None,
+        capacity: float,
         window_s: float,
         *,
         weight: float = 1,
         priority: int = 0,
         host: str | None = None,
     ) -> None:
-        """Wait until `weight` fits the rolling window. While a request with a negative
-        priority waits for a bucket, requests of priority >= 0 leave its capacity to it."""
-        if capacity is None:
-            return
         await self.acquire_many(
             [BudgetConstraint(key=key, capacity=capacity, window_s=window_s, weight=weight, host=host)],
             priority=priority,
@@ -233,45 +319,56 @@ class SharedRequestBudgets:
         try:
             while True:
                 if not urgent and any(self.urgent.get(bucket, 0) > 0 for bucket in buckets):
-                    await asyncio.sleep(min(0.05, *(bucket.window_s for bucket in buckets)))
+                    await self.backend.clock.sleep(min(0.05, *(bucket.window_s for bucket in buckets)))
                     continue
-                if self.ledger is not None:
-                    if len(values) == 1:
-                        constraint = values[0]
-                        wait = await self.ledger.wait_s(
-                            ledger_key(constraint),
-                            constraint.capacity,
-                            constraint.window_s,
-                            constraint.weight,
-                            constraint.host,
-                        )
-                    else:
-                        wait = await self.ledger.wait_many(values)
-                    if wait <= 0:
-                        return
-                    await asyncio.sleep(min(wait, LEDGER_MAX_WAIT_S))
-                    continue
-                async with AsyncExitStack() as stack:
-                    for bucket in buckets:
-                        await stack.enter_async_context(self.locks.setdefault(bucket, asyncio.Lock()))
-                    now = time.monotonic()
-                    yielding = not urgent and any(self.urgent.get(bucket, 0) > 0 for bucket in buckets)
-                    delay = min(0.05, *(bucket.window_s for bucket in buckets)) if yielding else 0.0
-                    for constraint, bucket in zip(values, buckets, strict=True):
-                        history = self.windows.setdefault(bucket, deque())
-                        while history and now - history[0].at >= bucket.window_s:
-                            history.popleft()
-                        if sum(row.weight for row in history) + constraint.weight > bucket.capacity:
-                            delay = max(delay, max(0.001, bucket.window_s - (now - history[0].at)))
-                    if delay <= 0:
-                        for constraint, bucket in zip(values, buckets, strict=True):
-                            self.windows[bucket].append(BudgetAdmission(at=now, weight=constraint.weight))
-                        return
-                await asyncio.sleep(delay)
+                if isinstance(self.backend, MemoryBudgetBackend):
+                    delay = await self.backend.wait_many(
+                        values,
+                        ready=lambda: urgent or not any(self.urgent.get(bucket, 0) > 0 for bucket in buckets),
+                    )
+                else:
+                    delay = await self.backend.wait_many(values)
+                if delay <= 0:
+                    return
+                await self.backend.clock.sleep(min(delay, LEDGER_MAX_WAIT_S))
         finally:
             if urgent:
                 for bucket in buckets:
                     self.urgent[bucket] -= 1
 
+    async def shutdown(self) -> None:
+        await self.backend.shutdown()
 
-shared_request_budgets = SharedRequestBudgets()
+
+class RequestBudgetScope:
+    """Runtime lifetime binding; an absent binding always refuses admission."""
+
+    def __init__(self) -> None:
+        self._active: SharedRequestBudgets | None = None
+
+    def bind(self, backend: BudgetBackend) -> SharedRequestBudgets:
+        engine = SharedRequestBudgets(backend)
+        self._active = engine
+        return engine
+
+    def require_binding(self) -> SharedRequestBudgets:
+        if self._active is None:
+            raise RuntimeError("Request admission backend has not been bound")
+        return self._active
+
+    async def release(self, binding: SharedRequestBudgets) -> None:
+        if self._active is binding:
+            self._active = None
+        await binding.shutdown()
+
+    async def wait_host(self, host: str) -> None:
+        await self.require_binding().wait_host(host)
+
+    async def acquire_many(self, constraints: Sequence[BudgetConstraint], *, priority: int = 0) -> None:
+        await self.require_binding().acquire_many(constraints, priority=priority)
+
+    async def block(self, host: str, until: datetime, reason: str) -> None:
+        await self.require_binding().block(host, until, reason)
+
+
+shared_request_budgets = RequestBudgetScope()

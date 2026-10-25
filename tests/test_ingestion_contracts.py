@@ -6,7 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 from pydantic import JsonValue, ValidationError
-from source_support import fixture_versions
+from source_support import fixture_request_budgets, fixture_versions
 
 from tank.sources.capture_fetch import (
     CaptureRepository,
@@ -283,7 +283,9 @@ async def test_real_source_record_roundtrips_and_validates_processing_transition
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda request: httpx.Response(200, content=RSS))
     ) as http:
-        source = SourceService(repo, configuration, http=http, versions=fixture_versions())
+        source = SourceService(
+            repo, configuration, http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
+        )
         assert (await source.poll_once("S30"))["items"] == 1
     [record] = await repo.list("ingest.source_items")
     item = parse_feed_source_item(record)
@@ -423,7 +425,9 @@ async def test_missing_provider_limits_prevents_source_service_start(tmp_path: P
     settings = MissingProviderLimits(data_dir=tmp_path, ops_progress_enabled=False)
     async with httpx.AsyncClient() as http:
         with pytest.raises(ValidationError, match="limits"):
-            SourceService(repo, settings, http=http, versions=fixture_versions())
+            SourceService(
+                repo, settings, http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
+            )
     assert await repo.list("ops.jobs") == []
     assert await repo.list("ingest.source_items") == []
 
@@ -451,7 +455,9 @@ async def test_feed_duplicate_of_web_evidence_counts_feeds_without_replacing_ori
     original_raw = Path(original["raw_ref"])
     original_bytes = original_raw.read_bytes()
     async with httpx.AsyncClient() as http:
-        service = SourceService(repo, settings, http=http, versions=fixture_versions())
+        service = SourceService(
+            repo, settings, http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
+        )
         for external_id in ("feed-first", "feed-repeat"):
             incoming = captured(
                 service,
@@ -494,6 +500,7 @@ async def test_duplicate_ingestion_cannot_delete_foreign_raw_evidence(tmp_path: 
             Settings(data_dir=tmp_path, ops_progress_enabled=False),
             http=http,
             versions=fixture_versions(),
+            budgets=fixture_request_budgets(),
         )
         first = captured(service, "S30", {"external_id": "first", "title": "Title", "text": "Same facts"})
         await service.ingest(service.sources["S30"], first)
@@ -529,6 +536,7 @@ async def test_ingestion_cannot_invent_a_missing_capture_clock(tmp_path: Path) -
             Settings(data_dir=tmp_path, ops_progress_enabled=False),
             http=http,
             versions=fixture_versions(),
+            budgets=fixture_request_budgets(),
         )
         incoming = captured(service, "S30", {"external_id": "entry", "title": "Title", "text": "Facts"})
         del incoming["observed_at"]
@@ -596,6 +604,7 @@ async def test_ingestion_requires_an_aware_capture_clock(tmp_path: Path, clock: 
             Settings(data_dir=tmp_path, ops_progress_enabled=False),
             http=http,
             versions=fixture_versions(),
+            budgets=fixture_request_budgets(),
         )
         incoming = captured(service, "S30", {"external_id": "clock-test", "title": "Title", "text": "Facts"})
         incoming["observed_at"] = clock
@@ -678,7 +687,11 @@ async def test_source_service_rejects_missing_or_excessive_known_provider_budget
     async with httpx.AsyncClient() as http:
         with pytest.raises(ValidationError, match="tank_max_requests_per_s|half the documented"):
             SourceService(
-                repo, InvalidProviderBudget(data_dir=tmp_path), http=http, versions=fixture_versions()
+                repo,
+                InvalidProviderBudget(data_dir=tmp_path),
+                http=http,
+                versions=fixture_versions(),
+                budgets=fixture_request_budgets(),
             )
     assert await repo.list("ops.jobs") == []
     assert await repo.list("ingest.source_items") == []
@@ -722,7 +735,11 @@ async def test_required_documented_provider_capacity_cannot_be_omitted(
     async with httpx.AsyncClient() as http:
         with pytest.raises(ValidationError):
             SourceService(
-                repo, MissingDocumentedCapacity(data_dir=tmp_path), http=http, versions=fixture_versions()
+                repo,
+                MissingDocumentedCapacity(data_dir=tmp_path),
+                http=http,
+                versions=fixture_versions(),
+                budgets=fixture_request_budgets(),
             )
     assert await repo.list("ops.jobs") == []
     assert await repo.list("ingest.source_items") == []
@@ -773,7 +790,9 @@ async def test_source_ingestion_persists_explicit_version_facet_not_raw_settings
     )
     repo = MemoryRepository()
     async with httpx.AsyncClient() as http:
-        source = SourceService(repo, settings, versions=versions, http=http)
+        source = SourceService(
+            repo, settings, versions=versions, http=http, budgets=fixture_request_budgets()
+        )
         wire = captured(source, "S30", {"external_id": "versioned", "title": "Title", "text": "Facts"})
         record = await source.ingest(source.sources["S30"], wire)
     item = SourceItemDocument.model_validate(record).root
