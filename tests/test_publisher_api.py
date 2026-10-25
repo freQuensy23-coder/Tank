@@ -160,7 +160,7 @@ def test_http_error_preserves_provider_reason_without_exposing_token() -> None:
         assert "[token] request refused" in str(caught.value)
 
 
-def test_actual_build_tag_fits_provider_limit_without_replacing_full_release_identity() -> None:
+def test_actual_build_tag_fits_provider_limit_with_approved_sha_prefix() -> None:
     with api_peer(b'{"data":{"id":"AAAAAAAAAAAAAAAAA","status":"READY"}}', status=201, location=None) as peer:
         observed = client(peer).start_build("b" * 40)
         assert observed.id == "A" * 17
@@ -189,3 +189,26 @@ def test_provider_reason_is_redacted_before_its_display_bound() -> None:
         assert len(diagnostic.text) == 300
         assert diagnostic.text.startswith("invalid-input [token] ")
         assert "synthetic-publisher-token" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        b'[{"name":"main.py","folder":0,"format":"TEXT","content":"x"}]',
+        b'[{"name":"main.py","folder":1,"format":"TEXT","content":"x"}]',
+        b'[{"name":"../main.py","format":"TEXT","content":"x"}]',
+        b'[{"name":"main.py","format":"BASE64","content":"%%%"}]',
+        b'[{"name":"main.py","format":"UNKNOWN","content":"x"}]',
+        b'[{"name":"bad\\u0000name","format":"TEXT","content":"x"}]',
+        b'[{"name":"main.py","format":"TEXT","content":"one"},{"name":"main.py","format":"TEXT","content":"two"}]',
+    ],
+)
+def test_actual_snapshot_refuses_malformed_file_facts_before_digesting(entries: bytes) -> None:
+    document = (
+        b'{"data":{"id":"AAAAAAAAAAAAAAAAA","actId":"rbf5CQKQgKNVl4SfO","status":"SUCCEEDED",'
+        b'"actVersion":{"sourceType":"SOURCE_FILES","sourceFiles":' + entries + b"}}}"
+    )
+    with api_peer(document, status=200, location=None) as peer:
+        with pytest.raises(ValueError):
+            client(peer).completed_build("A" * 17).actVersion.decoded()
+        assert len(peer.received) == 1

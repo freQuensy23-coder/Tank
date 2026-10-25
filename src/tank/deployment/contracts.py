@@ -51,7 +51,7 @@ type Release = Annotated[SourceRelease | HistoricalRelease, Field(discriminator=
 
 
 class ReleaseDocument(RootModel[Release]):
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, hide_input_in_errors=True)
 
 
 class SourceBuild(SourceRelease):
@@ -70,7 +70,7 @@ type BuildProvenance = Annotated[SourceBuild | HistoricalBuild, Field(discrimina
 
 
 class BuildDocument(RootModel[BuildProvenance]):
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, hide_input_in_errors=True)
 
 
 class ActiveRelease(DomainModel):
@@ -114,4 +114,4 @@ type Transaction = DeploymentTransaction | RolledBackTransaction
 
 
 class TransactionDocument(RootModel[Transaction]):
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, hide_input_in_errors=True)

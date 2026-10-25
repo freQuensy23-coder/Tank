@@ -4,7 +4,7 @@ import base64
 from pathlib import PurePosixPath
 from typing import Annotated, Literal, Self
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, RootModel, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, RootModel, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.scalars import FalseFlag, TrueFlag
@@ -13,7 +13,7 @@ from tank.deployment.contracts import ActorID, BuildID
 
 def source_path(value: str) -> str:
     path = PurePosixPath(value)
-    if not value or path.is_absolute() or ".." in path.parts:
+    if not value or "\x00" in value or path.is_absolute() or ".." in path.parts:
         raise ValueError("Invalid build source path")
     return value
 
@@ -37,9 +37,17 @@ class SourceFolder(ApifyProjection):
     folder: TrueFlag
 
 
-class TextSourceFile(ApifyProjection):
+class FileSourceProjection(ApifyProjection):
+    @model_validator(mode="before")
+    @classmethod
+    def validate_file_marker(cls, value: JsonValue) -> JsonValue:
+        if isinstance(value, dict) and "folder" in value and value["folder"] is not False:
+            raise ValueError("A source file cannot carry a non-false folder marker")
+        return value
+
+
+class TextSourceFile(FileSourceProjection):
     name: SourcePath
-    folder: FalseFlag = False
     format: Literal["TEXT"]
     content: str
 
@@ -47,9 +55,8 @@ class TextSourceFile(ApifyProjection):
         return self.content.encode("utf-8")
 
 
-class Base64SourceFile(ApifyProjection):
+class Base64SourceFile(FileSourceProjection):
     name: SourcePath
-    folder: FalseFlag = False
     format: Literal["BASE64"]
     content: str
 
@@ -66,7 +73,7 @@ type SourceEntry = SourceFolder | TextSourceFile | Base64SourceFile
 
 
 class SourceEntries(RootModel[list[SourceEntry]]):
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, hide_input_in_errors=True)
 
     def decoded(self) -> dict[str, bytes]:
         files: dict[str, bytes] = {}
