@@ -1341,3 +1341,352 @@ class UnrequestedConditionFunding(DomainModel):
 
 
 type ConditionFunding = AvailableConditionFunding | UnavailableConditionFunding | UnrequestedConditionFunding
+
+
+class ConditionCurrentLiquidationCapability(DomainModel):
+    kind: Literal["CURRENT_SOURCE_CAPABILITY"]
+    versions: ResolvedVersionIdentity
+
+
+class ConditionRecordedLiquidationCapability(DomainModel):
+    kind: Literal["RECORDED_METADATA"]
+    identity: KnownCadenceIdentity | UncapturedCadenceIdentity
+
+
+type ConditionLiquidationCapabilityOrigin = (
+    ConditionCurrentLiquidationCapability | ConditionRecordedLiquidationCapability
+)
+
+
+class ConditionLiquidationSide(DomainModel):
+    observed_record_count: int = Field(ge=0)
+    native: Decimal | None = Field(ge=0)
+    usd: Decimal | None = Field(ge=0)
+    usd_reason: Literal["INCOMPLETE"] | None
+
+    @model_validator(mode="after")
+    def conversion_absence(self) -> Self:
+        if (self.usd is None) != (self.usd_reason is not None):
+            raise ValueError("Liquidation USD absence requires its actual incomplete-evidence reason")
+        if self.observed_record_count == 0 and any(
+            value is not None and value != 0 for value in (self.native, self.usd)
+        ):
+            raise ValueError("No liquidation records cannot support a positive observed amount")
+        return self
+
+
+class ConditionLiquidationCaptureWindow(DomainModel):
+    requested: ConditionInterval
+    start: Timestamp
+    observed_through: Timestamp
+    complete: bool
+    reason: Literal["INCOMPLETE"] | None
+
+    @model_validator(mode="after")
+    def actual_capture_bounds(self) -> Self:
+        actual_start = None if self.start.value is None else parse_iso_time(self.start.value)
+        through = None if self.observed_through.value is None else parse_iso_time(self.observed_through.value)
+        if actual_start is not None and through is not None and actual_start > through:
+            raise ValueError("Liquidation capture bounds must preserve chronological order")
+        complete = (
+            actual_start is not None
+            and through is not None
+            and actual_start <= self.requested.start
+            and through >= self.requested.cutoff
+        )
+        if self.complete != complete or (self.reason is None) != complete:
+            raise ValueError("Liquidation completeness requires actual coverage of both requested bounds")
+        return self
+
+
+class ConditionLiquidations(DomainModel):
+    status: Literal["REQUESTED"]
+    long: ConditionLiquidationSide
+    short: ConditionLiquidationSide
+    source_coverage: Literal["COMPLETE", "SAMPLED", "UNKNOWN", "NOT_SUPPORTED"]
+    source_origin: ConditionLiquidationCapabilityOrigin
+    coverage: Literal["COMPLETE", "SAMPLED", "UNKNOWN", "NOT_SUPPORTED"]
+    capture_window: ConditionLiquidationCaptureWindow
+
+    @model_validator(mode="after")
+    def stream_and_source_coverage(self) -> Self:
+        expected = (
+            "UNKNOWN"
+            if self.source_coverage == "COMPLETE" and not self.capture_window.complete
+            else self.source_coverage
+        )
+        if self.coverage != expected:
+            raise ValueError("A complete source capability cannot establish an unproven capture window")
+        for side in (self.long, self.short):
+            if (
+                side.observed_record_count == 0
+                and not (self.capture_window.complete and self.coverage in ("COMPLETE", "SAMPLED"))
+                and (side.native is not None or side.usd is not None)
+            ):
+                raise ValueError("An unproven empty liquidation stream cannot manufacture zero amounts")
+        return self
+
+
+class UnrequestedConditionLiquidations(DomainModel):
+    status: Literal["NOT_REQUESTED"]
+
+
+class ConditionSupplementalOIObservation(DomainModel):
+    observed_at: Timestamp
+    oi_native: Decimal | None = Field(ge=0)
+    oi_usd: Decimal | None = Field(ge=0)
+    scope: Literal["SUPPLEMENTAL_PROVIDER_OBSERVATION_NOT_WINDOW_ENDPOINT"]
+
+    @model_validator(mode="after")
+    def observation_clock(self) -> Self:
+        if self.observed_at.value is None:
+            raise ValueError("Supplemental OI evidence requires the actual provider observation clock")
+        return self
+
+
+class ConditionOITemporalExclusions(DomainModel):
+    count: int = Field(gt=0)
+    reason: Literal["INCOMPLETE"]
+    detail: Literal["OI_BUCKET_EDGE_UNSPECIFIED"]
+    latest_observation: ConditionSupplementalOIObservation
+
+
+class ConditionDerivativeVenue(DomainModel):
+    venue: str = Field(min_length=1, pattern=r"\S")
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    open_interest: ConditionOpenInterest
+    funding: ConditionFunding
+    liquidations: ConditionLiquidations | UnrequestedConditionLiquidations
+    oi_temporal_exclusions: ConditionOITemporalExclusions | None
+    basis_bps: Decimal | None
+    basis_reason: Literal["INCOMPLETE"] | None
+
+    @model_validator(mode="after")
+    def actual_basis_availability(self) -> Self:
+        if (self.basis_bps is None) != (self.basis_reason is not None):
+            raise ValueError("Missing derivative basis requires the actual mark/index evidence gap")
+        return self
+
+
+class ConditionSynchronizedOpenInterest(DomainModel):
+    status: Literal["OBSERVED"]
+    venues: tuple[Annotated[str, Field(min_length=1, pattern=r"\S")], ...] = Field(min_length=1)
+    values: ObservedConditionOpenInterest
+
+
+class UnavailableConditionSynchronizedOpenInterest(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["INCOMPLETE", "NOT_ESTIMABLE"]
+
+
+class UnrequestedConditionSynchronizedOpenInterest(DomainModel):
+    status: Literal["NOT_REQUESTED"]
+
+
+class ConditionLiquidationTotals(DomainModel):
+    long: Decimal | None = Field(ge=0)
+    short: Decimal | None = Field(ge=0)
+    long_reason: Literal["INCOMPLETE"] | None
+    short_reason: Literal["INCOMPLETE"] | None
+
+    @model_validator(mode="after")
+    def totals_absence(self) -> Self:
+        if (self.long is None) != (self.long_reason is not None) or (self.short is None) != (
+            self.short_reason is not None
+        ):
+            raise ValueError("Missing liquidation totals require actual incomplete-evidence reasons")
+        return self
+
+
+class ConditionAggregateLiquidations(DomainModel):
+    status: Literal["REQUESTED"]
+    complete_venues_total: ConditionLiquidationTotals
+    sampled_venues_min: ConditionLiquidationTotals
+
+
+class ConditionIncrementalVolumeCoverage(DomainModel):
+    instruments: tuple[Annotated[str, Field(min_length=1, pattern=r"\S")], ...]
+    complete: bool
+    unit: Literal["USD"]
+    reason: Literal["INCOMPLETE"] | None
+
+    @model_validator(mode="after")
+    def actual_instrument_coverage(self) -> Self:
+        if len(self.instruments) != len(set(self.instruments)):
+            raise ValueError("Incremental-volume coverage cannot duplicate an instrument")
+        if self.complete and not self.instruments:
+            raise ValueError("An empty instrument set cannot establish complete volume coverage")
+        if self.complete != (self.reason is None):
+            raise ValueError("Incomplete incremental-volume coverage requires its actual reason")
+        return self
+
+
+class ConditionObservedIncrementalVolume(DomainModel):
+    status: Literal["OBSERVED"]
+    spot_usd: Decimal = Field(ge=0)
+    perp_usd: Decimal = Field(ge=0)
+    spot_share: float = Field(ge=0, le=1)
+    perp_share: float = Field(ge=0, le=1)
+
+    @model_validator(mode="after")
+    def actual_positive_increment(self) -> Self:
+        total = _sum_native(self.spot_usd, self.perp_usd)
+        if total <= 0:
+            raise ValueError("Zero total incremental volume cannot produce market shares")
+        with localcontext() as context:
+            context.prec = 128
+            expected_spot, expected_perp = float(self.spot_usd / total), float(self.perp_usd / total)
+        if self.spot_share != expected_spot or self.perp_share != expected_perp:
+            raise ValueError("Incremental market shares must use the actual positive USD increments")
+        return self
+
+
+class ConditionUnavailableIncrementalVolume(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["INCOMPLETE", "ZERO_TOTAL_VOLUME"]
+    spot_usd: Decimal | None = Field(ge=0)
+    perp_usd: Decimal | None = Field(ge=0)
+
+    @model_validator(mode="after")
+    def actual_missing_or_zero_increment(self) -> Self:
+        incomplete = self.spot_usd is None or self.perp_usd is None
+        if self.reason == "INCOMPLETE" and not incomplete:
+            raise ValueError("Known incremental volumes cannot carry an incomplete-volume reason")
+        if self.reason == "ZERO_TOTAL_VOLUME" and (incomplete or self.spot_usd != 0 or self.perp_usd != 0):
+            raise ValueError("Zero-total volume requires both actual zero increments")
+        return self
+
+
+class ConditionIncrementalVolumes(DomainModel):
+    status: Literal["REQUESTED"]
+    spot_coverage: ConditionIncrementalVolumeCoverage
+    perp_coverage: ConditionIncrementalVolumeCoverage
+    values: ConditionObservedIncrementalVolume | ConditionUnavailableIncrementalVolume
+
+    @model_validator(mode="after")
+    def matching_complete_market_inputs(self) -> Self:
+        if self.spot_coverage.complete != (
+            self.values.spot_usd is not None
+        ) or self.perp_coverage.complete != (self.values.perp_usd is not None):
+            raise ValueError("Known volume increments require complete current and preceding market coverage")
+        return self
+
+
+class UnrequestedConditionIncrementalVolumes(DomainModel):
+    status: Literal["NOT_REQUESTED"]
+
+
+class ConditionObservedFundingDispersion(DomainModel):
+    status: Literal["OBSERVED"]
+    value: Decimal = Field(ge=0)
+    observation_count: int = Field(ge=2)
+
+
+class ConditionUnavailableFundingDispersion(DomainModel):
+    status: Literal["UNAVAILABLE"]
+    reason: Literal["INSUFFICIENT_OBSERVATIONS"]
+    observation_count: int = Field(ge=0, lt=2)
+
+
+class UnrequestedConditionFundingDispersion(DomainModel):
+    status: Literal["NOT_REQUESTED"]
+
+
+class BasicConditionDerivatives(DomainModel):
+    kind: Literal["BASIC"]
+    interval: ConditionInterval
+    per_venue: tuple[ConditionDerivativeVenue, ...]
+    synchronized: (
+        ConditionSynchronizedOpenInterest
+        | UnavailableConditionSynchronizedOpenInterest
+        | UnrequestedConditionSynchronizedOpenInterest
+    )
+    funding_dispersion: (
+        ConditionObservedFundingDispersion
+        | ConditionUnavailableFundingDispersion
+        | UnrequestedConditionFundingDispersion
+    )
+    liquidations: ConditionAggregateLiquidations | UnrequestedConditionLiquidations
+    incremental_volume: ConditionIncrementalVolumes | UnrequestedConditionIncrementalVolumes
+
+    @model_validator(mode="after")
+    def actual_venue_cohorts(self) -> Self:
+        identities = [venue.instrument_id for venue in self.per_venue]
+        if len(identities) != len(set(identities)):
+            raise ValueError("A derivative window cannot duplicate an instrument")
+        if isinstance(self.synchronized, ConditionSynchronizedOpenInterest) and not set(
+            self.synchronized.venues
+        ) <= {venue.venue for venue in self.per_venue}:
+            raise ValueError("Synchronized OI cannot claim an absent derivative venue")
+        funding_rates: list[Decimal] = []
+        for venue in self.per_venue:
+            funding = venue.funding
+            if isinstance(funding, AvailableConditionFunding):
+                selected = (
+                    funding.estimate if funding.selected_kind == "CURRENT_ESTIMATE" else funding.settled
+                )
+                if selected is None or selected.equivalent_eight_hour_rate is None:
+                    raise ValueError("Selected funding must preserve its validated normalized observation")
+                funding_rates.append(selected.equivalent_eight_hour_rate)
+        if not isinstance(self.funding_dispersion, UnrequestedConditionFundingDispersion):
+            if any(isinstance(venue.funding, UnrequestedConditionFunding) for venue in self.per_venue):
+                raise ValueError("Funding dispersion cannot claim an unrequested venue calculation")
+            if self.funding_dispersion.observation_count != len(funding_rates):
+                raise ValueError("Funding dispersion count must preserve actual normalized observations")
+            if isinstance(
+                self.funding_dispersion, ConditionObservedFundingDispersion
+            ) and self.funding_dispersion.value != _sum_native(max(funding_rates), -min(funding_rates)):
+                raise ValueError("Funding dispersion must preserve the actual normalized rate range")
+        for venue in self.per_venue:
+            if isinstance(venue.open_interest, ObservedConditionOpenInterest):
+                self.validate_oi_window(venue.open_interest)
+            if (
+                isinstance(venue.liquidations, ConditionLiquidations)
+                and venue.liquidations.capture_window.requested != self.interval
+            ):
+                raise ValueError("Liquidation coverage must preserve the actual derivative request interval")
+            if isinstance(self.liquidations, ConditionAggregateLiquidations) != isinstance(
+                venue.liquidations, ConditionLiquidations
+            ):
+                raise ValueError(
+                    "Aggregate and venue liquidation calculations must preserve actual request selection"
+                )
+        if isinstance(self.synchronized, ConditionSynchronizedOpenInterest):
+            self.validate_oi_window(self.synchronized.values)
+        if isinstance(self.liquidations, ConditionAggregateLiquidations):
+            for coverage, totals in (
+                ("COMPLETE", self.liquidations.complete_venues_total),
+                ("SAMPLED", self.liquidations.sampled_venues_min),
+            ):
+                eligible = [
+                    venue.liquidations
+                    for venue in self.per_venue
+                    if isinstance(venue.liquidations, ConditionLiquidations)
+                    and venue.liquidations.coverage == coverage
+                ]
+                for side, supplied in (("long", totals.long), ("short", totals.short)):
+                    values = [entry.long.usd if side == "long" else entry.short.usd for entry in eligible]
+                    expected: Decimal | None = None
+                    if values and all(value is not None for value in values):
+                        expected = Decimal(0)
+                        for value in values:
+                            if value is None:
+                                raise ValueError("Known liquidation totals require every eligible amount")
+                            expected = _sum_native(expected, value)
+                    if supplied != expected:
+                        raise ValueError(
+                            "Liquidation totals must preserve every actually eligible venue amount"
+                        )
+        return self
+
+    def validate_oi_window(self, observation: ObservedConditionOpenInterest) -> None:
+        if (
+            observation.requested_window_duration_s
+            != (self.interval.cutoff - self.interval.start).total_seconds()
+        ):
+            raise ValueError("OI calculations must preserve the actual requested derivative duration")
+        if (
+            observation.end_observed_at.value is None
+            or parse_iso_time(observation.end_observed_at.value) > self.interval.cutoff
+        ):
+            raise ValueError("OI window endpoints cannot claim observations after the actual cutoff")

@@ -846,3 +846,173 @@ def test_funding_unknown_interval_preserves_observation_but_never_selects_a_kind
         ConditionFundingObservation.model_validate(
             unsettled.model_copy(update={"equivalent_eight_hour_rate": Decimal(0)})
         )
+
+
+def test_liquidation_capability_does_not_manufacture_an_empty_captured_window() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionLiquidationCaptureWindow,
+        ConditionLiquidations,
+        ConditionLiquidationSide,
+        ConditionRecordedLiquidationCapability,
+        UncapturedCadenceIdentity,
+    )
+
+    interval = ConditionInterval(window="W1H", start=AT - timedelta(hours=1), cutoff=AT)
+    absent_clock = Timestamp(value=None, precision=None, precision_reason="INCOMPLETE")
+    unknown_side = ConditionLiquidationSide(
+        observed_record_count=0, native=None, usd=None, usd_reason="INCOMPLETE"
+    )
+    unproven = ConditionLiquidations(
+        status="REQUESTED",
+        long=unknown_side,
+        short=unknown_side,
+        source_coverage="COMPLETE",
+        coverage="UNKNOWN",
+        source_origin=ConditionRecordedLiquidationCapability(
+            kind="RECORDED_METADATA",
+            identity=UncapturedCadenceIdentity(
+                status="UNRECORDED", reason="DECLARATION_IDENTITY_NOT_CAPTURED"
+            ),
+        ),
+        capture_window=ConditionLiquidationCaptureWindow(
+            requested=interval,
+            start=absent_clock,
+            observed_through=absent_clock,
+            complete=False,
+            reason="INCOMPLETE",
+        ),
+    )
+    assert unproven.source_coverage == "COMPLETE" and unproven.coverage == "UNKNOWN"
+    assert unproven.long.observed_record_count == 0 and unproven.long.usd is None
+    with pytest.raises(ValidationError, match="unproven capture window"):
+        ConditionLiquidations.model_validate(unproven.model_copy(update={"coverage": "COMPLETE"}))
+    false_zero = ConditionLiquidationSide(
+        observed_record_count=0, native=Decimal(0), usd=Decimal(0), usd_reason=None
+    )
+    with pytest.raises(ValidationError, match="manufacture zero amounts"):
+        ConditionLiquidations.model_validate(unproven.model_copy(update={"long": false_zero}))
+    window = ConditionLiquidationCaptureWindow(
+        requested=interval,
+        start=Timestamp(value="2026-10-17T11:00:00Z", precision="COLLECTION_ONLY", precision_reason=None),
+        observed_through=Timestamp(
+            value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY", precision_reason=None
+        ),
+        complete=True,
+        reason=None,
+    )
+    captured = ConditionLiquidations.model_validate(
+        unproven.model_copy(
+            update={"capture_window": window, "coverage": "COMPLETE", "long": false_zero, "short": false_zero}
+        )
+    )
+    assert captured.long.usd == 0 and captured.short.native == 0
+    with pytest.raises(ValidationError, match="both requested bounds"):
+        ConditionLiquidationCaptureWindow.model_validate(
+            window.model_copy(
+                update={
+                    "start": Timestamp(
+                        value="2026-10-17T11:00:01Z", precision="COLLECTION_ONLY", precision_reason=None
+                    )
+                }
+            )
+        )
+
+
+def test_incremental_volume_zero_total_is_not_missing_and_never_a_market_share() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionIncrementalVolumeCoverage,
+        ConditionIncrementalVolumes,
+        ConditionObservedIncrementalVolume,
+        ConditionUnavailableIncrementalVolume,
+    )
+
+    no_increment = ConditionUnavailableIncrementalVolume(
+        status="UNAVAILABLE", reason="ZERO_TOTAL_VOLUME", spot_usd=Decimal(0), perp_usd=Decimal(0)
+    )
+    assert no_increment.spot_usd == 0 and no_increment.perp_usd == 0
+    with pytest.raises(ValidationError, match="cannot produce market shares"):
+        ConditionObservedIncrementalVolume(
+            status="OBSERVED", spot_usd=Decimal(0), perp_usd=Decimal(0), spot_share=0.0, perp_share=0.0
+        )
+    coverage = ConditionIncrementalVolumeCoverage(instruments=("i",), complete=True, unit="USD", reason=None)
+    ConditionIncrementalVolumes(
+        status="REQUESTED", spot_coverage=coverage, perp_coverage=coverage, values=no_increment
+    )
+    missing = ConditionUnavailableIncrementalVolume(
+        status="UNAVAILABLE", reason="INCOMPLETE", spot_usd=None, perp_usd=Decimal(0)
+    )
+    with pytest.raises(ValidationError, match="complete current and preceding"):
+        ConditionIncrementalVolumes(
+            status="REQUESTED", spot_coverage=coverage, perp_coverage=coverage, values=missing
+        )
+    positive = ConditionObservedIncrementalVolume(
+        status="OBSERVED", spot_usd=Decimal(1), perp_usd=Decimal(3), spot_share=0.25, perp_share=0.75
+    )
+    assert positive.spot_share == 0.25
+    with pytest.raises(ValidationError, match="actual positive USD increments"):
+        ConditionObservedIncrementalVolume.model_validate(positive.model_copy(update={"perp_share": 0.25}))
+
+
+def test_derivative_window_refuses_invented_funding_dispersion_and_absent_sync_venue() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        BasicConditionDerivatives,
+        ConditionDerivativeVenue,
+        ConditionObservedFundingDispersion,
+        ConditionSynchronizedOpenInterest,
+        ConditionUnavailableFundingDispersion,
+        UnavailableConditionSynchronizedOpenInterest,
+        UnrequestedConditionIncrementalVolumes,
+        UnrequestedConditionLiquidations,
+    )
+
+    funding = AvailableConditionFunding(
+        status="OBSERVED",
+        settled=funding_observation("SETTLED", Decimal(8)),
+        estimate=None,
+        start=None,
+        selected_kind="SETTLED",
+        normal_range=DecimalRange(bounds=None, reason="INSUFFICIENT_HISTORY"),
+        funding_vs_normal=None,
+    )
+    venue = ConditionDerivativeVenue(
+        venue="bybit",
+        instrument_id="i",
+        open_interest=observed_oi_without_usd(),
+        funding=funding,
+        liquidations=UnrequestedConditionLiquidations(status="NOT_REQUESTED"),
+        oi_temporal_exclusions=None,
+        basis_bps=None,
+        basis_reason="INCOMPLETE",
+    )
+    graph = BasicConditionDerivatives(
+        kind="BASIC",
+        interval=ConditionInterval(window="W1H", start=AT - timedelta(hours=1), cutoff=AT),
+        per_venue=(venue,),
+        synchronized=UnavailableConditionSynchronizedOpenInterest(status="UNAVAILABLE", reason="INCOMPLETE"),
+        funding_dispersion=ConditionUnavailableFundingDispersion(
+            status="UNAVAILABLE", reason="INSUFFICIENT_OBSERVATIONS", observation_count=1
+        ),
+        liquidations=UnrequestedConditionLiquidations(status="NOT_REQUESTED"),
+        incremental_volume=UnrequestedConditionIncrementalVolumes(status="NOT_REQUESTED"),
+    )
+    assert graph.per_venue[0].funding == funding
+    with pytest.raises(ValidationError, match="actual normalized observations"):
+        BasicConditionDerivatives.model_validate(
+            graph.model_copy(
+                update={
+                    "funding_dispersion": ConditionObservedFundingDispersion(
+                        status="OBSERVED", value=Decimal(0), observation_count=2
+                    )
+                }
+            )
+        )
+    with pytest.raises(ValidationError, match="absent derivative venue"):
+        BasicConditionDerivatives.model_validate(
+            graph.model_copy(
+                update={
+                    "synchronized": ConditionSynchronizedOpenInterest(
+                        status="OBSERVED", venues=("unobserved",), values=observed_oi_without_usd()
+                    )
+                }
+            )
+        )
