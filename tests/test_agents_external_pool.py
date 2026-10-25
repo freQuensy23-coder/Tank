@@ -6,6 +6,7 @@ import json
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture, native_tool_arguments_fixture
+from native_input_fixtures import acknowledge_native_input
 from test_agents import seed_session, settings
 from test_session_binding_concurrency import fixture_repo, seed
 
@@ -46,7 +47,7 @@ async def exercise_external_tool_burst(repo, tool) -> None:
 
     def acknowledge(request: pytest.FixtureRequest):
         posts.append(json.loads(request.content)["events"][0])
-        return httpx.Response(200, json={"data": [{"id": f"ack-{len(posts)}"}]})
+        return httpx.Response(200, json=acknowledge_native_input(request, f"ack-{len(posts)}"))
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(acknowledge)) as http:
         controller = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
@@ -116,7 +117,7 @@ async def test_external_error_survives_lost_ack_without_refetch_or_new_ordinal(s
         posts.append(json.loads(request.content)["events"][0])
         if len(posts) == 1:
             raise httpx.ConnectError("Lost native ACK", request=request)
-        return httpx.Response(200, json={"data": [{"id": "ack"}]})
+        return httpx.Response(200, json=acknowledge_native_input(request, "ack"))
 
     event = {
         "id": "call",

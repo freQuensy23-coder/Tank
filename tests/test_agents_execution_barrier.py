@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture, source_record_fixture
+from native_input_fixtures import acknowledge_native_input
 
 from tank.agents.context import CONTEXT_VERSION
 from tank.agents.sessions import SessionService
@@ -106,7 +107,7 @@ async def test_actual_r11_intermediate_idle_does_not_complete_tool_result_execut
                 },
             )
         if request.method == "POST":
-            return httpx.Response(200, json={"data": [{"id": returned}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, returned))
         if request.url.path.endswith("/events"):
             return httpx.Response(200, json={"data": history})
         raise AssertionError(str(request.url))
@@ -165,7 +166,7 @@ async def test_finalizer_failure_is_not_completed_and_retry_supersedes_only_fail
             )
         if request.method == "POST":
             posts.append(json.loads(request.content))
-            return httpx.Response(200, json={"data": [{"id": "accepted-retry"}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, "accepted-retry"))
         return httpx.Response(200, json={"data": []})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
@@ -266,7 +267,7 @@ async def test_settled_snapshot_drains_all_pages_and_rechecks_new_tool_ack() -> 
                 },
             )
         if request.method == "POST":
-            return httpx.Response(200, json={"data": [{"id": "accepted-late-tool"}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, "accepted-late-tool"))
         page = request.url.params.get("page")
         pages.append(page)
         return httpx.Response(
@@ -302,7 +303,7 @@ async def test_message_lost_ack_reuses_durable_exact_body_after_source_changes()
         keys.append(request.headers.get("Idempotency-Key"))
         if len(bodies) == 1:
             raise httpx.ReadError("lost acceptance reply", request=request)
-        return httpx.Response(200, json={"data": [{"id": "accepted-original-message"}]})
+        return httpx.Response(200, json=acknowledge_native_input(request, "accepted-original-message"))
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, config(), None, http=http, versions=declared_versions_fixture())
@@ -345,7 +346,7 @@ async def test_tool_result_lost_ack_restart_reuses_result_and_records_original_a
         bodies.append(request.content)
         if len(bodies) == 1:
             raise httpx.ReadError("lost reply", request=request)
-        return httpx.Response(200, json={"data": [{"id": "accepted-original-tool-result"}]})
+        return httpx.Response(200, json=acknowledge_native_input(request, "accepted-original-tool-result"))
 
     async def dispatch(*args):
         dispatched.append(True)
@@ -393,7 +394,7 @@ async def test_correlated_tool_before_ack_defers_instead_of_using_previous_messa
 
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
-            lambda request: httpx.Response(200, json={"data": [{"id": "ack-tool"}]})
+            lambda request: httpx.Response(200, json=acknowledge_native_input(request, "ack-tool"))
         )
     ) as http:
         service = SessionService(repo, config(), dispatch, http=http, versions=declared_versions_fixture())
@@ -433,7 +434,7 @@ async def test_late_previous_attempt_tool_retains_immutable_attempt_lineage() ->
     await repo.put("ops.agent_sessions", "s", session)
 
     def handler(request: pytest.FixtureRequest):
-        return httpx.Response(200, json={"data": [{"id": "late-result"}]})
+        return httpx.Response(200, json=acknowledge_native_input(request, "late-result"))
 
     async def dispatch(*args):
         return {"item_id": "item"}
@@ -568,7 +569,7 @@ async def test_retry_lost_ack_recovers_durable_failure_intent_without_second_ret
             posted.append((request.headers["idempotency-key"], request.content))
             if len(posted) == 1:
                 raise httpx.ReadError("lost acknowledgement", request=request)
-            return httpx.Response(200, json={"data": [{"id": "retry-accepted"}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, "retry-accepted"))
         raise AssertionError(request.url)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -613,7 +614,7 @@ async def test_native_completion_preserves_source_failures_without_failing_sessi
     def handler(request: pytest.FixtureRequest):
         if request.method == "POST":
             posts.append(request.content)
-            return httpx.Response(200, json={"data": [{"id": "replacement"}]})
+            return httpx.Response(200, json=acknowledge_native_input(request, "replacement"))
         if request.url.path.endswith("/events"):
             return httpx.Response(200, json={"data": []})
         if request.url.path.endswith("/executions"):
