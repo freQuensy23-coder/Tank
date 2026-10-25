@@ -1238,6 +1238,376 @@
         "test_old_description_references_are_refused_and_name_the_id_field",
         "test_scout_review_binds_its_proposal_and_names_the_duplicate_by_id"
       ]
+    },
+    {
+      "ledger_key": "admission-association-absence",
+      "sites": [
+        {
+          "path": "src/tank/contracts/session_admission.py",
+          "symbol": "SessionTarget",
+          "line": 29
+        },
+        {
+          "path": "src/tank/contracts/session_admission.py",
+          "symbol": "SessionAdmissionState",
+          "line": 42
+        },
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "session_target",
+          "line": 85
+        },
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "session_admission_state",
+          "line": 91
+        }
+      ],
+      "kind": "required nullable routing/state projections",
+      "reason": "Targets cover source/event/proposal/session-addressed messages, so associations outside the actual scope are null; at least one real identity is required. A newly created native session is persisted before its first accepted input and can genuinely lack runtime_status/active_message_id. No observed idle/running tag is fabricated; supported non-null local tags are closed and unknown tags refuse. These are selected read facts, not approval of unfinished full SessionService state models.",
+      "validation": [
+        "test_missing_routing_identity_is_refused_before_a_slot_can_be_reserved",
+        "test_unsupported_native_state_cannot_be_treated_as_a_free_slot",
+        "test_cap_queues_turns_in_order_never_drops_and_running_session_bypasses"
+      ]
+    },
+    {
+      "ledger_key": "admission-wire-boundary",
+      "sites": [
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "AdmissionStore.get",
+          "line": 33
+        },
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "AdmissionStore.put",
+          "line": 34
+        },
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "AdmissionStore.iter_metadata",
+          "line": 38
+        },
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "AdmissionPayloadWire",
+          "line": 48
+        },
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "CandidateAdmissionWire",
+          "line": 55
+        },
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "WaitingAdmissionWire",
+          "line": 59
+        },
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "ReservedAdmissionWire",
+          "line": 64
+        },
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "FirstAdmissionClockWire",
+          "line": 71
+        },
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "WaitingAdmissionClockWire",
+          "line": 75
+        },
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "admission_policy",
+          "line": 79
+        },
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "payload_target",
+          "line": 98
+        }
+      ],
+      "kind": "selected persisted wire and configuration documents",
+      "reason": "Dictionary fields are actual document-store/queue/configuration JSON boundaries. The payload JSON tree is decoded only into the routing facts consumed; application admission sees closed targets/orders/slots. Reserved counting reads only identity/status/explicit boolean reservation, not unrelated payload contracts. Undeferred queued rows lack a waiting clock and are not waiting candidates. Strict policy projection requires max_running_sessions and does not default it. Reader filters None means no predicate and batch_size is the existing metadata pagination contract.",
+      "validation": [
+        "test_admission_factory_requires_a_declared_positive_integer_cap",
+        "test_slot_counting_uses_reservation_facts_without_consuming_unrelated_payloads",
+        "test_sparse_reservation_validates_identity_and_preserves_captured_job_input"
+      ]
+    },
+    {
+      "ledger_key": "admission-order-first-wait",
+      "sites": [
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "admission_candidate",
+          "line": 105
+        },
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "SessionAdmissionRepository.waiting_jobs",
+          "line": 181
+        },
+        {
+          "path": "src/tank/contracts/session_admission.py",
+          "symbol": "AdmissionOrder",
+          "line": 54
+        },
+        {
+          "path": "src/tank/contracts/session_admission.py",
+          "symbol": "order_key",
+          "line": 96
+        }
+      ],
+      "kind": "declared first-enqueue or prior-wait order and sort key",
+      "reason": "slot_waiting_since is absent before first deferral; that case uses the required actual created_at timestamp, never now/empty/zero. A declared waiting clock is retained. Both decode aware timestamps before comparison. order_key's tuple is the Python sorting API's composite key, not a domain record; AdmissionOrder names the business fields.",
+      "validation": [
+        "test_offset_aware_wait_order_defers_newer_input_and_wakes_without_changing_attempts",
+        "test_real_admission_deferral_replaces_clock_facets_and_copies_creation_precision"
+      ]
+    },
+    {
+      "ledger_key": "admission-selection-lifetime",
+      "sites": [
+        {
+          "path": "src/tank/agents/admission.py",
+          "symbol": "SessionAdmission.existing",
+          "line": 48
+        },
+        {
+          "path": "src/tank/agents/admission.py",
+          "symbol": "SessionAdmission.slots",
+          "line": 51
+        },
+        {
+          "path": "src/tank/agents/admission.py",
+          "symbol": "SessionAdmission.admit",
+          "line": 63
+        },
+        {
+          "path": "src/tank/agents/admission.py",
+          "symbol": "SessionAdmission.wake",
+          "line": 74
+        },
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "SessionAdmissionRepository.find",
+          "line": 139
+        },
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "SessionAdmissionRepository.reserve",
+          "line": 203
+        },
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "SessionAdmissionRepository.wake",
+          "line": 214
+        }
+      ],
+      "kind": "actual missing lookup, optional exclusion and sparse lifecycle update",
+      "reason": "None from find/get is a real missing local record; an explicit session ID never falls through to another event. exclude_job None means wake considers every reservation; admission excludes its own claimed job. A missing queued row during wake may have been pruned and is not recreated. A missing/identity-mismatched/non-running reservation refuses. Sparse dictionaries preserve unrelated captured data and change only owned reservation/clock fields. Saturating free-slot arithmetic prevents negative capacity during existing activity; it supplies no missing fact.",
+      "validation": [
+        "test_running_session_bypass_does_not_reserve_a_second_slot_or_guess_an_unknown_id",
+        "test_sparse_reservation_validates_identity_and_preserves_captured_job_input",
+        "test_wake_replaces_all_owned_clock_aliases_and_preserves_other_record_bytes"
+      ]
+    },
+    {
+      "ledger_key": "admission-fixed-metadata-selectors",
+      "sites": [
+        {
+          "path": "src/tank/contracts/session_admission.py",
+          "symbol": "ADMITTED_JOB_TYPES",
+          "line": 12
+        },
+        {
+          "path": "src/tank/contracts/session_admission.py",
+          "symbol": "BUSY_RUNTIME_STATES",
+          "line": 13
+        },
+        {
+          "path": "src/tank/contracts/session_admission.py",
+          "symbol": "SESSION_ADMISSION_FIELDS",
+          "line": 14
+        },
+        {
+          "path": "src/tank/contracts/session_admission.py",
+          "symbol": "JOB_ADMISSION_FIELDS",
+          "line": 15
+        },
+        {
+          "path": "src/tank/contracts/session_admission.py",
+          "symbol": "RESERVED_JOB_FIELDS",
+          "line": 16
+        }
+      ],
+      "kind": "fixed kind/status sets and metadata field selectors",
+      "reason": "These lookup collections name the two actual native-admitted queue kinds, supported busy states and exactly selected persisted fields. They are schema/lookup relations, not application records or defaults for unknown job/session facts.",
+      "validation": [
+        "test_cap_queues_turns_in_order_never_drops_and_running_session_bypasses",
+        "test_slot_counting_uses_reservation_facts_without_consuming_unrelated_payloads"
+      ]
+    },
+    {
+      "ledger_key": "job-clock-wire-replacement",
+      "sites": [
+        {
+          "path": "src/tank/runtime_contracts.py",
+          "symbol": "replace_job_clock",
+          "line": 235
+        },
+        {
+          "path": "src/tank/runtime_contracts.py",
+          "symbol": "JobClockField",
+          "line": 232
+        },
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "SessionAdmissionRepository.wake",
+          "line": 214
+        },
+        {
+          "path": "src/tank/runtime.py",
+          "symbol": "Runtime.worker",
+          "line": 165
+        },
+        {
+          "path": "src/tank/runtime.py",
+          "symbol": "Runtime.run",
+          "line": 361
+        }
+      ],
+      "kind": "owned timestamp wire serialization",
+      "reason": "These dictionaries are the actual persisted job document at write boundaries. Canonical timestamp_owned_fields from cbad735 clears the value and every recognized precision/reason/bucket alias before new typed Timestamp fields are merged. Unrelated prefixes/captured data survive. A missing timestamp value refuses; first waiting time copies real creation value/precision/reason rather than inventing an observed clock. This does not approve remaining untyped worker internals.",
+      "validation": [
+        "test_wake_replaces_all_owned_clock_aliases_and_preserves_other_record_bytes",
+        "test_real_admission_deferral_replaces_clock_facets_and_copies_creation_precision",
+        "test_job_expiring_after_real_claim_records_actual_finish_precision"
+      ]
+    },
+    {
+      "ledger_key": "scout-session-reference",
+      "sites": [
+        {
+          "path": "src/tank/agents/session_contracts.py",
+          "symbol": "ScoutProposalIdentity",
+          "line": 19
+        },
+        {
+          "path": "src/tank/agents/session_contracts.py",
+          "symbol": "ScoutSessionReference",
+          "line": 23
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.scout_review",
+          "line": 2227
+        },
+        {
+          "path": "src/tank/runtime.py",
+          "symbol": "Runtime.scout_review",
+          "line": 161
+        }
+      ],
+      "kind": "native read/reference and worker serialization boundary",
+      "reason": "Proposal/session projection dictionaries validate only authoritative identities needed by this use case. Stored/requested identities must agree. The returned object is a closed session/proposal reference; full private session state remains in storage. ScoutMessage serializes only explicitly set fields when crossing the still-legacy native message adapter, preserving the prior idempotency payload. Final worker result serialization happens at the queue wire boundary; no mapping facade or full-session migration claim is made.",
+      "validation": [
+        "test_new_scout_session_wire_protocol_and_isolation",
+        "test_scout_writes_only_proposals_and_its_logs_on_postgres"
+      ]
+    },
+    {
+      "ledger_key": "typed-agent-settings-fixtures",
+      "sites": [
+        {
+          "path": "tests/agent_configuration_fixtures.py",
+          "symbol": "AgentFixtureSettings",
+          "line": 15
+        },
+        {
+          "path": "tests/agent_configuration_fixtures.py",
+          "symbol": "AgentFixtureSettings.load_config",
+          "line": 31
+        },
+        {
+          "path": "tests/agent_configuration_fixtures.py",
+          "symbol": "AgentFixtureSettings.configured_secrets",
+          "line": 40
+        },
+        {
+          "path": "tests/test_agents.py",
+          "symbol": "settings",
+          "line": 28
+        },
+        {
+          "path": "tests/test_agents_session_audit.py",
+          "symbol": "settings",
+          "line": 21
+        }
+      ],
+      "kind": "typed fixture behavior port and literal configuration namespace",
+      "reason": "documents is the real config-file-name -> JSON-document fixture namespace; unknown names raise. This dataclass implements behavior, not a domain payload/mapping facade. Null unused provider keys and absent database/Telegram/gateway credentials are explicit fixture facts; configured secret strings and percent-decoded URL passwords are collected without reflection. Synthetic label/URL defaults are declared test facts, not production fallback or captured-version evidence. The paired settings/config return tuple is the established test-factory API.",
+      "validation": [
+        "test_configured_tokens_and_dsn_userinfo_never_enter_session_ledger",
+        "test_new_session_prompt_version_binds_actual_resolved_agent_not_static_label",
+        "test_stalled_rest_read_times_out_without_changing_sse"
+      ]
+    },
+    {
+      "ledger_key": "required-capacity-composition",
+      "sites": [
+        {
+          "path": "src/tank/runtime.py",
+          "symbol": "Runtime.validate",
+          "line": 114
+        },
+        {
+          "path": "src/tank/runtime.py",
+          "symbol": "Runtime.prepare",
+          "line": 119
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.admission",
+          "line": 2210
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.running_session_cap",
+          "line": 2218
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.admit",
+          "line": 2221
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.wake_waiting",
+          "line": 2224
+        },
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "admission_policy",
+          "line": 79
+        },
+        {
+          "path": "src/tank/agents/admission_repository.py",
+          "symbol": "build_admission",
+          "line": 227
+        }
+      ],
+      "kind": "required admission configuration at actual runtime/use-case boundaries",
+      "reason": "The configured positive integer is required by runtime preparation and admission composition; no cap2 default or None dependency remains. Native-only identity reads do not consume capacity, so retained/recorded callers do not acquire fabricated modern fields. The typed retry delay and clock are explicit required core dependencies, not missing-record fallbacks.",
+      "validation": [
+        "test_runtime_prepare_refuses_missing_admission_capacity_before_gateway_effects",
+        "test_admission_factory_requires_a_declared_positive_integer_cap",
+        "test_cap_queues_turns_in_order_never_drops_and_running_session_bypasses"
+      ]
     }
   ]
 }

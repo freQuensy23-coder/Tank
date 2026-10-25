@@ -1,29 +1,38 @@
 import json
 from datetime import timedelta
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Literal
 
 import httpx
 import pytest
+from agent_configuration_fixtures import AgentFixtureSettings, FixtureConfigurations
 from agent_source_fixtures import (
     declared_versions_fixture,
     native_tool_arguments_fixture,
     source_record_fixture,
 )
+from pydantic import JsonValue
 from scheduling_support import RecordingReactionScheduling
 
 from tank.agents import ConfigurationError, Pipeline, SessionService
 from tank.agents.context import CONTEXT_VERSION
 from tank.contracts.source_items import parse_feed_source_item
 from tank.ops_progress import DisabledSourceProgress
+from tank.runtime_contracts import ScoutReviewJob
+from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.telegram_rich import score_summary
 from tank.util import clock_iso, iso, sha256, utcnow
 
 
-def settings(**overrides):
-    config = {
+def settings(
+    *,
+    config_version: str = "test",
+    code_version: str = "test",
+    openma_model: str = "gpt-6.1-sol",
+    openma_url: str = "http://oma",
+) -> tuple[AgentFixtureSettings, FixtureConfigurations]:
+    config: FixtureConfigurations = {
         "thresholds": {"filter_cutoff": 0.7, "routing_cutoff": 0.8},
         "registry": {
             "entities": [
@@ -38,38 +47,30 @@ def settings(**overrides):
             "agent_id": "agt_1",
             "scout_agent_id": "agt_s",
             "environment_id": "env_1",
+            "max_running_sessions": 2,
             "prompt_version": "test",
         },
     }
-    values = {
-        "openrouter_api_key": "secret",
-        "opencode_api_key": None,
-        "replay": False,
-        "ops_progress_enabled": False,
-        "openma_api_key": "secret",
-        "openma_url": "http://oma",
-        "openma_model": "gpt-6.1-sol",
-        "config_version": "test",
-        "code_version": "test",
-        "load_config": lambda name: config[name],
+    config["thresholds"] = {
+        **Settings(_env_file=None).thresholds().model_dump(mode="json"),
+        **config["thresholds"],
     }
-    from tank.settings import Settings
-
-    values["read_config_json"] = Settings(_env_file=None).read_config_json
-    values["thresholds"] = lambda: (
-        Settings(_env_file=None)
-        .thresholds()
-        .model_validate(
-            {**Settings(_env_file=None).thresholds().model_dump(mode="json"), **config["thresholds"]}
-        )
-    )
-    values.update(overrides)
-    values["configured_secrets"] = lambda: frozenset(
-        value
-        for name, value in values.items()
-        if isinstance(value, str) and name.endswith(("_key", "_token", "_password"))
-    )
-    return SimpleNamespace(**values), config
+    return AgentFixtureSettings(
+        documents=config,
+        tool_reader=Settings(_env_file=None).read_config_json,
+        openrouter_api_key="secret",
+        opencode_api_key=None,
+        replay=False,
+        ops_progress_enabled=False,
+        openma_api_key="secret",
+        openma_url=openma_url,
+        openma_model=openma_model,
+        config_version=config_version,
+        code_version=code_version,
+        telegram_token=None,
+        codex_gateway_key=None,
+        database_url=None,
+    ), config
 
 
 async def seed_session(repo, **changes):
@@ -457,10 +458,10 @@ async def test_new_scout_session_wire_protocol_and_isolation() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
         service.start_stream = lambda sid: None
-        session = await service.scout_review({"proposal_id": "p"})
-        await service.scout_review({"proposal_id": "p"})
+        session = await service.scout_review(ScoutReviewJob(proposal_id="p"))
+        await service.scout_review(ScoutReviewJob(proposal_id="p"))
         await service.process_event(
-            session["session_id"],
+            session.session_id,
             {"id": "call_bad", "type": "agent.custom_tool_use", "name": "publish_card", "input": {}},
         )
     assert len(posted) == 3
@@ -1262,7 +1263,6 @@ def test_jev_source_view_does_not_substitute_internal_source_codes() -> None:
 async def test_publish_card_requires_declared_verdict_and_two_factual_bullets(
     defect: Literal["empty_verdict", "blank_verdict", "empty_why", "single_why", "blank_bullet"],
 ) -> None:
-    from pydantic import JsonValue
 
     from tank.contracts.json import decode_json
 

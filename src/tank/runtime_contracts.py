@@ -6,7 +6,7 @@ from pydantic import AliasChoices, Field, JsonValue, model_validator
 
 from tank.analysis.watch_contracts import MilestoneSnapshot, WatchCall, WatchCondition
 from tank.contracts import DomainModel
-from tank.time_precision import Timestamp
+from tank.time_precision import Timestamp, timestamp_owned_fields
 
 type BucketAnchor = Literal["START", "END", "UNSPECIFIED"]
 
@@ -121,7 +121,7 @@ class TelegramAnswerJob(JobPayload):
 
 
 class ScoutReviewJob(JobPayload):
-    proposal_id: str = Field(validation_alias=AliasChoices("proposal_id", "prp_id"))
+    proposal_id: str = Field(min_length=1, validation_alias=AliasChoices("proposal_id", "prp_id"))
 
 
 class ReplayBinding(DomainModel):
@@ -227,3 +227,17 @@ def parse_agent_message(payload: dict[str, JsonValue]) -> AgentMessage:
             return MilestoneMessage.model_validate(payload)
         case _:
             return parse_direct_agent_message(payload)
+
+
+type JobClockField = Literal["run_after", "slot_waiting_since", "interrupted_at", "finished_at"]
+
+
+def replace_job_clock(
+    record: dict[str, JsonValue], field: JobClockField, timestamp: Timestamp
+) -> dict[str, JsonValue]:
+    if timestamp.value is None:
+        raise ValueError("Job clock replacement requires an actual timestamp")
+    owned = timestamp_owned_fields(field)
+    result = {key: value for key, value in record.items() if key not in owned}
+    result.update(timestamp.fields(field))
+    return result
