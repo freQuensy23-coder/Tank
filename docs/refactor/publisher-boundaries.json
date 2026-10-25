@@ -1,6 +1,6 @@
 {
   "status": "HELD_NOT_ACTIVATED",
-  "implementation_revision": "4cafabd4",
+  "implementation_revision": "2f69f903",
   "not_a_lint_exclusion": true,
   "entries": [
     {
@@ -106,9 +106,10 @@
       "file": "src/tank/deployment/api_contracts.py",
       "symbol": "BuildObservation.status",
       "site": "nonempty foreign status text",
-      "reason": "This is an observed provider status, not a fabricated successful state. The pending orchestration migration must explicitly accept running/ready or successful completion and refuse all other states.",
+      "reason": "Observed provider status is not guessed success. Publisher._source_candidate explicitly accepts READY/RUNNING while waiting and SUCCEEDED only for completion; all other observed states refuse.",
       "evidence": [
-        "quality-publisher-unique-http.log"
+        "quality-publisher-unique-http.log",
+        "quality-publisher-state-machine-unit.log"
       ]
     },
     {
@@ -140,7 +141,7 @@
     },
     {
       "file": "src/tank/deployment/artifacts.py",
-      "symbol": "SourceBundle.files, source_files.files, package_release.files, package_release.inputs",
+      "symbol": "source_files.files, package_release.files, package_release.inputs",
       "site": "filename-to-opaque-bytes collections",
       "reason": "Actual resource filenames vary. Structured release metadata remains strict models; only source resources use maps. Legacy inputs retain the exact original two filenames and immutable allowlist.",
       "evidence": [
@@ -148,7 +149,7 @@
       ]
     },
     {
-      "file": "src/tank/deployment/artifacts.py",
+      "file": "src/tank/deployment/artifact_contracts.py",
       "symbol": "SourceBundle.digest.hashes",
       "site": "transient filename-to-hash map",
       "reason": "This is the specified canonical resource digest protocol, not an application domain record. It preserves path/byte binding and ignores unrelated repository commits.",
@@ -158,7 +159,7 @@
       ]
     },
     {
-      "file": "src/tank/deployment/artifacts.py",
+      "file": "src/tank/deployment/artifact_contracts.py",
       "symbol": "ActorDefinition",
       "site": "foreign actor-definition projection",
       "reason": "The actual .actor/actor.json control document requires integer1/name and forbids any buildTag key. Unrelated actor-definition fields are retained only as opaque source bytes; duplicate keys refuse before projection.",
@@ -219,12 +220,101 @@
       "evidence": [
         "quality-publisher-unique-http.log"
       ]
+    },
+    {
+      "file": "src/tank/deployment/artifact_contracts.py",
+      "symbol": "SourceBundle.files",
+      "site": "dict[SourcePath, bytes]",
+      "reason": "This is the actual variable filename-to-opaque-byte resource collection. SourceArtifact binds its digest and required control files before provider effects; it is not a domain record facade.",
+      "evidence": [
+        "quality-publisher-command-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/publisher.py",
+      "symbol": "Publisher.provenance.expected_digest",
+      "site": "required nullable argument",
+      "reason": "None explicitly requests identity/marker/source self-consistency without an independently supplied expected digest. Every source build still validates its marker against actual resource bytes; a present expected digest adds a comparison.",
+      "evidence": [
+        "quality-publisher-state-machine-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/publisher.py",
+      "symbol": "Publisher._source_candidate.cached, active",
+      "site": "explicit absent observation branches",
+      "reason": "Missing cache is physical absence, not build success. Cached reuse and active-source reuse independently revalidate provider provenance; otherwise source upload/readback/build are performed.",
+      "evidence": [
+        "quality-publisher-state-machine-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/publisher.py",
+      "symbol": "Publisher.prepare.previous_release, previous_active",
+      "site": "required physical absence distinctions",
+      "reason": "Only absent Tank marker serializes the preserved empty historical sentinel. Missing active journal is allowed solely for the verified pinned baseline, not an arbitrary observed tag.",
+      "evidence": [
+        "quality-publisher-state-machine-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/publisher.py",
+      "symbol": "Publisher.rollback, Publisher.rollback_finish",
+      "site": "no-pending idempotence",
+      "reason": "An absent transaction is an explicit named no-pending result or already-finished cleanup. Present transactions retain full provenance, readback and rollback-marker checks.",
+      "evidence": [
+        "quality-publisher-command-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/markers.py",
+      "symbol": "FilesystemTankReleaseState.deployed",
+      "site": "CommitSHA or None",
+      "reason": "Only FileNotFound means absent. Present empty, malformed, symbolic or nonregular files refuse and never become bootstrap absence.",
+      "evidence": [
+        "quality-publisher-state-machine-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/commands.py",
+      "symbol": "execute_command.previous_release",
+      "site": "None to exact empty output line",
+      "reason": "This retains the existing shell-facing representation of a genuinely absent prior Tank marker. It does not fabricate an identity or reinterpret malformed stored evidence.",
+      "evidence": [
+        "quality-publisher-command-unit.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/cli.py",
+      "symbol": "run.PublisherCommand.model_validate",
+      "site": "raw argparse action/release mapping",
+      "reason": "This exact two-field mapping is a command-line intake projection, immediately validated into the closed action/commit contract before composition. Application state is not carried in generic mappings.",
+      "evidence": [
+        "quality-publisher-cli-unit-2.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/apify_api.py",
+      "symbol": "ApifyAPI._request.body, NoRedirect.redirect_request",
+      "site": "required nullable HTTP body and redirect refusal",
+      "reason": "GET/build POST operations explicitly choose no body; upload/tag requests use named variants. Returning None from the urllib redirect hook refuses forwarding publisher credentials to redirected destinations.",
+      "evidence": [
+        "quality-publisher-unique-http.log"
+      ]
+    },
+    {
+      "file": "src/tank/deployment/credentials.py",
+      "symbol": "host_token.match",
+      "site": "regex no-match",
+      "reason": "Unrelated host dotenv lines are intentionally ignored. Exactly one supported APIFY_API_TOKEN assignment is required; environment values cannot supply a missing assignment.",
+      "evidence": [
+        "quality-publisher-credential-unit.log"
+      ]
     }
   ],
   "remaining": [
-    "Publisher orchestration and its original test suite remain unmigrated.",
-    "Versioned production publisher image/CLI activation remains open.",
+    "Typed publisher orchestration/CLI is implemented but held. Existing script/workflow activation, selected-source versus orchestrator runtime packaging, interruption/drain ownership and migration of the original publisher tests remain open.",
     "No genuine positive original baseline source payload is retained; no pinned digest is changed or synthetic positive substituted.",
-    "Global Python, Go, JavaScript, vendor and test audits remain open."
+    "Global Python, Go, JavaScript, vendor and meaningful-test audits remain open. This explicit ledger is not a lint exclusion or exhaustive global completion claim."
   ]
 }
