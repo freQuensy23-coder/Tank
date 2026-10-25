@@ -5851,3 +5851,98 @@ async def test_accepted_completion_and_native_failure_preserve_done_without_dead
                     task.cancel()
             await asyncio.gather(accepted, failed, return_exceptions=True)
             await native.close()
+
+
+async def test_expired_tracking_status_preserves_the_frozen_financial_calculation(service) -> None:
+    from test_decision_contracts import frozen_decision_fixture
+
+    from tank.analysis.decision_codec import decode_decision, encode_decision
+    from tank.analysis.decision_contracts import DecisionIdentity, DecisionMetadata, DecisionRecord
+    from tank.time_precision import chosen_boundary, collection_clock
+
+    authored = frozen_decision_fixture()
+    prior = authored.metadata
+    actual = prior.identity
+    cutoff = utcnow() - timedelta(days=3)
+    identity = DecisionIdentity.model_validate(
+        actual.model_copy(update={"cutoff": chosen_boundary(cutoff, precision="EXACT")})
+    )
+    frozen = DecisionRecord.model_validate(
+        authored.model_copy(
+            update={
+                "metadata": DecisionMetadata.model_validate(
+                    prior.model_copy(
+                        update={
+                            "identity": identity,
+                            "calculated_at": collection_clock(cutoff + timedelta(seconds=1)),
+                        }
+                    )
+                )
+            }
+        )
+    )
+    eid, token = identity.event_id, identity.token_id
+    closed_at = iso(cutoff + timedelta(days=1))
+    for table, key, value in (
+        (
+            "evt.events",
+            eid,
+            complete_event_fixture(eid, current_ems_id=identity.assessment_id),
+        ),
+        (
+            "evt.ems_assessments",
+            identity.assessment_id,
+            complete_assessment_fixture(identity.assessment_id, eid),
+        ),
+        (
+            "evt.beneficiary_maps",
+            "expired-map",
+            {"event_id": eid, "map_version": 1, "analysis_set": [token]},
+        ),
+        (
+            "evt.beneficiary_edges",
+            "expired-edge",
+            {
+                "event_id": eid,
+                "token_id": token,
+                "edge_id": "expired-edge",
+                "map_version": 1,
+                "role": "PRIMARY",
+                "credible": False,
+                "exposure_score": None,
+            },
+        ),
+        (
+            "ana.market_truth",
+            "newer-truth",
+            complete_truth_fixture("newer-truth", eid, token, clock_iso()),
+        ),
+        ("ana.decisions", identity.decision_id, encode_decision(frozen)),
+        (
+            "ana.calls",
+            "expired-call",
+            {
+                "call_id": "expired-call",
+                "event_id": eid,
+                "token_id": token,
+                "status": "CLOSED",
+                "closed_by": "EXPIRED",
+                "closed_at": closed_at,
+            },
+        ),
+    ):
+        await service.repo.put(table, key, value)
+    wire = await service.get_decision({"event_id": eid, "token_id": token}, {})
+    ended = decode_decision(wire)
+    assert ended.calculation == frozen.calculation
+    assert ended.metadata.identity.cutoff == frozen.metadata.identity.cutoff
+    assert ended.metadata.calculated_at == frozen.metadata.calculated_at
+    assert ended.metadata.identity.generation == frozen.metadata.identity.generation
+    assert ended.metadata.identity.assessment_id == identity.assessment_id
+    assert ended.metadata.identity.market_truth_id == identity.market_truth_id
+    assert ended.metadata.identity.thresholds_version == identity.thresholds_version
+    assert wire["previous_decision_id"] == identity.decision_id
+    assert wire["outlook_id"] == frozen.outlook_id and wire["conditions"] == []
+    assert wire["tracking_recorded_at"] is not None
+    assert wire["tracking_writer"]["versions"] == service.versions.model_dump(mode="json")
+    assert await service.repo.get("ana.decisions", identity.decision_id) == encode_decision(frozen)
