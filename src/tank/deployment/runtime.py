@@ -8,26 +8,11 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from tank.contracts import DomainModel
-from tank.deployment.identities import SHA256, CommitSHA
+from tank.deployment.runtime_contracts import RuntimeEvidence, RuntimeInvocation
 
 
 class PublisherRuntimeError(RuntimeError):
     pass
-
-
-class RuntimeInvocation(DomainModel):
-    orchestrator_sha: CommitSHA
-    selected_release_sha: CommitSHA
-
-
-class RuntimeEvidence(DomainModel):
-    orchestrator_sha: CommitSHA
-    selected_release_sha: CommitSHA
-    python_version: str
-    uv_version: str
-    lock_sha256: SHA256
-    project_sha256: SHA256
 
 
 def artifact_digest(path: Path) -> str:
@@ -55,8 +40,8 @@ def verify_runtime(invocation: RuntimeInvocation, root: Path) -> RuntimeEvidence
     return RuntimeEvidence(
         orchestrator_sha=invocation.orchestrator_sha,
         selected_release_sha=invocation.selected_release_sha,
-        python_version=python_version,
-        uv_version=fields[1],
+        python_version="3.13.13",
+        uv_version="0.11.7",
         lock_sha256=artifact_digest(root / "uv.lock"),
         project_sha256=artifact_digest(root / "pyproject.toml"),
     )

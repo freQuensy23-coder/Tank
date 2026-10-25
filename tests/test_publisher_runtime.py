@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tank.deployment.runtime import RuntimeEvidence
+from tank.deployment.runtime_contracts import RuntimeEvidence
 
 ROOT = Path(__file__).resolve().parents[1]
 
