@@ -943,7 +943,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
         seq += 1
         if event["type"] == "session.status_idle":
             settled.update(accepted)
-        await queue.put(f"id: {seq}\ndata: {json.dumps(event)}\n\n".encode())
+        await queue.put(("data: " + json.dumps(event) + "\n\n").encode())
 
     async def tool(name, args, execution) -> None:
         await emit(
@@ -1007,7 +1007,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
             return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
         if route.endswith("/events"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "next_page": None})
             event = json.loads(request.content)["events"][0]
             identity = "accepted-" + str(len(accepted))
             accepted.append(identity)
