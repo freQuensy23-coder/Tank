@@ -13,6 +13,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from tank.logging import redact_text
+from tank.sources.x_diagnostics import sanitize
 from tank.util import iso
 
 RUN_TIMEOUT_S = 130
@@ -52,6 +53,7 @@ class ApifyAccount(ApifyModel):
     posts: int = 0
     history_gap: bool = Field(default=False, alias="historyGap")
     error: str | None = None
+    diagnostics: dict | None = None
 
 
 class ApifyRun(ApifyModel):
@@ -68,6 +70,7 @@ class AccountFailure:
 
     account: str | None
     reason: str
+    diagnostics: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -90,14 +93,18 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
     missing from the run, or read with posts but without a next cursor, is a failure.
     A degraded run that names no failure or gap is recorded as a run-level failure.
     """
-    if run.health == "failed":
+    if run.health == "failed" and not any(a.status == "failed" and a.diagnostics for a in run.accounts):
         raise RuntimeError(f"Apify X run failed: {run.error}")
     rows = [
         post.row(raw)
         for post in run.posts
         if post.author.lower() in cursors and int(post.id) > int(cursors[post.author.lower()])
     ]
-    failures = [AccountFailure(a.handle, a.error or "FAILED") for a in run.accounts if a.status == "failed"]
+    failures = [
+        AccountFailure(a.handle, a.error or "FAILED", a.diagnostics)
+        for a in run.accounts
+        if a.status == "failed"
+    ]
     reported = {account.handle.lower(): account for account in run.accounts}
     for handle in accounts:
         account = reported.get(handle.lower())
@@ -108,7 +115,20 @@ def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: by
     gaps = [account.handle for account in run.accounts if account.history_gap]
     if run.health == "degraded" and not failures and not gaps:
         failures.append(AccountFailure(None, run.error or "RUN_DEGRADED"))
-    return Scan(rows=rows, cursors={**cursors, **run.next_cursors}, failures=failures, gaps=gaps)
+    failed_handles = {failure.account.lower() for failure in failures if failure.account}
+    next_cursors = dict(cursors)
+    next_cursors.update(
+        {
+            handle: cursor
+            for handle, cursor in run.next_cursors.items()
+            if handle.lower() not in failed_handles and run.health != "failed"
+        }
+    )
+    if run.health == "failed":
+        rows = []
+    else:
+        rows = [row for row in rows if str(row["author"]).lower() not in failed_handles]
+    return Scan(rows=rows, cursors=next_cursors, failures=failures, gaps=gaps)
 
 
 class XSensor:
@@ -134,4 +154,13 @@ class XSensor:
         except httpx.HTTPError as exc:
             message = redact_text(str(exc), (self.token, repr(self.token)[1:-1]))
             raise RuntimeError(f"Apify X run request failed: {message}") from None
-        return scan(ApifyRun.model_validate_json(response.content), accounts, cursors, response.content)
+        run = ApifyRun.model_validate_json(response.content)
+        run = run.model_copy(
+            update={
+                "accounts": [
+                    account.model_copy(update={"diagnostics": sanitize(account.diagnostics, self.token)})
+                    for account in run.accounts
+                ]
+            }
+        )
+        return scan(run, accounts, cursors, response.content)

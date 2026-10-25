@@ -1361,25 +1361,7 @@ with psycopg.connect(os.environ["TANK_DB_URL"]) as connection:
     recent = pd.read_sql_query("SELECT item_id,source_id,observed_at FROM ingest.source_items ORDER BY observed_at DESC LIMIT 20", connection)
 ```
 
-The current deployment explicitly routes Jev through OpenRouter: `POST https://openrouter.ai/api/v1/systemone`, `Authorization: Bearer` with `OPENROUTER_API_KEY`, and pinned request model `typesafe/jev-1.13`. `TANK_JEV_PROVIDER=openrouter` selects this route; the production adapter uses plain `httpx` with the unchanged typed state/questions body. The current primary design specifies this System One endpoint. An earlier chat/completions specification was corrected after its typed-body HTTP400 failure; that is historical evidence, not an outstanding endpoint deviation. No chat wrapping is used. This does not route the analyst through OpenRouter: analyst/scout models continue through the Codex subscription gateway. Calibration must use Pipeline's exact versioned filter/routing questions and state, not a paraphrase. A read-only research call can use HTTP directly without printing the key:
-
-```python
-import os
-import httpx
-payload = {
-    "model": "typesafe/jev-1.13",
-    "state": {"text": "the source text being assessed"},
-    "questions": {"relevant": {"type": "noul", "instructions": "Is this text about crypto?", "criteria": {"true": "About crypto", "false": "Not about crypto"}}}
-}
-with httpx.Client(timeout=20, trust_env=False) as client:
-    response = client.post("https://openrouter.ai/api/v1/systemone", headers={"Authorization": "Bearer " + os.environ["OPENROUTER_API_KEY"]}, json=payload)
-    response.raise_for_status()
-    result = response.json()
-    if result.get("model") != "typesafe/jev-1.13-20260917":
-        raise ValueError("Unverified Jev model revision")
-```
-
-The observed and accepted OpenRouter revision is `typesafe/jev-1.13-20260917`; preserve returned request/model/usage provenance and reject an unverified revision. This illustrative research question is not a replacement for Pipeline's calibration prompts. Honor the configured OpenRouter account's actual rate limits and retry metadata; no universal free quota is assumed. Do not change provider or select `latest`/another model as a fallback. Only OpenRouter `/api/v1/systemone` is supported; there is no direct TypeSafe credential, SDK route or provider fallback. Production sandbox scripts receive only OPENROUTER_API_KEY and TANK_JEV_PROVIDER=openrouter for this route. Replay receives neither provider key nor provider-routing environment.
+Tank's filter and routing classifier is Microsoft-Decision-1 version 1 through Microsoft Foundry. The service uses `/providers/microsoft/v1/systemone`, the configured deployment name `decision-1`, and typed `state`/`questions` with `noul` probabilities. The Foundry credential belongs to the service and is not exposed to agent sandboxes. Read the recorded relevance, routing scores and `ops.llm_usage` provenance instead of calling a substitute classifier. Analyst/scout models use the Codex subscription gateway. There is no automatic model/provider fallback; replay only reuses an exact saved request. Historical Jev rows remain historical evidence, and the current 0.5 cutoffs are uncalibrated for Decision-1.
 
 DuckDuckGo search needs **no API key** and costs zero. Use Tank's custom `web_search(query)` for facts: it stores titles, URLs and snippets as durable evidence. It uses pinned `ddgs==9.16.0`, exact DuckDuckGo backend only, 10 results, declared source User-Agent, at least 2 seconds between requests, and retry delays 5/15/45 seconds for the specified rate-limit/block/timeout failures. Its audited transport permits one `POST https://html.duckduckgo.com/html/` per attempt, does not follow redirects and does not load ambient proxies/credentials. It prevents DDGS metasearch fallback; a generic `DDGS().text(backend="duckduckgo")` is not a safe substitute because the library can substitute engines internally. Empty/failure results return explicit errors, never a paid or alternate-engine search. Search has no credential secret.
 

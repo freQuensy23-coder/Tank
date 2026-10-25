@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 const { NodeRetainedLifecycle } = await import(new URL('packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts', openmaSource));
 import { setup } from './fakes.mjs';
+import { BoxLiteFilesystemDurability } from '../../../vendor/openma/packages/managed-runtime-boxlite/src/guest-filesystem.ts';
 function fixture() {
   const s=setup(),allocations=[];
   const decorate=runtime=>Object.assign(runtime,{async spawnDuplexProcess(spec){
@@ -14,6 +15,7 @@ function fixture() {
       exited:Promise.resolve({code:0,signal:null}),async kill(){}};
   }});
   const module={
+    BoxLiteFilesystemDurability,
     createBoxLiteProvider(options){allocations.push(options);return {
       async create(_ctx,_env,acq){return decorate(await s.provider.create(acq.scope));},
       async resume(handle,_ctx,_env,acq){return decorate(await s.provider.resume(handle,acq.scope));},
@@ -148,4 +150,33 @@ test('warm current-prefix metadata advances preserve allocation/workspace and st
   await replacement.bind(fresh);assert.equal(JSON.parse((await newSb.exec('read','FAKE_AFTER_RESTART')).stdout).workspace,'persisted');await replacement.idle(fresh);
   assert.equal(s.allocations.filter(options=>options.providerId==='litebox').length,2);
   assert.equal([...s.disks.keys()][0],id);
+});
+
+test('retained memory-generation discovery is resource- and execution-fenced before staging any sandbox input', async () => {
+  const s = fixture(), context = s.context(s.sandbox());
+  let reads = 0;
+  const manager = s.lifecycle({ runtimeGeneration: async (_context, candidate, proposed) => {
+    reads++;
+    assert.equal([...s.rows.values()][0].active, true);
+    assert.equal(candidate, null);
+    assert.equal(proposed, 'runtime-proposed');
+    return 'runtime-retained';
+  } });
+  assert.equal(await manager.runtimeGeneration(context, 'runtime-proposed'), 'runtime-retained');
+  assert.equal([...s.rows.values()][0].active, false);
+  context.executionFence.current = false;
+  await assert.rejects(manager.runtimeGeneration(context, 'runtime-proposed'));
+  assert.equal(reads, 1);
+  assert.equal(s.disks.size, 0);
+});
+
+for (const lost of ['execution', 'resource']) test(`retained memory-generation discovery refuses ${lost} owner loss after durable lookup`, async () => {
+  const s = fixture(), context = s.context(s.sandbox());
+  const manager = s.lifecycle({ runtimeGeneration: async () => {
+    if (lost === 'execution') context.executionFence.current = false;
+    else [...s.rows.values()][0].active = false;
+    return 'runtime-retained';
+  } });
+  await assert.rejects(manager.runtimeGeneration(context, 'runtime-proposed'));
+  assert.equal(s.disks.size, 0);
 });

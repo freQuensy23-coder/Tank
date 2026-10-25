@@ -17,7 +17,7 @@ def options():
         "thresholds": {"filter_cutoff": 0.7, "routing_cutoff": 0.8},
     }
     return SimpleNamespace(
-        load_config=config.__getitem__, openrouter_api_key="test", config_version="test", code_version="test"
+        load_config=config.__getitem__, foundry_api_key="test", config_version="test", code_version="test"
     ), config
 
 
@@ -139,7 +139,7 @@ async def test_pending_extraction_is_not_a_candidate_then_real_event_is_scored(s
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13-free",
+                "model": "microsoft-decision-1",
                 "usage": {},
                 "answers": {"same_event": {"type": "noul", "noul": same}},
             },
@@ -241,7 +241,7 @@ async def test_official_repost_promotion_during_filter_request_preserves_latest_
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13-free",
+                "model": "microsoft-decision-1",
                 "usage": {},
                 "answers": {"relevant": {"type": "noul", "noul": 0.1}},
             },
