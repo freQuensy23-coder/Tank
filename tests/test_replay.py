@@ -4,6 +4,7 @@ from pathlib import Path
 import httpx
 import pytest
 from model_fixture import audited_result, model_arguments
+from source_support import fixture_versions
 
 from tank.replay import ReplayClock, ReplayError, evaluate_frozen, load_inputs, replay_bundle
 from tank.settings import Settings
@@ -665,9 +666,10 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
         tools = EventToolService(
             repo,
             config,
-            MarketTruthService(repo, config, CapturedMarket()),
+            MarketTruthService(repo, config, CapturedMarket(), versions=fixture_versions()),
             DecisionEngine(config),
             http=http,
+            versions=fixture_versions(),
         )
         report = await replay_agent_session(
             packet,
@@ -1400,8 +1402,11 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
         tools = EventToolService(
             repo,
             config,
-            MarketTruthService(repo, config, ReplayMarketReader(load_inputs(packet, config))),
+            MarketTruthService(
+                repo, config, ReplayMarketReader(load_inputs(packet, config)), versions=fixture_versions()
+            ),
             DecisionEngine(config),
+            versions=fixture_versions(),
         )
         report = await replay_agent_session(
             packet,
@@ -2021,8 +2026,11 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
         tools = EventToolService(
             repo,
             config,
-            MarketTruthService(repo, config, ReplayMarketReader(load_inputs(packet, config))),
+            MarketTruthService(
+                repo, config, ReplayMarketReader(load_inputs(packet, config)), versions=fixture_versions()
+            ),
             DecisionEngine(config),
+            versions=fixture_versions(),
         )
         report = await replay_agent_session(
             packet,
@@ -2385,8 +2393,11 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
         tools = EventToolService(
             repo,
             config,
-            MarketTruthService(repo, config, ReplayMarketReader(load_inputs(packet, config))),
+            MarketTruthService(
+                repo, config, ReplayMarketReader(load_inputs(packet, config)), versions=fixture_versions()
+            ),
             DecisionEngine(config),
+            versions=fixture_versions(),
         )
 
         async def fixture_grade(arguments, context):
@@ -2869,9 +2880,10 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
         tools = EventToolService(
             repo,
             config,
-            MarketTruthService(repo, config, ReplayMarketReader(inputs)),
+            MarketTruthService(repo, config, ReplayMarketReader(inputs), versions=fixture_versions()),
             DecisionEngine(config),
             reference_clock=TrustedFixtureClock(inputs) if inputs.fixture_reference else None,
+            versions=fixture_versions(),
         )
         if profile == "ordinary_missing_sent":
             with pytest.raises(ReplayError, match="one captured SENT delivery receipt required"):
@@ -2944,9 +2956,9 @@ async def test_captured_tools_decision_refreshes_fired_market_watch_offline(
     cfg = Settings(data_dir=tmp_path, _env_file=None)
     await seed_domain(source, cfg, end)
     market = ReleasedMarket(shifted_snapshot(end))
-    truth = MarketTruthService(source, cfg, market)
+    truth = MarketTruthService(source, cfg, market, versions=fixture_versions())
     first = await truth.assess("e", "T", chosen_boundary(earlier, precision="BUCKET(1m)"))
-    tools = EventToolService(source, cfg, truth, DecisionEngine())
+    tools = EventToolService(source, cfg, truth, DecisionEngine(), versions=fixture_versions())
     initial = await tools.dispatch("get_decision", {"event_id": "e", "token_id": "T"}, {})
     watch = next(row for row in initial["conditions"] if row["role"] == "UPGRADE")
     watch.update(status="FIRED", fired_at=data["cutoff"])

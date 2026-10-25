@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from source_support import fixture_versions
 from test_session_binding_concurrency import fixture_repo
 
 from tank.event_tools import EventToolService
@@ -18,7 +19,7 @@ async def test_observation_and_source_completion_are_atomic(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend, fail_item_write, postgres_template
 ) -> None:
     async with fixture_repo(backend, postgres_template) as repo:
-        service = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+        service = EventToolService(repo, Settings(data_dir=tmp_path), None, None, versions=fixture_versions())
         first, second, stamp = new_id("item"), new_id("item"), iso()
         quote = "Product announced"
         for item_id in (first, second):

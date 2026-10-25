@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from source_support import fixture_versions
 from test_truth_start_fixture import compact_start_snapshot
 
 import tank.analysis.truth as module
@@ -136,7 +137,7 @@ async def test_service_uses_only_light_loader_and_never_writes_assessments() -> 
             raise AssertionError("No full market snapshot")
 
     service = module.MarketTruthService(
-        Repo(), SimpleNamespace(config_version="t", code_version="t"), Market()
+        Repo(), SimpleNamespace(config_version="t", code_version="t"), Market(), versions=fixture_versions()
     )
     result = await service.condition_values("E", "T", packet["cutoff"], REQUIREMENTS[:2])
     assert reads == ["evt.events"] and "mta_id" not in result
@@ -303,11 +304,11 @@ async def test_actual_market_loader_selective_sql_footprint_and_no_assessment_wr
     (config / "thresholds.yaml").write_bytes(Settings().read_config_bytes("thresholds.yaml"))
     settings = Settings(_env_file=None, config_dir=config, data_dir=tmp_path)
     async with httpx.AsyncClient() as http:
-        market = MarketService(repo, settings, http=http)
+        market = MarketService(repo, settings, http=http, versions=fixture_versions())
         monkeypatch.setattr(market, "snapshot", forbidden)
         monkeypatch.setattr(market, "_put", forbidden)
         monkeypatch.setattr(market, "flush_market", forbidden)
-        truth = module.MarketTruthService(repo, settings, market)
+        truth = module.MarketTruthService(repo, settings, market, versions=fixture_versions())
         req = [
             dict(metric="spot.cohort.direction", window="W1H"),
             dict(metric="price.close_vs_level", window="W1H"),
@@ -573,7 +574,7 @@ async def test_selective_relative_uses_canonical_latest_beneficiary_direction() 
             return deepcopy(packet)
 
     service = module.MarketTruthService(
-        Repo(), SimpleNamespace(config_version="t", code_version="t"), Market()
+        Repo(), SimpleNamespace(config_version="t", code_version="t"), Market(), versions=fixture_versions()
     )
     actual = await service.condition_values(
         "E", "T", packet["cutoff"], [{"metric": "price.repricing_band", "window": "EVENT"}]

@@ -15,6 +15,7 @@ import httpx
 import pytest
 import yaml
 from pydantic import JsonValue
+from source_support import fixture_versions
 
 from tank.market.normalize import timestamp_fields
 from tank.market.service import CAPTURE_REQUEST_GRACE_S, EXCHANGE_REST_OWNER, MarketService
@@ -98,7 +99,7 @@ async def finish(repo, collection, key, **fields) -> None:
 
 async def test_external_escalation_writes_the_obligation_and_starts_nothing(settings) -> None:
     repo = MemoryRepository()
-    service = MarketService(repo, settings)
+    service = MarketService(repo, settings, versions=fixture_versions())
     service._stop = asyncio.Event()
     await repo.put(
         "evt.events",
@@ -119,11 +120,11 @@ async def test_external_escalation_writes_the_obligation_and_starts_nothing(sett
     ).status == "PENDING"
 
     await update(repo, "mkt.backfill_runs", run["backfill_id"], status="RUNNING")
-    restarted = MarketService(repo, settings)
+    restarted = MarketService(repo, settings, versions=fixture_versions())
     await restarted._schedule_hot_backfills()
     assert (await repo.get("mkt.backfill_runs", run["backfill_id"]))["status"] == "RUNNING"
     await finish(repo, "mkt.backfill_runs", run["backfill_id"], status="FAILED", reason="venue down")
-    again = MarketService(repo, settings)
+    again = MarketService(repo, settings, versions=fixture_versions())
     await again._schedule_hot_backfills()
     assert (await repo.get("mkt.backfill_runs", run["backfill_id"]))["status"] == "PENDING"
     for market in (service, restarted, again):
@@ -182,7 +183,7 @@ async def repair_round_trip(repo, service) -> None:
 
 async def test_external_repair_windows_is_a_capture_request(settings) -> None:
     repo = MemoryRepository()
-    service = MarketService(repo, settings)
+    service = MarketService(repo, settings, versions=fixture_versions())
     await repair_round_trip(repo, service)
     await service.close()
 
@@ -264,7 +265,7 @@ async def check_stream_state(repo, service) -> None:
 
 async def test_external_stream_state_comes_from_capture_streams(settings) -> None:
     repo = MemoryRepository()
-    service = MarketService(repo, settings)
+    service = MarketService(repo, settings, versions=fixture_versions())
     await check_stream_state(repo, service)
     await service.close()
 
@@ -277,7 +278,7 @@ async def test_external_capture_never_calls_exchange_rest(settings) -> None:
         return httpx.Response(200, json={"ok": True})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
-        service = MarketService(MemoryRepository(), settings, http=http)
+        service = MarketService(MemoryRepository(), settings, http=http, versions=fixture_versions())
         for method, url, extra in (
             ("GET", "https://api.binance.com/api/v3/klines", {"params": {"symbol": "ABCUSDT", "limit": 3}}),
             ("GET", "https://www.okx.com/api/v5/market/candles", {"params": {"instId": "ABC-USDT"}}),
@@ -297,7 +298,7 @@ async def test_external_run_keeps_tiers_and_obligations_and_captures_nothing(
     settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = MemoryRepository()
-    service = MarketService(repo, settings)
+    service = MarketService(repo, settings, versions=fixture_versions())
     since = "2026-10-21T10:00:00Z"
     await repo.put("evt.events", "EVT-1", {**capture_event(), "public_at": since})
     await put(
@@ -375,7 +376,7 @@ async def test_request_ledger_is_one_budget_for_every_process(migrated) -> None:
 @pytest.mark.integration
 @pytest.mark.postgres
 async def test_external_contract_on_postgres(migrated, tmp_path: Path) -> None:
-    service = MarketService(migrated, make_settings(tmp_path))
+    service = MarketService(migrated, make_settings(tmp_path), versions=fixture_versions())
     await repair_round_trip(migrated, service)
     await check_stream_state(migrated, service)
     await migrated.put(
@@ -446,7 +447,9 @@ async def test_shared_ledger_closes_hosts_on_429_and_418(
         return replies.pop(0)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
-        service = MarketService(MemoryRepository(), make_settings(tmp_path), http=http)
+        service = MarketService(
+            MemoryRepository(), make_settings(tmp_path), http=http, versions=fixture_versions()
+        )
         url, params = "https://api.llama.fi/summary/fees/abc", {"dataType": "dailyFees"}
         replies[:] = [httpx.Response(418, headers={"Retry-After": "120"})]
         with pytest.raises(RuntimeError, match="418"):

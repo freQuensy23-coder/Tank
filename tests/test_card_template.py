@@ -4,6 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+from source_support import fixture_versions
 
 from tank.analysis.cards import compose_card
 
@@ -568,7 +569,7 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
                 "source_class": "PRIMARY",
             },
         )
-        service = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+        service = EventToolService(repo, Settings(data_dir=tmp_path), None, None, versions=fixture_versions())
 
         await repo.put("ops.agent_sessions", "card-session", {"session_id": "card-session", "event_id": eid})
         result = await service.dispatch(

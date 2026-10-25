@@ -6,6 +6,7 @@ from functools import lru_cache
 from math import sin
 
 import pytest
+from source_support import fixture_versions
 
 from tank.analysis.truth import compute_market_truth
 from tank.util import iso, parse_time
@@ -384,7 +385,10 @@ async def _assess_loser_snapshot():
             return compact_start_snapshot()
 
     return await MarketTruthService(
-        Repo(), SimpleNamespace(config_version="test", code_version="test"), Market()
+        Repo(),
+        SimpleNamespace(config_version="test", code_version="test"),
+        Market(),
+        versions=fixture_versions(),
     ).assess("EVT", "T", "2026-10-16T12:00:00Z")
 
 
