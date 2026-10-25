@@ -325,6 +325,10 @@ func (c *Client) Fetch(ctx context.Context, method, rawURL string, params, heade
 		return nil, err
 	}
 	host := u.Hostname()
+	effective, err := effectiveFetchParams(u, params)
+	if err != nil {
+		return nil, err
+	}
 	var payload map[string]any
 	if data := bytes.TrimSpace(body); len(data) > 0 && data[0] == '{' {
 		if err := json.Unmarshal(data, &payload); err != nil {
@@ -332,7 +336,7 @@ func (c *Client) Fetch(ctx context.Context, method, rawURL string, params, heade
 		}
 	}
 	for attempt := 0; attempt < Attempts; attempt++ {
-		if err := c.Gate.AdmitBuckets(ctx, host, budget.FetchConstraints(host, u.Path, params, payload), priority); err != nil {
+		if err := c.Gate.AdmitBuckets(ctx, host, budget.FetchConstraints(host, u.Path, effective, payload), priority); err != nil {
 			return nil, err
 		}
 		release, err := c.Gate.Enter(ctx, host, priority)
