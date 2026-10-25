@@ -873,32 +873,45 @@ def test_assembly_does_not_admit_source_revision(packet) -> None:
         "unknown_observation",
     ],
 )
-def test_reconstructed_quiet_minute_preserves_collection_clock(
-    packet, monkeypatch: pytest.MonkeyPatch, case
-) -> None:
+def test_reconstructed_quiet_minute_preserves_collection_clock(packet, case) -> None:
     from copy import deepcopy
 
     from tank.market import flow, normalize
-    from tank.time_precision import collection_clock
+    from tank.market.trade_contracts import FlowInstrument, QuoteUsdValuation
+    from tank.util import parse_iso_time
 
     received = "2026-10-17T00:00:00Z"
-    monkeypatch.setattr(flow, "collection_clock", lambda value=None: collection_clock(received))
-    instrument = {
-        "instrument_id": "binance:spot:QNTUSDT",
-        "token_id": "quant:QNT",
-        "venue": "binance",
-        "market_type": "SPOT",
-        "quote_asset": "USDT",
-    }
-    accumulator = flow.FlowAccumulator()
+    instrument = FlowInstrument(
+        instrument_id="binance:spot:QNTUSDT",
+        token_id="quant:QNT",
+        venue="binance",
+        market_type="SPOT",
+        quote_asset="USDT",
+        venue_symbol="QNTUSDT",
+        contract_multiplier=None,
+    )
+    valuation = QuoteUsdValuation(
+        rate=None, as_of=None, basis="UNAVAILABLE", unavailable_reason="QUOTE_USD_RATE_UNAVAILABLE"
+    )
+    accumulator = flow.FlowAccumulator(now=lambda: parse_iso_time(received))
     trade = normalize.trade(
         instrument,
-        {"a": 1, "p": "100", "q": "2", "f": 1, "l": 1, "T": "2026-09-24T11:58:30Z", "m": False},
-        received_ts=received,
+        {
+            "a": 1,
+            "p": "100",
+            "q": "2",
+            "f": 1,
+            "l": 1,
+            "T": int(parse_iso_time("2026-09-24T11:58:30Z").timestamp() * 1000),
+            "m": False,
+        },
+        valuation=valuation,
+        received_ts=parse_iso_time(received),
+        source="ARCHIVE",
     )
     accumulator.add(trade, continuity=False)
     accumulator.prove_range(
-        instrument["instrument_id"],
+        instrument.instrument_id,
         "2026-09-24T11:58:00Z",
         "2026-09-24T12:00:00Z",
         complete=True,
@@ -906,10 +919,14 @@ def test_reconstructed_quiet_minute_preserves_collection_clock(
         observed_at=received,
     )
     accumulator.empty_minute(instrument, "2026-09-24T11:59:00Z")
-    bar = accumulator.record((instrument["instrument_id"], "2026-09-24T11:59:00Z"), complete=True)
+    produced = accumulator.record((instrument.instrument_id, "2026-09-24T11:59:00Z"), complete=True)
+    reference = produced.reference_points[0]
+    assert reference.complete and reference.observed_at_prec == "COLLECTION_ONLY"
+    assert reference.last_trade is not None and reference.last_trade.ts == parse_iso_time(
+        "2026-09-24T11:58:30Z"
+    )
+    bar = produced.model_dump(mode="json", by_alias=True, exclude_unset=True)
     point = bar["reference_points"][0]
-    assert point["complete"] and point["observed_at_prec"] == "COLLECTION_ONLY"
-    assert point["last_trade"]["ts"] == "2026-09-24T11:58:30Z"
     original = deepcopy(bar)
     data = json.loads(packet.read_text())
     data["assembled_at"] = "2026-10-17T01:00:00Z"
