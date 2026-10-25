@@ -633,3 +633,13 @@ reject absent/nontext values; day/exact/minute parser locals remain distinct typ
 and publication interval checks require both genuine bounds. Declared UTC and every
 frozen literal remain unchanged. The remaining legacy fixture_reference domain-map
 migration is still open; these resource ports do not claim to complete that module.
+### Clean authored PARTIAL narrative fixture
+
+The native replay publication fixture now supplies two actual factual WHY bullets
+for every kind, matching the strengthened public skill/schema. It authors the captured
+World-approval text and the fact that that publication does not quantify price or
+liquidity effects. It does not synthesize prose from a renderer fallback or claim an
+unmeasured economic effect. The first-reference QUEUED/unsent intent and ordinary
+missing-SENT refusal oracles remain unchanged. Both actual integration profiles pass
+in2.89s with zero skips. This companion is clean3e26558b + exact485 schema ancestry;
+held HTTP and decision/card renderer activation are excluded.
