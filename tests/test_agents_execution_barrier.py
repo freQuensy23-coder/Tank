@@ -7,10 +7,13 @@ import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture, source_record_fixture
 
+from tank.agents.context import CONTEXT_VERSION
 from tank.agents.sessions import SessionService
+from tank.openma_sync import agent_tools
 from tank.replay import semantic_verdict_output
 from tank.settings import Settings
 from tank.storage import MemoryRepository
+from tank.util import sha256
 
 
 def config():
@@ -25,6 +28,7 @@ def config():
         openma_model="gpt-6.1-sol",
         config_version="test",
         code_version="test",
+        read_config_json=real.read_config_json,
         load_config=lambda name: real.load_config(name) if name in {"registry", "sources"} else {},
     )
 
@@ -32,6 +36,8 @@ def config():
 async def seeded(repo, initial="accepted-message"):
     session = {
         "session_id": "s",
+        "model_context_version": CONTEXT_VERSION,
+        "tools_sha256": sha256(agent_tools(config(), "tank-event-analyst")),
         "status": "OPEN",
         "runtime_status": "RUNNING",
         "item_id": "item",

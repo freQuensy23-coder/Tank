@@ -936,8 +936,8 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
             lambda req: (_ for _ in ()).throw(AssertionError("No external requests"))
         )
     ) as http:
-        market = MarketService(repo, settings, http=http)
-        truth = MarketTruthService(repo, settings, market)
+        market = MarketService(repo, settings, http=http, versions=declared_versions_fixture())
+        truth = MarketTruthService(repo, settings, market, versions=declared_versions_fixture())
         original = truth.assess
         truth.assess = AsyncMock(wraps=original)
         runtime = object.__new__(Runtime)

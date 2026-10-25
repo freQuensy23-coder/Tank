@@ -425,3 +425,36 @@ Fixture calls declare synthetic identities explicitly. Production-effect regress
 The SessionFileSender port is the native bridge's file-response envelope; it is not a general domain-record substitute. Its temporary dict result reflects the current Telegram adapter API and is serialized at the native tool boundary. Full SessionService/Context/Telegram receipt migrations remain open, including constructor and journal domain types; this stage does not claim full session strict typing.
 
 Proof:268 focused owned unit cases passed in13.96seconds, four required-facet production-effect cases passed in1.49seconds, strict classifier/Pipeline/bootstrap/poll-state/facet-test targets pass, and default owned source/composition mypy passes. The guarded integration result is recorded in agents-required-versions-integration-v2.log. Calibration and quality-owned E2E callers require their coordinated explicit-facet companion; no compatibility default is provided.
+
+
+### Read-only OpenMA first-party provenance/caller classification
+
+agents-openma-provenance.json records exact observed hashes, independently verified Tank-added origin and production/type-only/test/qualification callers for the six tank-retained modules, node-managed-skill-aliases.py and tank-replay-evidence.ts. Origin is checked against quality's checksum-recorded exact upstream archive at85d5361f535c7221de975838dc48444e468cc02e. All eight are Tank additions; upstream licenses/notices and historical TANK_SOURCE receipts remain untouched.
+
+guest-file-worker.ts contains an active embedded Python program, passed by guest-file-io through the BoxLite guest execution adapter; its inner comments/types need first-party inventory coverage. The stable-skill alias Python worker is loaded by node-managed-stable-skills.ts, with direct Python claim tests. Retained lifecycle and replay modules are reached by the native managed route and sandbox adapter, with explicit offline/pinned-provider qualification callers. This classification assigns no vendor edit ownership and does not mark the implementation families complete. Quality owns inventory/manifest plumbing and will use these caller/hash records; no duplicate upstream archive was fetched.
+
+### Required public schema boundary
+
+ModelContext.public_schema now requires the captured read_config_json capability and a valid closed tool-definition list. Missing files, malformed roots/definitions, duplicate tool names and unknown requested tools fail before dispatch. parse_tool_definitions owns the JSON-schema adapter: ToolDefinition.input_schema remains a dictionary specifically because JSON Schema is an externally declared schema language, not application state. No permissive domain mapping was introduced. Existing SessionService typing and analyst_tools admission are still under migration.
+
+Transport fixtures now send genuine required public inputs and explicitly declare current model_context_version plus the actually installed tool-manifest fingerprint. This preserves the separate legacy-migration tests instead of having unrelated current-session tests accidentally exercise an uninstalled manifest.
+
+Validation: 227 agent unit cases passed in 8.87 seconds; 35 actual guarded integration cases passed in 16.64 seconds, zero skips. Four new tests exercise schema read/validation failures through native tool result publication and prove a private malformed input is absent from the native response and logs. The shared parser passes strict mypy; full SessionService/context strict closure remains open.
+
+### Producer version composition companion
+
+The canonical producer activation a89401b is merged. build_runtime passes the same already-resolved version identity to MarketService, MarketTruthService and EventToolService; ten owned test modules declare fixture identities explicitly at constructor boundaries. Historical stored provenance expectations remain unchanged. Validation: 339 owned units passed in 14.15 seconds and 40 actual guarded integration cases passed in 35.34 seconds, zero skips. Default composition mypy surfaced newly checked sibling constructor caches and scheduler's inferred None; those precise owner annotations are requested from analysis before cohort activation.
+
+### Strict context registry read projection
+
+ContextRegistry now validates the required token/entity/instrument/source namespaces before constructing model context; ModelContext no longer suppresses configuration lookup failures or invents an empty registry/source configuration. Closed TokenLabel, EntityLabel, InstrumentLabel and SourceLabel records replace display-record maps, require the fields actually consumed and reject duplicate namespace identities before indexing. Registry namespaces are read projections, not substitutes for the complete configuration loader.
+
+Retained sites: TokenLabel.name/project are required nullable projection fields because captured identity views may only declare symbol; display_name uses the documented project/name/symbol label precedence. EntityLabel.name is required nullable; explicit aliases then names then entity key are display alternatives, not invented registry membership. ModelContext token/entity/instrument unknown-key rendering preserves explicit unresolved references; source_label returns None for an unknown source so diagnostic projection does not invent a registered source. Key-indexed dictionaries are identity indexes over validated models; label_rows consumes configuration JSON only at the adapter. Registry_pattern None means there are no registered names to substitute.
+
+Validation: 339 owned units passed in 13.36 seconds, ten new required-namespace/identity/name projection cases passed in 1.57 seconds, and 35 actual guarded integrations passed in 27.75 seconds with zero skips. New projection source/tests pass independent strict mypy. The remaining context session/domain journal migration is still open.
+
+### Calendar review metadata under strict utility parsing
+
+calendar_review_metadata validates YYYY-MM-DD review labels as actual calendar dates, preserves the original text and reconciles declared precision aliases with the shared precision-only API. It never invents an occurrence, midnight or timezone. Registry review-clock validators and bootstrap's metadata serializer use this explicit branch; actual date-times still require aware occurrence parsing. Optional recognized precision/reason/bucket facets are adapter metadata and remain absent unless declared; unknown precision is None with the explicit INCOMPLETE reason. CalendarReviewMetadata has required nullable fields and validates canonical precision and bucket-anchor consistency. Dictionaries in this helper are serialized configuration inputs/metadata outputs only.
+
+Proof: 39 actual-configuration/bootstrap/context cases passed in 3.66 seconds, including full canonical serialized roundtrips, calendar date with/without declared daily bucket, invalid calendar date, naive date-time refusal and conflicting alias refusal. Registry/bootstrap/tests independently pass strict mypy and Ruff. A wider strict-utility scan passed 379 cases; 12 remaining failures call analysis-owned event test helpers still using the retired zero-argument iso, owner notified.
