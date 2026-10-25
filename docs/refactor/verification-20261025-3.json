@@ -1,0 +1,73 @@
+{
+  "scope": "Verified checkpoint only; full five-point refactor remains incomplete",
+  "code_head": "19c66cf20d5d1b5eb293369de842157a90ab68f8",
+  "commands": {
+    "comments": 0,
+    "ruff": 0,
+    "format": 0,
+    "mypy-3": 0,
+    "mypy-4": 0,
+    "mypy-5": 0,
+    "mypy-6": 0,
+    "typescript": 0,
+    "node-unit": 0,
+    "node-contract": 0,
+    "unit": 0,
+    "unit-timing": 0,
+    "collection": 0,
+    "integration": 0,
+    "integration-gate": 0,
+    "prepare-clickhouse": 0,
+    "prepare-postgres": 0,
+    "lint-go": 0,
+    "go-vet": 0,
+    "go-race": 0,
+    "go-gate": 0,
+    "go-schema": 0
+  },
+  "head_unchanged": true,
+  "tracked_worktree_clean": true,
+  "unit": {
+    "passed": 2190,
+    "skipped": 0,
+    "p90_seconds": 0.344,
+    "max_seconds": 4.564
+  },
+  "integration": {
+    "cases": 355,
+    "passed": 355,
+    "skipped": 0
+  },
+  "go": {
+    "cases": 251,
+    "passed": 251,
+    "skipped": 0
+  },
+  "node": {
+    "unit_passed": 50,
+    "contract_passed": 25,
+    "skipped": 0
+  },
+  "strict_families": {
+    "foundation_source_contracts": 27,
+    "foundation_tests_helpers": 17,
+    "quality_modules": 21
+  },
+  "configured_mypy_modules": 105,
+  "evidence_prefix": "/srv/tank-refactor-evidence/integrated-11-",
+  "limits": [
+    "Completed strict families are only part of all active first-party code.",
+    "Required version-consumer/cache/scheduler, strict generic-time enforcement and configured shared admission are separate in-progress cohorts.",
+    "Statistical beta fallback audit remains open in this published code; newer removal work is not included.",
+    "Shared live market-write admission is not included. Verified25 retained inputs contain no direct market-table rows; F02 hash mismatch remains excluded.",
+    "Tank-authored vendor and embedded-program inventory still requires full first-party classification; upstream source and licenses remain preserved."
+  ],
+  "source_trees": {
+    "src": "d7a8b7b07eb386b0940c706b827116ccebd95f56",
+    "tests": "851065162d52cbcb85c5883f2ec896c46adce702",
+    "scripts": "bd0173493661ca4bca9e6f06b68bab2fec2ad9d5",
+    "deploy": "9b96b47c867516792e10ff078e61a6c988d6d157",
+    "capture": "cc5d16ce40d129b478d9d60429e85422ac8d6e86",
+    "vendor": "c35b0052d99fa51c72a82c918da8830340db1ccf"
+  }
+}
