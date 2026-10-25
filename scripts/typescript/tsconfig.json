@@ -12,5 +12,5 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["*.mts", "../../deploy/**/*.mts", "../../tests/openma/**/*.mts"]
+  "include": ["*.mts", "../../deploy/**/*.mts", "../../tests/openma/**/*.mts", "../../vendor/openma/tank-deploy/*.mts"]
 }
