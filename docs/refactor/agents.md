@@ -861,3 +861,38 @@ functions and four Runtime functions still annotation-incomplete. The full
 journal/event stream, tool orchestration, usage, followup presentation layering,
 runtime worker domain and 42 assigned vendor programs remain open. This bounded
 migration does not approve their generic maps or remaining fallbacks.
+
+## Native chronology transport companion in progress
+
+The separate transport branch preserves the qualified outbound checkpoint.
+NativeRetryRefusal and NativeRefusalKey identify an actually observed native
+event/execution within its session. A host_retry_refusals namespace records the
+named host refusal, actual controller observation clock and required controller
+version facet. Historical producer metadata and retry budgets are not relabeled.
+The receipt and any genuinely reported cursor commit in one session-document
+write before memory dedup advances; committed-write acknowledgment loss is
+distinguished from a write that never committed.
+
+Page and stream callers now handle that permanent host outcome without inventing
+native termination or starving a later independently owned frame. Direct
+process_event still surfaces its named refusal. Existing durable refusal lookup
+skips only the exact recorded identity across restart; a different execution
+with the same event ID remains independently processable.
+
+Two source-backed HTTP paging contracts are explicit: managed data/next_page
+and native Node data/has_more with after_seq derived only from reported event
+sequences. Mixed, missing, repeated and non-progressing contracts refuse rather
+than guessing. Both source-backed SSE forms are flat events: cursor-free managed
+events and Node events with a reported seq, optionally bound to the same SSE id.
+The undocumented seq/event wrapper fallback is removed. Actual comment/ping
+heartbeats remain non-events; no event ID or cursor comes from list position,
+clock or inherited empty content.
+
+Actual native HTTP/SSE bytes opt into canonical decode_unique_json before
+ownership projection. Model serialization roundtrips and opaque tool/file text
+remain unparsed. First proof: 22 transport cases pass in 1.98 seconds, two actual
+PostgreSQL persistence/restart cases pass in 2.62 seconds, and the model/adapter
+plus behavior test pass independent strict mypy. The earlier 93 existing caller
+cases pass after authoring the already-declared Node seq in its SSE fixture and
+an explicit terminal managed cursor for the complete synthetic history page.
+Full owner and peer qualification remains pending.

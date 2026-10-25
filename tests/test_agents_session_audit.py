@@ -484,7 +484,7 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
         if request.url.path.endswith("/events/stream"):
             return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
         if request.url.path.endswith("/events") and request.method == "GET":
-            return httpx.Response(200, json={"data": list(history)})
+            return httpx.Response(200, json={"data": list(history), "next_page": None})
         if request.url.path.endswith("/events"):
             result = json.loads(request.content)["events"][0]
             responses.append(result["custom_tool_use_id"])

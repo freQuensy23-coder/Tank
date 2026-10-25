@@ -333,7 +333,9 @@ async def test_sse_resume_and_paginated_recovery_dedup_usage() -> None:
             return httpx.Response(
                 200,
                 headers={"content-type": "text/event-stream"},
-                text="id: 4\nevent: span.model_request_end\ndata: " + json.dumps(event) + "\n\n",
+                text="id: 4\nevent: span.model_request_end\ndata: "
+                + json.dumps({**event, "seq": 4})
+                + "\n\n",
             )
         if req.url.params.get("page") == "next":
             return httpx.Response(200, json={"data": [event], "next_page": None})

@@ -7,7 +7,7 @@ stream ignores Last-Event-ID, while the native Node transport honors it.
 import asyncio
 import base64
 import copy
-import json
+import logging
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import AsyncExitStack, suppress
@@ -50,6 +50,21 @@ from tank.agents.native_sessions import (
     NativeStoredSessionBinding,
     native_role_for_message,
 )
+from tank.agents.native_transport import (
+    ManagedEventCursor,
+    NativeEventCursor,
+    NativeEventObserved,
+    NativeEventOutcome,
+    NativeEventRetryRefused,
+    NativeFrameIdentity,
+    NativeRetryRefusalJournal,
+    NativeStoredCursor,
+    NodeEventCursor,
+    decode_native_page,
+    decode_native_stream,
+    native_event_sequence,
+    next_native_cursor,
+)
 from tank.agents.outbound_inputs import (
     AcceptedOutboundInput,
     initial_input_definition,
@@ -83,7 +98,7 @@ from tank.agents.tool_contracts import (
 )
 from tank.agents.wire import tool_wire_result
 from tank.agents.workflow import SOURCE_COMPLETION_VERSION
-from tank.contracts.json import decode_json
+from tank.contracts.json import decode_json, decode_unique_json
 from tank.contracts.native_readback import NativeSessionReference
 from tank.contracts.openma import (
     ManagedAgentName,
@@ -105,6 +120,8 @@ from tank.runtime_contracts import ScoutMessage, ScoutReviewJob, UserQuestionMes
 from tank.telegram_inbox import DOCUMENT_LIMIT, GONE_TEXT, closed_reason, question_message, record_answer
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, jsonable, parse_time, sha256, utcnow
+
+log = logging.getLogger(__name__)
 
 REST_TIMEOUT_S = 30
 
@@ -137,18 +154,24 @@ SESSION_FOLLOW_FIELDS = (
 )
 
 
-def seen_key(event):
-    """Identity of a handled stream event, including the execution correlation it carried."""
-    return event["id"] + "|" + str(event.get("execution_id") or "")
+def seen_key(event: dict[str, JsonValue]) -> str:
+    """Exact native identity and optional execution correlation, without delimiter collisions."""
+    return NativeFrameIdentity.from_wire(event).cache_key()
 
 
-def material_event(event):
-    """Whether a stream event can change Tank state (a refusal can arrive in any message)."""
-    if event.get("type") in MATERIAL_EVENT_TYPES or event.get("finish_reason") == "content-filter":
+def material_event(event: dict[str, JsonValue]) -> bool:
+    """Whether a native event can change state, including a refusal inside a message."""
+    kind = event.get("type")
+    if (
+        isinstance(kind, str)
+        and kind in MATERIAL_EVENT_TYPES
+        or event.get("finish_reason") == "content-filter"
+    ):
         return True
-    return any(
-        isinstance(block, dict) and block.get("type") == "refusal" for block in event.get("content") or []
-    )
+    content = event.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(isinstance(block, dict) and block.get("type") == "refusal" for block in content)
 
 
 class SessionFileSender(Protocol):
@@ -169,6 +192,7 @@ class SessionService:
         self.versions = ResolvedVersionIdentity.model_validate(versions)
         self.repo, self.settings, self.tool_dispatch = repo, settings, tool_dispatch
         self.source_extraction = SourceExtractionRepository(repo)
+        self.retry_refusals = NativeRetryRefusalJournal(repo, self.versions, self.clock_timestamp)
         self.http = httpx.AsyncClient(timeout=REST_TIMEOUT_S) if http is None else http
         self.owns_http = http is None
 
@@ -254,7 +278,7 @@ class SessionService:
             timeout=REST_TIMEOUT_S,
         )
         response.raise_for_status()
-        payload = decode_json(response.content)
+        payload = decode_unique_json(response.content)
         if not isinstance(payload, dict):
             raise ValueError("Native endpoint returned a non-object JSON response")
         return payload
@@ -777,7 +801,7 @@ class SessionService:
         if pending_retry is not None:
             if not isinstance(pending_retry, dict):
                 raise ValueError("Retained native retry event must be an object")
-            await self.process_event(sid, pending_retry)
+            await self.observe_native_event(sid, pending_retry, native_event_sequence(pending_retry))
 
     async def post_input(self, sid: str, body: NativeInput, *, idem: str) -> NativeInputAcknowledgment:
         receiver = NativeSessionReference(session_id=sid)
@@ -2059,40 +2083,80 @@ class SessionService:
             ):
                 await self.deliver_answers(sid)
 
-    async def catch_up(self, sid):
+    async def observe_native_event(
+        self, sid: str, event: dict[str, JsonValue], sequence: int | None = None
+    ) -> NativeEventOutcome:
+        sequence = NativeStoredCursor.model_validate({"value": sequence}).value
+        if (
+            event.get("type") in ("event_start", "event_delta")
+            or not event.get("id")
+            or not material_event(event)
+        ):
+            await self.process_event(sid, event, sequence)
+            return NativeEventObserved(status="OBSERVED")
+        frame = NativeFrameIdentity.from_wire(event)
+        recorded = await self.retry_refusals.find(sid, frame)
+        if recorded is not None:
+            self.seen_events.setdefault(sid, set()).add(seen_key(event))
+            return NativeEventRetryRefused(status="RETRY_REFUSED", receipt=recorded)
+        try:
+            await self.process_event(sid, event, sequence)
+        except UnknownNativeRetryState as refused:
+            receipt = await self.retry_refusals.record(sid, frame, refused.reason, sequence)
+            self.seen_events.setdefault(sid, set()).add(seen_key(event))
+            log.warning("Native host retry refused: %s", receipt.reason)
+            return NativeEventRetryRefused(status="RETRY_REFUSED", receipt=receipt)
+        return NativeEventObserved(status="OBSERVED")
 
-        page = None
+    async def catch_up(self, sid: str) -> None:
+        cursor: NativeEventCursor | None = None
+        visited: set[str] = set()
         while True:
-            params = {"limit": 100, "order": "asc"}
-            if page:
-                params["page"] = page
-            data = await self.request("GET", f"sessions/{sid}/events", params=params)
-            for event in data.get("data", []):
-                await self.process_event(sid, event)
-            page = data.get("next_page")
-            if not page:
-                break
+            params: dict[str, str | int] = {"limit": 100, "order": "asc"}
+            if isinstance(cursor, ManagedEventCursor):
+                params["page"] = cursor.page
+            elif isinstance(cursor, NodeEventCursor):
+                params["after_seq"] = cursor.after_seq
+            page = decode_native_page(
+                await self.request("GET", f"sessions/{quote(sid, safe='')}/events", params=params)
+            )
+            following = next_native_cursor(page, cursor)
+            if following is not None:
+                key = canonical_json(following)
+                if key in visited:
+                    raise ValueError("Native event paging repeated its cursor")
+                visited.add(key)
+            for event in page.data:
+                await self.observe_native_event(sid, event, native_event_sequence(event))
+            if following is None:
+                return
+            cursor = following
 
-    async def stream(self, sid):
+    async def stream(self, sid: str) -> None:
         session = await self.repo.get("ops.agent_sessions", sid)
+        if session is None:
+            raise KeyError(sid)
+        require_owned_session_identity(sid, session)
         headers = self.headers()
-        headers["Last-Event-ID"] = str(session.get("last_event_seq", 0))
+        cursor = session.get("last_event_seq")
+        if cursor is not None:
+            observed = NativeStoredCursor.model_validate({"value": cursor}).value
+            if observed is not None:
+                headers["Last-Event-ID"] = str(observed)
         async with aconnect_sse(
-            self.stream_http, "GET", self.url(f"sessions/{sid}/events/stream"), headers=headers
+            self.stream_http,
+            "GET",
+            self.url(f"sessions/{quote(sid, safe='')}/events/stream"),
+            headers=headers,
         ) as source:
             source.response.raise_for_status()
             async for message in source.aiter_sse():
                 if self.closed:
                     return
-                if message.event == "ping":
+                if message.event == "ping" or message.event == "message" and message.data == "":
                     continue
-                data = json.loads(message.data)
-
-                event = data.get("event", data) if "seq" in data else data
-                seq = data.get("seq")
-                if seq is None and message.id and message.id.isdigit():
-                    seq = int(message.id)
-                await self.process_event(sid, event, seq)
+                frame = decode_native_stream(message.data, message.id)
+                await self.observe_native_event(sid, frame.event, frame.sequence)
 
     async def can_archive(self, session, event):
         """Terminal domain state cannot preempt a pending denial/EXIT turn."""
