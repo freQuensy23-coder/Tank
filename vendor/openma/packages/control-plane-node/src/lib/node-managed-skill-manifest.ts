@@ -1,4 +1,5 @@
 import { posix } from 'node:path';
+import { TextDecoder } from 'node:util';
 
 export function skillArchiveManifest(files: Record<string, Uint8Array>): {
   path: string; directory: string; body: string;

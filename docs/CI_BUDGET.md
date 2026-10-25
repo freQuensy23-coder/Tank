@@ -2,6 +2,8 @@
 
 The first CI result is measured from the pull request's `created_at`, including event delivery, runner queueing, environment preparation, every required test/lint lane and all five image builds. A later commit gets a new 240-second feedback window from that workflow run's `created_at`; the age of an existing MR is not a reason to reject every later change.
 
+A rerun gets its own 240-second window from the attempt-specific API record, not the original run's creation or the budget job's start. The earlier of that attempt's `created_at` and `run_started_at` includes queueing and setup conservatively. Only jobs from that attempt count; a partial rerun cannot borrow previous successful lanes. Initial PR creation and first-attempt commit accounting are unchanged.
+
 The `CI 4 minute budget` job polls this run's jobs. It requires successful completion of all named lanes and all five image builds. Missing, skipped, cancelled, failed or late results cannot turn the gate green. It reserves five seconds for finishing and requests force-cancellation only of its own workflow when the budget expires. Individual MR jobs also have a four-minute ceiling. Publishing and deployment remain separate; this MR does not change production.
 
 GitHub-hosted runners do not guarantee scheduling latency. If the budget job itself is queued past the deadline, it rejects and cancels the run immediately when it starts. It cannot execute while queued. GitHub may also finish runner cleanup after accepting cancellation. A physical guarantee that work disappears at exactly 240 seconds requires an independently scheduled controller or reserved runner capacity; this workflow does not claim that infrastructure exists.

@@ -9,6 +9,9 @@ export interface ContinuationExecution {
   events: SentSessionEvent[];
   attemptCount: number;
   interruptRequestedAt: string | null;
+  imageRecoveryAfterEventId?: string;
+  imageRecoveryInterruptRequestedAt?: string | null;
+  imageRecoveryRetryAfterEventId?: string;
 }
 export interface ContinuationSnapshot {
   invalidReason?: string;
@@ -52,6 +55,13 @@ function snapshotDerivedState(snapshot: ContinuationSnapshot) {
     snapshotCache.set(snapshot, value);
   }
   return value;
+}
+export function lastMatching<T>(items: readonly T[], predicate: (item: T) => boolean): T | undefined {
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index]!;
+    if (predicate(item)) return item;
+  }
+  return undefined;
 }
 export const actionableInputs = (row: ContinuationExecution) => row.events.filter(e => e.type !== 'system.message');
 const eventLaneId = (e: SessionEventView) => 'sessionThreadId' in e ? e.sessionThreadId ?? 'sthr_primary' : 'sthr_primary';
@@ -139,7 +149,7 @@ function committedPhases(snapshot: ContinuationSnapshot): Phase[] {
       continue;
     const after = progress.length ? snapshot.orderedEvents.indexOf(progress.at(-1)!.entry) : -1;
     const output = snapshot.orderedEvents.filter((e, i) => i > after && e.executionId === row.id && !e.executionMetadata?.progress);
-    const terminal = output.findLast(e => e.event.type === 'session.status_idle');
+    const terminal = lastMatching(output, e => e.event.type === 'session.status_idle');
     if (!terminal)
       continue;
     phases.push({
@@ -208,11 +218,97 @@ function earlierNewWork(snapshot: ContinuationSnapshot, row: ContinuationExecuti
   return prior.some(other => other.laneId === row.laneId && ['queued', 'running'].includes(other.state) &&
     remainingInputs(snapshot, other).some(e => resultCallId(e) === undefined));
 }
+export function imageMismatchRecoveryBoundary(snapshot: ContinuationSnapshot, currentId: string): string | null {
+  if (snapshot.invalidReason) return null;
+  assertTrustedJournalOrder(snapshot);
+  const row = snapshot.executions.find(execution => execution.id === currentId);
+  if (!row || row.interruptRequestedAt !== null || row.state !== 'failed' || row.imageRecoveryAfterEventId
+      || !actionableInputs(row).length) return null;
+  const inputIds = new Set(actionableInputs(row).map(event => event.id));
+  if (committedPhases(snapshot).some(phase => phase.inputIds.some(id => inputIds.has(id)))) return null;
+  const output = snapshot.orderedEvents.filter(entry => entry.executionId === currentId);
+  if (!output.length || !output.some(entry => entry.event.type === 'session.error')) return null;
+  const first = snapshot.orderedEvents.indexOf(output[0]!);
+  if (snapshot.orderedEvents.slice(first).some(entry => entry.event.type === 'user.interrupt'
+      && (entry.event.sessionThreadId == null || entry.event.sessionThreadId === row.laneId))) return null;
+  for (const entry of output) {
+    if (entry.executionMetadata?.progress) return null;
+    const event = entry.event;
+    if (event.type === 'session.error') {
+      if (event.error.message !== 'retained_configuration_changed') return null;
+    } else if (event.type === 'session.status_idle') {
+      if (event.stopReason.type !== 'retries_exhausted') return null;
+    } else if (!['session.status_running', 'session.status_rescheduled'].includes(event.type)) return null;
+  }
+  return output.at(-1)!.event.id;
+}
+function retryableImagePreflight(entries: OrderedSessionEvent[], row: ContinuationExecution, allowUnfinished = false): boolean {
+  if (entries.some(entry => entry.event.type === 'user.interrupt'
+      && (entry.event.sessionThreadId == null || entry.event.sessionThreadId === row.laneId))) return false;
+  const output = entries.filter(entry => entry.executionId === row.id);
+  return output.length > 0 && (allowUnfinished || output.some(entry => entry.event.type === 'session.error')) && output.every(entry => {
+    if (entry.executionMetadata?.progress) return false;
+    const event = entry.event;
+    if (event.type === 'session.error') return /^(?:retained_configuration_changed(?::[a-zA-Z,]+)?|retained_legacy_provenance_missing:[a-zA-Z0-9_;]+|retained_legacy_provider_provenance_missing(?::[a-z_]+)?|retained_image_provenance_missing:[a-z_]+|retained_image_(?:blob_invalid|descriptor_invalid|index_invalid|config_invalid|selection_ambiguous)|retained_upgrade_transfer_failed:[a-z_]+|retained_resource_busy|retained_runtime_missing|retained_memory_binding_unproven)$/.test(event.error.message);
+    if (event.type === 'session.status_idle') return event.stopReason.type === 'retries_exhausted';
+    return ['session.status_running', 'session.status_rescheduled'].includes(event.type);
+  });
+}
+export function imageRecoveryRetryBoundary(snapshot: ContinuationSnapshot, currentId: string, allowUnfinished = false): string | null {
+  if (snapshot.invalidReason) return null;
+  const row = snapshot.executions.find(execution => execution.id === currentId);
+  if (!row?.imageRecoveryAfterEventId || row.interruptRequestedAt !== null) return null;
+  try { assertTrustedJournalOrder(snapshot); recoverImagePreflight(snapshot); } catch (error) { if (error instanceof ContinuationProtocolError) return null; throw error; }
+  const boundary = snapshot.orderedEvents.findIndex(entry => entry.event.id === row.imageRecoveryAfterEventId && entry.executionId === currentId);
+  const suffix = snapshot.orderedEvents.slice(boundary + 1);
+  if (allowUnfinished && suffix.every(entry => entry.executionId !== currentId
+      ? entry.event.type !== 'user.interrupt' || (entry.event.sessionThreadId != null && entry.event.sessionThreadId !== row.laneId)
+      : !entry.executionMetadata?.progress && ['session.status_running', 'session.status_rescheduled'].includes(entry.event.type))) {
+    return lastMatching(suffix, entry => entry.executionId === currentId)?.event.id ?? row.imageRecoveryAfterEventId;
+  }
+  if (!retryableImagePreflight(suffix, row)) return null;
+  return lastMatching(suffix, entry => entry.executionId === currentId)!.event.id;
+}
+function recoverImagePreflight(snapshot: ContinuationSnapshot): ContinuationSnapshot {
+  const removed = new Set<OrderedSessionEvent>();
+  for (const row of snapshot.executions) {
+    if (!row.imageRecoveryAfterEventId) continue;
+    const boundary = snapshot.orderedEvents.findIndex(entry => entry.event.id === row.imageRecoveryAfterEventId && entry.executionId === row.id);
+    if (boundary < 0) throw new ContinuationProtocolError('Image recovery boundary is missing');
+    const prefix = snapshot.orderedEvents.slice(0, boundary + 1);
+    if (row.imageRecoveryInterruptRequestedAt !== null) throw new ContinuationProtocolError('Image recovery interrupt proof is missing');
+    const proof = { ...snapshot, orderedEvents: prefix, executions: snapshot.executions.map(other => other.id === row.id
+      ? { ...other, state: 'failed' as const, interruptRequestedAt: row.imageRecoveryInterruptRequestedAt!, imageRecoveryAfterEventId: undefined } : other) };
+    if (imageMismatchRecoveryBoundary(proof, row.id) !== row.imageRecoveryAfterEventId) throw new ContinuationProtocolError('Image recovery preflight contains effects or unrelated failure');
+    let end = boundary;
+    if (row.imageRecoveryRetryAfterEventId) {
+      end = snapshot.orderedEvents.findIndex(entry => entry.event.id === row.imageRecoveryRetryAfterEventId && entry.executionId === row.id);
+      if (end <= boundary || !retryableImagePreflight(snapshot.orderedEvents.slice(boundary + 1, end + 1), row, true)) throw new ContinuationProtocolError('Image recovery retry boundary contains effects or unrelated failure');
+    }
+    snapshot.orderedEvents.slice(0, end + 1).filter(entry => entry.executionId === row.id).forEach(entry => removed.add(entry));
+  }
+  return removed.size ? { ...snapshot, orderedEvents: snapshot.orderedEvents.filter(entry => !removed.has(entry)) } : snapshot;
+}
+export function pendingImageRecoveries(snapshot: ContinuationSnapshot, eligibleExecutionIds: readonly string[]): ContinuationSnapshot {
+  const eligible = new Set(eligibleExecutionIds);
+  return { ...snapshot, executions: snapshot.executions.map(row => {
+    if (row.state !== 'failed' || row.interruptRequestedAt !== null || !eligible.has(row.id)) return row;
+    if (row.imageRecoveryAfterEventId && row.imageRecoveryInterruptRequestedAt !== null) return row;
+    const boundary = row.imageRecoveryAfterEventId ?? imageMismatchRecoveryBoundary(snapshot, row.id);
+    if (!boundary) return row;
+    const retryBoundary = imageRecoveryRetryBoundary(snapshot, row.id, true);
+    if (row.imageRecoveryAfterEventId && !retryBoundary) return row;
+    const pending = { ...row, state: 'queued' as const, imageRecoveryAfterEventId: boundary,
+      imageRecoveryInterruptRequestedAt: null, imageRecoveryRetryAfterEventId: retryBoundary === boundary ? undefined : retryBoundary ?? row.imageRecoveryRetryAfterEventId };
+    const proof = planSessionContinuation({ ...snapshot, executions: snapshot.executions.map(other => other.id === row.id ? pending : other) }, row.id);
+    return proof.mode === 'failure' ? row : pending;
+  }) };
+}
 export function planSessionContinuation(snapshot: ContinuationSnapshot, currentId: string): ContinuationPlan {
   try {
     if (snapshot.invalidReason)
       throw new ContinuationProtocolError(snapshot.invalidReason);
-    return planContinuation(snapshot, currentId);
+    return planContinuation(recoverImagePreflight(snapshot), currentId);
   }
   catch (error) {
     if (!(error instanceof ContinuationProtocolError))
@@ -294,8 +390,8 @@ function planContinuation(snapshot: ContinuationSnapshot, currentId: string): Co
     previousReceiptId: progress?.entry.event.id ?? null, historyEvents: [], ...(first ? { phaseStartEventId: first.event.id } : {})
   };
   if (output.length) {
-    const terminal = output.findLast(e => e.event.type === 'session.status_idle');
-    const error = output.findLast(e => e.event.type === 'session.error' && e.event.error.retryStatus === 'terminal');
+    const terminal = lastMatching(output, e => e.event.type === 'session.status_idle');
+    const error = lastMatching(output, e => e.event.type === 'session.error' && e.event.error.retryStatus === 'terminal');
     if (error) {
       plan.mode = 'failure';
       plan.failure = 'Original execution already has terminal failure: ' + (error.event.type === 'session.error' ? error.event.error.message : '');
@@ -311,8 +407,8 @@ function planContinuation(snapshot: ContinuationSnapshot, currentId: string): Co
       }
     }
     else if (output.some(e => e.event.type.startsWith('agent.'))) {
-      const start = output.findLast(e => e.event.type === 'span.model_request_start');
-      const end = start && output.findLast(e => e.event.type === 'span.model_request_end' && e.event.modelRequestStartId === start.event.id);
+      const start = lastMatching(output, e => e.event.type === 'span.model_request_start');
+      const end = start && lastMatching(output, e => e.event.type === 'span.model_request_end' && e.event.modelRequestStartId === start.event.id);
       const latestSpan = start ? output.slice(output.indexOf(start)) : output;
       const localUses = output.filter(e => e.event.type === 'agent.tool_use' || e.event.type === 'agent.mcp_tool_use');
       const latestLocalUses = latestSpan.filter(e => e.event.type === 'agent.tool_use' || e.event.type === 'agent.mcp_tool_use');

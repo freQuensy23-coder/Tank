@@ -29,6 +29,8 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { BoxLiteFilesystemDurability } from "./guest-filesystem.js";
+export { BoxLiteFilesystemDurability } from "./guest-filesystem.js";
 
 export type BoxLiteManagedProviderId = "litebox" | "boxrun";
 
@@ -112,6 +114,7 @@ type SafeAllocationOptions = Omit<
 export interface BoxLiteProviderOptions {
   providerId: BoxLiteManagedProviderId;
   image: string;
+  runtimeName?(context: SandboxFactoryContext): string;
   client?: BoxLiteClientPort;
   connection?:
     | { type: "embedded"; homeDir?: string }
@@ -265,6 +268,7 @@ export class BoxLiteManagedRuntime
   readonly #client: BoxLiteClientPort;
   readonly #box: BoxLiteBoxSdkPort;
   readonly #expectedName: string;
+  readonly #filesystem: BoxLiteFilesystemDurability;
   #destroyed = false;
 
   constructor(input: {
@@ -277,6 +281,7 @@ export class BoxLiteManagedRuntime
     this.#client = input.client;
     this.#box = input.box;
     this.#expectedName = input.expectedName;
+    this.#filesystem = new BoxLiteFilesystemDurability(input.box);
   }
 
   runtimeHandle() {
@@ -300,11 +305,15 @@ export class BoxLiteManagedRuntime
     }
   }
 
-  async suspend(input: { kind: "filesystem" | "memory" }): Promise<SandboxCheckpointHandle> {
+  async flushFilesystem(assertCurrent?: () => Promise<void>): Promise<void> {
+    await this.#filesystem.flush(assertCurrent);
+  }
+
+  async suspend(input: { kind: "filesystem" | "memory"; assertCurrent?: () => Promise<void> }): Promise<SandboxCheckpointHandle> {
     if (input.kind !== "filesystem") {
       throw new Error("BoxLite retained runtime supports filesystem suspension only");
     }
-    await this.#box.stop();
+    await this.#filesystem.suspend(input.assertCurrent);
     return {
       provider: this.#providerId,
       checkpointId: this.#box.id,
@@ -333,6 +342,7 @@ export class BoxLiteManagedRuntime
   }
 
   async exec(command: string, timeoutMs = 120_000): Promise<string> {
+    this.#filesystem.assertUsable();
     const result = await executeAndCollect(
       this.#box,
       "/bin/sh",
@@ -351,6 +361,7 @@ export class BoxLiteManagedRuntime
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
+    this.#filesystem.assertUsable();
     const directory = await mkdtemp(join(tmpdir(), "openma-boxlite-read-"));
     const target = join(directory, "content");
     try {
@@ -366,6 +377,7 @@ export class BoxLiteManagedRuntime
   }
 
   async writeFileBytes(path: string, bytes: Uint8Array): Promise<string> {
+    this.#filesystem.assertUsable();
     const directory = await mkdtemp(join(tmpdir(), "openma-boxlite-write-"));
     const source = join(directory, "content");
     try {
@@ -390,6 +402,7 @@ export class BoxLiteManagedRuntime
   }
 
   async spawnDuplexProcess(spec: SandboxDuplexProcessSpec): Promise<SandboxDuplexProcess> {
+    this.#filesystem.assertUsable();
     const execution = await this.#box.exec(
       spec.command,
       spec.args === undefined ? [] : [...spec.args],
@@ -489,7 +502,7 @@ function createBoxLiteProviderWithClient(
       }
       acquisition.signal.throwIfAborted();
       const sdk = await client();
-      const name = stableName(options.providerId, context.sessionId);
+      const name = options.runtimeName?.(context) ?? stableName(options.providerId, context.sessionId);
       const extra = await options.allocationOptions?.({ ...acquisition, name }) ?? {};
       acquisition.signal.throwIfAborted();
       const result = await sdk.getOrCreate({
@@ -525,10 +538,11 @@ function createBoxLiteProviderWithClient(
       const sdk = await client();
       const box = await sdk.get(handle.runtimeId);
       if (box === null) throw new Error(`BoxLite runtime not found: ${handle.runtimeId}`);
-      const name = stableName(options.providerId, context.sessionId);
+      const name = options.runtimeName?.(context) ?? stableName(options.providerId, context.sessionId);
       validateBox(box, name);
       await ensureRunning(box);
-      await ensureWorkspace(box);
+      const workspace = await executeAndCollect(box, '/bin/test', ['-d', '/workspace', '-a', '!', '-L', '/workspace'], [], 30, '/');
+      if (workspace.exitCode !== 0) throw new Error('retained_workspace_missing');
       acquisition?.signal.throwIfAborted();
       return runtime(sdk, box, name);
     },
@@ -590,7 +604,7 @@ export function createBoxLiteManagedRuntime(options: BoxLiteManagedRuntimeOption
       const sdk = await client();
       const box = await sdk.get(lease.runtimeId);
       if (box === null) return;
-      validateBox(box, stableName(options.providerId, context.sessionId));
+      validateBox(box, options.runtimeName?.(context) ?? stableName(options.providerId, context.sessionId));
       await sdk.remove(lease.runtimeId, true);
     },
     drivers: ["ama_worker"],

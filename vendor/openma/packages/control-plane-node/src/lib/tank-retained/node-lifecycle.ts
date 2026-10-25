@@ -1,5 +1,7 @@
-import { createHash } from 'node:crypto';
-import { RetainedSessionLifecycle, type Fences, type Options, type Scope } from './retained-session.js';
+import { createHash, randomUUID } from 'node:crypto';
+import type { LegacyResolution } from './legacy-provenance.js';
+import { assertCompatible, stableDigest, type RuntimeIdentity } from './runtime-identity.js';
+import { RetainedSessionLifecycle, type Candidate, type Fences, type Options, type Scope } from './retained-session.js';
 import { RetainedBoxOperations, pinnedBoxLiteProvider, type Allocation, type BoxLiteRuntime, type PinnedBoxLiteModule } from './boxlite-provider.js';
 
 type Box = RetainedBoxOperations & { stop(): Promise<void> };
@@ -15,6 +17,7 @@ export interface Context {
   signal?: AbortSignal;
 }
 interface Lifetime { final: boolean; binds: number }
+type GenerationContext = Pick<Context, 'workspaceId' | 'sessionId' | 'session' | 'environment' | 'executionFence' | 'signal'>;
 interface Entry {
   lifetime: Lifetime; context: Context; controller?: RetainedSessionLifecycle<BoxLiteRuntime>;
   allocation?: Allocation; beginning?: Promise<void>; finalizing?: Promise<void>; started: boolean;
@@ -31,6 +34,9 @@ export interface NodeRetainedOptions {
   ownerId: string;
   leaseTtlMs: number;
   fingerprint(context: Context, allocation: Allocation): Promise<string>;
+  identity?(context: Context, allocation: Allocation): Promise<RuntimeIdentity>;
+  resolveLegacy?(context: Context, allocation: Allocation): Promise<(fingerprint: string) => LegacyResolution | null>;
+  runtimeGeneration?(context: GenerationContext, candidate: Candidate | null, proposed: string): Promise<string>;
   assertExecutionCurrent(fence: unknown): Promise<void>;
 }
 const key = (scope: Omit<Scope, 'workId'>) => JSON.stringify([scope.workspaceId, scope.environmentId, scope.sessionId]);
@@ -45,6 +51,24 @@ export class NodeRetainedLifecycle {
   private archives = new Map<string, Promise<void>>();
   private lifetimes = new Map<string, Lifetime>();
   constructor(options: NodeRetainedOptions) { this.options = options; }
+  async runtimeGeneration(context: GenerationContext, proposed: string): Promise<string> {
+    if (!this.options.runtimeGeneration) return proposed;
+    const scope = { ...scopeOf(context), workId: 'tank-retained-session-v1' };
+    if (this.lifetimes.get(key(scope))?.final) throw Error('retained_session_archiving');
+    context.signal?.throwIfAborted();
+    await this.options.assertExecutionCurrent(context.executionFence);
+    const acquired = await this.options.fences.acquire({ scope, ownerId: `${this.options.ownerId}:bindings:${randomUUID()}`, ttlMs: this.options.leaseTtlMs });
+    if (acquired.type !== 'acquired') throw Error('retained_resource_busy');
+    try {
+      const generation = await this.options.runtimeGeneration(context, acquired.publication?.workspaceCandidate ?? null, proposed);
+      context.signal?.throwIfAborted();
+      await this.options.assertExecutionCurrent(context.executionFence);
+      if (!await this.options.fences.isCurrent(acquired.fence)) throw Error('retained_fence_lost');
+      return generation;
+    } finally {
+      await this.options.fences.release({ fence: acquired.fence, reason: 'completed' });
+    }
+  }
   async reconcileOrphans(): Promise<void> {
     const queue = this.options.orphans;
     if (!queue) return;
@@ -54,14 +78,28 @@ export class NodeRetainedLifecycle {
         ownerId: `${this.options.ownerId}:orphan:${orphan.id}`, ttlMs: this.options.leaseTtlMs });
       if (acquired.type !== 'acquired') continue;
       try {
-        const published = acquired.publication?.workspaceCandidate.metadata;
+        const candidate = acquired.publication?.workspaceCandidate;
+        const published = candidate?.metadata;
+        const protectedHandles: Array<{ provider: string; runtimeId: string }> = [];
+        if (published?.schema === 2) {
+          if (published.scope !== JSON.stringify(orphan.scope) || typeof published.manifest !== 'string'
+              || candidate!.contentHash !== stableDigest({ scope: orphan.scope, manifest: published.manifest })) throw Error('retained_manifest_invalid');
+          const manifest = JSON.parse(published.manifest);
+          protectedHandles.push(manifest.handle, ...manifest.retired ?? [], ...(manifest.upgrade ? [manifest.upgrade.target] : []));
+          for (const handle of [...protectedHandles]) {
+            if (!handle || handle.provider !== 'litebox' || typeof handle.runtimeId !== 'string') throw Error('retained_manifest_invalid');
+            const info = await (this.options.client as { getInfo(id: string): Promise<{ id: string } | null> }).getInfo(handle.runtimeId);
+            if (info) protectedHandles.push({ provider: 'litebox', runtimeId: info.id });
+          }
+        }
         if (!await this.options.fences.isCurrent(acquired.fence)) throw Error('retained_fence_lost');
         const provider = pinnedBoxLiteProvider({ module: this.options.providerModule, client: this.options.client,
           allocation: { image: 'cleanup-only-no-allocation' }, leaseTtlMs: this.options.leaseTtlMs,
           isCurrent: fence => this.options.fences.isCurrent(fence) });
         const intent = published?.state === 'allocating' && typeof published.runtimeId === 'string'
           ? await provider.resolveIntent({ provider: 'litebox', runtimeId: published.runtimeId }, orphan.scope, acquired.fence, new AbortController().signal) : null;
-        if (published?.runtimeId !== orphan.sandbox.runtimeId && intent?.runtimeId !== orphan.sandbox.runtimeId) {
+        if (published?.runtimeId !== orphan.sandbox.runtimeId && intent?.runtimeId !== orphan.sandbox.runtimeId
+            && !protectedHandles.some(handle => handle.runtimeId === orphan.sandbox.runtimeId)) {
           await provider.reap(orphan.sandbox, orphan.scope, acquired.fence, new AbortController().signal);
         }
         await queue.resolve({ id: orphan.id });
@@ -72,8 +110,8 @@ export class NodeRetainedLifecycle {
       }
     }
   }
-  private controller(scope: Omit<Scope, 'workId'>, fingerprint: string, allocation: Allocation): RetainedSessionLifecycle<BoxLiteRuntime> {
-    return new RetainedSessionLifecycle({ scope, fingerprint, providerId: 'litebox', ownerId: this.options.ownerId,
+  private controller(scope: Omit<Scope, 'workId'>, fingerprint: string, allocation: Allocation, identity?: RuntimeIdentity, resolveLegacy?: Options<BoxLiteRuntime>['resolveLegacy']): RetainedSessionLifecycle<BoxLiteRuntime> {
+    return new RetainedSessionLifecycle({ scope, fingerprint, identity, resolveLegacy, providerId: 'litebox', ownerId: this.options.ownerId,
       leaseTtlMs: this.options.leaseTtlMs, fences: this.options.fences,
       orphans: this.options.orphans,
       provider: pinnedBoxLiteProvider({ module: this.options.providerModule, client: this.options.client,
@@ -115,8 +153,12 @@ export class NodeRetainedLifecycle {
       if (entry.started) throw Error('retained_previous_turn_not_quiescent');
       if (entry.allocation) {
         const fingerprint = await this.options.fingerprint(context, entry.allocation);
+        const identity = await this.options.identity?.(context, entry.allocation);
         this.assertOpen(lifetime);
-        if (entry.controller && fingerprint !== entry.controller.options.fingerprint) throw Error('retained_configuration_changed');
+        if (entry.controller?.options.identity && identity) {
+          assertCompatible(entry.controller.options.identity, identity);
+          if (stableDigest(entry.controller.options.identity) !== stableDigest(identity)) entry.controller = this.controller(scope, fingerprint, entry.allocation, identity, await this.options.resolveLegacy?.(context, entry.allocation));
+        } else if (entry.controller && fingerprint !== entry.controller.options.fingerprint) throw Error('retained_configuration_changed');
       }
       entry.context = context;
       return;
@@ -129,8 +171,9 @@ export class NodeRetainedLifecycle {
       this.assertOpen(lifetime);
       owned.allocation = allocation;
       const fingerprint = await this.options.fingerprint(owned.context, allocation);
+      const identity = await this.options.identity?.(owned.context, allocation);
       this.assertOpen(lifetime);
-      owned.controller = this.controller(scope, fingerprint, allocation);
+      owned.controller = this.controller(scope, fingerprint, allocation, identity, await this.options.resolveLegacy?.(owned.context, allocation));
       const use = async <T>(operation: (runtime: BoxLiteRuntime) => Promise<T>): Promise<T> => {
         await this.ensureActive(owned);
         return owned.controller!.use(operation);
@@ -205,6 +248,9 @@ export class NodeRetainedLifecycle {
     });
     this.archives.set(scopeKey, archive);
     await archive;
+  }
+  upgradeNotice(context: Pick<Context, 'workspaceId' | 'sessionId' | 'session' | 'environment'>): string | null {
+    return this.entries.get(key(scopeOf(context)))?.controller?.upgradeNotice() ?? null;
   }
   async shutdown(): Promise<void> {
     for (const entry of this.entries.values()) await this.idleEntry(entry, async () => {});
