@@ -6,6 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from configuration_support import captured_fixture_settings
 from delivery_support import delivery_job
 from score_fixtures import unassessed_score_dimensions
 from source_support import source_configuration, source_definition
@@ -106,31 +107,23 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
         "sources": source_configuration({"sources": [{"source_id": "S30", "feeds": []}]}),
         "api_limits": _fixture_api_limits(),
         "exchange_addresses": {"version": "synthetic-fixture", "wallet_lists": []},
-        "registry": {"tokens": [{"token_id": "T", "symbol": "T"}], "entities": [], "x_accounts": []},
+        "registry": {
+            "tokens": [{"token_id": "T", "symbol": "T"}],
+            "entities": [],
+            "instruments": [],
+            "x_accounts": [],
+        },
         "thresholds": _fixture_thresholds(),
-        "openma": {"agent_id": "synthetic-agent", "environment_id": "synthetic-offline"},
+        "openma": {
+            "agent_id": "synthetic-agent",
+            "environment_id": "synthetic-offline",
+            "prompt_version": "synthetic-prompt-v1",
+            "agent_version": "synthetic-agent-v1",
+            "reasoning_effort": "medium",
+        },
     }
 
-    class TestSettings(Settings):
-        def load_config(self, name):
-            result = config[name.removesuffix(".yaml")]
-            if name.removesuffix(".yaml") == "openma":
-                result = dict(
-                    result,
-                    prompt_version="synthetic-prompt-v1",
-                    agent_version="synthetic-agent-v1",
-                    reasoning_effort="medium",
-                )
-            return result
-
-        def read_config_bytes(self, name):
-            import yaml
-
-            if name.removesuffix(".yaml") in config:
-                return yaml.safe_dump(self.load_config(name)).encode()
-            return super().read_config_bytes(name)
-
-    settings = TestSettings(
+    settings = Settings(
         **_fake_gateway_settings(tmp_path),
         data_dir=tmp_path,
         jev_provider="openrouter",
@@ -138,6 +131,8 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
         telegram_token="mock",
         telegram_alerts_chat="mock",
     )
+    settings = captured_fixture_settings(settings, config, tmp_path / "captured-config")
+    versions = settings.require_versions()
     repo = MemoryRepository()
     sent = []
     event_posts = []
@@ -181,7 +176,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
         raise AssertionError(str(request.url))
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-        source = SourceService(repo, settings, http=http)
+        source = SourceService(repo, settings, versions=versions, http=http)
         item_id, seen = "item-e2e-one", "2026-10-17T00:00:01Z"
         raw, sha = source.raw(
             b"Synthetic integration item", source_id="S30", item_id=item_id, observed_at=seen
@@ -204,18 +199,20 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
             },
         )
         tool_event["input"] = {}
-        pipeline = Pipeline(repo, settings, progress=DisabledSourceProgress(), http=http)
+        pipeline = Pipeline(repo, settings, progress=DisabledSourceProgress(), versions=versions, http=http)
         await pipeline.filter_item_wire({"item_id": item["item_id"]})
         routed_origin = await pipeline.route_item_wire({"item_id": item["item_id"]})
-        toolservice = EventToolService(repo, settings, None, DecisionEngine(settings), http=http)
-        session = SessionService(repo, settings, toolservice.dispatch, http=http)
+        toolservice = EventToolService(
+            repo, settings, None, DecisionEngine(settings), versions=versions, http=http
+        )
+        session = SessionService(repo, settings, toolservice.dispatch, versions=versions, http=http)
 
         session.start_stream = lambda sid: None
         await session.send_message(routed_origin["routing_message"])
         await session.stream("s1")
         stored_read = await repo.get("ops.tool_calls", "s1:tool1")
         assert stored_read["result"].get("item_id") == item["item_id"], stored_read
-        resumed = SessionService(repo, settings, toolservice.dispatch, http=http)
+        resumed = SessionService(repo, settings, toolservice.dispatch, versions=versions, http=http)
         before = len(event_posts)
         await resumed.stream("s1")
         assert len(event_posts) == before
@@ -297,7 +294,7 @@ async def test_full_sse_pipeline_postgres(
     from tank.storage import PostgresRepository
     from tank.util import clock_iso, iso, new_id
 
-    clock = datetime.now(UTC).replace(second=0, microsecond=0)
+    clock = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
     for name in (
         "tank.util",
         "tank.storage",
@@ -332,37 +329,37 @@ async def test_full_sse_pipeline_postgres(
             "x_accounts": [],
             "tokens": [{"token_id": "T", "symbol": "T"}],
             "entities": [
-                {"entity_id": "binance", "name": "Binance"},
-                {"entity_id": "synthetic-venue", "name": "Synthetic venue"},
+                {"entity_id": "binance", "name": "Binance", "names": ["Binance"], "aliases": []},
+                {
+                    "entity_id": "synthetic-venue",
+                    "name": "Synthetic venue",
+                    "names": ["Synthetic venue"],
+                    "aliases": [],
+                },
             ],
-            "instruments": [{"instrument_id": "mock:spot:T", "token_id": "T"}],
+            "instruments": [
+                {
+                    "instrument_id": "mock:spot:T",
+                    "token_id": "T",
+                    "venue": "mock",
+                    "market_type": "SPOT",
+                    "venue_symbol": "TUSDT",
+                }
+            ],
         },
         "thresholds": _fixture_thresholds(),
-        "openma": {"agent_id": "synthetic", "environment_id": "synthetic-offline"},
+        "openma": {
+            "agent_id": "synthetic",
+            "environment_id": "synthetic-offline",
+            "prompt_version": "synthetic-prompt-v1",
+            "agent_version": "synthetic-agent-v1",
+            "reasoning_effort": "medium",
+        },
         "semantics": {},
         "dependency_map": {},
     }
 
-    class TestSettings(Settings):
-        def load_config(self, name):
-            result = config[name.removesuffix(".yaml")]
-            if name.removesuffix(".yaml") == "openma":
-                result = dict(
-                    result,
-                    prompt_version="synthetic-prompt-v1",
-                    agent_version="synthetic-agent-v1",
-                    reasoning_effort="medium",
-                )
-            return result
-
-        def read_config_bytes(self, name):
-            import yaml
-
-            if name.removesuffix(".yaml") in config:
-                return yaml.safe_dump(self.load_config(name)).encode()
-            return super().read_config_bytes(name)
-
-    settings = TestSettings(
+    settings = Settings(
         **_fake_gateway_settings(tmp_path),
         data_dir=tmp_path,
         database_url=isolated_e2e_database.database_url,
@@ -371,6 +368,8 @@ async def test_full_sse_pipeline_postgres(
         telegram_token="mock",
         telegram_alerts_chat="mock",
     )
+    settings = captured_fixture_settings(settings, config, tmp_path / "captured-config")
+    versions = settings.require_versions()
     repo = isolated_e2e_database
     sid = new_id("synthetic-session")
     feed_guid = sid
@@ -471,7 +470,7 @@ async def test_full_sse_pipeline_postgres(
 
     try:
         async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-            source = SourceService(repo, settings, http=http)
+            source = SourceService(repo, settings, versions=versions, http=http)
             text = f"Binance approved the synthetic $T listing {sid}."
             if complete_market:
                 text += " The synthetic fee burn is now live and fees accrued are burned."
@@ -480,18 +479,16 @@ async def test_full_sse_pipeline_postgres(
             assert polled["status"] == "HEALTHY" and polled["items"] == 1, polled
             item = (await repo.list("ingest.source_items", filters={"external_id": sid}))[0]
             sha = item["raw_sha256"]
-            pipeline = Pipeline(repo, settings, progress=DisabledSourceProgress(), http=http)
+            pipeline = Pipeline(
+                repo, settings, progress=DisabledSourceProgress(), versions=versions, http=http
+            )
             await pipeline.filter_item_wire({"item_id": item["item_id"]})
             routed_origin = await pipeline.route_item_wire({"item_id": item["item_id"]})
-            truth_service = MarketTruthService(repo, settings, CapturedMarket())
+            truth_service = MarketTruthService(repo, settings, CapturedMarket(), versions=versions)
             tools = EventToolService(
-                repo,
-                settings,
-                truth_service,
-                DecisionEngine(settings),
-                http=http,
+                repo, settings, truth_service, DecisionEngine(settings), http=http, versions=versions
             )
-            session = SessionService(repo, settings, tools.dispatch, http=http)
+            session = SessionService(repo, settings, tools.dispatch, versions=versions, http=http)
             session.start_stream = lambda sid: None
             await session.send_message(routed_origin["routing_message"])
             count = 0
@@ -689,10 +686,15 @@ async def test_full_sse_pipeline_postgres(
             persisted_truth = (await repo.list("ana.market_truth", filters={"event_id": eid}))[0]
             assert all(isinstance(fact, str) for fact in persisted_truth["decisive_facts"])
             if complete_market:
+                assert persisted_truth["relative"]["beta_btc"] is not None
+                assert persisted_truth["relative"]["beta_flags"]["btc"] is None
                 assert persisted_truth["decisive_fact_details"]
                 assert any(
                     "EVENT" in fact and "NATIVE_TOKEN" in fact for fact in persisted_truth["decisive_facts"]
                 )
+            if not complete_market:
+                assert persisted_truth["relative"]["beta_btc"] is None
+                assert persisted_truth["relative"]["beta_flags"]["btc"] == "INSUFFICIENT_HISTORY"
             decision = await invoke("get_decision", {"event_id": eid, "token_id": "T"})
             assert decision["action"] == ("START" if complete_market else "WAIT"), decision
             what = "Binance approved listing T, allowing the exchange to add trading access for this token."
@@ -734,11 +736,12 @@ async def test_full_sse_pipeline_postgres(
             tools = EventToolService(
                 repo,
                 settings,
-                MarketTruthService(repo, settings, CapturedMarket()),
+                MarketTruthService(repo, settings, CapturedMarket(), versions=versions),
                 DecisionEngine(settings),
                 http=http,
+                versions=versions,
             )
-            resumed = SessionService(repo, settings, tools.dispatch, http=http)
+            resumed = SessionService(repo, settings, tools.dispatch, versions=versions, http=http)
             resumed.start_stream = lambda sid: None
             session = resumed
             before = len(posted)
@@ -755,10 +758,12 @@ async def test_full_sse_pipeline_postgres(
                     f"Binance cancelled the synthetic $T listing {sid} and reversed its synthetic fee burn."
                 )
                 now = clock_iso()
-                source = SourceService(repo, settings, http=http)
+                source = SourceService(repo, settings, versions=versions, http=http)
                 assert (await source.poll_once("S30"))["status"] == "HEALTHY"
                 denial_item = (await repo.list("ingest.source_items", filters={"external_id": feed_guid}))[0]
-                pipeline = Pipeline(repo, settings, progress=DisabledSourceProgress(), http=http)
+                pipeline = Pipeline(
+                    repo, settings, progress=DisabledSourceProgress(), versions=versions, http=http
+                )
                 await pipeline.filter_item_wire({"item_id": denial_item["item_id"]})
                 routed = await pipeline.route_item_wire({"item_id": denial_item["item_id"]})
                 assert routed["routing_message"]["kind"] == "ITEM_ADDED", routed
@@ -852,6 +857,8 @@ async def test_runtime_autonomous_source_to_telegram(
     import asyncio
     import importlib
 
+    from bootstrap_support import bootstrap_fixture
+
     from tank.analysis.truth import MarketTruthService
     from tank.bootstrap import sync_registry
     from tank.codex_gateway import CodexGateway
@@ -883,6 +890,7 @@ async def test_runtime_autonomous_source_to_telegram(
         if hasattr(module, "utcnow"):
             monkeypatch.setattr(module, "utcnow", lambda: clock)
     config = {
+        **bootstrap_fixture(tmp_path / "bootstrap-inputs", clock).documents(),
         "sources": source_configuration(
             {
                 "sources": [
@@ -897,42 +905,17 @@ async def test_runtime_autonomous_source_to_telegram(
             }
         ),
         "api_limits": _fixture_api_limits(),
-        "exchange_addresses": {"version": "synthetic-fixture", "wallet_lists": []},
-        "registry": {
-            "x_accounts": [],
-            "tokens": [{"token_id": "T", "symbol": "T"}],
-            "entities": [
-                {"entity_id": "binance", "name": "Binance"},
-                {"entity_id": "synthetic-venue", "name": "Synthetic venue"},
-            ],
-            "instruments": [{"instrument_id": "mock:spot:T", "token_id": "T"}],
-        },
         "thresholds": _fixture_thresholds(),
-        "openma": {"agent_id": "synthetic-offline-agent", "environment_id": "synthetic-offline-environment"},
-        "semantics": {"metrics": []},
-        "dependency_map": {},
+        "openma": {
+            "agent_id": "synthetic-offline-agent",
+            "environment_id": "synthetic-offline-environment",
+            "prompt_version": "synthetic-prompt-v1",
+            "agent_version": "synthetic-agent-v1",
+            "reasoning_effort": "medium",
+        },
     }
 
-    class TestSettings(Settings):
-        def load_config(self, name):
-            result = config[name.removesuffix(".yaml")]
-            if name.removesuffix(".yaml") == "openma":
-                result = dict(
-                    result,
-                    prompt_version="synthetic-prompt-v1",
-                    agent_version="synthetic-agent-v1",
-                    reasoning_effort="medium",
-                )
-            return result
-
-        def read_config_bytes(self, name):
-            import yaml
-
-            if name.removesuffix(".yaml") in config:
-                return yaml.safe_dump(self.load_config(name)).encode()
-            return super().read_config_bytes(name)
-
-    settings = TestSettings(
+    settings = Settings(
         **_fake_gateway_settings(tmp_path),
         data_dir=tmp_path / "data",
         database_url=repo.database_url,
@@ -947,9 +930,11 @@ async def test_runtime_autonomous_source_to_telegram(
         code_version="synthetic-test",
         shutdown_grace_s=3,
     )
+    settings = captured_fixture_settings(settings, config, tmp_path / "captured-config")
+    versions = settings.require_versions()
     assert backup_clock.hour < settings.backup_hour_utc, "Synthetic backup clock must precede its window"
     settings.backup_dir.mkdir()
-    settings.data_dir.mkdir()
+    settings.data_dir.mkdir(exist_ok=True)
     backup_results = []
 
     class FixtureScheduler(Scheduler):
@@ -1178,7 +1163,7 @@ async def test_runtime_autonomous_source_to_telegram(
             from tank.market.service import MarketService
 
             self.escalations = []
-            self.actual_capture_reader = MarketService(repo, settings, http=http)
+            self.actual_capture_reader = MarketService(repo, settings, versions=versions, http=http)
 
         async def run(self, event) -> None:
             await event.wait()
@@ -1308,20 +1293,26 @@ async def test_runtime_autonomous_source_to_telegram(
     try:
         async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
             market = CapturedMarket(http)
-            truth = MarketTruthService(repo, settings, market)
-            sources = SourceService(repo, settings, http=http)
-            pipeline = Pipeline(repo, settings, progress=DisabledSourceProgress(), http=http)
-            tools = EventToolService(repo, settings, truth, DecisionEngine(settings), http=http)
-            sessions = SessionService(repo, settings, tools.dispatch, http=http)
+            truth = MarketTruthService(repo, settings, market, versions=versions)
+            sources = SourceService(repo, settings, versions=versions, http=http)
+            pipeline = Pipeline(
+                repo, settings, progress=DisabledSourceProgress(), versions=versions, http=http
+            )
+            tools = EventToolService(
+                repo, settings, truth, DecisionEngine(settings), versions=versions, http=http
+            )
+            sessions = SessionService(repo, settings, tools.dispatch, versions=versions, http=http)
             delivery = DeliveryService(repo, settings, http=http)
             gateway = CodexGateway(settings)
             inbox = TelegramInbox(repo, settings, http=http)
-            scheduler = FixtureScheduler(repo, settings, market, truth)
+            scheduler = FixtureScheduler(
+                repo, settings, market, truth, versions=versions, thresholds=settings.thresholds()
+            )
             sessions.telegram = inbox
             tools.scheduler = scheduler
 
             async def bootstrap_registry() -> None:
-                await sync_registry(repo, settings)
+                await sync_registry(repo, settings, versions=versions)
 
             def validate_generation() -> None:
                 validate_runtime_settings(settings)

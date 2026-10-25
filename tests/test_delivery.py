@@ -1,9 +1,9 @@
-from source_support import fixture_versions
 from types import SimpleNamespace
 
 import httpx
 import pytest
 from delivery_support import delivery_job
+from source_support import fixture_versions
 
 from tank.delivery import DeliveryError, DeliveryService
 from tank.settings import Settings
@@ -756,9 +756,14 @@ async def test_first_sent_persists_alerted_until_subsequent_scheduler_transition
             delivery_job({"alert_id": "a", "version": 1})
         )
     assert (await repo.get("evt.events", "e"))["lifecycle"] == "ALERTED"
-    await Scheduler(repo, Settings(), None, None, thresholds=Settings(_env_file=None).thresholds(), versions=fixture_versions()).lifecycle(
-        utcnow()
-    )
+    await Scheduler(
+        repo,
+        Settings(),
+        None,
+        None,
+        thresholds=Settings(_env_file=None).thresholds(),
+        versions=fixture_versions(),
+    ).lifecycle(utcnow())
     event = await repo.get("evt.events", "e")
     assert event["lifecycle"] == "MONITORING" and event["monitoring_at"] and event["alerted_at"]
 

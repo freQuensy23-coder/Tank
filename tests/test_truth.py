@@ -18,7 +18,7 @@ from tank.analysis.truth import (
     spot_truth,
     walk_book,
 )
-from tank.util import iso, parse_time
+from tank.util import iso, parse_epoch, parse_time, parse_utc_time
 
 
 def _fresh_spot_snapshot(*, flow_minutes=1):
@@ -225,7 +225,7 @@ def test_real_rest_fixture_endpoints() -> None:
     for key, a, z, expected in cases:
         rows = [
             dict(
-                ts=iso(parse_time(r["timestamp"])),
+                ts=iso(parse_epoch(r["timestamp"], unit="ms")),
                 oi_native=r["sumOpenInterest"],
                 oi_usd=r["sumOpenInterestValue"],
             )
@@ -288,11 +288,11 @@ def test_real_archive_oi_regressions() -> None:
                             continue
                         n, u = float(r["sum_open_interest"]), float(r["sum_open_interest_value"])
                         if n > 0 and u > 0:
-                            ts = parse_time(r["create_time"])
+                            ts = parse_utc_time(r["create_time"])
                             rows[ts] = dict(ts=iso(ts), oi_native=n, oi_usd=u)
 
         for r in rest[f"{fixture}:{symbol}:1h"]:
-            t = parse_time(r["timestamp"])
+            t = parse_epoch(r["timestamp"], unit="ms")
             if t in (parse_time(a), parse_time(z)):
                 rows[t] = dict(ts=iso(t), oi_native=r["sumOpenInterest"], oi_usd=r["sumOpenInterestValue"])
         out = _oi_stats(list(rows.values()), parse_time(a), parse_time(z))
@@ -306,7 +306,7 @@ def fixture_klines(filename, token, interval_s):
         dict(
             instrument_id=f"binance:spot:{token}USDT",
             token_id=token,
-            open_time=iso(parse_time(r[0])),
+            open_time=iso(parse_epoch(r[0], unit="ms")),
             o=r[1],
             c=r[4],
             quote_volume=r[7],
