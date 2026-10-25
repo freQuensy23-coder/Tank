@@ -66,7 +66,7 @@ async def poll(repo, tmp_path: Path, payloads, *, enabled=True, replay=False, so
 async def test_first_poll_reports_unparsed_entry_once_with_identity_and_hashes(tmp_path: Path) -> None:
     repo = MemoryRepository()
     results = await poll(repo, tmp_path, [broken("Bad entry without identity")])
-    assert results[0]["items"] == 1
+    assert results[0].items == 1
     [notice] = await entry_notices(repo)
     assert len(await entry_jobs(repo)) == 1
     checkpoint = await repo.get("ops.source_checkpoints", "S30:0")
@@ -166,7 +166,7 @@ async def test_publisher_json_entry_error_is_reported_and_delivered_to_ops(tmp_p
     }
     payload = json.dumps(data).encode()
     results = await poll(repo, tmp_path, [payload, payload], source=source)
-    assert [result["items"] for result in results] == [1, 0]
+    assert [result.items for result in results] == [1, 0]
     [notice] = await entry_notices(repo)
     assert "INVALID_PUBLISHER_ENTRY" in notice["text"]
     assert "«Malformed original without identifier»" in notice["text"]
@@ -233,7 +233,7 @@ async def test_failed_report_does_not_fail_acquisition_and_is_retried_next_poll(
 
     monkeypatch.setattr("tank.sources.polling.report_entry_errors", flaky)
     results = await poll(repo, tmp_path, [broken("Bad"), broken("Bad") if second == "broken" else RSS])
-    assert [result["items"] for result in results] == [1, 0]
+    assert [result.items for result in results] == [1, 0]
     [notice] = await entry_notices(repo)
     assert "«Bad»" in notice["text"] and len(await entry_jobs(repo)) == 1
     checkpoint = await repo.get("ops.source_checkpoints", "S30:0")

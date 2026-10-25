@@ -1,5 +1,6 @@
 """Decision facts, pure policy results and explicit publication identity."""
 
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal, Self
 
@@ -9,6 +10,7 @@ from tank.analysis.watch_contracts import WatchCondition, WatchProposal, WatchRu
 from tank.contracts import DomainModel
 from tank.contracts.provenance import GenerationProvenance, ResolvedVersionIdentity
 from tank.time_precision import Timestamp
+from tank.util import parse_iso_time
 
 type Confidence = Literal["LOW", "MEDIUM", "HIGH"]
 type Grade = Literal["A", "B", "C", "D"]
@@ -158,6 +160,27 @@ class DecisionMarket(DomainModel):
 
 class DecisionOpenCall(DomainModel):
     invalidation_price: Decimal = Field(gt=0)
+
+
+class DecisionCallContext(DomainModel):
+    call_id: str = Field(min_length=1)
+    event_id: str = Field(min_length=1)
+    token_id: str = Field(min_length=1)
+    status: Literal["OPEN"]
+    opened_at: Timestamp
+    invalidation_price: Decimal = Field(gt=0)
+
+    @model_validator(mode="after")
+    def actual_call(self) -> Self:
+        if any(not value.strip() for value in (self.call_id, self.event_id, self.token_id)):
+            raise ValueError("Decision call context requires actual identities")
+        self.opened_instant()
+        return self
+
+    def opened_instant(self) -> datetime:
+        if self.opened_at.value is None:
+            raise ValueError("Decision call context requires its actual opening clock")
+        return parse_iso_time(self.opened_at.value)
 
 
 class DecisionTriggers(DomainModel):
@@ -395,4 +418,47 @@ class DecisionRecord(DomainModel):
             raise ValueError("Shown decision watches must belong to the reconciled set")
         if isinstance(self.metadata.tracking, EndedDecisionTracking) and self.conditions:
             raise ValueError("Ended tracking cannot retain active watch conditions")
+        return self
+
+
+class OutlookConditionRefs(DomainModel):
+    upgrade: tuple[str, ...]
+    downgrade: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def actual_distinct_references(self) -> Self:
+        values = self.upgrade + self.downgrade
+        if any(not value.strip() for value in values) or len(values) != len(set(values)):
+            raise ValueError("Outlook watch references require distinct actual identities")
+        return self
+
+    @classmethod
+    def from_conditions(cls, conditions: list[WatchCondition]) -> Self:
+        return cls(
+            upgrade=tuple(value.cond_id for value in conditions if value.role == "UPGRADE"),
+            downgrade=tuple(value.cond_id for value in conditions if value.role == "DOWNGRADE"),
+        )
+
+
+class ReconciledOutlook(DomainModel):
+    outlook_id: str = Field(min_length=1)
+    event_id: str = Field(min_length=1)
+    token_id: str = Field(min_length=1)
+    cutoff: Timestamp
+    versions: ResolvedVersionIdentity
+    generation: GenerationProvenance
+    calculation: DecisionOutlook
+    conditions: OutlookConditionRefs
+
+    @model_validator(mode="after")
+    def actual_projection_origin(self) -> Self:
+        if any(not value.strip() for value in (self.outlook_id, self.event_id, self.token_id)):
+            raise ValueError("An outlook row requires actual identities")
+        if self.cutoff.value is None:
+            raise ValueError("An outlook row requires its actual semantic cutoff")
+        if (
+            self.generation.config_version != self.versions.config_version
+            or self.generation.code_version != self.versions.code_version
+        ):
+            raise ValueError("Outlook generation must match its actual version identity")
         return self

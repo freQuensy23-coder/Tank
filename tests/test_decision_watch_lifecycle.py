@@ -3,13 +3,13 @@ from decimal import Decimal
 
 import pytest
 
+from tank.analysis.decision_contracts import DecisionCallContext
 from tank.analysis.decision_watches import (
     DecisionWatchCommand,
     DecisionWatchPolicy,
     reconcile_decision_watches,
 )
 from tank.analysis.watch_contracts import (
-    WatchCall,
     WatchCondition,
     WatchLeaf,
     WatchPersistence,
@@ -161,19 +161,11 @@ def test_missing_firing_clock_cannot_be_replaced_by_current_time() -> None:
 
 def test_open_call_and_declared_milestone_bound_the_new_watch_expiry() -> None:
     opened = collection_clock(NOW - timedelta(days=6))
-    call = WatchCall(
+    call = DecisionCallContext(
         call_id="CALL",
         event_id="EVENT",
         token_id="TOKEN",
-        opened_by_alert="ALERT",
-        opened_by_version=1,
-        opened_at=iso(NOW - timedelta(days=6)),
-        opened_at_prec=opened.precision,
-        opened_at_prec_reason=opened.precision_reason,
-        alert_generated_at=iso(NOW - timedelta(days=6)),
-        alert_generated_at_prec="COLLECTION_ONLY",
-        alert_generated_at_prec_reason=None,
-        entry_ref_price=Decimal(10),
+        opened_at=opened,
         invalidation_price=Decimal(9),
         status="OPEN",
     )

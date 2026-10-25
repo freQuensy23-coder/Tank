@@ -46,6 +46,7 @@ from tank.analysis.card_contracts import (
     InactiveCardDecision,
     MarketWindow,
     NegativeEventMarker,
+    PendingCardAnalysis,
     PeriodRevenueProtocol,
     PublicationBaseline,
     PublicationDecisionStatus,
@@ -609,6 +610,27 @@ def card_inputs_from_records(
     policy: PublicationPolicy,
 ) -> CardInputs:
     event_view = _event(event)
+    if narrative.kind == "PARTIAL" and event.get("beneficiary_map") is None:
+        edges = event.get("beneficiary_edges")
+        if (
+            beneficiaries
+            or decisions
+            or market_truths
+            or edges is not None
+            and _records(edges, "beneficiary_edges")
+        ):
+            raise ValueError("Pending PARTIAL analysis cannot claim unscoped financial subjects or results")
+        return CardInputs(
+            narrative=narrative,
+            policy=policy,
+            event=event_view,
+            assessment=_assessment(assessment),
+            beneficiaries=(),
+            other_subjects=(),
+            mapping=PendingCardAnalysis(kind="ANALYSIS_PENDING"),
+            decisions_by_token={},
+            market_by_token={},
+        )
     mapping_wire = _record(_field(event, "beneficiary_map"), "beneficiary_map")
     selected: list[CardBeneficiary] = []
     for row in beneficiaries:
@@ -661,22 +683,19 @@ class CardBeneficiaryHeader(DomainModel):
     causal_chain: str
 
 
-def _active_fatal_ids(event: Mapping[str, JsonValue], assessment: Mapping[str, JsonValue]) -> frozenset[str]:
+def _active_fatal_ids(event: Mapping[str, JsonValue]) -> frozenset[str]:
     fatal_ids: set[str] = set()
-    for row in (event, assessment):
-        for contradiction in _records(_field(row, "contradictions"), "contradictions"):
-            resolved_at = contradiction.get("resolved_at")
-            if resolved_at is not None:
-                parse_iso_time(_text(resolved_at, "resolved_at"))
-            elif _text(_field(contradiction, "type"), "contradiction.type") == "FATAL":
-                fatal_ids.add(_text(_field(contradiction, "contradiction_id"), "contradiction_id"))
+    for contradiction in _records(_field(event, "contradictions"), "contradictions"):
+        resolved_at = contradiction.get("resolved_at")
+        if resolved_at is not None:
+            parse_iso_time(_text(resolved_at, "resolved_at"))
+        elif _text(_field(contradiction, "type"), "contradiction.type") == "FATAL":
+            fatal_ids.add(_text(_field(contradiction, "contradiction_id"), "contradiction_id"))
     return frozenset(fatal_ids)
 
 
-def _publication_facts(
-    event: Mapping[str, JsonValue], assessment: Mapping[str, JsonValue]
-) -> PublicationEventFacts:
-    fatal_ids = _active_fatal_ids(event, assessment)
+def _publication_facts(event: Mapping[str, JsonValue]) -> PublicationEventFacts:
+    fatal_ids = _active_fatal_ids(event)
     facts = _project(
         PublicationEventFactsWire,
         {
@@ -740,7 +759,7 @@ def publication_baseline_from_records(
             negative_marker=_project(
                 PublicationNegativeMarker, {"value": event.get("negative_marker")}
             ).value,
-            active_fatal_ids=_active_fatal_ids(event, assessment),
+            active_fatal_ids=_active_fatal_ids(event),
         ),
         actions_by_token=actions,
         acknowledged_send=acknowledged,
@@ -767,7 +786,7 @@ def publication_gate_inputs_from_records(
             )
         )
     return PublicationGateInputs(
-        event=_publication_facts(event, assessment),
+        event=_publication_facts(event),
         assessment_class=_project(CardAssessmentClass, {"value": _field(assessment, "class")}).value,
         decisions=tuple(status),
         previous=previous,

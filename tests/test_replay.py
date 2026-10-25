@@ -1858,7 +1858,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
     complete_decision = complete_decision_fixture("original-dec", "event", "T", initial_at, "fixture-truth")
     complete_decision.update(decision, cutoff=initial_at)
     decision = complete_decision
-    alert["card_struct"] = {"event": dict(canonical_event), "assessment": canonical_ems}
+    alert["card_struct"] = {"event": dict(canonical_event, contradictions=[]), "assessment": canonical_ems}
     old_call = {
         "call_id": "original-call",
         "event_id": "event",
@@ -2320,7 +2320,10 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
                     "card_text": "Synthetic baseline",
                     "decisions": ["baseline-decision"],
                     "shown_tokens": ["T"],
-                    "card_struct": {"event": canonical_event, "assessment": canonical_ems},
+                    "card_struct": {
+                        "event": dict(canonical_event, contradictions=[]),
+                        "assessment": canonical_ems,
+                    },
                 },
                 start,
             ),
@@ -2546,36 +2549,76 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
                 truths = await repo.list("ana.market_truth")
                 latest = max(truths, key=lambda row: row["cutoff"])
                 result.update(mta_id=latest["mta_id"], market_truth_id=latest["mta_id"])
-            await tools.reconcile_conditions(
-                result, await repo.list("ana.watch_conditions") if len(messages) > 1 else [], [], context
+            from tank.analysis.decision_watches import DecisionWatchCommand
+            from tank.analysis.watch_contracts import WatchCondition, WatchProposal
+            from tank.contracts.provenance import GenerationProvenance
+            from tank.util import new_id
+
+            proposals = [
+                WatchProposal.model_validate({**value, "cond_id": new_id("cond")})
+                for value in result["conditions"]
+            ]
+            prepared = context.get("_decision_prepared_condition_ids")
+            reconciliation = await tools.reconcile_conditions(
+                DecisionWatchCommand(
+                    decision_id=result["dec_id"],
+                    event_id=result["event_id"],
+                    token_id=result["token_id"],
+                    generation=GenerationProvenance.model_validate(tools.provenance(context)),
+                    proposals=proposals,
+                ),
+                [WatchCondition.model_validate(value) for value in await repo.list("ana.watch_conditions")]
+                if len(messages) > 1
+                else [],
+                [],
+                prepared_condition_ids=None if prepared is None else frozenset(prepared),
             )
+            result["conditions"] = [
+                value.model_dump(mode="json", exclude_unset=True) for value in reconciliation.active
+            ]
+            result["conditions_shown"] = list(reconciliation.shown)
             await repo.put("ana.decisions", result["dec_id"], result)
             return result
 
         tools.get_decision = fixture_grade
-        report = await replay_agent_session(
-            packet,
-            repo,
-            config,
-            tools,
-            http=http,
-            initial_message={
-                "kind": "ITEM_ADDED",
-                "item_id": "source",
-                "event_id": "event",
-                "replay_at": start,
-            },
-            subsequent_messages=[
-                {
-                    "kind": "CONDITION_FIRED",
+        try:
+            report = await replay_agent_session(
+                packet,
+                repo,
+                config,
+                tools,
+                http=http,
+                initial_message={
+                    "kind": "ITEM_ADDED",
+                    "item_id": "source",
                     "event_id": "event",
-                    "condition": old,
-                    "token_id": "T",
-                    "replay_at": trigger,
+                    "replay_at": start,
+                },
+                subsequent_messages=[
+                    {
+                        "kind": "CONDITION_FIRED",
+                        "event_id": "event",
+                        "condition": old,
+                        "token_id": "T",
+                        "replay_at": trigger,
+                    }
+                ],
+                timeout=3,
+            )
+        except TimeoutError:
+            failures = [
+                {
+                    "tool": row["tool"],
+                    "status": row["status"],
+                    "result": row.get("result"),
+                    "error": row.get("error"),
                 }
-            ],
-            timeout=3,
-        )
+                for row in await repo.list("ops.tool_calls")
+                if row["status"] in {"REFUSED", "ERROR"}
+            ]
+            assert not failures, failures
+            raise
+
     all_conditions = await repo.list("ana.watch_conditions")
 
     conditions = [c for c in all_conditions if not c.get("rearmed_from")]

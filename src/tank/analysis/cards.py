@@ -16,6 +16,7 @@ from tank.analysis.card_contracts import (
     CardInputs,
     CardLengthDiagnostics,
     CardLengthSection,
+    CardMapping,
     CardMarket,
     CardRevenue,
     CardSpotVenue,
@@ -342,6 +343,9 @@ def _subject_name(subject: CardSubject, labels: Mapping[str, str]) -> str:
 
 
 def _who(inputs: CardInputs) -> list[str]:
+    mapping = inputs.mapping
+    if not isinstance(mapping, CardMapping):
+        raise ValueError("Full analysis requires its actual beneficiary mapping")
     edges = inputs.display_subjects()
     who: list[str] = []
     for edge in edges:
@@ -359,7 +363,7 @@ def _who(inputs: CardInputs) -> list[str]:
             item += " — outside the token universe, no market block"
         who.append(item)
     if not any(edge.role == "SECONDARY" and edge.credible for edge in edges):
-        reason = inputs.mapping.no_credible_secondary_reason
+        reason = mapping.no_credible_secondary_reason
         generic = "No SECONDARY edge satisfies the credibility requirements in §4.7."
         if reason is not None and reason.startswith(generic):
             reason = reason[len(generic) :].strip()
@@ -377,7 +381,7 @@ def _who(inputs: CardInputs) -> list[str]:
             "CUSTODY_COMPLIANCE": "Custody / compliance",
         }
         for layer, label in names.items():
-            lines.append("• " + label + ": " + inputs.mapping.layer_explanations[layer])
+            lines.append("• " + label + ": " + mapping.layer_explanations[layer])
     return lines
 
 

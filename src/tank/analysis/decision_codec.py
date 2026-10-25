@@ -10,6 +10,7 @@ from tank.analysis.decision_contracts import (
     ActiveDecisionTracking,
     DecisionAssessment,
     DecisionBeneficiary,
+    DecisionCallContext,
     DecisionCore,
     DecisionDivergence,
     DecisionDraft,
@@ -29,18 +30,21 @@ from tank.analysis.decision_contracts import (
     DecisionProvenance,
     DecisionRecord,
     DecisionRelative,
+    DecisionScenarioReasons,
     DecisionSpot,
     DecisionStatusWriter,
     DecisionTracking,
     DecisionTriggers,
     EndedDecisionTracking,
+    OutlookConditionRefs,
+    ReconciledOutlook,
     UnavailableDecisionLiquidity,
 )
-from tank.analysis.watch_contracts import WatchAll, WatchCall, WatchCondition, WatchLeaf, WatchProposal
+from tank.analysis.watch_contracts import WatchAll, WatchCondition, WatchLeaf, WatchProposal
 from tank.contracts import DomainModel
 from tank.contracts.json import JsonDocument, decode_json
 from tank.contracts.provenance import GenerationProvenance, ResolvedVersionIdentity
-from tank.time_precision import Timestamp
+from tank.time_precision import Timestamp, propagate_timestamp
 from tank.util import parse_iso_time
 
 
@@ -313,7 +317,7 @@ def decision_inputs_from_records(
     beneficiary: Mapping[str, JsonValue],
     market_truth: Mapping[str, JsonValue],
     *,
-    open_call: WatchCall | None,
+    open_call: DecisionCallContext | None,
     conditions: Sequence[WatchCondition],
 ) -> DecisionInputs:
     for value in (event, assessment, beneficiary, market_truth):
@@ -327,7 +331,7 @@ def decision_inputs_from_records(
         raise ValueError("Decision market truth belongs to a different token")
     call: DecisionOpenCall | None = None
     if open_call is not None:
-        open_call = WatchCall.model_validate(open_call)
+        open_call = DecisionCallContext.model_validate(open_call)
         if open_call.event_id != event_id or open_call.token_id != token_id:
             raise ValueError("Decision open call belongs to a different event or token")
         if open_call.status != "OPEN":
@@ -343,6 +347,59 @@ def decision_inputs_from_records(
         market=_market(market_truth),
         open_call=call,
         triggers=_triggers(conditions),
+    )
+
+
+def decision_call_from_record(record: Mapping[str, JsonValue]) -> DecisionCallContext:
+    return DecisionCallContext(
+        call_id=_text(_required(record, "call_id"), "call_id"),
+        event_id=_text(_required(record, "event_id"), "event_id"),
+        token_id=_text(_required(record, "token_id"), "token_id"),
+        status=_text_open_status(_required(record, "status")),
+        opened_at=propagate_timestamp(record, "opened_at"),
+        invalidation_price=_required_call_price(record),
+    )
+
+
+def _text_open_status(value: JsonValue) -> Literal["OPEN"]:
+    if value != "OPEN":
+        raise ValueError("Decision call context requires an actually open call")
+    return "OPEN"
+
+
+def _required_call_price(record: Mapping[str, JsonValue]) -> Decimal:
+    value = _decimal(_required(record, "invalidation_price"), "invalidation_price")
+    if value is None:
+        raise ValueError("An open call requires its actual invalidation price")
+    return value
+
+
+class _OutlookRefsWire(DomainModel):
+    upgrade: list[str]
+    downgrade: list[str]
+
+    def domain(self) -> OutlookConditionRefs:
+        return OutlookConditionRefs(upgrade=tuple(self.upgrade), downgrade=tuple(self.downgrade))
+
+
+class _DecisionOutlookWire(DecisionOutlook):
+    conditions: _OutlookRefsWire
+
+
+def _pure_outlook(value: DecisionOutlook) -> DecisionOutlook:
+    return DecisionOutlook(
+        direction=value.direction,
+        direction_rule=value.direction_rule,
+        potential=value.potential,
+        potential_rule=value.potential_rule,
+        best_horizon=value.best_horizon,
+        horizon_reason=value.horizon_reason,
+        confidence=value.confidence,
+        caps=value.caps,
+        confidence_limiting=value.confidence_limiting,
+        tactical=value.tactical,
+        scenarios=value.scenarios,
+        scenario_reasons=value.scenario_reasons,
     )
 
 
@@ -401,9 +458,46 @@ class _DecisionDraftWire(_DecisionWireCore):
 
 
 class _DecisionRecordWire(_DecisionWireCore):
+    outlook: _DecisionOutlookWire
     conditions: list[WatchCondition]
     conditions_shown: list[str]
     outlook_id: str = Field(min_length=1)
+
+    @field_validator("outlook", mode="before")
+    @classmethod
+    def sparse_scenario_reasons(cls, value: JsonValue | DecisionOutlook) -> _DecisionOutlookWire:
+        if isinstance(value, _DecisionOutlookWire):
+            return _DecisionOutlookWire.model_validate(value)
+        if isinstance(value, DecisionOutlook):
+            raise ValueError("Persisted decision outlook requires actual reconciled watch references")
+        payload = dict(_object(value, "outlook"))
+        reasons = dict(_object(_required(payload, "scenario_reasons"), "scenario_reasons"))
+        for name in ("base", "upside", "failure"):
+            if name not in reasons:
+                reasons[name] = None
+        payload["scenario_reasons"] = reasons
+        return _DecisionOutlookWire.model_validate(payload)
+
+
+class _OutlookRowWire(_DecisionOutlookWire, GenerationProvenance, ResolvedVersionIdentity):
+    out_id: str = Field(min_length=1)
+    event_id: str = Field(min_length=1)
+    token_id: str = Field(min_length=1)
+    cutoff: str
+    cutoff_prec: str | None
+    cutoff_prec_reason: str | None
+    cutoff_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
+
+    @field_validator("scenario_reasons", mode="before")
+    @classmethod
+    def sparse_available_reasons(cls, value: JsonValue | DecisionScenarioReasons) -> DecisionScenarioReasons:
+        if isinstance(value, DecisionScenarioReasons):
+            return DecisionScenarioReasons.model_validate(value)
+        reasons = dict(_object(value, "scenario_reasons"))
+        for name in ("base", "upside", "failure"):
+            if name not in reasons:
+                reasons[name] = None
+        return DecisionScenarioReasons.model_validate(reasons)
 
 
 def _wire_payload(
@@ -413,13 +507,15 @@ def _wire_payload(
     | WatchCondition
     | _DecisionDraftWire
     | _DecisionRecordWire
-    | DecisionStatusWriter,
+    | DecisionStatusWriter
+    | DecisionOutlook
+    | _OutlookRowWire,
 ) -> dict[str, JsonValue]:
     value = decode_json(model.model_dump_json(exclude_unset=True, warnings="error"))
     return _object(value, "serialized decision record")
 
 
-def _generation(wire: _DecisionWireCore) -> GenerationProvenance:
+def _generation(wire: GenerationProvenance) -> GenerationProvenance:
     return GenerationProvenance(
         config_version=wire.config_version,
         code_version=wire.code_version,
@@ -452,7 +548,7 @@ def _calculation(wire: _DecisionWireCore) -> DecisionCore:
         tactical=wire.tactical,
         investigate=wire.investigate,
         confidence_limiting=wire.confidence_limiting,
-        outlook=wire.outlook,
+        outlook=_pure_outlook(wire.outlook),
     )
 
 
@@ -607,6 +703,11 @@ def decode_decision_draft(payload: Mapping[str, JsonValue]) -> DecisionDraft:
 def encode_decision(record: DecisionRecord) -> dict[str, JsonValue]:
     record = DecisionRecord.model_validate(record)
     payload = _base_payload(record.calculation, record.metadata)
+    outlook = _wire_payload(record.calculation.outlook)
+    outlook["conditions"] = JsonDocument.validate_value(
+        OutlookConditionRefs.from_conditions(record.conditions).model_dump(mode="json")
+    )
+    payload["outlook"] = outlook
     payload["conditions"] = [_wire_payload(value) for value in record.conditions]
     payload["conditions_shown"] = [value for value in record.conditions_shown]
     payload["outlook_id"] = record.outlook_id
@@ -617,10 +718,47 @@ def encode_decision(record: DecisionRecord) -> dict[str, JsonValue]:
 
 def decode_decision(payload: Mapping[str, JsonValue]) -> DecisionRecord:
     wire = _DecisionRecordWire.model_validate(dict(payload), strict=True)
+    if wire.outlook.conditions.domain() != OutlookConditionRefs.from_conditions(wire.conditions):
+        raise ValueError("Embedded outlook watch references disagree with reconciled conditions")
     return DecisionRecord(
         calculation=_calculation(wire),
         metadata=_metadata(wire),
         conditions=wire.conditions,
         conditions_shown=tuple(wire.conditions_shown),
         outlook_id=wire.outlook_id,
+    )
+
+
+def encode_outlook(record: DecisionRecord) -> dict[str, JsonValue]:
+    record = DecisionRecord.model_validate(record)
+    metadata = record.metadata
+    if isinstance(metadata.tracking, EndedDecisionTracking):
+        raise ValueError("Ended tracking cannot overwrite its historical outlook row")
+    identity = metadata.identity
+    payload = _wire_payload(record.calculation.outlook)
+    payload["conditions"] = JsonDocument.validate_value(
+        OutlookConditionRefs.from_conditions(record.conditions).model_dump(mode="json")
+    )
+    payload.update(_wire_payload(identity.generation))
+    payload.update(identity.cutoff.fields("cutoff"))
+    payload.update(out_id=record.outlook_id, event_id=identity.event_id, token_id=identity.token_id)
+    wire = _OutlookRowWire.model_validate(payload, strict=True)
+    encoded = _wire_payload(wire)
+    reasons = _object(_required(encoded, "scenario_reasons"), "scenario_reasons")
+    encoded["scenario_reasons"] = {name: value for name, value in reasons.items() if value is not None}
+    decode_outlook(encoded)
+    return encoded
+
+
+def decode_outlook(payload: Mapping[str, JsonValue]) -> ReconciledOutlook:
+    wire = _OutlookRowWire.model_validate(dict(payload), strict=True)
+    return ReconciledOutlook(
+        outlook_id=wire.out_id,
+        event_id=wire.event_id,
+        token_id=wire.token_id,
+        cutoff=Timestamp(wire.cutoff, wire.cutoff_prec, wire.cutoff_prec_reason, wire.cutoff_bucket_anchor),
+        versions=ResolvedVersionIdentity(config_version=wire.config_version, code_version=wire.code_version),
+        generation=_generation(wire),
+        calculation=_pure_outlook(wire),
+        conditions=wire.conditions.domain(),
     )

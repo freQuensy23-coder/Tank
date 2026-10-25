@@ -159,8 +159,8 @@ async def test_normal_uniswap_poll_uses_retained_authored_body_and_never_fetches
         )
         try:
             result = await service.poll_once("S15")
-            assert result["status"] == ("DEGRADED" if malformed_sibling else "HEALTHY"), result
-            assert result["items"] == 2, result
+            assert result.status == ("DEGRADED" if malformed_sibling else "HEALTHY"), result
+            assert result.items == 2, result
             stored = await repo.list("ingest.source_items")
             assert len(stored) == 2
             for _, original, payload in fixtures:

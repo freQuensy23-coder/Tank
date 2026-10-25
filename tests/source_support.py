@@ -9,6 +9,7 @@ from functools import cache
 from pydantic import JsonValue
 
 from tank.contracts.provenance import ResolvedVersionIdentity
+from tank.contracts.source_checkpoints import InstrumentSnapshot
 from tank.contracts.sources import (
     HttpFetchPlan,
     SourceApiLimitsConfiguration,
@@ -139,3 +140,21 @@ def fixture_http_admission(
         fixture_versions() if versions is None else versions,
         fixture_request_budgets() if budgets is None else budgets,
     )
+
+
+def instrument_snapshot_fixture(
+    records: Mapping[str, dict[str, JsonValue]], *, venue: str
+) -> InstrumentSnapshot:
+    """Declare unknown synthetic currencies/contract metadata explicitly."""
+    wire: dict[str, JsonValue] = {}
+    for symbol, observation in records.items():
+        wire[symbol] = {
+            "venue": venue,
+            "market_type": "SPOT",
+            "symbol": symbol,
+            "base": None,
+            "quote": None,
+            "contract_type": None,
+            **observation,
+        }
+    return InstrumentSnapshot.model_validate(wire)
