@@ -386,7 +386,7 @@ def _who(inputs: CardInputs) -> list[str]:
 
 
 def _token_block(
-    inputs: CardInputs, token: str, decision: CardDecision, *, role: str, least_repriced: bool
+    inputs: CardInputs, token: str, decision: CardDecision, *, role: str, least_repriced: bool | None
 ) -> list[str]:
     name = token_name(token, inputs.event.token_labels)
     if isinstance(decision, InactiveCardDecision):

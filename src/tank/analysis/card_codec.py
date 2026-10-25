@@ -665,8 +665,19 @@ def card_inputs_from_records(
             CardBeneficiaryHeader,
             {"capture": _field(row, "capture_class"), "causal_chain": _field(row, "causal_chain")},
         )
-        edge_id = row.get("edge_id")
-        least = edge_id is not None and edge_id == _field(mapping_wire, "least_repriced_edge")
+        least: bool | None
+        if "least_repriced_edge" not in mapping_wire:
+            least = None
+        else:
+            ranking = mapping_wire["least_repriced_edge"]
+            if ranking is None:
+                least = False
+            else:
+                ranked_id = _text(ranking, "beneficiary_map.least_repriced_edge")
+                edge_id = _text(_field(row, "edge_id"), "beneficiary.edge_id")
+                if not ranked_id.strip() or not edge_id.strip():
+                    raise ValueError("least_repriced_edge requires actual nonblank edge identities")
+                least = edge_id == ranked_id
         selected.append(
             CardBeneficiary(
                 subject=subject,

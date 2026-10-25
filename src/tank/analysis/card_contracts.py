@@ -322,7 +322,7 @@ class CardBeneficiary(DomainModel):
     subject: CardSubject
     capture: Literal["DIRECT", "INDIRECT", "NARRATIVE_ONLY", "UNKNOWN"]
     causal_chain: str
-    least_repriced: bool
+    least_repriced: bool | None
 
     @model_validator(mode="after")
     def market_identity(self) -> Self:

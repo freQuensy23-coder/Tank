@@ -1074,6 +1074,7 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(
     event = {
         "event_id": eid,
         "statement": "Access approved",
+        "next_milestone": None,
         "current_ems_id": "expiry-ems",
         "event_state": "APPROVED",
         "state_verified": True,
@@ -1231,6 +1232,7 @@ async def test_material_update_is_queued_once_and_delivered_after_window(
             {
                 "event_id": eid,
                 "statement": "Access approved",
+                "next_milestone": None,
                 "current_ems_id": "material-ems",
                 "event_state": "APPROVED",
                 "state_verified": True,
@@ -2367,6 +2369,8 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
             },
             context,
         )
+        mappings = await repo.list("evt.beneficiary_maps", filters={"event_id": eid})
+        assert len(mappings) == 1 and "least_repriced_edge" not in mappings[0]
         truth = compute_market_truth({"event_id": eid, "token_id": "world:WLD", "cutoff": clock_iso()})
         truth["mta_id"] = new_id("mta")
         await repo.put("ana.market_truth", truth["mta_id"], truth)
@@ -2384,7 +2388,9 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
             context,
         )
         assert published["published"], published
-        assert (await repo.get("out.alerts", published["alert_id"] + ":1"))["shown_tokens"] == ["world:WLD"]
+        alert = await repo.get("out.alerts", published["alert_id"] + ":1")
+        assert "least-repriced" not in alert["card_text"]
+        assert alert["shown_tokens"] == ["world:WLD"]
         assert (await repo.get("evt.events", eid))[
             "public_at_basis"
         ] == "Synthetic primary fixture publication"
@@ -4835,7 +4841,7 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
 
     base = utcnow() - timedelta(minutes=15, seconds=3)
     clock = [base]
-    for module in ("tank.util", "tank.event_tools", "tank.analysis.cards", "tank.delivery", "tank.storage"):
+    for module in ("tank.util", "tank.event_tools", "tank.delivery", "tank.storage"):
         monkeypatch.setattr(module + ".utcnow", lambda: clock[0])
     eid = new_id("event")
     token = "world:WLD"
