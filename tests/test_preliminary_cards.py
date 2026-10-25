@@ -68,10 +68,17 @@ async def test_preliminary_without_market_analysis_preserves_ordinary_gate(servi
     assert row["card_struct"]["event"]["certainty"] == "LOW"
     assert row["decisions"] == row["shown_tokens"] == []
     assert row["card_struct"]["market_truths"] == []
-    assert "https://example.org/commit/123" in row["card_text"]
+    assert row["card_text"].startswith("PRELIMINARY · MATERIAL")
+    assert "VERIFIED:" in row["card_text"]
+    assert "NOT VERIFIED:" in row["card_text"]
+    assert "WHY IT MATTERS" in row["card_text"]
+    assert "Market analysis pending" in row["card_text"]
+    assert all(label not in row["card_text"] for label in ("SOURCE:", "POSSIBLE EFFECT:", "NOT CONFIRMED:"))
+    bundle = await service.repo.get("out.evidence_bundles", row["evidence_bundle_id"])
+    assert bundle["payload"]["source_items"][0]["url"] == "https://example.org/commit/123"
     assert args["unconfirmed"] in row["card_text"]
     assert "WHAT TO DO" not in row["card_text"]
-    assert not any(block["type"] == "table" for block in row["rich_message"]["blocks"])
+    assert sum(block["type"] == "table" for block in row["rich_message"]["blocks"]) == 1
     assert not await service.repo.list("ana.market_truth")
     assert not await service.repo.list("ana.decisions")
     assert not await service.repo.list("ana.calls")

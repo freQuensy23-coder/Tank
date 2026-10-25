@@ -3062,12 +3062,6 @@ class EventToolService:
                     source = await self.repo.get("reg.sources", source_id) if source_id else None
                     evidence_labels[item_id] = (source or {}).get("name") or source_id or "source"
         event["evidence_labels"] = evidence_labels
-        if preliminary:
-            event["evidence_urls"] = {
-                item_id: item.get("url") or item.get("canonical_url")
-                for item_id, item in source_items_read.items()
-                if item
-            }
 
         event["token_labels"] = {
             row["token_id"]: str(row.get("project") or row.get("name") or row["token_id"])
@@ -3092,7 +3086,6 @@ class EventToolService:
             text,
             assessment,
             max_chars=event["thresholds"].get("card_max_chars", CARD_TEXT_LIMIT),
-            include_scores=not preliminary,
         )
         if (
             previous

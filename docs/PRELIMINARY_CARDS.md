@@ -1,6 +1,6 @@
 # Preliminary cards and timed reviews
 
-MATERIAL events may produce a PRELIMINARY card when the analyst identifies a concrete sourced lead with a potentially substantial consequence. LOW event class still stops. LOW event certainty is preserved and displayed; it does not prevent this preliminary type. The agent supplies the finding, possible effect, and explicit missing confirmation.
+MATERIAL events may produce a PRELIMINARY card when the analyst identifies a concrete sourced lead with a potentially substantial consequence. LOW event class still stops. LOW event certainty is preserved and displayed; it does not prevent this preliminary type. The agent supplies the finding, possible effect, and explicit missing confirmation. Rendering reuses the existing PARTIAL layout and normal rich-message score table. The headline gains a PRELIMINARY marker and the missing confirmation is appended to the existing NOT VERIFIED section; there is no separate preliminary template.
 
 Ordinary PARTIAL, FULL and UPDATE rules remain separate. The first ordinary card still requires the normal eligibility and analysis, even after preliminary publication. All versions use the same out.alerts event chain and Telegram thread. Preliminary cards have no market/action blocks and do not satisfy ordinary first-card delivery timing. No new tables or tools are introduced. Migration 006 extends the existing out.alerts.valid_kind check to accept PRELIMINARY; it does not rewrite historical rows.
 

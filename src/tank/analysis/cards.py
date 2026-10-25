@@ -407,31 +407,8 @@ def compose_card(
                 + " — "
                 + str(claim.get("verification_missing") or "n/a (verification gap not supplied)")
             )
-    if kind == "PRELIMINARY":
-        sources = list(
-            dict.fromkeys(
-                entry.get("url")
-                or event.get("evidence_urls", {}).get(entry.get("item_id"))
-                or event.get("evidence_labels", {}).get(entry.get("item_id"))
-                or str(entry.get("item_id", ""))
-                for claim in claims
-                if claim.get("accepted") is not False and claim.get("claim_id") not in superseded
-                for entry in claim.get("evidence", [])
-            )
-        )
-        text = "\n".join(
-            [
-                "PRELIMINARY — " + (verdict or event.get("statement") or ""),
-                "WHAT: " + what,
-                "SOURCE: " + "; ".join(source for source in sources if source),
-                "POSSIBLE EFFECT: " + " ".join(why or []),
-                "NOT CONFIRMED: " + unconfirmed,
-                "Certainty: " + str(event.get("certainty", "LOW")),
-            ]
-        )
-        if len(text) > max_chars:
-            raise ValueError(f"CARD_LENGTH: {len(text)} characters, at most {max_chars}")
-        return text
+    if kind == "PRELIMINARY" and unconfirmed:
+        unverified.append(unconfirmed)
     scores = score_summary(assessment)
     stage = ("" if event.get("state_verified", event.get("verified")) is True else "unverified ") + _na(
         event.get("event_state", event.get("state"))
@@ -448,6 +425,8 @@ def compose_card(
         "",
         "WHY IT MATTERS",
     ]
+    if kind == "PRELIMINARY":
+        lines[0] = "PRELIMINARY · " + lines[0]
     why = list(why or [])
     changed = _why_content(why[0], "What changed") if why else "n/a (change description unavailable)"
     economic = _why_content(why[1], "Economic effect") if len(why) > 1 else "not estimable"
@@ -478,7 +457,7 @@ def compose_card(
     lines += ["• What changed: " + changed, "• Economic effect: " + economic, "• Token capture: " + capture]
     if event.get("call_expired"):
         lines[-1] += " · No longer following: call expired."
-    if kind == "PARTIAL":
+    if kind in {"PARTIAL", "PRELIMINARY"}:
         lines.append("Market analysis pending — token actions and outlook unavailable.")
     else:
         mapping = event.get("beneficiary_map") or {}
