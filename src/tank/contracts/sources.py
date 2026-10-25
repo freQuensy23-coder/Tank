@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 from pydantic import Field, JsonValue, field_validator, model_validator
 
 from tank.contracts import DomainModel
+from tank.contracts.scalars import ZeroInt
 from tank.time_precision import normalize_precision, propagate_timestamp
 from tank.util import iso, parse_iso_time, parse_utc_time
 
@@ -581,7 +582,7 @@ class PolledSource(FeedPollOutcome):
 
 class UnconfiguredSource(FeedPollOutcome):
     source_id: str = Field(min_length=1)
-    items: Literal[0]
+    items: ZeroInt
     status: Literal["UNCONFIGURED"] = "UNCONFIGURED"
     reason: Literal["NO_CONFIGURED_FEEDS"] = "NO_CONFIGURED_FEEDS"
 
