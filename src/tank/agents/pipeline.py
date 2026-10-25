@@ -1,4 +1,4 @@
-"""Version-pinned Jev classification (03 §3.1). Cutoffs come from config/thresholds.yaml."""
+"""Version-pinned Decision-1 classification (03 §3.1). Cutoffs come from config/thresholds.yaml."""
 
 import asyncio
 import re
@@ -7,12 +7,12 @@ from decimal import Decimal
 
 import httpx
 
-from tank.agents.jev import MODEL, binding, classify
+from tank.agents.decision import MODEL, binding, classify
 from tank.ops_progress import item_progress
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import iso, sha256, utcnow
 
-JEV_PROMPT_VERSION = "jev-v2"
+DECISION_PROMPT_VERSION = "decision-1-v1"
 
 
 FILTER = "Is `item` about crypto: crypto assets, crypto exchanges, crypto regulation or enforcement, blockchain networks, or one of these projects: Bitcoin, Ethereum, Uniswap, PancakeSwap, Aerodrome, Curve, 1inch, 0x, CoW Protocol, Hyperliquid, Lighter, Aave, Morpho, Euler, Ondo, LayerZero, Quant, Avalanche, NEAR, Plasma, Ethena, World (Worldcoin)?"
@@ -73,7 +73,7 @@ class Pipeline:
 
     @staticmethod
     def item_view(item):
-        """The item as Jev sees it: source, author when it adds anything, title, body once, quote."""
+        """The item as Decision-1 sees it: source, author when it adds anything, title, body once, quote."""
         source = _clean(item.get("source") or item.get("source_name"))
         author = _clean(item.get("author"))
         title = _clean(item.get("title"))
@@ -113,7 +113,7 @@ class Pipeline:
                 "criteria": FILTER_CRITERIA if name == "relevant" else ROUTE_CRITERIA,
             }
         }
-        pinned = binding(getattr(self.settings, "opencode_api_key", None))
+        pinned = binding(self.settings)
         state_fingerprint = sha256(state)
         question_fingerprint = sha256(questions)
         request_fingerprint = sha256({"model": pinned.request_model, "state": state, "questions": questions})
@@ -121,9 +121,10 @@ class Pipeline:
             {
                 "item_id": item["item_id"],
                 "model": pinned.request_model,
+                "semantic_model": pinned.semantic_model,
                 "provider": pinned.provider,
                 "base_url": pinned.base_url,
-                "prompt_version": JEV_PROMPT_VERSION,
+                "prompt_version": DECISION_PROMPT_VERSION,
                 "questions": questions,
                 "state_fingerprint": state_fingerprint,
             }
@@ -139,22 +140,22 @@ class Pipeline:
             return cached
         if getattr(self.settings, "replay", False):
             raise ValueError(
-                "Replay requires stored Jev score for the exact wire question and state; live classification is disabled"
+                "Replay requires stored Decision-1 score for the exact wire question and state; live classification is disabled"
             )
-        api_key = getattr(self.settings, "opencode_api_key", None)
-        data = await classify(self.http, api_key=api_key, state=state, questions=questions)
+        api_key = getattr(self.settings, "foundry_api_key", None)
+        data = await classify(self.http, api_key=api_key, state=state, questions=questions, pinned=pinned)
         score = float(data["answers"][name]["noul"])
         if not 0 <= score <= 1 or data.get("model") not in pinned.resolved_models:
-            raise ValueError("Jev returned invalid score or unexpected resolved model")
+            raise ValueError("Decision-1 returned invalid score or unexpected resolved model")
         usage = data.get("usage", {})
         tokens = usage.get("input_tokens")
         reported_cost = usage.get("cost")
         amount = Decimal(str(reported_cost)) if reported_cost is not None else None
         if amount is not None and (not amount.is_finite() or amount < 0):
-            raise ValueError("Invalid provider-reported Jev cost")
+            raise ValueError("Invalid provider-reported Decision-1 cost")
         cost = str(amount) if amount is not None else None
-        cost_reason = None if amount is not None else "OpenCode does not report usage.cost"
-        billing_basis = "OPENCODE_REPORTED"
+        cost_reason = None if amount is not None else "Azure Foundry does not report usage.cost"
+        billing_basis = "AZURE_FOUNDRY_REPORTED"
         completed_at = collection_clock()
         record = await self.repo.put(
             "ops.llm_usage",
@@ -166,15 +167,15 @@ class Pipeline:
                 "model_id": data["model"],
                 "semantic_model_id": MODEL,
                 "requested_model_id": pinned.request_model,
-                "jev_provider": pinned.provider,
-                "endpoint": pinned.base_url + "/v1/systemone",
+                "classifier_provider": pinned.provider,
+                "endpoint": pinned.endpoint,
                 "resolved_model_id": data["model"],
                 "response_id": data.get("id"),
                 "upstream_provider": data.get("provider"),
-                "model_pin_evidence": "OpenCode serves Jev 1.13 under this model name; no dated snapshot or patch suffix is exposed",
+                "model_pin_evidence": "Foundry deployment is configured for Microsoft-Decision-1 version 1; the response identifies microsoft-decision-1 but does not attest its version",
                 "billing_basis": billing_basis,
                 "billing_currency": "USD",
-                "prompt_version": JEV_PROMPT_VERSION,
+                "prompt_version": DECISION_PROMPT_VERSION,
                 "questions": questions,
                 "state_fingerprint": state_fingerprint,
                 "question_fingerprint": question_fingerprint,
@@ -188,7 +189,7 @@ class Pipeline:
                 "stop_reason": "NON_GENERATIVE_CLASSIFICATION",
                 "web_searches": 0,
                 "missing_fields": {
-                    "effort": "Not applicable to nongenerative Jev classification",
+                    "effort": "Not applicable to nongenerative Decision-1 classification",
                     **({"cost_usd": cost_reason} if cost is None else {}),
                     **({"input_tokens": "Provider omitted input tokens"} if tokens is None else {}),
                     **(
@@ -196,8 +197,8 @@ class Pipeline:
                         if usage.get("output_tokens") is None
                         else {}
                     ),
-                    "cache_read_tokens": "Not exposed by Jev API",
-                    "cache_write_tokens": "Not exposed by Jev API",
+                    "cache_read_tokens": "Not exposed by Decision-1 API",
+                    "cache_write_tokens": "Not exposed by Decision-1 API",
                 },
                 "cost_usd": cost,
                 "cost_reason": cost_reason,
@@ -238,7 +239,7 @@ class Pipeline:
                             "p_relevant": score,
                             "cutoff": cutoff,
                             "model": score_record["resolved_model_id"],
-                            "provider": score_record["jev_provider"],
+                            "provider": score_record["classifier_provider"],
                             "requested_model": score_record["requested_model_id"],
                             "semantic_model_id": score_record["semantic_model_id"],
                             "model_pin_evidence": score_record["model_pin_evidence"],
@@ -317,7 +318,7 @@ class Pipeline:
         return result - {None}
 
     def event_view(self, event):
-        """The candidate event as Jev sees it: the agent's statement, readable names, stage."""
+        """The candidate event as Decision-1 sees it: the agent's statement, readable names, stage."""
         registry = self.settings.load_config("registry")
         names = {
             row["entity_id"]: (row.get("aliases") or row.get("names") or [row["entity_id"]])[0]

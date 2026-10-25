@@ -186,8 +186,7 @@ async def test_parallel_candidate_scores_survive_retry_without_partial_winner(
         load_config=config.__getitem__,
         config_version="test",
         code_version="test",
-        openrouter_api_key="FAKE-offline-key",
-        jev_provider="openrouter",
+        foundry_api_key="FAKE-offline-key",
     )
     candidates = tuple({"event_id": marker + "-" + key, "statement": key} for key in ("a", "b", "c"))
     arrived, calls, ready = set(), {}, asyncio.Event()
@@ -209,7 +208,7 @@ async def test_parallel_candidate_scores_survive_retry_without_partial_winner(
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13-free",
+                "model": "microsoft-decision-1",
                 "usage": {"input_tokens": 10},
                 "answers": {"same_event": {"type": "noul", "noul": 0.9 if key == "c" else 0.95}},
             },
@@ -339,7 +338,7 @@ async def test_jev_billed_cost_or_explicit_unknown_persists_under_sql_contract(
 
     repo = isolated_routing_repo
     opts = SimpleNamespace(
-        openrouter_api_key="FAKE_TEST_KEY",
+        foundry_api_key="FAKE_TEST_KEY",
         config_version="test-config",
         code_version="test-code",
     )
@@ -354,7 +353,7 @@ async def test_jev_billed_cost_or_explicit_unknown_persists_under_sql_contract(
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13-free",
+                "model": "microsoft-decision-1",
                 "usage": usage,
                 "answers": {"relevant": {"type": "noul", "noul": 0.9}},
             },
@@ -368,11 +367,13 @@ async def test_jev_billed_cost_or_explicit_unknown_persists_under_sql_contract(
     records = await repo.list("ops.llm_usage", filters={"item_id": item["item_id"]})
     assert len(records) == 1
     row = records[0]
-    assert row["billing_basis"] == "OPENCODE_REPORTED"
+    assert row["billing_basis"] == "AZURE_FOUNDRY_REPORTED"
     if reported_cost is None:
         assert row["cost_usd"] is None
         assert (
-            row["missing_fields"]["cost_usd"] == row["cost_reason"] == "OpenCode does not report usage.cost"
+            row["missing_fields"]["cost_usd"]
+            == row["cost_reason"]
+            == "Azure Foundry does not report usage.cost"
         )
     else:
         assert row["cost_usd"] == str(reported_cost)

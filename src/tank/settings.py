@@ -92,10 +92,13 @@ class Settings(BaseSettings):
     )
     codex_auth_path: Path = Field(default_factory=_default_codex_auth_path)
 
-    opencode_api_key: str | None = Field(
+    foundry_endpoint: str = "https://alexeym-4644-resource.services.ai.azure.com"
+    foundry_deployment: str = "decision-1"
+    foundry_api_key: str | None = Field(
         default=None,
         repr=False,
-        validation_alias=AliasChoices("TANK_OPENCODE_API_KEY", "OPENCODE_API_KEY", "opencode_api_key"),
+        exclude=True,
+        validation_alias=AliasChoices("TANK_FOUNDRY_API_KEY", "FOUNDRY_API_KEY", "foundry_api_key"),
     )
     telegram_token: str | None = Field(
         default=None,

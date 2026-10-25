@@ -343,7 +343,9 @@ class SourceService:
                 self.settings,
                 item_id,
                 "RECEIVED",
-                "Ожидает проверки Jev" if filtered else "Jev не требуется; ожидает маршрутизации к агенту",
+                "Ожидает проверки Decision-1"
+                if filtered
+                else "Decision-1 не требуется; ожидает маршрутизации к агенту",
             )
             if not filtered:
                 await item_progress(

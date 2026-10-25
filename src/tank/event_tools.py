@@ -964,7 +964,7 @@ class EventToolService:
             getattr(self.settings, name, None)
             for name in [
                 "etherscan_api_key",
-                "opencode_api_key",
+                "foundry_api_key",
                 "openma_api_key",
                 "telegram_token",
                 "codex_gateway_key",
@@ -979,7 +979,7 @@ class EventToolService:
             getattr(self.settings, name, None)
             for name in [
                 "etherscan_api_key",
-                "opencode_api_key",
+                "foundry_api_key",
                 "openma_api_key",
                 "telegram_token",
                 "codex_gateway_key",
@@ -1070,7 +1070,7 @@ class EventToolService:
             self.settings,
             iid,
             "EVIDENCE_FETCHED",
-            "Источник запрошен агентом; Jev не требуется",
+            "Источник запрошен агентом; Decision-1 не требуется",
             event_id=c.get("event_id"),
         )
         return row

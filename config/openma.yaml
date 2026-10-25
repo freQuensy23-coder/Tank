@@ -14,7 +14,7 @@ model_prices:
     cache_read_per_million: 0
     cache_creation_per_million: 0
 pricing_basis: Analysis uses operator ChatGPT subscription; no per-token charge and
-  no V0 token/spending caps. DuckDuckGo web search is free; Jev paid usage remains
+  no V0 token/spending caps. DuckDuckGo web search is free; Decision-1 paid usage remains
   recorded.
 model_access: CHATGPT_SUBSCRIPTION_CODEX_OAUTH
 gateway_base_url: http://tank:8790/v1

@@ -127,8 +127,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path):
     settings = TestSettings(
         **_fake_gateway_settings(tmp_path),
         data_dir=tmp_path,
-        jev_provider="openrouter",
-        openrouter_api_key="mock",
+        foundry_api_key="mock",
         telegram_token="mock",
         telegram_alerts_chat="mock",
     )
@@ -140,13 +139,13 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path):
 
     def transport(request):
         path = request.url.path
-        if request.url.host == "opencode.ai":
+        if request.url.host == "alexeym-4644-resource.services.ai.azure.com":
             body = json.loads(request.content)
             key = next(iter(body["questions"]))
             return httpx.Response(
                 200,
                 json={
-                    "model": "jev-1.13-free",
+                    "model": "microsoft-decision-1",
                     "answers": {key: {"type": "noul", "noul": 0.99}},
                     "usage": {"input_tokens": 20},
                 },
@@ -348,8 +347,7 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
         **_fake_gateway_settings(tmp_path),
         data_dir=tmp_path,
         database_url=isolated_e2e_database.database_url,
-        jev_provider="openrouter",
-        openrouter_api_key="mock",
+        foundry_api_key="mock",
         telegram_token="mock",
         telegram_alerts_chat="mock",
     )
@@ -366,11 +364,11 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
         if req.url.host == "synthetic.invalid":
             rss = f'<rss version="2.0"><channel><title>Synthetic</title><item><guid>{feed_guid}</guid><title>Synthetic listing approval</title><description>{text}</description><pubDate>{now}</pubDate><link>https://synthetic.invalid/{sid}</link></item></channel></rss>'
             return httpx.Response(200, content=rss.encode(), headers={"content-type": "application/rss+xml"})
-        if req.url.host == "opencode.ai":
+        if req.url.host == "alexeym-4644-resource.services.ai.azure.com":
             return httpx.Response(
                 200,
                 json={
-                    "model": "jev-1.13-free",
+                    "model": "microsoft-decision-1",
                     "answers": {
                         next(iter(json.loads(req.content)["questions"])): {
                             "type": "noul",
@@ -906,8 +904,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
         **_fake_gateway_settings(tmp_path),
         data_dir=tmp_path / "data",
         database_url=repo.database_url,
-        jev_provider="openrouter",
-        openrouter_api_key="mock",
+        foundry_api_key="mock",
         telegram_token="mock",
         telegram_alerts_chat="mock-alerts",
         telegram_ops_chat="mock-ops",
@@ -972,14 +969,14 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
         if request.url.host == "synthetic.invalid":
             rss = f'<rss version="2.0"><channel><title>Synthetic</title><item><guid>autonomous-input</guid><title>Autonomous synthetic listing</title><description>{text}</description><pubDate>{timestamp}</pubDate><link>https://synthetic.invalid/autonomous-input</link></item></channel></rss>'
             return httpx.Response(200, content=rss.encode(), headers={"content-type": "application/rss+xml"})
-        if request.url.host == "opencode.ai":
+        if request.url.host == "alexeym-4644-resource.services.ai.azure.com":
             body = json.loads(request.content)
             question = next(iter(body["questions"]))
-            assert body["model"] == "jev-1.13-free"
+            assert body["model"] == "decision-1"
             return httpx.Response(
                 200,
                 json={
-                    "model": "jev-1.13-free",
+                    "model": "microsoft-decision-1",
                     "answers": {question: {"type": "noul", "noul": 0.99}},
                     "usage": {"input_tokens": 20},
                 },

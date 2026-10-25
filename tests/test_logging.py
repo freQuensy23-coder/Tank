@@ -63,9 +63,9 @@ def test_reload_preserves_old_and_new_credential_redaction():
         logger.removeHandler(handler)
 
 
-def test_opencode_and_gateway_keys_redacted_from_logs():
+def test_foundry_and_gateway_keys_redacted_from_logs():
     configure_logging(
-        Settings(opencode_api_key="fake-router-log-key", codex_gateway_key="fake-gateway-log-key")
+        Settings(foundry_api_key="fake-router-log-key", codex_gateway_key="fake-gateway-log-key")
     )
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)

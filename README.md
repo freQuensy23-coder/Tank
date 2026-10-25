@@ -4,7 +4,7 @@ The main branch contains the specifications and production code together. CI bui
 
 Tank collects public information and market data, maintains one OpenMA analysis session per event, computes market assessments and long-position guidance in Python, and delivers evidence-backed decision cards to Telegram. It has no exchange trading credentials or order execution path. The revised deployment uses three Linux Docker Compose services: Tank, OpenMA and PostgreSQL 16. Tank's internal Codex gateway connects OpenMA to the operator's ChatGPT subscription; there are no local token or spending caps.
 
-The implementation follows the three specifications in this directory and recorded operator changes. On 18 October 2026 the operator selected OpenRouter for Jev, using the existing OpenRouter key and plain HTTP with the documented System One endpoint and namespaced `typesafe/jev-1.13` model. Analysis remains on the Codex subscription gateway. Current acceptance evidence and unresolved specification conflicts are tracked in [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md). Operational installation is described in [docs/OPERATIONS.md](docs/OPERATIONS.md).
+Tank filtering and event routing use Microsoft-Decision-1 version 1 through Azure Foundry, as requested on 2026-10-25. The service posts typed `state`/`questions` to the resource's `/providers/microsoft/v1/systemone` endpoint with `api-key` authentication and deployment name `decision-1`. Analyst/scout models continue through the Codex subscription gateway. See [Foundry setup](docs/FOUNDRY_DECISION.md). Current acceptance evidence is tracked in [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
 
 ## Development and tests
 
@@ -17,9 +17,9 @@ uv run pytest -q -n auto --dist loadfile
 
 Run development commands in an isolated checkout on the server. The pytest command runs the offline unit selection across available CPUs with a 10-second per-case timeout. Normal test runs use no artificial CPU or memory quotas. [Testing conventions and separate integration commands](docs/TESTING.md) include the p90 <1s check, resource prerequisites, and Node lanes.
 
-`doctor` reports missing deployment configuration without printing credentials. Credentials remain outside the repository. The local configuration records deployed OpenMA resource IDs and the operator-approved Jev baseline: filter 0.23, routing 0.67. Its measured precision/recall and outstanding acceptance gates are recorded in the implementation ledger.
+`doctor` reports missing deployment configuration without printing credentials. Credentials remain outside the repository. Filter and routing cutoffs remain the user-selected **uncalibrated 0.5 midpoint**; Decision-1 needs its own labeled calibration.
 
-For local runs, `OPENROUTER_API_KEY` or `TANK_OPENROUTER_API_KEY` supplies the default Jev provider. Codex authorization defaults to `$CODEX_HOME/auth.json` when set, otherwise `~/.codex/auth.json`; `TANK_CODEX_AUTH_PATH` overrides that location. Compose explicitly uses its private `/codex-auth/auth.json` volume and `openrouter_api_key` secret. OpenRouter `/api/v1/systemone` is the sole Jev route; no direct TypeSafe SDK, credential alternative or provider fallback is supported.
+For runs outside Compose, set `TANK_FOUNDRY_API_KEY` (or `FOUNDRY_API_KEY`), `TANK_FOUNDRY_ENDPOINT` and `TANK_FOUNDRY_DEPLOYMENT`; `.env.example` gives the defaults. Codex authorization defaults to `$CODEX_HOME/auth.json` when set, otherwise `~/.codex/auth.json`; `TANK_CODEX_AUTH_PATH` overrides it. Compose uses its private `/codex-auth/auth.json` volume for the analyst.
 
 For database tests, use isolated PostgreSQL 16 databases. Test databases must never contain production data:
 
@@ -40,7 +40,7 @@ Pytest disables operator dotenv files, credential paths and external Python netw
 | Module | Responsibility |
 |---|---|
 | `sources` | RSS/Atom/REST/GraphQL/HTML ingestion and the Apify X actor; raw evidence and source checkpoints |
-| `agents` | Jev filtering/routing and durable OpenMA sessions with tool-result recovery |
+| `agents` | Decision-1 filtering/routing and durable OpenMA sessions with tool-result recovery |
 | `codex_gateway` | Internal Responses endpoint, subscription authentication, atomic OAuth refresh and streaming |
 | `event_tools` | Persistence of agent claims and judgments, registry identity resolution, beneficiary records and publication gate |
 | `market` | Venue discovery, REST/WS capture, normalization, archives and fundamentals |
@@ -54,7 +54,7 @@ The service and gateway use one asyncio process. tank-capture, PostgreSQL, Click
 
 ## Operator commands
 
-Follow [the deployment runbook](docs/OPERATIONS.md). Run `tank calibrate` offline and review both Jev cutoffs before the first `tank serve` startup. `serve` is the service command. Operator commands include `doctor`, `db migrate`, `sources check`, `coverage`, `archive fetch`, `review list/show/label/metrics`, `reaction`, `scout list/decide`, `replay`, `bundle reproduce`, `backup`, and `calibrate`; each exposes arguments through `--help`.
+Follow [the deployment runbook](docs/OPERATIONS.md). The existing 0.5 midpoint remains explicitly uncalibrated; use `tank calibrate` on labeled data to propose Decision-1 cutoffs. `serve` is the service command. Operator commands include `doctor`, `db migrate`, `sources check`, `coverage`, `archive fetch`, `review list/show/label/metrics`, `reaction`, `scout list/decide`, `replay`, `bundle reproduce`, `backup`, and `calibrate`; each exposes arguments through `--help`.
 
 Replay requires a fresh, isolated database. Calibration produces a report and proposed threshold changes; it does not apply thresholds automatically. The saved historical fixture checks retain their original source distinctions, including REST open-interest snapshots and archive-based historical distributions.
 
