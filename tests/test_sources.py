@@ -112,6 +112,7 @@ def settings(tmp_path: Path, sources):
         config_version="test",
         code_version="test",
         x_list_id=None,
+        apify_api_token=None,
         load_config=lambda name: (
             source_configuration({"sources": sources})
             if name == "sources"
