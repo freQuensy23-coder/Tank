@@ -7,37 +7,19 @@ from typing import Literal
 
 from tank.contracts.json import decode_unique_json
 from tank.deployment.artifact_contracts import (
-    ActorDefinition,
     HistoricalArtifact,
     PackageRequest,
     PublisherArtifactRuntime,
     SelectedArtifact,
     SourceArtifact,
     SourceBundle,
+    require_actor_source,
 )
 from tank.deployment.contracts import HistoricalRelease, Release, ReleaseDocument, SourceRelease
 
 
 class ArtifactError(RuntimeError):
     pass
-
-
-def validate_source(bundle: SourceBundle) -> None:
-    required = {
-        "main.py",
-        "direct_fetch.py",
-        "public_profile.py",
-        "requirements.txt",
-        "Dockerfile",
-        ".actor/actor.json",
-    }
-    if not required <= bundle.files.keys():
-        raise ArtifactError("Worker source incomplete")
-    if "tank-release.json" in bundle.files:
-        raise ArtifactError("Reserved release marker in worker source")
-    definition = bundle.files[".actor/actor.json"]
-    decode_unique_json(definition)
-    ActorDefinition.model_validate_json(definition)
 
 
 def source_files(root: Path) -> SourceBundle:
@@ -50,7 +32,7 @@ def source_files(root: Path) -> SourceBundle:
         if path.is_file():
             files[path.relative_to(root).as_posix()] = path.read_bytes()
     bundle = SourceBundle(files=files)
-    validate_source(bundle)
+    require_actor_source(bundle)
     return bundle
 
 
@@ -108,7 +90,7 @@ def package_release(request: PackageRequest) -> Release:
                 request.repository, "show", sha + ":" + name
             )
         bundle = SourceBundle(files=files)
-        validate_source(bundle)
+        require_actor_source(bundle)
         release = SourceRelease(
             release_sha=sha,
             source_digest=bundle.digest(),

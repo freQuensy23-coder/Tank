@@ -8,6 +8,7 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
+from tank.contracts.json import decode_unique_json
 from tank.contracts.scalars import OneInt
 from tank.deployment.api_contracts import ApifyProjection, SourcePath
 from tank.deployment.contracts import HistoricalRelease, SourceRelease
@@ -58,12 +59,31 @@ class PackageRequest(DomainModel):
     publisher: PublisherArtifactRuntime
 
 
+def require_actor_source(bundle: SourceBundle) -> None:
+    required = {
+        "main.py",
+        "direct_fetch.py",
+        "public_profile.py",
+        "requirements.txt",
+        "Dockerfile",
+        ".actor/actor.json",
+    }
+    if not required <= bundle.files.keys():
+        raise ValueError("Worker source incomplete")
+    if "tank-release.json" in bundle.files:
+        raise ValueError("Reserved release marker in worker source")
+    definition = bundle.files[".actor/actor.json"]
+    decode_unique_json(definition)
+    ActorDefinition.model_validate_json(definition)
+
+
 class SourceArtifact(DomainModel):
     release: SourceRelease
     bundle: SourceBundle
 
     @model_validator(mode="after")
     def bind_source(self) -> Self:
+        require_actor_source(self.bundle)
         if self.bundle.digest() != self.release.source_digest:
             raise ValueError("Selected source bytes do not match release provenance")
         return self
