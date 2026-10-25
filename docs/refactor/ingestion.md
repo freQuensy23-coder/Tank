@@ -913,6 +913,22 @@ bytes remain attached to the respective post observations.
 All 20 X adapter cases pass with zero skips, including both new boundary/baseline
 cases; source and tests pass strict typing and Ruff. This is independent of the
 unactivated pending checkpoint/quarantine work.
+## Reserved decision-watch caller companion
+
+The Telegram followup watch lifecycle test now calls the typed
+DecisionWatchCommand API with a validated WatchCondition and the actual arming
+producer's GenerationProvenance projection. It no longer constructs EventToolService
+through object.__new__ or supplies a fake settings bag. The fixture owns real
+market/truth/scheduler services, a configured budget engine and live page-access
+port, and drains them on exit. No financial assessment or MTA record is invented.
+
+prepared_condition_ids=None is explicit because this standalone agent-owned
+monitor has no rendered decision-card subset. The test verifies that a command
+with no new decision proposals does not cancel the existing AGENT rule, that
+invalid metrics still refuse, and that explicit disarm persists cancellation.
+All 81 Telegram followup unit cases pass with zero skips. This companion is based
+on the held card/decision activation 3a3d077a and must be integrated with that
+cohort rather than independently activating its breaking interface.
 
 ## Atomic instrument snapshot and pending capture
 
@@ -1153,3 +1169,23 @@ Exact retained optionality: OKX spot ctType may be absent or the actual empty no
 `instruments.differs` always compares actual identities/status and compares optional base/quote/contract facts only when both observations contain nonempty known values. New metadata availability is enrichment, not proof that an instrument changed; known-to-known metadata changes still produce transitions. Tests retain the genuine null prior facts in the emitted before-evidence. Associative maps are only provider-key/symbol indexes; `snapshot.root.get(symbol)` distinguishes actual added/removed membership. Projection dictionaries and synthetic row payload dictionaries are explicit external wire boundaries; internal normalized records are strict named models.
 
 All 371 focused source cases pass in 10.05 seconds, with zero skips; the six adapter/comparison/row/envelope/scope/durability strict targets pass. This includes required-field omission/null/type/blank controls, actual SourceService no-baseline-advance checks across all nine surfaces, optional-field controls, known/unknown metadata behavior, category mismatch, duplicate raw JSON and retained raw bytes. One new ETag assertion initially expected the previous committed tag; inspection confirmed the existing acquisition-error policy deliberately clears conditional headers. The corrected behavior test asserts the failed tag is not committed, the next request is fresh, the existing item/raw bytes survive unchanged, and a later valid empty catalog produces exactly one removal. This candidate still requires the full pinned owned unit/actual PostgreSQL/E2E cohort and any quality-owned synthetic fixture companion before activation; no global completion is claimed.
+
+### Explicit actor direct dependency and new-module image proof
+
+Actor branch normally joins quality's direct declaration companion `128cd221031d3df921a05ff3541e8a527c1fcd6a`; Pydantic 2.14.1 is now a direct member of the standalone x-reader group. The exact lock digest is `54a3cc4118b6601fcfd7d6e3452b61eab70c220a783b9448d26342901b6b3a86`; the frozen actor requirements remain byte-identical at `4c60a4a1fa0486de1b7b727673afed3db00dc6087fb204a442d5c7311e3be421`. Quality separately proves unchanged dependency identities and environment fingerprint, without an environment sync.
+
+New immutable application/dependency head `21aa740f9623b4c483a9a3d3cf1215d072405d06` built image `tank-x-reader-codex:21aa740f`, exact image ID `sha256:128e864fb89c4c2f0b30cac9df2078cf6c563b103d858170026507a984a9636a`. Offline containers with `--network none` imported all four modules, including the actual `/app/actor_contracts.py`, and verified Python 3.13.13 plus all four direct versions. Actual request normalization, boolean-concurrency refusal and diagnostic retained-body/digest roundtrip model probes passed; `pip check` reported no broken requirements. Source HEAD and tracked tree were unchanged throughout. Evidence `.refactor-evidence/actor-domain-image.log`. Actor.main, live jobs, cloud/X requests and deployment were never invoked. This is a new image proof rather than reuse of the old image identity; the paired tracked-source package/digest regression remains quality-owned.
+
+The stricter deadline interpretation follows [Apify's official environment-variable contract](https://docs.apify.com/actors/development/programming-interface/environment-variables): ACTOR_TIMEOUT_AT is the timeout date, and date variables use timezone-bearing UTC ISO 8601. Its genuine absence still uses the explicitly documented local safety cap; present malformed or naive input does not acquire invented timezone authority.
+
+
+### Four typed policy/card caller repairs on current parent
+
+The bounded caller companion starts from parent f7b6f3a7 and touches only the two generated-condition Scheduler cases and the two parameterized Ops delivery-receipt cases (plus their shared helper/imports). The actual DecisionEngine is constructed without the retired Settings argument; EventToolService still performs real decision materialization/persistence and generates the actual watch rules. The helper now exposes validated WatchCondition records, and the tests inspect real typed counters and emitted ConditionFiredMessage jobs. Both closed nonoverlapping hour boundaries, duplicate-hour suppression, one fired message and next-minute fatal behavior remain asserted.
+
+The receipt cases remove the retired alert_gate/compose_card monkeypatches entirely. They run the real typed publication policy and real pending PARTIAL card renderer with an explicitly authored synthetic STRUCTURAL_SHOCK criterion and seven declared unassessed dimensions. No beneficiary, decision or market-truth record is fabricated. They validate the actual PublicationReceipt, require the real INITIAL gate and pending-analysis text, and retain queued-before-send, no premature SENT, success idempotency, five failed delivery attempts and exactly one terminal outcome assertions. Synthetic Telegram success/error envelopes now declare their actual test receipt date/error fields.
+
+All four assigned cases pass in 3.46 seconds; both complete owned unit files pass all 79 cases in 4.61 seconds, zero skips. Broader Scheduler/Telegram/Ops test typing remains open: running default mypy on these historical files exposes existing module-wide issues, so this companion does not add them to a completed strict family or claim those diagnostics are closed. No production fallback, facade, policy bypass or source change was introduced. The held instrument-row candidate remains separately preserved as 9baf9050 pending its actual cohort and observed-kind/acquisition-scope review.
+
+
+Pinned caller head `b1222a0f39c1ddc8945eedb1e2d733c8ebbef546` passed both full files again: 79 units in 3.76 seconds and their complete collected actual PostgreSQL case in 2.95 seconds, zero skips. Tracked HEAD/source stayed unchanged. Evidence prefix `.refactor-evidence/typed-card-callers-b122`; no unrelated actual case or broader typing gate is relabelled by this bounded repair.

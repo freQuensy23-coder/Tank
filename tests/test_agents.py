@@ -520,6 +520,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from tank.analysis import cards
+    from tank.analysis.card_contracts import CardInputs
     from tank.analysis.decisions import DecisionEngine
     from tank.event_tools import EventToolService
     from tank.settings import Settings
@@ -530,7 +531,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
         repo,
         opts,
         None,
-        DecisionEngine(opts),
+        DecisionEngine(),
         versions=declared_versions_fixture(),
         scheduler=RecordingReactionScheduling(),
         pages=LivePageAccess(fixture_http_admission()),
@@ -545,7 +546,9 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
             "certainty": "HIGH",
             "event_state": "DEPLOYED",
             "state_verified": True,
-            "lifecycle": "ALERTED",
+            "lifecycle": "MONITORING",
+            "next_milestone": None,
+            "contradictions": [],
             "current_ems_id": "ems",
             "public_at": now,
             "known_to_us_at": now,
@@ -561,6 +564,9 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
             "ems_id": "ems",
             "event_id": "evt_1",
             "class": "MAJOR",
+            "criterion": "A deployed product announcement is the recorded synthetic major event.",
+            "impact_horizon": {"impact_start": "UNKNOWN"},
+            "all_dependencies_within_24h": None,
             "dims": {
                 key: {"value": None, "reason": "NO_ESTIMATE"}
                 for key in (
@@ -576,7 +582,25 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
         },
     )
     await repo.put(
-        "evt.beneficiary_maps", "map", {"event_id": "evt_1", "map_version": 1, "analysis_set": ["world:WLD"]}
+        "evt.beneficiary_maps",
+        "map",
+        {
+            "event_id": "evt_1",
+            "map_version": 1,
+            "analysis_set": ["world:WLD"],
+            "least_repriced_edge": None,
+            "no_credible_secondary_reason": "The synthetic announcement names only the product issuer.",
+            "layers": {
+                "ISSUER_PRODUCT": {"note": "Only the named product issuer is identified."},
+                "VENUE_DEX": {"note": "The announcement identifies no venue relationship."},
+                "SETTLEMENT_L1_L2": {"note": "The announcement identifies no settlement relationship."},
+                "LIQUIDITY_EXECUTION": {"note": "The announcement identifies no liquidity relationship."},
+                "LENDING_COLLATERAL": {"note": "The announcement identifies no lending relationship."},
+                "ORACLE_DATA": {"note": "The announcement identifies no oracle relationship."},
+                "INTEROPERABILITY": {"note": "The announcement identifies no interoperability relationship."},
+                "CUSTODY_COMPLIANCE": {"note": "The announcement identifies no custody relationship."},
+            },
+        },
     )
     await repo.put(
         "evt.beneficiary_edges",
@@ -588,6 +612,12 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
             "role": "PRIMARY",
             "credible": True,
             "tradable": True,
+            "capture_class": "UNKNOWN",
+            "exposure_score": None,
+            "thesis_link_credible": None,
+            "evidence": [],
+            "layer": "ISSUER_PRODUCT",
+            "causal_chain": "The announced product belongs to the named issuer.",
             "map_version": 1,
         },
     )
@@ -599,13 +629,54 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
             "event_id": "evt_1",
             "token_id": "world:WLD",
             "cutoff": now,
-            "data_confidence": {"class": "LOW"},
+            "data_confidence": {"class": "LOW", "limiting": None},
+            "decisive_facts": [],
+            "class_confidence": "LOW",
+            "move_class": "UNKNOWN",
+            "primary_window": "EVENT",
+            "relative": {
+                "repricing_band": None,
+                "market_context": None,
+                "entry_ref_price": None,
+                "anchor": {"ref_price": None},
+                "windows": {"EVENT": {"r_raw": None, "r_btc_adj": None}},
+                "context_inputs": {"return_normal_range": None, "btc_return_24h": None},
+            },
+            "liquidity": {"window": "EVENT", "start": None, "cutoff": now, "reason": "INCOMPLETE"},
+            "spot": {
+                "EVENT": {
+                    "window": "EVENT",
+                    "direction": None,
+                    "classification": None,
+                    "exact_majority": {"sell": None},
+                    "coverage": {"n_complete": None, "excluded": []},
+                    "venues": [],
+                }
+            },
+            "derivatives": {
+                "window": "W4H",
+                "synchronized": None,
+                "per_venue": [],
+                "windows": {"W4H": {"synchronized": None, "per_venue": []}},
+            },
+            "supply": {"holders_revenue": {"protocols": []}},
+            "divergence": {"state": "UNKNOWN", "unresolved": []},
+            "alternatives": [],
         },
     )
     await repo.put(
         "ana.calls",
         "call",
-        {"call_id": "call", "event_id": "evt_1", "token_id": "world:WLD", "status": "OPEN", "opened_at": now},
+        {
+            "call_id": "call",
+            "event_id": "evt_1",
+            "token_id": "world:WLD",
+            "status": "OPEN",
+            "opened_at": now,
+            "opened_at_prec": "COLLECTION_ONLY",
+            "opened_at_prec_reason": None,
+            "invalidation_price": "0.9",
+        },
     )
     await repo.put(
         "ingest.source_items",
@@ -637,9 +708,10 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
     ) as http:
         service = SessionService(repo, opts, tools.dispatch, http=http, versions=declared_versions_fixture())
 
-        monkeypatch.setattr(
-            cards, "compose_card", lambda *a, **k: "Original product card" + "\n" + score_summary(a[1])
-        )
+        def original_card(inputs: CardInputs) -> str:
+            return "Original product card" + "\n" + score_summary(inputs.assessment.scores)
+
+        monkeypatch.setattr(cards, "compose_card", original_card)
         await service.process_event(
             "ses_1",
             {
@@ -709,9 +781,11 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
         )
         decision = (await repo.get("ops.tool_calls", "ses_1:decision_exit"))["result"]
         assert decision["action"] == "EXIT"
-        monkeypatch.setattr(
-            cards, "compose_card", lambda *a, **k: "EXIT: Official cancellation" + "\n" + score_summary(a[1])
-        )
+
+        def exit_card(inputs: CardInputs) -> str:
+            return "EXIT: Official cancellation" + "\n" + score_summary(inputs.assessment.scores)
+
+        monkeypatch.setattr(cards, "compose_card", exit_card)
         await service.process_event(
             "ses_1",
             {

@@ -569,6 +569,22 @@ The last callback-origin fallback is removed. record_event and implicit get_item
 
 Two actual native tool lifecycle regressions exercise record_event and get_item under a source-less callback: both are recorded REFUSED and acknowledged without dispatch; an explicit get_item-by-ID then succeeds through the same service, and the source document remains unchanged. This follows the published get_item schema, whose omitted ID means incoming source. All 350 owned context/agent/session unit cases pass in 17.19 seconds and all 43 actual native/Memory/PostgreSQL cases pass in 18.71 seconds, zero skips. Five context source/test targets pass independent strict checks; the existing broader SessionService test module still awaits its actual source-method migration. No deadline or schema was loosened.
 
+## Parameterless decision composition companion
+
+The runtime factory and the slow-denial lifecycle fixture construct the pure
+DecisionEngine without Settings. The fixture declares only the narrow open-call
+facts consumed by DecisionCallContext, together with its synthetic issuer mapping
+and explicitly unavailable market observations. Its exposure remains null;
+publication uses the canonical nullable ordering repair rather than inventing
+a numerical estimate. Existing publication, denial, EXIT, delivery and archival
+assertions are unchanged. This companion adds no production fallback or dictionary
+exception and does not claim completion of SessionService or native transport.
+
+The combined owner prefix passes 388 unit/ranking cases and 78 actual integration
+cases with zero skips. Ruff and formatting pass for both changed Python files;
+configured mypy passes runtime_composition.py. Whole legacy test_agents.py and
+SessionService are not signed off as independent strict targets here. The broader
+card/decision cohort remains subject to its owning workstream's final qualification.
 
 ### Typed session admission and authoritative scoped references
 

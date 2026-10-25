@@ -27,7 +27,7 @@ from typing import Literal, Protocol, Self, overload
 from psycopg import AsyncConnection, sql
 from psycopg.abc import PQGen
 from psycopg_pool import AsyncConnectionPool
-from pydantic import JsonValue
+from pydantic import Field, JsonValue, field_validator, model_validator
 
 from tank.clickhouse_market import ClickHouse
 from tank.contracts import DomainModel
@@ -60,7 +60,17 @@ from tank.retention import (
     protected_windows,
 )
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
-from tank.util import JsonInput, TimeInput, iso, jsonable, new_id, parse_iso_time, parse_time, utcnow
+from tank.util import (
+    JsonInput,
+    TimeInput,
+    canonical_json,
+    iso,
+    jsonable,
+    new_id,
+    parse_iso_time,
+    parse_time,
+    utcnow,
+)
 
 
 class TaskOwner(Protocol):
@@ -93,6 +103,74 @@ class ImmutableDocument(DomainModel):
 
 class ImmutableRecordError(ValueError):
     pass
+
+
+class DecisionHeadStorageProjection(DomainModel):
+    """Mechanical persistence fields; the application owns the complete decision/writer schema."""
+
+    event_id: str = Field(min_length=1, pattern=r"\S")
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    dec_id: str = Field(min_length=1, pattern=r"\S")
+    revision: int = Field(gt=0, le=9223372036854775807)
+    previous_head_dec_id: str | None = Field(min_length=1, pattern=r"\S")
+    recorded_at: str
+    recorded_at_prec: Literal["COLLECTION_ONLY"]
+    recorded_at_prec_reason: None
+    dec_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("recorded_at")
+    @classmethod
+    def actual_write_clock(cls, value: str) -> str:
+        parse_iso_time(value)
+        return value
+
+    @model_validator(mode="after")
+    def actual_prior_head(self) -> Self:
+        if (self.revision == 1) != (self.previous_head_dec_id is None):
+            raise ValueError("Decision state head requires its actual prior indexed decision")
+        return self
+
+
+_DECISION_HEAD_FIELDS = (
+    "event_id",
+    "token_id",
+    "dec_id",
+    "revision",
+    "previous_head_dec_id",
+    "recorded_at",
+    "recorded_at_prec",
+    "recorded_at_prec_reason",
+    "dec_sha256",
+)
+
+
+def _decision_head_projection(document: Record) -> DecisionHeadStorageProjection:
+    required = {*_DECISION_HEAD_FIELDS, "writer"}
+    missing = required - document.keys()
+    if missing:
+        raise ValueError("Decision state head is missing required fields: " + ", ".join(sorted(missing)))
+    if not isinstance(document["writer"], dict):
+        raise ValueError("Decision state head writer must be a JSON object")
+    return DecisionHeadStorageProjection.model_validate(
+        {field: document[field] for field in _DECISION_HEAD_FIELDS}
+    )
+
+
+def _validate_decision_head_write(key: str, document: Record, previous: Record | None) -> None:
+    head = _decision_head_projection(document)
+    if key != canonical_json((head.event_id, head.token_id)):
+        raise ValueError("Decision state head requires its canonical event/token storage key")
+    if previous is None:
+        if head.revision != 1:
+            raise ValueError("Decision state head must start at revision 1")
+        return
+    prior = _decision_head_projection(previous)
+    if head.event_id != prior.event_id or head.token_id != prior.token_id:
+        raise ValueError("Decision state head scope is immutable")
+    if document == previous:
+        return
+    if head.revision != prior.revision + 1 or head.previous_head_dec_id != prior.dec_id:
+        raise ValueError("Decision state head revision conflict")
 
 
 type Records = list[Record]
@@ -901,6 +979,10 @@ class MemoryRepository(QueueMixin):
         JsonDocument.validate_value(document)
         async with self.transaction():
             old = self._data.get(collection, {}).get(key)
+            if collection == "ana.decision_state_heads":
+                if immutable:
+                    raise ValueError("Decision state heads require mutable storage")
+                _validate_decision_head_write(key, document, old)
             if old is not None and (
                 (collection, key) in self._immutable or collection in APPEND_ONLY or immutable
             ):
@@ -943,6 +1025,8 @@ class MemoryRepository(QueueMixin):
 
     async def delete(self, collection: str, key: str) -> None:
         _table(collection)
+        if collection == "ana.decision_state_heads":
+            raise ValueError("Decision state heads cannot be deleted")
         async with self.transaction():
             if collection in APPEND_ONLY or (collection, str(key)) in self._immutable:
                 raise ImmutableRecordError(f"Immutable record: {collection}/{key}")
@@ -1427,6 +1511,10 @@ class PostgresRepository(QueueMixin):
                 )
             ).fetchone()
             previous = None if old is None else ImmutableDocument.model_validate(old)
+            if collection == "ana.decision_state_heads":
+                if immutable:
+                    raise ValueError("Decision state heads require mutable storage")
+                _validate_decision_head_write(key, document, None if previous is None else previous.document)
             if previous is not None and (previous.immutable or immutable or collection in APPEND_ONLY):
                 if previous.document != document:
                     raise ImmutableRecordError(f"Immutable record: {collection}/{key}")
@@ -1532,6 +1620,8 @@ class PostgresRepository(QueueMixin):
         from psycopg import sql
 
         _table(collection)
+        if collection == "ana.decision_state_heads":
+            raise ValueError("Decision state heads cannot be deleted")
         if collection in MARKET_COLUMNS:
             from tank import clickhouse_market as chm
 
