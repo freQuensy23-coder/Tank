@@ -255,3 +255,25 @@ def test_skill_upload_holds_exactly_the_baked_files(tmp_path: Path, name) -> Non
     )
     assert sorted(paths) == expected
     assert "SKILL.md" in paths
+
+
+@pytest.mark.parametrize("defect", ["missing_limit", "boolean_price", "missing_model_price", "unknown_field"])
+async def test_invalid_complete_configuration_fails_before_any_openma_request(
+    tmp_path: Path, defect: str
+) -> None:
+    original = settings_for(ROOT / "config", tmp_path)
+    fake = FakeOpenMA(original)
+    config_dir = copied_config(tmp_path)
+    document = yaml.safe_load((config_dir / "openma.yaml").read_text())
+    if defect == "missing_limit":
+        del document["max_running_sessions"]
+    elif defect == "boolean_price":
+        document["model_prices"][document["model_id"]]["input_per_million"] = True
+    elif defect == "missing_model_price":
+        document["model_prices"] = {}
+    else:
+        document["allow_unknown_tool_defaults"] = True
+    (config_dir / "openma.yaml").write_text(yaml.safe_dump(document))
+    with pytest.raises(ValueError):
+        await run(settings_for(config_dir, tmp_path), fake)
+    assert fake.requests == []
