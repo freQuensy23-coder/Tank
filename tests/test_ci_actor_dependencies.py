@@ -1,5 +1,7 @@
 import re
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -66,3 +68,44 @@ def test_actor_export_refuses_wrong_uv_before_project_access(tmp_path: Path) -> 
     with pytest.raises(ActorDependencyError, match="requires uv 0.11.7"):
         frozen_actor_requirements(project, executable)
     assert list(project.iterdir()) == []
+
+
+def test_transitive_pydantic_cannot_replace_declared_actor_runtime_dependency(tmp_path: Path) -> None:
+    project = copied_project(tmp_path)
+    specification = project / "pyproject.toml"
+    specification.write_text(specification.read_text().replace(', "pydantic==2.14.1"', "", 1))
+    lock = project / "uv.lock"
+    lock.write_text(
+        lock.read_text()
+        .replace(
+            '    { name = "httpx" },\n    { name = "pydantic" },\n]\n\n[package.metadata]',
+            '    { name = "httpx" },\n]\n\n[package.metadata]',
+            1,
+        )
+        .replace('    { name = "pydantic", specifier = "==2.14.1" },\n', "", 1)
+    )
+    uv = locate_uv()
+    subprocess.run(
+        [str(uv), "lock", "--offline", "--check", "--python", sys.executable],
+        cwd=project,
+        capture_output=True,
+        check=True,
+    )
+    exported = subprocess.check_output(
+        [
+            str(uv),
+            "export",
+            "--offline",
+            "--frozen",
+            "--only-group",
+            "x-reader",
+            "--no-emit-project",
+            "--no-header",
+            "--no-annotate",
+        ],
+        cwd=project,
+    )
+    assert b"pydantic==2.14.1" in exported
+    with pytest.raises(ActorDependencyError, match="direct runtime dependency"):
+        frozen_actor_requirements(project, uv)
+    assert not (project / ".venv").exists()
