@@ -3448,14 +3448,22 @@ async def test_assessment_defers_reaction_ownership_to_scheduler_after_commit(se
 
 
 async def test_assessment_dispatch_creates_real_reaction_jobs(tmp_path: Path) -> None:
+    from contextlib import AsyncExitStack
+
     from scheduler_support import operational_reaction_services
+    from source_support import fixture_request_budgets
 
     from tank.analysis.decisions import DecisionEngine
 
     repo = MemoryRepository()
     await repo.open()
     settings = Settings(data_dir=tmp_path, _env_file=None)
-    async with operational_reaction_services(repo, settings, versions=fixture_versions()) as services:
+    async with AsyncExitStack() as resources:
+        budgets = fixture_request_budgets()
+        resources.push_async_callback(budgets.shutdown)
+        services = await resources.enter_async_context(
+            operational_reaction_services(repo, settings, versions=fixture_versions(), budgets=budgets)
+        )
         tools = EventToolService(
             repo,
             settings,
@@ -3463,7 +3471,7 @@ async def test_assessment_dispatch_creates_real_reaction_jobs(tmp_path: Path) ->
             DecisionEngine(settings),
             versions=fixture_versions(),
             scheduler=services.scheduler,
-            pages=LivePageAccess(fixture_http_admission()),
+            pages=LivePageAccess(services.admission),
         )
         created, _, _ = await seed_economic_event(tools, negative_relation=False)
         jobs = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
@@ -3481,6 +3489,7 @@ async def test_assessment_dispatch_creates_real_reaction_jobs(tmp_path: Path) ->
         assert all(job["payload"]["retro"] is False for job in jobs)
     assert services.scheduler.closing and not services.scheduler.background
     assert services.market.http.is_closed
+    assert budgets.backend.closed
     await repo.close()
 
 
