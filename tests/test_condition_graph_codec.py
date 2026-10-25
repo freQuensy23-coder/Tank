@@ -1,6 +1,7 @@
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Literal
 
 import pytest
 from pydantic import JsonValue, ValidationError
@@ -14,6 +15,9 @@ from tank.analysis.condition_graph_codec import (
 from tank.analysis.condition_graph_contracts import (
     BasicConditionDerivatives,
     ConditionFlowAggregateProjection,
+    ConditionSizeProfile,
+    ConditionWireClocks,
+    EnrichedConditionSpot,
     FlowAggregateEvidenceRef,
     IncompleteConditionTradeCounts,
 )
@@ -634,3 +638,220 @@ def test_incremental_wire_preserves_observed_zero_side_and_unknown_total_separat
         and zero_wire["incremental_share_reason"] == "ZERO_TOTAL_VOLUME"
     )
     assert zero_wire["incremental_volume_usd"] == {"spot": "0", "perp": "0"}
+
+
+def condition_wire_clocks() -> ConditionWireClocks:
+    from tank.analysis.condition_graph_contracts import ConditionWireClocks
+    from tank.time_precision import Timestamp
+
+    return ConditionWireClocks(
+        token_id="T",
+        cutoff=Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY", precision_reason=None),
+        event_anchor=Timestamp(value=None, precision=None, precision_reason="NOT_CAPTURED"),
+    )
+
+
+def test_windowed_spot_wire_preserves_actual_clock_precision_without_inventing_a_bucket() -> None:
+    from test_condition_graph_contracts import windowed_spot_graph
+
+    from tank.analysis.condition_graph_codec import encode_scoped_condition_spot
+    from tank.analysis.condition_graph_contracts import WindowedConditionSpot
+    from tank.time_precision import Timestamp
+
+    base = windowed_spot_graph()
+    unknown = Timestamp(value="2026-10-17T12:00:00Z", precision=None, precision_reason="NOT_CAPTURED")
+    model = WindowedConditionSpot.model_validate(base.model_copy(update={"coverage_through": unknown}))
+    lookup = EvidenceLookup(projection())
+    wire = encode_scoped_condition_spot(model, lookup, clocks=condition_wire_clocks())
+    assert lookup.calls == 0
+    assert wire["window"] == "W1H" and wire["start"] == "2026-10-17T11:00:00Z"
+    assert wire["start_prec"] == "COLLECTION_ONLY" and wire["start_origin"] == "CUTOFF_OFFSET"
+    assert wire["cutoff_prec"] == "COLLECTION_ONLY"
+    assert wire["observed_at"] == "2026-10-17T12:00:00Z" and wire["observed_at_prec"] is None
+    assert wire["observed_at_prec_reason"] == "NOT_CAPTURED" and wire["precision"] is None
+    assert wire["composite_cohort"] is None and wire["composite_cohort_reason"] == "NOT_COHORT_CONSISTENT"
+    assert wire["size_profile_status"] == "NOT_REQUESTED"
+    with pytest.raises(ValueError, match="subject"):
+        encode_scoped_condition_spot(
+            model, lookup, clocks=condition_wire_clocks().model_copy(update={"token_id": "OTHER"})
+        )
+    wrong = condition_wire_clocks().model_copy(
+        update={
+            "cutoff": Timestamp(value="2026-10-17T13:00:00Z", precision=None, precision_reason="NOT_CAPTURED")
+        }
+    )
+    with pytest.raises(ValueError, match="cutoff metadata"):
+        encode_scoped_condition_spot(model, lookup, clocks=wrong)
+
+
+def test_event_wire_clock_uses_actual_anchor_or_explicit_derived_origin() -> None:
+    from test_condition_graph_contracts import AT
+
+    from tank.analysis.condition_graph_contracts import ConditionInterval, ConditionWireClocks
+    from tank.time_precision import Timestamp
+
+    interval = ConditionInterval(window="EVENT", start=AT - timedelta(hours=1), cutoff=AT)
+    context = condition_wire_clocks()
+    derived = context.bounds(interval)
+    assert derived.start_origin == "CUTOFF_OFFSET"
+    anchor = Timestamp(
+        value="2026-10-17T11:00:00Z", precision=None, precision_reason="ANCHOR_PRECISION_NOT_CAPTURED"
+    )
+    captured = ConditionWireClocks.model_validate(context.model_copy(update={"event_anchor": anchor}))
+    bounds = captured.bounds(interval)
+    assert bounds.start_origin == "CAPTURED_EVENT_ANCHOR" and bounds.start == anchor
+    assert bounds.start.precision is None and bounds.start.precision_reason == "ANCHOR_PRECISION_NOT_CAPTURED"
+    with pytest.raises(ValueError, match="captured event anchor"):
+        captured.bounds(ConditionInterval(window="EVENT", start=AT - timedelta(hours=2), cutoff=AT))
+
+
+def enriched_spot(
+    profile: ConditionSizeProfile, role: Literal["PRIMARY", "OTHER_WINDOW"]
+) -> EnrichedConditionSpot:
+    from test_condition_graph_contracts import windowed_spot_graph
+
+    from tank.analysis.condition_graph_contracts import (
+        ConditionCohortComparison,
+        ConditionWindow,
+        EnrichedConditionSpot,
+        UnavailableConditionCohortComparison,
+    )
+
+    base = windowed_spot_graph()
+    comparisons: dict[ConditionWindow, ConditionCohortComparison] = {
+        name: UnavailableConditionCohortComparison(
+            status="UNAVAILABLE",
+            cohort=(),
+            share_of_max=None,
+            share_majority=None,
+            reason="NOT_COHORT_CONSISTENT",
+        )
+        for name in base.cohort_consistent
+    }
+    return EnrichedConditionSpot(
+        token_id=base.token_id,
+        kind="ENRICHED",
+        venues=base.venues,
+        composite_max=base.composite_max,
+        breadth=base.breadth,
+        cw_breadth=base.cw_breadth,
+        exact_majority=base.exact_majority,
+        topn=base.topn,
+        concentration=base.concentration,
+        direction=base.direction,
+        direction_reason=base.direction_reason,
+        classification=base.classification,
+        coverage=base.coverage,
+        interval=base.interval,
+        coverage_through=base.coverage_through,
+        composite_cohort=base.composite_cohort,
+        cohort_consistent=base.cohort_consistent,
+        enrichment_role=role,
+        cohort_comparisons=comparisons,
+        size_profile=profile,
+    )
+
+
+def test_enriched_spot_wire_distinguishes_observed_zero_unavailable_and_unrequested_profile() -> None:
+    from tank.analysis.condition_graph_codec import encode_scoped_condition_spot
+    from tank.analysis.condition_graph_contracts import (
+        ObservedConditionSizeProfile,
+        UnavailableConditionSizeProfile,
+        UnrequestedConditionSizeProfile,
+    )
+
+    lookup = EvidenceLookup(projection())
+    profile = ObservedConditionSizeProfile(
+        status="OBSERVED",
+        large_ticket_buy_share=1.0,
+        large_ticket_sell_share=0.0,
+        large_ticket_buy_majority=True,
+        large_tickets_minority=True,
+        large_ticket_buy_notional=Decimal(10),
+        large_ticket_sell_notional=Decimal(0),
+        sell_share_rising=None,
+        compatible_venues=("A", "B"),
+        null_reasons={"sell_share_rising": "INCOMPLETE"},
+    )
+    wire = encode_scoped_condition_spot(
+        enriched_spot(profile, "PRIMARY"), lookup, clocks=condition_wire_clocks()
+    )
+    observed = wire["size_profile"]
+    assert isinstance(observed, dict) and observed["large_ticket_sell_share"] == 0.0
+    assert observed["large_ticket_sell_notional"] == "0" and observed["sell_share_rising"] is None
+    assert observed["null_reasons"] == {"sell_share_rising": "INCOMPLETE"}
+    assert wire["size_profile_status"] == "OBSERVED"
+    unavailable = encode_scoped_condition_spot(
+        enriched_spot(
+            UnavailableConditionSizeProfile(status="UNAVAILABLE", reason="NOT_SUPPORTED"), "PRIMARY"
+        ),
+        lookup,
+        clocks=condition_wire_clocks(),
+    )
+    assert unavailable["size_profile"] is None and unavailable["size_profile_reason"] == "NOT_SUPPORTED"
+    unrequested = encode_scoped_condition_spot(
+        enriched_spot(UnrequestedConditionSizeProfile(status="NOT_REQUESTED"), "OTHER_WINDOW"),
+        lookup,
+        clocks=condition_wire_clocks(),
+    )
+    assert unrequested["size_profile"] is None and unrequested["size_profile_status"] == "NOT_REQUESTED"
+    assert "size_profile_reason" not in unrequested
+
+
+def test_enriched_spot_wire_preserves_actual_shared_cohorts_and_unknown_prior_velocity() -> None:
+    from tank.analysis.condition_graph_codec import encode_scoped_condition_spot
+    from tank.analysis.condition_graph_contracts import (
+        EnrichedConditionSpot,
+        ObservedConditionCohort,
+        ObservedConditionCohortComparison,
+        ObservedConditionComposite,
+        UnavailableConditionSizeProfile,
+    )
+
+    base = enriched_spot(
+        UnavailableConditionSizeProfile(status="UNAVAILABLE", reason="INCOMPLETE"), "PRIMARY"
+    )
+    composite = base.composite_max
+    assert isinstance(composite, ObservedConditionComposite)
+    cohort = ObservedConditionCohort(
+        status="OBSERVED",
+        cvd=composite.cvd,
+        volume=composite.volume,
+        buy_share=composite.buy_share,
+        bs_ratio=composite.bs_ratio,
+        venues=composite.venues,
+        sign=composite.sign,
+        null_reasons=composite.null_reasons,
+        cohort=composite.venues,
+        share_of_max=1.0,
+        share_majority=True,
+        velocity=None,
+        velocity_reason="INCOMPLETE",
+    )
+    comparison = ObservedConditionCohortComparison(
+        status="OBSERVED",
+        cohort=composite.venues,
+        current=composite,
+        other=composite,
+        share_of_max=1.0,
+        share_majority=True,
+    )
+    model = EnrichedConditionSpot.model_validate(
+        base.model_copy(
+            update={
+                "composite_cohort": cohort,
+                "cohort_consistent": {name: True for name in base.cohort_consistent},
+                "cohort_comparisons": {name: comparison for name in base.cohort_consistent},
+            }
+        )
+    )
+    wire = encode_scoped_condition_spot(model, EvidenceLookup(projection()), clocks=condition_wire_clocks())
+    common = wire["composite_cohort"]
+    assert isinstance(common, dict) and common["volume"] == "30" and common["cohort"] == ["A", "B"]
+    assert common["velocity"] is None and common["velocity_reason"] == "INCOMPLETE"
+    assert common["reason"] is None and "status" not in common
+    comparisons = wire["cohort_comparisons"]
+    assert isinstance(comparisons, dict) and isinstance(comparisons["W15M"], dict)
+    other = comparisons["W15M"]["other"]
+    assert isinstance(other, dict) and other["volume"] == "30" and "status" not in other
+    assert comparisons["W15M"]["reason"] is None

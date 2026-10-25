@@ -34,7 +34,7 @@ from tank.contracts.registry import FundamentalsEvidence, LendingPool
 from tank.contracts.scalars import TrueFlag, require_integer, require_number
 from tank.market.book_contracts import BookLevel
 from tank.market.trade_contracts import QuoteUsdValuation
-from tank.time_precision import Timestamp
+from tank.time_precision import Timestamp, offset_schedule
 from tank.util import parse_epoch, parse_iso_time
 
 type ConditionConfidenceLevel = Literal["LOW", "MEDIUM", "HIGH"]
@@ -6918,4 +6918,50 @@ class SelectiveConditionValues(DomainModel):
             isinstance(self.relative.repricing.band(), ObservedConditionRepricingBand)
             if metric == "price.repricing_band"
             else self.relative.windows["EVENT"].raw.value is not None
+        )
+
+
+class ConditionIntervalWireClocks(DomainModel):
+    start: Timestamp
+    cutoff: Timestamp
+    start_origin: Literal["CAPTURED_EVENT_ANCHOR", "CUTOFF_OFFSET"]
+
+    @model_validator(mode="after")
+    def actual_interval_bounds(self) -> Self:
+        if self.start.value is None or self.cutoff.value is None:
+            raise ValueError("Serialized interval boundaries require their actual logical values")
+        if parse_iso_time(self.start.value) >= parse_iso_time(self.cutoff.value):
+            raise ValueError("Serialized interval boundaries require a forward interval")
+        return self
+
+
+class ConditionWireClocks(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    cutoff: Timestamp
+    event_anchor: Timestamp
+
+    @model_validator(mode="after")
+    def actual_cutoff_value(self) -> Self:
+        if self.cutoff.value is None:
+            raise ValueError("Condition wire clocks require the actual captured cutoff")
+        return self
+
+    def bounds(self, interval: ConditionInterval) -> ConditionIntervalWireClocks:
+        validated = type(self).model_validate(self)
+        scope = ConditionInterval.model_validate(interval)
+        if validated.cutoff.value is None or parse_iso_time(validated.cutoff.value) != scope.cutoff:
+            raise ValueError("Wire cutoff metadata must match the actual calculation cutoff")
+        anchor = validated.event_anchor
+        if scope.window == "EVENT" and anchor.value is not None:
+            if parse_iso_time(anchor.value) != scope.start:
+                raise ValueError("EVENT start metadata must match the actual captured event anchor")
+            return ConditionIntervalWireClocks(
+                start=anchor,
+                cutoff=validated.cutoff,
+                start_origin="CAPTURED_EVENT_ANCHOR",
+            )
+        return ConditionIntervalWireClocks(
+            start=offset_schedule(validated.cutoff, scope.start - scope.cutoff),
+            cutoff=validated.cutoff,
+            start_origin="CUTOFF_OFFSET",
         )

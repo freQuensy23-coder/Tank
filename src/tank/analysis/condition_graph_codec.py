@@ -29,16 +29,24 @@ from tank.analysis.condition_graph_contracts import (
     ConditionObservedPredicate,
     ConditionOpenInterest,
     ConditionPredicate,
+    ConditionSpotValues,
     ConditionSynchronizedOpenInterest,
+    ConditionWireClocks,
     EnrichedConditionDerivatives,
     EnrichedConditionDerivativeVenue,
+    EnrichedConditionSpot,
     FlowAggregateEvidenceRef,
     FlowCaptureEvidenceRef,
     KnownConditionTradeCount,
+    ObservedConditionCohort,
+    ObservedConditionCohortComparison,
+    ObservedConditionSizeProfile,
     UnavailableConditionLeadLag,
     UnavailableConditionOpenInterest,
+    UnavailableConditionSizeProfile,
     UnrequestedConditionFunding,
     UnrequestedConditionOpenInterest,
+    WindowedConditionSpot,
 )
 from tank.analysis.statistics_contracts import DecimalRange, FloatRange
 from tank.contracts import DomainModel
@@ -200,12 +208,28 @@ def bind_flow_capture_evidence(
     )
 
 
-def encode_basic_condition_spot(
-    value: BasicConditionSpot, evidence: ConditionFlowEvidenceLookup
+def _spot_values_wire(
+    value: ConditionSpotValues, evidence: ConditionFlowEvidenceLookup
 ) -> dict[str, JsonValue]:
-    validated = BasicConditionSpot.model_validate(value)
+    validated = type(value).model_validate(value)
     result = JsonDocument.validate_value(
-        validated.model_dump(mode="json", exclude={"kind", "token_id"}, warnings="error")
+        validated.model_dump(
+            mode="json",
+            warnings="error",
+            include={
+                "venues",
+                "composite_max",
+                "breadth",
+                "cw_breadth",
+                "exact_majority",
+                "topn",
+                "concentration",
+                "direction",
+                "direction_reason",
+                "classification",
+                "coverage",
+            },
+        )
     )
     if not isinstance(result, dict):
         raise TypeError("A basic spot result must serialize as an object")
@@ -237,6 +261,14 @@ def encode_basic_condition_spot(
         validated.composite_max.model_dump(mode="json", exclude={"status"}, warnings="error")
     )
     result["composite_max"] = composite
+    return result
+
+
+def encode_basic_condition_spot(
+    value: BasicConditionSpot, evidence: ConditionFlowEvidenceLookup
+) -> dict[str, JsonValue]:
+    validated = BasicConditionSpot.model_validate(value)
+    result = _spot_values_wire(validated, evidence)
     result["composite_cohort"] = None
     result["cohort_consistent"] = {}
     result["size_profile"] = None
@@ -575,4 +607,76 @@ def encode_condition_derivatives(value: ConditionDerivatives) -> dict[str, JsonV
             "sequence": [],
             "status": "NOT_REQUESTED",
         }
+    return result
+
+
+def encode_scoped_condition_spot(
+    value: WindowedConditionSpot | EnrichedConditionSpot,
+    evidence: ConditionFlowEvidenceLookup,
+    *,
+    clocks: ConditionWireClocks,
+) -> dict[str, JsonValue]:
+    validated = type(value).model_validate(value)
+    clock_context = ConditionWireClocks.model_validate(clocks)
+    if validated.token_id != clock_context.token_id:
+        raise ValueError("Spot serialization cannot borrow another subject's clock context")
+    bounds = clock_context.bounds(validated.interval)
+    result = _spot_values_wire(validated, evidence)
+    result.update(_clock_wire(bounds.start, "start"))
+    result.update(_clock_wire(bounds.cutoff, "cutoff"))
+    result["start_origin"] = bounds.start_origin
+    result["window"] = validated.interval.window
+    result.update(_clock_wire(validated.coverage_through, "observed_at"))
+    result["precision"] = validated.coverage_through.precision
+    cohort = validated.composite_cohort
+    if isinstance(cohort, ObservedConditionCohort):
+        cohort_wire = _model_wire(cohort)
+        del cohort_wire["status"]
+        cohort_wire["reason"] = None
+        result["composite_cohort"] = cohort_wire
+    else:
+        result["composite_cohort"] = None
+        result["composite_cohort_reason"] = cohort.reason
+    result["cohort_consistent"] = {
+        name: consistent for name, consistent in validated.cohort_consistent.items()
+    }
+    if isinstance(validated, EnrichedConditionSpot):
+        comparisons: dict[str, JsonValue] = {}
+        for name, comparison in validated.cohort_comparisons.items():
+            if isinstance(comparison, ObservedConditionCohortComparison):
+                current = _model_wire(comparison.current)
+                other = _model_wire(comparison.other)
+                del current["status"]
+                del other["status"]
+                comparisons[name] = {
+                    "cohort": list(comparison.cohort),
+                    "current": current,
+                    "other": other,
+                    "share_of_max": comparison.share_of_max,
+                    "share_majority": comparison.share_majority,
+                    "reason": None,
+                }
+            else:
+                comparisons[name] = {
+                    "cohort": list(comparison.cohort),
+                    "current": None,
+                    "other": None,
+                    "share_of_max": comparison.share_of_max,
+                    "share_majority": comparison.share_majority,
+                    "reason": comparison.reason,
+                }
+        result["cohort_comparisons"] = comparisons
+        profile = validated.size_profile
+        result["size_profile_status"] = profile.status
+        if isinstance(profile, ObservedConditionSizeProfile):
+            profile_wire = _model_wire(profile)
+            del profile_wire["status"]
+            result["size_profile"] = profile_wire
+        else:
+            result["size_profile"] = None
+            if isinstance(profile, UnavailableConditionSizeProfile):
+                result["size_profile_reason"] = profile.reason
+    else:
+        result["size_profile"] = None
+        result["size_profile_status"] = "NOT_REQUESTED"
     return result
