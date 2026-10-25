@@ -110,7 +110,9 @@ class _FixtureSettings(Settings):
 @dataclass
 class PipelineFixtureSettings:
     configurations: dict[str, dict[str, JsonValue]]
-    opencode_api_key: str | None
+    foundry_endpoint: str
+    foundry_deployment: str
+    foundry_api_key: str | None
     replay: bool
     config_version: str
     code_version: str
@@ -126,13 +128,23 @@ class PipelineFixtureSettings:
 def pipeline_settings_fixture(
     configurations: dict[str, dict[str, JsonValue]],
     *,
-    opencode_api_key: str | None = None,
+    foundry_api_key: str | None = "FAKE_FOUNDRY_KEY",
+    foundry_endpoint: str = "https://synthetic.services.ai.azure.com",
+    foundry_deployment: str = "decision-1",
     replay: bool = False,
     config_version: str = "test",
     code_version: str = "test",
 ) -> PipelineFixtureSettings:
     """Declare complete synthetic test settings without changing runtime configuration policy."""
-    return PipelineFixtureSettings(configurations, opencode_api_key, replay, config_version, code_version)
+    return PipelineFixtureSettings(
+        configurations,
+        foundry_endpoint,
+        foundry_deployment,
+        foundry_api_key,
+        replay,
+        config_version,
+        code_version,
+    )
 
 
 def declared_versions_fixture(

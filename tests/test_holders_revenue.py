@@ -5,10 +5,17 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+from card_wire_support import wire_card_inputs
 from score_fixtures import unassessed_score_dimensions
 
 from tank.analysis import cards as CARDS
 from tank.analysis import truth as TRUTH
+from tank.analysis.card_codec import (
+    card_inputs_from_records,
+    card_registry_from_record,
+    holders_revenue_from_record,
+)
+from tank.analysis.card_contracts import PublicationNarrative, PublicationPolicy
 from tank.market.supply import SupplyCapture
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -43,24 +50,50 @@ def metric(rows):
     return TRUTH.supply_truth({"supply": rows}, END, END)["holders_revenue"]
 
 
-def render(truths, tokens=None):
-    tokens = tokens or ["T"]
-    event = {
-        "statement": "A source reports a proposal.",
-        "event_state": "PROPOSED",
-        "thresholds": {"card_max_chars": 20000},
-    }
-    edges = [
-        {
-            "token_id": token,
-            "role": "PRIMARY",
-            "capture_class": "UNKNOWN",
-            "causal_chain": "No mechanism evidenced",
-        }
-        for token in tokens
-    ]
-    decisions = [{"token_id": token, "action": "WAIT"} for token in tokens]
-    return CARDS.compose_card(event, {"dims": unassessed_score_dimensions()}, edges, decisions, truths)
+def render(truths, tokens=None, *, limit=20000, narrative=None, event_statement=None):
+    tokens = (["T"] if tokens is None else tokens)[:3]
+    event, assessment, beneficiary, decision, market = wire_card_inputs()
+    event.update(statement="A source reports a proposal.", token_labels={})
+    if event_statement is not None:
+        event["statement"] = event_statement
+    assessment["dims"] = unassessed_score_dimensions()
+    edges, decisions, markets = [], [], []
+    supplied = {row["token_id"]: row for row in truths}
+    for token in tokens:
+        edges.append(
+            dict(
+                beneficiary,
+                token_id=token,
+                entity_name=None,
+                capture_class="UNKNOWN",
+                causal_chain="No mechanism evidenced",
+                mechanism_evidence=[],
+            )
+        )
+        decisions.append(dict(decision, token_id=token))
+        row = supplied[token]
+        if "move_class" in row:
+            markets.append(row)
+        else:
+            markets.append(dict(market, token_id=token, supply=row["supply"]))
+    inputs = card_inputs_from_records(
+        event,
+        assessment,
+        edges,
+        decisions,
+        markets,
+        registry=card_registry_from_record({"tokens": [{"token_id": token} for token in tokens]}),
+        narrative=PublicationNarrative(
+            kind="FULL",
+            what="A source reports a proposal.",
+            verdict="A proposal is reported.",
+            why=("The source reports a proposal", "Token capture is unverified"),
+        )
+        if narrative is None
+        else narrative,
+        policy=PublicationPolicy(card_max_chars=limit, update_rate_limit_s=900),
+    )
+    return CARDS.compose_card(inputs)
 
 
 @pytest.mark.parametrize("value", ["0", "3460000.123456789"])
@@ -257,7 +290,7 @@ def test_provider_revenue_with_unknown_capture_never_authorizes_token_capture_cl
         "market_truths": [truth],
     }
     before = deepcopy(context)
-    card = CARDS.compose_card(event, {"dims": unassessed_score_dimensions()}, edges, decisions, [truth])
+    card = render([truth])
     line = next(line for line in card.splitlines() if line.startswith("• Token capture:"))
     assert "T UNKNOWN" in line
     assert "DefiLlama reports holders revenue: adapter 123.456 USD/24h" in line
@@ -270,23 +303,7 @@ def test_compact_display_prefers_24h_preserving_30d_details_and_default_limit() 
     truths = [
         {"token_id": token, "supply": {"holders_revenue": deepcopy(observed)}} for token in ["A", "B", "C"]
     ]
-    event = {"statement": "A source reports a proposal.", "event_state": "PROPOSED"}
-    edges = [
-        {
-            "token_id": token,
-            "role": "PRIMARY",
-            "capture_class": "UNKNOWN",
-            "causal_chain": "No mechanism evidenced",
-        }
-        for token in ["A", "B", "C"]
-    ]
-    card = CARDS.compose_card(
-        event,
-        {"dims": unassessed_score_dimensions()},
-        edges,
-        [{"token_id": token, "action": "WAIT"} for token in ["A", "B", "C"]],
-        truths,
-    )
+    card = render(truths, ["A", "B", "C"], limit=3500)
     assert len(card) <= 3500
     assert card.count("123.456 USD/24h") == 3 and "8765.432" not in card
     assert observed["protocols"][0]["periods"][1]["value"] == "8765.432"
@@ -296,93 +313,7 @@ def test_compact_display_prefers_24h_preserving_30d_details_and_default_limit() 
 
 
 def ordinary_full_card_inputs():
-    event = {
-        "statement": "Approval changes access.",
-        "event_state": "APPROVED",
-        "state_verified": True,
-        "freshness": "FRESH",
-        "public_at": "2026-10-18T12:30:00Z",
-        "public_at_prec": "EXACT",
-        "known_to_us_at": "2026-10-18T12:31:00Z",
-        "known_to_us_at_prec": "EXACT",
-        "claims": [
-            {
-                "subject": "World",
-                "predicate": "approved",
-                "object": "product",
-                "accepted": True,
-                "verified": True,
-                "state_claim": "APPROVED",
-                "evidence": [{"item_id": "source-proof", "quote": "World approved product"}],
-            }
-        ],
-        "beneficiary_map": {"no_credible_secondary_reason": "No eligible dependency rail"},
-    }
-    assessment = {
-        "class": "MAJOR",
-        "criterion": "M2",
-        "certainty": "HIGH",
-        "dims": {
-            key: {"value": value}
-            for key, value in zip(
-                [
-                    "economic_directness",
-                    "magnitude",
-                    "permanence",
-                    "distribution_expansion",
-                    "mechanical_flows",
-                    "surprise",
-                    "implementation",
-                ],
-                [8, 7, 6, 5, 4, 3, 2],
-                strict=True,
-            )
-        },
-    }
-    beneficiary = {
-        "token_id": "world:WLD",
-        "entity_name": "World",
-        "role": "PRIMARY",
-        "credible": True,
-        "capture_class": "DIRECT",
-        "causal_chain": "Required token gas",
-        "mechanism_evidence": ["mechanism"],
-    }
-    decision = {
-        "token_id": "world:WLD",
-        "action": "WAIT",
-        "thesis_grade": "A",
-        "trade_grade": "B",
-        "outlook": {
-            "direction": "BULLISH",
-            "potential": "MEDIUM",
-            "best_horizon": "H4",
-            "horizon_reason": "event window",
-            "confidence": "HIGH",
-            "scenarios": {
-                "base": "Product remains available",
-                "upside": "Deployment verified",
-                "failure": "Approval reversed",
-            },
-        },
-        "conditions": [
-            {"role": "UPGRADE", "human_text": "Spot BUY persists"},
-            {"role": "DOWNGRADE", "human_text": "Spot SELL persists"},
-        ],
-    }
-    truth = {
-        "token_id": "world:WLD",
-        "cutoff": "2026-10-18T12:31:00Z",
-        "move_class": "ORGANIC_MIXED",
-        "data_confidence": {"class": "HIGH"},
-        "primary_window": "W4H",
-        "decisive_facts": [
-            {"metric": "price", "value": ".05", "unit": "DECIMAL_RETURN", "window": "W4H"},
-            {"metric": "spot.cvd", "value": "2000", "unit": "NATIVE_TOKEN", "window": "W4H"},
-        ],
-        "relative": {"repricing_band": "EARLY", "windows": {"EVENT": {"r_raw": ".03", "r_btc_adj": ".01"}}},
-    }
-    return event, assessment, beneficiary, decision, truth
+    return wire_card_inputs()
 
 
 def test_full_ordinary_three_decision_tokens_with_observed_revenue_fit_default_limit() -> None:
@@ -398,9 +329,7 @@ def test_full_ordinary_three_decision_tokens_with_observed_revenue_fit_default_l
                 supply={"holders_revenue": metric([captured({"adapter": {"total24h": "123.456"}})])},
             )
         )
-    card = CARDS.compose_card(
-        event, assessment, edges, decisions, truths, why=["The approval is confirmed", "not estimable"]
-    )
+    card = render(truths, ["A", "B", "C"], limit=3500)
     assert len(card) <= 3500
     assert card.count("123.456 USD/24h") == 3
     assert card.count("──") == 6
@@ -421,7 +350,7 @@ def test_full_ordinary_three_decision_tokens_with_observed_revenue_fit_default_l
     import pytest
 
     with pytest.raises(ValueError, match="CARD_LENGTH"):
-        CARDS.compose_card(dict(event, statement="x" * 3500), assessment, edges, decisions, truths)
+        render(truths, ["A", "B", "C"], limit=len(card) - 1)
 
 
 @pytest.mark.parametrize(
@@ -436,7 +365,7 @@ def test_full_ordinary_three_decision_tokens_with_observed_revenue_fit_default_l
 )
 def test_missing_holder_revenue_renders_bound_safe_reason(reason, label) -> None:
     frozen = {"status": "UNAVAILABLE", "protocols": [], "reason": reason}
-    text = CARDS._holders_revenue_text({"supply": {"holders_revenue": frozen}})
+    text = CARDS.holders_revenue_text(holders_revenue_from_record(frozen))
     assert text == "holders revenue: n/a (" + label + ")"
     assert "hidden" not in text and "http" not in text
     assert frozen["reason"] == reason
@@ -454,7 +383,7 @@ def test_missing_protocol_figure_renders_safe_n_a_reason(reason, label) -> None:
     row = captured({"adapter": {}})
     row["protocols"]["adapter"]["dailyHoldersRevenue"].update(available=False, reason=reason)
     frozen = metric([row])
-    text = CARDS._holders_revenue_text({"supply": {"holders_revenue": frozen}})
+    text = CARDS.holders_revenue_text(holders_revenue_from_record(frozen))
     assert "adapter n/a (" + label + ")" in text
     assert "secret" not in text
     assert frozen["protocols"][0]["reason"] == reason
@@ -462,7 +391,7 @@ def test_missing_protocol_figure_renders_safe_n_a_reason(reason, label) -> None:
 
 def test_scalar_clock_is_observation_not_provider_period_end() -> None:
     observed = metric([captured({"adapter": {"total24h": "8"}})])
-    text = CARDS._holders_revenue_text({"supply": {"holders_revenue": observed}})
+    text = CARDS.holders_revenue_text(holders_revenue_from_record(observed))
     assert "8 USD/24h" in text and "observed 2026-10-19 12:00Z" in text
     assert "as of" not in text and "as-of" not in text and "receipt" not in text
 

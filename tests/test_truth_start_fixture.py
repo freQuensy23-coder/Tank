@@ -1,7 +1,7 @@
 """Synthetic deterministic evidence generator for the positive START integration path."""
 
 from copy import deepcopy
-from datetime import timedelta
+from datetime import datetime, timedelta
 from functools import lru_cache
 from math import sin
 
@@ -11,10 +11,14 @@ from source_support import fixture_versions
 from tank.analysis.truth import compute_market_truth
 from tank.util import iso, parse_time
 
+SYNTHETIC_END = parse_time("2026-10-16T12:00:00Z")
 
-def synthetic_start_snapshot():
-    end = parse_time("2026-10-16T12:00:00Z")
-    anchor = end - timedelta(hours=4)
+
+def synthetic_start_snapshot(*, end: datetime = SYNTHETIC_END, event_window_h: int = 4):
+    if event_window_h <= 0:
+        raise ValueError("An authored event window must be positive")
+    event_minutes = event_window_h * 60
+    anchor = end - timedelta(hours=event_window_h)
     snap = {
         "token_id": "T",
         "event_id": "EVT-SYNTHETIC",
@@ -88,9 +92,9 @@ def synthetic_start_snapshot():
                     "low": 99,
                 }
             )
-        for minute in range(240):
+        for minute in range(event_minutes):
             t = anchor + timedelta(minutes=minute)
-            p = 100 * (1 + 0.011 * (minute + 1) / 240)
+            p = 100 * (1 + 0.011 * (minute + 1) / event_minutes)
             snap["klines"].append(
                 {
                     "instrument_id": iid,
@@ -137,7 +141,7 @@ def synthetic_start_snapshot():
                 "complete": True,
             }
         )
-    for minute in range(240):
+    for minute in range(event_minutes):
         snap["klines"].append(
             {
                 "instrument_id": btc,
@@ -169,7 +173,7 @@ def synthetic_start_snapshot():
                 "aggregation_class": "oi_native_single_sided",
             }
         )
-    for minute in range(-8 * 1440 - 240, 1, 5):
+    for minute in range(-8 * 1440 - event_minutes, 1, 5):
         t = end + timedelta(minutes=minute)
         snap["oi"].append(
             {

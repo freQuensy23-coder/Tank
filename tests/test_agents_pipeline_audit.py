@@ -24,7 +24,9 @@ def options():
     }
     return SimpleNamespace(
         load_config=config.__getitem__,
-        opencode_api_key=None,
+        foundry_api_key="FAKE_FOUNDRY_KEY",
+        foundry_endpoint="https://synthetic.services.ai.azure.com",
+        foundry_deployment="decision-1",
         replay=False,
         ops_progress_enabled=False,
         thresholds=lambda: (
@@ -197,7 +199,7 @@ async def test_pending_extraction_is_not_a_candidate_then_real_event_is_scored(s
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13-free",
+                "model": "microsoft-decision-1",
                 "usage": {},
                 "answers": {"same_event": {"type": "noul", "noul": same}},
             },
@@ -331,7 +333,7 @@ async def test_official_repost_promotion_during_filter_request_preserves_latest_
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13-free",
+                "model": "microsoft-decision-1",
                 "usage": {},
                 "answers": {"relevant": {"type": "noul", "noul": 0.1}},
             },

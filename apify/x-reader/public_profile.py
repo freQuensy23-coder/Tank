@@ -9,11 +9,25 @@ import re
 import time
 import urllib.parse
 import zlib
-from contextlib import AsyncExitStack, suppress
+from contextlib import AsyncExitStack
 from datetime import UTC, datetime
+from typing import Literal, Protocol, runtime_checkable
 
 import httpx
+from actor_contracts import (
+    AccountFailure,
+    AccountResult,
+    AccountSuccess,
+    ActorRequest,
+    CollectionReport,
+    DiagnosticAttempt,
+    DiagnosticRequest,
+    DiagnosticResponse,
+    ProfileDiagnostics,
+    PublicPost,
+)
 from bs4 import BeautifulSoup
+from pydantic import JsonValue
 
 LINK = re.compile(r"^/(?:@)?([A-Za-z0-9_]{1,15})/status/(\d+)(?:[/?#]|$)")
 BODY_LIMIT = 2_000_000
@@ -36,12 +50,16 @@ DIAGNOSTIC_HEADERS = {
 
 
 class ProfileFailure(RuntimeError):
-    def __init__(self, reason, diagnostics):
+    def __init__(self, reason: str, evidence: ProfileDiagnostics) -> None:
         super().__init__(reason)
-        self.diagnostics = diagnostics
+        self.evidence = evidence
+
+    @property
+    def diagnostics(self) -> dict[str, JsonValue]:
+        return self.evidence.model_dump(mode="json", exclude_unset=True)
 
 
-def redact(value):
+def redact(value: str) -> str:
     for name in ("APIFY_TOKEN", "APIFY_API_TOKEN", "ACTOR_TOKEN"):
         if secret := os.environ.get(name):
             value = value.replace(secret, "[REDACTED]")
@@ -60,7 +78,7 @@ def redact(value):
     )
 
 
-async def read_body(response, parts, limit=BODY_LIMIT):
+async def read_body(response: httpx.Response, parts: list[bytes], limit: int = BODY_LIMIT) -> None:
     size = 0
     async for part in response.aiter_raw():
         captured = part[: limit + 1 - size]
@@ -70,7 +88,13 @@ async def read_body(response, parts, limit=BODY_LIMIT):
             break
 
 
-def response_evidence(response, raw, read_error=None, limit=BODY_LIMIT, serialized_limit=None):
+def response_evidence(
+    response: httpx.Response,
+    raw: bytes,
+    read_error: str | None = None,
+    limit: int = BODY_LIMIT,
+    serialized_limit: int | None = None,
+) -> DiagnosticResponse:
     headers = {
         name.lower(): redact(value)
         for name, value in response.headers.items()
@@ -111,40 +135,44 @@ def response_evidence(response, raw, read_error=None, limit=BODY_LIMIT, serializ
     length = headers.get("content-length", "")
     total = int(length) if length.isdecimal() and len(length) <= 20 else None
     truncated = truncated or (total is not None and total > len(raw))
-    return {
-        "status": response.status_code,
-        "headers": headers,
-        "body": body,
-        "bodyEncoding": "utf-8" if textual else "base64",
-        "bodyBytes": len(safe),
-        "bodySha256": hashlib.sha256(safe).hexdigest(),
-        "wireBytes": min(len(raw), limit),
-        "captureLimitBytes": limit,
-        "serializedBodyLimitBytes": serialized_limit,
-        "bodyTruncated": truncated or read_error is not None,
-        "omittedWireBytes": max(0, total - min(len(raw), limit)) if total is not None else None,
-        "readError": read_error,
-        "decodeError": encoding_error,
-        "redacted": redacted,
-    }
+    return DiagnosticResponse(
+        status=response.status_code,
+        headers=headers,
+        body=body,
+        bodyEncoding="utf-8" if textual else "base64",
+        bodyBytes=len(safe),
+        bodySha256=hashlib.sha256(safe).hexdigest(),
+        wireBytes=min(len(raw), limit),
+        captureLimitBytes=limit,
+        serializedBodyLimitBytes=serialized_limit,
+        bodyTruncated=truncated or read_error is not None,
+        omittedWireBytes=max(0, total - min(len(raw), limit)) if total is not None else None,
+        readError=read_error,
+        decodeError=encoding_error,
+        redacted=redacted,
+    )
 
 
-def run_deadline():
+def run_deadline() -> float:
     remaining = 100.0
-    if value := os.environ.get("ACTOR_TIMEOUT_AT"):
-        with suppress(ValueError):
-            remaining = min(
-                remaining, datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() - time.time() - 2
-            )
+    value = os.environ.get("ACTOR_TIMEOUT_AT")
+    if value is not None:
+        try:
+            declared = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            raise ValueError("INVALID_ACTOR_TIMEOUT_AT") from None
+        if declared.tzinfo is None or declared.utcoffset() is None:
+            raise ValueError("ACTOR_TIMEOUT_AT_REQUIRES_TIMEZONE")
+        remaining = min(remaining, declared.timestamp() - time.time() - 2)
     return time.monotonic() + max(0, remaining)
 
 
-def parse_profile(raw, handle):
+def parse_profile(raw: str, handle: str) -> list[PublicPost]:
     soup = BeautifulSoup(raw, "html.parser")
     title = soup.title.get_text() if soup.title else ""
     if " / X" not in title or ("@" + handle.lower()) not in title.lower():
         raise RuntimeError("PUBLIC_PROFILE_NOT_READABLE")
-    posts = {}
+    posts: dict[str, PublicPost] = {}
     for article in soup.find_all("article"):
         if article.find_parent("article"):
             continue
@@ -167,35 +195,43 @@ def parse_profile(raw, handle):
         ):
             raise RuntimeError("PUBLIC_POST_BODY_MISSING")
         published = ((int(post_id) >> 22) + 1288834974657) / 1000
-        posts[post_id] = {
-            "id": post_id,
-            "author": author,
-            "text": content.get_text("", strip=False).strip() if content else "",
-            "publishedTs": published,
-            "publishedAt": datetime.fromtimestamp(published, UTC).isoformat(),
-            "url": f"https://x.com/{author}/status/{post_id}",
-            "source": "x-public-profile",
-        }
+        posts[post_id] = PublicPost(
+            id=post_id,
+            author=author,
+            text=content.get_text("", strip=False).strip() if content else "",
+            publishedTs=published,
+            publishedAt=datetime.fromtimestamp(published, UTC).isoformat(),
+            url=f"https://x.com/{author}/status/{post_id}",
+            source="x-public-profile",
+        )
     if not posts:
         raise RuntimeError("NO_PUBLIC_POSTS_VISIBLE")
-    return sorted(posts.values(), key=lambda r: int(r["id"]))
+    return sorted(posts.values(), key=lambda r: int(r.id))
 
 
-async def fetch_profile(handle, deadline=None, evidence_limit=BODY_LIMIT):
+@runtime_checkable
+class AsyncConnection(Protocol):
+    async def aclose(self) -> None: ...
+
+
+async def fetch_profile(
+    handle: str,
+    deadline: float | None = None,
+    evidence_limit: int = BODY_LIMIT,
+) -> tuple[list[PublicPost], int]:
     deadline = run_deadline() if deadline is None else deadline
     url = PROFILE_ORIGIN + urllib.parse.quote(handle)
-    diagnostics = {
-        "request": {"method": "GET", "url": url, "body": None},
-        "attempts": [],
-        "attemptCount": 0,
-        "outcome": "exhausted",
-    }
+    attempts: list[DiagnosticAttempt] = []
+    outcome: Literal["exhausted", "deadline_exhausted", "permanent_failure"] = "exhausted"
     reason = "PUBLIC_PROFILE_DEADLINE_EXHAUSTED"
     capture_limit = min(BODY_LIMIT, evidence_limit)
 
-    async def trace(name, info):
+    async def trace(name: str, info: dict[str, object]) -> None:
         if name == "connection.connect_tcp.complete":
-            cleanup.push_async_callback(info["return_value"].aclose)
+            connection = info["return_value"]
+            if not isinstance(connection, AsyncConnection):
+                raise RuntimeError("INVALID_HTTP_CONNECTION_TRACE")
+            cleanup.push_async_callback(connection.aclose)
 
     async with (
         AsyncExitStack() as cleanup,
@@ -203,18 +239,19 @@ async def fetch_profile(handle, deadline=None, evidence_limit=BODY_LIMIT):
     ):
         for index, delay in enumerate((0, 1, 5), 1):
             if deadline - time.monotonic() <= delay:
-                diagnostics["outcome"] = "deadline_exhausted"
+                outcome = "deadline_exhausted"
                 break
             if delay:
                 await asyncio.sleep(delay)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                diagnostics["outcome"] = "deadline_exhausted"
+                outcome = "deadline_exhausted"
                 break
-            attempt = {"attempt": index, "at": datetime.now(UTC).isoformat()}
+            attempt_at = datetime.now(UTC).isoformat()
+            response_capture: DiagnosticResponse | None = None
             retryable = False
             response = None
-            parts = []
+            parts: list[bytes] = []
             read_error = None
             try:
                 async with asyncio.timeout(remaining):
@@ -270,82 +307,100 @@ async def fetch_profile(handle, deadline=None, evidence_limit=BODY_LIMIT):
                 reason = "PUBLIC_PROFILE_HTTP_" + str(response.status_code)
                 retryable = response.status_code in (408, 429) or 500 <= response.status_code <= 599
             if response is not None and (response.status_code >= 400 or read_error):
-                attempt["response"] = response_evidence(
+                response_capture = response_evidence(
                     response, b"".join(parts), read_error, capture_limit, evidence_limit
                 )
-                attempt["status"] = response.status_code
-            attempt.update(error=reason, retryable=retryable)
-            diagnostics["attempts"].append(attempt)
-            diagnostics["attemptCount"] = len(diagnostics["attempts"])
+            if response_capture is None:
+                attempt = DiagnosticAttempt(
+                    attempt=index,
+                    at=attempt_at,
+                    error=reason,
+                    retryable=retryable,
+                )
+            else:
+                attempt = DiagnosticAttempt(
+                    attempt=index,
+                    at=attempt_at,
+                    error=reason,
+                    retryable=retryable,
+                    response=response_capture,
+                    status=response_capture.status,
+                )
+            attempts.append(attempt)
             if time.monotonic() >= deadline:
-                diagnostics["outcome"] = "deadline_exhausted"
+                outcome = "deadline_exhausted"
                 break
             if not retryable:
-                diagnostics["outcome"] = "permanent_failure"
+                outcome = "permanent_failure"
                 break
-    raise ProfileFailure(reason, diagnostics) from None
+    raise ProfileFailure(
+        reason,
+        ProfileDiagnostics(
+            request=DiagnosticRequest(method="GET", url=url, body=None),
+            attempts=attempts,
+            attemptCount=len(attempts),
+            outcome=outcome,
+        ),
+    ) from None
 
 
-async def collect(config, known_ids, cutoff):
+async def collect(config: ActorRequest) -> tuple[list[PublicPost], CollectionReport]:
     started = time.monotonic()
     deadline = run_deadline()
-    names = list(dict.fromkeys(h.lstrip("@").lower() for h in config["handles"]))
-    if not names or any(not re.fullmatch(r"[a-z0-9_]{1,15}", h) for h in names):
-        raise RuntimeError("INVALID_MONITORED_HANDLE")
-    semaphore = asyncio.Semaphore(max(1, min(8, int(config.get("concurrency", 6)))))
-    account_state = config.get("_accountState") or {}
+    names = config.handles
+    semaphore = asyncio.Semaphore(config.concurrency)
     evidence_limit = RUN_EVIDENCE_LIMIT // (3 * len(names))
 
-    async def one(handle):
+    async def one(handle: str) -> tuple[list[PublicPost], AccountResult]:
         async with semaphore:
             stamp = time.time()
             try:
                 rows, size = await fetch_profile(handle, deadline, evidence_limit)
-                previous = account_state.get(handle) or {}
-                previous_max = previous.get("lastMaxId")
-                current_max = max(int(r["id"]) for r in rows)
-                if previous_max and current_max < int(previous_max):
+                previous_max = config.cursors.get(handle)
+                current_max = max(int(row.id) for row in rows)
+                if previous_max is not None and current_max < int(previous_max):
                     raise RuntimeError("PUBLIC_PROFILE_STALE_SAMPLE")
-                gap = bool(
-                    previous_max
-                    and previous_max not in {r["id"] for r in rows}
+                gap = (
+                    previous_max is not None
+                    and previous_max not in {row.id for row in rows}
                     and current_max > int(previous_max)
                 )
-                return rows, {
-                    "handle": handle,
-                    "status": "ok",
-                    "scanTs": stamp,
-                    "posts": len(rows),
-                    "wireBytes": size,
-                    "lastMaxId": max(rows, key=lambda r: int(r["id"]))["id"],
-                    "historyGap": gap,
-                }
+                return rows, AccountSuccess(
+                    handle=handle,
+                    status="ok",
+                    scanTs=stamp,
+                    posts=len(rows),
+                    wireBytes=size,
+                    lastMaxId=max(rows, key=lambda row: int(row.id)).id,
+                    historyGap=gap,
+                )
             except RuntimeError as exc:
-                return [], {
-                    "handle": handle,
-                    "status": "failed",
-                    "scanTs": stamp,
-                    "error": str(exc),
-                    "diagnostics": getattr(exc, "diagnostics", None),
-                }
+                return [], AccountFailure(
+                    handle=handle,
+                    status="failed",
+                    scanTs=stamp,
+                    error=str(exc),
+                    diagnostics=exc.evidence if isinstance(exc, ProfileFailure) else None,
+                )
 
-    pairs = await asyncio.gather(*[one(h) for h in names])
-    rows = {r["id"]: r for records, _ in pairs for r in records}
+    pairs = await asyncio.gather(*(one(handle) for handle in names))
+    rows = {row.id: row for records, _ in pairs for row in records}
     accounts = [report for _, report in pairs]
-    failed = [x for x in accounts if x["status"] != "ok"]
-    gaps = [x["handle"] for x in accounts if x.get("historyGap")]
-    report = {
-        "source": "x-public-profile",
-        "seconds": round(time.monotonic() - started, 3),
-        "watchedAccounts": len(names),
-        "accountsRead": len(names) - len(failed),
-        "failedAccounts": failed,
-        "coverageGaps": gaps,
-        "accountResults": accounts,
-        "wireBytes": sum(x.get("wireBytes", 0) for x in accounts),
-        "postCount": len(rows),
-        "authorsSeen": len({r["author"].lower() for r in rows.values()}),
-        "reachedHistory": not failed and not gaps,
-        "error": "PUBLIC_SOURCE_UNAVAILABLE" if len(failed) == len(names) else None,
-    }
-    return sorted(rows.values(), key=lambda r: (r["publishedTs"], int(r["id"]))), report
+    failed = [account for account in accounts if isinstance(account, AccountFailure)]
+    successful = [account for account in accounts if isinstance(account, AccountSuccess)]
+    gaps = [account.handle for account in successful if account.historyGap]
+    report = CollectionReport(
+        source="x-public-profile",
+        seconds=round(time.monotonic() - started, 3),
+        watchedAccounts=len(names),
+        accountsRead=len(successful),
+        failedAccounts=failed,
+        coverageGaps=gaps,
+        accountResults=accounts,
+        wireBytes=sum(account.wireBytes for account in successful),
+        postCount=len(rows),
+        authorsSeen=len({row.author.lower() for row in rows.values()}),
+        reachedHistory=not failed and not gaps,
+        error="PUBLIC_SOURCE_UNAVAILABLE" if len(failed) == len(names) else None,
+    )
+    return sorted(rows.values(), key=lambda row: (row.publishedTs, int(row.id))), report

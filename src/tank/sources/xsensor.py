@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, m
 
 from tank.contracts import DomainModel
 from tank.contracts.http_policy import HttpAdmission, HttpRefused
-from tank.contracts.json import JsonDocument, decode_json
+from tank.contracts.json import JsonDocument, decode_unique_json
 from tank.contracts.source_items import DiscoveryEnvelope, DiscoveryObservation, SocialDiscovery
 from tank.contracts.sources import HttpFetchPlan
 from tank.logging import redact_text
@@ -402,7 +402,10 @@ class XSensor:
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise RuntimeError(f"Apify X run request failed: {redact_text(str(exc), secrets)}") from None
-        decoded = decode_json(response.content)
+        try:
+            decoded = decode_unique_json(response.content)
+        except ValueError:
+            raise ValueError("Apify X response JSON is invalid or ambiguous") from None
         contains_token = any(
             secret.encode() in response.content for secret in secrets
         ) or contains_credential(decoded, secrets)

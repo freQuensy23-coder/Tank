@@ -7,7 +7,7 @@ from typing import Protocol, Self
 
 from pydantic import JsonValue
 
-from tank.agents.jev import JevEvent, JevItem, JevState
+from tank.agents.decision import DecisionEvent, DecisionItem, DecisionState
 from tank.agents.pipeline_contracts import RoutingCandidate, RoutingRegistry, RoutingSession
 from tank.contracts import DomainModel
 from tank.contracts.source_items import (
@@ -77,7 +77,7 @@ def _truncate(text: str, limit: int = TEXT_LIMIT) -> str:
     return (cut[: end + 1] if end > limit // 2 else cut[: cut.rfind(" ")]) + " …"
 
 
-def item_view(item: RoutingItem) -> JevItem:
+def item_view(item: RoutingItem) -> DecisionItem:
     source = _clean(item.source)
     author = _clean(item.author)
     title = _clean(item.title)
@@ -91,7 +91,7 @@ def item_view(item: RoutingItem) -> JevItem:
     if set(_words(body)) <= set(_words(title)) | set(_words(source)):
         body = ""
     quoted = _clean(item.quoted) if item.quoted is not None else ""
-    return JevItem(
+    return DecisionItem(
         source=source,
         author=author if author and author.casefold() != source.casefold() else None,
         title=title if title else None,
@@ -100,8 +100,8 @@ def item_view(item: RoutingItem) -> JevItem:
     )
 
 
-def item_state(item: RoutingItem) -> JevState:
-    return JevState(item=item_view(item))
+def item_state(item: RoutingItem) -> DecisionState:
+    return DecisionState(item=item_view(item))
 
 
 class RoutingSelector:
@@ -163,7 +163,7 @@ class RoutingSelector:
                     result.add(token.entity_id)
         return result
 
-    def event_view(self, event: RoutingCandidate) -> JevEvent:
+    def event_view(self, event: RoutingCandidate) -> DecisionEvent:
         registry = self.registry
         names: dict[str, str] = {}
         for entity in registry.entities:
@@ -179,15 +179,15 @@ class RoutingSelector:
             key = key.removeprefix("UNRESOLVED:")
             return table[key] if key in table else key.split(":")[-1]
 
-        return JevEvent(
+        return DecisionEvent(
             statement=_clean(event.statement),
             entities=list(dict.fromkeys(label(entity, names) for entity in event.entities)),
             tokens=list(dict.fromkeys(label(token, symbols) for token in event.tokens_mentioned)),
             stage=event.event_state.lower(),
         )
 
-    def routing_state(self, item: RoutingItem, event: RoutingCandidate) -> JevState:
-        return JevState(item=item_view(item), event=self.event_view(event))
+    def routing_state(self, item: RoutingItem, event: RoutingCandidate) -> DecisionState:
+        return DecisionState(item=item_view(item), event=self.event_view(event))
 
     async def candidate_events(
         self, identities: set[str], since: str, now: datetime

@@ -9,7 +9,7 @@ from agent_source_fixtures import (
     native_tool_arguments_fixture,
     source_record_fixture,
 )
-from native_session_fixtures import created_native_session
+from native_session_fixtures import created_native_session, native_session_record
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
@@ -38,7 +38,7 @@ def settings(replay: bool = False) -> AgentFixtureSettings:
         documents=config,
         tool_reader=Settings(_env_file=None).read_config_json,
         openrouter_api_key=None,
-        opencode_api_key=None,
+        foundry_api_key="FAKE_FOUNDRY_KEY",
         replay=replay,
         ops_progress_enabled=False,
         openma_api_key="fake-only",
@@ -409,6 +409,7 @@ async def test_legacy_prompt_label_requires_exact_native_snapshot() -> None:
     repo = MemoryRepository()
     session = await seed(repo)
     session.update(prompt_version="baseline-2.3", prompt_version_basis=None, prompt_label=None)
+    await repo.put("ops.agent_sessions", "s", session)
     requests = []
     snapshot = {
         "id": "agent",
@@ -421,7 +422,17 @@ async def test_legacy_prompt_label_requires_exact_native_snapshot() -> None:
 
     def transport(request: httpx.Request):
         requests.append(request.url.path)
-        return httpx.Response(200, json={"data": {"id": "s", "agent": snapshot}})
+        return httpx.Response(
+            200,
+            json=native_session_record(
+                "s",
+                agent_id="agent",
+                environment_id="live",
+                metadata={},
+                model_id="gpt-6.1-sol",
+                agent_snapshot=snapshot,
+            ),
+        )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
         service = SessionService(repo, settings(), None, http=http, versions=declared_versions_fixture())
@@ -473,7 +484,7 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
         if request.url.path.endswith("/events/stream"):
             return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
         if request.url.path.endswith("/events") and request.method == "GET":
-            return httpx.Response(200, json={"data": list(history)})
+            return httpx.Response(200, json={"data": list(history), "next_page": None})
         if request.url.path.endswith("/events"):
             result = json.loads(request.content)["events"][0]
             responses.append(result["custom_tool_use_id"])

@@ -7,19 +7,22 @@ from typing import Literal
 
 import httpx
 import pytest
-from pydantic import ValidationError
+from pydantic import JsonValue, RootModel, ValidationError
 
 from tank.agents.classification import FILTER, ROUTE
-from tank.agents.jev import JevQuestion, JevState
+from tank.agents.decision import DecisionQuestion, DecisionState
 from tank.agents.pipeline_contracts import ClassificationName
 from tank.analysis.calibration_contracts import (
     CalibrationEntity,
     CalibrationEvent,
+    CalibrationGeneration,
     CalibrationLabel,
     CalibrationPacket,
     CalibrationSource,
     CandidateScore,
+    DecisionCalibrationGeneration,
     FilterEvaluation,
+    JevCalibrationGeneration,
     RoutingEvaluation,
 )
 from tank.calibration import (
@@ -32,7 +35,7 @@ from tank.calibration import (
     routing_metrics,
 )
 from tank.contracts import DomainModel
-from tank.contracts.json import decode_json, encode_json
+from tank.contracts.json import DuplicateJsonKeyError, decode_json, encode_json
 from tank.settings import Settings, resolve_versions
 from tank.util import iso
 
@@ -127,10 +130,10 @@ def test_routing_cutoff_is_highest_meeting_both_targets_or_none() -> None:
     assert routing_cutoff([routing_metrics(rows, 0.95)]) is None
 
 
-class CapturedJevRequest(DomainModel):
-    model: Literal["jev-1.13-free"]
-    state: JevState
-    questions: dict[ClassificationName, JevQuestion]
+class CapturedDecisionRequest(DomainModel):
+    model: Literal["decision-1"]
+    state: DecisionState
+    questions: dict[ClassificationName, DecisionQuestion]
 
 
 @pytest.mark.integration
@@ -144,12 +147,23 @@ async def test_acquire_scores_the_service_inputs_at_the_historical_clock(tmp_pat
     ]
     path = tmp_path / "packet.json"
     path.write_text(packet(items, ["old", "e1"]).model_dump_json(exclude_unset=True))
-    calls: list[CapturedJevRequest] = []
+    calls: list[CapturedDecisionRequest] = []
 
-    def jev(request: httpx.Request) -> httpx.Response:
-        body = CapturedJevRequest.model_validate_json(request.content, strict=True)
+    def decision(request: httpx.Request) -> httpx.Response:
+        body = CapturedDecisionRequest.model_validate_json(request.content, strict=True)
         calls.append(body)
-        assert str(request.url) == "https://opencode.ai/inference/systemone/v1/systemone"
+        wire = decode_json(request.content)
+        assert isinstance(wire, dict) and set(wire) == {"model", "state", "questions"}
+        state = wire["state"]
+        assert isinstance(state, dict) and set(state) <= {"item", "event"}
+        source = state["item"]
+        assert isinstance(source, dict)
+        assert not {"relevant", "event_id", "expected_event_id"} & source.keys()
+        assert request.headers["api-key"] == "FAKE"
+        assert (
+            str(request.url)
+            == "https://alexeym-4644-resource.services.ai.azure.com/providers/microsoft/v1/systemone"
+        )
         (name,) = body.questions
         assert body.questions[name].instructions == (FILTER if name == "relevant" else ROUTE)
         title = body.state.item.title
@@ -160,7 +174,8 @@ async def test_acquire_scores_the_service_inputs_at_the_historical_clock(tmp_pat
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13-free",
+                "model": "microsoft-decision-1",
+                "provider": 'opaque {"score":0,"score":1}',
                 "usage": {"input_tokens": 9},
                 "answers": {name: {"type": "noul", "noul": score}},
             },
@@ -178,13 +193,13 @@ async def test_acquire_scores_the_service_inputs_at_the_historical_clock(tmp_pat
         Settings(
             config_dir=config,
             data_dir=tmp_path / "data",
-            opencode_api_key=None,
+            foundry_api_key="FAKE",
             replay=False,
             config_version="cfg",
             code_version="code",
         )
     )
-    async with httpx.AsyncClient(transport=httpx.MockTransport(jev)) as http:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(decision)) as http:
         result = await acquire(path, tmp_path / "out", settings=settings, http=http)
         routing_calls = [call for call in calls if "same_event" in call.questions]
         assert len(routing_calls) == 1
@@ -193,6 +208,31 @@ async def test_acquire_scores_the_service_inputs_at_the_historical_clock(tmp_pat
         first = len(calls)
         await acquire(path, tmp_path / "out", settings=settings, http=http)
         assert len(calls) == first
+        assert isinstance(result.generation, DecisionCalibrationGeneration)
+        assert result.generation.classifier_provider == "azure-foundry"
+        assert result.generation.classifier_request_model == "decision-1"
+        assert result.generation.semantic_model_id == "microsoft-decision-1:1"
+        assert result.generation.prompt_version == "decision-1-v1"
+        usage_path = next((tmp_path / "out" / "usage").glob("*.json"))
+        valid_cache = usage_path.read_bytes()
+        valid = await _Ledger(usage_path.parent).get(usage_path.stem)
+        assert valid is not None and valid.classifier_provider == "azure-foundry"
+        assert valid.cost_usd is None and valid.cost_reason is not None
+        assert valid.upstream_provider == 'opaque {"score":0,"score":1}'
+        report_path = tmp_path / "out" / "calibration-report.json"
+        original_report = report_path.read_bytes()
+        for prefix in (b'{"score":0.1,', rb'{"\u0073core":0.1,', b'{"usage_id":"' + b"0" * 64 + b'",'):
+            duplicated = prefix + valid_cache[1:]
+            usage_path.write_bytes(duplicated)
+            with pytest.raises(DuplicateJsonKeyError):
+                await acquire(path, tmp_path / "out", settings=settings, http=http)
+            assert len(calls) == first
+            assert usage_path.read_bytes() == duplicated
+            assert report_path.read_bytes() == original_report
+        usage_path.write_bytes(valid_cache)
+        await acquire(path, tmp_path / "out", settings=settings, http=http)
+        assert len(calls) == first
+        assert usage_path.read_bytes() == valid_cache
     assert result.counts.repeats == 1 and result.selected.routing_cutoff == 0.92
     assert result.filter.crypto_reaching_full_analysis == 3
     assert result.status == "FAIL" and result.rejection_reasons == ["sample_minimums"]
@@ -289,3 +329,25 @@ def test_captured_source_metadata_refuses_invalid_clock_or_digest(field: str, va
     wire[field] = value
     with pytest.raises(ValidationError):
         CalibrationSource.model_validate(wire)
+
+
+def test_historical_jev_generation_keeps_its_original_provider_format() -> None:
+    historical: dict[str, JsonValue] = {
+        "packet_sha256": "a" * 64,
+        "code_version": "declared-legacy-fixture",
+        "config_version": "declared-legacy-fixture",
+        "prompt_version": "declared-legacy-prompt",
+        "registry_sha256": "b" * 64,
+        "routing_window_days": 3,
+        "jev_endpoint": "https://opencode.ai/inference/systemone/v1/systemone",
+        "jev_request_model": "jev-1.13-free",
+        "jev_resolved_models": ["jev-1.13-free", "jev-1.13"],
+    }
+    generation = RootModel[CalibrationGeneration].model_validate(historical, strict=True).root
+    assert isinstance(generation, JevCalibrationGeneration)
+    assert generation.model_dump(mode="json") == historical
+    assert "classifier_provider" not in generation.model_dump(mode="json")
+    with pytest.raises(ValidationError):
+        RootModel[CalibrationGeneration].model_validate(
+            {**historical, "classifier_provider": "azure-foundry"}, strict=True
+        )
