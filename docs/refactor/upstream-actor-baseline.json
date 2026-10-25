@@ -1,0 +1,3196 @@
+{
+  "revision": "122d8c7248c824cb8d07614221f27cce262bfe3b",
+  "scope": "immutable upstream actor runtime, publisher and their exact Python test programs; excludes unrelated source/runtime integration",
+  "tool_sha256": "09301d3b0019f6cd9b4e13a862db1f968b1887795f2a2cc2ec3b9292e0c7a88c",
+  "inputs": {
+    "apify/x-reader/direct_fetch.py": "964c46a5b82bc935ae2a2f12e16af233ad3d29b9986507c60a2b80948afd27e3",
+    "apify/x-reader/main.py": "4ef1e23f3fe3b1695d3fd9f7711da609fd764b17f310f78027433ebd18d60a7e",
+    "apify/x-reader/public_profile.py": "81248043f1ffcd11aa2923e146733ba6bb7c4594fec443d33c74c94e897e8ea8",
+    "scripts/deploy/apify_deploy.py": "eba30111c6eada93acdce14a7f4cc298632e5a489d716df2877a9b86e3830ecb",
+    "tests/test_apify_deploy.py": "57689c7f05c35b858e593c8d410b4565284b47f37360fba35ad07dfe70018fe7"
+  },
+  "inventory": {
+    "files": 5,
+    "coverage": [
+      "active Python files in src/tests/scripts/deploy/capture/apify; vendor provenance is a separate openma_inventory report",
+      "active Go files in src/tests/scripts/deploy/capture/apify; unchanged upstream programs are not first-party completion evidence",
+      "explicit embedded Python snippets from JavaScript report",
+      "Python import graph covers src and apify/x-reader; actor:x-reader labels distinguish sibling runtime modules from the external SDK"
+    ],
+    "embedded_python": 0,
+    "counts": {
+      "any": 2,
+      "dictionary": 93,
+      "fallback": 81,
+      "none_default": 5,
+      "untyped_parameter": 137,
+      "untyped_return": 75
+    },
+    "findings": [
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 35,
+        "symbol": "release",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 35,
+        "symbol": "release",
+        "kind": "untyped_return",
+        "expression": "release"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 45,
+        "symbol": "release",
+        "kind": "dictionary",
+        "expression": "{'release_sha': SHA, 'source_digest': deploy.digest(deploy.source_files(worker)), 'contract': deploy.CONTRACT, 'actor_id': deploy.ACTOR_ID}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 56,
+        "symbol": "test_host_secret_permissions_fail_closed",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 56,
+        "symbol": "test_host_secret_permissions_fail_closed",
+        "kind": "untyped_parameter",
+        "expression": "mode"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 56,
+        "symbol": "test_host_secret_permissions_fail_closed",
+        "kind": "untyped_return",
+        "expression": "test_host_secret_permissions_fail_closed"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 64,
+        "symbol": "test_host_secret_owner_and_symlink_fail_closed",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 64,
+        "symbol": "test_host_secret_owner_and_symlink_fail_closed",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 64,
+        "symbol": "test_host_secret_owner_and_symlink_fail_closed",
+        "kind": "untyped_return",
+        "expression": "test_host_secret_owner_and_symlink_fail_closed"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 79,
+        "symbol": "test_only_apify_token_is_read_from_single_host_store",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 79,
+        "symbol": "test_only_apify_token_is_read_from_single_host_store",
+        "kind": "untyped_parameter",
+        "expression": "value"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 79,
+        "symbol": "test_only_apify_token_is_read_from_single_host_store",
+        "kind": "untyped_return",
+        "expression": "test_only_apify_token_is_read_from_single_host_store"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 89,
+        "symbol": "test_missing_ambiguous_or_shell_token_is_refused",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 89,
+        "symbol": "test_missing_ambiguous_or_shell_token_is_refused",
+        "kind": "untyped_parameter",
+        "expression": "contents"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 89,
+        "symbol": "test_missing_ambiguous_or_shell_token_is_refused",
+        "kind": "untyped_return",
+        "expression": "test_missing_ambiguous_or_shell_token_is_refused"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 97,
+        "symbol": "test_source_digest_includes_paths_bytes_and_build_manifest",
+        "kind": "untyped_parameter",
+        "expression": "release"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 97,
+        "symbol": "test_source_digest_includes_paths_bytes_and_build_manifest",
+        "kind": "untyped_return",
+        "expression": "test_source_digest_includes_paths_bytes_and_build_manifest"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 100,
+        "symbol": "test_source_digest_includes_paths_bytes_and_build_manifest",
+        "kind": "dictionary",
+        "expression": "dict(reversed(list(files.items())))"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 101,
+        "symbol": "test_source_digest_includes_paths_bytes_and_build_manifest",
+        "kind": "dictionary",
+        "expression": "{**files, 'Dockerfile': b'different'}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 102,
+        "symbol": "test_source_digest_includes_paths_bytes_and_build_manifest",
+        "kind": "dictionary",
+        "expression": "dict(files)"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 107,
+        "symbol": "test_journal_replacement_and_removal_sync_parent_after_effect",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 107,
+        "symbol": "test_journal_replacement_and_removal_sync_parent_after_effect",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 107,
+        "symbol": "test_journal_replacement_and_removal_sync_parent_after_effect",
+        "kind": "untyped_return",
+        "expression": "test_journal_replacement_and_removal_sync_parent_after_effect"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 109,
+        "symbol": "test_journal_replacement_and_removal_sync_parent_after_effect",
+        "kind": "dictionary",
+        "expression": "{'old': True}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 113,
+        "symbol": "test_journal_replacement_and_removal_sync_parent_after_effect.sync",
+        "kind": "untyped_parameter",
+        "expression": "descriptor"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 113,
+        "symbol": "test_journal_replacement_and_removal_sync_parent_after_effect.sync",
+        "kind": "untyped_return",
+        "expression": "sync"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 118,
+        "symbol": "test_journal_replacement_and_removal_sync_parent_after_effect",
+        "kind": "dictionary",
+        "expression": "{'new': True}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 120,
+        "symbol": "test_journal_replacement_and_removal_sync_parent_after_effect",
+        "kind": "dictionary",
+        "expression": "{'old': True}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 120,
+        "symbol": "test_journal_replacement_and_removal_sync_parent_after_effect",
+        "kind": "dictionary",
+        "expression": "{'new': True}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 125,
+        "symbol": "test_invalid_staging_is_not_published_or_unowned_staging_removed",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 125,
+        "symbol": "test_invalid_staging_is_not_published_or_unowned_staging_removed",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 125,
+        "symbol": "test_invalid_staging_is_not_published_or_unowned_staging_removed",
+        "kind": "untyped_parameter",
+        "expression": "change"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 125,
+        "symbol": "test_invalid_staging_is_not_published_or_unowned_staging_removed",
+        "kind": "untyped_return",
+        "expression": "test_invalid_staging_is_not_published_or_unowned_staging_removed"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 127,
+        "symbol": "test_invalid_staging_is_not_published_or_unowned_staging_removed",
+        "kind": "dictionary",
+        "expression": "{'old': True}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 133,
+        "symbol": "test_invalid_staging_is_not_published_or_unowned_staging_removed.sync",
+        "kind": "untyped_parameter",
+        "expression": "descriptor"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 133,
+        "symbol": "test_invalid_staging_is_not_published_or_unowned_staging_removed.sync",
+        "kind": "untyped_return",
+        "expression": "sync"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 146,
+        "symbol": "test_invalid_staging_is_not_published_or_unowned_staging_removed",
+        "kind": "dictionary",
+        "expression": "{'new': True}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 147,
+        "symbol": "test_invalid_staging_is_not_published_or_unowned_staging_removed",
+        "kind": "dictionary",
+        "expression": "{'old': True}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 157,
+        "symbol": "ApifyStand.__init__",
+        "kind": "untyped_return",
+        "expression": "__init__"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 159,
+        "symbol": "ApifyStand.__init__",
+        "kind": "dictionary",
+        "expression": "{}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 160,
+        "symbol": "ApifyStand.__init__",
+        "kind": "dictionary",
+        "expression": "{deploy.BASELINE_BUILD: {'id': deploy.BASELINE_BUILD, 'actId': deploy.ACTOR_ID, 'status': 'SUCCEEDED', 'buildNumber': '0.2.2', 'actVersion': {'sourceType': 'SOURCE_FILES', 'versionNumber': '0.2', 'buildTag': 'direct', 'sourceFiles': [{'name': 'main.py', 'format': 'TEXT', 'content': 'legacy fixture\\n'}]}}}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 161,
+        "symbol": "ApifyStand.__init__",
+        "kind": "dictionary",
+        "expression": "{'id': deploy.BASELINE_BUILD, 'actId': deploy.ACTOR_ID, 'status': 'SUCCEEDED', 'buildNumber': '0.2.2', 'actVersion': {'sourceType': 'SOURCE_FILES', 'versionNumber': '0.2', 'buildTag': 'direct', 'sourceFiles': [{'name': 'main.py', 'format': 'TEXT', 'content': 'legacy fixture\\n'}]}}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 166,
+        "symbol": "ApifyStand.__init__",
+        "kind": "dictionary",
+        "expression": "{'sourceType': 'SOURCE_FILES', 'versionNumber': '0.2', 'buildTag': 'direct', 'sourceFiles': [{'name': 'main.py', 'format': 'TEXT', 'content': 'legacy fixture\\n'}]}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 170,
+        "symbol": "ApifyStand.__init__",
+        "kind": "dictionary",
+        "expression": "{'name': 'main.py', 'format': 'TEXT', 'content': 'legacy fixture\\n'}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 182,
+        "symbol": "ApifyStand.handle",
+        "kind": "untyped_parameter",
+        "expression": "method"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 182,
+        "symbol": "ApifyStand.handle",
+        "kind": "untyped_parameter",
+        "expression": "path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 182,
+        "symbol": "ApifyStand.handle",
+        "kind": "untyped_parameter",
+        "expression": "body"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 182,
+        "symbol": "ApifyStand.handle",
+        "kind": "untyped_return",
+        "expression": "handle"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 190,
+        "symbol": "ApifyStand.handle",
+        "kind": "dictionary",
+        "expression": "{'error': {'message': 'synthetic failure'}}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 190,
+        "symbol": "ApifyStand.handle",
+        "kind": "dictionary",
+        "expression": "{'message': 'synthetic failure'}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 194,
+        "symbol": "ApifyStand.handle",
+        "kind": "dictionary",
+        "expression": "{'error': {'message': 'synthetic failure'}}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 194,
+        "symbol": "ApifyStand.handle",
+        "kind": "dictionary",
+        "expression": "{'message': 'synthetic failure'}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 195,
+        "symbol": "ApifyStand.handle",
+        "kind": "dictionary",
+        "expression": "{'data': {'id': deploy.ACTOR_ID, 'taggedBuilds': {'direct': {'buildId': self.direct}}, 'versions': list(self.versions.values())}}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 196,
+        "symbol": "ApifyStand.handle",
+        "kind": "dictionary",
+        "expression": "{'id': deploy.ACTOR_ID, 'taggedBuilds': {'direct': {'buildId': self.direct}}, 'versions': list(self.versions.values())}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 198,
+        "symbol": "ApifyStand.handle",
+        "kind": "dictionary",
+        "expression": "{'direct': {'buildId': self.direct}}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 198,
+        "symbol": "ApifyStand.handle",
+        "kind": "dictionary",
+        "expression": "{'buildId': self.direct}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 202,
+        "symbol": "ApifyStand.handle",
+        "kind": "fallback",
+        "expression": "route == actor + '/versions' or route == actor + '/versions/' + deploy.VERSION"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 205,
+        "symbol": "ApifyStand.handle",
+        "kind": "dictionary",
+        "expression": "{'error': {'message': 'must not log synthetic-token'}}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 205,
+        "symbol": "ApifyStand.handle",
+        "kind": "dictionary",
+        "expression": "{'message': 'must not log synthetic-token'}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 207,
+        "symbol": "ApifyStand.handle",
+        "kind": "dictionary",
+        "expression": "{'data': self.versions[deploy.VERSION]}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 213,
+        "symbol": "ApifyStand.handle",
+        "kind": "dictionary",
+        "expression": "{'id': build_id, 'actId': deploy.ACTOR_ID, 'status': 'FAILED' if self.fail_build else 'SUCCEEDED', 'actVersion': snapshot}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 219,
+        "symbol": "ApifyStand.handle",
+        "kind": "dictionary",
+        "expression": "dict(self.builds[build_id])"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 222,
+        "symbol": "ApifyStand.handle",
+        "kind": "dictionary",
+        "expression": "{'data': response}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 226,
+        "symbol": "ApifyStand.handle",
+        "kind": "dictionary",
+        "expression": "{'data': {**self.builds[build_id], 'status': self.poll_status}}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 226,
+        "symbol": "ApifyStand.handle",
+        "kind": "dictionary",
+        "expression": "{**self.builds[build_id], 'status': self.poll_status}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 227,
+        "symbol": "ApifyStand.handle",
+        "kind": "dictionary",
+        "expression": "{'data': self.builds[build_id]}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 228,
+        "symbol": "ApifyStand.handle",
+        "kind": "dictionary",
+        "expression": "{'error': {'message': 'unknown route'}}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 228,
+        "symbol": "ApifyStand.handle",
+        "kind": "dictionary",
+        "expression": "{'message': 'unknown route'}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 232,
+        "symbol": "apify_stand",
+        "kind": "untyped_parameter",
+        "expression": "monkeypatch"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 232,
+        "symbol": "apify_stand",
+        "kind": "untyped_return",
+        "expression": "apify_stand"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 234,
+        "symbol": "apify_stand",
+        "kind": "dictionary",
+        "expression": "{'main.py': b'legacy fixture\\n'}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 237,
+        "symbol": "apify_stand.Handler.do_GET",
+        "kind": "untyped_return",
+        "expression": "do_GET"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 240,
+        "symbol": "apify_stand.Handler.do_POST",
+        "kind": "untyped_return",
+        "expression": "do_POST"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 243,
+        "symbol": "apify_stand.Handler.do_PUT",
+        "kind": "untyped_return",
+        "expression": "do_PUT"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 246,
+        "symbol": "apify_stand.Handler.respond",
+        "kind": "untyped_return",
+        "expression": "respond"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 249,
+        "symbol": "apify_stand.Handler.respond",
+        "kind": "fallback",
+        "expression": "self.rfile.read(int(self.headers.get('Content-Length', '0'))) or b'null'"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 249,
+        "symbol": "apify_stand.Handler.respond",
+        "kind": "fallback",
+        "expression": "self.headers.get('Content-Length', '0')"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 258,
+        "symbol": "apify_stand.Handler.log_message",
+        "kind": "untyped_parameter",
+        "expression": "format"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 258,
+        "symbol": "apify_stand.Handler.log_message",
+        "kind": "untyped_parameter",
+        "expression": "args"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 258,
+        "symbol": "apify_stand.Handler.log_message",
+        "kind": "untyped_return",
+        "expression": "log_message"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 262,
+        "symbol": "apify_stand",
+        "kind": "dictionary",
+        "expression": "{'poll_interval': 0.01}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 274,
+        "symbol": "publisher",
+        "kind": "untyped_parameter",
+        "expression": "stand"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 274,
+        "symbol": "publisher",
+        "kind": "untyped_parameter",
+        "expression": "release"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 274,
+        "symbol": "publisher",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 274,
+        "symbol": "publisher",
+        "kind": "untyped_parameter",
+        "expression": "sha"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 274,
+        "symbol": "publisher",
+        "kind": "untyped_return",
+        "expression": "publisher"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 278,
+        "symbol": "finish_release",
+        "kind": "untyped_parameter",
+        "expression": "instance"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 278,
+        "symbol": "finish_release",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 278,
+        "symbol": "finish_release",
+        "kind": "untyped_return",
+        "expression": "finish_release"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 287,
+        "symbol": "test_changed_worker_publishes_verifies_then_activates_and_reuses_unchanged",
+        "kind": "untyped_parameter",
+        "expression": "apify_stand"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 287,
+        "symbol": "test_changed_worker_publishes_verifies_then_activates_and_reuses_unchanged",
+        "kind": "untyped_parameter",
+        "expression": "release"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 287,
+        "symbol": "test_changed_worker_publishes_verifies_then_activates_and_reuses_unchanged",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 286,
+        "symbol": "test_changed_worker_publishes_verifies_then_activates_and_reuses_unchanged",
+        "kind": "untyped_return",
+        "expression": "test_changed_worker_publishes_verifies_then_activates_and_reuses_unchanged"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 320,
+        "symbol": "test_publication_errors_do_not_activate_or_commit",
+        "kind": "untyped_parameter",
+        "expression": "apify_stand"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 320,
+        "symbol": "test_publication_errors_do_not_activate_or_commit",
+        "kind": "untyped_parameter",
+        "expression": "release"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 320,
+        "symbol": "test_publication_errors_do_not_activate_or_commit",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 320,
+        "symbol": "test_publication_errors_do_not_activate_or_commit",
+        "kind": "untyped_parameter",
+        "expression": "failure"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 320,
+        "symbol": "test_publication_errors_do_not_activate_or_commit",
+        "kind": "untyped_return",
+        "expression": "test_publication_errors_do_not_activate_or_commit"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 334,
+        "symbol": "test_failed_tag_readback_or_uncertain_update_restores_previous_build",
+        "kind": "untyped_parameter",
+        "expression": "apify_stand"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 334,
+        "symbol": "test_failed_tag_readback_or_uncertain_update_restores_previous_build",
+        "kind": "untyped_parameter",
+        "expression": "release"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 334,
+        "symbol": "test_failed_tag_readback_or_uncertain_update_restores_previous_build",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 334,
+        "symbol": "test_failed_tag_readback_or_uncertain_update_restores_previous_build",
+        "kind": "untyped_parameter",
+        "expression": "failure"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 333,
+        "symbol": "test_failed_tag_readback_or_uncertain_update_restores_previous_build",
+        "kind": "untyped_return",
+        "expression": "test_failed_tag_readback_or_uncertain_update_restores_previous_build"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 351,
+        "symbol": "test_build_poll_failure_is_not_treated_as_success",
+        "kind": "untyped_parameter",
+        "expression": "apify_stand"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 351,
+        "symbol": "test_build_poll_failure_is_not_treated_as_success",
+        "kind": "untyped_parameter",
+        "expression": "release"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 351,
+        "symbol": "test_build_poll_failure_is_not_treated_as_success",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 351,
+        "symbol": "test_build_poll_failure_is_not_treated_as_success",
+        "kind": "untyped_return",
+        "expression": "test_build_poll_failure_is_not_treated_as_success"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 360,
+        "symbol": "test_build_deadline_cannot_activate_incomplete_build",
+        "kind": "untyped_parameter",
+        "expression": "apify_stand"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 360,
+        "symbol": "test_build_deadline_cannot_activate_incomplete_build",
+        "kind": "untyped_parameter",
+        "expression": "release"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 360,
+        "symbol": "test_build_deadline_cannot_activate_incomplete_build",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 360,
+        "symbol": "test_build_deadline_cannot_activate_incomplete_build",
+        "kind": "untyped_return",
+        "expression": "test_build_deadline_cannot_activate_incomplete_build"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 372,
+        "symbol": "test_worker_rollback_failure_retains_recovery_transaction",
+        "kind": "untyped_parameter",
+        "expression": "apify_stand"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 372,
+        "symbol": "test_worker_rollback_failure_retains_recovery_transaction",
+        "kind": "untyped_parameter",
+        "expression": "release"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 372,
+        "symbol": "test_worker_rollback_failure_retains_recovery_transaction",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 372,
+        "symbol": "test_worker_rollback_failure_retains_recovery_transaction",
+        "kind": "untyped_return",
+        "expression": "test_worker_rollback_failure_retains_recovery_transaction"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 386,
+        "symbol": "test_committed_release_can_rollback_before_tank_marker_finishes",
+        "kind": "untyped_parameter",
+        "expression": "apify_stand"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 386,
+        "symbol": "test_committed_release_can_rollback_before_tank_marker_finishes",
+        "kind": "untyped_parameter",
+        "expression": "release"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 386,
+        "symbol": "test_committed_release_can_rollback_before_tank_marker_finishes",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 386,
+        "symbol": "test_committed_release_can_rollback_before_tank_marker_finishes",
+        "kind": "untyped_return",
+        "expression": "test_committed_release_can_rollback_before_tank_marker_finishes"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 413,
+        "symbol": "test_provenance_drift_fails_closed",
+        "kind": "untyped_parameter",
+        "expression": "apify_stand"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 413,
+        "symbol": "test_provenance_drift_fails_closed",
+        "kind": "untyped_parameter",
+        "expression": "release"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 413,
+        "symbol": "test_provenance_drift_fails_closed",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 413,
+        "symbol": "test_provenance_drift_fails_closed",
+        "kind": "untyped_parameter",
+        "expression": "change"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 413,
+        "symbol": "test_provenance_drift_fails_closed",
+        "kind": "untyped_return",
+        "expression": "test_provenance_drift_fails_closed"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 438,
+        "symbol": "test_package_uses_selected_git_bytes_not_untracked_or_dirty_source",
+        "kind": "untyped_parameter",
+        "expression": "release"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 438,
+        "symbol": "test_package_uses_selected_git_bytes_not_untracked_or_dirty_source",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 438,
+        "symbol": "test_package_uses_selected_git_bytes_not_untracked_or_dirty_source",
+        "kind": "untyped_return",
+        "expression": "test_package_uses_selected_git_bytes_not_untracked_or_dirty_source"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 476,
+        "symbol": "test_actual_deploy_shell_restores_actor_before_tank_rollback",
+        "kind": "untyped_parameter",
+        "expression": "apify_stand"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 476,
+        "symbol": "test_actual_deploy_shell_restores_actor_before_tank_rollback",
+        "kind": "untyped_parameter",
+        "expression": "release"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 476,
+        "symbol": "test_actual_deploy_shell_restores_actor_before_tank_rollback",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 476,
+        "symbol": "test_actual_deploy_shell_restores_actor_before_tank_rollback",
+        "kind": "untyped_parameter",
+        "expression": "rollback_outcome"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 475,
+        "symbol": "test_actual_deploy_shell_restores_actor_before_tank_rollback",
+        "kind": "untyped_return",
+        "expression": "test_actual_deploy_shell_restores_actor_before_tank_rollback"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 518,
+        "symbol": "test_actual_deploy_shell_restores_actor_before_tank_rollback",
+        "kind": "dictionary",
+        "expression": "{**os.environ, 'PATH': str(binary) + os.pathsep + os.environ['PATH']}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 543,
+        "symbol": "test_actual_deploy_shell_restores_actor_before_tank_rollback",
+        "kind": "fallback",
+        "expression": "pending.get('rolled_back', False)"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 555,
+        "symbol": "shell_host",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 555,
+        "symbol": "shell_host",
+        "kind": "untyped_parameter",
+        "expression": "stand"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 555,
+        "symbol": "shell_host",
+        "kind": "untyped_parameter",
+        "expression": "artifact"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 555,
+        "symbol": "shell_host",
+        "kind": "untyped_parameter",
+        "expression": "sha"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 555,
+        "symbol": "shell_host",
+        "kind": "untyped_return",
+        "expression": "shell_host"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 590,
+        "symbol": "shell_host",
+        "kind": "dictionary",
+        "expression": "{**os.environ, 'PATH': str(binary) + os.pathsep + os.environ['PATH']}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 599,
+        "symbol": "test_deploy_retry_recovers_process_death_before_journal_rename",
+        "kind": "untyped_parameter",
+        "expression": "apify_stand"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 599,
+        "symbol": "test_deploy_retry_recovers_process_death_before_journal_rename",
+        "kind": "untyped_parameter",
+        "expression": "release"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 599,
+        "symbol": "test_deploy_retry_recovers_process_death_before_journal_rename",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 599,
+        "symbol": "test_deploy_retry_recovers_process_death_before_journal_rename",
+        "kind": "untyped_parameter",
+        "expression": "journal"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 599,
+        "symbol": "test_deploy_retry_recovers_process_death_before_journal_rename",
+        "kind": "untyped_parameter",
+        "expression": "retry_sha"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 598,
+        "symbol": "test_deploy_retry_recovers_process_death_before_journal_rename",
+        "kind": "untyped_return",
+        "expression": "test_deploy_retry_recovers_process_death_before_journal_rename"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 618,
+        "symbol": "test_deploy_retry_recovers_process_death_before_journal_rename",
+        "kind": "dictionary",
+        "expression": "{'cache': 'prepare', 'pending': 'activate', 'active': 'commit'}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 622,
+        "symbol": "test_deploy_retry_recovers_process_death_before_journal_rename",
+        "kind": "dictionary",
+        "expression": "{**environment, 'INTERRUPT_JOURNAL': 'yes'}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 662,
+        "symbol": "test_workflow_packages_historical_main_with_current_orchestrator",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 662,
+        "symbol": "test_workflow_packages_historical_main_with_current_orchestrator",
+        "kind": "untyped_parameter",
+        "expression": "sha"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 662,
+        "symbol": "test_workflow_packages_historical_main_with_current_orchestrator",
+        "kind": "untyped_return",
+        "expression": "test_workflow_packages_historical_main_with_current_orchestrator"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 667,
+        "symbol": "test_workflow_packages_historical_main_with_current_orchestrator",
+        "kind": "fallback",
+        "expression": "step.get('id')"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 668,
+        "symbol": "test_workflow_packages_historical_main_with_current_orchestrator",
+        "kind": "fallback",
+        "expression": "step.get('name', '')"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 669,
+        "symbol": "test_workflow_packages_historical_main_with_current_orchestrator",
+        "kind": "fallback",
+        "expression": "step.get('name')"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 688,
+        "symbol": "test_workflow_packages_historical_main_with_current_orchestrator",
+        "kind": "dictionary",
+        "expression": "{**os.environ, 'INPUT_SHA': sha, 'RUNNER_TEMP': str(runner), 'GITHUB_OUTPUT': str(output)}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 702,
+        "symbol": "test_workflow_packages_historical_main_with_current_orchestrator",
+        "kind": "dictionary",
+        "expression": "{**environment, 'SHA': sha}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 759,
+        "symbol": "test_historical_worker_selection_never_rebuilds_or_relabels_source",
+        "kind": "untyped_parameter",
+        "expression": "apify_stand"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 759,
+        "symbol": "test_historical_worker_selection_never_rebuilds_or_relabels_source",
+        "kind": "untyped_parameter",
+        "expression": "release"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 759,
+        "symbol": "test_historical_worker_selection_never_rebuilds_or_relabels_source",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 759,
+        "symbol": "test_historical_worker_selection_never_rebuilds_or_relabels_source",
+        "kind": "untyped_parameter",
+        "expression": "mode"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 759,
+        "symbol": "test_historical_worker_selection_never_rebuilds_or_relabels_source",
+        "kind": "untyped_return",
+        "expression": "test_historical_worker_selection_never_rebuilds_or_relabels_source"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 769,
+        "symbol": "test_historical_worker_selection_never_rebuilds_or_relabels_source",
+        "kind": "dictionary",
+        "expression": "{'release_sha': NEXT_SHA, 'actor_id': deploy.ACTOR_ID, 'contract': deploy.LEGACY_CONTRACT, 'worker_mode': mode, 'compatibility_digest': compatibility, 'source_digest': deploy.BASELINE_DIGEST, 'build_id': deploy.BASELINE_BUILD}"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 812,
+        "symbol": "test_legacy_build_drift_blocks_bootstrap_and_rollback",
+        "kind": "untyped_parameter",
+        "expression": "apify_stand"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 812,
+        "symbol": "test_legacy_build_drift_blocks_bootstrap_and_rollback",
+        "kind": "untyped_parameter",
+        "expression": "release"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 812,
+        "symbol": "test_legacy_build_drift_blocks_bootstrap_and_rollback",
+        "kind": "untyped_parameter",
+        "expression": "tmp_path"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 812,
+        "symbol": "test_legacy_build_drift_blocks_bootstrap_and_rollback",
+        "kind": "untyped_parameter",
+        "expression": "change"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 812,
+        "symbol": "test_legacy_build_drift_blocks_bootstrap_and_rollback",
+        "kind": "untyped_return",
+        "expression": "test_legacy_build_drift_blocks_bootstrap_and_rollback"
+      },
+      {
+        "path": "tests/test_apify_deploy.py",
+        "line": 831,
+        "symbol": "test_legacy_build_drift_blocks_bootstrap_and_rollback",
+        "kind": "fallback",
+        "expression": "instance.read('pending.json').get('rolled_back')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 22,
+        "symbol": "",
+        "kind": "dictionary",
+        "expression": "{'1dcfa5489d2f3622ddcad2d8d45a5515d9734407c4d5a3533e15e3fce6b3ba39': 'legacy', '1be5c4cadef74c3bf1dd77c10fde968d068ef1baad6bbb3969836ccd74a54800': 'legacy', '431febb05a9303605ba57962214df687363f223b33a0aaaca85e15e9033c0061': 'legacy', '0da234b567166f735ae2c1c33e6de74890a0681088d06b640b1edf470d84a36e': 'legacy', '67141bdf567e9c73678efb290e3cae04bae0f11bbd5ad2087db8520bd035035a': 'unused'}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 35,
+        "symbol": "require",
+        "kind": "untyped_parameter",
+        "expression": "condition"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 35,
+        "symbol": "require",
+        "kind": "untyped_parameter",
+        "expression": "message"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 35,
+        "symbol": "require",
+        "kind": "untyped_return",
+        "expression": "require"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 40,
+        "symbol": "canonical",
+        "kind": "untyped_parameter",
+        "expression": "value"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 40,
+        "symbol": "canonical",
+        "kind": "untyped_return",
+        "expression": "canonical"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 44,
+        "symbol": "digest",
+        "kind": "untyped_parameter",
+        "expression": "files"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 44,
+        "symbol": "digest",
+        "kind": "untyped_return",
+        "expression": "digest"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 50,
+        "symbol": "source_files",
+        "kind": "untyped_parameter",
+        "expression": "root"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 50,
+        "symbol": "source_files",
+        "kind": "untyped_return",
+        "expression": "source_files"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 51,
+        "symbol": "source_files",
+        "kind": "dictionary",
+        "expression": "{}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 76,
+        "symbol": "package",
+        "kind": "untyped_parameter",
+        "expression": "sha"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 76,
+        "symbol": "package",
+        "kind": "untyped_parameter",
+        "expression": "destination"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 76,
+        "symbol": "package",
+        "kind": "untyped_return",
+        "expression": "package"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 93,
+        "symbol": "package",
+        "kind": "dictionary",
+        "expression": "{'release_sha': sha, 'actor_id': ACTOR_ID, 'contract': LEGACY_CONTRACT, 'worker_mode': LEGACY_INPUTS[compatibility], 'compatibility_digest': compatibility, 'source_digest': BASELINE_DIGEST, 'build_id': BASELINE_BUILD}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 106,
+        "symbol": "package",
+        "kind": "dictionary",
+        "expression": "{}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 122,
+        "symbol": "package",
+        "kind": "dictionary",
+        "expression": "{'release_sha': sha, 'source_digest': digest(files), 'contract': CONTRACT, 'actor_id': ACTOR_ID}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 128,
+        "symbol": "private_path",
+        "kind": "untyped_parameter",
+        "expression": "path"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 128,
+        "symbol": "private_path",
+        "kind": "untyped_parameter",
+        "expression": "directory"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 128,
+        "symbol": "private_path",
+        "kind": "untyped_return",
+        "expression": "private_path"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 141,
+        "symbol": "host_token",
+        "kind": "untyped_parameter",
+        "expression": "path"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 141,
+        "symbol": "host_token",
+        "kind": "untyped_return",
+        "expression": "host_token"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 157,
+        "symbol": "NoRedirect.redirect_request",
+        "kind": "untyped_parameter",
+        "expression": "req"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 157,
+        "symbol": "NoRedirect.redirect_request",
+        "kind": "untyped_parameter",
+        "expression": "fp"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 157,
+        "symbol": "NoRedirect.redirect_request",
+        "kind": "untyped_parameter",
+        "expression": "code"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 157,
+        "symbol": "NoRedirect.redirect_request",
+        "kind": "untyped_parameter",
+        "expression": "msg"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 157,
+        "symbol": "NoRedirect.redirect_request",
+        "kind": "untyped_parameter",
+        "expression": "headers"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 157,
+        "symbol": "NoRedirect.redirect_request",
+        "kind": "untyped_parameter",
+        "expression": "newurl"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 157,
+        "symbol": "NoRedirect.redirect_request",
+        "kind": "untyped_return",
+        "expression": "redirect_request"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 162,
+        "symbol": "Api.__init__",
+        "kind": "untyped_parameter",
+        "expression": "token"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 162,
+        "symbol": "Api.__init__",
+        "kind": "untyped_parameter",
+        "expression": "base"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 162,
+        "symbol": "Api.__init__",
+        "kind": "untyped_return",
+        "expression": "__init__"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 165,
+        "symbol": "Api.__init__",
+        "kind": "dictionary",
+        "expression": "{}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 167,
+        "symbol": "Api.request",
+        "kind": "untyped_parameter",
+        "expression": "method"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 167,
+        "symbol": "Api.request",
+        "kind": "untyped_parameter",
+        "expression": "path"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 167,
+        "symbol": "Api.request",
+        "kind": "untyped_parameter",
+        "expression": "body"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 167,
+        "symbol": "Api.request",
+        "kind": "untyped_return",
+        "expression": "request"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 167,
+        "symbol": "Api.request",
+        "kind": "none_default",
+        "expression": "None"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 172,
+        "symbol": "Api.request",
+        "kind": "dictionary",
+        "expression": "{'Authorization': 'Bearer ' + self.token, 'Content-Type': 'application/json'}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 182,
+        "symbol": "Api.request",
+        "kind": "fallback",
+        "expression": "value.get('data')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 187,
+        "symbol": "decoded_files",
+        "kind": "untyped_parameter",
+        "expression": "entries"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 187,
+        "symbol": "decoded_files",
+        "kind": "untyped_return",
+        "expression": "decoded_files"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 188,
+        "symbol": "decoded_files",
+        "kind": "dictionary",
+        "expression": "{}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 190,
+        "symbol": "decoded_files",
+        "kind": "fallback",
+        "expression": "entry.get('folder')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 199,
+        "symbol": "decoded_files",
+        "kind": "fallback",
+        "expression": "entry.get('format')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 209,
+        "symbol": "Publisher.__init__",
+        "kind": "untyped_parameter",
+        "expression": "api"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 209,
+        "symbol": "Publisher.__init__",
+        "kind": "untyped_parameter",
+        "expression": "release"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 209,
+        "symbol": "Publisher.__init__",
+        "kind": "untyped_parameter",
+        "expression": "state"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 209,
+        "symbol": "Publisher.__init__",
+        "kind": "untyped_parameter",
+        "expression": "sha"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 209,
+        "symbol": "Publisher.__init__",
+        "kind": "untyped_return",
+        "expression": "__init__"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 219,
+        "symbol": "Publisher.read",
+        "kind": "untyped_parameter",
+        "expression": "name"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 219,
+        "symbol": "Publisher.read",
+        "kind": "untyped_return",
+        "expression": "read"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 226,
+        "symbol": "Publisher.write",
+        "kind": "untyped_parameter",
+        "expression": "name"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 226,
+        "symbol": "Publisher.write",
+        "kind": "untyped_parameter",
+        "expression": "value"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 226,
+        "symbol": "Publisher.write",
+        "kind": "untyped_return",
+        "expression": "write"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 246,
+        "symbol": "Publisher.write",
+        "kind": "fallback",
+        "expression": "temporary.exists() or temporary.is_symlink()"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 256,
+        "symbol": "Publisher.sync_directory",
+        "kind": "untyped_return",
+        "expression": "sync_directory"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 263,
+        "symbol": "Publisher.remove",
+        "kind": "untyped_parameter",
+        "expression": "name"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 263,
+        "symbol": "Publisher.remove",
+        "kind": "untyped_return",
+        "expression": "remove"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 265,
+        "symbol": "Publisher.remove",
+        "kind": "fallback",
+        "expression": "path.exists() or path.is_symlink()"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 270,
+        "symbol": "Publisher.current",
+        "kind": "untyped_return",
+        "expression": "current"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 272,
+        "symbol": "Publisher.current",
+        "kind": "fallback",
+        "expression": "actor.get('id')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 273,
+        "symbol": "Publisher.current",
+        "kind": "fallback",
+        "expression": "actor.get('taggedBuilds', {}).get('direct', {}).get('buildId')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 273,
+        "symbol": "Publisher.current",
+        "kind": "fallback",
+        "expression": "actor.get('taggedBuilds', {}).get('direct', {})"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 273,
+        "symbol": "Publisher.current",
+        "kind": "fallback",
+        "expression": "actor.get('taggedBuilds', {})"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 273,
+        "symbol": "Publisher.current",
+        "kind": "dictionary",
+        "expression": "{}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 273,
+        "symbol": "Publisher.current",
+        "kind": "dictionary",
+        "expression": "{}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 279,
+        "symbol": "Publisher.build",
+        "kind": "untyped_parameter",
+        "expression": "build_id"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 279,
+        "symbol": "Publisher.build",
+        "kind": "untyped_return",
+        "expression": "build"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 283,
+        "symbol": "Publisher.build",
+        "kind": "fallback",
+        "expression": "build.get('id')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 284,
+        "symbol": "Publisher.build",
+        "kind": "fallback",
+        "expression": "build.get('actId')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 285,
+        "symbol": "Publisher.build",
+        "kind": "fallback",
+        "expression": "build.get('status')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 290,
+        "symbol": "Publisher.provenance",
+        "kind": "untyped_parameter",
+        "expression": "build_id"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 290,
+        "symbol": "Publisher.provenance",
+        "kind": "untyped_parameter",
+        "expression": "expected_digest"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 290,
+        "symbol": "Publisher.provenance",
+        "kind": "untyped_return",
+        "expression": "provenance"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 290,
+        "symbol": "Publisher.provenance",
+        "kind": "none_default",
+        "expression": "None"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 292,
+        "symbol": "Publisher.provenance",
+        "kind": "fallback",
+        "expression": "build.get('actVersion', {})"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 292,
+        "symbol": "Publisher.provenance",
+        "kind": "dictionary",
+        "expression": "{}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 293,
+        "symbol": "Publisher.provenance",
+        "kind": "fallback",
+        "expression": "version.get('sourceType')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 294,
+        "symbol": "Publisher.provenance",
+        "kind": "fallback",
+        "expression": "version.get('sourceFiles', [])"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 297,
+        "symbol": "Publisher.provenance",
+        "kind": "fallback",
+        "expression": "build.get('buildNumber')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 298,
+        "symbol": "Publisher.provenance",
+        "kind": "fallback",
+        "expression": "version.get('versionNumber')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 299,
+        "symbol": "Publisher.provenance",
+        "kind": "fallback",
+        "expression": "version.get('buildTag')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 304,
+        "symbol": "Publisher.provenance",
+        "kind": "fallback",
+        "expression": "expected_digest is None or expected_digest == BASELINE_DIGEST"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 307,
+        "symbol": "Publisher.provenance",
+        "kind": "dictionary",
+        "expression": "{'actor_id': ACTOR_ID, 'contract': LEGACY_CONTRACT, 'source_digest': BASELINE_DIGEST, 'build_id': BASELINE_BUILD, 'build_number': '0.2.2'}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 317,
+        "symbol": "Publisher.provenance",
+        "kind": "fallback",
+        "expression": "marker.get('actor_id')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 317,
+        "symbol": "Publisher.provenance",
+        "kind": "fallback",
+        "expression": "marker.get('contract')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 320,
+        "symbol": "Publisher.provenance",
+        "kind": "fallback",
+        "expression": "marker.get('release_sha', '')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 321,
+        "symbol": "Publisher.provenance",
+        "kind": "fallback",
+        "expression": "marker.get('source_digest')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 323,
+        "symbol": "Publisher.provenance",
+        "kind": "fallback",
+        "expression": "expected_digest is None or marker['source_digest'] == expected_digest"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 326,
+        "symbol": "Publisher.provenance",
+        "kind": "dictionary",
+        "expression": "{**marker, 'build_id': build_id}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 328,
+        "symbol": "Publisher.prepare",
+        "kind": "untyped_return",
+        "expression": "prepare"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 333,
+        "symbol": "Publisher.prepare",
+        "kind": "fallback",
+        "expression": "not previous_release or re.fullmatch('[0-9a-f]{40}', previous_release)"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 337,
+        "symbol": "Publisher.prepare",
+        "kind": "fallback",
+        "expression": "manifest.get('contract')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 338,
+        "symbol": "Publisher.prepare",
+        "kind": "dictionary",
+        "expression": "{}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 340,
+        "symbol": "Publisher.prepare",
+        "kind": "fallback",
+        "expression": "manifest.get('compatibility_digest')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 342,
+        "symbol": "Publisher.prepare",
+        "kind": "dictionary",
+        "expression": "{'release_sha': self.sha, 'actor_id': ACTOR_ID, 'contract': LEGACY_CONTRACT, 'worker_mode': LEGACY_INPUTS[compatibility], 'compatibility_digest': compatibility, 'source_digest': BASELINE_DIGEST, 'build_id': BASELINE_BUILD}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 352,
+        "symbol": "Publisher.prepare",
+        "kind": "dictionary",
+        "expression": "{'release_sha': self.sha, 'source_digest': digest(files), 'contract': CONTRACT, 'actor_id': ACTOR_ID}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 378,
+        "symbol": "Publisher.prepare",
+        "kind": "dictionary",
+        "expression": "dict(files)"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 380,
+        "symbol": "Publisher.prepare",
+        "kind": "dictionary",
+        "expression": "{'versionNumber': VERSION, 'sourceType': 'SOURCE_FILES', 'buildTag': None, 'envVars': [], 'applyEnvVarsToBuild': False, 'sourceFiles': [{'name': name, 'format': 'BASE64', 'content': base64.b64encode(body).decode()} for name, body in sorted(uploaded.items())]}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 387,
+        "symbol": "Publisher.prepare",
+        "kind": "dictionary",
+        "expression": "{'name': name, 'format': 'BASE64', 'content': base64.b64encode(body).decode()}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 392,
+        "symbol": "Publisher.prepare",
+        "kind": "fallback",
+        "expression": "actor.get('versions', [])"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 400,
+        "symbol": "Publisher.prepare",
+        "kind": "fallback",
+        "expression": "actual.get('sourceType')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 401,
+        "symbol": "Publisher.prepare",
+        "kind": "fallback",
+        "expression": "actual.get('buildTag')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 402,
+        "symbol": "Publisher.prepare",
+        "kind": "fallback",
+        "expression": "actual.get('envVars')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 403,
+        "symbol": "Publisher.prepare",
+        "kind": "fallback",
+        "expression": "actual.get('applyEnvVarsToBuild')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 404,
+        "symbol": "Publisher.prepare",
+        "kind": "fallback",
+        "expression": "actual.get('sourceFiles', [])"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 410,
+        "symbol": "Publisher.prepare",
+        "kind": "fallback",
+        "expression": "build.get('id')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 416,
+        "symbol": "Publisher.prepare",
+        "kind": "fallback",
+        "expression": "build.get('status')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 418,
+        "symbol": "Publisher.prepare",
+        "kind": "fallback",
+        "expression": "build.get('status')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 425,
+        "symbol": "Publisher.prepare",
+        "kind": "dictionary",
+        "expression": "{'release_sha': self.sha, 'previous': previous, 'previous_active': active, 'previous_release_sha': previous_release, 'candidate': candidate, 'activation_attempted': False}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 438,
+        "symbol": "Publisher.pending",
+        "kind": "untyped_return",
+        "expression": "pending"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 440,
+        "symbol": "Publisher.pending",
+        "kind": "fallback",
+        "expression": "transaction is None or transaction['release_sha'] != self.sha"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 444,
+        "symbol": "Publisher.tag",
+        "kind": "untyped_parameter",
+        "expression": "build_id"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 444,
+        "symbol": "Publisher.tag",
+        "kind": "untyped_return",
+        "expression": "tag"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 445,
+        "symbol": "Publisher.tag",
+        "kind": "dictionary",
+        "expression": "{'taggedBuilds': {'direct': {'buildId': build_id}}}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 445,
+        "symbol": "Publisher.tag",
+        "kind": "dictionary",
+        "expression": "{'direct': {'buildId': build_id}}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 445,
+        "symbol": "Publisher.tag",
+        "kind": "dictionary",
+        "expression": "{'buildId': build_id}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 448,
+        "symbol": "Publisher.activate",
+        "kind": "untyped_return",
+        "expression": "activate"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 458,
+        "symbol": "Publisher.commit",
+        "kind": "untyped_return",
+        "expression": "commit"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 469,
+        "symbol": "Publisher.commit",
+        "kind": "dictionary",
+        "expression": "{'release_sha': self.sha, 'build_id': candidate['build_id'], 'build': candidate}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 473,
+        "symbol": "Publisher.finish",
+        "kind": "untyped_return",
+        "expression": "finish"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 481,
+        "symbol": "Publisher.finish",
+        "kind": "dictionary",
+        "expression": "{'release_sha': self.sha, 'build_id': transaction['candidate']['build_id'], 'build': transaction['candidate']}"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 493,
+        "symbol": "Publisher.rollback",
+        "kind": "untyped_return",
+        "expression": "rollback"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 523,
+        "symbol": "Publisher.previous_release",
+        "kind": "untyped_return",
+        "expression": "previous_release"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 526,
+        "symbol": "Publisher.recovery_release",
+        "kind": "untyped_return",
+        "expression": "recovery_release"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 529,
+        "symbol": "Publisher.recovery_release",
+        "kind": "fallback",
+        "expression": "transaction.get('release_sha', '')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 534,
+        "symbol": "Publisher.rollback_finish",
+        "kind": "untyped_return",
+        "expression": "rollback_finish"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 539,
+        "symbol": "Publisher.rollback_finish",
+        "kind": "fallback",
+        "expression": "transaction.get('rolled_back')"
+      },
+      {
+        "path": "scripts/deploy/apify_deploy.py",
+        "line": 549,
+        "symbol": "main",
+        "kind": "untyped_return",
+        "expression": "main"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 30,
+        "symbol": "validate_input",
+        "kind": "fallback",
+        "expression": "value.get('mode', 'fetch')"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 32,
+        "symbol": "validate_input",
+        "kind": "fallback",
+        "expression": "value.get('handles')"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 33,
+        "symbol": "validate_input",
+        "kind": "fallback",
+        "expression": "not isinstance(handles, list) or not 1 <= len(handles) <= 200"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 36,
+        "symbol": "validate_input",
+        "kind": "fallback",
+        "expression": "value.get('concurrency', 6)"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 37,
+        "symbol": "validate_input",
+        "kind": "fallback",
+        "expression": "type(concurrency) is not int or not 1 <= concurrency <= 8"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 39,
+        "symbol": "validate_input",
+        "kind": "fallback",
+        "expression": "value.get('cursors', {})"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 39,
+        "symbol": "validate_input",
+        "kind": "dictionary",
+        "expression": "{}"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 40,
+        "symbol": "validate_input",
+        "kind": "fallback",
+        "expression": "not isinstance(supplied, dict) or len(supplied) > 200"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 42,
+        "symbol": "validate_input",
+        "kind": "dictionary",
+        "expression": "dict[str, str]"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 42,
+        "symbol": "validate_input",
+        "kind": "dictionary",
+        "expression": "{}"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 47,
+        "symbol": "validate_input",
+        "kind": "fallback",
+        "expression": "not isinstance(post_id, str) or not POST_ID.fullmatch(post_id) or int(post_id) <= 0"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 52,
+        "symbol": "validate_input",
+        "kind": "fallback",
+        "expression": "value.get('requestId')"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 53,
+        "symbol": "validate_input",
+        "kind": "fallback",
+        "expression": "not isinstance(request_id, str) or len(request_id) > 128"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 55,
+        "symbol": "validate_input",
+        "kind": "dictionary",
+        "expression": "{'handles': names, 'concurrency': concurrency, 'cursors': cursors, 'requestId': request_id}"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 23,
+        "symbol": "validate_input",
+        "kind": "dictionary",
+        "expression": "dict[str, Any]"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 23,
+        "symbol": "validate_input",
+        "kind": "any",
+        "expression": "Any"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 67,
+        "symbol": "fetch_snapshot",
+        "kind": "dictionary",
+        "expression": "{'handles': config['handles'], 'concurrency': config['concurrency'], '_accountState': {handle: {'lastMaxId': post_id} for handle, post_id in cursors.items()}}"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 70,
+        "symbol": "fetch_snapshot",
+        "kind": "dictionary",
+        "expression": "{'lastMaxId': post_id}"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 74,
+        "symbol": "fetch_snapshot",
+        "kind": "dictionary",
+        "expression": "dict(cursors)"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 81,
+        "symbol": "fetch_snapshot",
+        "kind": "fallback",
+        "expression": "report['failedAccounts'] or report['coverageGaps']"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 83,
+        "symbol": "fetch_snapshot",
+        "kind": "dictionary",
+        "expression": "{'schemaVersion': 1, 'mode': 'fetch', 'requestId': config['requestId'], 'source': 'x-public-profile', 'checkedAt': datetime.now(UTC).isoformat(), 'ok': health == 'healthy', 'health': health, 'posts': posts, 'accounts': accounts, 'nextCursors': next_cursors, 'failedAccounts': report['failedAccounts'], 'coverageGaps': report['coverageGaps'], 'error': report['error'], 'stats': {'durationSeconds': round(time.monotonic() - started, 3), 'watchedAccounts': report['watchedAccounts'], 'accountsRead': report['accountsRead'], 'postCount': len(posts), 'wireBytes': report['wireBytes']}}"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 97,
+        "symbol": "fetch_snapshot",
+        "kind": "dictionary",
+        "expression": "{'durationSeconds': round(time.monotonic() - started, 3), 'watchedAccounts': report['watchedAccounts'], 'accountsRead': report['accountsRead'], 'postCount': len(posts), 'wireBytes': report['wireBytes']}"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 63,
+        "symbol": "fetch_snapshot",
+        "kind": "dictionary",
+        "expression": "dict[str, Any]"
+      },
+      {
+        "path": "apify/x-reader/direct_fetch.py",
+        "line": 63,
+        "symbol": "fetch_snapshot",
+        "kind": "any",
+        "expression": "Any"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 39,
+        "symbol": "ProfileFailure.__init__",
+        "kind": "untyped_parameter",
+        "expression": "reason"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 39,
+        "symbol": "ProfileFailure.__init__",
+        "kind": "untyped_parameter",
+        "expression": "diagnostics"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 39,
+        "symbol": "ProfileFailure.__init__",
+        "kind": "untyped_return",
+        "expression": "__init__"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 44,
+        "symbol": "redact",
+        "kind": "untyped_parameter",
+        "expression": "value"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 44,
+        "symbol": "redact",
+        "kind": "untyped_return",
+        "expression": "redact"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 46,
+        "symbol": "redact",
+        "kind": "fallback",
+        "expression": "os.environ.get(name)"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 63,
+        "symbol": "read_body",
+        "kind": "untyped_parameter",
+        "expression": "response"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 63,
+        "symbol": "read_body",
+        "kind": "untyped_parameter",
+        "expression": "parts"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 63,
+        "symbol": "read_body",
+        "kind": "untyped_parameter",
+        "expression": "limit"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 63,
+        "symbol": "read_body",
+        "kind": "untyped_return",
+        "expression": "read_body"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 73,
+        "symbol": "response_evidence",
+        "kind": "untyped_parameter",
+        "expression": "response"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 73,
+        "symbol": "response_evidence",
+        "kind": "untyped_parameter",
+        "expression": "raw"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 73,
+        "symbol": "response_evidence",
+        "kind": "untyped_parameter",
+        "expression": "read_error"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 73,
+        "symbol": "response_evidence",
+        "kind": "untyped_parameter",
+        "expression": "limit"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 73,
+        "symbol": "response_evidence",
+        "kind": "untyped_parameter",
+        "expression": "serialized_limit"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 73,
+        "symbol": "response_evidence",
+        "kind": "untyped_return",
+        "expression": "response_evidence"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 73,
+        "symbol": "response_evidence",
+        "kind": "none_default",
+        "expression": "None"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 73,
+        "symbol": "response_evidence",
+        "kind": "none_default",
+        "expression": "None"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 82,
+        "symbol": "response_evidence",
+        "kind": "fallback",
+        "expression": "headers.get('content-encoding', '')"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 86,
+        "symbol": "response_evidence",
+        "kind": "fallback",
+        "expression": "truncated or len(captured) > limit"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 111,
+        "symbol": "response_evidence",
+        "kind": "fallback",
+        "expression": "headers.get('content-length', '')"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 113,
+        "symbol": "response_evidence",
+        "kind": "fallback",
+        "expression": "truncated or (total is not None and total > len(raw))"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 114,
+        "symbol": "response_evidence",
+        "kind": "dictionary",
+        "expression": "{'status': response.status_code, 'headers': headers, 'body': body, 'bodyEncoding': 'utf-8' if textual else 'base64', 'bodyBytes': len(safe), 'bodySha256': hashlib.sha256(safe).hexdigest(), 'wireBytes': min(len(raw), limit), 'captureLimitBytes': limit, 'serializedBodyLimitBytes': serialized_limit, 'bodyTruncated': truncated or read_error is not None, 'omittedWireBytes': max(0, total - min(len(raw), limit)) if total is not None else None, 'readError': read_error, 'decodeError': encoding_error, 'redacted': redacted}"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 124,
+        "symbol": "response_evidence",
+        "kind": "fallback",
+        "expression": "truncated or read_error is not None"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 132,
+        "symbol": "run_deadline",
+        "kind": "untyped_return",
+        "expression": "run_deadline"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 134,
+        "symbol": "run_deadline",
+        "kind": "fallback",
+        "expression": "os.environ.get('ACTOR_TIMEOUT_AT')"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 142,
+        "symbol": "parse_profile",
+        "kind": "untyped_parameter",
+        "expression": "raw"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 142,
+        "symbol": "parse_profile",
+        "kind": "untyped_parameter",
+        "expression": "handle"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 142,
+        "symbol": "parse_profile",
+        "kind": "untyped_return",
+        "expression": "parse_profile"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 145,
+        "symbol": "parse_profile",
+        "kind": "fallback",
+        "expression": "' / X' not in title or '@' + handle.lower() not in title.lower()"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 147,
+        "symbol": "parse_profile",
+        "kind": "dictionary",
+        "expression": "{}"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 155,
+        "symbol": "parse_profile",
+        "kind": "fallback",
+        "expression": "a.get('href')"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 159,
+        "symbol": "parse_profile",
+        "kind": "fallback",
+        "expression": "not link or link.group(1).lower() != handle.lower()"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 162,
+        "symbol": "parse_profile",
+        "kind": "fallback",
+        "expression": "article.select_one('.whitespace-pre-wrap') or article.select_one('[data-testid=\"tweetText\"]')"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 170,
+        "symbol": "parse_profile",
+        "kind": "dictionary",
+        "expression": "{'id': post_id, 'author': author, 'text': content.get_text('', strip=False).strip() if content else '', 'publishedTs': published, 'publishedAt': datetime.fromtimestamp(published, UTC).isoformat(), 'url': f'https://x.com/{author}/status/{post_id}', 'source': 'x-public-profile'}"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 184,
+        "symbol": "fetch_profile",
+        "kind": "untyped_parameter",
+        "expression": "handle"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 184,
+        "symbol": "fetch_profile",
+        "kind": "untyped_parameter",
+        "expression": "deadline"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 184,
+        "symbol": "fetch_profile",
+        "kind": "untyped_parameter",
+        "expression": "evidence_limit"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 184,
+        "symbol": "fetch_profile",
+        "kind": "untyped_return",
+        "expression": "fetch_profile"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 184,
+        "symbol": "fetch_profile",
+        "kind": "none_default",
+        "expression": "None"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 187,
+        "symbol": "fetch_profile",
+        "kind": "dictionary",
+        "expression": "{'request': {'method': 'GET', 'url': url, 'body': None}, 'attempts': [], 'attemptCount': 0, 'outcome': 'exhausted'}"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 188,
+        "symbol": "fetch_profile",
+        "kind": "dictionary",
+        "expression": "{'method': 'GET', 'url': url, 'body': None}"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 196,
+        "symbol": "fetch_profile.trace",
+        "kind": "untyped_parameter",
+        "expression": "name"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 196,
+        "symbol": "fetch_profile.trace",
+        "kind": "untyped_parameter",
+        "expression": "info"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 196,
+        "symbol": "fetch_profile.trace",
+        "kind": "untyped_return",
+        "expression": "trace"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 214,
+        "symbol": "fetch_profile",
+        "kind": "dictionary",
+        "expression": "{'attempt': index, 'at': datetime.now(UTC).isoformat()}"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 224,
+        "symbol": "fetch_profile",
+        "kind": "dictionary",
+        "expression": "{'User-Agent': 'Mozilla/5.0', 'Accept': 'text/html', 'Accept-Encoding': 'gzip', 'Cache-Control': 'no-cache'}"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 231,
+        "symbol": "fetch_profile",
+        "kind": "dictionary",
+        "expression": "{'trace': trace}"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 247,
+        "symbol": "fetch_profile",
+        "kind": "fallback",
+        "expression": "response.headers.get('Content-Encoding', '')"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 271,
+        "symbol": "fetch_profile",
+        "kind": "fallback",
+        "expression": "response.status_code in (408, 429) or 500 <= response.status_code <= 599"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 272,
+        "symbol": "fetch_profile",
+        "kind": "fallback",
+        "expression": "response.status_code >= 400 or read_error"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 289,
+        "symbol": "collect",
+        "kind": "untyped_parameter",
+        "expression": "config"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 289,
+        "symbol": "collect",
+        "kind": "untyped_parameter",
+        "expression": "known_ids"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 289,
+        "symbol": "collect",
+        "kind": "untyped_parameter",
+        "expression": "cutoff"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 289,
+        "symbol": "collect",
+        "kind": "untyped_return",
+        "expression": "collect"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 293,
+        "symbol": "collect",
+        "kind": "fallback",
+        "expression": "not names or any((not re.fullmatch('[a-z0-9_]{1,15}', h) for h in names))"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 295,
+        "symbol": "collect",
+        "kind": "fallback",
+        "expression": "config.get('concurrency', 6)"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 296,
+        "symbol": "collect",
+        "kind": "fallback",
+        "expression": "config.get('_accountState') or {}"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 296,
+        "symbol": "collect",
+        "kind": "fallback",
+        "expression": "config.get('_accountState')"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 296,
+        "symbol": "collect",
+        "kind": "dictionary",
+        "expression": "{}"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 299,
+        "symbol": "collect.one",
+        "kind": "untyped_parameter",
+        "expression": "handle"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 299,
+        "symbol": "collect.one",
+        "kind": "untyped_return",
+        "expression": "one"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 304,
+        "symbol": "collect.one",
+        "kind": "fallback",
+        "expression": "account_state.get(handle) or {}"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 304,
+        "symbol": "collect.one",
+        "kind": "fallback",
+        "expression": "account_state.get(handle)"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 304,
+        "symbol": "collect.one",
+        "kind": "dictionary",
+        "expression": "{}"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 305,
+        "symbol": "collect.one",
+        "kind": "fallback",
+        "expression": "previous.get('lastMaxId')"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 314,
+        "symbol": "collect.one",
+        "kind": "dictionary",
+        "expression": "{'handle': handle, 'status': 'ok', 'scanTs': stamp, 'posts': len(rows), 'wireBytes': size, 'lastMaxId': max(rows, key=lambda r: int(r['id']))['id'], 'historyGap': gap}"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 324,
+        "symbol": "collect.one",
+        "kind": "dictionary",
+        "expression": "{'handle': handle, 'status': 'failed', 'scanTs': stamp, 'error': str(exc), 'diagnostics': getattr(exc, 'diagnostics', None)}"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 336,
+        "symbol": "collect",
+        "kind": "fallback",
+        "expression": "x.get('historyGap')"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 337,
+        "symbol": "collect",
+        "kind": "dictionary",
+        "expression": "{'source': 'x-public-profile', 'seconds': round(time.monotonic() - started, 3), 'watchedAccounts': len(names), 'accountsRead': len(names) - len(failed), 'failedAccounts': failed, 'coverageGaps': gaps, 'accountResults': accounts, 'wireBytes': sum((x.get('wireBytes', 0) for x in accounts)), 'postCount': len(rows), 'authorsSeen': len({r['author'].lower() for r in rows.values()}), 'reachedHistory': not failed and (not gaps), 'error': 'PUBLIC_SOURCE_UNAVAILABLE' if len(failed) == len(names) else None}"
+      },
+      {
+        "path": "apify/x-reader/public_profile.py",
+        "line": 345,
+        "symbol": "collect",
+        "kind": "fallback",
+        "expression": "x.get('wireBytes', 0)"
+      }
+    ],
+    "areas": {
+      "apify": {
+        "fallback": 34,
+        "dictionary": 24,
+        "any": 2,
+        "untyped_parameter": 22,
+        "untyped_return": 10,
+        "none_default": 3
+      },
+      "scripts": {
+        "dictionary": 25,
+        "untyped_parameter": 34,
+        "untyped_return": 30,
+        "none_default": 2,
+        "fallback": 39
+      },
+      "tests": {
+        "untyped_parameter": 81,
+        "untyped_return": 35,
+        "dictionary": 44,
+        "fallback": 8
+      }
+    },
+    "modules": {
+      "apify/x-reader/direct_fetch.py": {
+        "fallback": 11,
+        "dictionary": 11,
+        "any": 2
+      },
+      "apify/x-reader/public_profile.py": {
+        "untyped_parameter": 22,
+        "untyped_return": 10,
+        "fallback": 23,
+        "none_default": 3,
+        "dictionary": 13
+      },
+      "scripts/deploy/apify_deploy.py": {
+        "dictionary": 25,
+        "untyped_parameter": 34,
+        "untyped_return": 30,
+        "none_default": 2,
+        "fallback": 39
+      },
+      "tests/test_apify_deploy.py": {
+        "untyped_parameter": 81,
+        "untyped_return": 35,
+        "dictionary": 44,
+        "fallback": 8
+      }
+    },
+    "symbols": {
+      "apify/x-reader/direct_fetch.py:fetch_snapshot": {
+        "dictionary": 6,
+        "fallback": 1,
+        "any": 1
+      },
+      "apify/x-reader/direct_fetch.py:validate_input": {
+        "fallback": 10,
+        "dictionary": 5,
+        "any": 1
+      },
+      "apify/x-reader/public_profile.py:ProfileFailure.__init__": {
+        "untyped_parameter": 2,
+        "untyped_return": 1
+      },
+      "apify/x-reader/public_profile.py:collect": {
+        "untyped_parameter": 3,
+        "untyped_return": 1,
+        "fallback": 6,
+        "dictionary": 2
+      },
+      "apify/x-reader/public_profile.py:collect.one": {
+        "untyped_parameter": 1,
+        "untyped_return": 1,
+        "fallback": 3,
+        "dictionary": 3
+      },
+      "apify/x-reader/public_profile.py:fetch_profile": {
+        "untyped_parameter": 3,
+        "untyped_return": 1,
+        "none_default": 1,
+        "dictionary": 5,
+        "fallback": 3
+      },
+      "apify/x-reader/public_profile.py:fetch_profile.trace": {
+        "untyped_parameter": 2,
+        "untyped_return": 1
+      },
+      "apify/x-reader/public_profile.py:parse_profile": {
+        "untyped_parameter": 2,
+        "untyped_return": 1,
+        "fallback": 4,
+        "dictionary": 2
+      },
+      "apify/x-reader/public_profile.py:read_body": {
+        "untyped_parameter": 3,
+        "untyped_return": 1
+      },
+      "apify/x-reader/public_profile.py:redact": {
+        "untyped_parameter": 1,
+        "untyped_return": 1,
+        "fallback": 1
+      },
+      "apify/x-reader/public_profile.py:response_evidence": {
+        "untyped_parameter": 5,
+        "untyped_return": 1,
+        "none_default": 2,
+        "fallback": 5,
+        "dictionary": 1
+      },
+      "apify/x-reader/public_profile.py:run_deadline": {
+        "untyped_return": 1,
+        "fallback": 1
+      },
+      "scripts/deploy/apify_deploy.py:": {
+        "dictionary": 1
+      },
+      "scripts/deploy/apify_deploy.py:Api.__init__": {
+        "untyped_parameter": 2,
+        "untyped_return": 1,
+        "dictionary": 1
+      },
+      "scripts/deploy/apify_deploy.py:Api.request": {
+        "untyped_parameter": 3,
+        "untyped_return": 1,
+        "none_default": 1,
+        "dictionary": 1,
+        "fallback": 1
+      },
+      "scripts/deploy/apify_deploy.py:NoRedirect.redirect_request": {
+        "untyped_parameter": 6,
+        "untyped_return": 1
+      },
+      "scripts/deploy/apify_deploy.py:Publisher.__init__": {
+        "untyped_parameter": 4,
+        "untyped_return": 1
+      },
+      "scripts/deploy/apify_deploy.py:Publisher.activate": {
+        "untyped_return": 1
+      },
+      "scripts/deploy/apify_deploy.py:Publisher.build": {
+        "untyped_parameter": 1,
+        "untyped_return": 1,
+        "fallback": 3
+      },
+      "scripts/deploy/apify_deploy.py:Publisher.commit": {
+        "untyped_return": 1,
+        "dictionary": 1
+      },
+      "scripts/deploy/apify_deploy.py:Publisher.current": {
+        "untyped_return": 1,
+        "fallback": 4,
+        "dictionary": 2
+      },
+      "scripts/deploy/apify_deploy.py:Publisher.finish": {
+        "untyped_return": 1,
+        "dictionary": 1
+      },
+      "scripts/deploy/apify_deploy.py:Publisher.pending": {
+        "untyped_return": 1,
+        "fallback": 1
+      },
+      "scripts/deploy/apify_deploy.py:Publisher.prepare": {
+        "untyped_return": 1,
+        "fallback": 12,
+        "dictionary": 7
+      },
+      "scripts/deploy/apify_deploy.py:Publisher.previous_release": {
+        "untyped_return": 1
+      },
+      "scripts/deploy/apify_deploy.py:Publisher.provenance": {
+        "untyped_parameter": 2,
+        "untyped_return": 1,
+        "none_default": 1,
+        "fallback": 12,
+        "dictionary": 3
+      },
+      "scripts/deploy/apify_deploy.py:Publisher.read": {
+        "untyped_parameter": 1,
+        "untyped_return": 1
+      },
+      "scripts/deploy/apify_deploy.py:Publisher.recovery_release": {
+        "untyped_return": 1,
+        "fallback": 1
+      },
+      "scripts/deploy/apify_deploy.py:Publisher.remove": {
+        "untyped_parameter": 1,
+        "untyped_return": 1,
+        "fallback": 1
+      },
+      "scripts/deploy/apify_deploy.py:Publisher.rollback": {
+        "untyped_return": 1
+      },
+      "scripts/deploy/apify_deploy.py:Publisher.rollback_finish": {
+        "untyped_return": 1,
+        "fallback": 1
+      },
+      "scripts/deploy/apify_deploy.py:Publisher.sync_directory": {
+        "untyped_return": 1
+      },
+      "scripts/deploy/apify_deploy.py:Publisher.tag": {
+        "untyped_parameter": 1,
+        "untyped_return": 1,
+        "dictionary": 3
+      },
+      "scripts/deploy/apify_deploy.py:Publisher.write": {
+        "untyped_parameter": 2,
+        "untyped_return": 1,
+        "fallback": 1
+      },
+      "scripts/deploy/apify_deploy.py:canonical": {
+        "untyped_parameter": 1,
+        "untyped_return": 1
+      },
+      "scripts/deploy/apify_deploy.py:decoded_files": {
+        "untyped_parameter": 1,
+        "untyped_return": 1,
+        "dictionary": 1,
+        "fallback": 2
+      },
+      "scripts/deploy/apify_deploy.py:digest": {
+        "untyped_parameter": 1,
+        "untyped_return": 1
+      },
+      "scripts/deploy/apify_deploy.py:host_token": {
+        "untyped_parameter": 1,
+        "untyped_return": 1
+      },
+      "scripts/deploy/apify_deploy.py:main": {
+        "untyped_return": 1
+      },
+      "scripts/deploy/apify_deploy.py:package": {
+        "untyped_parameter": 2,
+        "untyped_return": 1,
+        "dictionary": 3
+      },
+      "scripts/deploy/apify_deploy.py:private_path": {
+        "untyped_parameter": 2,
+        "untyped_return": 1
+      },
+      "scripts/deploy/apify_deploy.py:require": {
+        "untyped_parameter": 2,
+        "untyped_return": 1
+      },
+      "scripts/deploy/apify_deploy.py:source_files": {
+        "untyped_parameter": 1,
+        "untyped_return": 1,
+        "dictionary": 1
+      },
+      "tests/test_apify_deploy.py:ApifyStand.__init__": {
+        "untyped_return": 1,
+        "dictionary": 5
+      },
+      "tests/test_apify_deploy.py:ApifyStand.handle": {
+        "untyped_parameter": 3,
+        "untyped_return": 1,
+        "dictionary": 19,
+        "fallback": 1
+      },
+      "tests/test_apify_deploy.py:apify_stand": {
+        "untyped_parameter": 1,
+        "untyped_return": 1,
+        "dictionary": 2
+      },
+      "tests/test_apify_deploy.py:apify_stand.Handler.do_GET": {
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:apify_stand.Handler.do_POST": {
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:apify_stand.Handler.do_PUT": {
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:apify_stand.Handler.log_message": {
+        "untyped_parameter": 2,
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:apify_stand.Handler.respond": {
+        "untyped_return": 1,
+        "fallback": 2
+      },
+      "tests/test_apify_deploy.py:finish_release": {
+        "untyped_parameter": 2,
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:publisher": {
+        "untyped_parameter": 4,
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:release": {
+        "untyped_parameter": 1,
+        "untyped_return": 1,
+        "dictionary": 1
+      },
+      "tests/test_apify_deploy.py:shell_host": {
+        "untyped_parameter": 4,
+        "untyped_return": 1,
+        "dictionary": 1
+      },
+      "tests/test_apify_deploy.py:test_actual_deploy_shell_restores_actor_before_tank_rollback": {
+        "untyped_parameter": 4,
+        "untyped_return": 1,
+        "dictionary": 1,
+        "fallback": 1
+      },
+      "tests/test_apify_deploy.py:test_build_deadline_cannot_activate_incomplete_build": {
+        "untyped_parameter": 3,
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:test_build_poll_failure_is_not_treated_as_success": {
+        "untyped_parameter": 3,
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:test_changed_worker_publishes_verifies_then_activates_and_reuses_unchanged": {
+        "untyped_parameter": 3,
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:test_committed_release_can_rollback_before_tank_marker_finishes": {
+        "untyped_parameter": 3,
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:test_deploy_retry_recovers_process_death_before_journal_rename": {
+        "untyped_parameter": 5,
+        "untyped_return": 1,
+        "dictionary": 2
+      },
+      "tests/test_apify_deploy.py:test_failed_tag_readback_or_uncertain_update_restores_previous_build": {
+        "untyped_parameter": 4,
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:test_historical_worker_selection_never_rebuilds_or_relabels_source": {
+        "untyped_parameter": 4,
+        "untyped_return": 1,
+        "dictionary": 1
+      },
+      "tests/test_apify_deploy.py:test_host_secret_owner_and_symlink_fail_closed": {
+        "untyped_parameter": 2,
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:test_host_secret_permissions_fail_closed": {
+        "untyped_parameter": 2,
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:test_invalid_staging_is_not_published_or_unowned_staging_removed": {
+        "untyped_parameter": 3,
+        "untyped_return": 1,
+        "dictionary": 3
+      },
+      "tests/test_apify_deploy.py:test_invalid_staging_is_not_published_or_unowned_staging_removed.sync": {
+        "untyped_parameter": 1,
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:test_journal_replacement_and_removal_sync_parent_after_effect": {
+        "untyped_parameter": 2,
+        "untyped_return": 1,
+        "dictionary": 4
+      },
+      "tests/test_apify_deploy.py:test_journal_replacement_and_removal_sync_parent_after_effect.sync": {
+        "untyped_parameter": 1,
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:test_legacy_build_drift_blocks_bootstrap_and_rollback": {
+        "untyped_parameter": 4,
+        "untyped_return": 1,
+        "fallback": 1
+      },
+      "tests/test_apify_deploy.py:test_missing_ambiguous_or_shell_token_is_refused": {
+        "untyped_parameter": 2,
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:test_only_apify_token_is_read_from_single_host_store": {
+        "untyped_parameter": 2,
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:test_package_uses_selected_git_bytes_not_untracked_or_dirty_source": {
+        "untyped_parameter": 2,
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:test_provenance_drift_fails_closed": {
+        "untyped_parameter": 4,
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:test_publication_errors_do_not_activate_or_commit": {
+        "untyped_parameter": 4,
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:test_source_digest_includes_paths_bytes_and_build_manifest": {
+        "untyped_parameter": 1,
+        "untyped_return": 1,
+        "dictionary": 3
+      },
+      "tests/test_apify_deploy.py:test_worker_rollback_failure_retains_recovery_transaction": {
+        "untyped_parameter": 3,
+        "untyped_return": 1
+      },
+      "tests/test_apify_deploy.py:test_workflow_packages_historical_main_with_current_orchestrator": {
+        "untyped_parameter": 2,
+        "untyped_return": 1,
+        "fallback": 3,
+        "dictionary": 2
+      }
+    },
+    "imports": {
+      "actor:x-reader.direct_fetch": [
+        "actor:x-reader.public_profile"
+      ],
+      "actor:x-reader.main": [
+        "actor:x-reader.direct_fetch"
+      ],
+      "actor:x-reader.public_profile": []
+    },
+    "cycles": [],
+    "reference_programs": {}
+  }
+}

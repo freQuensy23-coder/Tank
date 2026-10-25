@@ -205,12 +205,19 @@ class Scan(ast.NodeVisitor):
 
 def dependencies(root: Path) -> tuple[dict[str, list[str]], list[list[str]]]:
     modules: dict[str, Path] = {}
-    for path in sorted((root / "src").rglob("*.py")):
-        relative = path.relative_to(root / "src").with_suffix("")
-        if EXCLUDED.intersection(relative.parts):
-            continue
-        parts = relative.parts[:-1] if relative.name == "__init__" else relative.parts
-        modules[".".join(parts)] = path
+    namespaces: dict[str, str] = {}
+    for directory, namespace in (
+        (root / "src", ""),
+        (root / "apify" / "x-reader", "actor:x-reader."),
+    ):
+        for path in sorted(directory.rglob("*.py")):
+            relative = path.relative_to(directory).with_suffix("")
+            if EXCLUDED.intersection(relative.parts):
+                continue
+            parts = relative.parts[:-1] if relative.name == "__init__" else relative.parts
+            name = namespace + ".".join(parts)
+            modules[name] = path
+            namespaces[name] = namespace
     graph: dict[str, list[str]] = {}
     for name, path in modules.items():
         edges: set[str] = set()
@@ -222,12 +229,16 @@ def dependencies(root: Path) -> tuple[dict[str, list[str]], list[list[str]]]:
                 candidates = [node.module + "." + alias.name for alias in node.names]
                 candidates.append(node.module)
             for candidate in candidates:
-                while candidate:
-                    if candidate in modules:
-                        if candidate != name:
-                            edges.add(candidate)
-                        break
-                    candidate = candidate.rpartition(".")[0]
+                for reference in (
+                    namespaces[name] + candidate,
+                    candidate,
+                ):
+                    while reference:
+                        if reference in modules:
+                            if reference != name:
+                                edges.add(reference)
+                            break
+                        reference = reference.rpartition(".")[0]
         graph[name] = sorted(edges)
     index = 0
     indices: dict[str, int] = {}
@@ -269,7 +280,7 @@ def inventory(root: Path, embedded: tuple[EmbeddedPython, ...] = ()) -> Inventor
     findings: list[Finding] = []
     references: dict[str, ReferenceProgram] = {}
     count = 0
-    for directory in ("src", "tests", "scripts", "deploy", "capture"):
+    for directory in ("src", "tests", "scripts", "deploy", "capture", "apify"):
         for path in sorted((root / directory).rglob("*")):
             relative = path.relative_to(root)
             if (
@@ -321,9 +332,10 @@ def inventory(root: Path, embedded: tuple[EmbeddedPython, ...] = ()) -> Inventor
     return Inventory(
         files=count - len(references),
         coverage=[
-            "active Python files in src/tests/scripts/deploy/capture; vendor provenance is a separate openma_inventory report",
-            "active Go files in src/tests/scripts/deploy/capture; unchanged upstream programs are not first-party completion evidence",
+            "active Python files in src/tests/scripts/deploy/capture/apify; vendor provenance is a separate openma_inventory report",
+            "active Go files in src/tests/scripts/deploy/capture/apify; unchanged upstream programs are not first-party completion evidence",
             "explicit embedded Python snippets from JavaScript report",
+            "Python import graph covers src and apify/x-reader; actor:x-reader labels distinguish sibling runtime modules from the external SDK",
         ],
         embedded_python=len(embedded),
         counts=dict(sorted(Counter(item.kind for item in findings).items())),
