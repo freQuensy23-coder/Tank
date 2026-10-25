@@ -1,5 +1,5 @@
 {
-  "files": 409,
+  "files": 416,
   "coverage": [
     "active Python files",
     "active Go files",
@@ -7,12 +7,12 @@
   ],
   "embedded_python": 0,
   "counts": {
-    "dictionary": 10098,
+    "dictionary": 10177,
     "dynamic_go": 1060,
-    "fallback": 7696,
-    "none_default": 534,
-    "untyped_parameter": 3786,
-    "untyped_return": 1582
+    "fallback": 7645,
+    "none_default": 536,
+    "untyped_parameter": 3710,
+    "untyped_return": 1554
   },
   "areas": {
     "capture": {
@@ -26,25 +26,25 @@
       "dictionary": 142
     },
     "scripts": {
-      "untyped_parameter": 167,
-      "untyped_return": 78,
-      "dictionary": 223,
-      "none_default": 9,
-      "fallback": 331
+      "untyped_parameter": 156,
+      "untyped_return": 73,
+      "fallback": 333,
+      "dictionary": 230,
+      "none_default": 8
     },
     "src": {
-      "dictionary": 2546,
-      "fallback": 5777,
-      "none_default": 439,
-      "untyped_parameter": 1526,
-      "untyped_return": 754
+      "dictionary": 2560,
+      "fallback": 5723,
+      "none_default": 440,
+      "untyped_parameter": 1487,
+      "untyped_return": 738
     },
     "tests": {
-      "none_default": 82,
-      "fallback": 1364,
-      "dictionary": 7187,
-      "untyped_parameter": 1987,
-      "untyped_return": 700
+      "none_default": 84,
+      "fallback": 1365,
+      "dictionary": 7245,
+      "untyped_parameter": 1961,
+      "untyped_return": 693
     }
   },
   "modules": {
@@ -375,11 +375,11 @@
       "fallback": 17
     },
     "scripts/acceptance/assemble_packets.py": {
-      "untyped_parameter": 81,
-      "untyped_return": 37,
-      "dictionary": 67,
-      "none_default": 3,
-      "fallback": 164
+      "untyped_parameter": 70,
+      "untyped_return": 32,
+      "fallback": 163,
+      "dictionary": 64,
+      "none_default": 2
     },
     "scripts/acceptance/common.py": {
       "fallback": 6,
@@ -403,6 +403,10 @@
       "untyped_return": 5,
       "fallback": 7,
       "dictionary": 13
+    },
+    "scripts/acceptance/masking_contracts.py": {
+      "dictionary": 10,
+      "fallback": 3
     },
     "scripts/acceptance/run_fixtures.py": {
       "fallback": 19,
@@ -553,7 +557,7 @@
       "dictionary": 388,
       "untyped_parameter": 290,
       "untyped_return": 126,
-      "fallback": 1205,
+      "fallback": 1204,
       "none_default": 22
     },
     "src/tank/analysis/watch_contracts.py": {
@@ -567,10 +571,8 @@
       "fallback": 1
     },
     "src/tank/bootstrap.py": {
-      "untyped_parameter": 10,
-      "untyped_return": 6,
-      "fallback": 22,
-      "dictionary": 13
+      "dictionary": 15,
+      "fallback": 2
     },
     "src/tank/calibration.py": {
       "dictionary": 24,
@@ -587,8 +589,8 @@
       "dictionary": 15
     },
     "src/tank/clickhouse_market.py": {
-      "dictionary": 38,
-      "fallback": 32,
+      "dictionary": 37,
+      "fallback": 30,
       "none_default": 17
     },
     "src/tank/codex_gateway.py": {
@@ -610,9 +612,12 @@
       "none_default": 3,
       "fallback": 3
     },
+    "src/tank/contracts/provenance.py": {
+      "fallback": 1
+    },
     "src/tank/contracts/registry.py": {
-      "fallback": 2,
-      "dictionary": 1
+      "dictionary": 4,
+      "fallback": 2
     },
     "src/tank/contracts/repository.py": {
       "dictionary": 17,
@@ -629,7 +634,7 @@
     },
     "src/tank/contracts/sources.py": {
       "dictionary": 8,
-      "fallback": 5
+      "fallback": 8
     },
     "src/tank/contracts/tool_schema.py": {
       "dictionary": 4,
@@ -693,18 +698,16 @@
       "fallback": 7
     },
     "src/tank/market/flow.py": {
-      "untyped_return": 9,
-      "dictionary": 17,
-      "untyped_parameter": 25,
-      "none_default": 3,
-      "fallback": 36
+      "dictionary": 12,
+      "none_default": 2,
+      "fallback": 10
     },
     "src/tank/market/normalize.py": {
-      "untyped_parameter": 31,
-      "untyped_return": 9,
-      "none_default": 9,
-      "dictionary": 21,
-      "fallback": 77
+      "untyped_parameter": 27,
+      "untyped_return": 8,
+      "none_default": 8,
+      "dictionary": 22,
+      "fallback": 58
     },
     "src/tank/market/numbers.py": {
       "fallback": 1
@@ -716,7 +719,7 @@
       "untyped_parameter": 144,
       "untyped_return": 64,
       "dictionary": 175,
-      "fallback": 263,
+      "fallback": 262,
       "none_default": 20
     },
     "src/tank/market/supply.py": {
@@ -724,7 +727,16 @@
       "untyped_parameter": 24,
       "untyped_return": 13,
       "none_default": 1,
-      "fallback": 59
+      "fallback": 58
+    },
+    "src/tank/market/trade_contracts.py": {
+      "fallback": 9,
+      "dictionary": 1
+    },
+    "src/tank/market/trade_wire.py": {
+      "dictionary": 13,
+      "none_default": 3,
+      "fallback": 1
     },
     "src/tank/market_codec.py": {
       "dictionary": 26,
@@ -817,7 +829,7 @@
     },
     "src/tank/settings.py": {
       "dictionary": 13,
-      "fallback": 5
+      "fallback": 7
     },
     "src/tank/sources/__init__.py": {
       "untyped_return": 12,
@@ -915,6 +927,10 @@
       "fallback": 4,
       "dictionary": 9
     },
+    "tests/bootstrap_support.py": {
+      "dictionary": 5,
+      "fallback": 1
+    },
     "tests/conftest.py": {
       "fallback": 10,
       "untyped_parameter": 28,
@@ -970,6 +986,9 @@
     "tests/source_support.py": {
       "dictionary": 8,
       "fallback": 1
+    },
+    "tests/test_acceptance_masking.py": {
+      "dictionary": 28
     },
     "tests/test_acceptance_scripts.py": {
       "dictionary": 16
@@ -1083,11 +1102,9 @@
       "fallback": 9
     },
     "tests/test_bootstrap.py": {
-      "untyped_parameter": 8,
-      "untyped_return": 1,
-      "none_default": 1,
-      "dictionary": 50,
-      "fallback": 15
+      "none_default": 2,
+      "dictionary": 54,
+      "fallback": 16
     },
     "tests/test_bootstrap_contracts.py": {
       "fallback": 2
@@ -1167,20 +1184,21 @@
     },
     "tests/test_deploy.py": {
       "untyped_parameter": 1,
-      "untyped_return": 1
+      "untyped_return": 1,
+      "dictionary": 1
     },
     "tests/test_e2e.py": {
       "untyped_parameter": 39,
       "untyped_return": 25,
-      "dictionary": 178,
+      "dictionary": 170,
       "fallback": 23,
       "none_default": 6
     },
     "tests/test_event_tools.py": {
-      "untyped_return": 47,
-      "untyped_parameter": 209,
-      "dictionary": 788,
-      "fallback": 165,
+      "untyped_return": 45,
+      "untyped_parameter": 208,
+      "dictionary": 798,
+      "fallback": 169,
       "none_default": 2
     },
     "tests/test_event_tools_agent_ownership.py": {
@@ -1234,6 +1252,9 @@
       "dictionary": 10,
       "untyped_parameter": 4
     },
+    "tests/test_flow_contracts.py": {
+      "dictionary": 3
+    },
     "tests/test_formula_vectors.py": {
       "untyped_parameter": 17,
       "untyped_return": 8,
@@ -1242,7 +1263,7 @@
       "none_default": 1
     },
     "tests/test_foundation_contracts.py": {
-      "dictionary": 30,
+      "dictionary": 32,
       "fallback": 14
     },
     "tests/test_funding_confirmations.py": {
@@ -1265,7 +1286,7 @@
       "fallback": 2
     },
     "tests/test_ingestion_contracts.py": {
-      "dictionary": 40,
+      "dictionary": 46,
       "fallback": 7
     },
     "tests/test_logging.py": {
@@ -1292,10 +1313,9 @@
       "fallback": 1
     },
     "tests/test_market_normalize.py": {
-      "dictionary": 41,
-      "untyped_parameter": 13,
-      "untyped_return": 2,
-      "fallback": 3
+      "none_default": 1,
+      "dictionary": 51,
+      "untyped_parameter": 4
     },
     "tests/test_market_rate_gate.py": {
       "untyped_parameter": 10,
@@ -1445,7 +1465,7 @@
     },
     "tests/test_replay.py": {
       "untyped_return": 26,
-      "dictionary": 404,
+      "dictionary": 403,
       "untyped_parameter": 103,
       "fallback": 56,
       "none_default": 1
@@ -1496,7 +1516,7 @@
     "tests/test_review_typed_market_stored.py": {
       "untyped_parameter": 3,
       "fallback": 1,
-      "dictionary": 8
+      "dictionary": 7
     },
     "tests/test_runtime.py": {
       "dictionary": 100,
@@ -1592,7 +1612,7 @@
       "dictionary": 19
     },
     "tests/test_settings.py": {
-      "dictionary": 9
+      "dictionary": 10
     },
     "tests/test_skill_alias_claims.py": {
       "untyped_return": 1,
@@ -1649,8 +1669,8 @@
       "dictionary": 4
     },
     "tests/test_storage.py": {
-      "dictionary": 124,
-      "fallback": 45
+      "dictionary": 123,
+      "fallback": 43
     },
     "tests/test_storage_lifecycle.py": {
       "fallback": 14,
@@ -1661,10 +1681,8 @@
       "fallback": 7
     },
     "tests/test_storage_native_flow.py": {
-      "untyped_parameter": 8,
-      "untyped_return": 2,
       "fallback": 5,
-      "dictionary": 5
+      "dictionary": 4
     },
     "tests/test_storage_time_precision.py": {
       "dictionary": 13,
@@ -2451,16 +2469,6 @@
       "untyped_return": 1,
       "fallback": 25
     },
-    "scripts/acceptance/assemble_packets.py:leak_scan": {
-      "untyped_parameter": 4,
-      "untyped_return": 1,
-      "none_default": 1,
-      "dictionary": 2
-    },
-    "scripts/acceptance/assemble_packets.py:leak_scan.walk": {
-      "untyped_parameter": 2,
-      "fallback": 1
-    },
     "scripts/acceptance/assemble_packets.py:main": {
       "dictionary": 6,
       "fallback": 1
@@ -2520,23 +2528,6 @@
       "untyped_return": 1,
       "dictionary": 4,
       "fallback": 7
-    },
-    "scripts/acceptance/assemble_packets.py:transform_pair": {
-      "untyped_parameter": 2,
-      "untyped_return": 1
-    },
-    "scripts/acceptance/assemble_packets.py:transform_pair.build": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "dictionary": 1
-    },
-    "scripts/acceptance/assemble_packets.py:transform_pair.build.text": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
-    "scripts/acceptance/assemble_packets.py:transform_pair.build.tree": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
     },
     "scripts/acceptance/assemble_packets.py:verify": {
       "untyped_parameter": 4,
@@ -2671,6 +2662,30 @@
     "scripts/acceptance/latency.py:render.f": {
       "untyped_parameter": 1,
       "untyped_return": 1
+    },
+    "scripts/acceptance/masking_contracts.py:LeakScanResult": {
+      "dictionary": 1
+    },
+    "scripts/acceptance/masking_contracts.py:MaskPlan": {
+      "dictionary": 1
+    },
+    "scripts/acceptance/masking_contracts.py:MaskPlan.declared_names": {
+      "fallback": 1
+    },
+    "scripts/acceptance/masking_contracts.py:TechnicalContextExceptions.nonempty_declarations": {
+      "fallback": 1
+    },
+    "scripts/acceptance/masking_contracts.py:leak_scan": {
+      "dictionary": 4
+    },
+    "scripts/acceptance/masking_contracts.py:mask_plan": {
+      "dictionary": 1
+    },
+    "scripts/acceptance/masking_contracts.py:transform_pair.build": {
+      "dictionary": 3
+    },
+    "scripts/acceptance/masking_contracts.py:transform_pair.build.replacement": {
+      "fallback": 1
     },
     "scripts/acceptance/run_fixtures.py:": {
       "fallback": 4,
@@ -3670,7 +3685,7 @@
       "untyped_parameter": 3,
       "untyped_return": 1,
       "none_default": 1,
-      "fallback": 7,
+      "fallback": 6,
       "dictionary": 5
     },
     "src/tank/analysis/truth.py:MarketTruthService.assess_for_job": {
@@ -4345,39 +4360,31 @@
     "src/tank/backup.py:prune_backup_snapshots": {
       "fallback": 1
     },
-    "src/tank/bootstrap.py:_config_timestamp_metadata": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
-    "src/tank/bootstrap.py:_key": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
-    },
-    "src/tank/bootstrap.py:_routing_aliases": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "fallback": 4,
+    "src/tank/bootstrap.py:RegistryStore.get": {
       "dictionary": 1
     },
-    "src/tank/bootstrap.py:_routing_aliases.nonempty_string": {
-      "untyped_parameter": 1,
-      "untyped_return": 1
+    "src/tank/bootstrap.py:RegistryStore.iter_all": {
+      "dictionary": 2
     },
-    "src/tank/bootstrap.py:sync_registry": {
-      "dictionary": 4,
+    "src/tank/bootstrap.py:RegistryStore.put": {
+      "dictionary": 2
+    },
+    "src/tank/bootstrap.py:RegistrySyncResult.to_wire": {
+      "dictionary": 2
+    },
+    "src/tank/bootstrap.py:_document": {
+      "fallback": 1,
+      "dictionary": 2
+    },
+    "src/tank/bootstrap.py:_entity_record": {
+      "dictionary": 1
+    },
+    "src/tank/bootstrap.py:_sync_rows": {
+      "dictionary": 3,
       "fallback": 1
     },
     "src/tank/bootstrap.py:validate_registry": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "dictionary": 6,
-      "fallback": 16
-    },
-    "src/tank/bootstrap.py:validate_registry.add": {
-      "untyped_parameter": 5,
-      "untyped_return": 1,
-      "dictionary": 2,
-      "fallback": 1
+      "dictionary": 2
     },
     "src/tank/calibration.py:": {
       "dictionary": 1
@@ -4611,8 +4618,7 @@
       "fallback": 1
     },
     "src/tank/clickhouse_market.py:ClickHouse._post": {
-      "dictionary": 4,
-      "fallback": 1
+      "dictionary": 3
     },
     "src/tank/clickhouse_market.py:ClickHouse.execute": {
       "none_default": 1,
@@ -4650,7 +4656,7 @@
     },
     "src/tank/clickhouse_market.py:_record": {
       "dictionary": 1,
-      "fallback": 2
+      "fallback": 1
     },
     "src/tank/clickhouse_market.py:_row": {
       "dictionary": 1,
@@ -4825,7 +4831,19 @@
       "fallback": 1,
       "dictionary": 1
     },
+    "src/tank/contracts/provenance.py:ResolvedVersionIdentity.declared_identity": {
+      "fallback": 1
+    },
     "src/tank/contracts/registry.py:ExchangeAddressesConfiguration": {
+      "dictionary": 1
+    },
+    "src/tank/contracts/registry.py:FundamentalsEvidence.declared_clock": {
+      "dictionary": 1
+    },
+    "src/tank/contracts/registry.py:RegistryEntity.declared_clock": {
+      "dictionary": 1
+    },
+    "src/tank/contracts/registry.py:RegistryInstrument.declared_clock": {
       "dictionary": 1
     },
     "src/tank/contracts/registry.py:RegistryInstrument.declared_decimal": {
@@ -4991,14 +5009,20 @@
     "src/tank/contracts/sources.py:SourceAccountRegistryView.unique_handles": {
       "fallback": 1
     },
+    "src/tank/contracts/sources.py:SourceBudgetEvidence.declared_evidence": {
+      "fallback": 1
+    },
     "src/tank/contracts/sources.py:SourceFeed": {
       "dictionary": 3
     },
     "src/tank/contracts/sources.py:SourceFeed.adapter_requirements": {
       "fallback": 4
     },
-    "src/tank/contracts/sources.py:SourceProviderBudget": {
+    "src/tank/contracts/sources.py:SourceHyperliquidBudget": {
       "dictionary": 2
+    },
+    "src/tank/contracts/sources.py:SourceHyperliquidBudget.usable_operation_weights": {
+      "fallback": 2
     },
     "src/tank/contracts/tool_schema.py:_array": {
       "dictionary": 1
@@ -5691,55 +5715,31 @@
       "dictionary": 2
     },
     "src/tank/market/flow.py:FlowAccumulator.__init__": {
-      "untyped_return": 1,
-      "dictionary": 6
+      "dictionary": 10
     },
-    "src/tank/market/flow.py:FlowAccumulator.add": {
-      "untyped_parameter": 3,
-      "untyped_return": 1,
-      "fallback": 13,
+    "src/tank/market/flow.py:FlowAccumulator._snapshot": {
       "dictionary": 2
     },
+    "src/tank/market/flow.py:FlowAccumulator.add": {
+      "fallback": 4
+    },
     "src/tank/market/flow.py:FlowAccumulator.covered": {
-      "untyped_parameter": 3,
-      "untyped_return": 1,
-      "fallback": 2
+      "fallback": 1
     },
     "src/tank/market/flow.py:FlowAccumulator.empty_minute": {
-      "untyped_parameter": 2,
-      "untyped_return": 1,
-      "dictionary": 2,
-      "fallback": 4
-    },
-    "src/tank/market/flow.py:FlowAccumulator.mark_gap": {
-      "untyped_parameter": 4,
-      "untyped_return": 1
-    },
-    "src/tank/market/flow.py:FlowAccumulator.prove_range": {
-      "untyped_parameter": 7,
-      "untyped_return": 1,
-      "none_default": 2,
-      "dictionary": 1,
-      "fallback": 4
-    },
-    "src/tank/market/flow.py:FlowAccumulator.record": {
-      "untyped_parameter": 3,
-      "untyped_return": 1,
-      "none_default": 1,
-      "dictionary": 5,
-      "fallback": 11
-    },
-    "src/tank/market/flow.py:FlowAccumulator.register_boundaries": {
-      "untyped_parameter": 2,
-      "untyped_return": 1
-    },
-    "src/tank/market/flow.py:FlowAccumulator.trade_point": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "dictionary": 1,
       "fallback": 2
     },
+    "src/tank/market/flow.py:FlowAccumulator.prove_range": {
+      "none_default": 1
+    },
+    "src/tank/market/flow.py:FlowAccumulator.record": {
+      "none_default": 1,
+      "fallback": 3
+    },
     "src/tank/market/normalize.py:": {
+      "dictionary": 2
+    },
+    "src/tank/market/normalize.py:_trade_metric": {
       "dictionary": 2
     },
     "src/tank/market/normalize.py:funding": {
@@ -5785,13 +5785,6 @@
       "untyped_parameter": 4,
       "untyped_return": 1,
       "none_default": 1,
-      "dictionary": 1
-    },
-    "src/tank/market/normalize.py:trade": {
-      "untyped_parameter": 4,
-      "untyped_return": 1,
-      "none_default": 1,
-      "fallback": 19,
       "dictionary": 1
     },
     "src/tank/market/normalize.py:venue_key": {
@@ -5904,7 +5897,7 @@
       "untyped_parameter": 2,
       "untyped_return": 1,
       "dictionary": 7,
-      "fallback": 18
+      "fallback": 17
     },
     "src/tank/market/service.py:MarketService._load_day_counts": {
       "untyped_return": 1,
@@ -6208,8 +6201,37 @@
       "untyped_parameter": 2,
       "untyped_return": 1,
       "none_default": 1,
-      "fallback": 3,
+      "fallback": 2,
       "dictionary": 2
+    },
+    "src/tank/market/trade_contracts.py:EmptyFlowSnapshot.no_trade_evidence": {
+      "fallback": 1
+    },
+    "src/tank/market/trade_contracts.py:FlowMetrics.native_and_price_evidence": {
+      "fallback": 5
+    },
+    "src/tank/market/trade_contracts.py:FlowSnapshotBase": {
+      "dictionary": 1
+    },
+    "src/tank/market/trade_contracts.py:FlowSnapshotBase.minute_alignment": {
+      "fallback": 1
+    },
+    "src/tank/market/trade_contracts.py:QuoteUsdValuation.availability": {
+      "fallback": 2
+    },
+    "src/tank/market/trade_wire.py:": {
+      "dictionary": 1
+    },
+    "src/tank/market/trade_wire.py:_decoded": {
+      "none_default": 2,
+      "fallback": 1
+    },
+    "src/tank/market/trade_wire.py:_project": {
+      "none_default": 1,
+      "dictionary": 4
+    },
+    "src/tank/market/trade_wire.py:decode_trade": {
+      "dictionary": 8
     },
     "src/tank/market_codec.py:": {
       "dictionary": 2
@@ -7418,7 +7440,6 @@
       "dictionary": 1
     },
     "src/tank/settings.py:ConfigOwnedSource.__call__": {
-      "fallback": 1,
       "dictionary": 1
     },
     "src/tank/settings.py:Settings": {
@@ -7430,8 +7451,14 @@
     "src/tank/settings.py:Settings.load_config": {
       "dictionary": 1
     },
+    "src/tank/settings.py:Settings.require_versions": {
+      "fallback": 2
+    },
     "src/tank/settings.py:_capture_tree": {
       "dictionary": 2,
+      "fallback": 1
+    },
+    "src/tank/settings.py:_config_version": {
       "fallback": 1
     },
     "src/tank/settings.py:_default_codex_auth_path": {
@@ -8569,6 +8596,16 @@
     "tests/agent_source_fixtures.py:source_record_fixture": {
       "dictionary": 1
     },
+    "tests/bootstrap_support.py:BootstrapFixture.documents": {
+      "dictionary": 3
+    },
+    "tests/bootstrap_support.py:bootstrap_fixture": {
+      "fallback": 1,
+      "dictionary": 1
+    },
+    "tests/bootstrap_support.py:document": {
+      "dictionary": 1
+    },
     "tests/conftest.py:_check_credential_file": {
       "untyped_parameter": 2,
       "fallback": 3
@@ -8815,6 +8852,36 @@
     },
     "tests/source_support.py:source_feed": {
       "dictionary": 1
+    },
+    "tests/test_acceptance_masking.py:test_assembler_declared_launch_imports_its_own_checkout": {
+      "dictionary": 1
+    },
+    "tests/test_acceptance_masking.py:test_declared_technical_exception_is_limited_to_its_actual_field": {
+      "dictionary": 3
+    },
+    "tests/test_acceptance_masking.py:test_empty_mask_preserves_copy_isolation": {
+      "dictionary": 3
+    },
+    "tests/test_acceptance_masking.py:test_leak_scanner_covers_keys_and_values_beyond_declared_mask_metadata": {
+      "dictionary": 6
+    },
+    "tests/test_acceptance_masking.py:test_lowercase_venue_exception_does_not_hide_uppercase_identity": {
+      "dictionary": 2
+    },
+    "tests/test_acceptance_masking.py:test_many_to_one_mask_cannot_guess_an_inverse_source": {
+      "dictionary": 1
+    },
+    "tests/test_acceptance_masking.py:test_mask_refuses_json_key_collision": {
+      "dictionary": 2
+    },
+    "tests/test_acceptance_masking.py:test_mask_transform_obeys_word_boundaries_and_case_declarations": {
+      "dictionary": 1
+    },
+    "tests/test_acceptance_masking.py:test_masked_json_keys_and_values_round_trip_without_aliasing": {
+      "dictionary": 4
+    },
+    "tests/test_acceptance_masking.py:test_undeclared_or_malformed_exception_cannot_relax_scan": {
+      "dictionary": 5
     },
     "tests/test_acceptance_scripts.py:test_clickhouse_parameters_remain_literal_shell_arguments": {
       "dictionary": 1
@@ -9765,37 +9832,54 @@
       "untyped_parameter": 1
     },
     "tests/test_bootstrap.py:PagedRepository.iter_all": {
-      "untyped_parameter": 3,
-      "untyped_return": 1,
-      "none_default": 1
+      "none_default": 1,
+      "dictionary": 2
     },
     "tests/test_bootstrap.py:PagedRepository.list": {
-      "untyped_parameter": 2
+      "none_default": 1,
+      "dictionary": 1
     },
-    "tests/test_bootstrap.py:assert_config_retained": {
-      "untyped_parameter": 2
+    "tests/test_bootstrap.py:documents": {
+      "dictionary": 2
+    },
+    "tests/test_bootstrap.py:records": {
+      "dictionary": 3
     },
     "tests/test_bootstrap.py:test_alias_projection_never_promotes_display_names_or_drops_qualifiers": {
-      "dictionary": 8
+      "dictionary": 3
     },
     "tests/test_bootstrap.py:test_canonical_registry_bootstrap_and_idempotence": {
       "dictionary": 1,
-      "fallback": 8
+      "fallback": 6
     },
     "tests/test_bootstrap.py:test_conflicting_static_clock_precision_refused_before_registry_mutation": {
-      "dictionary": 2
+      "dictionary": 1
+    },
+    "tests/test_bootstrap.py:test_corrupt_managed_identity_rolls_back_all_preceding_registry_writes": {
+      "dictionary": 2,
+      "fallback": 1
     },
     "tests/test_bootstrap.py:test_invalid_routing_alias_policy_refused_before_registry_mutation": {
-      "untyped_parameter": 1,
-      "dictionary": 17
+      "dictionary": 18
+    },
+    "tests/test_bootstrap.py:test_metric_family_replacement_removes_all_old_family_fields_and_preserves_discovery": {
+      "fallback": 2,
+      "dictionary": 4
+    },
+    "tests/test_bootstrap.py:test_removing_configured_qualifier_clears_owned_state_without_erasing_discovery": {
+      "dictionary": 6,
+      "fallback": 1
     },
     "tests/test_bootstrap.py:test_static_config_clocks_preserve_declared_precision_and_unknown_legacy": {
-      "dictionary": 12,
-      "fallback": 4
+      "dictionary": 5,
+      "fallback": 2
     },
     "tests/test_bootstrap.py:test_sync_removes_configured_tail_and_preserves_discovery": {
-      "dictionary": 10,
-      "fallback": 3
+      "dictionary": 4,
+      "fallback": 4
+    },
+    "tests/test_bootstrap.py:write_documents": {
+      "dictionary": 2
     },
     "tests/test_bootstrap_contracts.py:test_actual_configuration_loader_roundtrips_all_declared_fields": {
       "fallback": 2
@@ -10386,6 +10470,9 @@
       "untyped_parameter": 1,
       "untyped_return": 1
     },
+    "tests/test_deploy.py:test_capture_build_identity_guard_precedes_compiler": {
+      "dictionary": 1
+    },
     "tests/test_e2e.py:_fake_gateway_settings": {
       "untyped_return": 1,
       "dictionary": 5
@@ -10455,7 +10542,7 @@
     },
     "tests/test_e2e.py:test_runtime_autonomous_source_to_telegram": {
       "untyped_parameter": 1,
-      "dictionary": 20,
+      "dictionary": 12,
       "fallback": 6
     },
     "tests/test_e2e.py:test_runtime_autonomous_source_to_telegram.CapturedMarket.__init__": {
@@ -10561,8 +10648,7 @@
       "dictionary": 2
     },
     "tests/test_event_tools.py:extraction": {
-      "untyped_return": 1,
-      "dictionary": 4
+      "dictionary": 5
     },
     "tests/test_event_tools.py:live_update_database": {
       "untyped_parameter": 3,
@@ -10577,9 +10663,7 @@
       "dictionary": 3
     },
     "tests/test_event_tools.py:seed": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
-      "dictionary": 1
+      "dictionary": 2
     },
     "tests/test_event_tools.py:seed_economic_event": {
       "untyped_parameter": 4,
@@ -10588,6 +10672,19 @@
     },
     "tests/test_event_tools.py:service": {
       "untyped_return": 1
+    },
+    "tests/test_event_tools.py:test_accepted_completion_and_native_failure_preserve_done_without_deadlock": {
+      "fallback": 4,
+      "dictionary": 5
+    },
+    "tests/test_event_tools.py:test_accepted_completion_and_native_failure_preserve_done_without_deadlock.accept_fact": {
+      "dictionary": 1
+    },
+    "tests/test_event_tools.py:test_accepted_completion_and_native_failure_preserve_done_without_deadlock.fail_native": {
+      "dictionary": 1
+    },
+    "tests/test_event_tools.py:test_accepted_completion_and_native_failure_preserve_done_without_deadlock.held_event_write": {
+      "dictionary": 1
     },
     "tests/test_event_tools.py:test_actual_fetch_http_error_returns_durably_then_card_or_native_failed": {
       "untyped_parameter": 4,
@@ -11743,6 +11840,12 @@
     "tests/test_fixture_s03_projection.py:test_source_parser_version_is_bound": {
       "untyped_parameter": 1
     },
+    "tests/test_flow_contracts.py:test_missing_historical_fx_preserves_native_flow_without_false_usd": {
+      "dictionary": 1
+    },
+    "tests/test_flow_contracts.py:test_mutated_trade_and_naive_processing_clock_are_refused": {
+      "dictionary": 2
+    },
     "tests/test_formula_vectors.py:_three_venue_snapshot_with_stale_funding": {
       "untyped_return": 1,
       "fallback": 3
@@ -11801,6 +11904,9 @@
     "tests/test_formula_vectors.py:test_t9_disconnected_minutes_are_incomplete_and_exclude_the_venue": {
       "dictionary": 2
     },
+    "tests/test_foundation_contracts.py:test_clickhouse_full_row_decoder_refuses_an_omitted_schema_column": {
+      "dictionary": 1
+    },
     "tests/test_foundation_contracts.py:test_clickhouse_rejects_nonfinite_json_before_http_write": {
       "dictionary": 1
     },
@@ -11849,6 +11955,9 @@
     },
     "tests/test_foundation_contracts.py:test_timestamp_adapter_rejects_conflicting_value_aliases": {
       "dictionary": 2
+    },
+    "tests/test_foundation_contracts.py:test_trade_instrument_requires_declared_metadata_and_rejects_unclocked_history": {
+      "dictionary": 1
     },
     "tests/test_foundation_contracts.py:test_typed_job_adapter_refuses_fabricated_completion_before_write": {
       "dictionary": 2,
@@ -12057,6 +12166,9 @@
     "tests/test_ingestion_contracts.py:test_duplicate_ingestion_cannot_delete_foreign_raw_evidence": {
       "dictionary": 2
     },
+    "tests/test_ingestion_contracts.py:test_endpoint_clock_declarations_preserve_wire_and_reject_conflicting_aliases": {
+      "dictionary": 4
+    },
     "tests/test_ingestion_contracts.py:test_entry_error_variants_preserve_run_identity_and_validate_evidence": {
       "dictionary": 5
     },
@@ -12095,6 +12207,9 @@
     "tests/test_ingestion_contracts.py:test_real_web_evidence_record_roundtrips_without_feed_source_assumptions": {
       "dictionary": 1
     },
+    "tests/test_ingestion_contracts.py:test_required_documented_provider_capacity_cannot_be_omitted.MissingDocumentedCapacity.load_config": {
+      "dictionary": 1
+    },
     "tests/test_ingestion_contracts.py:test_source_configuration_requires_adapter_inputs_and_unique_identities": {
       "dictionary": 1
     },
@@ -12103,6 +12218,9 @@
     },
     "tests/test_ingestion_contracts.py:test_source_repository_validation_logs_hide_complete_input_record": {
       "fallback": 1
+    },
+    "tests/test_ingestion_contracts.py:test_source_service_rejects_missing_or_excessive_known_provider_budget.InvalidProviderBudget.load_config": {
+      "dictionary": 1
     },
     "tests/test_logging.py:test_credential_urls_are_redacted_even_when_httpx_info_enabled": {
       "fallback": 1
@@ -12355,15 +12473,19 @@
       "untyped_return": 1
     },
     "tests/test_market_normalize.py:instrument": {
-      "untyped_parameter": 3,
-      "untyped_return": 1,
-      "dictionary": 1
+      "dictionary": 2
     },
     "tests/test_market_normalize.py:test_binance_bool_not_string_and_coinbase_unknown_side": {
       "dictionary": 2
     },
+    "tests/test_market_normalize.py:test_boolean_wire_identifiers_are_rejected_instead_of_becoming_numbers": {
+      "dictionary": 2
+    },
     "tests/test_market_normalize.py:test_bybit_oi_no_division_fallback_and_immediate_registry_eligibility": {
       "dictionary": 2
+    },
+    "tests/test_market_normalize.py:test_declared_millisecond_wire_clock_preserves_zero_ids_and_raw_lexemes": {
+      "dictionary": 3
     },
     "tests/test_market_normalize.py:test_evm_precision_products_and_squared_flow_sizes_are_not_rounded_to28digits": {
       "dictionary": 1
@@ -12387,14 +12509,12 @@
       "dictionary": 5
     },
     "tests/test_market_normalize.py:test_missing_or_future_usd_rate_never_assumed": {
-      "dictionary": 1
+      "dictionary": 2
     },
     "tests/test_market_normalize.py:test_native_only_flow_preserves_complete_native_evidence_and_explicit_null_reasons": {
-      "dictionary": 1
+      "dictionary": 2
     },
     "tests/test_market_normalize.py:test_nine_trade_paths_exact_native_and_aggressor": {
-      "untyped_parameter": 5,
-      "fallback": 3,
       "dictionary": 8
     },
     "tests/test_market_normalize.py:test_oi_canonical_precision_and_missing_exchange_timestamp_is_not_invented": {
@@ -12411,13 +12531,17 @@
       "dictionary": 1
     },
     "tests/test_market_normalize.py:test_prints_are_valued_with_the_latest_quote_usd_sample_at_or_before_them.usd": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
+      "dictionary": 2
+    },
+    "tests/test_market_normalize.py:test_trade_identity_cannot_reinterpret_unsupported_market_as_spot": {
       "dictionary": 1
     },
     "tests/test_market_normalize.py:test_unknown_liquidation_side_or_negative_quantity_is_not_guessed": {
       "untyped_parameter": 2,
       "dictionary": 3
+    },
+    "tests/test_market_normalize.py:trade_instrument": {
+      "none_default": 1
     },
     "tests/test_market_rate_gate.py:ControlledClock.advance": {
       "untyped_parameter": 1
@@ -13864,7 +13988,7 @@
     },
     "tests/test_replay.py:test_reconstructed_quiet_minute_preserves_collection_clock": {
       "untyped_parameter": 2,
-      "dictionary": 4
+      "dictionary": 3
     },
     "tests/test_replay.py:test_reject_contaminated_or_unpinned": {
       "untyped_parameter": 2,
@@ -14105,7 +14229,7 @@
     "tests/test_review_typed_market_stored.py:test_actual_flow_batch_producer_to_stored_review": {
       "untyped_parameter": 3,
       "fallback": 1,
-      "dictionary": 8
+      "dictionary": 7
     },
     "tests/test_runtime.py:test_contended_delivery_lock_is_scheduling_then_sends_once": {
       "untyped_parameter": 3,
@@ -15010,6 +15134,9 @@
     "tests/test_settings.py:test_user_agent_and_chats_from_configuration": {
       "dictionary": 1
     },
+    "tests/test_settings.py:test_version_identity_requires_capture_and_detects_post_capture_relabelling": {
+      "dictionary": 1
+    },
     "tests/test_skill_alias_claims.py:binding": {
       "untyped_return": 1,
       "dictionary": 1
@@ -15624,8 +15751,8 @@
       "dictionary": 4
     },
     "tests/test_storage.py:complete_fixture_record": {
-      "dictionary": 23,
-      "fallback": 4
+      "dictionary": 22,
+      "fallback": 2
     },
     "tests/test_storage.py:test_append_only_and_immutable": {
       "dictionary": 4
@@ -15801,30 +15928,21 @@
       "fallback": 1
     },
     "tests/test_storage_native_flow.py:native_bar": {
-      "untyped_return": 1,
-      "dictionary": 2
+      "dictionary": 1
     },
     "tests/test_storage_native_flow.py:native_flow_repo": {
-      "untyped_parameter": 1,
-      "untyped_return": 1,
       "fallback": 3
     },
     "tests/test_storage_native_flow.py:test_missing_usd_requires_its_own_valid_reason": {
-      "untyped_parameter": 3,
       "dictionary": 1
     },
     "tests/test_storage_native_flow.py:test_native_flow_roundtrip_preserves_quantities_and_unavailable_usd": {
-      "untyped_parameter": 1,
       "fallback": 1,
       "dictionary": 1
     },
     "tests/test_storage_native_flow.py:test_null_buckets_cannot_bypass_missing_reason": {
-      "untyped_parameter": 1,
       "dictionary": 1,
       "fallback": 1
-    },
-    "tests/test_storage_native_flow.py:test_usd_reason_does_not_make_native_fields_optional": {
-      "untyped_parameter": 2
     },
     "tests/test_storage_time_precision.py:_sql_job": {
       "none_default": 1,
@@ -17314,8 +17432,9 @@
     "tank.backup": [],
     "tank.bootstrap": [
       "tank.contracts",
-      "tank.settings",
-      "tank.storage",
+      "tank.contracts.json",
+      "tank.contracts.registry",
+      "tank.contracts.sources",
       "tank.time_precision"
     ],
     "tank.calibration": [
@@ -17389,7 +17508,8 @@
     ],
     "tank.contracts.registry": [
       "tank.contracts",
-      "tank.contracts.sources"
+      "tank.contracts.sources",
+      "tank.time_precision"
     ],
     "tank.contracts.repository": [
       "tank.contracts.json"
@@ -17411,7 +17531,8 @@
       "tank.contracts.source_items"
     ],
     "tank.contracts.sources": [
-      "tank.contracts"
+      "tank.contracts",
+      "tank.time_precision"
     ],
     "tank.contracts.tool_schema": [],
     "tank.delivery": [
@@ -17427,6 +17548,7 @@
       "tank.analysis.identity",
       "tank.analysis.truth_contracts",
       "tank.analysis.watch_contracts",
+      "tank.contracts.source_repository",
       "tank.contracts.tool_schema",
       "tank.fixture_reference",
       "tank.ops_progress",
@@ -17503,9 +17625,8 @@
     ],
     "tank.market.errors": [],
     "tank.market.flow": [
-      "tank.market.normalize",
       "tank.market.precision",
-      "tank.time_precision",
+      "tank.market.trade_contracts",
       "tank.util"
     ],
     "tank.market.funding": [
@@ -17516,6 +17637,8 @@
       "tank.market.funding",
       "tank.market.numbers",
       "tank.market.precision",
+      "tank.market.trade_contracts",
+      "tank.market.trade_wire",
       "tank.time_precision",
       "tank.util"
     ],
@@ -17545,6 +17668,20 @@
       "tank.market.errors",
       "tank.market.precision",
       "tank.time_precision",
+      "tank.util"
+    ],
+    "tank.market.trade_contracts": [
+      "tank.contracts",
+      "tank.contracts.json",
+      "tank.contracts.registry",
+      "tank.util"
+    ],
+    "tank.market.trade_wire": [
+      "tank.contracts",
+      "tank.contracts.registry",
+      "tank.market.errors",
+      "tank.market.numbers",
+      "tank.market.trade_contracts",
       "tank.util"
     ],
     "tank.market_codec": [
@@ -17683,6 +17820,7 @@
     "tank.settings": [
       "tank.contracts.configuration",
       "tank.contracts.json",
+      "tank.contracts.provenance",
       "tank.contracts.registry",
       "tank.contracts.sources",
       "tank.util"
