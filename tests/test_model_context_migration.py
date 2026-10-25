@@ -106,7 +106,7 @@ async def test_legacy_callbacks_upgrade_before_delivery_and_new_turns_reject_ids
         service = SessionService(
             repo,
             settings,
-            EventToolService(repo, settings, None, None).dispatch,
+            EventToolService(repo, settings, None, None, versions=declared_versions_fixture()).dispatch,
             http=http,
             versions=declared_versions_fixture(),
         )
@@ -156,7 +156,7 @@ async def test_old_description_call_in_a_legacy_turn_is_refused_once_and_the_id_
     await repo.put("evt.events", event["event_id"], event)
     await repo.put("ops.agent_sessions", session["session_id"], session)
     count = 0
-    domain = EventToolService(repo, settings, None, None)
+    domain = EventToolService(repo, settings, None, None, versions=declared_versions_fixture())
 
     async def dispatch(*args):
         nonlocal count

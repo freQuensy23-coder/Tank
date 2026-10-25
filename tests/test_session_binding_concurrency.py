@@ -140,7 +140,9 @@ async def test_controller_snapshot_cannot_erase_domain_binding(
 ) -> None:
     async with fixture_repo(backend, postgres_template) as repo:
         session, args = await seed(repo)
-        tools = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+        tools = EventToolService(
+            repo, Settings(data_dir=tmp_path), None, None, versions=declared_versions_fixture()
+        )
         writer_ready, binding_waiting, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
         original_put, original_lock = repo.put, repo.lock
         poll_task = domain_task = None
@@ -208,7 +210,9 @@ async def test_origin_scope_rechecked_after_two_unbound_preflight_snapshots(
 ) -> None:
     async with fixture_repo(backend, postgres_template) as repo:
         _, args = await seed(repo)
-        tools = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+        tools = EventToolService(
+            repo, Settings(data_dir=tmp_path), None, None, versions=declared_versions_fixture()
+        )
         original_get = repo.get
         both_read = asyncio.Event()
         first_reads = set()

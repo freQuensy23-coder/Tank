@@ -440,3 +440,7 @@ ModelContext.public_schema now requires the captured read_config_json capability
 Transport fixtures now send genuine required public inputs and explicitly declare current model_context_version plus the actually installed tool-manifest fingerprint. This preserves the separate legacy-migration tests instead of having unrelated current-session tests accidentally exercise an uninstalled manifest.
 
 Validation: 227 agent unit cases passed in 8.87 seconds; 35 actual guarded integration cases passed in 16.64 seconds, zero skips. Four new tests exercise schema read/validation failures through native tool result publication and prove a private malformed input is absent from the native response and logs. The shared parser passes strict mypy; full SessionService/context strict closure remains open.
+
+### Producer version composition companion
+
+The canonical producer activation a89401b is merged. build_runtime passes the same already-resolved version identity to MarketService, MarketTruthService and EventToolService; ten owned test modules declare fixture identities explicitly at constructor boundaries. Historical stored provenance expectations remain unchanged. Validation: 339 owned units passed in 14.15 seconds and 40 actual guarded integration cases passed in 35.34 seconds, zero skips. Default composition mypy surfaced newly checked sibling constructor caches and scheduler's inferred None; those precise owner annotations are requested from analysis before cohort activation.

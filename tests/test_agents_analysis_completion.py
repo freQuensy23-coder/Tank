@@ -60,7 +60,9 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
         from tank.event_tools import EventToolService
         from tank.settings import Settings
 
-        domain = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+        domain = EventToolService(
+            repo, Settings(data_dir=tmp_path), None, None, versions=declared_versions_fixture()
+        )
         event_id = None
         if bound:
             original = await repo.get("ingest.source_items", "item")
@@ -71,7 +73,9 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
                     dict(original, item_id="origin", external_id="origin", extraction_status="PENDING")
                 ),
             )
-            domain = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+            domain = EventToolService(
+                repo, Settings(data_dir=tmp_path), None, None, versions=declared_versions_fixture()
+            )
             result = await domain.dispatch(
                 "record_event",
                 {
@@ -286,7 +290,9 @@ async def test_ignored_item_keeps_event_and_call_for_next_native_update(
 
     async with fixture_repo(backend, postgres_template) as repo:
         _session, extraction = await seed(repo)
-        domain = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+        domain = EventToolService(
+            repo, Settings(data_dir=tmp_path), None, None, versions=declared_versions_fixture()
+        )
         origin = await domain.dispatch("record_event", extraction, {"session_id": "s"})
         eid = origin["event_id"]
         original = await repo.get("ingest.source_items", "i")

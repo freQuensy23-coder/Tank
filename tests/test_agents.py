@@ -512,7 +512,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
 
     repo = MemoryRepository()
     opts = Settings(data_dir=tmp_path)
-    tools = EventToolService(repo, opts, None, DecisionEngine(opts))
+    tools = EventToolService(repo, opts, None, DecisionEngine(opts), versions=declared_versions_fixture())
     now = clock_iso()
     await repo.put(
         "evt.events",
