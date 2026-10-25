@@ -8,65 +8,152 @@ import asyncio
 import json
 import logging
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import datetime, timedelta
+from typing import Literal, Protocol
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 from pydantic import JsonValue
 
 import tank.sources.parsers as parsers
-from tank.contracts.source_checkpoints import InstrumentSnapshot, InstrumentSnapshotUpdate
+from tank.contracts.provenance import ResolvedVersionIdentity
+from tank.contracts.source_checkpoints import (
+    CompletedPendingRow,
+    InstrumentSnapshot,
+    InstrumentSnapshotUpdate,
+    MaterializedSourceObservation,
+    ReadCounter,
+    SourcePendingBatch,
+)
 from tank.contracts.source_items import (
     DiscoveryEnvelope,
     PendingSourceItem,
     RawSourceReference,
+    SourceText,
+    captured_item,
     discovered_item,
+    parse_source_item,
 )
 from tank.contracts.sources import (
+    FeedKind,
     FeedPollOutcome,
     HttpFetchPlan,
     PolledSource,
+    SourceAccount,
     SourceDefinition,
     SourceFeed,
     SourcePollOutcome,
     UnconfiguredSource,
 )
-from tank.ops_entry_errors import report_entry_errors
-from tank.sources.fetch import FetchedContent, NotModified
+from tank.sources.checkpoints import (
+    ArticleFailure,
+    CheckpointStore,
+    CompletedSourceRow,
+    FailedSourceRow,
+    PendingCheckpointState,
+    QuarantineArchiveRepository,
+    SourceCadence,
+    SourceDegradation,
+    SourceDuplicateCache,
+    SourceRowResult,
+    decode_pending_checkpoint,
+    pending_coverage,
+)
+from tank.sources.errors import SourceEntryError, parse_entry_error
+from tank.sources.fetch import FetchedContent, FetchResult, NotModified
+from tank.sources.http_client import RequestStarted
 from tank.sources.instrument_adapters import parse_instrument_page
 from tank.sources.instruments import InstrumentPage, instrument_changes
-from tank.util import TimeInput, new_id, parse_time, sha256
+from tank.sources.xsensor import XSensor
+from tank.util import new_id, parse_time, sha256
 
 log = logging.getLogger(__name__)
 ARTICLE_KINDS = {"html", "rendered", "rendered_html", "html_diff"}
 
 
-def count_read(state, name, *, ok, n=1):
-    """Cumulative per-feed read counters for the V0-A failed-read rate (01 §10)."""
-    counters = state.setdefault(name, {"ok": 0, "failed": 0})
-    counters["ok" if ok else "failed"] += n
+def count_read(
+    state: dict[str, JsonValue],
+    name: Literal["reads", "detail_reads"],
+    *,
+    ok: bool,
+    n: int = 1,
+) -> None:
+    """Cumulative counts: absent means no prior reads; declared records must be complete."""
+    if n < 0:
+        raise ValueError("Read counts cannot decrease")
+    counters = ReadCounter.model_validate(state[name]) if name in state else ReadCounter(ok=0, failed=0)
+    updated = ReadCounter(
+        ok=counters.ok + (n if ok else 0),
+        failed=counters.failed + (0 if ok else n),
+    )
+    state[name] = updated.model_dump(mode="json")
+
+
+class SourcePollingPort(Protocol):
+    @property
+    def repo(self) -> CheckpointStore: ...
+    @property
+    def versions(self) -> ResolvedVersionIdentity: ...
+    @property
+    def sources(self) -> Mapping[str, SourceDefinition]: ...
+    @property
+    def accounts(self) -> Mapping[str, SourceAccount]: ...
+    @property
+    def xsensor(self) -> XSensor: ...
+    @property
+    def escalated_interval_s(self) -> float: ...
+
+    def now(self) -> datetime: ...
+    def stamp(self, value: datetime | str | None = None) -> str: ...
+    def raw(
+        self, payload: bytes, *, source_id: str, item_id: str, observed_at: datetime | str
+    ) -> tuple[str, str]: ...
+    def filing_matches(self, item: SourceText) -> bool: ...
+    async def observe_known(self, source_id: str, external_id: str | int, feed: str) -> bool: ...
+    async def is_escalated(self, source_id: str, *, now: datetime | str | None = None) -> bool: ...
+    async def fetch(
+        self,
+        source: SourceDefinition,
+        feed: HttpFetchPlan,
+        key: str,
+        *,
+        persist_http_evidence: bool,
+        on_start: RequestStarted | None = None,
+    ) -> FetchResult: ...
+    async def ingest(
+        self, source: SourceDefinition, item: Mapping[str, JsonValue]
+    ) -> dict[str, JsonValue]: ...
+    async def report_errors(
+        self,
+        source: SourceDefinition,
+        feed: SourceFeed,
+        errors: Sequence[SourceEntryError],
+        seen_at: str,
+    ) -> None: ...
 
 
 class SourcePoller:
-    def __init__(self, service):
+    def __init__(self, service: SourcePollingPort) -> None:
         self.service = service
-        self.acquisition_locks = {}
-        self.state_locks = {}
-        self.processing_locks = {}
+        self.archives = QuarantineArchiveRepository(service.repo, service.versions)
+        self.acquisition_locks: dict[str, asyncio.Lock] = {}
+        self.state_locks: dict[str, asyncio.Lock] = {}
+        self.processing_locks: dict[str, asyncio.Lock] = {}
 
         self.details = asyncio.Semaphore(4)
-        self.active_acquisitions = {}
-        self.active_details = {}
+        self.active_acquisitions: dict[str, asyncio.Task[FeedPollOutcome]] = {}
+        self.active_details: dict[str, asyncio.Task[FeedPollOutcome]] = {}
 
     def now(self) -> datetime:
         return self.service.now()
 
-    def stamp(self, value: TimeInput | None = None) -> str:
+    def stamp(self, value: datetime | str | None = None) -> str:
         return self.service.stamp(value)
 
-    def lock(self, mapping, key):
+    def lock(self, mapping: dict[str, asyncio.Lock], key: str) -> asyncio.Lock:
         return mapping.setdefault(key, asyncio.Lock())
 
     def feed(self, source: SourceDefinition, index: int) -> SourceFeed:
@@ -75,49 +162,54 @@ class SourcePoller:
     def interval(self, source: SourceDefinition, feed: SourceFeed, escalated: bool) -> float:
         return self.service.escalated_interval_s if escalated else feed.interval_s
 
-    async def state(self, key):
+    @asynccontextmanager
+    async def state_change(self, key: str) -> AsyncIterator[None]:
+        async with (
+            self.lock(self.state_locks, key),
+            self.service.repo.lock("source-checkpoint:" + key),
+            self.service.repo.transaction(),
+        ):
+            yield
 
-        return await self.service.repo.get("ops.source_checkpoints", key) or {}
+    async def state(self, key: str) -> dict[str, JsonValue]:
+        value = await self.service.repo.get("ops.source_checkpoints", key)
+        return {} if value is None else value
 
-    async def save(self, source: SourceDefinition, key: str, state):
+    async def pending(
+        self, source: SourceDefinition, key: str, state: Mapping[str, JsonValue]
+    ) -> PendingCheckpointState:
+        decoded = decode_pending_checkpoint(
+            source, key, state, now=self.now(), versions=self.service.versions
+        )
+        return await self.archives.reconcile(decoded)
+
+    async def save(self, source: SourceDefinition, key: str, state: dict[str, JsonValue]) -> None:
         from tank.time_precision import collection_clock
 
-        def annotate(value):
-            if isinstance(value, dict):
-                for field in (
-                    "observed_at",
-                    "acquired_at",
-                    "captured_at",
-                    "fetched_at",
-                    "last_attempt_at",
-                    "last_success_at",
-                    "last_failure_at",
-                    "detail_retry_at",
-                ):
-                    if value.get(field):
-                        value.update(collection_clock(value[field]).fields(field))
-                for name, child in list(value.items()):
-                    if name != "instruments" and isinstance(child, (list, dict)):
-                        annotate(child)
-            elif isinstance(value, list):
-                for child in value:
-                    annotate(child)
-
-        if "source_id" in state and state["source_id"] != source.source_id:
-            raise ValueError("Checkpoint owner conflicts with the actual source operation")
-        state["source_id"] = source.source_id
-        state.update(collection_clock(self.stamp()).fields("updated_at"))
-        annotate(state)
-        for field in (
-            "fetched_at",
-            "last_attempt_at",
-            "last_success_at",
-            "last_failure_at",
-            "detail_retry_at",
-        ):
-            if state.get(field):
-                state[field + "_precision"] = "COLLECTION_ONLY"
-        await self.service.repo.put("ops.source_checkpoints", key, state)
+        async with self.service.repo.lock("source-checkpoint:" + key), self.service.repo.transaction():
+            if "source_id" in state and state["source_id"] != source.source_id:
+                raise ValueError("Checkpoint owner conflicts with the actual source operation")
+            pending = await self.pending(source, key, state)
+            now = self.now()
+            pending = await self.archives.persist(pending, now=now)
+            if "pending_batches" in state or pending.batches:
+                state["pending_batches"] = pending.storage_records()
+            state["source_id"] = source.source_id
+            state.update(collection_clock(now).fields("updated_at"))
+            for field in (
+                "fetched_at",
+                "last_attempt_at",
+                "last_success_at",
+                "last_failure_at",
+                "detail_retry_at",
+            ):
+                if field in state and state[field] is not None:
+                    value = state[field]
+                    if not isinstance(value, str):
+                        raise ValueError("Source operational checkpoint clock must be ISO text")
+                    state.update(collection_clock(value).fields(field))
+                    state[field + "_precision"] = "COLLECTION_ONLY"
+            await self.service.repo.put("ops.source_checkpoints", key, state)
 
     @staticmethod
     def needs_detail(sid, kind):
@@ -126,21 +218,21 @@ class SourcePoller:
 
     async def queue_rows(
         self,
-        current,
+        current: dict[str, JsonValue],
         key: str,
         source: SourceDefinition,
         feed: SourceFeed,
         rows: Sequence[DiscoveryEnvelope | Mapping[str, JsonValue | bytes]],
-        kind: str,
-        coverage,
+        kind: FeedKind,
+        coverage: Mapping[str, JsonValue],
         acquired_at: str,
     ) -> None:
         """Validate discoveries before binding first-seen identity and durable raw evidence."""
         svc, sid = self.service, source.source_id
-        pending = {
-            str(row["external_id"]) for batch in current.get("pending_batches", []) for row in batch["rows"]
-        }
-        fresh: list[dict[str, JsonValue]] = []
+        checkpoint = await self.pending(source, key, current)
+        pending = checkpoint.pending_external_ids()
+        duplicates = SourceDuplicateCache.from_document(current)
+        fresh: list[PendingSourceItem] = []
         for original in rows:
             envelope = original if isinstance(original, DiscoveryEnvelope) else discovered_item(sid, original)
             material = envelope.discovery
@@ -149,7 +241,7 @@ class SourcePoller:
             external = material.external_id
             if (
                 external in pending
-                or external in current.get("duplicate_ids", [])
+                or external in duplicates.duplicate_ids
                 or await svc.observe_known(sid, external, feed.url)
             ):
                 continue
@@ -179,21 +271,21 @@ class SourcePoller:
                 raw=raw,
             )
             pending.add(external)
-            fresh.append(row.storage_record())
-        current.setdefault("pending_batches", []).append(
-            {
-                "batch_id": new_id("batch"),
-                "acquired_at": acquired_at,
-                "acquired_at_precision": "COLLECTION_ONLY",
-                "kind": kind,
-                "rows": fresh,
-                "coverage": coverage,
-            }
+            fresh.append(row)
+        batch = SourcePendingBatch(
+            source_id=sid,
+            batch_id=new_id("batch"),
+            acquired_at=acquired_at,
+            acquired_at_precision="COLLECTION_ONLY",
+            kind=kind,
+            rows=fresh,
+            coverage=pending_coverage(coverage),
         )
+        current["pending_batches"] = [*checkpoint.storage_records(), batch.storage_record()]
 
     async def retain_page(self, key, source, feed, rows, page_state, *, kind="json"):
 
-        async with self.lock(self.state_locks, key):
+        async with self.state_change(key):
             current = await self.state(key)
             await self.queue_rows(
                 current,
@@ -208,7 +300,7 @@ class SourcePoller:
             await self.save(source, key, current)
 
     async def mark_request_start(self, source: SourceDefinition, key: str) -> None:
-        async with self.lock(self.state_locks, key):
+        async with self.state_change(key):
             current = await self.state(key)
             current["last_attempt_at"] = self.stamp()
             await self.save(source, key, current)
@@ -524,26 +616,28 @@ class SourcePoller:
             )
         return rows, state
 
-    async def acquire(self, source, index, *, due_only=False, escalated=False) -> FeedPollOutcome:
+    async def acquire(
+        self, source: SourceDefinition, index: int, *, due_only: bool = False, escalated: bool = False
+    ) -> FeedPollOutcome:
         sid = source.source_id
         key, feed = f"{sid}:{index}", self.feed(source, index)
         async with self.lock(self.acquisition_locks, key):
             state = await self.state(key)
-            last = state.get("last_attempt_at") or state.get("last_success_at")
+            cadence = SourceCadence.from_document(state)
             if (
                 due_only
-                and last
-                and (self.now() - parse_time(last)).total_seconds() < self.interval(source, feed, escalated)
+                and cadence.poll_remaining(now=self.now(), interval_s=self.interval(source, feed, escalated))
+                > 0
             ):
                 return FeedPollOutcome(items=0, errors=[])
             attempted = self.stamp()
-            async with self.lock(self.state_locks, key):
+            async with self.state_change(key):
                 current = await self.state(key)
                 current["last_attempt_at"] = attempted
                 await self.save(source, key, current)
             try:
                 rows, acquired, kind, snapshot_update = await self._fetch_rows(source, feed, key, state)
-                async with self.lock(self.state_locks, key):
+                async with self.state_change(key):
                     current = await self.state(key)
                     if rows is not None:
                         coverage = {
@@ -589,7 +683,10 @@ class SourcePoller:
                             current[field] = acquired[field]
                     current.pop("acquisition_error", None)
                     current.pop("instruments", None)
-                    if not any(batch["rows"] for batch in current.get("pending_batches", [])):
+                    pending = await self.pending(source, key, current)
+                    if not any(
+                        batch.rows for batch in pending.batches if isinstance(batch, SourcePendingBatch)
+                    ):
                         current["article_errors"] = {}
                     count_read(current, "reads", ok=True)
                     current.update(
@@ -601,7 +698,9 @@ class SourcePoller:
                         else "HEALTHY",
                         error=None,
                     )
-                    if rows is None:
+                    if pending.unresolved_quarantines:
+                        current.update(status="DEGRADED", error="PENDING_CHECKPOINT_QUARANTINE")
+                    if rows is None and not pending.batches:
                         current["last_success_at"] = self.stamp()
                     elif not current.get("last_success_at") and current["status"] == "HEALTHY":
                         current["status"] = "PENDING"
@@ -616,7 +715,7 @@ class SourcePoller:
                                 source, snapshot_update.checkpoint_key, snapshot_update.storage_record()
                             )
             except Exception as exc:
-                async with self.lock(self.state_locks, key):
+                async with self.state_change(key):
                     current = await self.state(key)
                     current.pop("etag", None)
                     current.pop("last_modified", None)
@@ -648,14 +747,17 @@ class SourcePoller:
             failed = []
             for poll in polls:
                 try:
-                    await report_entry_errors(
-                        svc.repo, svc.settings, source, feed, poll["entry_errors"], poll["seen_at"]
+                    await svc.report_errors(
+                        source,
+                        feed,
+                        [parse_entry_error(error) for error in poll["entry_errors"]],
+                        poll["seen_at"],
                     )
                 except Exception:
                     log.exception("Entry error report for %s is kept for the next poll", key)
                     failed.append(poll)
             if failed or backlog:
-                async with self.lock(self.state_locks, key):
+                async with self.state_change(key):
                     current = await self.state(key)
                     current["entry_error_reports"] = failed
                     await self.save(source, key, current)
@@ -728,10 +830,10 @@ class SourcePoller:
             item["url"] = fallback
             return _http_read
 
-    async def _item(self, source, feed, key, batch, original):
+    async def _item(self, source, feed, key, kind, original):
         svc, sid = self.service, source.source_id
         item = deepcopy(original)
-        if self.needs_detail(sid, batch["kind"]):
+        if self.needs_detail(sid, kind):
             if sid == "S09":
                 _http_read = await svc.fetch(
                     source,
@@ -757,7 +859,7 @@ class SourcePoller:
                     )
                 item["text"] = parsers.binance_body(detail_object.get("body", ""))
                 if not item["text"].strip():
-                    return self._empty_body(item["url"], detail_state)
+                    return ArticleFailure.model_validate(self._empty_body(item["url"], detail_state))
             else:
                 _http_read = await self._article(source, feed, key, item)
                 payload = _http_read.payload
@@ -768,7 +870,7 @@ class SourcePoller:
                     raise ValueError("Article returned 304 without a durable source item")
                 detail = await asyncio.to_thread(parsers.article, payload, source_id=sid)
                 if not detail["text"].strip():
-                    return self._empty_body(item["url"], detail_state)
+                    return ArticleFailure.model_validate(self._empty_body(item["url"], detail_state))
 
                 item.update(
                     {
@@ -787,102 +889,112 @@ class SourcePoller:
             )
         stored = await svc.ingest(source, item)
 
-        return "DUPLICATE" if stored["item_id"] != item["item_id"] else None
+        return MaterializedSourceObservation(
+            captured=captured_item(sid, item),
+            stored=parse_source_item(stored),
+        )
 
-    async def drain(self, source, index, *, force=False, escalated=False) -> FeedPollOutcome:
-        sid = source.source_id
-        key, feed = f"{sid}:{index}", self.feed(source, index)
+    async def process_pending_row(
+        self,
+        source: SourceDefinition,
+        feed: SourceFeed,
+        key: str,
+        batch: SourcePendingBatch,
+        row: PendingSourceItem,
+    ) -> SourceRowResult:
+        async with self.details:
+            try:
+                result = await self._item(source, feed, key, batch.kind, row.storage_record())
+                if isinstance(result, ArticleFailure):
+                    return FailedSourceRow(
+                        original=row,
+                        error="Article parse failure (empty visible text): " + row.discovery.url,
+                        article_failure=result,
+                    )
+                observation = MaterializedSourceObservation.model_validate(result)
+                return CompletedSourceRow(
+                    completion=CompletedPendingRow(original=row, observation=observation)
+                )
+            except httpx.HTTPStatusError as exc:
+                return FailedSourceRow(
+                    original=row,
+                    error=f"Article HTTP{exc.response.status_code}: " + row.discovery.url,
+                    article_failure=ArticleFailure(
+                        url=row.discovery.url,
+                        http_status=exc.response.status_code,
+                        payload_sha256=sha256(exc.response.content),
+                        observed_at=self.stamp(),
+                        observed_at_precision="COLLECTION_ONLY",
+                        reason="PUBLISHER_ARTICLE_NOT_FOUND"
+                        if exc.response.status_code == 404
+                        else "PUBLISHER_HTTP_FAILURE",
+                    ),
+                )
+            except Exception as exc:
+                return FailedSourceRow(original=row, error=str(exc), article_failure=None)
+
+    async def drain(
+        self, source: SourceDefinition, index: int, *, force: bool = False, escalated: bool = False
+    ) -> FeedPollOutcome:
+        key = f"{source.source_id}:{index}"
+        feed = self.feed(source, index)
         async with self.lock(self.processing_locks, key):
-            state = await self.state(key)
+            async with self.state_change(key):
+                state = await self.state(key)
+                pending = await self.pending(source, key, state)
+                await self.save(source, key, state)
+            cadence = SourceCadence.from_document(state)
             if (
                 not force
-                and state.get("detail_retry_at")
-                and parse_time(state.get("last_failure_at") or state["detail_retry_at"])
-                + timedelta(seconds=self.interval(source, feed, escalated))
-                > self.now()
+                and cadence.detail_remaining(
+                    now=self.now(), interval_s=self.interval(source, feed, escalated)
+                )
+                > 0
             ):
                 return FeedPollOutcome(items=0, errors=[])
-            if any(
-                "item_id" not in row for batch in state.get("pending_batches", []) for row in batch["rows"]
-            ):
-                async with self.lock(self.state_locks, key):
-                    current = await self.state(key)
-                    for batch in current.get("pending_batches", []):
-                        batch["rows"] = [row for row in batch["rows"] if "item_id" in row]
-                    await self.save(source, key, current)
-                state = await self.state(key)
-            batches = deepcopy(state.get("pending_batches", []))
-            if not any(batch["rows"] for batch in batches) and state.get("article_errors"):
-                async with self.lock(self.state_locks, key):
-                    current = await self.state(key)
-                    current["article_errors"] = {}
-                    if current.get("status") == "DEGRADED" and not (
-                        current.get("entry_errors")
-                        or current.get("history_gap")
-                        or current.get("acquisition_error")
-                    ):
-                        current.update(status="HEALTHY", error=None)
-                    await self.save(source, key, current)
-            if not batches:
-                return FeedPollOutcome(items=0, errors=[])
-            errors, completed, count, duplicates = [], {}, 0, []
-            article_errors = {}
-            for batch in batches:
-
-                async def process(row, current_batch=batch):
-                    nonlocal count
-                    async with self.details:
-                        try:
-                            error = await self._item(source, feed, key, current_batch, row)
-                            if error == "DUPLICATE":
-                                duplicates.append(str(row["external_id"]))
-                                return None
-                            if error:
-                                article_errors[row["url"]] = error
-                                errors.append("Article parse failure (empty visible text): " + row["url"])
-                                return row
-                            count += 1
-                            return None
-                        except httpx.HTTPStatusError as exc:
-                            article_errors[row.get("url", row["external_id"])] = {
-                                "url": row.get("url"),
-                                "http_status": exc.response.status_code,
-                                "payload_sha256": sha256(exc.response.content),
-                                "observed_at": self.stamp(),
-                                "observed_at_precision": "COLLECTION_ONLY",
-                                "reason": "PUBLISHER_ARTICLE_NOT_FOUND"
-                                if exc.response.status_code == 404
-                                else "PUBLISHER_HTTP_FAILURE",
-                            }
-                            errors.append(f"Article HTTP{exc.response.status_code}: " + str(row.get("url")))
-                            return row
-                        except Exception as exc:
-                            errors.append(str(exc))
-                            return row
-
-                remaining = await asyncio.gather(*(process(row) for row in batch["rows"]))
-                completed[batch["batch_id"]] = {
-                    row["item_id"]
-                    for row, failed in zip(batch["rows"], remaining, strict=True)
-                    if failed is None
-                }
-            async with self.lock(self.state_locks, key):
+            results: list[SourceRowResult] = []
+            for batch in pending.batches:
+                if isinstance(batch, SourcePendingBatch):
+                    results.extend(
+                        await asyncio.gather(
+                            *(self.process_pending_row(source, feed, key, batch, row) for row in batch.rows)
+                        )
+                    )
+            completed = [result.completion for result in results if isinstance(result, CompletedSourceRow)]
+            failures = [result for result in results if isinstance(result, FailedSourceRow)]
+            duplicates = [
+                completion.original.discovery.external_id
+                for completion in completed
+                if completion.observation.deduplicated
+            ]
+            count = sum(not completion.observation.deduplicated for completion in completed)
+            errors = [failure.error for failure in failures]
+            async with self.state_change(key):
                 current = await self.state(key)
-                done_count = sum(len(ids) for ids in completed.values())
-                count_read(current, "detail_reads", ok=True, n=done_count)
-                count_read(current, "detail_reads", ok=False, n=len(errors))
-                for batch in current.get("pending_batches", []):
-                    if batch["batch_id"] in completed:
-                        done = completed[batch["batch_id"]]
-                        batch["rows"] = [row for row in batch["rows"] if row["item_id"] not in done]
-
-                while current.get("pending_batches") and not current["pending_batches"][0]["rows"]:
-                    batch = current["pending_batches"].pop(0)
-                    current.update(batch["coverage"])
-                    current.pop("instruments", None)
-                current["article_errors"] = article_errors
+                latest = await self.pending(source, key, current)
+                latest = latest.link_completions(completed, now=self.now()).complete_rows(completed)
+                latest = await self.archives.persist(latest, now=self.now())
+                coverage = latest.coverage_commit()
+                for batch in coverage.completed:
+                    current.update(batch.coverage.model_dump(mode="json", exclude_unset=True))
+                current["pending_batches"] = [batch.storage_record() for batch in coverage.remaining]
+                current.pop("instruments", None)
+                current["article_errors"] = {
+                    failure.article_failure.url: failure.article_failure.model_dump(
+                        mode="json", exclude_unset=True
+                    )
+                    for failure in failures
+                    if failure.article_failure is not None
+                }
+                count_read(current, "detail_reads", ok=True, n=len(completed))
+                count_read(current, "detail_reads", ok=False, n=len(failures))
                 if duplicates:
-                    current["duplicate_ids"] = (current.get("duplicate_ids", []) + duplicates)[-1000:]
+                    cache = SourceDuplicateCache.from_document(current)
+                    current["duplicate_ids"] = [
+                        identity for identity in (cache.duplicate_ids + duplicates)[-1000:]
+                    ]
+                if latest.unresolved_quarantines:
+                    errors.append("PENDING_CHECKPOINT_QUARANTINE")
                 if errors:
                     current.update(
                         status="DEGRADED",
@@ -892,18 +1004,15 @@ class SourcePoller:
                             self.now() + timedelta(seconds=self.interval(source, feed, escalated))
                         ),
                     )
-                    current.pop("etag", None)
-                    current.pop("last_modified", None)
+                    if failures:
+                        current.pop("etag", None)
+                        current.pop("last_modified", None)
                 else:
                     current.pop("detail_retry_at", None)
+                    degradation = SourceDegradation.from_document(current)
                     current.update(
-                        status="DEGRADED"
-                        if current.get("history_gap")
-                        or current.get("entry_errors")
-                        or current.get("acquisition_error")
-                        or current.get("scan_status") == "GAP_LIMIT"
-                        else "HEALTHY",
-                        error="X_HISTORY_GAP_LIMIT" if current.get("scan_status") == "GAP_LIMIT" else None,
+                        status="DEGRADED" if degradation.blocked else "HEALTHY",
+                        error="X_HISTORY_GAP_LIMIT" if degradation.scan_status == "GAP_LIMIT" else None,
                         last_success_at=self.stamp(),
                     )
                 await self.save(source, key, current)
