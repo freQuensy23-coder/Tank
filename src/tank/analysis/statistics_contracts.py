@@ -187,9 +187,20 @@ class HistoryDiagnostics(DomainModel):
         return self
 
 
+class UnavailableHistoryDiagnostics(DomainModel):
+    target_window_duration_s: float = Field(gt=0)
+    exact: Literal[False]
+    reason: Literal["INCOMPLETE", "INSUFFICIENT_HISTORY", "NOT_ESTIMABLE"]
+    resolution_s: float | None = Field(gt=0)
+    sample_count: Literal[0]
+
+
+type HistoryDiagnostic = HistoryDiagnostics | UnavailableHistoryDiagnostics
+
+
 class RelativeHistory(DomainModel):
     samples: StatisticalPopulation
-    diagnostics: HistoryDiagnostics
+    diagnostics: HistoryDiagnostic
 
     @model_validator(mode="after")
     def count(self) -> Self:

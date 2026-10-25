@@ -20,6 +20,7 @@ from tank.analysis.statistics_contracts import (
     RelativeHistory,
     StatisticalPopulation,
     UnavailableBeta,
+    UnavailableHistoryDiagnostics,
 )
 
 
@@ -159,3 +160,21 @@ def test_baseline_families_share_the_original_total_fifo_budget() -> None:
     composed = BaselineCaches.with_capacity(128)
     assert composed.open_interest.retention is composed.depth.retention
     assert composed.depth.retention.capacity == 128
+
+
+def test_unavailable_history_never_invents_a_cadence_or_measured_endpoints() -> None:
+    diagnostic = UnavailableHistoryDiagnostics(
+        target_window_duration_s=3600.0,
+        exact=False,
+        reason="NOT_ESTIMABLE",
+        resolution_s=None,
+        sample_count=0,
+    )
+    history = RelativeHistory(samples=StatisticalPopulation([]), diagnostics=diagnostic)
+    assert isinstance(history.diagnostics, UnavailableHistoryDiagnostics)
+    assert history.diagnostics.resolution_s is None
+    assert history.diagnostics.reason == "NOT_ESTIMABLE"
+    with pytest.raises(ValidationError, match="sample count"):
+        RelativeHistory(samples=StatisticalPopulation([1.0]), diagnostics=diagnostic)
+    with pytest.raises(ValidationError):
+        UnavailableHistoryDiagnostics.model_validate(diagnostic.model_copy(update={"resolution_s": 0.0}))
