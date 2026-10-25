@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_versions
 from test_card_template import card_inputs, render
 from test_event_tools import seed
@@ -16,7 +17,14 @@ from tank.storage import MemoryRepository
 async def test_agent_verification_gap_reaches_card_through_public_tool(tmp_path: Path, tool) -> None:
     repo = MemoryRepository()
     await repo.open()
-    service = EventToolService(repo, Settings(data_dir=tmp_path), None, None, versions=fixture_versions())
+    service = EventToolService(
+        repo,
+        Settings(data_dir=tmp_path),
+        None,
+        None,
+        versions=fixture_versions(),
+        scheduler=RecordingReactionScheduling(),
+    )
     args = await seed(service)
     gap = "No announcement from the named venue; the reporter supplies no primary quote."
     args["certainty"] = "MEDIUM"

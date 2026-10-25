@@ -3,6 +3,8 @@ package budget
 import (
 	"container/heap"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -10,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/freQuensy23-coder/Tank/capture/internal/budgetpolicy"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
 )
 
@@ -34,13 +37,6 @@ func InFlight(host string) int {
 	return HostInFlight
 }
 
-func UsedWeightLimit(host string) int {
-	if host == "fapi.binance.com" {
-		return 2400
-	}
-	return 6000
-}
-
 type BannedError struct {
 	Host  string
 	Until time.Time
@@ -57,8 +53,9 @@ type hostGate struct {
 }
 
 type Gate struct {
-	ledger Ledger
-	owner  string
+	ledger   Ledger
+	owner    string
+	policies Policies
 
 	Interval func(host string) time.Duration
 	InFlight func(host string) int
@@ -72,9 +69,9 @@ type Gate struct {
 	banned map[string]time.Time
 }
 
-func NewGate(l Ledger, owner string) *Gate {
+func NewGate(l Ledger, owner string, policies Policies) *Gate {
 	return &Gate{
-		ledger: l, owner: owner, Interval: Interval, InFlight: InFlight,
+		ledger: l, owner: owner, policies: policies, Interval: Interval, InFlight: InFlight,
 		now: time.Now, sleep: sleep,
 		hosts: map[string]*hostGate{}, urgent: map[string]int{}, banned: map[string]time.Time{},
 	}
@@ -105,12 +102,20 @@ func (g *Gate) host(host string) *hostGate {
 	return h
 }
 
-func (g *Gate) Admit(ctx context.Context, host, path string, params map[string]string, payload map[string]any, priority int) error {
-	buckets, err := Constraints(host, path, params, payload)
+func (g *Gate) Admit(ctx context.Context, method, host, path string, params map[string]string, body json.RawMessage, priority int) error {
+	buckets, err := g.policies.Plan(budgetpolicy.Request{Method: method, Host: host, Path: path, Query: params, Body: body})
 	if err != nil {
 		return err
 	}
 	return g.AdmitBuckets(ctx, host, buckets, priority)
+}
+
+func (g *Gate) PlanFetch(method, host, path string, params map[string]string, body json.RawMessage) ([]Bucket, error) {
+	return g.policies.Plan(budgetpolicy.Request{Method: method, Host: host, Path: path, Query: params, Body: body})
+}
+
+func (g *Gate) QueryFields(host, path string) []string {
+	return g.policies.QueryFields(host, path)
 }
 
 func (g *Gate) AdmitBuckets(ctx context.Context, host string, buckets []Bucket, priority int) error {
@@ -120,39 +125,47 @@ func (g *Gate) AdmitBuckets(ctx context.Context, host string, buckets []Bucket, 
 	if banned && time.Now().Before(until) {
 		return &BannedError{Host: host, Until: until}
 	}
-	for _, b := range buckets {
-		if err := g.acquire(ctx, host, b, priority); err != nil {
-			return err
-		}
-	}
-	return nil
+	return g.acquireGroup(ctx, host, buckets, priority)
 }
 
 func (g *Gate) acquire(ctx context.Context, host string, b Bucket, priority int) error {
-	if err := valid(b.Capacity, b.Weight); err != nil {
+	return g.acquireGroup(ctx, host, []Bucket{b}, priority)
+}
+
+func (g *Gate) acquireGroup(ctx context.Context, host string, buckets []Bucket, priority int) error {
+	ordered, err := OrderedBuckets(buckets)
+	if err != nil {
 		return err
 	}
-	name := b.Name()
 	urgent := priority < 0
 	if urgent {
 		g.mu.Lock()
-		g.urgent[name]++
+		for _, b := range ordered {
+			g.urgent[b.Name()]++
+		}
 		g.mu.Unlock()
 		defer func() {
 			g.mu.Lock()
-			if g.urgent[name]--; g.urgent[name] <= 0 {
-				delete(g.urgent, name)
+			for _, b := range ordered {
+				name := b.Name()
+				if g.urgent[name]--; g.urgent[name] <= 0 {
+					delete(g.urgent, name)
+				}
 			}
 			g.mu.Unlock()
 		}()
 	}
 	for {
 		g.mu.Lock()
-		yielding := !urgent && g.urgent[name] > 0
+		yielding := false
+		wait := 50 * time.Millisecond
+		for _, b := range ordered {
+			yielding = yielding || (!urgent && g.urgent[b.Name()] > 0)
+			wait = min(wait, seconds(b.WindowS))
+		}
 		g.mu.Unlock()
-		wait := min(50*time.Millisecond, seconds(b.WindowS))
 		if !yielding {
-			w, err := g.ledger.Acquire(ctx, name, b.Capacity, b.WindowS, b.Weight, g.owner, host)
+			w, err := g.ledger.AcquireGroup(ctx, ordered, g.owner, host)
 			if err != nil {
 				return err
 			}
@@ -228,7 +241,9 @@ func (g *Gate) Observe(ctx context.Context, host string, status int, header http
 	case http.StatusTooManyRequests:
 		delay := seconds(min(max(retryAfter(header, 60), 1), 60))
 		g.push(host, now.Add(delay))
-		_ = g.ledger.Block(ctx, host, time.Now().Add(delay), "HTTP 429", g.owner)
+		if err := g.ledger.Block(ctx, host, time.Now().Add(delay), "HTTP 429", g.owner); err != nil {
+			return false, err
+		}
 		return true, nil
 	case http.StatusTeapot:
 		delay := seconds(max(retryAfter(header, 120), 60))
@@ -239,13 +254,25 @@ func (g *Gate) Observe(ctx context.Context, host string, status int, header http
 			g.banned[host] = until
 		}
 		g.mu.Unlock()
-		_ = g.ledger.Block(ctx, host, until, "HTTP 418", g.owner)
-		return false, &BannedError{Host: host, Until: until}
+		blockErr := g.ledger.Block(ctx, host, until, "HTTP 418", g.owner)
+		return false, errors.Join(&BannedError{Host: host, Until: until}, blockErr)
 	}
-	if used := strings.TrimSpace(header.Get("X-MBX-USED-WEIGHT-1M")); used != "" {
-		if n, err := strconv.Atoi(used); err == nil && n >= UsedWeightLimit(host) {
-			g.push(host, now.Add(time.Minute))
-			_ = g.ledger.Block(ctx, host, time.Now().Add(time.Minute), "X-MBX-USED-WEIGHT-1M "+used, g.owner)
+	if host == "api.binance.com" || host == "fapi.binance.com" {
+		if used := strings.TrimSpace(header.Get("X-MBX-USED-WEIGHT-1M")); used != "" {
+			n, err := strconv.ParseInt(used, 10, 64)
+			if err != nil || n < 0 {
+				return false, fmt.Errorf("invalid provider used-weight header")
+			}
+			limit, err := g.policies.DocumentedWeight(host)
+			if err != nil {
+				return false, err
+			}
+			if float64(n) >= limit {
+				g.push(host, now.Add(time.Minute))
+				if err := g.ledger.Block(ctx, host, time.Now().Add(time.Minute), "X-MBX-USED-WEIGHT-1M "+used, g.owner); err != nil {
+					return false, err
+				}
+			}
 		}
 	}
 	return false, nil

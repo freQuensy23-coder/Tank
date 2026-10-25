@@ -289,3 +289,41 @@ to captured arguments change the catalog binding, and forbidden assessment canno
 reach its implementation or change persisted event/assessment state. The named
 contract passes strict mypy; Ruff/format pass. Actual scheduling effects and replay
 reader qualification belong to the companion cohort, not this initial checkpoint.
+
+### Scheduling consumer qualification
+
+`run_operational_replay` constructs the real Scheduler with the packet's validated
+complete `Thresholds`, shares it with EventToolService and closes it in the owning
+finally scope. `replay_agent_session` requires that same concrete Scheduler and
+checks repository/settings/market/truth identity instead of creating a second one.
+The recorded diagnostic runner binds the complete call catalog to the verified
+`ReplayInputs.input_sha256`; assessment-bearing catalogs require captured policy
+and an owned real Scheduler. Assessment-free catalogs use the restricted capability.
+Scheduler's processing clock is patched to the existing deterministic replay clock;
+recorded market snapshots remain the read-only external evidence adapter.
+
+Synthetic operational packets in test_replay, test_fixture_reference,
+test_replay_abort_finalization and test_replay_session_boundaries now explicitly
+capture the complete declared fixture policy instead of `{}` or a lone expiry key.
+Frozen packets are unchanged. Other isolated EventTool fixtures declare the
+observable `RecordingReactionScheduling` adapter at construction; it records every
+intent and never pretends to create jobs. This includes exposure, fetch deadline,
+ownership, certainty, claim context, formula, observation, review, token watch and
+market-refresh fixtures whose independent purpose does not assert scheduling.
+Actual replay/session tests compose the real scheduler from their actual truth
+reader. Operational composition remains a consumer-owner responsibility.
+
+`test_assessment_defers_reaction_ownership_to_scheduler_after_commit` preserves its
+independent transaction/event-lock read oracle and now consumes only the event ID.
+`test_assessment_dispatch_creates_real_reaction_jobs` invokes actual assessment
+through dispatch and the real owned services: it observes ten durable POST jobs
+for the actual BTC/ETH benchmark scope, all five expected checkpoints, and drained
+scheduler tasks/closed HTTP resources. The analysis set is not populated until the
+later beneficiary command in that authored sequence, so no token is fabricated.
+
+Qualification: 339 owned units passed in 12.40s before the additional real-job case;
+the final five capability/post-commit/real-job cases passed in 2.45s. All 56 collected
+actual affected integrations passed in 30.29s with zero skips
+(`/tmp/analysis-scheduling-integration.xml`). Ruff and formatting pass. Default
+mypy reports only the four preexisting Truth cache declarations and the pending
+runtime-composition constructor companion; no generic annotation substitute added.

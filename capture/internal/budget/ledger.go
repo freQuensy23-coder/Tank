@@ -7,6 +7,8 @@ import (
 )
 
 type Ledger interface {
+	AcquireGroup(ctx context.Context, buckets []Bucket, owner, host string) (time.Duration, error)
+
 	Acquire(ctx context.Context, bucket string, capacity, windowS, weight float64, owner, host string) (time.Duration, error)
 
 	Block(ctx context.Context, host string, until time.Time, reason, owner string) error
@@ -36,7 +38,7 @@ func NewMemoryLedger(now func() time.Time) *MemoryLedger {
 }
 
 func (m *MemoryLedger) Acquire(_ context.Context, bucket string, capacity, windowS, weight float64, _, host string) (time.Duration, error) {
-	if err := valid(capacity, weight); err != nil {
+	if err := (Bucket{Key: bucket, Capacity: capacity, WindowS: windowS, Weight: weight}).Validate(); err != nil {
 		return 0, err
 	}
 	m.mu.Lock()

@@ -488,3 +488,11 @@ Open issue: the prior reconciler did not compare configured reasoning_effort, al
 ### Isolated published-head CI reload repair
 
 8ea20bb is based only on published 91b717f. The control-plane reload test now supplies a complete minimal synthetic configuration with one entity for its real malformed-qualifier oracle, plus an owned empty catalog and matching SHA. Real Settings capture, strict runtime validation, generation activation/swap and rejection assertions remain; two-second waits are unchanged. The original incidental production catalog caused a 3.31-second local case. The repaired case took 0.180 seconds under the full 2,190-case unit run; every case passed with zero skips, p90 0.369 seconds and maximum 5.160 seconds. No source cache/scheduler/budget changes are included. The independent configuration-cache optimization remains a separate foundation change.
+
+### Independent required scheduling composition
+
+This companion starts from verified parent 57c26c39 and merges canonical d19a9bf8 plus 970cfe51; it contains no held sync or request-budget activation. Production creates the real Scheduler with the same Market/Truth, captured versions and required thresholds before constructing EventToolService, passes the required ReactionScheduling port, and removes the late optional assignment. Runtime shutdown still owns that same scheduler. Runtime.close now explicitly returns None.
+
+Owned native/controller component fixtures inject RecordingReactionScheduling, which records the scheduling command and never fabricates a successful market capture. Actual reaction behavior is qualified by the shared operational service fixture and analysis's real-dispatch tests. A new production composition test constructs real services and verifies scheduler identity, dependencies, version/threshold facets and closure of owned clients. The new test is independently strict-clean.
+
+Validation: 330 owned unit cases pass in 14.82 seconds; 32 actual Memory/PostgreSQL/native integration cases pass in 19.17 seconds, zero skips. Ruff/format and source-comment checks pass. Default composition mypy no longer reports the scheduler assignment; only the four separately owned Truth cache declarations remain.

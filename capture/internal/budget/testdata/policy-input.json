@@ -1,0 +1,182 @@
+{
+  "Input": {
+    "Bybit": {
+      "Capacity": 300,
+      "Key": "bybit",
+      "WindowS": 5
+    },
+    "Hyperliquid": {
+      "ResponseWeights": {
+        "candleSnapshot": {
+          "PerItems": 60,
+          "Weight": 1
+        },
+        "fundingHistory": {
+          "PerItems": 20,
+          "Weight": 1
+        },
+        "recentTrades": {
+          "PerItems": 20,
+          "Weight": 1
+        }
+      },
+      "Weights": {
+        "allMids": 2,
+        "candleSnapshot": 20,
+        "fundingHistory": 20,
+        "l2Book": 2,
+        "meta": 20,
+        "metaAndAssetCtxs": 20,
+        "recentTrades": 20,
+        "userRole": 60
+      }
+    },
+    "OKX": [
+      {
+        "Capacity": 20,
+        "Path": "/api/v5/market/books",
+        "Scope": "IP",
+        "WindowS": 2
+      },
+      {
+        "Capacity": 50,
+        "Path": "/api/v5/market/trades",
+        "Scope": "IP",
+        "WindowS": 2
+      },
+      {
+        "Capacity": 10,
+        "Path": "/api/v5/market/history-trades",
+        "Scope": "IP",
+        "WindowS": 2
+      },
+      {
+        "Capacity": 20,
+        "Path": "/api/v5/market/candles",
+        "Scope": "IP",
+        "WindowS": 2
+      },
+      {
+        "Capacity": 10,
+        "Path": "/api/v5/market/history-candles",
+        "Scope": "IP",
+        "WindowS": 2
+      },
+      {
+        "Capacity": 10,
+        "Path": "/api/v5/public/open-interest",
+        "Scope": "IP_INSTRUMENT",
+        "WindowS": 2
+      },
+      {
+        "Capacity": 5,
+        "Path": "/api/v5/public/funding-rate",
+        "Scope": "IP_INSTRUMENT",
+        "WindowS": 2
+      },
+      {
+        "Capacity": 5,
+        "Path": "/api/v5/public/funding-rate-history",
+        "Scope": "IP_INSTRUMENT",
+        "WindowS": 2
+      },
+      {
+        "Capacity": 10,
+        "Path": "/api/v5/public/instruments",
+        "Scope": "IP_INSTRUMENT_TYPE",
+        "WindowS": 2
+      },
+      {
+        "Capacity": 10,
+        "Path": "/api/v5/market/tickers",
+        "Scope": "IP",
+        "WindowS": 2
+      },
+      {
+        "Capacity": 10,
+        "Path": "/api/v5/market/ticker",
+        "Scope": "IP",
+        "WindowS": 2
+      },
+      {
+        "Capacity": 5,
+        "Path": "/api/v5/public/mark-price",
+        "Scope": "IP_INSTRUMENT",
+        "WindowS": 2
+      },
+      {
+        "Capacity": 10,
+        "Path": "/api/v5/market/mark-price-candles",
+        "Scope": "IP",
+        "WindowS": 2
+      },
+      {
+        "Capacity": 10,
+        "Path": "/api/v5/market/index-tickers",
+        "Scope": "IP",
+        "WindowS": 2
+      }
+    ],
+    "Public": [
+      {
+        "Capacity": 60,
+        "Host": "www.binance.com",
+        "Key": "binance.www",
+        "WindowS": 60
+      },
+      {
+        "Capacity": 10,
+        "Host": "data.binance.vision",
+        "Key": "binance.vision",
+        "WindowS": 1
+      }
+    ],
+    "Rates": [
+      {
+        "Capacity": 5,
+        "Key": "coinbase"
+      },
+      {
+        "Capacity": 1,
+        "Key": "kraken"
+      }
+    ],
+    "USDMProtection": [
+      {
+        "Capacity": 250,
+        "Key": "binance.usdm.funding",
+        "Paths": [
+          "/fapi/v1/fundingRate",
+          "/fapi/v1/fundingInfo"
+        ],
+        "WindowS": 300
+      },
+      {
+        "Capacity": 500,
+        "Key": "binance.usdm.statistics",
+        "Paths": [
+          "/futures/data/openInterestHist"
+        ],
+        "WindowS": 300
+      }
+    ],
+    "Weighted": [
+      {
+        "Capacity": 3000,
+        "Documented": 6000,
+        "Key": "binance.spot"
+      },
+      {
+        "Capacity": 1200,
+        "Documented": 2400,
+        "Key": "binance.usdm"
+      },
+      {
+        "Capacity": 600,
+        "Documented": 1200,
+        "Key": "hyperliquid"
+      }
+    ]
+  },
+  "SourceConfigSHA256": "8ec1b6d2596569992353bdd5e00636e5849c3c1c8a6b3993835bc8777c8c22b9"
+}
