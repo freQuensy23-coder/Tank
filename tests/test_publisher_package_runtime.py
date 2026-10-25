@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def declared_package(root: Path) -> PublisherArtifactRuntime:
     declared = PublisherArtifactRuntime(
         contract="tank-publisher-runtime-v1",
-        image_repository="ghcr.io/example/tank",
+        image_repository="ghcr.io/example/project/tank",
         runtime=RuntimeEvidence(
             orchestrator_sha="a" * 40,
             selected_release_sha="b" * 40,
@@ -53,7 +53,7 @@ def test_package_runtime_refuses_inconsistent_control_before_publisher_effects(
     invocation = RuntimeInvocation(orchestrator_sha="a" * 40, selected_release_sha="b" * 40)
     runtime_root = ROOT
     if tamper == "image":
-        (tmp_path / "publisher-image").write_text("ghcr.io/example/tank:" + "c" * 40 + "\n")
+        (tmp_path / "publisher-image").write_text("ghcr.io/example/project/tank:" + "c" * 40 + "\n")
     elif tamper == "selected":
         invocation = RuntimeInvocation(orchestrator_sha="a" * 40, selected_release_sha="c" * 40)
     elif tamper == "orchestrator":
