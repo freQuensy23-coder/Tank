@@ -7,6 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 import zstandard
+from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_versions
 
 import tank.event_tools as CANDIDATE
@@ -42,6 +43,7 @@ async def setup(tmp_path: Path, handler, owned, monkeypatch: pytest.MonkeyPatch)
         None,
         http=None if owned else client,
         versions=fixture_versions(),
+        scheduler=RecordingReactionScheduling(),
     )
     if owned:
 

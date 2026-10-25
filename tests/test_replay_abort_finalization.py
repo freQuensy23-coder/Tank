@@ -13,6 +13,7 @@ from tank.analysis.decisions import DecisionEngine
 from tank.analysis.truth import MarketTruthService
 from tank.event_tools import EventToolService
 from tank.replay import ReplayError, ReplayMarketReader, load_inputs, replay_agent_session
+from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.util import new_id
@@ -36,7 +37,7 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
     cfg = {
         "registry": {"tokens": [{"token_id": "T", "symbol": "T"}], "entities": [], "instruments": []},
         "sources": {"sources": [{"source_id": "S01", "name": "Synthetic replay abort source"}]},
-        "thresholds": {},
+        "thresholds": Settings(_env_file=None).load_config("thresholds"),
         "semantics": {},
         "dependency_map": {},
         "openma": {
@@ -241,8 +242,23 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
         truth = MarketTruthService(
             repo, settings, ReplayMarketReader(load_inputs(packet, settings)), versions=fixture_versions()
         )
+        reaction_truth = truth
+        reaction_scheduler = Scheduler(
+            repo,
+            settings,
+            reaction_truth.market,
+            reaction_truth,
+            thresholds=settings.thresholds(),
+            versions=fixture_versions(),
+        )
         tools = EventToolService(
-            repo, settings, truth, DecisionEngine(settings), http=http, versions=fixture_versions()
+            repo,
+            settings,
+            reaction_truth,
+            DecisionEngine(settings),
+            http=http,
+            versions=fixture_versions(),
+            scheduler=reaction_scheduler,
         )
         task = asyncio.create_task(
             replay_agent_session(

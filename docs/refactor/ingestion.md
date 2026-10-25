@@ -412,3 +412,20 @@ and optional head-refresh 304 outcomes retain their explicit no-content branch.
 Required receipt digest/status/response URL/fetch clock accesses no longer use
 empty receipt maps or invented current-time fallbacks. Strict reader/test mypy
 and touched Ruff checks pass. Full pinned services verification follows the commit.
+
+
+### Independent clean scheduling companion: operational test composition
+
+`scheduler_support.operational_reaction_services` constructs the real MarketService,
+MarketTruthService and Scheduler with the actual threshold configuration and an
+explicit version facet. Its async exit stack closes scheduler tasks before market
+flush and client cleanup. It supplies a real HTTP client whose transport refuses
+undeclared external requests, rather than a no-op scheduler or fabricated capture
+answer. The small dataclass contains resource handles, not serialized domain
+records.
+
+The helper's actual background-task lifetime proof passes with zero skips, and
+both helper/test modules pass strict mypy and Ruff. Constructor consumer migration
+will be paired with analysis' exact required ReactionScheduling activation.
+This clean branch is based on parent 95ce994 and does not include the held
+admission/7af27d3 cohort or the independent polling-state WIP.

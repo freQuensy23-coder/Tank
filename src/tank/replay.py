@@ -20,6 +20,7 @@ from typing import Self
 from pydantic import JsonValue
 
 from tank.contracts import DomainModel
+from tank.contracts.configuration import Thresholds
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.source_items import SourceRelevance
 from tank.market_schema import MARKET_COLUMNS
@@ -656,7 +657,7 @@ class ReplayMarketReader:
 
 async def run_captured_tools(inputs, repo):
     """Execute captured analyst tool calls through production validation and rules."""
-    from contextlib import ExitStack
+    from contextlib import AsyncExitStack, ExitStack
     from unittest.mock import patch
 
     import httpx
@@ -664,13 +665,22 @@ async def run_captured_tools(inputs, repo):
     from tank import event_tools, storage, util
     from tank.analysis import cards, decisions, truth
     from tank.analysis.decisions import DecisionEngine
+    from tank.analysis.reaction_scheduling import (
+        AssessmentFreeDiagnosticScheduling,
+        ReactionScheduling,
+        diagnostic_call_catalog,
+    )
     from tank.event_tools import EventToolService
+    from tank.scheduler import Scheduler
     from tank.settings import Settings
 
     versions = ResolvedVersionIdentity(config_version=inputs.config_version, code_version=inputs.code_version)
     calls = inputs.config.get("replay_tool_calls")
     if not calls:
         raise ReplayError("insufficient_fixture: missing captured analyst tool calls")
+    if inputs.input_sha256 is None:
+        raise ReplayError("insufficient_fixture: diagnostic input identity is not verified")
+    catalog = diagnostic_call_catalog(inputs.input_sha256, calls)
 
     class ReplaySettings(Settings):
         def load_config(self, name):
@@ -702,7 +712,7 @@ async def run_captured_tools(inputs, repo):
         inputs,
         "RPL-diagnostic",
         Path(evidence_directory.name).resolve() / "RPL-diagnostic",
-        input_sha256=digest({"records": inputs._records, "cutoff": inputs.cutoff}),
+        input_sha256=inputs.input_sha256,
     )
     counter = 0
     original_new_id = util.new_id
@@ -749,20 +759,42 @@ async def run_captured_tools(inputs, repo):
 
     with ExitStack() as stack:
         stack.callback(evidence_directory.cleanup)
-        for module in (event_tools, decisions, cards, storage, truth, util):
+        import tank.scheduler as scheduler_module
+
+        for module in (event_tools, decisions, cards, storage, truth, util, scheduler_module):
             if hasattr(module, "new_id"):
                 stack.enter_context(patch.object(module, "new_id", stable_id))
             if hasattr(module, "utcnow"):
                 stack.enter_context(patch.object(module, "utcnow", clock.now))
-        async with httpx.AsyncClient(transport=httpx.MockTransport(captured_http)) as http:
+        async with AsyncExitStack() as resources:
+            http = await resources.enter_async_context(
+                httpx.AsyncClient(transport=httpx.MockTransport(captured_http))
+            )
+            market_reader = ReplayMarketReader(inputs, evidence)
+            market_truth = truth.MarketTruthService(repo, settings, market_reader, versions=versions)
+            scheduling: ReactionScheduling
+            if catalog.declares_assessment():
+                try:
+                    thresholds = Thresholds.model_validate(inputs.config["thresholds"])
+                except (KeyError, ValueError) as exc:
+                    raise ReplayError(
+                        "insufficient_fixture: assessment scheduling requires captured policy"
+                    ) from exc
+                scheduling = Scheduler(
+                    repo, settings, market_reader, market_truth, thresholds=thresholds, versions=versions
+                )
+                resources.push_async_callback(scheduling.close)
+            else:
+                scheduling = AssessmentFreeDiagnosticScheduling(
+                    mode="ASSESSMENT_FREE_DIAGNOSTIC", catalog=catalog
+                )
             service = EventToolService(
                 repo,
                 settings,
-                truth.MarketTruthService(
-                    repo, settings, ReplayMarketReader(inputs, evidence), versions=versions
-                ),
+                market_truth,
                 DecisionEngine(settings),
                 versions=versions,
+                scheduler=scheduling,
                 http=http,
             )
             seeded = set()
@@ -1273,13 +1305,24 @@ async def run_operational_replay(bundle_path, repo, settings, *, http=None):
     versions = ResolvedVersionIdentity(config_version=inputs.config_version, code_version=inputs.code_version)
     truth = MarketTruthService(repo, settings, ReplayMarketReader(inputs, evidence), versions=versions)
     from tank.fixture_reference import TrustedFixtureClock
+    from tank.scheduler import Scheduler
 
+    try:
+        captured_thresholds = Thresholds.model_validate(inputs.config["thresholds"])
+    except (KeyError, ValueError) as exc:
+        raise ReplayError(
+            "insufficient_fixture: operational replay requires captured reaction policy"
+        ) from exc
+    scheduler = Scheduler(
+        repo, settings, truth.market, truth, thresholds=captured_thresholds, versions=versions
+    )
     tools = EventToolService(
         repo,
         settings,
         truth,
         DecisionEngine(settings),
         versions=versions,
+        scheduler=scheduler,
         reference_clock=TrustedFixtureClock(inputs) if inputs.fixture_reference else None,
     )
     client = http or httpx.AsyncClient(timeout=httpx.Timeout(30, read=None))
@@ -1300,6 +1343,7 @@ async def run_operational_replay(bundle_path, repo, settings, *, http=None):
             timeout=inputs.config.get("replay_timeout_seconds", 480),
         )
     finally:
+        await scheduler.close()
         if http is None:
             await client.aclose()
 
@@ -1825,7 +1869,16 @@ async def replay_agent_session(
         )
         return {"captured_delivery": True}
 
-    scheduler = Scheduler(repo, settings, event_tools.truth.market, event_tools.truth, versions=versions)
+    if not isinstance(event_tools.scheduler, Scheduler):
+        raise ReplayError("fresh replay requires its shared operational reaction scheduler")
+    scheduler = event_tools.scheduler
+    if (
+        scheduler.repo is not repo
+        or scheduler.settings is not settings
+        or scheduler.market is not event_tools.truth.market
+        or scheduler.truth is not event_tools.truth
+    ):
+        raise ReplayError("fresh replay scheduling dependencies differ from its analysis services")
     timer_receipts = []
     selected_timer_timestamp = None
 

@@ -5,6 +5,7 @@ from pathlib import Path
 import httpx
 import pytest
 from review_typed_fixtures import put_boundary, put_flow
+from scheduling_support import RecordingReactionScheduling
 from score_fixtures import unassessed_score_dimensions
 from source_support import fixture_versions
 
@@ -227,7 +228,14 @@ async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_pa
     truth.update(mta_id="actual-review-truth", event_id="actual-review-event")
     repo = MemoryRepository()
     settings = Settings(data_dir=tmp_path)
-    tools = EventToolService(repo, settings, None, DecisionEngine(), versions=fixture_versions())
+    tools = EventToolService(
+        repo,
+        settings,
+        None,
+        DecisionEngine(),
+        versions=fixture_versions(),
+        scheduler=RecordingReactionScheduling(),
+    )
     now = iso(utcnow())
     eid = "actual-review-event"
     event = {

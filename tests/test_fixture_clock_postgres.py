@@ -5,6 +5,7 @@ from pathlib import Path
 from runpy import run_path
 
 import pytest
+from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_versions
 
 from tank.event_tools import EventToolService
@@ -20,7 +21,14 @@ async def test_reference_clock_view_and_search_with_actual_postgres(
     if not dsn:
         pytest.skip("Requires isolated PostgreSQL QA connection")
     async with postgres_template.repository(dsn) as repo:
-        service = EventToolService(repo, Settings(data_dir=tmp_path), None, None, versions=fixture_versions())
+        service = EventToolService(
+            repo,
+            Settings(data_dir=tmp_path),
+            None,
+            None,
+            versions=fixture_versions(),
+            scheduler=RecordingReactionScheduling(),
+        )
         case = run_path(str(Path(__file__).with_name("test_event_tools.py")))[
             "test_trusted_reference_clock_changes_logical_age_only"
         ]
