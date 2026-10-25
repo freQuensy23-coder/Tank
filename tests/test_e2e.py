@@ -227,7 +227,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
             repo,
             settings,
             reactions.truth,
-            DecisionEngine(settings),
+            DecisionEngine(),
             versions=versions,
             scheduler=reactions.scheduler,
             pages=LivePageAccess(reactions.admission),
@@ -268,7 +268,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
             "spot": {},
             "derivatives": {},
         }
-        decision = DecisionEngine(settings).evaluate(event, assessment, edge, market)
+        decision = DecisionEngine().evaluate(event, assessment, edge, market)
         assert decision["action"] == "WAIT"
         card = compose_card(
             event, assessment, [edge], [decision], [market], verdict="Synthetic integration test."
@@ -546,7 +546,7 @@ async def test_full_sse_pipeline_postgres(
                 repo,
                 settings,
                 truth_service,
-                DecisionEngine(settings),
+                DecisionEngine(),
                 http=http,
                 versions=versions,
                 scheduler=scheduler,
@@ -814,7 +814,7 @@ async def test_full_sse_pipeline_postgres(
                 repo,
                 settings,
                 truth_service,
-                DecisionEngine(settings),
+                DecisionEngine(),
                 http=http,
                 versions=versions,
                 scheduler=scheduler,
@@ -1406,7 +1406,7 @@ async def test_runtime_autonomous_source_to_telegram(
                 repo,
                 settings,
                 truth,
-                DecisionEngine(settings),
+                DecisionEngine(),
                 versions=versions,
                 scheduler=scheduler,
                 pages=LivePageAccess(admission),
