@@ -1881,7 +1881,7 @@
           "symbol": "NativeSessionReader._lookup"
         },
         {
-          "path": "src/tank/agents/native_readback.py",
+          "path": "src/tank/contracts/native_readback.py",
           "symbol": "NativeSessionState.archived_at"
         }
       ],
