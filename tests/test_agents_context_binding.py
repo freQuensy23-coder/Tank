@@ -20,7 +20,6 @@ def test_callback_without_source_cannot_borrow_session_origin(active: bool) -> N
         session["message_log"] = [{"message_id": "callback", "payload": payload}]
     binding = ContextBinding.from_session(session)
     assert binding.observation_source() is None
-    assert binding.incoming_source() == "original"
 
 
 def test_active_source_owns_observation_after_an_earlier_origin() -> None:
@@ -34,7 +33,7 @@ def test_active_source_owns_observation_after_an_earlier_origin() -> None:
         ],
     }
     binding = ContextBinding.from_session(session)
-    assert binding.observation_source() == binding.incoming_source() == "incoming"
+    assert binding.observation_source() == "incoming"
     session["message_log"] = []
     assert binding.observation_source() == "incoming"
 
@@ -43,7 +42,7 @@ def test_unaccepted_session_without_input_journal_has_no_active_owner() -> None:
     binding = ContextBinding.from_session({"session_id": "new", "item_id": None, "event_id": None})
     assert binding.active_message_id is None
     assert binding.trigger.active_message is False
-    assert binding.observation_source() is binding.incoming_source() is None
+    assert binding.observation_source() is None
 
 
 def test_legacy_source_without_journal_retains_its_explicit_origin() -> None:

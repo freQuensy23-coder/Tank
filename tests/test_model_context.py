@@ -3,10 +3,12 @@
 import copy
 import json
 from pathlib import Path
+from typing import Literal
 
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture
+from pydantic import JsonValue
 from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_http_admission
 
@@ -783,7 +785,13 @@ async def test_watch_audit_relationships_are_removed_entirely_without_mutating_s
         "cond_id": new_id("CND"),
         "token_id": "uniswap:UNI",
         "human_text": "Coverage becomes high",
-        "expr": {"metric": "dc.class", "op": "==", "value": "HIGH"},
+        "expr": {
+            "metric": "dc.class",
+            "window": "EVENT",
+            "op": "==",
+            "value": "HIGH",
+            "persist": {"count": 1, "unit": "consecutive_windows"},
+        },
         "created_at": "2026-10-23T10:00:00Z",
         "status": "CANCELLED",
         "created_by": new_id("DEC"),
@@ -972,3 +980,65 @@ async def test_milestone_callback_confirms_from_the_fetched_official_document_by
     escalations = await repo.list("ops.source_escalations")
     assert escalations and all(row["status"] == "CONFIRMED" for row in escalations)
     assert await repo.get("ingest.source_items", opening["item_id"]) == opening
+
+
+@pytest.mark.parametrize("tool", ["record_event", "get_item"])
+async def test_active_sourceless_callback_cannot_record_or_implicitly_read_the_opening_document(
+    context: tuple[MemoryRepository, Settings, dict[str, JsonValue], dict[str, JsonValue]],
+    tool: Literal["record_event", "get_item"],
+) -> None:
+    repo, settings, session, item = context
+    session.update(
+        active_message_id="callback",
+        message_log=[
+            {
+                "message_id": "callback",
+                "payload": {"kind": "CONDITION_FIRED"},
+                "retry_count": 0,
+                "turn_status": "RUNNING",
+            }
+        ],
+        last_payload={"kind": "ITEM_ADDED", "item_id": "stale-source"},
+    )
+    await repo.put("ops.agent_sessions", "session_private", session)
+    item_id = item["item_id"]
+    assert isinstance(item_id, str)
+    before = copy.deepcopy(await repo.get("ingest.source_items", item_id))
+    dispatches: list[str] = []
+    requests: list[httpx.Request] = []
+
+    async def dispatch(
+        name: str,
+        arguments: dict[str, JsonValue],
+        context: dict[str, JsonValue],
+    ) -> dict[str, JsonValue]:
+        dispatches.append(name)
+        assert name == "get_item" and arguments["item_id"] == item["item_id"]
+        return item
+
+    def receive(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"data": []})
+
+    arguments: dict[str, JsonValue] = recorded(item) if tool == "record_event" else {}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
+        service = SessionService(
+            repo, settings, dispatch, http=http, stream_http=http, versions=declared_versions_fixture()
+        )
+        await service.tool(session, {"id": "callback-call", "name": tool, "input": arguments})
+        refused = await repo.get("ops.tool_calls", "session_private:callback-call")
+        assert refused is not None and refused["status"] == "REFUSED"
+        failure = refused["result"]
+        assert isinstance(failure, dict) and isinstance(failure["error"], dict)
+        reason = failure["error"]["reason"]
+        assert isinstance(reason, str) and "source" in reason
+        assert dispatches == []
+        assert len(requests) == 1
+        await service.tool(
+            session,
+            {"id": "explicit-origin-read", "name": "get_item", "input": {"item_id": item["item_id"]}},
+        )
+    assert dispatches == ["get_item"] and len(requests) == 2
+    explicit = await repo.get("ops.tool_calls", "session_private:explicit-origin-read")
+    assert explicit is not None and explicit["status"] == "DONE"
+    assert await repo.get("ingest.source_items", item_id) == before
