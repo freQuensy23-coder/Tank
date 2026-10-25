@@ -66,6 +66,65 @@ for (const failure of ['lease', 'input', 'cancel']) test(`${failure} loss during
   assert.equal(s.calls.some(call => call[0] === 'stop'), false);
 });
 
+test('a failed flush can retry suspension while ordinary operations remain poisoned until stop', async () => {
+  const s = fixture(), wait = s.execution.wait;
+  s.execution.wait = async () => ({ exitCode: 5 });
+  await assert.rejects(s.barrier.suspend(), /retained_filesystem_flush_failed/);
+  s.execution.wait = wait;
+  const pending = s.barrier.suspend().then(() => null, error => error);
+  await turn();
+  assert.throws(() => s.barrier.assertUsable(), /retained_runtime_requires_stop|retained_runtime_quiescing/);
+  await assert.rejects(s.barrier.flush(), /retained_runtime_requires_stop|retained_runtime_quiescing/);
+  await assert.rejects(s.barrier.suspend(), /retained_runtime_quiescing/);
+  assert.equal(s.calls.filter(call => call[0] === 'exec').length, 2);
+  s.completed.resolve();
+  assert.equal(await pending, null);
+  assert.equal(s.dirty, 'acknowledged workspace write');
+  assert.equal(s.calls.filter(call => call[0] === 'stop').length, 1);
+  s.barrier.assertUsable();
+});
+
+test('suspension recovery revalidates the fence before stopping', async () => {
+  const s = fixture();
+  s.execution.wait = async () => ({ exitCode: 5 });
+  await assert.rejects(s.barrier.suspend(), /retained_filesystem_flush_failed/);
+  s.execution.wait = async () => ({ exitCode: 0 });
+  let checks = 0;
+  await assert.rejects(s.barrier.suspend(async () => { if (++checks === 2) throw Error('lease_lost'); }), /lease_lost/);
+  assert.equal(s.calls.some(call => call[0] === 'stop'), false);
+  assert.throws(() => s.barrier.assertUsable(), /retained_runtime_requires_stop/);
+  await s.barrier.suspend(async () => {});
+  assert.equal(s.calls.filter(call => call[0] === 'stop').length, 1);
+});
+
+test('a transient native stop failure can be retried after another successful flush', async () => {
+  const s = fixture(), stop = s.box.stop;
+  s.completed.resolve();
+  s.box.stop = async () => { throw Error('native_stop_transient'); };
+  await assert.rejects(s.barrier.suspend(), /native_stop_transient/);
+  assert.throws(() => s.barrier.assertUsable(), /retained_runtime_requires_stop/);
+  s.box.stop = stop;
+  await s.barrier.suspend();
+  assert.equal(s.calls.filter(call => call[0] === 'exec').length, 2);
+  assert.equal(s.dirty, 'acknowledged workspace write');
+  s.barrier.assertUsable();
+});
+
+test('lost stop acknowledgement recovers without restarting or flushing the stopped guest', async () => {
+  const s = fixture(), stop = s.box.stop;
+  s.completed.resolve();
+  s.box.stop = async () => { await stop(); throw Error('stop_ack_lost'); };
+  await assert.rejects(s.barrier.suspend(), /stop_ack_lost/);
+  assert.throws(() => s.barrier.assertUsable(), /retained_runtime_requires_stop/);
+  let checks = 0;
+  await s.barrier.suspend(async () => { checks++; });
+  assert.equal(checks, 2);
+  assert.equal(s.calls.filter(call => call[0] === 'exec').length, 1);
+  assert.equal(s.calls.filter(call => call[0] === 'stop').length, 1);
+  assert.equal(s.dirty, 'acknowledged workspace write');
+  s.barrier.assertUsable();
+});
+
 test('a stopped guest is never restarted just to flush', async () => {
   const calls = [];
   const barrier = new BoxLiteFilesystemDurability({ info: () => ({ state: { running: false } }),
