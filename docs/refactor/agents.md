@@ -806,3 +806,18 @@ Z and explicit-offset clocks retain their exact text. The actual continuation
 reader regression proves invalid input refuses before local state mutation or
 native input posting. All 27 reader/tool-boundary cases pass in 4.38 seconds;
 the inward model, HTTP adapter and test pass independent strict mypy.
+
+The unknown-budget behavior proof now covers actual process_event dispatch for
+a journal without a count, an origin-only retained row without a count, and stale
+journal history without a current owner. All three cases pass in 2.38 seconds:
+zero HTTP calls, unchanged retained row, and no fabricated terminal failure.
+The behavior test is not independently strict-complete while process_event
+remains an untyped legacy boundary; no test suppression or protocol facade was
+introduced to hide that open work.
+
+The complete consumer audit corrects the earlier ordinal-fence assumption:
+retry_call_ordinal_cutoffs and _host_retry_call_ordinal_cutoff are write-only.
+native_turn_call_index is reported as optional replay checkpoint metadata.
+Operational late callback supersession compares actual message and retry
+attempt identities. The WIP cutoff requirement therefore remains under review
+and must not be used to justify padding retained fixture metadata.
