@@ -175,6 +175,34 @@ type ConditionCadenceScope = (
 )
 
 
+def _bind_cadence_scope(
+    scope: ConditionCadenceScope,
+    *,
+    collection: ConditionCollection,
+    token_id: str,
+    instrument_id: str | None,
+    metric_key: str | None,
+    observation_kind: str | None,
+    chain: str | None,
+) -> None:
+    if scope.collection != collection:
+        raise ValueError("Cadence declaration belongs to another collection")
+    if scope.token_id is not None and scope.token_id != token_id:
+        raise ValueError("Cadence declaration belongs to another token")
+    if isinstance(scope, InstrumentCadenceScope) and scope.instrument_id != instrument_id:
+        raise ValueError("Cadence declaration belongs to another instrument")
+    if isinstance(scope, MetricCadenceScope):
+        if scope.metric_key != metric_key:
+            raise ValueError("Cadence declaration belongs to another metric")
+        if scope.instrument_id is not None and scope.instrument_id != instrument_id:
+            raise ValueError("Metric cadence declaration belongs to another instrument")
+    if isinstance(scope, SupplyCadenceScope):
+        if scope.observation_kind != observation_kind:
+            raise ValueError("Cadence declaration belongs to another supply kind")
+        if scope.chain is not None and scope.chain != chain:
+            raise ValueError("Cadence declaration belongs to another supply chain")
+
+
 class KnownCadenceIdentity(DomainModel):
     status: Literal["RECORDED"]
     versions: ResolvedVersionIdentity
@@ -338,6 +366,7 @@ class ConditionStreamFreshness(DomainModel):
 
 class ConditionFieldObservation(DomainModel):
     collection: ConditionCollection
+    token_id: str = Field(min_length=1, pattern=r"\S")
     instrument_id: str | None = Field(min_length=1, pattern=r"\S")
     metric_key: str | None = Field(min_length=1, pattern=r"\S")
     observation_kind: str | None = Field(min_length=1, pattern=r"\S")
@@ -353,8 +382,15 @@ class ConditionFieldObservation(DomainModel):
     def honest_freshness(self) -> Self:
         if self.observed_at.value is None:
             raise ValueError("An observed field requires its actual reported clock")
-        if self.collection != self.cadence.scope.collection:
-            raise ValueError("Field freshness cadence belongs to another collection")
+        _bind_cadence_scope(
+            self.cadence.scope,
+            collection=self.collection,
+            token_id=self.token_id,
+            instrument_id=self.instrument_id,
+            metric_key=self.metric_key,
+            observation_kind=self.observation_kind,
+            chain=self.chain,
+        )
         if isinstance(self.cadence, DeclaredConditionCadence):
             expected = 0 <= self.age_s <= self.cadence.seconds
             expected_reason: Literal["INCOMPLETE", "NOT_ESTIMABLE"] | None = (
@@ -371,6 +407,9 @@ class ConditionFieldObservation(DomainModel):
 
 
 class ConditionDepthObservation(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    metric_key: str | None = Field(min_length=1, pattern=r"\S")
     venue: str = Field(min_length=1, pattern=r"\S")
     observed_at: Timestamp
     cadence: ConditionCadence
@@ -380,8 +419,15 @@ class ConditionDepthObservation(DomainModel):
     def actual_depth_observation(self) -> Self:
         if self.observed_at.value is None:
             raise ValueError("A selected book requires its actual observation clock")
-        if self.cadence.scope.collection != "books":
-            raise ValueError("A book observation requires a book cadence declaration")
+        _bind_cadence_scope(
+            self.cadence.scope,
+            collection="books",
+            token_id=self.token_id,
+            instrument_id=self.instrument_id,
+            metric_key=self.metric_key,
+            observation_kind=None,
+            chain=None,
+        )
         return self
 
 
@@ -425,6 +471,8 @@ class ConditionCoverageFailure(DomainModel):
 
 
 class ConditionRequiredFieldFailure(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    metric_key: str | None = Field(min_length=1, pattern=r"\S")
     kind: Literal["REQUIRED_FIELD"]
     condition: Literal["freshness"]
     reason: Literal["INCOMPLETE"]
@@ -435,15 +483,15 @@ class ConditionRequiredFieldFailure(DomainModel):
 
     @model_validator(mode="after")
     def scoped_requirement(self) -> Self:
-        if self.cadence.scope.collection != self.collection:
-            raise ValueError("Required-field cadence belongs to another collection")
-        scope = self.cadence.scope
-        if (
-            isinstance(scope, (InstrumentCadenceScope, MetricCadenceScope))
-            and scope.instrument_id is not None
-            and scope.instrument_id != self.instrument_id
-        ):
-            raise ValueError("Required-field cadence belongs to another instrument")
+        _bind_cadence_scope(
+            self.cadence.scope,
+            collection=self.collection,
+            token_id=self.token_id,
+            instrument_id=self.instrument_id,
+            metric_key=self.metric_key,
+            observation_kind=None,
+            chain=None,
+        )
         return self
 
 
