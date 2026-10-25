@@ -345,7 +345,9 @@ class SourcePoller:
                     )
                     page = _http_read.payload
                     if isinstance(_http_read, NotModified):
-                        raise ValueError("Source detail/history returned 304 without retained content") from None
+                        raise ValueError(
+                            "Source detail/history returned 304 without retained content"
+                        ) from None
                     page_state = _http_read.receipt.storage_record()
                     if page is None:
                         raise ValueError("Unexpected conditional paginated response")
