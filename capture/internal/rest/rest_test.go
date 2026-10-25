@@ -289,7 +289,7 @@ func TestHyperliquidContextsAreShared(t *testing.T) {
 	if btc["_capture_observed_at"] != "2026-10-21T12:34:56.789012Z" || eth["_capture_observed_at"] != btc["_capture_observed_at"] {
 		t.Fatalf("observation time %v %v", btc["_capture_observed_at"], eth["_capture_observed_at"])
 	}
-	if used := ledger.Used("hyperliquid|60.0|600.0", 60); used != 20 {
+	if used := ledger.Used("hyperliquid|60.0", 60); used != 20 {
 		t.Fatalf("a cache hit took budget: %v", used)
 	}
 
@@ -347,7 +347,7 @@ func TestRetryOn429AndNeverOn418(t *testing.T) {
 	if len(ex.requests) != 2 || time.Since(started) < time.Second {
 		t.Fatalf("%d requests after %v", len(ex.requests), time.Since(started))
 	}
-	if used := ledger.Used("binance.spot|60.0|3000.0", 60); used != 4 {
+	if used := ledger.Used("binance.spot|60.0", 60); used != 4 {
 		t.Fatalf("each attempt is charged: %v", used)
 	}
 
@@ -436,17 +436,17 @@ func TestRecentTrades(t *testing.T) {
 		bucket   string
 	}{
 		{map[string]any{"venue": "binance", "market_type": "SPOT", "venue_symbol": "BTCUSDT"}, `[{"a":1,"p":"1","q":"1","T":1792578000123,"m":true}]`,
-			"https://api.binance.com/api/v3/aggTrades", map[string]string{"symbol": "BTCUSDT", "limit": "1"}, 1, "binance.spot|60.0|3000.0"},
+			"https://api.binance.com/api/v3/aggTrades", map[string]string{"symbol": "BTCUSDT", "limit": "1"}, 1, "binance.spot|60.0"},
 		{map[string]any{"venue": "binance", "market_type": "PERP_LINEAR", "venue_symbol": "BTCUSDT"}, `[]`,
-			"https://fapi.binance.com/fapi/v1/aggTrades", map[string]string{"symbol": "BTCUSDT", "limit": "1"}, 0, "binance.usdm|60.0|1200.0"},
+			"https://fapi.binance.com/fapi/v1/aggTrades", map[string]string{"symbol": "BTCUSDT", "limit": "1"}, 0, "binance.usdm|60.0"},
 		{map[string]any{"venue": "okx", "market_type": "SPOT", "venue_symbol": "BTC-USDT"}, fixture(t, "okx_recent_trades.json"),
-			"https://www.okx.com/api/v5/market/trades", map[string]string{"instId": "BTC-USDT", "limit": "1"}, 2, "okx:/api/v5/market/trades:IP|2.0|50.0"},
+			"https://www.okx.com/api/v5/market/trades", map[string]string{"instId": "BTC-USDT", "limit": "1"}, 2, "okx:/api/v5/market/trades:IP|2.0"},
 		{map[string]any{"venue": "bybit", "market_type": "PERP_LINEAR", "venue_symbol": "BTCUSDT"}, `{"retCode":0,"retMsg":"OK","result":{"category":"linear","list":[{"execId":"x","price":"1","size":"1","side":"Buy","time":"1792578000123","seq":"1"}]}}`,
-			"https://api.bybit.com/v5/market/recent-trade", map[string]string{"category": "linear", "symbol": "BTCUSDT", "limit": "1"}, 1, "bybit|5.0|300.0"},
+			"https://api.bybit.com/v5/market/recent-trade", map[string]string{"category": "linear", "symbol": "BTCUSDT", "limit": "1"}, 1, "bybit|5.0"},
 		{map[string]any{"venue": "coinbase", "market_type": "SPOT", "venue_symbol": "BTC-USD"}, fixture(t, "coinbase_recent_trades.json"),
-			"https://api.exchange.coinbase.com/products/BTC-USD/trades", map[string]string{"limit": "1"}, 2, "coinbase|1.0|5.0"},
+			"https://api.exchange.coinbase.com/products/BTC-USD/trades", map[string]string{"limit": "1"}, 2, "coinbase|1.0"},
 		{map[string]any{"venue": "kraken", "market_type": "SPOT", "venue_symbol": "XBT/USD"}, fixture(t, "kraken_recent_trades.json"),
-			"https://api.kraken.com/0/public/Trades", map[string]string{"pair": "XBTUSD", "count": "1"}, 3, "kraken|1.0|1.0"},
+			"https://api.kraken.com/0/public/Trades", map[string]string{"pair": "XBTUSD", "count": "1"}, 3, "kraken|1.0"},
 	} {
 		c, ex, ledger := newClient(t, ok(tc.response))
 		rows, err := NewAdapter(venue.FromRegistry(tc.inst), c, -1).RecentTrades(context.Background(), 1)
