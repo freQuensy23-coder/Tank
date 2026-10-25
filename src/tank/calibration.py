@@ -1,4 +1,12 @@
-"""Offline calibration of the same typed classification and routing use cases."""
+"""`tank calibrate`: offline Decision-1 calibration of the filter and routing cutoffs (03 §3.1, 01 V0-B, D6).
+
+One pass over one frozen labeled packet (docs/OFFLINE_CALIBRATION.md). Every
+item is scored exactly as the service scores it - Pipeline state, questions,
+registry identities, candidate builder and the pinned Azure Foundry Decision-1 binding -
+at the item's historical clock, against the labeled event history before it.
+Production configuration is never changed: the command writes a report and a
+proposed thresholds patch, which is recorded in config by a D6 checkpoint.
+"""
 
 import asyncio
 import hashlib
@@ -12,11 +20,11 @@ import httpx
 import yaml
 from pydantic import JsonValue, ValidationError, field_validator
 
-from tank.agents.classification import JEV_PROMPT_VERSION, ClassificationSettings, JevClassifier
-from tank.agents.jev import JevState, binding
+from tank.agents.classification import DECISION_PROMPT_VERSION, ClassificationSettings, DecisionClassifier
+from tank.agents.decision import DecisionState, binding
 from tank.agents.pipeline_contracts import (
     ClassificationName,
-    JevScoreRecord,
+    DecisionScoreRecord,
     RoutingCandidate,
     RoutingRegistry,
     RoutingSession,
@@ -36,6 +44,7 @@ from tank.analysis.calibration_contracts import (
     CalibrationRow,
     CalibrationSource,
     CandidateScore,
+    DecisionCalibrationGeneration,
     FailedThresholdProposal,
     FilterEvaluation,
     FilterMetrics,
@@ -50,7 +59,7 @@ from tank.analysis.calibration_contracts import (
     SelectedThresholds,
 )
 from tank.contracts.configuration import Thresholds
-from tank.contracts.json import decode_json, encode_json
+from tank.contracts.json import decode_json, decode_unique_json, encode_json
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.repository import Collection
 from tank.contracts.source_items import PendingRelevance
@@ -65,21 +74,10 @@ MIN_CROSS_SOURCE_REPEATS = 10
 FILTER_RECALL = 0.95
 ROUTING_TARGET = 0.90
 CONCURRENCY = 8
-JEV_ENDPOINT: Literal["https://opencode.ai/inference/systemone/v1/systemone"] = (
-    "https://opencode.ai/inference/systemone/v1/systemone"
-)
 _LABELS = Collection("calibration.labels", CalibrationLabel)
 _CANDIDATE_SCORES = Collection("calibration.candidate_scores", CandidateScore)
 _SCORED = Collection("calibration.scored", ScoredCalibrationWire)
 _ROUTING_EVENTS = Collection("calibration.routing_events", RoutingCandidate)
-
-
-def _classification_endpoint(
-    base_url: str,
-) -> Literal["https://opencode.ai/inference/systemone/v1/systemone"]:
-    if base_url + "/v1/systemone" != JEV_ENDPOINT:
-        raise CalibrationError("Unsupported calibration classification endpoint")
-    return JEV_ENDPOINT
 
 
 class CalibrationError(ValueError):
@@ -288,22 +286,26 @@ def report(
 
 
 class _Ledger:
-    """Content-addressed immutable score records at the filesystem boundary."""
+    """Content-addressed immutable Decision-1 records at the filesystem boundary."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
         root.mkdir(parents=True, exist_ok=True)
 
-    async def get(self, key: str) -> JevScoreRecord | None:
+    async def get(self, key: str) -> DecisionScoreRecord | None:
         path = self.root / (key + ".json")
         if not path.exists():
             return None
-        record = JevScoreRecord.model_validate_json(path.read_bytes(), strict=True)
+        raw = path.read_bytes()
+        decode_unique_json(raw)
+        record = DecisionScoreRecord.model_validate_json(raw, strict=True)
         if record.usage_id != key:
             raise CalibrationError("Cached classification identity differs from its durable filename")
         return record
 
-    async def put(self, key: str, value: JevScoreRecord, *, immutable: bool = False) -> JevScoreRecord:
+    async def put(
+        self, key: str, value: DecisionScoreRecord, *, immutable: bool = False
+    ) -> DecisionScoreRecord:
         if not immutable:
             raise CalibrationError("Calibration classification records require immutable writes")
         if value.usage_id != key:
@@ -400,27 +402,29 @@ async def acquire(
     versions = configuration.require_versions()
     registry_wire = configuration.load_config("registry")
     registry = RoutingRegistry.from_wire(registry_wire)
-    pinned = binding(configuration.opencode_api_key)
-    generation = CalibrationGeneration(
+    pinned = binding(configuration)
+    generation = DecisionCalibrationGeneration(
         packet_sha256=hashlib.sha256(raw).hexdigest(),
         code_version=versions.code_version,
         config_version=versions.config_version,
-        prompt_version=JEV_PROMPT_VERSION,
+        prompt_version=DECISION_PROMPT_VERSION,
         registry_sha256=sha256(registry_wire),
         routing_window_days=window.days,
-        jev_endpoint=_classification_endpoint(pinned.base_url),
-        jev_request_model=pinned.request_model,
-        jev_resolved_models=list(pinned.resolved_models),
+        classifier_provider=pinned.provider,
+        classifier_endpoint=pinned.endpoint,
+        classifier_request_model=pinned.request_model,
+        classifier_resolved_models=pinned.resolved_models,
+        semantic_model_id=pinned.semantic_model,
     )
     output = Path(output_dir)
     owned = http is None
     client = httpx.AsyncClient(timeout=30) if http is None else http
-    scorer = JevClassifier(_Ledger(output / "usage"), configuration, client, versions=versions)
+    scorer = DecisionClassifier(_Ledger(output / "usage"), configuration, client, versions=versions)
     repository = MemoryRepository()
     selector = RoutingSelector(repository, registry)
     capacity = asyncio.Semaphore(CONCURRENCY)
 
-    async def score(item: RoutingItem, name: ClassificationName, state: JevState) -> float:
+    async def score(item: RoutingItem, name: ClassificationName, state: DecisionState) -> float:
         async with capacity:
             return await scorer.score(item, name, state)
 

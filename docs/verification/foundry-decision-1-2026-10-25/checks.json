@@ -1,0 +1,35 @@
+{
+  "python": "3.13.13",
+  "uv": "0.11.7",
+  "dependencies": "Frozen uv.lock dependency versions verified against existing runtime; no dependency changes",
+  "unit": {
+    "cases": 1945,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "max_seconds": 2.775,
+    "p90_seconds": 0.229
+  },
+  "affected_integration": {
+    "cases": 11,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "max_seconds": 3.481,
+    "p90_seconds": 2.54,
+    "scope": [
+      "tests/test_pipeline_postgres.py",
+      "tests/test_e2e.py"
+    ],
+    "services": "Own isolated PostgreSQL16; full integration suite remains required in CI"
+  },
+  "static": [
+    "Ruff check",
+    "Ruff format --check",
+    "mypy: 61 source files",
+    "no_comments.py",
+    "git diff --check"
+  ],
+  "production_deployed": false,
+  "calibration": "0.5 midpoints remain uncalibrated; synthetic API calls do not establish quality"
+}

@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -122,10 +123,13 @@ async def test_filter_outcomes_and_routing_are_visible_without_publishing(
         requests.append(request)
         assert score is not None
         assert request.method == "POST"
+        assert str(request.url) == settings.foundry_endpoint + "/providers/microsoft/v1/systemone"
+        assert request.headers["api-key"] == settings.foundry_api_key
+        assert json.loads(request.content)["model"] == settings.foundry_deployment
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13-free",
+                "model": "microsoft-decision-1",
                 "answers": {"relevant": {"type": "noul", "noul": score}},
                 "usage": {"input_tokens": 100, "output_tokens": 0},
             },
@@ -155,10 +159,11 @@ async def test_filter_outcomes_and_routing_are_visible_without_publishing(
     usages = await repo.list("ops.llm_usage")
     assert len(usages) == (0 if score is None else 1)
     if score is not None:
-        from tank.agents.pipeline_contracts import JevScoreRecord
+        from tank.agents.pipeline_contracts import DecisionScoreRecord
 
-        usage = JevScoreRecord.model_validate(usages[0])
+        usage = DecisionScoreRecord.model_validate(usages[0])
         assert usage.score == score and usage.model_pin_evidence
+        assert usage.classifier_provider == "azure-foundry"
 
 
 @pytest.mark.parametrize("is_event", [False, True])

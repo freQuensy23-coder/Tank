@@ -7,10 +7,10 @@ import pytest
 from agent_source_fixtures import declared_versions_fixture
 from pydantic import JsonValue, ValidationError
 
-from tank.agents.classification import JevClassifier
-from tank.agents.jev import JevItem, JevState
+from tank.agents.classification import DecisionClassifier
+from tank.agents.decision import DecisionItem, DecisionState
 from tank.agents.native_readback import NativeSessionMissing
-from tank.agents.pipeline_contracts import JevScoreRecord
+from tank.agents.pipeline_contracts import DecisionScoreRecord
 from tank.agents.tool_contracts import FailedToolResponse, NativeToolResult
 from tank.contracts.repository import Collection, Repository
 from tank.runtime_contracts import RevisedReactionJob
@@ -19,8 +19,10 @@ from tank.storage import MemoryRepository
 
 @dataclass(frozen=True)
 class ClassifierPreferences:
-    opencode_api_key: str | None
+    foundry_api_key: str | None
     replay: bool
+    foundry_endpoint: str = "https://synthetic.services.ai.azure.com"
+    foundry_deployment: str = "decision-1"
 
 
 @dataclass(frozen=True)
@@ -32,28 +34,28 @@ class ClassifierSubject:
 @pytest.mark.parametrize("invalid", [False, True, 0.0, "0"])
 async def test_actual_classifier_ledger_requires_integer_zero_web_searches(invalid: JsonValue) -> None:
     repo = MemoryRepository()
-    collection = Collection("ops.llm_usage", JevScoreRecord)
+    collection = Collection("ops.llm_usage", DecisionScoreRecord)
     scores = Repository(repo, collection)
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13-free",
+                "model": "microsoft-decision-1",
                 "answers": {"relevant": {"type": "noul", "noul": 0.8}},
                 "usage": {},
             },
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        classifier = JevClassifier(
+        classifier = DecisionClassifier(
             scores,
-            ClassifierPreferences(opencode_api_key=None, replay=False),
+            ClassifierPreferences(foundry_api_key="FAKE_FOUNDRY_KEY", replay=False),
             http,
             versions=declared_versions_fixture(),
         )
         ledger = await classifier._score_record(
-            ClassifierSubject("source"), "relevant", JevState(item=JevItem(source="Synthetic"))
+            ClassifierSubject("source"), "relevant", DecisionState(item=DecisionItem(source="Synthetic"))
         )
     assert type(ledger.web_searches) is int and ledger.web_searches == 0
     wire = collection.encode(ledger)

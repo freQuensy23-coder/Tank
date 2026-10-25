@@ -38,7 +38,7 @@ def settings(replay: bool = False) -> AgentFixtureSettings:
         documents=config,
         tool_reader=Settings(_env_file=None).read_config_json,
         openrouter_api_key=None,
-        opencode_api_key=None,
+        foundry_api_key="FAKE_FOUNDRY_KEY",
         replay=replay,
         ops_progress_enabled=False,
         openma_api_key="fake-only",

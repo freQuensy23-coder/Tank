@@ -937,3 +937,60 @@ history execution domain migration remains open. The refreshed inventory lists
 30 SessionService/free-helper functions and four Runtime functions still
 annotation-incomplete, plus the separate assigned vendor backlog. The Telegram
 eligibility/presentation policy dependency is still explicitly open.
+
+## Foundry Decision-1 upstream integration, precommit checkpoint
+
+The upstream replacement of Jev/OpenCode is implemented through the existing
+extracted layers: agents.decision admits the provider protocol,
+classification.DecisionClassifier owns immutable score identities/accounting,
+routing projects typed source/event facts, and Pipeline orchestrates typed
+repositories and progress. The Jev runtime adapter is deleted; no compatibility
+alias, provider switch or raw-record classifier facade remains. The configured
+deployment, returned microsoft-decision-1 identity and declared
+microsoft-decision-1:1 configuration are separate facts. The response does not
+attest a version, and model_pin_evidence says so.
+
+Settings owns the declared endpoint/deployment defaults from upstream main.
+The adapter requires an explicit validated binding and never supplies a missing
+provider, credential or deployment. Binding admission requires an HTTPS Azure
+resource origin without credentials, query, fragment or nonstandard port.
+Live classification requires a nonblank key before HTTP, sends only api-key,
+and refuses redirects. Exact-cache and offline replay may operate without a
+credential; a missing replay score cannot invoke Foundry.
+
+DecisionItem optional author/title/text/quoted fields and DecisionState.event
+represent actual absent or duplicate-cleaned projection facts. DecisionEvent
+optional stage/entities/tokens retain existing event projection semantics.
+DecisionQuestion.criteria is genuinely optional in the verified provider
+contract. DecisionUsage token counts/cost and DecisionResponse id/provider
+remain genuinely optional provider reports. Omitted monetary cost is unknown
+with an explicit reason; reported zero remains known. Question/answer
+dictionaries are actual label-keyed protocol namespaces, serialized at the
+request, response and fingerprint boundaries; persisted scores use the closed
+DecisionScoreRecord. Raw responses pass unique-key admission before strict
+Pydantic validation, preventing duplicate ownership/answer facts from collapsing.
+
+Cache identity includes resource, deployment, provider, semantic declaration,
+prompt version and exact state/question fingerprints. Cache consumption
+crosschecks the corresponding closed record. Historical Jev rows remain
+untouched and cannot answer Decision-1 requests.
+
+Precommit verification: independent strict mypy passes twelve exact owned
+source/test targets with both real src/tests roots and the official Pydantic
+plugin. Ruff/format and staged whitespace checks pass. Nine directly invoked
+offline async smoke cases pass, including provider HTTP/cache, reported cost,
+raw duplicate refusal, old-provider cache separation with known zero cost,
+optional metadata, redirects and missing credentials. The smoke script's
+printed count eleven was a counting typo; nine cases actually ran. Formal
+pytest remains pending resolution of the other owners' active merge conflicts.
+The complete SessionService/Runtime and assigned vendor backlog remains open.
+
+Formal merged-tree owner selection is now green: all 155 classifier, pipeline,
+provenance/scalar and agent cases pass in 6.56 seconds, zero skips, using the
+shared pinned runner and -n auto. The first selection had one outdated
+authored routing-fixture assertion for the former OpenCode path; it now checks
+/providers/microsoft/v1/systemone. All original routing/model/effect assertions
+remain. Logs are agents-foundry-merge-unit.log (diagnostic) and
+agents-foundry-merge-unit-final.log (terminal green) under shared evidence.
+No live Foundry request occurred. Whole merged-tree and actual PostgreSQL/E2E
+qualification remain parent/peer gates.

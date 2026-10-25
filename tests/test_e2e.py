@@ -154,8 +154,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
     settings = Settings(
         **_fake_gateway_settings(tmp_path),
         data_dir=tmp_path,
-        jev_provider="openrouter",
-        openrouter_api_key="mock",
+        foundry_api_key="mock",
         telegram_token="mock",
         telegram_alerts_chat="mock",
     )
@@ -165,19 +164,19 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
     sent = []
     event_posts = []
     failures = [True]
-    tool_event = {"id": "tool1", "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
+    tool_event = {"id": "tool1", "seq": 1, "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
 
     native_sessions: dict[str, dict[str, JsonValue]] = {}
 
     def transport(request: httpx.Request) -> httpx.Response:
         path = request.url.path
-        if request.url.host == "opencode.ai":
+        if request.url.host == "alexeym-4644-resource.services.ai.azure.com":
             body = json.loads(request.content)
             key = next(iter(body["questions"]))
             return httpx.Response(
                 200,
                 json={
-                    "model": "jev-1.13-free",
+                    "model": "microsoft-decision-1",
                     "answers": {key: {"type": "noul", "noul": 0.99}},
                     "usage": {"input_tokens": 20},
                 },
@@ -553,8 +552,7 @@ async def test_full_sse_pipeline_postgres(
         **_fake_gateway_settings(tmp_path),
         data_dir=tmp_path,
         database_url=isolated_e2e_database.database_url,
-        jev_provider="openrouter",
-        openrouter_api_key="mock",
+        foundry_api_key="mock",
         telegram_token="mock",
         telegram_alerts_chat="mock",
     )
@@ -575,11 +573,11 @@ async def test_full_sse_pipeline_postgres(
         if req.url.host == "synthetic.invalid":
             rss = f'<rss version="2.0"><channel><title>Synthetic</title><item><guid>{feed_guid}</guid><title>Synthetic listing approval</title><description>{text}</description><pubDate>{now}</pubDate><link>https://synthetic.invalid/{sid}</link></item></channel></rss>'
             return httpx.Response(200, content=rss.encode(), headers={"content-type": "application/rss+xml"})
-        if req.url.host == "opencode.ai":
+        if req.url.host == "alexeym-4644-resource.services.ai.azure.com":
             return httpx.Response(
                 200,
                 json={
-                    "model": "jev-1.13-free",
+                    "model": "microsoft-decision-1",
                     "answers": {
                         next(iter(json.loads(req.content)["questions"])): {
                             "type": "noul",
@@ -612,9 +610,7 @@ async def test_full_sse_pipeline_postgres(
             return httpx.Response(
                 200,
                 headers={"content-type": "text/event-stream"},
-                text="".join(
-                    "id: " + str(i + 1) + "\ndata: " + json.dumps(e) + "\n\n" for i, e in enumerate(active)
-                ),
+                text="".join("id: " + str(e["seq"]) + "\ndata: " + json.dumps(e) + "\n\n" for e in active),
             )
         if path.endswith("/events"):
             posted.append(json.loads(req.content))
@@ -763,7 +759,13 @@ async def test_full_sse_pipeline_postgres(
                 count += 1
                 call_id = f"{sid}-full-{count}"
                 active[:] = [
-                    {"id": call_id, "type": "agent.custom_tool_use", "name": name, "input": model_args}
+                    {
+                        "id": call_id,
+                        "seq": count,
+                        "type": "agent.custom_tool_use",
+                        "name": name,
+                        "input": model_args,
+                    }
                 ]
                 if name == "get_market_truth":
                     import asyncio
@@ -1160,8 +1162,7 @@ async def test_runtime_autonomous_source_to_telegram(
         **_fake_gateway_settings(tmp_path),
         data_dir=tmp_path / "data",
         database_url=repo.database_url,
-        jev_provider="openrouter",
-        openrouter_api_key="mock",
+        foundry_api_key="mock",
         telegram_token="mock",
         telegram_alerts_chat="mock-alerts",
         telegram_ops_chat="mock-ops",
@@ -1202,7 +1203,7 @@ async def test_runtime_autonomous_source_to_telegram(
                     "id: "
                     + str(event["seq"])
                     + "\ndata: "
-                    + json.dumps({"seq": event["seq"], "event": event["body"]})
+                    + json.dumps({**event["body"], "seq": event["seq"]})
                     + "\n\n"
                 ).encode()
 
@@ -1230,14 +1231,14 @@ async def test_runtime_autonomous_source_to_telegram(
         if request.url.host == "synthetic.invalid":
             rss = f'<rss version="2.0"><channel><title>Synthetic</title><item><guid>autonomous-input</guid><title>Autonomous synthetic listing</title><description>{text}</description><pubDate>{timestamp}</pubDate><link>https://synthetic.invalid/autonomous-input</link></item></channel></rss>'
             return httpx.Response(200, content=rss.encode(), headers={"content-type": "application/rss+xml"})
-        if request.url.host == "opencode.ai":
+        if request.url.host == "alexeym-4644-resource.services.ai.azure.com":
             body = json.loads(request.content)
             question = next(iter(body["questions"]))
-            assert body["model"] == "jev-1.13-free"
+            assert body["model"] == "decision-1"
             return httpx.Response(
                 200,
                 json={
-                    "model": "jev-1.13-free",
+                    "model": "microsoft-decision-1",
                     "answers": {question: {"type": "noul", "noul": 0.99}},
                     "usage": {"input_tokens": 20},
                 },
@@ -1257,7 +1258,7 @@ async def test_runtime_autonomous_source_to_telegram(
             return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=SSE())
         if path.endswith("/events"):
             if request.method == "GET":
-                return httpx.Response(200, json={"data": []})
+                return httpx.Response(200, json={"data": [], "has_more": False})
             event = json.loads(request.content)["events"][0]
             if event["type"] == "user.message":
                 payload = json.loads(event["content"][0]["text"])
