@@ -2557,7 +2557,7 @@ class EventToolService:
     async def set_watch_condition(self, a, c):
         """Arm an agent monitoring rule (role AGENT) or disarm any ARMED rule of the event."""
         eid = a["event_id"]
-        await self.require("evt.events", eid)
+        event = await self.require("evt.events", eid)
         now = utcnow()
         if a["action"] == "DISARM":
             condition = await self.repo.get("ana.watch_conditions", a.get("cond_id") or "")
@@ -2573,53 +2573,69 @@ class EventToolService:
             )
             await self.repo.put("ana.watch_conditions", condition["cond_id"], condition)
             return {"accepted": True, "cond_id": condition["cond_id"], "status": "CANCELLED"}
-        if "review_at" in a or "review_question" in a:
-            return await self.arm_review(a, c, now)
         token = a.get("token_id")
-        if not isinstance(token, str):
-            raise ValueError("ARM requires token_id, a registry token key")
-        registry = self.settings.load_config("registry") if hasattr(self.settings, "load_config") else None
-        if registry is not None and token not in {row["token_id"] for row in registry.get("tokens", [])}:
-            raise ValueError("ARM token_id is not a registry token key")
-        leaves = []
-        for leaf in a.get("conditions") or []:
-            if leaf["metric"] not in AGENT_WATCH_METRICS:
-                raise ValueError(
-                    "metric is not evaluated by the watch scheduler; use one of "
-                    + ", ".join(sorted(AGENT_WATCH_METRICS))
-                )
-            if leaf["metric"].startswith(("event.", "milestone.")) and leaf.get("persist_count", 1) > 1:
-                raise ValueError(
-                    "event.* and milestone.* conditions fire on the first match; omit persist_count"
-                )
-            if leaf["op"] == "in" and not isinstance(leaf["value"], list):
-                raise ValueError("op in requires a list value")
-            if leaf["op"] in (">", ">=", "<", "<=") and leaf["metric"] in CATEGORICAL_WATCH_METRICS:
-                raise ValueError(f"{leaf['metric']} is categorical; use ==, != or in")
-            if leaf["op"] in (">", ">=", "<", "<="):
-                try:
-                    number = Decimal(str(leaf["value"]))
-                except InvalidOperation:
-                    number = None
-                if isinstance(leaf["value"], bool) or number is None or not number.is_finite():
-                    raise ValueError(f"op {leaf['op']} requires a numeric value")
-            leaves.append(
-                {
-                    "metric": leaf["metric"],
-                    "window": leaf.get("window", "W1H"),
-                    "op": leaf["op"],
-                    "value": leaf["value"],
-                    "persist": {"count": leaf.get("persist_count", 1), "unit": "consecutive_windows"},
-                }
+        expiry = offset_schedule(collection_clock(now), timedelta(hours=int(a.get("expires_in_hours", 72))))
+        if "review_at" in a or "review_question" in a:
+            if event.get("lifecycle") in {"CLOSED", "MERGED", "INVALIDATED"}:
+                raise ValueError("Cannot schedule review for a terminal event")
+            if a.get("conditions") or token:
+                raise ValueError("Timed reviews cannot include token_id or metric conditions")
+            text = str(a.get("review_question") or "").strip()
+            if not text or not a.get("review_at"):
+                raise ValueError("Timed reviews require review_at and review_question")
+            due = parse_time(a["review_at"])
+            if not now < due < parse_time(expiry.value):
+                raise ValueError("review_at must be in the future and before the condition expiry")
+            token = None
+            expr = {"review_at": iso(due), "review_question": text}
+        else:
+            if not isinstance(token, str):
+                raise ValueError("ARM requires token_id, a registry token key")
+            registry = (
+                self.settings.load_config("registry") if hasattr(self.settings, "load_config") else None
             )
-        if not leaves:
-            raise ValueError("ARM requires at least one condition")
-        market_windows = {
-            leaf["window"] for leaf in leaves if not leaf["metric"].startswith(("event.", "milestone."))
-        }
-        if len(market_windows) > 1:
-            raise ValueError("All market conditions of one rule must use the same window")
-        expr = leaves[0] if len(leaves) == 1 else {"all": leaves}
+            if registry is not None and token not in {row["token_id"] for row in registry.get("tokens", [])}:
+                raise ValueError("ARM token_id is not a registry token key")
+            leaves = []
+            for leaf in a.get("conditions") or []:
+                if leaf["metric"] not in AGENT_WATCH_METRICS:
+                    raise ValueError(
+                        "metric is not evaluated by the watch scheduler; use one of "
+                        + ", ".join(sorted(AGENT_WATCH_METRICS))
+                    )
+                if leaf["metric"].startswith(("event.", "milestone.")) and leaf.get("persist_count", 1) > 1:
+                    raise ValueError(
+                        "event.* and milestone.* conditions fire on the first match; omit persist_count"
+                    )
+                if leaf["op"] == "in" and not isinstance(leaf["value"], list):
+                    raise ValueError("op in requires a list value")
+                if leaf["op"] in (">", ">=", "<", "<=") and leaf["metric"] in CATEGORICAL_WATCH_METRICS:
+                    raise ValueError(f"{leaf['metric']} is categorical; use ==, != or in")
+                if leaf["op"] in (">", ">=", "<", "<="):
+                    try:
+                        number = Decimal(str(leaf["value"]))
+                    except InvalidOperation:
+                        number = None
+                    if isinstance(leaf["value"], bool) or number is None or not number.is_finite():
+                        raise ValueError(f"op {leaf['op']} requires a numeric value")
+                leaves.append(
+                    {
+                        "metric": leaf["metric"],
+                        "window": leaf.get("window", "W1H"),
+                        "op": leaf["op"],
+                        "value": leaf["value"],
+                        "persist": {"count": leaf.get("persist_count", 1), "unit": "consecutive_windows"},
+                    }
+                )
+            if not leaves:
+                raise ValueError("ARM requires at least one condition")
+            market_windows = {
+                leaf["window"] for leaf in leaves if not leaf["metric"].startswith(("event.", "milestone."))
+            }
+            if len(market_windows) > 1:
+                raise ValueError("All market conditions of one rule must use the same window")
+            expr = leaves[0] if len(leaves) == 1 else {"all": leaves}
+            text = a.get("text") or ""
         active = [
             row
             for row in await self.rows("ana.watch_conditions", eid, filters={"status": "ARMED"})
@@ -2638,53 +2654,7 @@ class EventToolService:
             "event_id": eid,
             "token_id": token,
             "role": "AGENT",
-            "human_text": a.get("text") or "",
-            "expr": expr,
-            "status": "ARMED",
-            "agent_defined": True,
-            "created_by": "AGENT",
-            **collection_clock(now).fields("created_at"),
-            **offset_schedule(
-                collection_clock(now), timedelta(hours=int(a.get("expires_in_hours", 72)))
-            ).fields("expires_at"),
-            **self.provenance(c),
-        }
-        await self.repo.put("ana.watch_conditions", condition["cond_id"], condition)
-        return {"accepted": True, "condition": condition}
-
-    async def arm_review(self, a, c, now):
-        eid = a["event_id"]
-        event = await self.require("evt.events", eid)
-        if event.get("lifecycle") in {"CLOSED", "MERGED", "INVALIDATED"}:
-            raise ValueError("Cannot schedule review for a terminal event")
-        if a.get("conditions") or a.get("token_id"):
-            raise ValueError("Timed reviews cannot include token_id or metric conditions")
-        question = str(a.get("review_question") or "").strip()
-        if not question or not a.get("review_at"):
-            raise ValueError("Timed reviews require review_at and review_question")
-        due = parse_time(a["review_at"])
-        expiry = offset_schedule(collection_clock(now), timedelta(hours=int(a.get("expires_in_hours", 72))))
-        if not now < due < parse_time(expiry.value):
-            raise ValueError("review_at must be in the future and before the condition expiry")
-        expr = {"review_at": iso(due), "review_question": question}
-        active = [
-            row
-            for row in await self.rows("ana.watch_conditions", eid, filters={"status": "ARMED"})
-            if row.get("agent_defined")
-        ]
-        for row in active:
-            if row.get("expr") == expr:
-                return {"accepted": True, "condition": row, "existing": True}
-        if len(active) >= MAX_AGENT_WATCHES:
-            raise ValueError(
-                f"At most {MAX_AGENT_WATCHES} agent rules may be ARMED per event; DISARM one first"
-            )
-        condition = {
-            "cond_id": new_id("CND"),
-            "event_id": eid,
-            "token_id": None,
-            "role": "AGENT",
-            "human_text": question,
+            "human_text": text,
             "expr": expr,
             "status": "ARMED",
             "agent_defined": True,
@@ -2788,12 +2758,14 @@ class EventToolService:
             newest_generated_alert_id=previous.get("alert_id") if previous else None,
             newest_generated_alert_version=previous.get("version") if previous else None,
         )
-        active_tokens = (
-            set(max(active_maps, key=lambda row: int(row["map_version"]))["analysis_set"])
-            if active_maps
-            else set(event.get("tokens_mentioned", []))
-        )
-        active_tokens |= await self.managed_tokens(eid)
+        active_tokens = set()
+        if not preliminary:
+            active_tokens = (
+                set(max(active_maps, key=lambda row: int(row["map_version"]))["analysis_set"])
+                if active_maps
+                else set(event.get("tokens_mentioned", []))
+            )
+            active_tokens |= await self.managed_tokens(eid)
         decisions = []
         for token in sorted(active_tokens):
             decision = await self.latest_record("ana.decisions", eid, token)
@@ -3007,8 +2979,6 @@ class EventToolService:
             if truth:
                 truth_by_token[token] = truth
         truths = list(truth_by_token.values())
-        if preliminary:
-            decisions, truths = [], []
         if kind == "FULL":
             required = (
                 set(max(current_maps, key=lambda row: int(row["map_version"]))["analysis_set"])

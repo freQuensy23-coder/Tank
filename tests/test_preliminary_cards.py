@@ -56,10 +56,12 @@ async def deliver(repo, http, result):
     await service.deliver({"alert_id": result["alert_id"], "version": result["version"]})
 
 
-async def test_preliminary_without_market_analysis_preserves_ordinary_gate(service):
+async def test_preliminary_without_market_analysis_preserves_ordinary_gate(service, monkeypatch):
     args = await lead(service)
     denied = await service.dispatch("publish_card", {**args, "kind": "FULL"}, {})
     assert denied["reason"] == "BELOW_MAJOR"
+    analysis_read = AsyncMock(side_effect=AssertionError("Preliminary cards must not read analysis records"))
+    monkeypatch.setattr(service, "latest_record", analysis_read)
     result = await service.dispatch("publish_card", args, {})
     assert result["published"]
     row = await service.repo.get("out.alerts", f"{result['alert_id']}:1")
@@ -85,6 +87,7 @@ async def test_preliminary_without_market_analysis_preserves_ordinary_gate(servi
     again = await service.dispatch("publish_card", args, {})
     assert again["reason"] == "NO_MATERIAL_CHANGE"
     assert len(await service.repo.list("out.alerts")) == 1
+    analysis_read.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -633,3 +636,38 @@ async def test_disarm_wins_while_timed_review_waits_for_event_lock(service, monk
     assert (await service.repo.get("ana.watch_conditions", cid))["status"] == "CANCELLED"
     assert not await service.repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
     assert not (await service.repo.get("evt.events", eid)).get("review_requested_at")
+
+
+async def test_metric_and_timed_watches_share_deduplication_and_capacity(service):
+    from tank.event_tools import MAX_AGENT_WATCHES
+
+    args = await lead(service)
+    eid = args["event_id"]
+    metric = {
+        "event_id": eid,
+        "action": "ARM",
+        "token_id": "world:WLD",
+        "conditions": [{"metric": "event.state", "op": "==", "value": "APPROVED"}],
+        "text": "Check event approval",
+    }
+    first = await service.dispatch("set_watch_condition", metric, {})
+    due = utcnow() + timedelta(hours=6)
+    timed = await arm(service, eid, due)
+    for index in range(MAX_AGENT_WATCHES - 2):
+        await arm(service, eid, due + timedelta(minutes=index + 1))
+    assert (await service.dispatch("set_watch_condition", metric, {}))["existing"]
+    assert (await arm(service, eid, due))["condition"]["cond_id"] == timed["condition"]["cond_id"]
+    with pytest.raises(ValueError, match="agent rules"):
+        await arm(service, eid, due + timedelta(hours=1))
+    await service.dispatch(
+        "set_watch_condition",
+        {
+            "event_id": eid,
+            "action": "DISARM",
+            "cond_id": first["condition"]["cond_id"],
+        },
+        {},
+    )
+    assert (await arm(service, eid, due + timedelta(hours=1)))["accepted"]
+    active = await service.repo.list("ana.watch_conditions", filters={"event_id": eid, "status": "ARMED"})
+    assert len(active) == MAX_AGENT_WATCHES
