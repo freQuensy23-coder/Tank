@@ -2246,7 +2246,15 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
     canonical_ems = complete_assessment_fixture("fixture-ems", "event", cutoff=start, **{"class": "MAJOR"})
     canonical_truth = complete_truth_fixture("fixture-truth", "event", "T", start)
     baseline_decision = complete_decision_fixture("baseline-decision", "event", "T", start, "fixture-truth")
-    baseline_decision.update(cutoff=start, conditions=[], conditions_shown=[])
+    from tank.analysis.decision_codec import decode_decision, encode_decision
+    from tank.analysis.decision_contracts import DecisionRecord
+
+    baseline_record = decode_decision(baseline_decision)
+    baseline_decision = encode_decision(
+        DecisionRecord.model_validate(
+            baseline_record.model_copy(update={"conditions": [], "conditions_shown": ()})
+        )
+    )
     rows = [
         (
             "ingest.source_items",
@@ -2559,7 +2567,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
                 for value in result["conditions"]
             ]
             prepared = context.get("_decision_prepared_condition_ids")
-            reconciliation = await tools.reconcile_conditions(
+            reconciliation = tools._plan_conditions(
                 DecisionWatchCommand(
                     decision_id=result["dec_id"],
                     event_id=result["event_id"],
@@ -2577,8 +2585,45 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
                 value.model_dump(mode="json", exclude_unset=True) for value in reconciliation.active
             ]
             result["conditions_shown"] = list(reconciliation.shown)
-            await repo.put("ana.decisions", result["dec_id"], result)
-            return result
+            from tank.analysis.decision_codec import decode_decision, encode_decision
+            from tank.analysis.decision_contracts import DecisionRecord
+            from tank.analysis.decision_state import DecisionScope, DecisionStateRepository
+            from tank.time_precision import collection_clock, propagate_timestamp
+
+            baseline = decode_decision(baseline_decision)
+            identity = baseline.metadata.identity.model_copy(
+                update={
+                    "decision_id": result["dec_id"],
+                    "market_truth_id": result["mta_id"],
+                    "cutoff": propagate_timestamp(result, "cutoff"),
+                    "versions": tools.versions,
+                    "generation": GenerationProvenance.model_validate(tools.provenance(context)),
+                }
+            )
+            candidate = DecisionRecord(
+                calculation=baseline.calculation,
+                metadata=baseline.metadata.model_copy(
+                    update={"identity": identity, "calculated_at": collection_clock()}
+                ),
+                conditions=reconciliation.active,
+                conditions_shown=reconciliation.shown,
+                outlook_id=result["dec_id"] + ":outlook",
+            )
+            states = DecisionStateRepository(repo)
+            scope = DecisionScope(event_id="event", token_id="T")
+            current = await states.current(scope)
+
+            async def effects() -> None:
+                await tools._persist_condition_writes(reconciliation)
+
+            await states.advance(
+                scope,
+                expected=None if current is None else current[0],
+                candidate=candidate,
+                recorded_at=collection_clock(),
+                effects=effects,
+            )
+            return encode_decision(candidate)
 
         tools.get_decision = fixture_grade
         try:

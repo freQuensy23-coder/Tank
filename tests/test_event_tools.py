@@ -6023,3 +6023,91 @@ async def test_expired_tracking_status_preserves_the_frozen_financial_calculatio
     assert ended.calculation.outlook.scenario_explanations.base.state == "EXPLANATION_NOT_CAPTURED"
     assert await service.repo.get("ana.decisions", identity.decision_id) == literal_historical
     assert await service.repo.get("ana.outlooks", frozen.outlook_id) == literal_outlook
+
+    from tank.analysis.decision_state import DecisionScope, DecisionStateConflict, DecisionStateRepository
+
+    states = DecisionStateRepository(service.repo)
+    scope = DecisionScope(event_id=eid, token_id=token)
+    current = await states.current(scope)
+    assert current is not None and current[1] == ended and current[0].revision == 1
+    conflicting = ended.model_copy(
+        update={
+            "metadata": ended.metadata.model_copy(
+                update={"contradiction_ids": ("different-captured-evidence",)}
+            )
+        }
+    )
+    attempted_effects: list[str] = []
+
+    async def effects() -> None:
+        attempted_effects.append("must not run")
+
+    with pytest.raises(DecisionStateConflict, match="conflicting content"):
+        await states.advance(
+            scope,
+            expected=current[0],
+            candidate=conflicting,
+            recorded_at=current[0].recorded_at,
+            effects=effects,
+        )
+    assert attempted_effects == []
+    assert (await states.current(scope)) == current
+    assert await service.repo.get("ana.decisions", ended.metadata.identity.decision_id) == wire
+
+    fresh = decode_decision(
+        complete_decision_fixture("DEC-new-active", eid, token, clock_iso(), "newer-truth")
+    )
+
+    async def no_writes() -> None:
+        """This authored calculation has no separate watch write set."""
+
+    fresh_head = await states.advance(
+        scope,
+        expected=current[0],
+        candidate=fresh,
+        recorded_at=current[0].recorded_at,
+        effects=no_writes,
+    )
+    assert fresh_head.revision == 2
+    assert fresh_head.previous_head_dec_id == ended.metadata.identity.decision_id
+    assert fresh_head.recorded_at == current[0].recorded_at
+    assert (await service.latest_record("ana.decisions", eid, token))["dec_id"] == "DEC-new-active"
+
+    rollback_candidate = decode_decision(
+        complete_decision_fixture("DEC-rollback", eid, token, clock_iso(), "newer-truth")
+    )
+    assert rollback_candidate.conditions
+    watch = rollback_candidate.conditions[0]
+    original_put = service.repo.put
+
+    async def fail_head(collection, key, document, *, immutable=False):
+        if collection == "ana.decision_state_heads":
+            raise RuntimeError("injected final head failure")
+        return await original_put(collection, key, document, immutable=immutable)
+
+    async def write_watch() -> None:
+        await service.repo.put(
+            "ana.watch_conditions",
+            watch.cond_id,
+            watch.model_dump(mode="json", exclude_unset=True),
+        )
+
+    monkeypatch.setattr(service.repo, "put", fail_head)
+    try:
+        with pytest.raises(RuntimeError, match="injected final head failure"):
+            await states.advance(
+                scope,
+                expected=fresh_head,
+                candidate=rollback_candidate,
+                recorded_at=fresh_head.recorded_at,
+                effects=write_watch,
+            )
+    finally:
+        monkeypatch.setattr(service.repo, "put", original_put)
+    assert await service.repo.get("ana.watch_conditions", watch.cond_id) is None
+    assert await service.repo.get("ana.decisions", "DEC-rollback") is None
+    assert await service.repo.get("ana.outlooks", rollback_candidate.outlook_id) is None
+    final = await states.current(scope)
+    assert final is not None and final[0] == fresh_head and final[1] == fresh
+    assert await service.repo.get("ana.decisions", identity.decision_id) == literal_historical
+    assert await service.repo.get("ana.outlooks", frozen.outlook_id) == literal_outlook

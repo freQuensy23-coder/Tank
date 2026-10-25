@@ -16,18 +16,19 @@ from tank.analysis.decision_codec import (
     decision_call_from_record,
     decision_inputs_from_records,
     decode_decision,
-    encode_decision,
-    encode_outlook,
 )
 from tank.analysis.decision_contracts import (
     ActiveDecisionTracking,
     DecisionCallContext,
     DecisionIdentity,
+    DecisionManagement,
     DecisionMaterialization,
     DecisionMetadata,
     DecisionPrices,
     DecisionStatusWriter,
+    EndedDecisionTracking,
 )
+from tank.analysis.decision_state import DecisionScope, DecisionStateHead, DecisionStateRepository
 from tank.analysis.decision_watches import (
     DecisionWatchCommand,
     DecisionWatchPolicy,
@@ -626,6 +627,16 @@ class EventToolService:
         return [row async for row in self.repo.iter_all(table, filters=query or None)]
 
     async def latest_record(self, table, event_id, token_id):
+        if table == "ana.decisions":
+            states = DecisionStateRepository(self.repo)
+            scope = DecisionScope(event_id=event_id, token_id=token_id)
+            current = await states.current(scope)
+            if current is not None:
+                return await self.require(table, current[0].dec_id)
+            legacy = await states.legacy_current(scope)
+            if legacy is None:
+                return None
+            return await self.require(table, legacy.decision_id)
         return await self.repo.latest_before(
             table,
             "cutoff",
@@ -2339,6 +2350,17 @@ class EventToolService:
         }
 
     async def get_decision(self, a, c):
+        scope = DecisionScope(event_id=a["event_id"], token_id=a["token_id"])
+        async with self.repo.lock("decision-state:" + scope.key()), self.repo.transaction():
+            states = DecisionStateRepository(self.repo)
+            current = await states.current(scope)
+            return await self._get_decision(
+                a, c, states=states, expected=None if current is None else current[0]
+            )
+
+    async def _get_decision(
+        self, a, c, *, states: DecisionStateRepository, expected: DecisionStateHead | None
+    ):
         eid = a["event_id"]
         token = a["token_id"]
         event = await self.require("evt.events", eid)
@@ -2395,17 +2417,24 @@ class EventToolService:
         prepared = c.get("_decision_prepared_condition_ids")
         prepared_ids = None if prepared is None else frozenset(prepared)
         if expired_calls and not calls and not new_fact_after_expiry:
-            frozen = await self.latest_record("ana.decisions", eid, token)
-            if frozen is None:
-                raise ValueError("Expired call requires its frozen decision")
+            scope = DecisionScope(event_id=eid, token_id=token)
+            legacy = await states.legacy_current(scope) if expected is None else None
+            if expected is None:
+                if legacy is None:
+                    raise ValueError("Expired call requires its frozen decision")
+                frozen = decode_decision(await self.require("ana.decisions", legacy.decision_id))
+            else:
+                frozen = decode_decision(await self.require("ana.decisions", expected.dec_id))
+            if isinstance(frozen.metadata.tracking, EndedDecisionTracking):
+                return await self.require("ana.decisions", frozen.metadata.identity.decision_id)
             ended = end_decision_tracking(
-                decode_decision(frozen),
+                frozen,
                 decision_id=new_id("dec"),
                 expired_call_ids=tuple(row["call_id"] for row in expired_calls),
                 status_recorded_at=collection_clock(),
                 writer=DecisionStatusWriter(versions=self.versions, generation=generation),
             )
-            await self.reconcile_conditions(
+            reconciliation = self._plan_conditions(
                 DecisionWatchCommand(
                     decision_id=ended.metadata.identity.decision_id,
                     event_id=eid,
@@ -2417,9 +2446,19 @@ class EventToolService:
                 [],
                 prepared_condition_ids=prepared_ids,
             )
-            result = encode_decision(ended)
-            await self.repo.put("ana.decisions", ended.metadata.identity.decision_id, result)
-            return result
+
+            async def ending_effects() -> None:
+                await self._persist_condition_writes(reconciliation)
+
+            await states.advance(
+                scope,
+                expected=expected,
+                candidate=ended,
+                recorded_at=collection_clock(),
+                effects=ending_effects,
+                legacy_source=legacy,
+            )
+            return await self.require("ana.decisions", ended.metadata.identity.decision_id)
         inputs = decision_inputs_from_records(
             event,
             assessment,
@@ -2449,7 +2488,7 @@ class EventToolService:
                 entry_ref_price=relative.entry_price,
                 invalidation_price=min(relative.anchor_price, relative.entry_price),
             )
-        management = "NORMAL"
+        management: DecisionManagement = "NORMAL"
         if management_only:
             management = "MANAGEMENT_ONLY" if watch_calls else "REMOVED_FROM_ANALYSIS"
         draft = materialize_decision(
@@ -2480,7 +2519,7 @@ class EventToolService:
                 condition_ids=tuple(new_id("cond") for condition in evaluation.conditions),
             ),
         )
-        reconciliation = await self.reconcile_conditions(
+        reconciliation = self._plan_conditions(
             DecisionWatchCommand.from_draft(draft),
             watch_conditions,
             watch_calls,
@@ -2492,12 +2531,20 @@ class EventToolService:
             conditions_shown=reconciliation.shown,
             outlook_id=new_id("out"),
         )
-        result = encode_decision(decision)
-        await self.repo.put("ana.outlooks", decision.outlook_id, encode_outlook(decision))
-        await self.repo.put("ana.decisions", decision.metadata.identity.decision_id, result)
-        return result
 
-    async def reconcile_conditions(
+        async def effects() -> None:
+            await self._persist_condition_writes(reconciliation)
+
+        await states.advance(
+            DecisionScope(event_id=eid, token_id=token),
+            expected=expected,
+            candidate=decision,
+            recorded_at=collection_clock(),
+            effects=effects,
+        )
+        return await self.require("ana.decisions", decision.metadata.identity.decision_id)
+
+    def _plan_conditions(
         self,
         command: DecisionWatchCommand,
         existing: list[WatchCondition],
@@ -2505,8 +2552,7 @@ class EventToolService:
         *,
         prepared_condition_ids: frozenset[str] | None,
     ) -> DecisionWatchReconciliation:
-        """Persist a validated pure lifecycle result for actual decision watch facts."""
-        result = reconcile_decision_watches(
+        return reconcile_decision_watches(
             command,
             existing,
             calls,
@@ -2517,12 +2563,28 @@ class EventToolService:
             ),
             prepared_condition_ids=prepared_condition_ids,
         )
+
+    async def _persist_condition_writes(self, result: DecisionWatchReconciliation) -> None:
         for condition in result.writes:
             await self.repo.put(
                 "ana.watch_conditions",
                 condition.cond_id,
                 condition.model_dump(mode="json", exclude_unset=True),
             )
+
+    async def reconcile_conditions(
+        self,
+        command: DecisionWatchCommand,
+        existing: list[WatchCondition],
+        calls: list[DecisionCallContext],
+        *,
+        prepared_condition_ids: frozenset[str] | None,
+    ) -> DecisionWatchReconciliation:
+        """Persist a validated pure lifecycle result for actual decision watch facts."""
+        result = self._plan_conditions(
+            command, existing, calls, prepared_condition_ids=prepared_condition_ids
+        )
+        await self._persist_condition_writes(result)
         return result
 
     async def set_watch_condition(self, a, c):
