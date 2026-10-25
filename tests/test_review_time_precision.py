@@ -6,6 +6,7 @@ from datetime import timedelta
 import pytest
 from click.testing import CliRunner
 from review_typed_fixtures import put_flow
+from test_event_tools import service as service
 
 from tank.analysis.decisions import DecisionEngine
 from tank.review import ReviewService, public_bounds
@@ -22,14 +23,29 @@ from tank.util import parse_time, sha256
         (None, None),
     ],
 )
-def test_decision_inherits_selected_truth_cutoff(precision, expected) -> None:
+async def test_decision_inherits_selected_truth_cutoff(service, precision, expected) -> None:
     from test_decisions import inputs
 
     e, a, b, m = inputs()
     m["cutoff"] = "2026-10-01T00:03:00Z"
     if precision:
         m["cutoff_prec"] = precision
-    result = DecisionEngine().evaluate(e, a, b, m)
+    e["current_ems_id"] = a["ems_id"]
+    b.update(edge_id="cutoff-edge", map_version=1)
+    service.engine = DecisionEngine()
+    for table, identity, value in (
+        ("evt.events", e["event_id"], e),
+        ("evt.ems_assessments", a["ems_id"], a),
+        ("evt.beneficiary_edges", b["edge_id"], b),
+        ("ana.market_truth", m["mta_id"], m),
+        (
+            "evt.beneficiary_maps",
+            "cutoff-map",
+            {"event_id": e["event_id"], "map_version": 1, "analysis_set": [b["token_id"]]},
+        ),
+    ):
+        await service.repo.put(table, identity, value)
+    result = await service.get_decision({"event_id": e["event_id"], "token_id": b["token_id"]}, {})
     assert result["cutoff"] == m["cutoff"] and result["cutoff_prec"] == expected
     assert bool(result["cutoff_prec_reason"]) == (expected is None)
 

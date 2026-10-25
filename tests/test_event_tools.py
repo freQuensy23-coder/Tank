@@ -2101,6 +2101,7 @@ def complete_event_fixture(event_id, **changes):
         "public_at_basis": "Synthetic fixture primary publication",
         "known_to_us_at": now,
         "event_state": "APPROVED",
+        "next_milestone": None,
         "state_verified": True,
         "certainty": "HIGH",
         "timing_confidence": "HIGH",
@@ -2140,22 +2141,93 @@ def complete_truth_fixture(mta_id, event_id, token_id, cutoff, **changes):
 
 
 def complete_decision_fixture(dec_id, event_id, token_id, cutoff, mta_id):
-    from tank.analysis.decisions import DecisionEngine
+    from tank.analysis.decision_codec import decision_inputs_from_records, encode_decision
+    from tank.analysis.decision_contracts import (
+        ActiveDecisionTracking,
+        DecisionIdentity,
+        DecisionMaterialization,
+        DecisionMetadata,
+    )
+    from tank.analysis.decision_watches import (
+        DecisionWatchCommand,
+        DecisionWatchPolicy,
+        reconcile_decision_watches,
+    )
+    from tank.analysis.decisions import DecisionEngine, finalize_decision, materialize_decision
+    from tank.contracts.provenance import GenerationProvenance
+    from tank.time_precision import collection_clock, propagate_timestamp
+    from tank.util import parse_time
 
-    event = complete_event_fixture(event_id)
+    event = complete_event_fixture(event_id, contradictions=[], next_milestone=None)
     assessment = complete_assessment_fixture("fixture-ems", event_id)
     truth = complete_truth_fixture(mta_id, event_id, token_id, cutoff)
-    edge = {"token_id": token_id, "role": "PRIMARY", "credible": False, "capture_class": "UNKNOWN"}
-    row = DecisionEngine().evaluate(event, assessment, edge, truth)
-    row.update(
-        dec_id=dec_id,
-        mta_id=mta_id,
-        market_truth_id=mta_id,
-        trade_reasons=[row["trade_rule"]],
-        config_version="fixture",
-        code_version="fixture",
+    edge = {
+        "event_id": event_id,
+        "token_id": token_id,
+        "role": "PRIMARY",
+        "credible": False,
+        "capture_class": "UNKNOWN",
+        "exposure_score": None,
+    }
+    evaluated = DecisionEngine().evaluate(
+        decision_inputs_from_records(event, assessment, edge, truth, open_call=None, conditions=())
     )
-    return row
+    versions = fixture_versions()
+    generation = GenerationProvenance(
+        config_version=versions.config_version,
+        code_version=versions.code_version,
+        session_config_version=None,
+        session_code_version=None,
+        model_id=None,
+        model_id_basis=None,
+        model_id_reason=None,
+        prompt_version=None,
+        prompt_version_basis=None,
+        prompt_version_reason=None,
+        prompt_label=None,
+        prompt_binding=None,
+        agent_version=None,
+        agent_version_basis=None,
+        agent_version_reason=None,
+        session_id=None,
+    )
+    draft = materialize_decision(
+        evaluated,
+        DecisionMaterialization(
+            metadata=DecisionMetadata(
+                identity=DecisionIdentity(
+                    decision_id=dec_id,
+                    event_id=event_id,
+                    token_id=token_id,
+                    cutoff=propagate_timestamp(truth, "cutoff"),
+                    thresholds_version=Settings().thresholds().version,
+                    versions=versions,
+                    generation=generation,
+                    assessment_id=assessment["ems_id"],
+                    market_truth_id=mta_id,
+                ),
+                calculated_at=collection_clock(cutoff),
+                management="NORMAL",
+                contradiction_ids=(),
+                prices=None,
+                tracking=ActiveDecisionTracking(kind="ACTIVE"),
+            ),
+            condition_ids=tuple(f"{dec_id}:watch:{index}" for index in range(len(evaluated.conditions))),
+        ),
+    )
+    watches = reconcile_decision_watches(
+        DecisionWatchCommand.from_draft(draft),
+        [],
+        [],
+        now=parse_time(cutoff),
+        policy=DecisionWatchPolicy(lifetime=timedelta(days=7), milestone_grace=timedelta(hours=1)),
+        prepared_condition_ids=None,
+    )
+    return encode_decision(
+        finalize_decision(
+            draft, conditions=watches.active, conditions_shown=watches.shown, outlook_id=f"{dec_id}:outlook"
+        )
+    )
 
 
 @pytest.mark.integration
