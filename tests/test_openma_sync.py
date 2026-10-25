@@ -15,8 +15,8 @@ from pydantic_settings import SettingsConfigDict
 
 from tank import openma_sync
 from tank.contracts import DomainModel
-from tank.contracts.json import decode_json
-from tank.contracts.openma import ManagedSkillName, OpenMASyncReport
+from tank.contracts.json import decode_json, encode_json
+from tank.contracts.openma import ManagedSkillName, OpenMAContractViolation, OpenMASyncReport
 from tank.settings import Settings, resolve_versions
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,6 +63,7 @@ def fixture_integer(value: JsonValue) -> int:
 class ObservedRequest(DomainModel):
     method: str
     path: str
+    query: str
 
 
 class FakeOpenMA:
@@ -73,6 +74,7 @@ class FakeOpenMA:
         self.cards: list[dict[str, JsonValue]] = []
         self.skills: dict[str, dict[str, JsonValue]] = {}
         self.agents: dict[str, dict[str, JsonValue]] = {}
+        self.versions: dict[str, dict[int, dict[str, JsonValue]]] = {}
         self.environments: dict[str, dict[str, JsonValue]] = {}
         for name, binding in openma_sync.AGENTS.items():
             references: list[JsonValue] = []
@@ -92,8 +94,19 @@ class FakeOpenMA:
                 "system": openma_sync.SYSTEM,
                 "tools": tools,
                 "skills": references,
-                "metadata": {"skill_mount": "inline"},
+                "metadata": {
+                    "skill_mount": "inline",
+                    "tank_skills": json.dumps(
+                        {
+                            skill: {"skill_id": "skill_" + skill, "version": "1", "sha256": None}
+                            for skill in binding.skills
+                        },
+                        sort_keys=True,
+                    ),
+                },
             }
+        for agent in self.agents.values():
+            self.remember(agent)
         for environment_name, environment in openma_sync.ENVIRONMENTS.items():
             identity = CONFIG.environment_id_for(environment_name)
             self.environments[identity] = {
@@ -109,6 +122,11 @@ class FakeOpenMA:
                     },
                 },
             }
+
+    def remember(self, agent: dict[str, JsonValue]) -> None:
+        identity = fixture_text(agent["id"])
+        version = fixture_integer(agent["version"])
+        self.versions.setdefault(identity, {})[version] = fixture_object(decode_json(encode_json(agent)))
 
     @staticmethod
     def normalized(tool: dict[str, JsonValue]) -> dict[str, JsonValue]:
@@ -133,7 +151,9 @@ class FakeOpenMA:
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
-        self.requests.append(ObservedRequest(method=request.method, path=path))
+        self.requests.append(
+            ObservedRequest(method=request.method, path=path, query=request.url.query.decode())
+        )
         assert request.headers["x-api-key"] == "synthetic-oma-key"
         assert "skills-2025-10-02" in request.headers["anthropic-beta"]
         if path == "/v1/oma/model_cards":
@@ -155,6 +175,12 @@ class FakeOpenMA:
                     self.normalized(fixture_object(tool)) for tool in fixture_array(body["tools"])
                 ]
                 agent["version"] = fixture_integer(agent["version"]) + 1
+                self.remember(agent)
+            requested_version = request.url.params.get("version")
+            if request.method == "GET" and requested_version is not None:
+                return httpx.Response(
+                    200, json=self.versions[fixture_text(agent["id"])][int(requested_version)]
+                )
             return httpx.Response(200, json=agent)
         if path.startswith("/v1/environments/"):
             return httpx.Response(200, json=self.environments[path.rsplit("/", 1)[1]])
@@ -264,6 +290,7 @@ async def test_a_skill_missing_from_its_agent_is_created(tmp_path: Path) -> None
     settings = settings_for(ROOT / "config", tmp_path)
     fake = FakeOpenMA(settings)
     fake.agents[CONFIG.scout_agent_id]["skills"] = []
+    fixture_object(fake.agents[CONFIG.scout_agent_id]["metadata"])["tank_skills"] = "{}"
     report = await run(settings, fake)
     assert report.skills["tank-scout-reviewer"] == "CREATED"
     first = fixture_object(fixture_array(fake.agents[CONFIG.scout_agent_id]["skills"])[0])
@@ -654,3 +681,309 @@ async def test_empty_declared_tool_description_is_a_valid_provider_string(tmp_pa
     await run(settings, fake)
     second = await run(settings, fake)
     assert {outcome.status for outcome in second.agents.values()} == {"CURRENT"}
+
+
+async def test_changed_effort_publishes_confirmed_version_and_unchanged_effort_is_current(
+    tmp_path: Path,
+) -> None:
+    directory = copied_config(tmp_path)
+    settings = settings_for(directory, tmp_path)
+    fake = FakeOpenMA(settings)
+    await run(settings, fake)
+    document = settings.load_config("openma")
+    document["reasoning_effort"] = "high"
+    (directory / "openma.yaml").write_text(yaml.safe_dump(document))
+    changed = settings_for(directory, tmp_path)
+    fake.requests.clear()
+    report = await run(changed, fake)
+    assert {outcome.status for outcome in report.agents.values()} == {"UPDATED"}
+    assert {outcome.version for outcome in report.agents.values()} == {3}
+    assert all(fixture_object(agent["model"])["effort"] == "high" for agent in fake.agents.values())
+    for name in report.agents:
+        assert any(
+            request.method == "GET"
+            and request.path == "/v1/agents/" + CONFIG.agent_id_for(name)
+            and request.query == "version=3"
+            for request in fake.requests
+        )
+    assert fake.writes("/v1/skills") == []
+    fake.requests.clear()
+    unchanged = await run(changed, fake)
+    assert {outcome.status for outcome in unchanged.agents.values()} == {"CURRENT"}
+    assert fake.writes("/v1/agents/") == []
+
+
+@pytest.mark.parametrize("failure", ["unreported", "different", "wrong_version"])
+async def test_unconfirmed_readback_stops_without_repeated_publish(
+    tmp_path: Path, failure: Literal["unreported", "different", "wrong_version"]
+) -> None:
+    settings = settings_for(ROOT / "config", tmp_path)
+    fake = FakeOpenMA(settings)
+
+    def unconfirmed(request: httpx.Request) -> httpx.Response:
+        response = fake.handler(request)
+        if request.method == "GET" and request.url.params.get("version") is not None:
+            body = fixture_object(decode_json(response.content))
+            if failure == "unreported":
+                fixture_object(body["model"]).pop("effort")
+            elif failure == "different":
+                fixture_object(body["model"])["effort"] = {"type": "low"}
+            else:
+                body["version"] = fixture_integer(body["version"]) + 1
+            return httpx.Response(200, json=body)
+        return response
+
+    with pytest.raises(OpenMAContractViolation):
+        await asyncio.wait_for(
+            openma_sync.keep_in_sync(
+                settings, asyncio.Event(), transport_factory=lambda: httpx.MockTransport(unconfirmed)
+            ),
+            timeout=1,
+        )
+    assert len(fake.writes("/v1/agents/")) == 1
+
+
+async def test_readback_is_bound_to_published_version_not_concurrently_changed_latest(tmp_path: Path) -> None:
+    settings = settings_for(ROOT / "config", tmp_path)
+    fake = FakeOpenMA(settings)
+
+    def concurrent(request: httpx.Request) -> httpx.Response:
+        response = fake.handler(request)
+        if request.method == "POST" and request.url.path == "/v1/agents/" + CONFIG.agent_id:
+            latest = fake.agents[CONFIG.agent_id]
+            latest["version"] = fixture_integer(latest["version"]) + 1
+            fixture_object(latest["model"])["effort"] = "low"
+            fake.remember(latest)
+        return response
+
+    async with httpx.AsyncClient(base_url="http://oma", transport=httpx.MockTransport(concurrent)) as client:
+        report = await openma_sync.sync(settings, client)
+    assert report.agents["tank-event-analyst"].version == 2
+    assert fake.agents[CONFIG.agent_id]["version"] == 3
+    assert any(request.query == "version=2" for request in fake.requests)
+
+
+@pytest.mark.parametrize("layout", ["reordered", "missing", "extra", "duplicate"])
+async def test_metadata_free_skill_references_cannot_authorize_role_updates(
+    tmp_path: Path, layout: Literal["reordered", "missing", "extra", "duplicate"]
+) -> None:
+    settings = settings_for(ROOT / "config", tmp_path)
+    fake = FakeOpenMA(settings)
+    analyst = fake.agents[CONFIG.agent_id]
+    fixture_object(analyst["metadata"]).pop("tank_skills")
+    references = fixture_array(analyst["skills"])
+    if layout == "reordered":
+        references.reverse()
+    elif layout == "missing":
+        references.pop()
+    elif layout == "extra":
+        references.append({"type": "custom", "skill_id": "unrelated-skill", "version": "7"})
+    else:
+        references.append(references[0])
+    original = encode_json(analyst)
+    before = encode_json({identity: record for identity, record in fake.skills.items()})
+    with pytest.raises(OpenMAContractViolation):
+        await run(settings, fake)
+    assert fake.writes("/v1/skills") == [] and fake.writes("/v1/agents/") == []
+    assert encode_json(analyst) == original
+    assert encode_json({identity: record for identity, record in fake.skills.items()}) == before
+
+
+async def test_explicit_skill_bindings_ignore_provider_order_and_preserve_unrelated_references(
+    tmp_path: Path,
+) -> None:
+    settings = settings_for(ROOT / "config", tmp_path)
+    fake = FakeOpenMA(settings)
+    analyst = fake.agents[CONFIG.agent_id]
+    references = fixture_array(analyst["skills"])
+    references.reverse()
+    unrelated: dict[str, JsonValue] = {"type": "custom", "skill_id": "unrelated-skill", "version": "7"}
+    references.append(unrelated)
+    fake.skills["unrelated-skill"] = {"id": "unrelated-skill", "latest_version": "7"}
+    expected = {
+        "skill_tank-event-analyst": b"name: tank-event-analyst",
+        "skill_tank-data": b"name: tank-data",
+        "skill_tank-scout-reviewer": b"name: tank-scout-reviewer",
+    }
+
+    def owned_upload(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path.endswith("/versions"):
+            identity = request.url.path.split("/")[3]
+            assert identity in expected and expected[identity] in request.content
+        return fake.handler(request)
+
+    async with httpx.AsyncClient(
+        base_url="http://oma", transport=httpx.MockTransport(owned_upload)
+    ) as client:
+        first = await openma_sync.sync(settings, client)
+        fake.requests.clear()
+        second = await openma_sync.sync(settings, client)
+    assert first.agents["tank-event-analyst"].status == "UPDATED"
+    assert {outcome.status for outcome in second.agents.values()} == {"CURRENT"}
+    assert unrelated in fixture_array(analyst["skills"])
+    assert fake.skills["unrelated-skill"]["latest_version"] == "7"
+    assert fake.writes("/v1/skills") == []
+
+
+async def test_metadata_free_empty_skill_set_creates_new_resources_without_mutating_old_ones(
+    tmp_path: Path,
+) -> None:
+    settings = settings_for(ROOT / "config", tmp_path)
+    fake = FakeOpenMA(settings)
+    original_ids = set(fake.skills)
+    for agent in fake.agents.values():
+        agent["skills"] = []
+        fixture_object(agent["metadata"]).pop("tank_skills")
+    report = await run(settings, fake)
+    assert set(report.skills.values()) == {"CREATED"}
+    assert all(fake.skills[identity]["latest_version"] == "1" for identity in original_ids)
+    assert len(fake.writes("/v1/skills")) == 3
+    assert not any(request.path.endswith("/versions") for request in fake.writes("/v1/skills"))
+
+
+async def test_duplicate_declared_role_resources_are_refused_before_publication(tmp_path: Path) -> None:
+    settings = settings_for(ROOT / "config", tmp_path)
+    fake = FakeOpenMA(settings)
+    metadata = fixture_object(fake.agents[CONFIG.agent_id]["metadata"])
+    roles = fixture_object(decode_json(fixture_text(metadata["tank_skills"])))
+    fixture_object(roles["tank-data"])["skill_id"] = "skill_tank-event-analyst"
+    metadata["tank_skills"] = json.dumps(roles)
+    with pytest.raises(OpenMAContractViolation, match="multiple managed roles"):
+        await run(settings, fake)
+    assert not any(request.method == "POST" for request in fake.requests)
+
+
+async def test_unsupported_effort_is_rejected_before_any_remote_effect(tmp_path: Path) -> None:
+    directory = copied_config(tmp_path)
+    source = settings_for(directory, tmp_path)
+    fake = FakeOpenMA(source)
+    document = source.load_config("openma")
+    document["reasoning_effort"] = "minimal"
+    (directory / "openma.yaml").write_text(yaml.safe_dump(document))
+    with pytest.raises(ValueError):
+        await run(settings_for(directory, tmp_path), fake)
+    assert fake.requests == []
+
+
+@pytest.mark.parametrize("same_id_as_managed", [False, True])
+async def test_unrelated_anthropic_reference_keeps_its_kind_identity_and_version(
+    tmp_path: Path, same_id_as_managed: bool
+) -> None:
+    settings = settings_for(ROOT / "config", tmp_path)
+    fake = FakeOpenMA(settings)
+    analyst = fake.agents[CONFIG.agent_id]
+    reference: dict[str, JsonValue] = {
+        "type": "anthropic",
+        "skill_id": "skill_tank-event-analyst" if same_id_as_managed else "vendor-skill",
+        "version": "builtin-2026-10",
+    }
+    fixture_array(analyst["skills"]).append(reference)
+    first = await run(settings, fake)
+    assert first.agents["tank-event-analyst"].status == "UPDATED"
+    assert reference in fixture_array(analyst["skills"])
+    fake.requests.clear()
+    second = await run(settings, fake)
+    assert second.agents["tank-event-analyst"].status == "CURRENT"
+    assert reference in fixture_array(analyst["skills"])
+    assert fake.writes("/v1/agents/") == [] and fake.writes("/v1/skills") == []
+
+
+@pytest.mark.parametrize("tag", [None, True, "unknown-provider"])
+async def test_malformed_or_unknown_skill_type_is_not_coerced_into_custom(
+    tmp_path: Path, tag: JsonValue
+) -> None:
+    settings = settings_for(ROOT / "config", tmp_path)
+    fake = FakeOpenMA(settings)
+    reference = fixture_object(fixture_array(fake.agents[CONFIG.agent_id]["skills"])[0])
+    reference["type"] = tag
+    with pytest.raises((ValueError, OpenMAContractViolation)):
+        await run(settings, fake)
+    assert not any(request.method == "POST" for request in fake.requests)
+
+
+@pytest.mark.parametrize("field", ["tools", "skills", "system", "tank_skills", "skill_mount"])
+async def test_full_owned_state_must_be_confirmed_on_the_published_version(
+    tmp_path: Path, field: Literal["tools", "skills", "system", "tank_skills", "skill_mount"]
+) -> None:
+    settings = settings_for(ROOT / "config", tmp_path)
+    fake = FakeOpenMA(settings)
+
+    def missing_owned_fact(request: httpx.Request) -> httpx.Response:
+        response = fake.handler(request)
+        if request.method == "GET" and request.url.params.get("version") is not None:
+            body = fixture_object(decode_json(response.content))
+            if field in {"tank_skills", "skill_mount"}:
+                fixture_object(body["metadata"]).pop(field)
+            elif field in {"tools", "skills"}:
+                fixture_array(body[field]).pop()
+            else:
+                body["system"] = "Contradictory observed system"
+            return httpx.Response(200, json=body)
+        return response
+
+    with pytest.raises(OpenMAContractViolation):
+        await asyncio.wait_for(
+            openma_sync.keep_in_sync(
+                settings,
+                asyncio.Event(),
+                transport_factory=lambda: httpx.MockTransport(missing_owned_fact),
+            ),
+            timeout=1,
+        )
+    assert len(fake.writes("/v1/agents/")) == 1
+
+
+@pytest.mark.parametrize(
+    "failure", ["missing_harness", "wrong_harness", "missing_metadata", "changed_metadata"]
+)
+async def test_harness_and_retained_metadata_require_observed_confirmation(
+    tmp_path: Path,
+    failure: Literal["missing_harness", "wrong_harness", "missing_metadata", "changed_metadata"],
+) -> None:
+    settings = settings_for(ROOT / "config", tmp_path)
+    fake = FakeOpenMA(settings)
+    fixture_object(fake.agents[CONFIG.agent_id]["metadata"])["provider_tag"] = "preserve exactly"
+
+    def contradictory(request: httpx.Request) -> httpx.Response:
+        response = fake.handler(request)
+        if request.method == "GET" and request.url.params.get("version") is not None:
+            body = fixture_object(decode_json(response.content))
+            if failure == "missing_harness":
+                fixture_object(body["_oma"]).pop("harness")
+            elif failure == "wrong_harness":
+                fixture_object(body["_oma"])["harness"] = "acp"
+            elif failure == "missing_metadata":
+                fixture_object(body["metadata"]).pop("provider_tag")
+            else:
+                fixture_object(body["metadata"])["provider_tag"] = "changed"
+            return httpx.Response(200, json=body)
+        return response
+
+    with pytest.raises(OpenMAContractViolation):
+        await asyncio.wait_for(
+            openma_sync.keep_in_sync(
+                settings, asyncio.Event(), transport_factory=lambda: httpx.MockTransport(contradictory)
+            ),
+            timeout=1,
+        )
+    assert len(fake.writes("/v1/agents/")) == 1
+
+
+async def test_additional_provider_metadata_after_publication_is_preserved_as_an_extension(
+    tmp_path: Path,
+) -> None:
+    settings = settings_for(ROOT / "config", tmp_path)
+    fake = FakeOpenMA(settings)
+    fixture_object(fake.agents[CONFIG.agent_id]["metadata"])["provider_tag"] = "preserved"
+
+    def additional(request: httpx.Request) -> httpx.Response:
+        response = fake.handler(request)
+        if request.method == "GET" and request.url.params.get("version") is not None:
+            body = fixture_object(decode_json(response.content))
+            fixture_object(body["metadata"])["server_generated_tag"] = "new"
+            return httpx.Response(200, json=body)
+        return response
+
+    async with httpx.AsyncClient(base_url="http://oma", transport=httpx.MockTransport(additional)) as client:
+        result = await openma_sync.sync(settings, client)
+    assert {outcome.status for outcome in result.agents.values()} == {"UPDATED"}

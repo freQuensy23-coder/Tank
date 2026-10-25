@@ -1,0 +1,41 @@
+{
+  "pinned_release": "85d5361f535c7221de975838dc48444e468cc02e",
+  "records": [
+    {
+      "path": "vendor/openma/packages/managed-agents-domain/src/agents/agent.ts",
+      "sha256": "f2821833ab5556a354cd761100b14e7fe22e2d856506cd2a34231d60f0b34ffc",
+      "symbol": "AgentEffortLevel/AgentModel",
+      "access": "READ_ONLY_PROTOCOL_EVIDENCE"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-api/src/mappers/agents.ts",
+      "sha256": "73e16c53b31d9b10ca96ef503aa323027e9cc9f3d261cb04ae23b8857812e2d5",
+      "symbol": "toAgentModelInput/toAgentResponse",
+      "access": "READ_ONLY_PROTOCOL_EVIDENCE"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-api/src/routes/agents.ts",
+      "sha256": "c191b1eb36e4d3b07ffe4bdb3bc6e1c540f880f21baa08bb090f441d38993980",
+      "symbol": "GET /:agentId query.version",
+      "access": "READ_ONLY_PROTOCOL_EVIDENCE"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-api/src/contracts/agent-input-components.ts",
+      "sha256": "b127ddfd8ffa9310c5e7e002fa754cf4d0cb36d8382b531b89966029510845b6",
+      "symbol": "agentSkillInputSchema",
+      "access": "READ_ONLY_PROTOCOL_EVIDENCE"
+    },
+    {
+      "path": "vendor/openma/packages/managed-agents-api/src/contracts/agent-response-components.ts",
+      "sha256": "b7c5baf65f725fe18be44a4547a81c36f0cb919342f12f156a8f757e27dcb0a9",
+      "symbol": "agentSkillResponseSchema",
+      "access": "READ_ONLY_PROTOCOL_EVIDENCE"
+    },
+    {
+      "path": "vendor/openma/packages/control-plane-node/src/modules/node-http.ts",
+      "sha256": "08423097e4cb8eb86c6b4dc00f1acfadf1be13b46d2028f4c543affc7f52e842",
+      "symbol": "active /v1/agents managed route",
+      "access": "READ_ONLY_PROTOCOL_EVIDENCE"
+    }
+  ]
+}

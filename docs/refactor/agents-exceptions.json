@@ -773,10 +773,11 @@
         }
       ],
       "kind": "observed unregistered resources and digest absence",
-      "reason": "No model card/skill registration is a genuine create case. A positional provider skill has required identity/version but nullable unknown Tank digest until successful managed publication. Namespace get/next(None) reflects resource existence, not a required-value substitute.",
+      "reason": "Only explicit validated Tank metadata authorizes existing role resources. Digest None represents unknown content for a declared binding, never ownership. Metadata-free nonempty references refuse; genuinely empty registrations can create resources. Unrelated anthropic/custom references retain actual kind/identity/version.",
       "validation": [
-        "test_first_start_versions_every_skill_and_agent_then_nothing_changes",
-        "test_a_skill_missing_from_its_agent_is_created"
+        "test_metadata_free_skill_references_cannot_authorize_role_updates",
+        "test_explicit_skill_bindings_ignore_provider_order_and_preserve_unrelated_references",
+        "test_unrelated_anthropic_reference_keeps_its_kind_identity_and_version"
       ]
     },
     {
@@ -924,6 +925,28 @@
         "test_production_composition_binds_the_real_scheduler_and_owns_shutdown",
         "test_gateway_starts_in_same_runtime_before_sources_and_closes_after_drain",
         "test_production_budget_backend_uses_explicit_repository_kind_without_connecting"
+      ]
+    },
+    {
+      "ledger_key": "openma-confirmation",
+      "sites": [
+        {
+          "path": "src/tank/contracts/openma.py",
+          "symbol": "ManagedAgentObservation.model_effort",
+          "line": 260
+        },
+        {
+          "path": "src/tank/openma_sync.py",
+          "symbol": "OpenMAApi.publish_agent",
+          "line": 437
+        }
+      ],
+      "kind": "genuine unconfigured observed effort and exact immutable write confirmation",
+      "reason": "Observed effort None is not configured intent; it forces reconciliation and can never confirm an update. A successful write requires exact-version read-back. Unsupported/missing confirmation is permanent, preventing repeated publications. JSON wrappers are parsed only at the adapter.",
+      "validation": [
+        "test_changed_effort_publishes_confirmed_version_and_unchanged_effort_is_current",
+        "test_unconfirmed_readback_stops_without_repeated_publish",
+        "test_readback_is_bound_to_published_version_not_concurrently_changed_latest"
       ]
     }
   ]
