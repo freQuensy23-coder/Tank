@@ -785,3 +785,14 @@ seconds. Independent strict models/test checks pass. The generic private journal
 storage adapter remains a boundary under migration; these models do not pretend
 to be a full SessionService aggregate. The retry writer still requires its
 separate pending/reported/unknown-budget conversion before outbound release.
+
+Retry-phase activation is an unqualified work checkpoint. KnownRetryState,
+UnknownRetryState, PendingNativeRetry and AcceptedNativeRetry retain the actual
+budget, input definition, owner, failure identity and callback ordinal fence.
+Missing counts, missing owner/body or missing cutoff refuse before posting,
+without fabricating a terminal native event. The first focused run has 59 passes
+and 11 expected fixture-fact failures after removal of the ordinal-zero guess;
+synthetic known-budget controls and explicit unknown-state regressions are still
+being completed. Fresh provisioning versus native discovery/adoption must be
+distinguished before any initial ordinal zero is assigned. No retry release or
+whole-session completion is claimed.

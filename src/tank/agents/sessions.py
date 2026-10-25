@@ -33,6 +33,12 @@ from tank.agents.native_inputs import (
     parse_native_input,
 )
 from tank.agents.native_readback import NativeSessionMissing, NativeSessionReader
+from tank.agents.native_retry import (
+    PendingNativeRetry,
+    UnknownNativeRetryState,
+    UnknownRetryState,
+    retry_state,
+)
 from tank.agents.native_sessions import (
     NativeOpeningSource,
     NativeSessionCreate,
@@ -1898,24 +1904,45 @@ class SessionService:
                     ),
                     None,
                 )
-                body = active["body"] if active else session.get("last_message")
-                retry = active.get("retry_count", 0) if active else session.get("retry_count", 0)
-                if retry < 1 and body:
-                    message_id = active["message_id"] if active else "legacy"
-
+                state = retry_state(session, active)
+                if isinstance(state, UnknownRetryState):
+                    raise UnknownNativeRetryState(state.reason)
+                retry = state.attempt
+                if retry == 0:
+                    if state.body is None:
+                        raise UnknownNativeRetryState("RETRY_BODY_NOT_RETAINED")
                     async with self.repo.lock("session:" + sid):
                         durable = await self.repo.get("ops.agent_sessions", sid)
-                        event = dict(event)
-                        event.setdefault(
-                            "_host_retry_call_ordinal_cutoff", durable.get("next_tool_call_ordinal", 0)
+                        if durable is None:
+                            raise KeyError(sid)
+                        cutoff = (
+                            event["_host_retry_call_ordinal_cutoff"]
+                            if "_host_retry_call_ordinal_cutoff" in event
+                            else durable.get("next_tool_call_ordinal")
                         )
+                        if cutoff is None:
+                            raise UnknownNativeRetryState("TOOL_ORDINAL_NOT_RETAINED")
+                        plan = PendingNativeRetry.model_validate(
+                            {
+                                "phase": "PENDING",
+                                "owner": state.owner,
+                                "body": state.body,
+                                "previous_input_id": state.previous_input_id,
+                                "previous_attempt": retry,
+                                "next_attempt": 1,
+                                "failure_event_id": event["id"],
+                                "tool_call_ordinal_cutoff": cutoff,
+                            }
+                        )
+                        retained = durable.get("pending_retry_intent")
+                        if retained is not None and PendingNativeRetry.model_validate(retained) != plan:
+                            raise ValueError("Pending native retry intent changed before posting")
+                        event = dict(event, _host_retry_call_ordinal_cutoff=plan.tool_call_ordinal_cutoff)
                         durable["pending_retry_event"] = copy.deepcopy(event)
+                        durable["pending_retry_intent"] = plan.model_dump(mode="json")
                         await put_owned_session(self.repo, sid, durable)
-                    accepted = await self.post_input(
-                        sid,
-                        parse_native_input(body),
-                        idem="turn-retry:" + sid + ":" + message_id,
-                    )
+                    accepted = await self.post_input(sid, plan.body, idem=plan.idempotency_key(sid))
+                    receipt = plan.accepted(accepted, self.clock_timestamp())
                     if active:
                         active.setdefault("retry_call_ordinal_cutoffs", {})[str(retry)] = event[
                             "_host_retry_call_ordinal_cutoff"
@@ -1926,7 +1953,8 @@ class SessionService:
                         replacement_input = self.accepted_input_id(accepted)
                         if replacement_input:
                             active.setdefault("native_input_attempts", {})[replacement_input] = retry + 1
-                        active.setdefault("superseded_native_input_ids", []).append(previous_input)
+                        if previous_input is not None:
+                            active.setdefault("superseded_native_input_ids", []).append(previous_input)
                         if previous_input:
                             session.setdefault("superseded_native_inputs", {})[previous_input] = {
                                 "reason": "TURN_FAILED_AND_RETRIED",
@@ -1937,10 +1965,13 @@ class SessionService:
                             retry_count=retry + 1,
                             turn_status="RUNNING",
                             remote_event_id=self.accepted_input_id(accepted),
+                            retry_acceptance=receipt.model_dump(mode="json"),
                         )
                     else:
                         session["retry_count"] = retry + 1
+                        session["retry_acceptance"] = receipt.model_dump(mode="json")
                     session["pending_retry_event"] = None
+                    session["pending_retry_intent"] = None
                     session["runtime_status"] = "RUNNING"
                 else:
                     session["status"] = "FAILED"
