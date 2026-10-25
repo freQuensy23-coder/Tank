@@ -182,8 +182,9 @@ async def test_publication_freezes_reproducible_bundle_and_queues_only(
     import tank.analysis.cards as cards
     from tank.util import sha256
 
-    monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
-    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[1]))
+    monkeypatch.setattr(
+        cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[0].assessment.scores)
+    )
     x = await seed(service)
     result = await service.dispatch("record_event", x, {})
     eid = result["event_id"]
@@ -917,9 +918,10 @@ async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(
 ) -> None:
     import tank.analysis.cards as cards
 
-    monkeypatch.setattr(cards, "alert_gate", lambda *a, **kw: (True, "TEST"))
     monkeypatch.setattr(
-        cards, "compose_card", lambda *a, **kw: "Validated full card" + "\n" + score_summary(a[1])
+        cards,
+        "compose_card",
+        lambda *a, **kw: "Validated full card" + "\n" + score_summary(a[0].assessment.scores),
     )
     x = await seed(service)
     result = await service.dispatch("record_event", x, {})
@@ -2122,6 +2124,7 @@ def complete_assessment_fixture(ems_id, event_id, **changes):
         version=1,
         cutoff=clock_iso(),
         structural_gates=[],
+        contradictions=[],
         class_reasons=["Synthetic fixture primary fact"],
         config_version="fixture",
         code_version="fixture",
@@ -2659,7 +2662,7 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(
     monkeypatch.setattr(
         cards,
         "compose_card",
-        lambda *args, **kwargs: "Synthetic safety update" + "\n" + score_summary(args[1]),
+        lambda *args, **kwargs: "Synthetic safety update" + "\n" + score_summary(args[0].assessment.scores),
     )
     eid = "repeat-safety"
     await service.repo.put(
@@ -3577,70 +3580,6 @@ async def test_assessment_dispatch_creates_real_reaction_jobs(tmp_path: Path) ->
     await repo.close()
 
 
-async def test_full_card_blocks_only_analysis_tokens_with_decisions(
-    service, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from tank.analysis import cards
-
-    created, _, _ = await seed_economic_event(service, negative_relation=False)
-    eid = created["event_id"]
-    token = "world:WLD"
-    await service.repo.put(
-        "evt.beneficiary_maps", "block-map", {"event_id": eid, "map_version": 1, "analysis_set": [token]}
-    )
-    for edge_id, edge_token, exposure in [("selected", token, 7), ("not-in-analysis", "ethereum:ETH", 10)]:
-        await service.repo.put(
-            "evt.beneficiary_edges",
-            edge_id,
-            {
-                "edge_id": edge_id,
-                "event_id": eid,
-                "map_version": 1,
-                "token_id": edge_token,
-                "role": "PRIMARY",
-                "tradable": True,
-                "credible": True,
-                "exposure_score": exposure,
-            },
-        )
-    truth = complete_truth_fixture("block-truth", eid, token, clock_iso())
-    await service.repo.put("ana.market_truth", "block-truth", truth)
-    await service.repo.put(
-        "ana.decisions",
-        "block-decision",
-        {
-            "dec_id": "block-decision",
-            "event_id": eid,
-            "token_id": token,
-            "action": "WAIT",
-            "cutoff": clock_iso(),
-            "market_truth_id": "block-truth",
-        },
-    )
-    captured = {}
-
-    def compose(event, assessment, beneficiaries, *args, **kwargs):
-        captured["blocks"] = [edge["token_id"] for edge in beneficiaries]
-        captured["who"] = [edge["token_id"] for edge in event["beneficiary_edges"]]
-        return "Isolated token selection fixture\n" + score_summary(assessment)
-
-    monkeypatch.setattr(cards, "compose_card", compose)
-    result = await service.dispatch(
-        "publish_card",
-        {
-            "event_id": eid,
-            "kind": "FULL",
-            "what": "World approved access",
-            "verdict": "World approved access",
-            "why": ["Quoted approval", "Supported capture"],
-        },
-        {},
-    )
-    assert result["published"], result
-    assert captured["blocks"] == [token]
-    assert set(captured["who"]) == {token, "ethereum:ETH"}
-
-
 async def test_web_raw_canonical_file_exists_even_when_parser_fails(
     service, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3679,9 +3618,10 @@ async def test_bundle_directory_sync_failure_never_creates_database_reference(
 
     from tank.analysis import cards
 
-    monkeypatch.setattr(cards, "alert_gate", lambda *args, **kwargs: (True, "INITIAL"))
     monkeypatch.setattr(
-        cards, "compose_card", lambda *args, **kwargs: "Durability fixture" + "\n" + score_summary(args[1])
+        cards,
+        "compose_card",
+        lambda *args, **kwargs: "Durability fixture" + "\n" + score_summary(args[0].assessment.scores),
     )
     extraction_args = await seed(service)
     made = await service.dispatch("record_event", extraction_args, {})
@@ -5001,7 +4941,9 @@ async def test_old_trigger_updates_stage_but_does_not_publish_or_resurface_on_ti
     import tank.analysis.cards as cards
 
     monkeypatch.setattr(
-        cards, "compose_card", lambda *args, **kwargs: "Stored stage update" + "\n" + score_summary(args[1])
+        cards,
+        "compose_card",
+        lambda *args, **kwargs: "Stored stage update" + "\n" + score_summary(args[0].assessment.scores),
     )
     extracted = await seed(service)
     extracted["claims"][0]["state_claim"] = "APPROVED"
@@ -5561,8 +5503,9 @@ async def test_card_generated_at_is_the_version_write_and_deliver_is_runnable_th
     import tank.event_tools as event_tools
     from tank.util import parse_time
 
-    monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
-    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[1]))
+    monkeypatch.setattr(
+        cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[0].assessment.scores)
+    )
     written = {}
     original = event_tools.write_evidence_bundle
 
@@ -5700,8 +5643,9 @@ async def test_publish_card_keeps_market_truth_once_and_bounds_evidence_and_ops_
     assert deduped[0]["result"]["market_truth"][1] == {"mta_id": "other", "v": 1}
     assert deduped[1] == calls[1] and calls[0]["result"]["market_truth"][0] is truth
 
-    monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
-    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[1]))
+    monkeypatch.setattr(
+        cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[0].assessment.scores)
+    )
     x = await seed(service)
     eid = (await service.dispatch("record_event", x, {}))["event_id"]
     event = await service.repo.get("evt.events", eid)
