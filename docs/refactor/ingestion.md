@@ -469,8 +469,9 @@ physical acquisition keys come from the same validated canonical identity.
 
 `RequestBudgetScope._active=None` is solely the real before-bind/after-release
 resource state. Acquire, host wait and block all raise when unbound. `bind` returns
-the exact owned engine lease. Releasing an older lease closes its backend while
-preserving a newer binding, so reload cleanup cannot disable its replacement.
+the exact owned engine lease and refuses a second binding while that lease is
+active. After the old lease is released, a replacement can bind; stale repeated
+cleanup of the old lease cannot clear that replacement.
 Runtime composition must supply an explicit backend and inject the scope into its
 services; the core does not choose a backend by inspecting a structural repository.
 
@@ -676,3 +677,27 @@ Proof: all 512 owned unit cases pass in 7.12s, zero skips. Four operational help
 page test modules pass strict mypy. Full physical/E2E qualification remains pending
 the corresponding runtime, recorded-read and quality-owned constructor companions;
 this checkpoint is not a claim that the held HTTP cohort is integrated.
+
+
+### Held HTTP lifetime follow-up
+
+`build_budget_backend(repo, *, owner)` centralizes explicit composition for the
+two supported concrete repository backends. PostgresRepository selects a real
+RequestLedger with its required database/owner; MemoryRepository explicitly selects
+the actual process-local implementation. Every other repository implementation
+raises TypeError, rather than being guessed to mean memory. The factory is a
+composition boundary, not an admission fallback. CLI source and market commands
+reuse it, so real isolated memory fixtures remain supported without accessing a
+nonexistent database_url.
+
+`RequestBudgetScope.bind` now refuses an already-active lease before replacing
+anything. The regression proves the first backend remains active and receives
+actual spend. After release, the replacement can bind, and stale old cleanup
+does not disable it. This preserves orderly reload ownership without silently
+abandoning a live backend.
+
+Proof: 29 admission/CLI cases pass in 1.64s, zero skips; engine/admission tests pass
+strict mypy and Ruff. Factory cases exercise explicit memory and unopened physical
+resources; unsupported repository rejection is an explicit closed runtime guard.
+Agents owns the CLI fake Source constructor update and production reuse of this
+common factory. Combined runtime/physical verification follows that exact pair.

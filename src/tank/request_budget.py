@@ -7,13 +7,16 @@ from collections import deque
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
 from datetime import UTC, datetime
-from typing import Protocol, Self
+from typing import TYPE_CHECKING, Protocol, Self
 
 from psycopg import AsyncConnection, OperationalError
 from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
 from tank.util import parse_iso_time
+
+if TYPE_CHECKING:
+    from tank.storage import Repository
 
 LEDGER_MAX_WAIT_S = 5.0
 
@@ -269,6 +272,19 @@ class MemoryBudgetBackend:
 type BudgetBackend = MemoryBudgetBackend | RequestLedger
 
 
+def build_budget_backend(repo: "Repository", *, owner: str) -> BudgetBackend:
+    """Compose only an explicitly supported concrete storage backend."""
+    from tank.storage import MemoryRepository, PostgresRepository
+
+    if not owner.strip():
+        raise ValueError("Request admission requires an explicit owner")
+    if isinstance(repo, PostgresRepository):
+        return RequestLedger(repo.database_url, owner)
+    if isinstance(repo, MemoryRepository):
+        return MemoryBudgetBackend(SystemBudgetClock())
+    raise TypeError("Request admission does not support this repository backend")
+
+
 class RequestBudgets(Protocol):
     async def wait_host(self, host: str) -> None: ...
     async def acquire_many(self, constraints: Sequence[BudgetConstraint], *, priority: int = 0) -> None: ...
@@ -347,6 +363,8 @@ class RequestBudgetScope:
         self._active: SharedRequestBudgets | None = None
 
     def bind(self, backend: BudgetBackend) -> SharedRequestBudgets:
+        if self._active is not None:
+            raise RuntimeError("Request admission scope already has an active binding")
         engine = SharedRequestBudgets(backend)
         self._active = engine
         return engine
