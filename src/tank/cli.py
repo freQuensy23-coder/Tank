@@ -452,9 +452,7 @@ def readiness_checks(settings):
                     checks.append({"check": "openma_" + key, "ok": configured(config.get(key))})
         except Exception as exc:
             checks.append({"check": name + "_syntax", "ok": False, "reason": type(exc).__name__})
-    checks.append(
-        {"check": "opencode_api_key", "ok": configured(getattr(settings, "opencode_api_key", None))}
-    )
+    checks.append({"check": "foundry_api_key", "ok": configured(getattr(settings, "foundry_api_key", None))})
     for name in (
         "openma_api_key",
         "codex_gateway_key",
@@ -529,7 +527,7 @@ def doctor():
 @click.argument("input_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--output-dir", required=True, type=click.Path(file_okay=False, path_type=Path))
 def calibrate(input_path, output_dir):
-    """Score >=200 frozen labeled news items with Jev and propose measured cutoffs."""
+    """Score >=200 frozen labeled news items with Decision-1 and propose measured cutoffs."""
     import httpx
 
     from tank.calibration import acquire

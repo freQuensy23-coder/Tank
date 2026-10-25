@@ -105,7 +105,7 @@ async def test_filter_outcomes_and_routing_are_visible_without_publishing(score,
         return_value={
             "score": score,
             "resolved_model_id": "fixture",
-            "jev_provider": "fixture",
+            "classifier_provider": "fixture",
             "requested_model_id": "fixture",
             "semantic_model_id": "fixture",
             "model_pin_evidence": {},

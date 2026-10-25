@@ -167,7 +167,7 @@ async def test_fundamentals_use_registered_slugs_only_and_partial_holders_revenu
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("secret_name", ["etherscan_api_key", "opencode_api_key", "codex_gateway_key"])
+@pytest.mark.parametrize("secret_name", ["etherscan_api_key", "foundry_api_key", "codex_gateway_key"])
 async def test_market_transport_and_recursive_metadata_never_persist_api_key(setup, secret_name):
     from tank.market.supply import SupplyCapture
 

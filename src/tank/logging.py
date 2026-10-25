@@ -45,7 +45,7 @@ def configure_logging(settings=None) -> None:
     if settings is not None:
         for name in (
             "openma_api_key",
-            "opencode_api_key",
+            "foundry_api_key",
             "telegram_token",
             "etherscan_api_key",
             "codex_gateway_key",

@@ -236,7 +236,7 @@ def outcome(data):
         cutoff = relevance.get("cutoff")
         if cutoff is not None:
             jev += f", порог {cutoff:.0%}"
-    fields = [("Jev", jev)]
+    fields = [("Фильтр", jev)]
     finished = "AGENT_COMPLETED" in stages or "AGENT_REJECTED" in stages
     if time_of(stages.get("AGENT_ACCEPTED")) > max(
         time_of(stages.get("AGENT_COMPLETED")), time_of(stages.get("AGENT_REJECTED"))
@@ -343,7 +343,7 @@ def outcome(data):
         fields.append(("Alerts", "не отправлено"))
         reason = reason_text(failure.get("reason", ""))
         for code, label in {
-            "FILTER_ITEM": "фильтр Jev",
+            "FILTER_ITEM": "фильтр",
             "ROUTE_ITEM": "маршрутизация",
             "AGENT_MESSAGE": "передача агенту",
             "RUN_MARKET_TRUTH": "рыночный анализ",
@@ -363,7 +363,7 @@ def outcome(data):
         fields.append(("Alerts", "не отправлено — материал отсеян до анализа"))
         return {
             "code": "JEV_REJECTED",
-            "status": "Отсеяно Jev",
+            "status": "Отсеяно фильтром",
             "fields": fields,
             "reason": "Релевантность ниже порога",
         }
@@ -501,7 +501,7 @@ def outcome(data):
         }
     return {
         "code": "QUEUED",
-        "status": "В очереди к агенту" if decision in {"SEND", "ALWAYS"} else "В очереди на Jev",
+        "status": "В очереди к агенту" if decision in {"SEND", "ALWAYS"} else "В очереди на фильтр",
         "fields": fields,
         "reason": "",
     }
