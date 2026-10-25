@@ -199,6 +199,7 @@ async def test_publication_freezes_reproducible_bundle_and_queues_only(
             "ems_id": "ems",
             "event_id": eid,
             "class": "STRUCTURAL_SHOCK",
+            "criterion": "G5",
         },
     )
     result = await service.dispatch(
@@ -2124,7 +2125,6 @@ def complete_assessment_fixture(ems_id, event_id, **changes):
         version=1,
         cutoff=clock_iso(),
         structural_gates=[],
-        contradictions=[],
         class_reasons=["Synthetic fixture primary fact"],
         config_version="fixture",
         code_version="fixture",
@@ -2790,6 +2790,7 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(
                 "ems_id": "repeat-ems",
                 "event_id": eid,
                 "class": "STRUCTURAL_SHOCK",
+                "criterion": "G5",
                 "certainty": "HIGH",
             },
         )
@@ -3637,6 +3638,7 @@ async def test_bundle_directory_sync_failure_never_creates_database_reference(
             "ems_id": "durability-ems",
             "event_id": eid,
             "class": "STRUCTURAL_SHOCK",
+            "criterion": "G5",
         },
     )
     original_sync = os.fsync
@@ -5528,6 +5530,7 @@ async def test_card_generated_at_is_the_version_write_and_deliver_is_runnable_th
             "ems_id": "ems",
             "event_id": eid,
             "class": "STRUCTURAL_SHOCK",
+            "criterion": "G5",
         },
     )
     result = await service.dispatch(
@@ -5659,6 +5662,7 @@ async def test_publish_card_keeps_market_truth_once_and_bounds_evidence_and_ops_
             "ems_id": "ems",
             "event_id": eid,
             "class": "STRUCTURAL_SHOCK",
+            "criterion": "G5",
         },
     )
     reads = []
