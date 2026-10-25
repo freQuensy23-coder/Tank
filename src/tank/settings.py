@@ -200,6 +200,14 @@ class Settings(BaseSettings):
             raise ValueError("Version provenance no longer matches the captured identity")
         return self._version_identity
 
+    def captured_config_paths(self) -> tuple[str, ...]:
+        """List the immutable configuration inventory attached to resolved provenance."""
+        self.require_versions()
+        snapshot = self._config_snapshot
+        if snapshot is None:
+            raise ValueError("Captured configuration is unavailable")
+        return tuple(sorted(snapshot))
+
     def configured_secrets(self) -> frozenset[str]:
         """Return configured credentials without reading any credential files."""
         secrets = {
