@@ -188,30 +188,35 @@ func (c *Client) once(ctx context.Context, method string, u *url.URL, host strin
 			return nil, err
 		}
 	}
+	buckets, err := c.Gate.PlanFetch(method, host, u.Path, effective, requestBody)
+	if err != nil {
+		return nil, err
+	}
 	for attempt := 0; attempt < Attempts; attempt++ {
-		if err := c.Gate.Admit(ctx, method, host, u.Path, effective, requestBody, priority); err != nil {
+		if err := c.Gate.AdmitBuckets(ctx, host, buckets, priority); err != nil {
 			return nil, err
 		}
 		release, err := c.Gate.Enter(ctx, host, priority)
 		if err != nil {
 			return nil, err
 		}
-		status, header, data, err := c.send(ctx, method, u, params, requestBody)
+		initial := initialAdmission{buckets: buckets, lease: &hostLease{release: release}}
+		packet, err := c.send(ctx, method, u, params, requestBody, priority, initial)
+		initial.lease.close()
 		if err != nil {
-			release()
+			var rejected *httpAdmissionError
+			if errors.As(err, &rejected) {
+				return nil, rejected.cause
+			}
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
 			return nil, fmt.Errorf("%s: %s", host, errorName(err))
 		}
-		retry, err := c.Gate.Observe(ctx, host, status, header)
-		release()
-		if err != nil {
-			return nil, err
-		}
-		if retry {
+		if packet.retry {
 			continue
 		}
+		status, data := packet.status, packet.data
 		if status >= 400 {
 
 			return nil, fmt.Errorf("%s: HTTP %d %s", host, status, prefix(string(data), 200))
@@ -225,7 +230,7 @@ func (c *Client) once(ctx context.Context, method string, u *url.URL, host strin
 	return nil, fmt.Errorf("%s: rate limited after bounded retries", host)
 }
 
-func (c *Client) send(ctx context.Context, method string, u *url.URL, params map[string]string, body json.RawMessage) (int, http.Header, []byte, error) {
+func (c *Client) send(ctx context.Context, method string, u *url.URL, params map[string]string, body json.RawMessage, priority int, initial initialAdmission) (observedHTTPResponse, error) {
 	target := *u
 	if len(params) > 0 {
 		query := target.Query()
@@ -241,7 +246,7 @@ func (c *Client) send(ctx context.Context, method string, u *url.URL, params map
 
 	req, err := http.NewRequestWithContext(ctx, method, target.String(), payload)
 	if err != nil {
-		return 0, nil, nil, err
+		return observedHTTPResponse{}, err
 	}
 	if c.UserAgent != "" {
 		req.Header.Set("User-Agent", c.UserAgent)
@@ -250,18 +255,7 @@ func (c *Client) send(ctx context.Context, method string, u *url.URL, params map
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return 0, nil, nil, err
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, nil, nil, err
-	}
-	return resp.StatusCode, resp.Header, data, nil
+	return c.readAdmitted(req, priority, initial, providerResponse)
 }
 
 func errorName(err error) string {
@@ -350,9 +344,14 @@ func (c *Client) Fetch(ctx context.Context, method, rawURL string, params, heade
 		if err != nil {
 			return nil, err
 		}
-		got, err := c.raw(ctx, method, u, params, headers, body)
+		initial := initialAdmission{buckets: buckets, lease: &hostLease{release: release}}
+		got, err := c.raw(ctx, method, u, params, headers, body, priority, initial)
+		initial.lease.close()
 		if err != nil {
-			release()
+			var rejected *httpAdmissionError
+			if errors.As(err, &rejected) {
+				return nil, rejected.cause
+			}
 			c.count(host, false)
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
@@ -362,13 +361,7 @@ func (c *Client) Fetch(ctx context.Context, method, rawURL string, params, heade
 			}
 			return nil, fmt.Errorf("%s: %s", host, errorName(err))
 		}
-		retry, err := c.Gate.Observe(ctx, host, got.Status, got.header)
-		release()
-		if err != nil {
-			c.count(host, false)
-			return nil, err
-		}
-		if retry {
+		if got.retry {
 			continue
 		}
 		c.count(host, got.Status < 400)
@@ -380,9 +373,10 @@ func (c *Client) Fetch(ctx context.Context, method, rawURL string, params, heade
 type rawResponse struct {
 	Fetched
 	header http.Header
+	retry  bool
 }
 
-func (c *Client) raw(ctx context.Context, method string, u *url.URL, params, headers map[string]string, body json.RawMessage) (*rawResponse, error) {
+func (c *Client) raw(ctx context.Context, method string, u *url.URL, params, headers map[string]string, body json.RawMessage, priority int, initial initialAdmission) (*rawResponse, error) {
 	target := *u
 	if len(params) > 0 {
 		query := target.Query()
@@ -408,21 +402,11 @@ func (c *Client) raw(ctx context.Context, method string, u *url.URL, params, hea
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := c.HTTP.Do(req)
+	packet, err := c.readAdmitted(req, priority, initial, capturedResponse)
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, FetchLimit+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > FetchLimit {
-		return nil, ErrTooLarge
-	}
-	return &rawResponse{Fetched{resp.StatusCode, resp.Header.Get("Content-Type"), data}, resp.Header}, nil
+	return &rawResponse{Fetched: Fetched{packet.status, packet.header.Get("Content-Type"), packet.data}, header: packet.header, retry: packet.retry}, nil
 }
 
 func (c *Client) count(host string, ok bool) {
