@@ -23,16 +23,7 @@ class RecordedBodyProvenance(DomainModel):
     captured_body_sha256: PageDigest
 
 
-class ReconstructedPageProvenance(DomainModel):
-    mode: Literal["VERIFIED_JSON_RECONSTRUCTION"]
-    input_sha256: PageDigest
-    catalog_sha256: PageDigest
-    record_id: str = Field(min_length=1)
-    result_sha256: PageDigest
-    available_at: Timestamp
-
-
-type PageReadProvenance = LivePageProvenance | RecordedBodyProvenance | ReconstructedPageProvenance
+type PageReadProvenance = LivePageProvenance | RecordedBodyProvenance
 
 
 class PageRead(DomainModel):

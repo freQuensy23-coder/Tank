@@ -2,12 +2,13 @@
 
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Never, Protocol
 
 import httpx
 
+from tank.contracts import DomainModel
 from tank.contracts.http_policy import HttpAdmission
-from tank.contracts.page_evidence import LivePageProvenance, PageRead
+from tank.contracts.page_evidence import LivePageProvenance, PageDigest, PageRead
 from tank.http_transport import RequestGuard, send_admitted
 from tank.time_precision import collection_clock
 from tank.util import sha256
@@ -15,6 +16,14 @@ from tank.util import sha256
 
 class VerifiedRecordedPageReader(Protocol):
     async def read(self, url: str) -> PageRead: ...
+
+
+class RecordedResultsOnlyPageReader(DomainModel):
+    input_sha256: PageDigest
+    captured_result_catalog_sha256: PageDigest
+
+    async def read(self, url: str) -> Never:
+        raise ValueError("Verified packet retains tool results but no original page response bytes")
 
 
 @dataclass(frozen=True, slots=True)

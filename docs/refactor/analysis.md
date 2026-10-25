@@ -411,9 +411,9 @@ no sixty-second value/clamp is synthesized.
 
 `contracts.page_evidence.PageRead` validates binary bytes against their actual
 computed digest and the two-megabyte bound. An original recorded-body claim must
-match its recorded digest. Live receipt and verified recorded/reconstructed
-provenance are distinct named records. Unknown source Content-Type remains None;
-a reconstruction's format is not an original source response header. Infrastructure
+match its recorded digest. Live receipt and verified original-body provenance are distinct named records.
+Unknown source Content-Type remains None. No reconstruction variant is introduced
+without an actual consumer. Infrastructure
 handles are precise protocol/dataclass composition objects in analysis.page_access,
 not Pydantic arbitrary types. `LivePageAccess` requires admission; `RecordedPageAccess`
 requires its recorded reader. The live reader owns only a client it constructs and
@@ -427,3 +427,13 @@ binary digest fidelity, unknown media and client lifetime. These are additive
 contracts; Market/Event activation and actual verified offline reader proof remain
 held for the companion cohort. The verified replay inventory already substitutes
 complete captured external tool results; raw response reconstruction is not assumed.
+
+
+Actual caller inventory correction: run_captured_tools already intercepts external
+web_search/fetch_page through exact captured call identity, arguments and availability;
+native replay uses CapturedToolResult. Its old captured_http callback reconstructing
+JSON response bytes is unused by those reads and is removed during activation.
+RecordedResultsOnlyPageReader binds the verified packet/result catalog and refuses
+raw-page requests because this input format retains complete tool results rather
+than original response bytes. This refusal occurs before admission/client creation.
+No speculative reconstruction model/reader is retained.
