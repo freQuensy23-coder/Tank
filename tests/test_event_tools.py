@@ -22,7 +22,7 @@ async def service(tmp_path: Path):
     repo = MemoryRepository()
     await repo.open()
     settings = Settings(data_dir=tmp_path)
-    return EventToolService(repo, settings, None, None)
+    return EventToolService(repo, settings, None, None, versions=fixture_versions())
 
 
 @pytest.fixture
@@ -1357,7 +1357,7 @@ async def test_bundle_keeps_producing_model_and_separate_session_config(service)
     context = dict(session, role="analyst")
     result = await service.dispatch("record_event", x, context)
     event = await service.repo.get("evt.events", result["event_id"])
-    assert event["config_version"] == service.settings.config_version
+    assert event["config_version"] == service.versions.config_version
     assert event["session_config_version"] == "prior-config"
     assert event["model_id"] == "prior-model"
     dims = {
@@ -1412,7 +1412,7 @@ async def test_bundle_keeps_producing_model_and_separate_session_config(service)
     assert service.settings.openma_model not in bundle["model_ids"]
     assert bundle["prompt_versions"] == ["prior-prompt"]
     assert bundle["agent_versions"] == ["prior-agent"]
-    assert {"prior-config", service.settings.config_version} <= set(bundle["config_versions"])
+    assert {"prior-config", service.versions.config_version} <= set(bundle["config_versions"])
 
 
 async def test_tool_schema_uses_frozen_runtime_snapshot_after_disk_edit(service, tmp_path: Path) -> None:
@@ -2150,6 +2150,7 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
         http=service.http,
         search=service.search_service,
         reference_clock=service.reference_clock,
+        versions=fixture_versions(),
     )
     item_id = new_id("item")
     stamp = iso()
@@ -3595,6 +3596,7 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
             http=service.http,
             search=service.search_service,
             reference_clock=service.reference_clock,
+            versions=fixture_versions(),
         )
     repo = service.repo
     sid = new_id("native-session")
@@ -4133,10 +4135,16 @@ async def test_trusted_reference_clock_changes_logical_age_only(
     )
     clock = TrustedFixtureClock(load_inputs(path, options))
     with pytest.raises(ValueError, match="isolated fixture"):
-        EventToolService(service.repo, service.settings, None, None, reference_clock=clock)
+        EventToolService(
+            service.repo, service.settings, None, None, reference_clock=clock, versions=fixture_versions()
+        )
     with pytest.raises(ValueError, match="isolated fixture"):
-        EventToolService(service.repo, options, None, None, reference_clock=object())
-    reference = EventToolService(service.repo, options, None, None, reference_clock=clock)
+        EventToolService(
+            service.repo, options, None, None, reference_clock=object(), versions=fixture_versions()
+        )
+    reference = EventToolService(
+        service.repo, options, None, None, reference_clock=clock, versions=fixture_versions()
+    )
     x = extraction()
     x["public_at"] = dict(value=public, precision="DAY", basis="Original publication", quote=None)
     x["event_time"] = dict(value=public, precision="BUCKET_1D", quote=None)
@@ -4169,7 +4177,9 @@ async def test_trusted_reference_clock_changes_logical_age_only(
         "item_id"
     ] == "i"
 
-    unimported = EventToolService(MemoryRepository(), options, None, None, reference_clock=clock)
+    unimported = EventToolService(
+        MemoryRepository(), options, None, None, reference_clock=clock, versions=fixture_versions()
+    )
     assert not (await unimported.dispatch("search_tank_items", {"query": "Product"}, {}))["items"]
     monkeypatch.setattr("tank.event_tools.utcnow", lambda: parse_time("2022-09-22T01:00:00Z"))
     result = await reference.dispatch("record_event", x, {})

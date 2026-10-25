@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from score_fixtures import unassessed_score_dimensions
+from source_support import fixture_versions
 
 from tank.analysis.truth import (
     _oi_stats,
@@ -420,7 +421,12 @@ async def test_assessment_persists_with_event_anchor() -> None:
             return {"token_id": token_id, "cutoff": cutoff, "anchor": anchor}
 
     repo = Repo()
-    service = MarketTruthService(repo, SimpleNamespace(config_version="test", code_version="test"), Market())
+    service = MarketTruthService(
+        repo,
+        SimpleNamespace(config_version="test", code_version="test"),
+        Market(),
+        versions=fixture_versions(),
+    )
     result = await service.assess("EVT-1", "WLD", "2026-10-16T12:00:00Z")
     assert repo.records[0][0] == "ana.market_truth"
     assert result["relative"]["anchor"]["type"] == "T0"
@@ -1750,7 +1756,10 @@ async def test_assessment_cpu_runs_off_event_loop_and_default_cutoff_is_closed_m
             return {"token_id": token, "cutoff": cutoff, "anchor": anchor}
 
     service = module.MarketTruthService(
-        Repo(), SimpleNamespace(config_version="test", code_version="test"), Market()
+        Repo(),
+        SimpleNamespace(config_version="test", code_version="test"),
+        Market(),
+        versions=fixture_versions(),
     )
     result = await service.assess(None, "T")
     assert called[0] != main_thread
@@ -2604,7 +2613,10 @@ async def test_assessment_calls_snapshot_with_shared_canonical_anchor(
 
     market = Market()
     result = await MarketTruthService(
-        Repo(), SimpleNamespace(config_version="test", code_version="test"), market
+        Repo(),
+        SimpleNamespace(config_version="test", code_version="test"),
+        market,
+        versions=fixture_versions(),
     ).assess("EVT", "T", "2026-10-16T12:00:00Z")
     assert market.calls == [event_anchor(event).to_wire()]
     assert market.calls[0]["type"] == kind

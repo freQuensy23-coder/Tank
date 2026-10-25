@@ -25,6 +25,7 @@ from tank.analysis.identity import (
 )
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.analysis.watch_contracts import WatchCondition
+from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.source_repository import SourceExtractionRepository
 from tank.contracts.tool_schema import SCOPED_TOOLS as SCOPED_TOOLS
 from tank.contracts.tool_schema import validate_schema as validate_schema
@@ -365,9 +366,19 @@ class EventToolService:
     }
 
     def __init__(
-        self, repo, settings, market_truth, decision_engine, *, http=None, search=None, reference_clock=None
+        self,
+        repo,
+        settings,
+        market_truth,
+        decision_engine,
+        *,
+        versions: ResolvedVersionIdentity,
+        http=None,
+        search=None,
+        reference_clock=None,
     ):
         self.repo, self.settings, self.truth, self.engine = repo, settings, market_truth, decision_engine
+        self.versions = versions
         self.source_extraction = SourceExtractionRepository(repo)
         self.http = http
         self.search_service = search
@@ -403,8 +414,8 @@ class EventToolService:
         return {
             k: v
             for k, v in dict(
-                config_version=self.settings.config_version,
-                code_version=self.settings.code_version,
+                config_version=self.versions.config_version,
+                code_version=self.versions.code_version,
                 session_config_version=ctx.get("session_config_version", ctx.get("config_version")),
                 session_code_version=ctx.get("session_code_version", ctx.get("code_version")),
                 model_id=ctx.get("model_id"),
@@ -2978,14 +2989,14 @@ class EventToolService:
             "contradictions": list(event["contradictions"]),
             "data_confidence": [m["data_confidence"] for m in truths],
             "unresolved_fields": [],
-            "config_hash": self.settings.config_version,
+            "config_hash": self.versions.config_version,
             "analysis_inputs_hash": sha256(
                 {
                     name: self.settings.load_config(name)
                     for name in ["registry", "thresholds", "semantics", "dependency_map"]
                 }
             ),
-            "code_version": self.settings.code_version,
+            "code_version": self.versions.code_version,
             "model_ids": [],
             "rich_message": rich_message,
             "producing_session_provenance": self.provenance(c),
