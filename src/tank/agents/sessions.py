@@ -44,6 +44,13 @@ from tank.agents.native_sessions import (
     NativeStoredSessionBinding,
     native_role_for_message,
 )
+from tank.agents.outbound_inputs import (
+    AcceptedOutboundInput,
+    initial_input_definition,
+    outbound_message_record,
+    parse_outbound_input,
+    recoverable_outbound_inputs,
+)
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.provenance import resolve_agent_provenance
 from tank.agents.security import redact_tool_arguments
@@ -675,51 +682,91 @@ class SessionService:
         self.start_stream(sid)
         return session
 
-    async def post_message_intent(self, sid, key):
+    async def post_message_intent(self, sid: str, key: str) -> dict[str, JsonValue]:
         session = await self.repo.get("ops.agent_sessions", sid)
-        intent = next(row for row in session["message_log"] if row["message_id"] == key)
-        if intent.get("remote_event_id"):
+        if session is None:
+            raise KeyError(sid)
+        pending = parse_outbound_input(outbound_message_record(session, key))
+        if isinstance(pending, AcceptedOutboundInput):
             return session
-        accepted = await self.post_input(sid, parse_native_input(intent["body"]), idem="message:" + key)
-        accepted_at, identity = self.clock_timestamp(), self.accepted_input_id(accepted)
+        receipt = await self.post_input(sid, pending.body, idem="message:" + key)
+        accepted_at = self.clock_timestamp()
+        accepted = pending.accepted(receipt, accepted_at)
         async with self.repo.lock("session:" + sid):
-            session = await self.repo.get("ops.agent_sessions", sid)
-            intent = next(row for row in session["message_log"] if row["message_id"] == key)
-            if intent.get("remote_event_id") and intent["remote_event_id"] != identity:
-                raise ValueError("Idempotent message acceptance changed native input identity")
-            if identity:
-                intent.setdefault("native_input_attempts", {})[identity] = intent.get("retry_count", 0)
+            current = await self.repo.get("ops.agent_sessions", sid)
+            if current is None:
+                raise KeyError(sid)
+            intent = outbound_message_record(current, key)
+            durable = parse_outbound_input(intent)
+            if isinstance(durable, AcceptedOutboundInput):
+                if (
+                    durable.event_id is not None
+                    and accepted.event_id is not None
+                    and durable.event_id != accepted.event_id
+                ):
+                    raise ValueError("Idempotent message acceptance changed native input identity")
+                if durable.event_id is None and accepted.event_id is not None:
+                    if initial_input_definition(intent) != pending.definition():
+                        raise ValueError("Outbound input advanced before acknowledgment refinement")
+                    lineage = JournalInputLineage.from_record(intent)
+                    intent["native_input_attempts"] = {
+                        **(lineage.attempts if lineage.attempts is not None else {}),
+                        accepted.event_id: pending.attempt,
+                    }
+                    intent["remote_event_id"] = accepted.event_id
+                    intent["initial_input_acceptance"] = receipt.model_dump(mode="json")
+                    await put_owned_session(self.repo, sid, current)
+                return current
+            if durable != pending:
+                raise ValueError("Outbound input intent changed before acceptance committed")
+            identity = accepted.event_id
+            if identity is not None:
+                attempts = JournalInputLineage.from_record(intent).attempts
+                intent["native_input_attempts"] = {
+                    **(attempts if attempts is not None else {}),
+                    identity: pending.attempt,
+                }
             intent.update(
                 **accepted_at.fields("sent_at"),
                 remote_event_id=identity,
-                turn_status="PENDING"
-                if intent.get("turn_status") == "ACCEPTING"
-                else intent.get("turn_status", "PENDING"),
+                initial_input_acceptance=receipt.model_dump(mode="json"),
+                turn_status="PENDING",
             )
-            if key not in session.setdefault("messages", []):
-                session["messages"].append(key)
-            session["status"] = "OPEN"
-            if intent["payload"].get("item_id"):
-                session.update(accepted_at.fields("last_item_at"))
-                session.update(
-                    propagate_timestamp(intent, "item_observed_at").fields("last_item_observed_at")
-                )
-                session.get("missing_fields", {}).pop("last_item_at", None)
-                session["last_item_at_reason"] = None
-            await put_owned_session(self.repo, sid, session)
-            await session_progress(self.repo, self.settings, session)
-            return session
+            messages = current.setdefault("messages", [])
+            if not isinstance(messages, list):
+                raise ValueError("Accepted session message identities must be an array")
+            if key not in messages:
+                messages.append(key)
+            current["status"] = "OPEN"
+            if pending.source.item_id is not None:
+                current.update(accepted_at.fields("last_item_at"))
+                current.update(pending.source.observed_at.fields("last_item_observed_at"))
+                missing = current.get("missing_fields")
+                if isinstance(missing, dict):
+                    missing.pop("last_item_at", None)
+                elif missing is not None:
+                    raise ValueError("Session missing-field provenance must be an object")
+                current["last_item_at_reason"] = None
+            await put_owned_session(self.repo, sid, current)
+            await session_progress(self.repo, self.settings, current)
+            return current
 
-    async def recover_outbound_inputs(self, sid):
+    async def recover_outbound_inputs(self, sid: str) -> None:
         async with self.send_locks.setdefault(sid, asyncio.Lock()):
             session = await self.repo.get("ops.agent_sessions", sid)
-            for message in session.get("message_log", []):
-                if message.get("turn_status") == "ACCEPTING" and not message.get("sent_at"):
-                    await self.post_message_intent(sid, message["message_id"])
+            if session is None:
+                raise KeyError(sid)
+            for message in recoverable_outbound_inputs(session):
+                await self.post_message_intent(sid, message.message_id)
         session = await self.repo.get("ops.agent_sessions", sid)
+        if session is None:
+            raise KeyError(sid)
         await session_progress(self.repo, self.settings, session)
-        if session.get("pending_retry_event"):
-            await self.process_event(sid, session["pending_retry_event"])
+        pending_retry = session.get("pending_retry_event")
+        if pending_retry is not None:
+            if not isinstance(pending_retry, dict):
+                raise ValueError("Retained native retry event must be an object")
+            await self.process_event(sid, pending_retry)
 
     async def post_input(self, sid: str, body: NativeInput, *, idem: str) -> NativeInputAcknowledgment:
         response = await self.request(

@@ -762,3 +762,26 @@ including the actual acknowledged-execution rebind. The new pure model and
 service-boundary tests pass independent strict mypy. Pending/accepted/retry
 intent phase models and durable write/recovery migration remain work in
 progress; this checkpoint is not a release of the outbound slice.
+
+PendingOutboundInput and AcceptedOutboundInput now drive initial posting and
+outbound recovery. An accepted unreported or empty protocol receipt is retained
+as that exact observation; it is never fabricated into an event identity and
+never reposted merely because its ID is absent. Historical accepted rows whose
+receipt was not retained use LegacyUnreportedAcceptance with an explicit reason.
+A later retry ID cannot be substituted for an unknown original receipt.
+
+Posting compares the durable initial definition before committing acceptance.
+Concurrent confirmed receipts retain stronger identity evidence; an actual
+reported receipt can refine an unreported receipt only for the same unchanged
+initial input. Recovery by a new controller reuses the original durable body and
+idempotency key after a lost response. Invalid scalar aliases, null retained
+receipt, changed body and conflicting identities refuse before posting or
+before the acceptance write as appropriate. Source observation time remains
+explicitly unknown when unreported, distinct from the actual local acceptance
+clock.
+
+Seventy focused phase/lineage/native-retry/audit/barrier cases pass in 5.65
+seconds. Independent strict models/test checks pass. The generic private journal
+storage adapter remains a boundary under migration; these models do not pretend
+to be a full SessionService aggregate. The retry writer still requires its
+separate pending/reported/unknown-budget conversion before outbound release.
