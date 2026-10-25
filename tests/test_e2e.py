@@ -107,7 +107,12 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
         "sources": source_configuration({"sources": [{"source_id": "S30", "feeds": []}]}),
         "api_limits": _fixture_api_limits(),
         "exchange_addresses": {"version": "synthetic-fixture", "wallet_lists": []},
-        "registry": {"tokens": [{"token_id": "T", "symbol": "T"}], "entities": [], "x_accounts": []},
+        "registry": {
+            "tokens": [{"token_id": "T", "symbol": "T"}],
+            "entities": [],
+            "instruments": [],
+            "x_accounts": [],
+        },
         "thresholds": _fixture_thresholds(),
         "openma": {
             "agent_id": "synthetic-agent",
@@ -324,10 +329,23 @@ async def test_full_sse_pipeline_postgres(
             "x_accounts": [],
             "tokens": [{"token_id": "T", "symbol": "T"}],
             "entities": [
-                {"entity_id": "binance", "name": "Binance"},
-                {"entity_id": "synthetic-venue", "name": "Synthetic venue"},
+                {"entity_id": "binance", "name": "Binance", "names": ["Binance"], "aliases": []},
+                {
+                    "entity_id": "synthetic-venue",
+                    "name": "Synthetic venue",
+                    "names": ["Synthetic venue"],
+                    "aliases": [],
+                },
             ],
-            "instruments": [{"instrument_id": "mock:spot:T", "token_id": "T"}],
+            "instruments": [
+                {
+                    "instrument_id": "mock:spot:T",
+                    "token_id": "T",
+                    "venue": "mock",
+                    "market_type": "SPOT",
+                    "venue_symbol": "TUSDT",
+                }
+            ],
         },
         "thresholds": _fixture_thresholds(),
         "openma": {
