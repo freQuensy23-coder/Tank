@@ -31,6 +31,7 @@ from tank.agents.native_inputs import (
     observe_native_input,
     parse_native_input,
 )
+from tank.agents.native_readback import NativeSessionMissing, NativeSessionReader
 from tank.agents.native_sessions import (
     NativeOpeningSource,
     NativeSessionCreate,
@@ -48,8 +49,13 @@ from tank.agents.security import redact_tool_arguments
 from tank.agents.session_contracts import (
     ExecutionPoll,
     HistoryPoll,
+    LegacyToolContext,
+    NativeToolSyncResult,
+    PromptRecoveryRecord,
     ScoutProposalIdentity,
     ScoutSessionReference,
+    SessionPromptState,
+    SessionToolBoundaryState,
 )
 from tank.agents.session_ownership import put_owned_session
 from tank.agents.tool_contracts import (
@@ -64,20 +70,24 @@ from tank.agents.tool_contracts import (
 from tank.agents.wire import tool_wire_result
 from tank.agents.workflow import SOURCE_COMPLETION_VERSION
 from tank.contracts.json import decode_json
-from tank.contracts.provenance import AgentProvenance, ResolvedVersionIdentity
-from tank.contracts.session_admission import (
-    BUSY_RUNTIME_STATES,
+from tank.contracts.openma import (
+    ManagedAgentName,
+    ManagedToolManifest,
+    NativeSessionToolOverride,
+    NativeSessionToolUpdate,
+    OpenMAContractViolation,
+    openma_tools_match,
 )
+from tank.contracts.provenance import AgentProvenance, ResolvedVersionIdentity
 from tank.contracts.source_items import (
     FailedExtraction,
     SkippedExtraction,
 )
 from tank.contracts.source_repository import SourceExtractionRepository
 from tank.delivery import DeliveryDeferred
-from tank.openma_sync import agent_tools
 from tank.ops_progress import session_progress
-from tank.runtime_contracts import ScoutMessage, ScoutReviewJob
-from tank.telegram_inbox import DOCUMENT_LIMIT, closed_reason, question_message, record_answer
+from tank.runtime_contracts import ScoutMessage, ScoutReviewJob, UserQuestionMessage
+from tank.telegram_inbox import DOCUMENT_LIMIT, GONE_TEXT, closed_reason, question_message, record_answer
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, parse_time, sha256, utcnow
 
@@ -355,34 +365,37 @@ class SessionService:
         await put_owned_session(self.repo, sid, session)
         return session
 
-    async def continuable(self, payload):
-        """A follow-up continues only a live session; otherwise the reader gets just the reason."""
-        question_id = payload["question_id"]
-        session = await self.repo.get("ops.agent_sessions", payload.get("session_id") or "")
-        if getattr(self.settings, "replay", False):
+    async def continuable(self, request: UserQuestionMessage) -> bool:
+        session = await self.repo.get("ops.agent_sessions", request.session_id)
+        if self.settings.replay:
             session = None
         closed = closed_reason(session)
         if closed is not None:
-            await record_answer(self.repo, question_id, closed[1], status=closed[0])
+            await record_answer(self.repo, request.question_id, closed[1], status=closed[0])
             return False
-        try:
-            remote = await self.request("GET", f"sessions/{session['session_id']}")
-        except httpx.HTTPStatusError as error:
-            if error.response.status_code != 404:
-                raise
-            remote = {"status": "terminated", "missing": True}
-        remote = remote.get("data", remote)
-        if remote.get("status") == "terminated" or remote.get("archived_at"):
-            async with self.repo.lock("session:" + session["session_id"]):
-                current = await self.repo.get("ops.agent_sessions", session["session_id"])
-                current["remote_state"] = {
-                    "status": remote.get("status"),
-                    "archived_at": remote.get("archived_at"),
-                    **self.clock_timestamp().fields("checked_at"),
-                }
-                await put_owned_session(self.repo, session["session_id"], current)
-            status, text = closed_reason(current) or ("ARCHIVED", None)
-            await record_answer(self.repo, question_id, text, status=status)
+        observed = await NativeSessionReader(self).state(request.session_id)
+        if isinstance(observed, NativeSessionMissing) or (
+            observed.status == "terminated" or observed.archived_at is not None
+        ):
+            async with self.repo.lock("session:" + request.session_id):
+                current = await self.repo.get("ops.agent_sessions", request.session_id)
+                if current is not None:
+                    current["remote_state"] = {
+                        **observed.model_dump(mode="json"),
+                        **self.clock_timestamp().fields("checked_at"),
+                    }
+                    await put_owned_session(self.repo, request.session_id, current)
+            if current is None:
+                await record_answer(self.repo, request.question_id, GONE_TEXT, status="NO_SESSION")
+                return False
+            if isinstance(observed, NativeSessionMissing):
+                status, text = "NO_SESSION", GONE_TEXT
+            else:
+                closure = closed_reason(current)
+                if closure is None:
+                    raise ValueError("Observed closed native session has no follow-up closure")
+                status, text = closure
+            await record_answer(self.repo, request.question_id, text, status=status)
             return False
         return True
 
@@ -410,73 +423,82 @@ class SessionService:
         if retired or "retired_message_ids" in session:
             session["retired_message_ids"] = sorted(retired)
 
-    def analyst_tools(self, *, scout=False):
-        """The current analyst toolset: built-ins plus the custom tools of config/skills."""
-        reader = getattr(self.settings, "read_config_json", None)
-        if reader is None:
-            return None
-        return agent_tools(self.settings, "tank-scout-reviewer" if scout else "tank-event-analyst")
+    def analyst_tools(self, *, scout: bool) -> ManagedToolManifest:
+        name: ManagedAgentName = "tank-scout-reviewer" if scout else "tank-event-analyst"
+        return ManagedToolManifest.from_definitions(
+            name, self.settings.read_config_json(f"skills/{name}/tools.json")
+        )
 
     @staticmethod
-    def legacy_contract(session):
-        return session.get("model_context_version", 0) < CONTEXT_VERSION or session.get(
-            "active_message_id"
-        ) in session.get("legacy_model_message_ids", [])
+    def legacy_contract(session: dict[str, JsonValue]) -> bool:
+        return LegacyToolContext.from_record(session).has_legacy_turn(CONTEXT_VERSION)
 
-    async def sync_tools(self, sid, *, resume=False):
-        """Migrate tools at an idle input boundary without replacing the session or its history."""
-        if getattr(self.settings, "replay", False):
-            return
+    async def sync_tools(self, sid: str, *, resume: bool = False) -> NativeToolSyncResult:
+        if self.settings.replay:
+            return NativeToolSyncResult(status="READ_ONLY")
         session = await self.repo.get("ops.agent_sessions", sid)
         if session is None:
-            return None
-        tools = self.analyst_tools(scout=bool(session.get("proposal_id")))
-        migrating = session.get("model_context_version", 0) < CONTEXT_VERSION
-        if not tools or (not migrating and session.get("tools_sha256") == sha256(tools)):
-            return None
-        if not resume and (
-            session.get("active_message_id") or session.get("runtime_status") in BUSY_RUNTIME_STATES
-        ):
-            return "BUSY"
-        try:
-            if resume:
-                remote = await self.request("GET", f"sessions/{sid}")
-                if remote.get("data", remote).get("status") != "idle":
-                    raise ValueError("Wait for the native tool boundary before updating its tools")
-            await self.request("POST", f"sessions/{sid}", json={"agent": {"tools": tools}})
-            remote = await self.request("GET", f"sessions/{sid}")
-        except httpx.HTTPStatusError as error:
-            if migrating or error.response.status_code == 429 or error.response.status_code >= 500:
-                raise
-            return
-        remote = remote.get("data", remote)
-        descriptor = self.agent_provenance(remote, {}, session.get("agent_id"))
+            raise KeyError(sid)
+        state = SessionToolBoundaryState.from_record(session)
+        manifest = self.analyst_tools(scout=state.proposal_id is not None)
+        tools_sha256 = sha256(manifest.tools)
+        migrating = state.context.needs_migration(CONTEXT_VERSION)
+        if not migrating and state.tools_sha256 == tools_sha256:
+            return NativeToolSyncResult(status="UNCHANGED")
+        if not resume and state.is_busy():
+            return NativeToolSyncResult(status="BUSY")
+        reader = NativeSessionReader(self)
+        observed = await reader.snapshot(sid, prompt_label=state.prompt.recovery_label())
+        if isinstance(observed, NativeSessionMissing):
+            raise KeyError(sid)
+        if observed.state.status != "idle" or observed.state.archived_at is not None:
+            if not resume:
+                return NativeToolSyncResult(status="BUSY")
+            raise ValueError("Wait for the native tool boundary before updating its tools")
+        if not openma_tools_match(observed.observation.tools, manifest.tools):
+            request = NativeSessionToolUpdate(agent=NativeSessionToolOverride(tools=manifest.tools))
+            await self.request(
+                "POST", f"sessions/{quote(sid, safe='')}", json=request.model_dump(mode="json")
+            )
+            observed = await reader.snapshot(sid, prompt_label=state.prompt.recovery_label())
+            if isinstance(observed, NativeSessionMissing):
+                raise OpenMAContractViolation("Native session disappeared before tool confirmation")
+            if not openma_tools_match(observed.observation.tools, manifest.tools):
+                raise OpenMAContractViolation("Native session did not confirm the requested tool contract")
+        descriptor = observed.observation.provenance
+        if descriptor.prompt_version is None:
+            raise OpenMAContractViolation("Native session did not confirm its resolved prompt snapshot")
         async with self.repo.lock("session:" + sid):
             current = await self.repo.get("ops.agent_sessions", sid)
-            if descriptor.prompt_version:
-                current.update(descriptor.model_dump(mode="json", exclude={"agent_id", "prompt_label"}))
-            current["tools_sha256"] = sha256(tools)
-            if migrating:
-                current["legacy_model_message_ids"] = [
-                    row["message_id"]
-                    for row in current.get("message_log", [])
-                    if row.get("model_context_version", 0) < CONTEXT_VERSION
-                ]
+            if current is None:
+                raise KeyError(sid)
+            current_state = SessionToolBoundaryState.from_record(current)
+            if current_state != state:
+                raise ValueError("Native tool ownership changed during readback confirmation")
+            version = current_state.context.version
+            if version is not None and version > CONTEXT_VERSION:
+                raise ValueError("Native tool context advanced during readback confirmation")
+            current.update(descriptor.model_dump(mode="json"))
+            current["tools_sha256"] = tools_sha256
+            if current_state.context.needs_migration(CONTEXT_VERSION):
+                current["legacy_model_message_ids"] = current_state.legacy_inputs(CONTEXT_VERSION)
                 current["model_context_version"] = CONTEXT_VERSION
                 current.pop("model_catalog", None)
             current.update(self.clock_timestamp().fields("tools_synced_at"))
             await put_owned_session(self.repo, sid, current)
+        return NativeToolSyncResult(status="UPDATED")
 
-    async def transition_note(self, sid):
-        """The ID-contract note for a turn that began before its session switched: delivered once, because
-        a switched session keeps its earlier skill text and learns the lookups only from this note."""
+    async def transition_note(self, sid: str) -> str | None:
         async with self.repo.lock("session:" + sid):
             current = await self.repo.get("ops.agent_sessions", sid)
-            if current is None or current.get("context_note_version") == CONTEXT_VERSION:
+            if current is None:
+                raise KeyError(sid)
+            state = SessionToolBoundaryState.from_record(current)
+            if state.context_note_version == CONTEXT_VERSION:
                 return None
             current["context_note_version"] = CONTEXT_VERSION
             await put_owned_session(self.repo, sid, current)
-        return CONTEXT_TRANSITION[bool(current.get("proposal_id"))]
+        return CONTEXT_TRANSITION[state.proposal_id is not None]
 
     async def prepare_attachments(self, session, question):
         question = copy.deepcopy(question)
@@ -561,7 +583,9 @@ class SessionService:
         )
 
     async def send_message(self, payload):
-        if payload.get("kind") == "USER_QUESTION" and not await self.continuable(payload):
+        if payload.get("kind") == "USER_QUESTION" and not await self.continuable(
+            UserQuestionMessage.model_validate(payload)
+        ):
             return None
         item = (
             await self.repo.get("ingest.source_items", payload["item_id"]) if payload.get("item_id") else None
@@ -584,7 +608,7 @@ class SessionService:
         sid, key = session["session_id"], sha256(payload)
         migrating = session.get("model_context_version", 0) < CONTEXT_VERSION
         if migrating or payload.get("kind") == "USER_QUESTION":
-            if await self.sync_tools(sid) == "BUSY":
+            if (await self.sync_tools(sid)).status == "BUSY":
                 raise DeliveryDeferred(offset_schedule(collection_clock(), timedelta(seconds=30)))
             session = await self.repo.get("ops.agent_sessions", sid)
         content = await ModelContext(self.repo, self.settings, session).message(payload, item)
@@ -1184,48 +1208,43 @@ class SessionService:
         context.update(call_id=call_id, role="scout" if session.get("proposal_id") else "analyst")
         return context
 
-    async def hydrate_prompt_provenance(self, session):
-        """Recover only the native resolved session snapshot, never latest agent bytes."""
-        value = session.get("prompt_version")
-        if (
-            session.get("prompt_version_basis") == "RESOLVED_SESSION_AGENT_SNAPSHOT"
-            and isinstance(value, str)
-            and len(value) == 64
-            and all(character in "0123456789abcdef" for character in value)
-        ):
+    async def hydrate_prompt_provenance(self, session: dict[str, JsonValue]) -> None:
+        state = SessionPromptState.from_record(session)
+        if state.descriptor.has_resolved_snapshot():
             return
-        remote = await self.request("GET", f"sessions/{session['session_id']}")
-        remote = remote.get("data", remote)
-        descriptor = self.agent_provenance(remote, {}, session.get("agent_id"))
-        if descriptor.prompt_version is None:
+        native = await NativeSessionReader(self).prompt(
+            state.session_id, prompt_label=state.descriptor.recovery_label()
+        )
+        if isinstance(native, NativeSessionMissing) or native.observation.provenance.prompt_version is None:
             raise ConfigurationError(
                 "Resolved session prompt provenance unavailable; versioned outputs refused"
             )
-        if value and "legacy_prompt_descriptor" not in session:
-            session["legacy_prompt_descriptor"] = {
-                key: session.get(key)
-                for key in (
-                    "prompt_version",
-                    "prompt_version_basis",
-                    "prompt_version_reason",
-                    "prompt_label",
-                    "agent_version",
-                    "model_id",
-                )
-            }
-        descriptor_data = descriptor.model_dump(mode="json")
-        descriptor_data["prompt_label"] = session.get("prompt_label") or value
-        recovered = {**descriptor_data, **self.clock_timestamp().fields("recovered_at")}
-        session.update(descriptor_data)
-        session["recovered_prompt_descriptor"] = recovered
-
-        async with self.repo.lock("session:" + session["session_id"]):
-            current = await self.repo.get("ops.agent_sessions", session["session_id"])
+        recovery = PromptRecoveryRecord(
+            provenance=native.observation.provenance,
+            recovered_at=self.clock_timestamp(),
+            legacy=(
+                state.descriptor
+                if state.descriptor.prompt_version is not None and not state.has_legacy_descriptor
+                else None
+            ),
+        )
+        descriptor_data = recovery.provenance_document()
+        recovered = recovery.recovery_document()
+        async with self.repo.lock("session:" + state.session_id):
+            current = await self.repo.get("ops.agent_sessions", state.session_id)
+            if current is None:
+                raise KeyError(state.session_id)
+            if SessionPromptState.from_record(current).descriptor != state.descriptor:
+                raise ValueError("Stored prompt provenance changed during native recovery")
             current.update(descriptor_data)
             current["recovered_prompt_descriptor"] = recovered
-            if session.get("legacy_prompt_descriptor") and "legacy_prompt_descriptor" not in current:
-                current["legacy_prompt_descriptor"] = copy.deepcopy(session["legacy_prompt_descriptor"])
-            await put_owned_session(self.repo, session["session_id"], current)
+            if recovery.legacy is not None and "legacy_prompt_descriptor" not in current:
+                current["legacy_prompt_descriptor"] = recovery.legacy.document()
+            await put_owned_session(self.repo, state.session_id, current)
+        session.update(descriptor_data)
+        session["recovered_prompt_descriptor"] = recovered
+        if recovery.legacy is not None and "legacy_prompt_descriptor" not in session:
+            session["legacy_prompt_descriptor"] = recovery.legacy.document()
 
     async def invoke_tool(
         self,
