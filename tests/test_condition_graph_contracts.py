@@ -17,10 +17,12 @@ from tank.analysis.condition_graph_contracts import (
     ConditionElasticityInputs,
     ConditionFieldObservation,
     ConditionFlowAggregate,
+    ConditionFundingConfirmationGraph,
     ConditionFundingObservation,
     ConditionIndependentRestQuote,
     ConditionInterval,
     ConditionPrimaryBookQuote,
+    ConditionReceiptVisibility,
     ConditionRelativeGraph,
     ConditionRelativeWindow,
     ConditionReplenishmentBurst,
@@ -2232,6 +2234,10 @@ def independent_quote(primary: ConditionPrimaryBookQuote) -> ConditionIndependen
         quote_valuation=primary.quote_valuation,
         capture_identity=primary.capture_identity,
         source="PUBLIC_REST",
+        visibility=ConditionReceiptVisibility(
+            received_at=Timestamp(value="2026-10-17T11:59:57Z", precision="COLLECTION_ONLY"),
+            assembled_at=Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY"),
+        ),
         primary_observed_at=primary.observed_at,
         proximity_policy=cadence_for_book(primary.instrument_id),
         capture_confirmed_independent=True,
@@ -2602,3 +2608,160 @@ def test_missing_fragmentation_quotes_are_unavailable_not_a_negative_gap_witness
         ConditionBookPairHistory.model_validate(
             history.model_copy(update={"left_cadence": cadence_for_book("wrong")})
         )
+
+
+def test_receipt_visibility_requires_actual_receipt_and_assembly_clocks() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionObservedPredicate,
+        ConditionUnavailablePredicate,
+    )
+
+    known = ConditionReceiptVisibility(
+        received_at=Timestamp(value="2026-10-17T11:59:57Z", precision="COLLECTION_ONLY"),
+        assembled_at=Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY"),
+    )
+    eligible = known.eligible()
+    assert isinstance(eligible, ConditionObservedPredicate) and eligible.value is True
+    future = ConditionReceiptVisibility.model_validate(
+        known.model_copy(
+            update={
+                "received_at": Timestamp(value="2026-10-17T12:00:01Z", precision="COLLECTION_ONLY"),
+            }
+        )
+    ).eligible()
+    assert isinstance(future, ConditionObservedPredicate) and future.value is False
+    for field in ("received_at", "assembled_at"):
+        unknown = ConditionReceiptVisibility.model_validate(
+            known.model_copy(
+                update={
+                    field: Timestamp(value=None, precision=None, precision_reason="NOT_CAPTURED"),
+                }
+            )
+        )
+        assert isinstance(unknown.eligible(), ConditionUnavailablePredicate)
+
+
+def test_independent_rest_confirmation_cannot_assume_missing_receipt_is_visible() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionUnavailablePredicate
+
+    valuation = QuoteUsdValuation(rate=Decimal(1), basis="USD_UNIT", as_of=None, unavailable_reason=None)
+    rest = independent_quote(primary_quote("a", "USD", Decimal(100), valuation))
+    unknown = ConditionIndependentRestQuote.model_validate(
+        rest.model_copy(
+            update={
+                "visibility": ConditionReceiptVisibility(
+                    received_at=Timestamp(value=None, precision=None, precision_reason="NOT_CAPTURED"),
+                    assembled_at=Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY"),
+                ),
+            }
+        )
+    )
+    assert isinstance(unknown.eligible_at(AT), ConditionUnavailablePredicate)
+
+
+def funding_confirmation_graph() -> ConditionFundingConfirmationGraph:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionFundingConfirmationGraph,
+        ConditionIndependentFundingRate,
+        ConditionScopedFundingRate,
+    )
+
+    primary: list[ConditionScopedFundingRate] = []
+    independent: list[ConditionIndependentFundingRate] = []
+    for venue, rate in (("a", Decimal("0.01")), ("b", Decimal("0.04"))):
+        primary.append(
+            ConditionScopedFundingRate(
+                token_id="T",
+                instrument_id=venue + ":perp:T",
+                venue=venue,
+                rate=ConditionFundingObservation(
+                    kind="CURRENT_ESTIMATE",
+                    rate=rate,
+                    interval_h=Decimal(8),
+                    equivalent_eight_hour_rate=rate,
+                    equivalent_rate_reason=None,
+                    observed_at=Timestamp(
+                        value="2026-10-17T11:59:00Z", precision=None, precision_reason="NOT_CAPTURED"
+                    ),
+                ),
+            )
+        )
+        independent.append(
+            ConditionIndependentFundingRate(
+                token_id="T",
+                instrument_id=venue + ":perp:T",
+                venue=venue,
+                rate_8h_eq=rate,
+                observed_at=Timestamp(
+                    value="2026-10-17T11:59:30Z", precision=None, precision_reason="NOT_CAPTURED"
+                ),
+                visibility=ConditionReceiptVisibility(
+                    received_at=Timestamp(value="2026-10-17T11:59:31Z", precision="COLLECTION_ONLY"),
+                    assembled_at=Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY"),
+                ),
+                source_path=venue + "/rest",
+                primary_source_path=venue + "/ws",
+                independent_path_verified=True,
+                verification_reason=None,
+            )
+        )
+    return ConditionFundingConfirmationGraph(
+        token_id="T",
+        cutoff=AT,
+        primary=tuple(primary),
+        independent=tuple(independent),
+        normal_range_8h=DecimalRange(
+            bounds=DecimalBounds(lower=Decimal(0), upper=Decimal("0.02")), reason=None
+        ),
+    )
+
+
+def test_funding_confirmation_uses_same_actual_instrument_cohort_and_distinct_paths() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionObservedPredicate
+
+    graph = funding_confirmation_graph()
+    primary, independent = graph.primary_beyond_normal(), graph.independent_beyond_normal()
+    assert isinstance(primary, ConditionObservedPredicate) and primary.value is True
+    assert isinstance(independent, ConditionObservedPredicate) and independent.value is True
+    with pytest.raises(ValidationError, match="another token"):
+        type(graph).model_validate(
+            graph.model_copy(
+                update={
+                    "independent": (
+                        graph.independent[0].model_copy(update={"token_id": "OTHER"}),
+                        graph.independent[1],
+                    )
+                }
+            )
+        )
+    with pytest.raises(ValidationError, match="different actual source"):
+        type(graph).model_validate(
+            graph.model_copy(
+                update={
+                    "independent": (
+                        graph.independent[0].model_copy(
+                            update={"source_path": graph.independent[0].primary_source_path}
+                        ),
+                        graph.independent[1],
+                    )
+                }
+            )
+        )
+
+
+def test_funding_confirmation_missing_secondary_or_history_stays_unavailable() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionUnavailablePredicate
+
+    graph = funding_confirmation_graph()
+    partial = type(graph).model_validate(graph.model_copy(update={"independent": (graph.independent[0],)}))
+    assert isinstance(partial.independent_beyond_normal(), ConditionUnavailablePredicate)
+    unknown = type(graph).model_validate(
+        graph.model_copy(
+            update={
+                "normal_range_8h": DecimalRange(bounds=None, reason="INCOMPLETE"),
+            }
+        )
+    )
+    result = unknown.primary_beyond_normal()
+    assert isinstance(result, ConditionUnavailablePredicate) and result.reason == "INCOMPLETE"
+    assert isinstance(unknown.independent_beyond_normal(), ConditionUnavailablePredicate)

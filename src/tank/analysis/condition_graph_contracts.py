@@ -3825,8 +3825,23 @@ def _condition_comparable_mid_gap(
     return ConditionObservedPredicate(status="OBSERVED", value=gap)
 
 
+class ConditionReceiptVisibility(DomainModel):
+    received_at: Timestamp
+    assembled_at: Timestamp
+
+    def eligible(self) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        received, assembled = validated.received_at.value, validated.assembled_at.value
+        if received is None or assembled is None:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        return ConditionObservedPredicate(
+            status="OBSERVED", value=parse_iso_time(received) <= parse_iso_time(assembled)
+        )
+
+
 class ConditionIndependentRestQuote(ConditionComparableBookQuote):
     source: Literal["PUBLIC_REST"]
+    visibility: ConditionReceiptVisibility
     primary_observed_at: Timestamp
     proximity_policy: ConditionCadence
     capture_confirmed_independent: bool | None
@@ -3870,7 +3885,7 @@ class ConditionIndependentRestQuote(ConditionComparableBookQuote):
         a, b, bound = parse_iso_time(primary), parse_iso_time(secondary), parse_iso_time(cutoff)
         if a > bound or b > bound or abs((b - a).total_seconds()) > validated.proximity_policy.seconds:
             return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
-        return ConditionObservedPredicate(status="OBSERVED", value=True)
+        return validated.visibility.eligible()
 
 
 class ConditionIndependentPairConfirmation(DomainModel):
@@ -4116,3 +4131,130 @@ class ConditionBookPairHistory(DomainModel):
         else:
             closed = current
         return condition_predicates_all((previous, closed))
+
+
+class ConditionScopedFundingRate(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    venue: str = Field(min_length=1, pattern=r"\S")
+    rate: ConditionFundingObservation
+
+
+class ConditionIndependentFundingRate(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    venue: str = Field(min_length=1, pattern=r"\S")
+    rate_8h_eq: Decimal
+    observed_at: Timestamp
+    visibility: ConditionReceiptVisibility
+    source_path: str = Field(min_length=1, pattern=r"\S")
+    primary_source_path: str = Field(min_length=1, pattern=r"\S")
+    independent_path_verified: bool | None
+    verification_reason: Literal["NOT_CAPTURED", "NOT_VERIFIED"] | None
+
+    @model_validator(mode="after")
+    def actual_independent_claim(self) -> Self:
+        expected = (
+            None
+            if self.independent_path_verified is True
+            else "NOT_VERIFIED"
+            if self.independent_path_verified is False
+            else "NOT_CAPTURED"
+        )
+        if self.verification_reason != expected:
+            raise ValueError(
+                "Independent funding verification must preserve actual missing/false/true metadata"
+            )
+        if self.independent_path_verified is True and self.source_path == self.primary_source_path:
+            raise ValueError("Verified funding confirmation requires a different actual source path")
+        return self
+
+    def eligible_at(self, cutoff: datetime) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        if validated.independent_path_verified is False:
+            return ConditionObservedPredicate(status="OBSERVED", value=False)
+        stamp = validated.observed_at.value
+        if (
+            validated.independent_path_verified is None
+            or stamp is None
+            or parse_iso_time(stamp) > parse_iso_time(cutoff)
+        ):
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        return validated.visibility.eligible()
+
+
+class ConditionFundingConfirmationGraph(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    cutoff: datetime
+    primary: tuple[ConditionScopedFundingRate, ...]
+    independent: tuple[ConditionIndependentFundingRate, ...]
+    normal_range_8h: DecimalRange
+
+    @field_validator("cutoff")
+    @classmethod
+    def aware_cutoff(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_funding_cohort(self) -> Self:
+        primary = {row.instrument_id: row for row in self.primary}
+        if len(primary) != len(self.primary) or len({row.instrument_id for row in self.independent}) != len(
+            self.independent
+        ):
+            raise ValueError("Funding confirmation instrument identities must be distinct within each cohort")
+        for row in self.primary:
+            stamp = row.rate.observed_at.value
+            if row.token_id != self.token_id or stamp is None or parse_iso_time(stamp) > self.cutoff:
+                raise ValueError(
+                    "Primary funding must preserve actual token scope and nonfuture source clocks"
+                )
+        for observation in self.independent:
+            source = primary.get(observation.instrument_id)
+            if source is None or (observation.token_id, observation.venue) != (self.token_id, source.venue):
+                raise ValueError("Independent funding cannot borrow another token or instrument cohort")
+        if self.normal_range_8h.bounds is not None and self.normal_range_8h.bounds.lower < 0:
+            raise ValueError("Funding dispersion history cannot have negative bounds")
+        return self
+
+    def primary_beyond_normal(self) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        rates: list[Decimal] = []
+        for row in validated.primary:
+            rate = row.rate.equivalent_eight_hour_rate
+            if rate is None:
+                return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+            rates.append(rate)
+        return validated._dispersion_beyond(tuple(rates))
+
+    def independent_beyond_normal(self) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        if len(validated.primary) < 2 or len(validated.independent) != len(validated.primary):
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        eligibility = condition_predicates_all(
+            tuple(row.eligible_at(validated.cutoff) for row in validated.independent)
+        )
+        if isinstance(eligibility, ConditionUnavailablePredicate) or not eligibility.value:
+            return eligibility
+        return validated._dispersion_beyond(tuple(row.rate_8h_eq for row in validated.independent))
+
+    def _dispersion_beyond(self, rates: tuple[Decimal, ...]) -> ConditionPredicate:
+        if len(rates) < 2:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        bounds = self.normal_range_8h.bounds
+        if bounds is None:
+            reason = self.normal_range_8h.reason
+            if reason is None:
+                raise ValueError("Unavailable funding dispersion history requires its actual reason")
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason=reason)
+        values = (*rates, bounds.lower, bounds.upper)
+        span = (
+            max(value.adjusted() for value in values)
+            - min(int(value.as_tuple().exponent) for value in values)
+            + 1
+        )
+        with localcontext() as context:
+            context.prec = max(128, 2 * span + 16)
+            dispersion = max(rates) - min(rates)
+        return ConditionObservedPredicate(
+            status="OBSERVED", value=dispersion < bounds.lower or dispersion > bounds.upper
+        )
