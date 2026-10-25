@@ -978,3 +978,5 @@ Final cursor companion qualification: exact 08c311a9066ad43e9cfc0f34ad2432d6868a
 
 
 Final spot protocol refinement: BybitSpotResult.no_spot_pagination rejects a declared nonempty cursor. Omitted and explicit-empty spot cursor values remain valid; perpetual cursors remain required and may contain an actual next-page token. The actual source refusal/restart test asserts no outgoing cursor request, no false removals and no snapshot advance for a contradictory spot declaration, followed by a valid explicit-empty observation. The generic successful-pagination unit fixture now declares PERP_LINEAR, the real supported protocol.
+
+Spot contradiction companion qualification: exact c50959f717fc20389dfc44ed3cdc83e1e2bf838b passed all 575 owned units in 8.23s and all 38 actual integrations in 15.68s, zero skips; tracked snapshot remained clean and unchanged. Evidence is bybit-spot-cursor-final-unit.xml, bybit-spot-cursor-final-integration.xml and bybit-spot-cursor-final-cohort.log. Strict adapter/envelope targets and src/tests/scripts Ruff/format passed.
