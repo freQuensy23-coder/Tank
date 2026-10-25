@@ -664,7 +664,7 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
         settings = Settings(data_dir=tmp_path, _env_file=None)
         versions = fixture_versions()
         budgets = fixture_request_budgets()
-        resources.push_async_callback(budgets.close)
+        resources.push_async_callback(budgets.shutdown)
         services = await resources.enter_async_context(
             operational_reaction_services(repo, settings, versions=versions, budgets=budgets)
         )
@@ -678,6 +678,7 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
             "map_version": 1,
             "analysis_set": [token],
             "no_credible_secondary_reason": "No eligible dependency rail",
+            "least_repriced_edge": object_field(event, "beneficiary_map")["least_repriced_edge"],
             "layers": object_field(event, "beneficiary_map")["layers"],
         }
         await repo.put("evt.beneficiary_maps", "current-map", map_record)
