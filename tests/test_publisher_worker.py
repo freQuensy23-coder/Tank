@@ -115,14 +115,20 @@ def test_successful_worker_uses_known_owned_identity_and_leaves_no_active_lease(
     assert not (stand.host / "apify-state/.worker-active").exists()
 
 
-def test_interrupt_drains_actual_child_before_return_and_stops_further_effects(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("signal_number", "expected_status"),
+    [(signal.SIGTERM, 143), (signal.SIGHUP, 129), (signal.SIGINT, 130)],
+)
+def test_interrupt_drains_actual_child_before_return_and_stops_further_effects(
+    tmp_path: Path, signal_number: signal.Signals, expected_status: int
+) -> None:
     stand = worker_stand(tmp_path, "BLOCK")
     process = stand.launch()
     try:
         wait_for_effect(stand)
-        process.send_signal(signal.SIGTERM)
+        process.send_signal(signal_number)
         _, stderr = process.communicate(timeout=4)
-        assert process.returncode == 143, stderr.decode()
+        assert process.returncode == expected_status, stderr.decode()
         before = (stand.root / "effects").read_bytes()
         time.sleep(0.05)
         assert (stand.root / "effects").read_bytes() == before
