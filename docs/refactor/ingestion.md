@@ -701,3 +701,47 @@ strict mypy and Ruff. Factory cases exercise explicit memory and unopened physic
 resources; unsupported repository rejection is an explicit closed runtime guard.
 Agents owns the CLI fake Source constructor update and production reuse of this
 common factory. Combined runtime/physical verification follows that exact pair.
+
+
+## Capacity reload admission review (paired activation held)
+
+The parent review demonstrated that capacity was incorrectly part of quota
+identity. The local correction separates `BudgetBucket(key, window_s)` from
+`BudgetConstraint.capacity`. Memory history, locks, and urgency accounting now
+share the same provider scope and declared period across capacity changes.
+Capacity remains required, positive policy input for each actual admission.
+
+The regression consumes two units at capacity two, verifies a capacity-one
+request waits without spending its grouped sibling, then checks capacity three
+admits only the third total unit and period expiry releases the original spend.
+The actual SEC source workflow also retains both host/minute debits when its two
+feed operations select different configured capacities. The selected source and
+admission cohort passes 96 unit cases.
+
+This is not yet an activated PostgreSQL or Go transition. Existing persisted
+capacity-suffixed rows must retain their history, and old and new clients must
+share one lock domain. Arbitrary period changes and a global minimum policy
+across stale deployments are not established by this memory proof.
+
+The new ordered migration `006_request_budget_policy_identity.sql` leaves every
+applied migration unchanged. `request_budget_acquire_scope` receives raw scope
+separately and locks/stores `request_budget_scope_key(scope, period)`, the SQL
+JSON-array encoding. The legacy entrypoint validates its supplied numeric suffixes
+and delegates to the same structured function. Under that canonical lock,
+historical capacity variants are rekeyed without rewriting timestamps, weights,
+or owners. Scope parsing splits only the final two numeric components, preserving
+opaque scopes that themselves contain pipes or numeric suffixes.
+
+Migration iteration uses an associative storage identity set; it recognizes only
+the declared positive legacy numeric grammar and exact scope/period. This is an
+explicit bridge for already-written quota evidence, not a generic record parser.
+The transaction owns both rekeying and debit writes, so a blocked grouped attempt
+rolls back all tentative changes. Period remains a separate constraint identity.
+
+The scheduling test composition now receives an explicit shared request-budget
+port. Owned source workflows pass the same actual engine to their source reader
+and reaction services; isolated web/operations cases declare their own real
+configured memory engine. No helper grants admission or allocates an unrelated
+private quota ledger. The consumer selection passes 222 unit cases and four
+actual integration cases, with zero skips; scheduling helpers and source-page
+tests pass strict typing.

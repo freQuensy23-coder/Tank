@@ -364,7 +364,7 @@ async def test_real_web_evidence_record_roundtrips_without_feed_source_assumptio
     reaction_settings = Settings(data_dir=tmp_path, ops_progress_enabled=False)
     reaction_versions = fixture_versions()
     async with operational_reaction_services(
-        repo, reaction_settings, versions=reaction_versions
+        repo, reaction_settings, versions=reaction_versions, budgets=fixture_request_budgets()
     ) as reaction_services:
         service = EventToolService(
             repo,
@@ -458,8 +458,9 @@ async def test_feed_duplicate_of_web_evidence_counts_feeds_without_replacing_ori
     settings = Settings(data_dir=tmp_path, ops_progress_enabled=False)
     reaction_settings = settings
     reaction_versions = fixture_versions()
+    budgets = fixture_request_budgets()
     async with operational_reaction_services(
-        repo, reaction_settings, versions=reaction_versions
+        repo, reaction_settings, versions=reaction_versions, budgets=budgets
     ) as reaction_services:
         tools = EventToolService(
             repo,
@@ -481,9 +482,7 @@ async def test_feed_duplicate_of_web_evidence_counts_feeds_without_replacing_ori
         original_raw = Path(original["raw_ref"])
         original_bytes = original_raw.read_bytes()
         async with httpx.AsyncClient() as http:
-            service = SourceService(
-                repo, settings, http=http, versions=fixture_versions(), budgets=fixture_request_budgets()
-            )
+            service = SourceService(repo, settings, http=http, versions=fixture_versions(), budgets=budgets)
             for external_id in ("feed-first", "feed-repeat"):
                 incoming = captured(
                     service,
