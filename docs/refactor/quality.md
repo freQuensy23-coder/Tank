@@ -316,3 +316,7 @@ Reproduce from the checkout root with Python 3.13.13 and pinned Node 24.22.0, af
     /srv/tank-refactor-env/bin/python -m scripts.ci.openma_inventory --upstream-archive /srv/tank-refactor-evidence/openma-upstream-85d5361f535c7221de975838dc48444e468cc02e.tar.gz --node /srv/tank-refactor-tools/node-v24.22.0-linux-x64/bin/node --output docs/refactor/openma-coverage.json
 
 The report records its checkout revision, upstream archive checksum and exact scanner source hashes. It complements the non-vendor inventories and semantic caller ledger; it is not behavior evidence or a claim of global typing completion.
+
+### Typed source-poll E2E consumer
+
+Companion 5bbeae3b78710209fd8ff0b8bed0f110ce0e5536 normally merges the exact source-state/instrument API and consumes its poll result through .status/.items at both existing E2E sites. All four actual E2Es passed on the exact clean committed head in 10.85 seconds, zero skips, preserving the existing source-item count, health, positive classification, restart and delivery assertions. Evidence /srv/tank-refactor-evidence/quality-source-state-e2e-5bbeae3b.log and .xml. The subsequent exact 29195f2d dependency fixes only three ingestion-owned operations tests; application/E2E/helper blobs stayed unchanged.
