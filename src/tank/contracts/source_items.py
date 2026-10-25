@@ -18,6 +18,7 @@ from tank.contracts.provenance import GenerationProvenance
 from tank.contracts.repository import Collection
 from tank.contracts.sources import SourceAuthorRole
 from tank.time_precision import Timestamp, collection_clock, propagate_timestamp
+from tank.util import parse_iso_time
 
 type BucketAnchor = Literal["START", "END", "UNSPECIFIED"]
 type SourceContextId = Annotated[str, Field(min_length=1, pattern=r"^\S+$")]
@@ -267,7 +268,17 @@ def discovered_item(source_id: str, wire: Mapping[str, JsonValue | bytes]) -> Di
     )
 
 
-class CaptureEvidence(DomainModel):
+class SourceObservedClock(DomainModel):
+    observed_at: str
+
+    @field_validator("observed_at")
+    @classmethod
+    def aware_collection_clock(cls, value: str) -> str:
+        parse_iso_time(value)
+        return value
+
+
+class CaptureEvidence(SourceObservedClock):
     item_id: str = Field(min_length=1)
     feed: str = Field(min_length=1)
     observed_at: str
@@ -318,7 +329,7 @@ class RawSourceReference(DomainModel):
     raw_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
-class PendingSourceItem(DomainModel):
+class PendingSourceItem(SourceObservedClock):
     discovery: DiscoveredItem
     item_id: str = Field(min_length=1)
     feed: str = Field(min_length=1)
@@ -512,7 +523,7 @@ class SourceIdentityHints(DomainModel):
     entities: list[str | SourceEntityHint] = Field(default_factory=list)
 
 
-class SourceLifecycle(SourceExtractionFields):
+class SourceLifecycle(SourceExtractionFields, SourceObservedClock):
     item_id: str = Field(min_length=1)
     feed: str = Field(min_length=1)
     source: str = Field(min_length=1)
@@ -762,7 +773,7 @@ def parse_feed_source_item(record: Mapping[str, JsonValue]) -> FeedSourceItem:
     return ArticleSourceItem.model_validate(document)
 
 
-class WebEvidenceItem(GenerationProvenance, SourceText, SourceExtractionFields):
+class WebEvidenceItem(GenerationProvenance, SourceText, SourceExtractionFields, SourceObservedClock):
     item_id: str = Field(min_length=1)
     source_id: Literal["WEB"]
     feed: Literal["web:search", "web:page"]

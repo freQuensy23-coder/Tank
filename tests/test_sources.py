@@ -16,7 +16,7 @@ from source_support import (
 
 from tank.contracts.source_items import SourceText, parse_feed_source_item
 from tank.sources import SourceService, parsers
-from tank.util import new_id, sha256
+from tank.util import clock_iso, new_id, sha256
 
 
 @pytest.fixture
@@ -798,7 +798,6 @@ async def test_run_controls_wake_within_15s_for_600s_source_without_extra_reads(
     import asyncio
 
     import tank.sources as sources_module
-    from tank.util import iso
 
     repo = Repo()
     source = {
@@ -806,7 +805,7 @@ async def test_run_controls_wake_within_15s_for_600s_source_without_extra_reads(
         "interval_s": 600,
         "feeds": [{"url": "https://example.org/rss", "kind": "rss", "interval_s": 600}],
     }
-    await repo.put("ops.source_checkpoints", "S15:0", {"last_success_at": iso(), "status": "HEALTHY"})
+    await repo.put("ops.source_checkpoints", "S15:0", {"last_success_at": clock_iso(), "status": "HEALTHY"})
     calls = []
     http = httpx.AsyncClient(
         transport=httpx.MockTransport(
@@ -1534,7 +1533,7 @@ async def test_slow_detail_does_not_block_index_cadence_and_restart_preserves_fi
 ) -> None:
     import asyncio
 
-    from tank.util import iso, parse_time
+    from tank.util import parse_time
 
     calls = []
     detail_started = asyncio.Event()
@@ -1542,7 +1541,7 @@ async def test_slow_detail_does_not_block_index_cadence_and_restart_preserves_fi
 
     async def handle(request: httpx.Request):
         if request.url.path == "/index":
-            calls.append(iso())
+            calls.append(clock_iso())
             return httpx.Response(200, text='<a href="/article/one">Release</a>')
         detail_started.set()
         await release.wait()
@@ -1844,7 +1843,6 @@ async def test_completed_later_batch_cannot_erase_failed_earlier_coverage(tmp_pa
 
 @pytest.mark.asyncio
 async def test_conditional_304_does_not_starve_durable_pending_detail(tmp_path: Path) -> None:
-    from tank.util import iso
 
     source = {
         "source_id": "S20",
@@ -1861,7 +1859,7 @@ async def test_conditional_304_does_not_starve_durable_pending_detail(tmp_path: 
         )
     ) as http:
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
-        state = {"etag": "older-index", "fetched_at": iso()}
+        state = {"etag": "older-index", "fetched_at": clock_iso()}
         await svc.poller.queue_rows(
             state,
             "S20:0",

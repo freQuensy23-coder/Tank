@@ -1,13 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   browserEvidence, configuration, mountedOutputNonce, phaseWallSeconds, PREPARATION_TIMEOUT_EXIT,
   type BrowserEvidencePort,
 } from "./qualification-contracts.mts";
+
+import { processEvidence, terminatedProcess } from "./process-evidence.mts";
 
 const permitted = {
   TANK_NATIVE_LIFECYCLE_GO: "AUTHORIZED_NATIVE_PROOF", TANK_NATIVE_MEMORY_MIB: "2048",
@@ -122,4 +124,59 @@ test("public cache reuse is explicit and keeps a distinct proof/session director
   assert.throws((): void => { configuration({ ...next, TANK_NATIVE_REUSE_CACHE_PROOF_DIR: "/app/data" }); }, /explicit owned/);
   assert.throws((): void => { configuration({ ...next, TANK_NATIVE_REUSE_CACHE_PROOF_DIR: "/proof/native-browser-v7" }); }, /distinct/);
   assert.throws((): void => { configuration({ ...next, TANK_NATIVE_REUSE_CACHE_PROOF_DIR: undefined }); }, /dedicated proof directory/);
+});
+
+async function writeProcessFixture(root: string, state: string, start: string, status: string): Promise<void> {
+  const fields: string[] = Array(22).fill("0");
+  fields[0] = state;
+  fields[19] = start;
+  await mkdir(join(root, "123"), { recursive: true });
+  await writeFile(join(root, "123", "stat"), "123 (owned ) process) " + fields.join(" "));
+  await writeFile(join(root, "123", "status"), status);
+}
+
+test("native process evidence reads exact start identity across command parentheses", async (): Promise<void> => {
+  const root = await mkdtemp(join(tmpdir(), "tank-owned-proc-"));
+  try {
+    await writeProcessFixture(root, "S", "9007199254740993", "Name: owned\nVmRSS:\t256 kB\n");
+    const evidence = await processEvidence(123, root);
+    assert.ok(evidence);
+    assert.equal(evidence.startTime, "9007199254740993");
+    assert.equal(evidence.state, "S");
+    assert.equal(evidence.rssKiB, 256);
+    assert.equal(evidence.rssUnavailableReason, null);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("native process identity rejects malformed PIDs and reports missing valid processes", async (): Promise<void> => {
+  const root = await mkdtemp(join(tmpdir(), "tank-owned-proc-"));
+  try {
+    for (const pid of [0, -1, 1.5, NaN, Number.MAX_SAFE_INTEGER + 1]) {
+      await assert.rejects(processEvidence(pid, root), /positive safe integer/);
+    }
+    assert.equal(await processEvidence(123, root), null);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("native process RSS omission requires explicit terminated kernel state", async (): Promise<void> => {
+  const root = await mkdtemp(join(tmpdir(), "tank-owned-proc-"));
+  try {
+    await writeProcessFixture(root, "S", "42", "Name: owned\n");
+    await assert.rejects(processEvidence(123, root), /RSS evidence is unavailable/);
+    await writeProcessFixture(root, "Z", "42", "Name: owned\n");
+    const evidence = await processEvidence(123, root);
+    assert.ok(evidence);
+    assert.equal(evidence.rssKiB, null);
+    assert.equal(evidence.rssUnavailableReason, "KERNEL_OMITTED_VMRSS_FOR_TERMINATED_PROCESS");
+    assert.equal(terminatedProcess(evidence.state), true);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("native process malformed stat cannot certify disappearance", async (): Promise<void> => {
+  const root = await mkdtemp(join(tmpdir(), "tank-owned-proc-"));
+  try {
+    await writeProcessFixture(root, "S", "42", "VmRSS: 256 kB\n");
+    await writeFile(join(root, "123", "stat"), "123 (owned) S 0");
+    await assert.rejects(processEvidence(123, root), /lacks explicit state or start identity/);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

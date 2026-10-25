@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -83,3 +85,46 @@ console.log(JSON.stringify({called,resolved,denied}));"""
     data = json.loads(result.stdout)
     assert data["called"] and data["denied"] == 4
     assert data["resolved"]["url"] == "postgresql://tank_replay_agent:synthetic@172.30.42.2:5432/tank_replay"
+
+
+def capture_compile_step() -> str:
+    lines = (ROOT / "capture/Dockerfile").read_text().splitlines()
+    compile_line = next(index for index, line in enumerate(lines) if "go build -trimpath" in line)
+    first = compile_line
+    while not lines[first].startswith("RUN "):
+        first -= 1
+    last = compile_line
+    while lines[last].endswith("\\"):
+        last += 1
+    instruction = "\n".join(lines[first : last + 1]).removeprefix("RUN ")
+    return re.sub(r"--mount=\S+", "", instruction).replace("\\\n", " ")
+
+
+@pytest.mark.parametrize("build", ["", "dev", "ab" * 20])
+def test_capture_build_identity_guard_precedes_compiler(tmp_path: Path, build: str) -> None:
+    binary = tmp_path / "go"
+    captured = tmp_path / "compiler-arguments"
+    binary.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@" > "$COMPILER_CAPTURE"\n')
+    binary.chmod(0o700)
+    result = subprocess.run(
+        ["/bin/sh", "-c", capture_compile_step()],
+        cwd=tmp_path,
+        env={
+            "PATH": str(tmp_path) + ":" + os.defpath,
+            "GIT_SHA": build,
+            "TARGETOS": "linux",
+            "TARGETARCH": "amd64",
+            "COMPILER_CAPTURE": str(captured),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=3,
+    )
+    if build == "":
+        assert result.returncode != 0
+        assert not captured.exists()
+        assert "GIT_SHA must not be empty" in result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
+        assert "internal/config.Build=" + build in captured.read_text()

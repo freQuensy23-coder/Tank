@@ -7,6 +7,7 @@ from delivery_support import delivery_job
 from tank.delivery import DeliveryError, DeliveryService
 from tank.settings import Settings
 from tank.storage import MemoryRepository
+from tank.util import clock_iso
 
 
 async def setup_repo():
@@ -738,10 +739,12 @@ async def test_milestone_resolution_consumed_only_on_matching_sent_snapshot(curr
 @pytest.mark.asyncio
 async def test_first_sent_persists_alerted_until_subsequent_scheduler_transition() -> None:
     from tank.scheduler import Scheduler
-    from tank.util import iso, utcnow
+    from tank.util import utcnow
 
     repo = await setup_repo()
-    await repo.put("evt.events", "e", {"event_id": "e", "lifecycle": "ANALYZING", "known_to_us_at": iso()})
+    await repo.put(
+        "evt.events", "e", {"event_id": "e", "lifecycle": "ANALYZING", "known_to_us_at": clock_iso()}
+    )
     settings = Settings(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2")
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
@@ -786,7 +789,7 @@ async def test_explicit_ordinary_update_flag_preserves_rate_with_persistent_safe
             "status": "SENT",
             "message_ref": "42",
             "attempt": 1,
-            "at": iso(),
+            "at": clock_iso(),
         },
         immutable=True,
     )
@@ -893,7 +896,7 @@ async def test_delivery_due_guard_preserves_sent_anchor_and_records_no_attempt(p
         "status": "SENT",
         "message_ref": "42",
         "attempt": 1,
-        "at": iso(),
+        "at": clock_iso(),
     }
     if precision:
         stamp["at_prec"] = precision
