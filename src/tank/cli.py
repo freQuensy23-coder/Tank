@@ -378,7 +378,7 @@ def coverage():
     async def command(repo, settings):
         from tank.market.service import MarketService
 
-        service = MarketService(repo, settings)
+        service = MarketService(repo, settings, versions=settings.require_versions())
         try:
             return await service.coverage()
         finally:
@@ -578,7 +578,7 @@ def doctor() -> None:
 @main.command()
 @click.argument("input_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--output-dir", required=True, type=click.Path(file_okay=False, path_type=Path))
-def calibrate(input_path, output_dir):
+def calibrate(input_path: Path, output_dir: Path) -> None:
     """Score >=200 frozen labeled news items with Jev and propose measured cutoffs."""
     import httpx
 
@@ -589,22 +589,19 @@ def calibrate(input_path, output_dir):
     configure_logging(settings)
     try:
         result = asyncio.run(acquire(input_path, output_dir, settings=settings))
-        summary = {
-            key: result[key]
-            for key in (
-                "status",
-                "counts",
-                "selected",
-                "routing_target_90_90_met",
-                "rejection_reasons",
+        output(
+            result.model_dump(
+                mode="json",
+                include={
+                    "status",
+                    "counts",
+                    "selected",
+                    "routing_target_90_90_met",
+                    "rejection_reasons",
+                    "best_measured_routing",
+                },
             )
-        }
-        best = result["best_measured_routing"]
-        summary["best_measured_routing"] = {
-            **best,
-            "metrics": {key: value for key, value in best["metrics"].items() if key != "decisions"},
-        }
-        output(summary)
+        )
     except (ValueError, OSError) as exc:
         raise click.ClickException(str(exc)) from None
     except (httpx.HTTPError, KeyError, TypeError, RuntimeError) as exc:

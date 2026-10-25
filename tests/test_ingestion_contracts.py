@@ -357,7 +357,9 @@ async def test_real_web_evidence_record_roundtrips_without_feed_source_assumptio
     from tank.settings import Settings
 
     repo = MemoryRepository()
-    service = EventToolService(repo, Settings(data_dir=tmp_path, ops_progress_enabled=False), None, None)
+    service = EventToolService(
+        repo, Settings(data_dir=tmp_path, ops_progress_enabled=False), None, None, versions=fixture_versions()
+    )
     record = await service.save_web(
         "https://example.org/evidence",
         "Verified public document text",
@@ -437,7 +439,7 @@ async def test_feed_duplicate_of_web_evidence_counts_feeds_without_replacing_ori
 
     repo = MemoryRepository()
     settings = Settings(data_dir=tmp_path, ops_progress_enabled=False)
-    tools = EventToolService(repo, settings, None, None)
+    tools = EventToolService(repo, settings, None, None, versions=fixture_versions())
     original = await tools.save_web(
         "https://example.org/original",
         "Shared independently observed facts",
@@ -850,3 +852,22 @@ def test_client_protection_cannot_replace_a_documented_api_quota_or_another_host
     ):
         with pytest.raises(ValidationError):
             SourceClientProtectionBudget.model_validate({**declared, **changed})
+
+
+def test_calendar_verification_label_does_not_gain_an_assumed_clock() -> None:
+    from tank.contracts.sources import EndpointVerification
+
+    unrecorded: dict[str, JsonValue] = {
+        "checked_at": "2026-10-20",
+        "status": "VERIFIED",
+        "basis": "Calendar audit label",
+        "checked_at_prec": None,
+        "checked_at_precision": None,
+        "checked_at_prec_reason": None,
+    }
+    value = EndpointVerification.model_validate(unrecorded)
+    assert value.model_dump(mode="json", exclude_unset=True) == unrecorded
+    day = {**unrecorded, "checked_at_precision": "BUCKET(1d)"}
+    assert EndpointVerification.model_validate(day).model_dump(mode="json", exclude_unset=True) == day
+    with pytest.raises(ValidationError, match="day-bucket"):
+        EndpointVerification.model_validate({**unrecorded, "checked_at_precision": "EXACT"})
