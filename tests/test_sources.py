@@ -3030,3 +3030,38 @@ def test_binance_zero_epoch_precedes_alternate_publication_field() -> None:
     [record] = parsers.json_items(payload, "S09")
     assert record["published_at"] == "1970-01-01T00:00:00Z"
     assert record["published_prec"] == "EXACT"
+
+
+def test_coinbase_missing_prior_flags_remain_unknown_in_real_status_change_evidence() -> None:
+    from copy import deepcopy
+
+    from tank.sources.polling import instrument_changes
+
+    previous = {"ETH-USD": {"status": "online", "base": "ETH"}}
+    original = deepcopy(previous)
+    current = {"ETH-USD": {"status": "offline", "base": "ETH", "status_flags": {"cancel_only": True}}}
+    rows, _ = instrument_changes(
+        current,
+        previous,
+        source_feed(
+            {"url": "https://api.exchange.coinbase.com/products", "venue": "coinbase", "market_type": "SPOT"}
+        ),
+        [(b"actual current response", "2026-10-25T00:00:00Z")],
+        {"ETH-USD": 0},
+        "2026-10-25T00:00:01Z",
+    )
+    [row] = rows
+    evidence = json.loads(row["text"])
+    assert evidence["before"]["status_flags"] is None
+    assert evidence["after"]["status_flags"] == {"cancel_only": True}
+    assert previous == original
+
+
+def test_coinbase_unknown_flag_observation_is_not_a_proven_transition() -> None:
+    from tank.sources.instrument_flags import CoinbaseRestrictionFlags
+
+    unknown = CoinbaseRestrictionFlags.from_snapshot({"status": "online"})
+    observed = CoinbaseRestrictionFlags.from_snapshot({"status_flags": {"cancel_only": True}})
+    assert unknown.known_changes(observed) == ()
+    assert observed.known_changes(CoinbaseRestrictionFlags()) == ()
+    assert observed.known_changes(CoinbaseRestrictionFlags(cancel_only=False)) == ("cancel_only",)

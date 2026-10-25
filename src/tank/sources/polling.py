@@ -34,6 +34,7 @@ from tank.contracts.sources import (
 )
 from tank.ops_entry_errors import report_entry_errors
 from tank.sources.fetch import FetchedContent, NotModified
+from tank.sources.instrument_flags import CoinbaseRestrictionFlags
 from tank.util import TimeInput, new_id, parse_time, sha256
 
 log = logging.getLogger(__name__)
@@ -53,18 +54,32 @@ def instrument_changes(snapshot, previous, feed, pages, found_on, completed_at):
     transition (a venue-wide delisting reaches routing and the analyst once, not once per pair)
     or one newly listed base asset. Independent moves stay separate items.
     """
-    if previous is not None and feed.venue == "coinbase":
-        previous = deepcopy(previous)
-        for symbol, old in previous.items():
-            if symbol in snapshot and "status_flags" not in old:
-                old["status_flags"] = snapshot[symbol].get("status_flags", {})
     digest = sha256(snapshot)
     if previous is None:
         return [], digest
+
+    def differs(current, old):
+        if feed.venue != "coinbase" or current is None or old is None:
+            return current != old
+        if {key: value for key, value in current.items() if key != "status_flags"} != {
+            key: value for key, value in old.items() if key != "status_flags"
+        }:
+            return True
+        return bool(
+            CoinbaseRestrictionFlags.from_snapshot(old).known_changes(
+                CoinbaseRestrictionFlags.from_snapshot(current)
+            )
+        )
+
+    def evidence(record):
+        if record is not None and feed.venue == "coinbase" and "status_flags" not in record:
+            return {**record, "status_flags": None}
+        return record
+
     changed = [
         (symbol, snapshot.get(symbol), previous.get(symbol))
         for symbol in sorted(set(snapshot) | set(previous))
-        if snapshot.get(symbol) != previous.get(symbol)
+        if differs(snapshot.get(symbol), previous.get(symbol))
     ]
     if not changed:
         return [], digest
@@ -106,7 +121,7 @@ def instrument_changes(snapshot, previous, feed, pages, found_on, completed_at):
                     **row,
                     "external_id": f"{venue}|{market_type}|{symbol}|{sha256(current)}",
                     "title": f"{symbol} instrument change",
-                    "text": json.dumps({"before": old, "after": current}, sort_keys=True),
+                    "text": json.dumps({"before": evidence(old), "after": evidence(current)}, sort_keys=True),
                 }
             )
             continue
@@ -123,7 +138,12 @@ def instrument_changes(snapshot, previous, feed, pages, found_on, completed_at):
                 "text": json.dumps(
                     {
                         "changes": [
-                            {"symbol": symbol, "change": key[0], "before": old, "after": current}
+                            {
+                                "symbol": symbol,
+                                "change": key[0],
+                                "before": evidence(old),
+                                "after": evidence(current),
+                            }
                             for symbol, current, old in group
                         ]
                     },

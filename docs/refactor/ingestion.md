@@ -647,3 +647,28 @@ write. Reader tests prove an opaque feed address persists evidence when explicit
 selected, while a feed-looking detail address does not. Reader/X adapter strict
 checks pass. Full checkpoint record schemas and generic clock annotation remain
 open in this independent branch; these changes do not imply that migration is done.
+
+
+### Independent next branch: unknown prior Coinbase restriction flags
+
+The available imported baseline (0d3e0cb2, retained in 1216b4b) already contains
+the status_flags parser and the history backfill; 23aaac8b moved that diff work
+into a thread. Its regression simulates an older snapshot by removing the
+field. This establishes migration intent, not any actual prior flag values.
+Copying the current flags into that history therefore lacks evidentiary support.
+
+The backfill is removed. `CoinbaseRestrictionFlags` is a strict named five-flag
+facet: None means an unreported prior/current value, never false. A flag transition
+requires both observations. A newly observed flag alone updates the real snapshot
+baseline without claiming a market-state change. Existing proven false-to-true/
+true-to-false restriction changes still emit source items. If another real
+instrument state changes while prior flags are absent, new change evidence writes
+status_flags:null for that unknown side; it never inserts the current flags into
+the past. Historical input maps and retained raw bytes remain unchanged.
+
+Evidence: 214 source/admission units pass in 3.39s, including existing live flag
+transition, restart/baseline and dedup regressions plus explicit unknown-history
+evidence and input-immutability tests. The named facet is strict-mypy clean and
+Ruff passes touched files. Full instrument snapshot/parser record typing remains
+open; this is a bounded correction of a concrete evidence defect, not a claim
+that the entire polling module is complete.
