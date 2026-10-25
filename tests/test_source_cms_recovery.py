@@ -122,11 +122,11 @@ async def test_cms_fallback_is_not_used_for_non404_failure(
 ) -> None:
     from types import SimpleNamespace
 
-    import tank.sources as source_module
+    import tank.sources.fetch as source_module
 
     calls, retry_delays = [], []
 
-    async def record_retry(delay) -> None:
+    async def record_retry(delay: float) -> None:
         retry_delays.append(delay)
 
     monkeypatch.setattr(source_module, "asyncio", SimpleNamespace(sleep=record_retry))

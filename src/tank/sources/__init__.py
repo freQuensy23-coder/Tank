@@ -6,12 +6,9 @@ persists probability/model provenance; source ingestion never guesses relevance.
 """
 
 import asyncio
-import math
 import re
 import ssl
 from collections.abc import Mapping
-from contextlib import suppress
-from copy import deepcopy
 from datetime import datetime
 from functools import cached_property
 from urllib.parse import urlsplit
@@ -20,7 +17,6 @@ import certifi
 import httpx
 from pydantic import JsonValue
 
-import tank.sources.parsers as parsers
 from tank.contracts.configuration import Thresholds
 from tank.contracts.http_policy import HttpRefused
 from tank.contracts.provenance import ResolvedVersionIdentity
@@ -37,11 +33,12 @@ from tank.http_admission import ConfiguredHttpAdmission
 from tank.ops_progress import RepositorySourceProgress
 from tank.request_budget import BudgetConstraint, shared_request_budgets
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
+from tank.sources.fetch import FetchEvidence, FetchResult, HttpCheckpointProjection, SourceHttpReader
 from tank.sources.http_client import RequestStarted, SourceHttpTransport
 from tank.sources.ingestion import SourceIngestion
 from tank.sources.raw_store import RawItemStorage
 from tank.sources.xsensor import XSensor
-from tank.util import iso, parse_iso_time, parse_time, sha256, utcnow
+from tank.util import iso, parse_iso_time, parse_time, utcnow
 
 
 def tls_context() -> ssl.SSLContext:
@@ -147,81 +144,45 @@ class SourceService:
         if isinstance(result, HttpRefused):
             raise ValueError("Source HTTP admission refused: " + result.reason)
 
-    async def fetch(self, feed: HttpFetchPlan, key: str, *, on_start: RequestStarted | None = None):
-        state = deepcopy(await self.repo.get("ops.source_checkpoints", key) or {})
-        headers = dict(feed.headers)
-        if state.get("etag") and not state.get("article_errors") and not state.get("entry_errors"):
-            headers["If-None-Match"] = state["etag"]
-        if state.get("last_modified") and not state.get("article_errors") and not state.get("entry_errors"):
-            headers["If-Modified-Since"] = state["last_modified"]
-        error = None
-        for attempt in range(4):
-            try:
-                if is_exchange_url(feed.url):
-                    await self.acquire_budget(feed)
-                    if on_start is not None:
-                        await on_start()
-                    response = await capture_fetch(
-                        self.repo,
-                        feed.method,
-                        feed.url,
-                        headers=headers,
-                        body=feed.body if feed.method.upper() == "POST" else None,
-                        source_id=key.split(":", 1)[0],
-                    )
-                else:
-                    response = await self.transport.request(feed, headers, on_start)
-                if response.status_code == 304:
-                    return None, state
-                payload = response.content
-                received_at = iso(self.now())
-                digest = sha256(payload)
+    async def _send_fetch(
+        self,
+        feed: HttpFetchPlan,
+        headers: Mapping[str, str],
+        key: str,
+        on_start: RequestStarted | None,
+    ) -> httpx.Response:
+        if is_exchange_url(feed.url):
+            await self.acquire_budget(feed)
+            if on_start is not None:
+                await on_start()
+            return await capture_fetch(
+                self.repo,
+                feed.method,
+                feed.url,
+                headers=headers,
+                body=feed.body if feed.method == "POST" else None,
+                source_id=key.split(":", 1)[0],
+            )
+        return await self.transport.request(feed, headers, on_start)
 
-                if re.fullmatch(r"S\d{2}:\d+", key):
-                    async with self.poller.lock(self.poller.state_locks, key):
-                        evidence = await self.poller.state(key)
-                        evidence.update(
-                            payload_sha256=digest,
-                            fetched_at=received_at,
-                            http_status=response.status_code,
-                            response_url=str(response.url),
-                        )
-                        await self.poller.save(key, evidence)
-                response.raise_for_status()
-                state.update(
-                    etag=response.headers.get("etag"),
-                    last_modified=response.headers.get("last-modified"),
-                    payload_sha256=digest,
-                    fetched_at=received_at,
-                    http_status=response.status_code,
-                    response_url=str(response.url),
-                )
-                return payload, state
-            except (httpx.HTTPError, TimeoutError) as exc:
-                error = exc
-                if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404:
-                    raise
-                if attempt < 3:
-                    delay = 2 ** (attempt + 1)
-                    if isinstance(exc, httpx.HTTPStatusError):
-                        retry = exc.response.headers.get("retry-after")
-                        if retry:
-                            try:
-                                retry_seconds = float(retry)
-                                if not math.isfinite(retry_seconds) or retry_seconds < 0:
-                                    raise ValueError("Invalid retry delay")
-                                delay = max(delay, retry_seconds)
-                            except ValueError:
-                                retry_at = parsers.published(retry)
-                                if retry_at is not None:
-                                    with suppress(ValueError, TypeError):
-                                        delay = max(
-                                            delay, (parse_time(retry_at) - self.now()).total_seconds()
-                                        )
-                    await asyncio.sleep(delay)
-        if error is None:
-            raise RuntimeError("Source fetch exhausted retries without a recorded failure")
-        raise error
+    async def _record_fetch(self, key: str, receipt: FetchEvidence) -> None:
+        async with self.poller.lock(self.poller.state_locks, key):
+            evidence = await self.poller.state(key)
+            evidence.update(receipt.storage_record())
+            await self.poller.save(key, evidence)
+
+    async def fetch(
+        self,
+        feed: HttpFetchPlan,
+        key: str,
+        *,
+        on_start: RequestStarted | None = None,
+    ) -> FetchResult:
+        checkpoint = await self.repo.get("ops.source_checkpoints", key)
+        cache = HttpCheckpointProjection.from_document(checkpoint)
+        return await SourceHttpReader(self._send_fetch, self._record_fetch, self.now).read(
+            feed, key, cache, on_start
+        )
 
     def _ingestion(self) -> SourceIngestion:
         return SourceIngestion(
