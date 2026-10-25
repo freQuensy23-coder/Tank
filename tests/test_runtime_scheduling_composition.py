@@ -7,9 +7,13 @@ import pytest
 from pydantic_settings import SettingsConfigDict
 
 from tank import runtime_composition
+from tank.analysis.page_access import LivePageAccess
 from tank.event_tools import EventToolService
+from tank.http_admission import ConfiguredHttpAdmission
+from tank.request_budget import MemoryBudgetBackend, RequestLedger
 from tank.settings import Settings, resolve_versions
-from tank.storage import MemoryRepository
+from tank.sources import SourceService
+from tank.storage import MemoryRepository, PostgresRepository
 
 
 class CompositionFixtureSettings(Settings):
@@ -43,6 +47,17 @@ async def test_production_composition_binds_the_real_scheduler_and_owns_shutdown
         tools = dispatch.__self__
         assert isinstance(tools, EventToolService)
         assert tools.scheduler is runtime.scheduler
+        assert isinstance(runtime.budget_backend, MemoryBudgetBackend)
+        assert isinstance(runtime.sources, SourceService)
+        assert runtime.sources.budgets is runtime.budget_scope
+        assert isinstance(runtime.market.admission, ConfiguredHttpAdmission)
+        assert runtime.market.admission.budgets is runtime.budget_scope
+        assert runtime.market.admission.versions == settings.require_versions()
+        assert isinstance(tools.pages, LivePageAccess)
+        assert tools.pages.admission is runtime.market.admission
+        assert runtime.budget_binding is None
+        with pytest.raises(RuntimeError, match="has not been bound"):
+            await runtime.budget_scope.wait_host("example.invalid")
         assert runtime.scheduler.market is runtime.market
         assert runtime.scheduler.truth is runtime.truth
         assert runtime.scheduler.versions == settings.require_versions()
@@ -52,3 +67,15 @@ async def test_production_composition_binds_the_real_scheduler_and_owns_shutdown
         await runtime.close()
     assert runtime.scheduler.closing is True and not runtime.scheduler.background
     assert runtime.sessions.http.is_closed and runtime.market.http.is_closed
+
+
+def test_production_budget_backend_uses_explicit_repository_kind_without_connecting() -> None:
+    memory = runtime_composition.build_budget_backend(MemoryRepository())
+    assert isinstance(memory, MemoryBudgetBackend)
+    postgres = runtime_composition.build_budget_backend(
+        PostgresRepository("postgresql://synthetic.invalid/tank")
+    )
+    assert isinstance(postgres, RequestLedger)
+    assert postgres.database_url == "postgresql://synthetic.invalid/tank"
+    assert postgres.owner == "tank-core"
+    assert postgres.connection is None

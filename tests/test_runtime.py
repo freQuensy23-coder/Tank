@@ -10,6 +10,7 @@ import pytest
 from agent_source_fixtures import declared_versions_fixture
 from pydantic import JsonValue
 from pydantic_settings import SettingsConfigDict
+from source_support import fixture_http_admission
 
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.contracts import DomainModel
@@ -17,6 +18,7 @@ from tank.contracts.json import decode_json, encode_json
 from tank.contracts.progress import ProgressPreferences
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.market.capture_contracts import CaptureReadiness
+from tank.request_budget import MemoryBudgetBackend, RequestBudgets, RequestBudgetScope, SystemBudgetClock
 from tank.runtime import Runtime
 from tank.runtime_contracts import MarketTruthJob
 from tank.settings import Settings, resolve_versions
@@ -46,6 +48,9 @@ async def test_timeout_reports_suspended_operation_without_exception_values(
     stop = asyncio.Event()
     job = await repo.enqueue("RUN_MARKET_TRUTH", {}, "timeout-frames", max_attempts=1)
     runtime = object.__new__(Runtime)
+    runtime.budget_scope = RequestBudgetScope()
+    runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
+    runtime.budget_binding = None
     runtime.repo = repo
 
     async def wait_for_snapshot(payload):
@@ -72,6 +77,9 @@ async def test_worker_survives_bad_job_and_persists_result() -> None:
     bad = await repo.enqueue("BAD", {}, "bad", max_attempts=1)
     good = await repo.enqueue("GOOD", {}, "good", max_attempts=1)
     runtime = object.__new__(Runtime)
+    runtime.budget_scope = RequestBudgetScope()
+    runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
+    runtime.budget_binding = None
     runtime.repo = repo
 
     async def handle(payload):
@@ -96,6 +104,9 @@ async def test_worker_refuses_failed_dependency() -> None:
     await repo.put("ops.jobs", dep["job_id"], {**dep, "status": "FAILED"})
     job = await repo.enqueue("RUN_MARKET_TRUTH", {"_depends_on": [dep["job_id"]]}, "truth", max_attempts=1)
     runtime = object.__new__(Runtime)
+    runtime.budget_scope = RequestBudgetScope()
+    runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
+    runtime.budget_binding = None
     runtime.repo = repo
     runtime.handlers = {"RUN_MARKET_TRUTH": AsyncMock()}
     task = asyncio.create_task(runtime.worker(stop))
@@ -150,7 +161,12 @@ def test_source_check_network_probes_are_explicit(monkeypatch: pytest.MonkeyPatc
 
     class Source:
         def __init__(
-            self, repo: Repository, settings: Settings, *, versions: ResolvedVersionIdentity
+            self,
+            repo: Repository,
+            settings: Settings,
+            *,
+            versions: ResolvedVersionIdentity,
+            budgets: RequestBudgets,
         ) -> None:
             pass
 
@@ -322,6 +338,9 @@ async def test_runtime_quiescence_drains_old_job_dependencies_and_preserves_sess
             self.closed = True
 
     runtime = object.__new__(Runtime)
+    runtime.budget_scope = RequestBudgetScope()
+    runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
+    runtime.budget_binding = None
     runtime.repo = repo
     runtime.settings = SimpleNamespace(shutdown_grace_s=1, config_version="old")
     runtime.active_jobs = set()
@@ -699,6 +718,9 @@ async def test_controlled_generation_timeout_preserves_last_job_attempt(
             pass
 
     runtime = object.__new__(Runtime)
+    runtime.budget_scope = RequestBudgetScope()
+    runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
+    runtime.budget_binding = None
     runtime.repo = repo
     runtime.settings = SimpleNamespace(shutdown_grace_s=0.01)
     runtime.active_jobs = set()
@@ -784,6 +806,7 @@ async def test_gateway_starts_in_same_runtime_before_sources_and_closes_after_dr
             self.started = asyncio.Event()
 
         async def run(self, flag) -> None:
+            assert runtime.budget_binding is runtime.budget_scope.require_binding()
             order.append("run:" + self.name)
             self.started.set()
             await flag.wait()
@@ -802,6 +825,9 @@ async def test_gateway_starts_in_same_runtime_before_sources_and_closes_after_dr
             order.append("gateway:closed")
 
     runtime = object.__new__(Runtime)
+    runtime.budget_scope = RequestBudgetScope()
+    runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
+    runtime.budget_binding = None
     runtime.repo = repo
     runtime.settings = SimpleNamespace(shutdown_grace_s=1)
     runtime.active_jobs = set()
@@ -821,6 +847,9 @@ async def test_gateway_starts_in_same_runtime_before_sources_and_closes_after_dr
     stop.set()
     await task
     assert order[-1] == "gateway:closed" and order.index("close:sessions") < order.index("gateway:closed")
+    assert runtime.budget_binding is None
+    with pytest.raises(RuntimeError, match="has not been bound"):
+        await runtime.budget_scope.wait_host("example.invalid")
 
 
 @pytest.mark.asyncio
@@ -836,6 +865,9 @@ async def test_unfinished_dependency_defers_without_error_or_attempt_cost(
     dep = await repo.enqueue("ESCALATE_TOKENS", {}, "pending", run_after=iso(utcnow() + timedelta(hours=1)))
     child = await repo.enqueue("RUN_MARKET_TRUTH", {"_depends_on": [dep["job_id"]]}, "child", priority=0)
     runtime = object.__new__(Runtime)
+    runtime.budget_scope = RequestBudgetScope()
+    runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
+    runtime.budget_binding = None
     runtime.repo = repo
     runtime.handlers = {"RUN_MARKET_TRUTH": AsyncMock()}
     task = asyncio.create_task(runtime.worker(stop))
@@ -862,6 +894,9 @@ async def test_terminal_delivery_reconciliation_covers_expiry_restart_and_valida
 
     repo = MemoryRepository()
     runtime = object.__new__(Runtime)
+    runtime.budget_scope = RequestBudgetScope()
+    runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
+    runtime.budget_binding = None
     runtime.repo = repo
     runtime.settings = ProgressPreferences(ops_progress_enabled=False, replay=False)
     runtime.delivery = DeliveryService(repo, runtime.settings, http=SimpleNamespace())
@@ -985,11 +1020,20 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
             lambda req: (_ for _ in ()).throw(AssertionError("No external requests"))
         )
     ) as http:
-        market = MarketService(repo, settings, http=http, versions=declared_versions_fixture())
+        market = MarketService(
+            repo,
+            settings,
+            http=http,
+            versions=declared_versions_fixture(),
+            admission=fixture_http_admission(),
+        )
         truth = MarketTruthService(repo, settings, market, versions=declared_versions_fixture())
         original = truth.assess
         truth.assess = AsyncMock(wraps=original)
         runtime = object.__new__(Runtime)
+        runtime.budget_scope = RequestBudgetScope()
+        runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
+        runtime.budget_binding = None
         runtime.repo = repo
         runtime.market = market
         runtime.truth = truth
@@ -1232,6 +1276,9 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
             async def run_one() -> None:
                 stop = asyncio.Event()
                 runtime = object.__new__(Runtime)
+                runtime.budget_scope = RequestBudgetScope()
+                runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
+                runtime.budget_binding = None
                 runtime.settings = settings
                 runtime.repo = repo
                 runtime.delivery = delivery
@@ -1405,6 +1452,9 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
             async def run_one() -> None:
                 stop = asyncio.Event()
                 runtime = object.__new__(Runtime)
+                runtime.budget_scope = RequestBudgetScope()
+                runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
+                runtime.budget_binding = None
                 runtime.settings = settings
                 runtime.repo, runtime.delivery = repo, delivery
 

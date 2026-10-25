@@ -12,9 +12,11 @@ from agent_source_fixtures import (
     source_record_fixture,
 )
 from scheduling_support import RecordingReactionScheduling
+from source_support import fixture_http_admission
 
 from tank.agents import ConfigurationError, Pipeline, SessionService
 from tank.agents.context import CONTEXT_VERSION
+from tank.analysis.page_access import LivePageAccess
 from tank.contracts.source_items import parse_feed_source_item
 from tank.ops_progress import DisabledSourceProgress
 from tank.storage import MemoryRepository
@@ -525,6 +527,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
         DecisionEngine(opts),
         versions=declared_versions_fixture(),
         scheduler=RecordingReactionScheduling(),
+        pages=LivePageAccess(fixture_http_admission()),
     )
     now = clock_iso()
     await repo.put(

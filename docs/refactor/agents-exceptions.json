@@ -904,6 +904,27 @@
         "test_persistence_guard_refuses_an_unrecorded_pointer_before_store_write",
         "test_send_writer_revalidates_owner_after_reloading_under_lock"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/runtime.py",
+          "symbol": "Runtime.__init__",
+          "line": 78
+        },
+        {
+          "path": "src/tank/runtime.py",
+          "symbol": "Runtime.close",
+          "line": 478
+        }
+      ],
+      "kind": "owned runtime resource lifetime absence",
+      "reason": "budget_binding is None before Runtime.run binds the required backend or after close clears and releases its exact owned lease. Scope/backend dependencies remain required; an unbound scope refuses admission.",
+      "validation": [
+        "test_production_composition_binds_the_real_scheduler_and_owns_shutdown",
+        "test_gateway_starts_in_same_runtime_before_sources_and_closes_after_drain",
+        "test_production_budget_backend_uses_explicit_repository_kind_without_connecting"
+      ]
     }
   ]
 }
