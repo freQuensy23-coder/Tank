@@ -248,3 +248,48 @@ Scheduler.ensure_event_reactions is the structural implementation of the require
 
 
 USD-M's two existing internal subwindows are explicit required client_protection_limits on SourceBinanceUsdmBudget, separate from its required documented aggregate weight budget: binance.usdm.funding shares250requests/300seconds across exactly fundingRate/fundingInfo; binance.usdm.statistics allows500requests/300seconds for exactly openInterestHist. Each declares CLIENT_PROTECTION/NOT_CAPTURED/null provider documentation/IP/operator basis. No doubled provider documentation or new quota values are inferred. Spot and USD-M now have distinct concrete provider variants so the required USD-M operation windows cannot disappear through an optional list. Missing groups, unknown paths, changed scope and invented numeric documentation fail. Go's verified zero aggregate weight for these operations remains request-planner behavior; the internal count windows still apply.
+
+
+### Configured HTTP admission and atomic quota groups
+
+The shared rolling-window engine now lives inward in `tank.request_budget`.
+`sources.rate_limits` only reexports its exact singleton while peer imports migrate;
+there is no second ledger or domain implementation. `HttpAdmission.admit` accepts
+the actual built `httpx.Request` immediately before Python I/O. A caller that
+queues Go transport never calls this port. Hostnames do not decide transport.
+
+`ConfiguredHttpAdmission._etherscan` admits only HTTPS GET api.etherscan.io/v2/api
+with one nonempty decoded UTF-8 apikey. The exact logical key is SHA-256 hashed,
+without trimming/case changes, into the shared API_KEY scope across chain IDs.
+Its required configured RPS and daily constraints reserve atomically.
+Public explorer hosts return an explicit unconfigured outcome; unsupported API
+routes, duplicate/missing/invalid keys, or missing provider policy return fixed
+refusal codes without credential/query output. `_sec` shares the configured
+sec.gov IP scope across subdomains. Unknown routes have an explicit unconfigured
+outcome, never a fabricated quota.
+
+`BudgetConstraint.host=None` means a primitive quota lacks a provider-block
+association; it does not suppress its quota. `SharedRequestBudgets.acquire`
+retains capacity=None only for existing explicitly unconfigured primitive callers;
+the configured adapter always supplies validated positive capacities. Priority=0
+is the ordinary fairness class; negative priorities receive existing urgent
+precedence. Budget maps are associative indexes by validated complete quota
+identity; deques are rolling weighted admission histories. `RequestLedger.connection`
+is absent before opening/after closing, and a missing SQL row is an explicit
+validation error. The serialized key preserves the existing cross-language
+float window/capacity suffix and never partitions by owner/version.
+
+`RequestLedger.wait_many` sorts the same serialized bucket identities as Go,
+holds all reservations in one PostgreSQL transaction, and rolls back tentative
+spends when any window returns a delay. Memory admission locks the complete
+group in that order and appends every spend at one monotonic instant only when
+all windows are ready. Waiting happens outside locks/transactions.
+
+Evidence: 87 source/admission units pass in 2.01s; the actual PostgreSQL grouped
+rollback test passes in 1.64s with zero skips. It proves the available long window
+is not charged when a later short-window constraint blocks. Memory tests prove
+the same boundary and retry behavior; actual built-client query tests prove
+cross-chain scope and exact key hashing. Strict mypy passes the new engine,
+adapter, contract and test module; Ruff checks/format pass. Consumer injection
+into market/event workflows remains the corresponding owner's next activation;
+this checkpoint alone does not claim all external attempts use the port.
