@@ -657,7 +657,7 @@ async def run_captured_tools(inputs, repo):
         oma_db_password=None,
         apify_api_token=None,
         openma_api_key=None,
-        openrouter_api_key=None,
+        foundry_api_key=None,
         telegram_token=None,
         tavily_api_key=None,
         etherscan_api_key=None,
