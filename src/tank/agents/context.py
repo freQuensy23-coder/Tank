@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, JsonValue
 
+from tank.agents.context_registry import ContextRegistry
 from tank.contracts import DomainModel
 from tank.contracts.tool_schema import SCOPED_TOOLS, parse_tool_definitions, validate_schema
 from tank.util import JsonInput
@@ -374,17 +375,11 @@ class ModelContext:
     def __init__(self, repo, settings, session):
         self.repo, self.settings, self.session = repo, settings, session
         self.scout = bool(session.get("proposal_id"))
-        try:
-            self.registry = settings.load_config("registry")
-        except (KeyError, AttributeError):
-            self.registry = {}
-        self.tokens = {r["token_id"]: r for r in self.registry.get("tokens", [])}
-        self.entities = {r["entity_id"]: r for r in self.registry.get("entities", [])}
-        self.instruments = {r["instrument_id"]: r for r in self.registry.get("instruments", [])}
-        try:
-            self.sources = {r["source_id"]: r for r in settings.load_config("sources").get("sources", [])}
-        except (KeyError, AttributeError):
-            self.sources = {}
+        self.registry = ContextRegistry.from_configuration(settings)
+        self.tokens = {row.token_id: row for row in self.registry.tokens}
+        self.entities = {row.entity_id: row for row in self.registry.entities}
+        self.instruments = {row.instrument_id: row for row in self.registry.instruments}
+        self.sources = {row.source_id: row for row in self.registry.sources}
         self.registry_labels = {
             **{key: self.entity_label(key) for key in self.entities},
             **{key: self.source_label(key) for key in self.sources},
@@ -402,34 +397,27 @@ class ModelContext:
         )
         self.described = {}
 
-    def token_label(self, key):
+    def token_label(self, key: str) -> str:
         row = self.tokens.get(key)
-        if row:
-            return labelled(
-                f"{row.get('project') or row.get('name') or row.get('symbol')} ({row.get('symbol')})", key
-            )
-        return str(key).removeprefix("UNRESOLVED:").rsplit(":", 1)[-1]
+        if row is not None:
+            return labelled(f"{row.display_name()} ({row.symbol})", key)
+        return key.removeprefix("UNRESOLVED:").rsplit(":", 1)[-1]
 
-    def entity_label(self, key):
+    def entity_label(self, key: str) -> str:
         row = self.entities.get(key)
-        if not row:
-            return str(key).removeprefix("UNRESOLVED:")
-        name = row.get("name")
-        if not name or name == key:
-            name = (row.get("aliases") or row.get("names") or [key])[0]
-        return labelled(name, key)
+        if row is None:
+            return key.removeprefix("UNRESOLVED:")
+        return labelled(row.display_name(), key)
 
-    def instrument_label(self, key):
+    def instrument_label(self, key: str) -> str:
         row = self.instruments.get(key)
-        if row:
-            return labelled(
-                " ".join(str(row.get(k) or "") for k in ("venue", "market_type", "venue_symbol")).strip(), key
-            )
-        return " ".join(str(key).split(":"))
+        if row is not None:
+            return labelled(f"{row.venue} {row.market_type} {row.venue_symbol}", key)
+        return " ".join(key.split(":"))
 
-    def source_label(self, key):
+    def source_label(self, key: str) -> str | None:
         row = self.sources.get(key)
-        return labelled(row.get("name") or row.get("url") or "registered source", key) if row else None
+        return labelled(row.name, key) if row is not None else None
 
     def diagnostic_text(self, value):
         if self.registry_pattern is None:

@@ -36,9 +36,10 @@ def settings(replay=False):
         config_version="current-config",
         code_version="current-code",
         replay=replay,
-        load_config=lambda name: {"registry": {"tokens": [{"token_id": "T", "symbol": "T"}]}}.get(
-            name, config
-        ),
+        load_config=lambda name: {
+            "registry": {"tokens": [{"token_id": "T", "symbol": "T"}], "entities": [], "instruments": []},
+            "sources": {"sources": []},
+        }.get(name, config),
     )
     opts.configured_secrets = lambda: frozenset(
         value

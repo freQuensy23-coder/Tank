@@ -24,10 +24,14 @@ def settings(**overrides):
     config = {
         "thresholds": {"filter_cutoff": 0.7, "routing_cutoff": 0.8},
         "registry": {
-            "entities": [{"entity_id": "aave", "name": "Aave", "aliases": ["Aave", "Aave Labs"]}],
+            "entities": [
+                {"entity_id": "aave", "name": "Aave", "names": ["Aave"], "aliases": ["Aave", "Aave Labs"]}
+            ],
             "tokens": [],
             "x_accounts": [],
+            "instruments": [],
         },
+        "sources": {"sources": []},
         "openma": {
             "agent_id": "agt_1",
             "scout_agent_id": "agt_s",
