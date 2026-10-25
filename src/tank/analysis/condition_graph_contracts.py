@@ -6,7 +6,7 @@ from math import isfinite
 from statistics import median
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import BeforeValidator, Field, field_validator, model_validator
 
 from tank.analysis.execution import BookWalkResult
 from tank.analysis.positioning import MissingOIDecomposition, OIDecomposition, oi_class
@@ -22,6 +22,7 @@ from tank.analysis.statistics_contracts import (
 )
 from tank.contracts import DomainModel
 from tank.contracts.provenance import ResolvedVersionIdentity
+from tank.contracts.scalars import TrueFlag, require_integer, require_number
 from tank.market.trade_contracts import QuoteUsdValuation
 from tank.time_precision import Timestamp
 from tank.util import parse_iso_time
@@ -597,7 +598,7 @@ class ConditionFlowAggregate(DomainModel):
     instrument_id: str = Field(min_length=1, pattern=r"\S")
     start: datetime
     end: datetime
-    complete: Literal[True]
+    complete: TrueFlag
     buy_qty: Decimal = Field(ge=0)
     sell_qty: Decimal = Field(ge=0)
     sum_sq_qty: Decimal = Field(ge=0)
@@ -689,7 +690,7 @@ class ObservedConditionComposite(DomainModel):
     buy_share: float | None = Field(ge=0, le=1)
     bs_ratio: float | None = Field(ge=0)
     venues: tuple[str, ...] = Field(min_length=1)
-    sign: Literal[-1, 0, 1]
+    sign: Annotated[Literal[-1, 0, 1], BeforeValidator(require_integer)]
 
     null_reasons: dict[Literal["buy_share", "bs_ratio"], Literal["ZERO_TOTAL_VOLUME", "ZERO_SELL_QUANTITY"]]
 
@@ -718,7 +719,7 @@ class UnavailableConditionComposite(DomainModel):
     buy_share: None
     bs_ratio: None
     venues: tuple[()]
-    sign: Literal[0]
+    sign: None
     reason: Literal["INCOMPLETE"]
 
 
@@ -898,14 +899,14 @@ class ConditionSpotCoverage(DomainModel):
 
 class ConditionSpotVenue(DomainModel):
     venue: str = Field(min_length=1, pattern=r"\S")
-    complete: Literal[True]
+    complete: TrueFlag
     volume_native: Decimal = Field(ge=0)
     buy_qty: Decimal = Field(ge=0)
     sell_qty: Decimal = Field(ge=0)
     cvd: Decimal
     buy_share: float | None = Field(ge=0, le=1)
     bs_ratio: float | None = Field(ge=0)
-    sign: Literal[-1, 0, 1]
+    sign: Annotated[Literal[-1, 0, 1], BeforeValidator(require_integer)]
     sum_sq_qty: Decimal = Field(ge=0)
     boundary_segments: tuple[ConditionBoundaryGroup, ...]
     volume_share: float | None = Field(ge=0, le=1)
@@ -994,7 +995,7 @@ class BasicConditionSpot(ConditionSpotValues):
 class ObservedConditionCohort(ObservedConditionComposite):
     cohort: tuple[str, ...] = Field(min_length=1)
     share_of_max: float = Field(ge=0, le=1)
-    share_majority: Literal[True]
+    share_majority: TrueFlag
     velocity: float | None = Field(ge=0)
     velocity_reason: Literal["INCOMPLETE", "ZERO_BASELINE", "NOT_ESTIMABLE"] | None
 
@@ -1044,7 +1045,7 @@ class ObservedConditionCohortComparison(DomainModel):
     current: ObservedConditionComposite
     other: ObservedConditionComposite
     share_of_max: float = Field(ge=0, le=1)
-    share_majority: Literal[True]
+    share_majority: TrueFlag
 
     @model_validator(mode="after")
     def common_comparison_scope(self) -> Self:
@@ -1724,6 +1725,7 @@ type ConditionPredicateUnavailableReason = Literal[
     "ZERO_NET_FLOW",
     "NO_EVENT_ANCHOR",
     "NO_VENUES",
+    "QUOTE_CONVERSION_UNAVAILABLE",
 ]
 
 
@@ -2085,7 +2087,7 @@ class ConditionMarketContextInputs(DomainModel):
     btc_return_24h: float | None
     rv24: float | None = Field(ge=0)
     rv24_bound: datetime
-    rv24_resolution_s: Literal[3600]
+    rv24_resolution_s: Annotated[Literal[3600], BeforeValidator(require_number)]
     return_normal_range: FloatRange
     return_lower_quartile: float | None
     rv_normal_range: FloatRange
@@ -2307,7 +2309,7 @@ class ConditionRelativeAnchor(DomainModel):
 
 class ConditionPriceReferenceCoverage(DomainModel):
     complete: bool
-    expected_duration_s: Literal[86400]
+    expected_duration_s: Annotated[Literal[86400], BeforeValidator(require_number)]
     boundary_segments: tuple[ConditionBoundaryGroup, ...]
     excluded: tuple[ConditionSpotExclusion, ...]
     volume_unit: Literal["NATIVE_TOKEN"]
@@ -2732,7 +2734,7 @@ class ConditionLiquidityVenue(DomainModel):
     venue: str = Field(min_length=1, pattern=r"\S")
     instrument_id: str = Field(min_length=1, pattern=r"\S")
     observed_at: Timestamp
-    integrity_ok: Literal[True]
+    integrity_ok: TrueFlag
     bid_range: ConditionCoveredBookRange
     ask_range: ConditionCoveredBookRange
     spread_bps: float | None = Field(ge=0)
@@ -3602,3 +3604,306 @@ def _condition_depth_cohort_matches(
         or cohort.previous_usd != _condition_sum_known_depth(tuple(before[venue] for venue in venues))
     ):
         raise ValueError("Depth-drop cohorts must preserve actual common venue amounts")
+
+
+class ConditionBookSampleCoverage(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    venue: str = Field(min_length=1, pattern=r"\S")
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    metric_key: str | None = Field(min_length=1, pattern=r"\S")
+    cadence: ConditionCadence
+    sample_count: int = Field(ge=0)
+    initial_observation: Timestamp
+    latest_observation: Timestamp
+    maximum_gap_s: float | None = Field(ge=0)
+
+    @model_validator(mode="after")
+    def actual_scoped_samples(self) -> Self:
+        _bind_cadence_scope(
+            self.cadence.scope,
+            collection="books",
+            token_id=self.token_id,
+            instrument_id=self.instrument_id,
+            metric_key=self.metric_key,
+            observation_kind=None,
+            chain=None,
+        )
+        first, last = self.initial_observation.value, self.latest_observation.value
+        if self.sample_count == 0:
+            if first is not None or last is not None or self.maximum_gap_s is not None:
+                raise ValueError("No book samples cannot invent measured coverage clocks or gaps")
+        else:
+            if first is None or last is None:
+                raise ValueError("Observed book samples require their actual first and last clocks")
+            span = (parse_iso_time(last) - parse_iso_time(first)).total_seconds()
+            if span < 0:
+                raise ValueError("Book coverage clocks must preserve their actual order")
+            if self.sample_count == 1:
+                if self.initial_observation != self.latest_observation or self.maximum_gap_s is not None:
+                    raise ValueError("One actual book sample has no measured inter-sample gap")
+            elif self.maximum_gap_s is None or self.maximum_gap_s > span:
+                raise ValueError("Multiple book samples require their actual bounded maximum observed gap")
+        return self
+
+    def covers(self, interval: ConditionInterval) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        actual = ConditionInterval.model_validate(interval)
+        cadence = validated.cadence
+        if not isinstance(cadence, DeclaredConditionCadence) or validated.sample_count == 0:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        first, last = validated.initial_observation.value, validated.latest_observation.value
+        if first is None or last is None:
+            raise ValueError("Observed coverage requires its actual endpoint clocks")
+        a, z = parse_iso_time(first), parse_iso_time(last)
+        if z > actual.cutoff:
+            raise ValueError("Book coverage cannot borrow a future observation")
+        endpoints = (
+            a <= actual.start
+            and (actual.start - a).total_seconds() <= cadence.seconds
+            and (actual.cutoff - z).total_seconds() <= cadence.seconds
+        )
+        if validated.sample_count == 1:
+            complete = endpoints
+        else:
+            gap = validated.maximum_gap_s
+            if gap is None:
+                raise ValueError("Multiple observations require their actual measured gap")
+            complete = endpoints and gap <= cadence.seconds
+        return ConditionObservedPredicate(status="OBSERVED", value=complete)
+
+
+class RecordedConditionCaptureIdentity(DomainModel):
+    status: Literal["RECORDED"]
+    versions: ResolvedVersionIdentity
+
+
+class UnrecordedConditionCaptureIdentity(DomainModel):
+    status: Literal["UNRECORDED"]
+    reason: Literal["CAPTURE_IDENTITY_NOT_CAPTURED"]
+
+
+class ConditionComparableBookQuote(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    venue: str = Field(min_length=1, pattern=r"\S")
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    metric_key: str | None = Field(min_length=1, pattern=r"\S")
+    quote_asset: str = Field(min_length=1, pattern=r"\S")
+    mid_quote: Decimal = Field(gt=0)
+    spread_bps: Decimal = Field(ge=0)
+    observed_at: Timestamp
+    quote_valuation: QuoteUsdValuation
+    capture_identity: RecordedConditionCaptureIdentity | UnrecordedConditionCaptureIdentity
+
+    @model_validator(mode="after")
+    def actual_currency_identity(self) -> Self:
+        if self.quote_asset == "USD" and self.quote_valuation.basis != "USD_UNIT":
+            raise ValueError("A USD book comparison uses its exact currency unit identity")
+        if self.quote_valuation.basis == "USD_UNIT" and self.quote_asset != "USD":
+            raise ValueError("A non-USD book comparison cannot borrow USD's unit conversion")
+        return self
+
+    def fresh_at(self, at: datetime, cadence: ConditionCadence) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        policy = type(cadence).model_validate(cadence)
+        _bind_cadence_scope(
+            policy.scope,
+            collection="books",
+            token_id=validated.token_id,
+            instrument_id=validated.instrument_id,
+            metric_key=validated.metric_key,
+            observation_kind=None,
+            chain=None,
+        )
+        bound = parse_iso_time(at)
+        if not isinstance(policy, DeclaredConditionCadence) or validated.observed_at.value is None:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        observed = parse_iso_time(validated.observed_at.value)
+        if observed > bound or (bound - observed).total_seconds() > policy.seconds:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        return ConditionObservedPredicate(status="OBSERVED", value=True)
+
+
+class ConditionPrimaryBookQuote(ConditionComparableBookQuote):
+    integrity_ok: TrueFlag
+
+
+class ConditionBookPairSample(DomainModel):
+    left: ConditionPrimaryBookQuote
+    right: ConditionPrimaryBookQuote
+    left_cadence: ConditionCadence
+    right_cadence: ConditionCadence
+    evaluated_at: datetime
+    quote_conversion_uncertainty_bps: Decimal = Field(ge=0)
+
+    @field_validator("evaluated_at")
+    @classmethod
+    def aware_evaluation(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_comparable_scope(self) -> Self:
+        if self.left.venue == self.right.venue or self.left.token_id != self.right.token_id:
+            raise ValueError("A cross-venue gap requires distinct actual venues for the same token")
+        for quote, cadence in ((self.left, self.left_cadence), (self.right, self.right_cadence)):
+            _bind_cadence_scope(
+                cadence.scope,
+                collection="books",
+                token_id=quote.token_id,
+                instrument_id=quote.instrument_id,
+                metric_key=quote.metric_key,
+                observation_kind=None,
+                chain=None,
+            )
+        return self
+
+    def gap(self) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        eligible = condition_predicates_all(
+            (
+                validated.left.fresh_at(validated.evaluated_at, validated.left_cadence),
+                validated.right.fresh_at(validated.evaluated_at, validated.right_cadence),
+            )
+        )
+        if isinstance(eligible, ConditionUnavailablePredicate):
+            return eligible
+        return _condition_book_price_gap(
+            validated.left,
+            validated.right,
+            validated.evaluated_at,
+            validated.quote_conversion_uncertainty_bps,
+        )
+
+
+def _condition_book_price_gap(
+    left: ConditionComparableBookQuote,
+    right: ConditionComparableBookQuote,
+    at: datetime,
+    conversion_uncertainty_bps: Decimal,
+) -> ConditionPredicate:
+    if left.quote_asset == right.quote_asset:
+        return _condition_comparable_mid_gap(
+            left.mid_quote, right.mid_quote, left.spread_bps, right.spread_bps, Decimal(0)
+        )
+    left_rate, right_rate = left.quote_valuation.rate, right.quote_valuation.rate
+    if left_rate is None or right_rate is None:
+        return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="QUOTE_CONVERSION_UNAVAILABLE")
+    for valuation in (left.quote_valuation, right.quote_valuation):
+        if valuation.as_of is not None and valuation.as_of > at:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+    values = (left.mid_quote, right.mid_quote, left_rate, right_rate)
+    span = (
+        max(value.adjusted() for value in values)
+        - min(int(value.as_tuple().exponent) for value in values)
+        + 1
+    )
+    with localcontext() as context:
+        context.prec = max(128, 4 * span + 32)
+        left_usd, right_usd = left.mid_quote * left_rate, right.mid_quote * right_rate
+    return _condition_comparable_mid_gap(
+        left_usd, right_usd, left.spread_bps, right.spread_bps, conversion_uncertainty_bps
+    )
+
+
+def _condition_comparable_mid_gap(
+    left_mid: Decimal,
+    right_mid: Decimal,
+    left_spread_bps: Decimal,
+    right_spread_bps: Decimal,
+    conversion_cost_bps: Decimal,
+) -> ConditionObservedPredicate:
+    values = (left_mid, right_mid, left_spread_bps, right_spread_bps, conversion_cost_bps)
+    span = (
+        max(value.adjusted() for value in values)
+        - min(int(value.as_tuple().exponent) for value in values)
+        + 1
+    )
+    with localcontext() as context:
+        context.prec = max(128, 4 * span + 32)
+        gap = (left_mid - right_mid).copy_abs() * 10000 > (
+            left_spread_bps + right_spread_bps + conversion_cost_bps
+        ) * right_mid
+    return ConditionObservedPredicate(status="OBSERVED", value=gap)
+
+
+class ConditionIndependentRestQuote(ConditionComparableBookQuote):
+    source: Literal["PUBLIC_REST"]
+    primary_observed_at: Timestamp
+    proximity_policy: ConditionCadence
+    capture_confirmed_independent: bool | None
+    confirmation_reason: Literal["NOT_CAPTURED", "NOT_CONFIRMED"] | None
+
+    @model_validator(mode="after")
+    def actual_confirmation_claim(self) -> Self:
+        _bind_cadence_scope(
+            self.proximity_policy.scope,
+            collection="books",
+            token_id=self.token_id,
+            instrument_id=self.instrument_id,
+            metric_key=self.metric_key,
+            observation_kind=None,
+            chain=None,
+        )
+        expected = (
+            None
+            if self.capture_confirmed_independent is True
+            else "NOT_CONFIRMED"
+            if self.capture_confirmed_independent is False
+            else "NOT_CAPTURED"
+        )
+        if self.confirmation_reason != expected:
+            raise ValueError(
+                "Independent capture confirmation must preserve actual absent/false/true metadata"
+            )
+        return self
+
+    def eligible_at(self, cutoff: datetime) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        if validated.capture_confirmed_independent is False:
+            return ConditionObservedPredicate(status="OBSERVED", value=False)
+        if validated.capture_confirmed_independent is None or not isinstance(
+            validated.proximity_policy, DeclaredConditionCadence
+        ):
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        primary, secondary = validated.primary_observed_at.value, validated.observed_at.value
+        if primary is None or secondary is None:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        a, b, bound = parse_iso_time(primary), parse_iso_time(secondary), parse_iso_time(cutoff)
+        if a > bound or b > bound or abs((b - a).total_seconds()) > validated.proximity_policy.seconds:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        return ConditionObservedPredicate(status="OBSERVED", value=True)
+
+
+class ConditionIndependentPairConfirmation(DomainModel):
+    left: ConditionIndependentRestQuote | None
+    right: ConditionIndependentRestQuote | None
+    cutoff: datetime
+    quote_conversion_uncertainty_bps: Decimal = Field(ge=0)
+
+    @field_validator("cutoff")
+    @classmethod
+    def aware_evaluation(cls, value: datetime) -> datetime:
+        return parse_iso_time(value)
+
+    @model_validator(mode="after")
+    def actual_pair_identity(self) -> Self:
+        if (
+            self.left is not None
+            and self.right is not None
+            and (self.left.venue == self.right.venue or self.left.token_id != self.right.token_id)
+        ):
+            raise ValueError("Independent confirmation requires distinct venues for the same actual token")
+        return self
+
+    def confirmed_gap(self) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        left, right = validated.left, validated.right
+        if left is None or right is None:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        eligible = condition_predicates_all(
+            (left.eligible_at(validated.cutoff), right.eligible_at(validated.cutoff))
+        )
+        if isinstance(eligible, ConditionUnavailablePredicate) or not eligible.value:
+            return eligible
+        return _condition_book_price_gap(
+            left, right, validated.cutoff, validated.quote_conversion_uncertainty_bps
+        )

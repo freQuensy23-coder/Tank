@@ -18,7 +18,9 @@ from tank.analysis.condition_graph_contracts import (
     ConditionFieldObservation,
     ConditionFlowAggregate,
     ConditionFundingObservation,
+    ConditionIndependentRestQuote,
     ConditionInterval,
+    ConditionPrimaryBookQuote,
     ConditionRelativeGraph,
     ConditionRelativeWindow,
     ConditionReplenishmentBurst,
@@ -33,6 +35,7 @@ from tank.analysis.condition_graph_contracts import (
 )
 from tank.analysis.positioning import MissingOIDecomposition
 from tank.analysis.statistics_contracts import DecimalBounds, DecimalRange, FloatBounds, FloatRange
+from tank.market.trade_contracts import QuoteUsdValuation
 from tank.time_precision import Timestamp
 
 AT = datetime(2026, 10, 17, 12, tzinfo=UTC)
@@ -543,10 +546,11 @@ def test_observed_zero_volume_is_distinct_from_an_unavailable_composite() -> Non
         buy_share=None,
         bs_ratio=None,
         venues=(),
-        sign=0,
+        sign=None,
         reason="INCOMPLETE",
     )
     assert observed.volume == 0 and unavailable.volume is None
+    assert observed.sign == 0 and unavailable.sign is None
     assert observed.venues == ("venue",) and unavailable.venues == ()
     with pytest.raises(ValidationError, match="ratios are undefined"):
         ObservedConditionComposite.model_validate(
@@ -2173,3 +2177,260 @@ def test_pre_depth_means_preserve_different_qualified_observation_cohorts() -> N
         ConditionPreBookSideDepth.model_validate(
             partial.model_copy(update={"native": native.model_copy(update={"cohort": one})})
         )
+
+
+def cadence_for_book(instrument: str) -> DeclaredConditionCadence:
+    from tank.analysis.condition_graph_contracts import InstrumentCadenceScope
+
+    return DeclaredConditionCadence.model_validate(
+        declared_book_cadence().model_copy(
+            update={
+                "scope": InstrumentCadenceScope(
+                    kind="INSTRUMENT", collection="books", token_id="T", instrument_id=instrument
+                )
+            }
+        )
+    )
+
+
+def primary_quote(
+    venue: str, quote_asset: str, mid: Decimal, valuation: QuoteUsdValuation
+) -> ConditionPrimaryBookQuote:
+    from tank.analysis.condition_graph_contracts import UnrecordedConditionCaptureIdentity
+
+    return ConditionPrimaryBookQuote(
+        token_id="T",
+        venue=venue,
+        instrument_id=venue + ":spot:T",
+        metric_key=None,
+        quote_asset=quote_asset,
+        mid_quote=mid,
+        spread_bps=Decimal(1),
+        observed_at=Timestamp(
+            value="2026-10-17T11:59:55Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+        ),
+        quote_valuation=valuation,
+        capture_identity=UnrecordedConditionCaptureIdentity(
+            status="UNRECORDED", reason="CAPTURE_IDENTITY_NOT_CAPTURED"
+        ),
+        integrity_ok=True,
+    )
+
+
+def independent_quote(primary: ConditionPrimaryBookQuote) -> ConditionIndependentRestQuote:
+    return ConditionIndependentRestQuote(
+        token_id=primary.token_id,
+        venue=primary.venue,
+        instrument_id=primary.instrument_id,
+        metric_key=primary.metric_key,
+        quote_asset=primary.quote_asset,
+        mid_quote=primary.mid_quote,
+        spread_bps=primary.spread_bps,
+        observed_at=Timestamp(
+            value="2026-10-17T11:59:56Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+        ),
+        quote_valuation=primary.quote_valuation,
+        capture_identity=primary.capture_identity,
+        source="PUBLIC_REST",
+        primary_observed_at=primary.observed_at,
+        proximity_policy=cadence_for_book(primary.instrument_id),
+        capture_confirmed_independent=True,
+        confirmation_reason=None,
+    )
+
+
+def test_book_window_coverage_uses_actual_scoped_cadence_and_measured_gaps() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionBookSampleCoverage,
+        UnavailableConditionCadence,
+    )
+
+    cadence = cadence_for_book("a:spot:T")
+    scope = ConditionInterval(window="W15M", start=AT - timedelta(minutes=15), cutoff=AT)
+    coverage = ConditionBookSampleCoverage(
+        token_id="T",
+        venue="a",
+        instrument_id="a:spot:T",
+        metric_key=None,
+        cadence=cadence,
+        sample_count=91,
+        initial_observation=Timestamp(
+            value="2026-10-17T11:45:00Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+        ),
+        latest_observation=Timestamp(
+            value="2026-10-17T12:00:00Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+        ),
+        maximum_gap_s=10.0,
+    )
+    complete = coverage.covers(scope)
+    assert complete.status == "OBSERVED" and complete.value is True
+    gap = coverage.model_copy(update={"maximum_gap_s": 11.0}).covers(scope)
+    assert gap.status == "OBSERVED" and gap.value is False
+    unknown = coverage.model_copy(
+        update={
+            "cadence": UnavailableConditionCadence(
+                status="UNAVAILABLE",
+                seconds=None,
+                scope=cadence.scope,
+                origin=None,
+                reason="CADENCE_NOT_CAPTURED",
+            )
+        }
+    ).covers(scope)
+    assert unknown.status == "UNAVAILABLE"
+    with pytest.raises(ValidationError, match="another instrument"):
+        ConditionBookSampleCoverage.model_validate(
+            coverage.model_copy(update={"cadence": cadence_for_book("different")})
+        )
+
+
+def test_same_currency_gap_does_not_require_or_invent_usd_conversion() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionBookPairSample
+
+    missing_fx = QuoteUsdValuation(
+        rate=None, as_of=None, basis="UNAVAILABLE", unavailable_reason="QUOTE_USD_RATE_UNAVAILABLE"
+    )
+    left, right = (
+        primary_quote("a", "USDT", Decimal(103), missing_fx),
+        primary_quote("b", "USDT", Decimal(100), missing_fx),
+    )
+    sample = ConditionBookPairSample(
+        left=left,
+        right=right,
+        left_cadence=cadence_for_book(left.instrument_id),
+        right_cadence=cadence_for_book(right.instrument_id),
+        evaluated_at=AT,
+        quote_conversion_uncertainty_bps=Decimal(2),
+    )
+    gap = sample.gap()
+    assert gap.status == "OBSERVED" and gap.value is True
+    assert sample.left.quote_valuation.rate is None
+    with pytest.raises(ValidationError):
+        ConditionBookPairSample.model_validate(
+            sample.model_copy(update={"left": left.model_copy(update={"integrity_ok": 1})})
+        )
+
+
+def test_cross_currency_gap_requires_actual_fx_instead_of_a_stablecoin_peg_default() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionBookPairSample
+
+    missing_fx = QuoteUsdValuation(
+        rate=None, as_of=None, basis="UNAVAILABLE", unavailable_reason="QUOTE_USD_RATE_UNAVAILABLE"
+    )
+    usd = QuoteUsdValuation(rate=Decimal(1), as_of=None, basis="USD_UNIT", unavailable_reason=None)
+    left, right = (
+        primary_quote("a", "USDT", Decimal("100.1"), missing_fx),
+        primary_quote("b", "USD", Decimal(100), usd),
+    )
+    sample = ConditionBookPairSample(
+        left=left,
+        right=right,
+        left_cadence=cadence_for_book(left.instrument_id),
+        right_cadence=cadence_for_book(right.instrument_id),
+        evaluated_at=AT,
+        quote_conversion_uncertainty_bps=Decimal(2),
+    )
+    unknown = sample.gap()
+    assert unknown.status == "UNAVAILABLE" and unknown.reason == "QUOTE_CONVERSION_UNAVAILABLE"
+    actual = left.model_copy(
+        update={
+            "quote_valuation": QuoteUsdValuation(
+                rate=Decimal("0.999"),
+                as_of=AT - timedelta(seconds=5),
+                basis="HISTORICAL_SAMPLE",
+                unavailable_reason=None,
+            )
+        }
+    )
+    converted = sample.model_copy(update={"left": actual}).gap()
+    assert converted.status == "OBSERVED" and converted.value is False
+
+
+def test_independent_confirmation_absence_is_unknown_and_captured_false_stays_false() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionIndependentPairConfirmation
+
+    no_fx = QuoteUsdValuation(
+        rate=None, as_of=None, basis="UNAVAILABLE", unavailable_reason="QUOTE_USD_RATE_UNAVAILABLE"
+    )
+    left, right = (
+        independent_quote(primary_quote("a", "USDT", Decimal(103), no_fx)),
+        independent_quote(primary_quote("b", "USDT", Decimal(100), no_fx)),
+    )
+    partial = ConditionIndependentPairConfirmation(
+        left=left, right=None, cutoff=AT, quote_conversion_uncertainty_bps=Decimal(2)
+    )
+    assert partial.confirmed_gap().status == "UNAVAILABLE"
+    complete = partial.model_copy(update={"right": right})
+    confirmed = complete.confirmed_gap()
+    assert confirmed.status == "OBSERVED" and confirmed.value is True
+    unconfirmed = left.model_copy(
+        update={"capture_confirmed_independent": False, "confirmation_reason": "NOT_CONFIRMED"}
+    )
+    failed = complete.model_copy(update={"left": unconfirmed}).confirmed_gap()
+    assert failed.status == "OBSERVED" and failed.value is False
+    missing = left.model_copy(
+        update={"capture_confirmed_independent": None, "confirmation_reason": "NOT_CAPTURED"}
+    )
+    assert complete.model_copy(update={"left": missing}).confirmed_gap().status == "UNAVAILABLE"
+
+
+def test_independent_confirmation_requires_actual_clock_proximity_and_instrument_scope() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionIndependentPairConfirmation
+
+    no_fx = QuoteUsdValuation(
+        rate=None, as_of=None, basis="UNAVAILABLE", unavailable_reason="QUOTE_USD_RATE_UNAVAILABLE"
+    )
+    left, right = (
+        independent_quote(primary_quote("a", "USDT", Decimal(103), no_fx)),
+        independent_quote(primary_quote("b", "USDT", Decimal(100), no_fx)),
+    )
+    confirmation = ConditionIndependentPairConfirmation(
+        left=left, right=right, cutoff=AT, quote_conversion_uncertainty_bps=Decimal(2)
+    )
+    stale = left.model_copy(
+        update={
+            "observed_at": Timestamp(
+                value="2026-10-17T11:59:40Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+            )
+        }
+    )
+    assert confirmation.model_copy(update={"left": stale}).confirmed_gap().status == "UNAVAILABLE"
+    with pytest.raises(ValidationError, match="another instrument"):
+        ConditionIndependentPairConfirmation.model_validate(
+            confirmation.model_copy(
+                update={"left": left.model_copy(update={"proximity_policy": cadence_for_book("other")})}
+            )
+        )
+
+
+def test_discrete_direction_and_missing_composite_sign_are_not_boolean_or_neutral_surrogates() -> None:
+    from tank.analysis.condition_graph_contracts import (
+        ObservedConditionComposite,
+        UnavailableConditionComposite,
+    )
+
+    observed = ObservedConditionComposite(
+        status="OBSERVED",
+        cvd=Decimal(0),
+        volume=Decimal(0),
+        buy_share=None,
+        bs_ratio=None,
+        venues=("a",),
+        sign=0,
+        null_reasons={"buy_share": "ZERO_TOTAL_VOLUME", "bs_ratio": "ZERO_TOTAL_VOLUME"},
+    )
+    with pytest.raises(ValidationError, match="integer"):
+        ObservedConditionComposite.model_validate(observed.model_copy(update={"sign": False}))
+    missing = UnavailableConditionComposite(
+        status="UNAVAILABLE",
+        cvd=None,
+        volume=None,
+        buy_share=None,
+        bs_ratio=None,
+        venues=(),
+        sign=None,
+        reason="INCOMPLETE",
+    )
+    assert observed.sign == 0 and missing.sign is None
+    with pytest.raises(ValidationError):
+        UnavailableConditionComposite.model_validate(missing.model_copy(update={"sign": 0}))
