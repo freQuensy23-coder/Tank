@@ -732,3 +732,12 @@ JevScoreRecord.web_searches, FailedToolResponse.ok,
 NativeToolResult.is_error, RevisedReactionJob.automatic_revision, and
 NativeSessionMissing.missing. Forty real DTO/classifier cases prove boolean,
 integer and integral-float aliases cannot silently satisfy the wrong wire type.
+
+The lifecycle-only NativeSessionReference, NativeSessionState,
+NativeSessionMissing and NativeSessionLookup contracts now live in
+contracts/native_readback.py. The HTTP adapter reexports the same objects for
+existing callers. Presentation and followup selectors can validate missing
+observations without importing native transport code. The move changes no
+field, default or lifecycle behavior; 19 reader/tool-confirmation cases pass
+in 2.15 seconds, and the inward contract/adapter/test independent strict gate
+passes.

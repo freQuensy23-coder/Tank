@@ -1,35 +1,27 @@
 """Direct native resource lookup observations without inferred lifecycle facts."""
 
-from typing import Literal
 from urllib.parse import quote
 
 import httpx
-from pydantic import Field, JsonValue
+from pydantic import JsonValue
 
 from tank.agents.native_sessions import NativeSessionEndpoint
 from tank.agents.provenance import NativePromptObservation, observe_resolved_native_prompt
-from tank.contracts import DomainModel
-from tank.contracts.scalars import TrueFlag
-
-type NativeLifecycle = Literal["rescheduling", "running", "idle", "terminated"]
-
-
-class NativeSessionReference(DomainModel):
-    session_id: str = Field(min_length=1)
-
-
-class NativeSessionState(NativeSessionReference):
-    kind: Literal["FOUND"]
-    status: NativeLifecycle
-    archived_at: str | None
-
-
-class NativeSessionMissing(NativeSessionReference):
-    kind: Literal["MISSING"]
-    missing: TrueFlag
-
-
-type NativeSessionLookup = NativeSessionState | NativeSessionMissing
+from tank.contracts.native_readback import (
+    NativeLifecycle as NativeLifecycle,
+)
+from tank.contracts.native_readback import (
+    NativeSessionLookup as NativeSessionLookup,
+)
+from tank.contracts.native_readback import (
+    NativeSessionMissing as NativeSessionMissing,
+)
+from tank.contracts.native_readback import (
+    NativeSessionReference as NativeSessionReference,
+)
+from tank.contracts.native_readback import (
+    NativeSessionState as NativeSessionState,
+)
 
 
 class NativeSessionPrompt(NativeSessionReference):
