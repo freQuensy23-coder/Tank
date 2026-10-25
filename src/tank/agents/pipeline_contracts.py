@@ -6,7 +6,7 @@ from typing import Literal, Self
 
 from pydantic import Field, JsonValue, field_serializer, model_validator
 
-from tank.agents.jev import JevBinding, JevQuestion, JevUsage
+from tank.agents.decision import DecisionBinding, DecisionQuestion, DecisionUsage
 from tank.analysis.identity import EntityIdentity, TokenIdentity
 from tank.contracts import DomainModel
 from tank.contracts.scalars import ZeroInt
@@ -29,8 +29,8 @@ type EventLifecycle = Literal[
 
 class ClassificationIdentity(DomainModel):
     usage_id: str
-    questions: dict[str, JevQuestion]
-    binding: JevBinding
+    questions: dict[str, DecisionQuestion]
+    binding: DecisionBinding
     state_fingerprint: str
     question_fingerprint: str
     request_fingerprint: str
@@ -59,29 +59,29 @@ class MissingClassificationFields(DomainModel):
         return fields
 
 
-class JevScoreRecord(DomainModel):
+class DecisionScoreRecord(DomainModel):
     usage_id: str = Field(pattern=r"^[a-f0-9]{64}$")
     item_id: str
     call: Literal["FILTER", "ROUTE"]
     model_id: str
-    semantic_model_id: Literal["jev-1.13.0"]
-    requested_model_id: Literal["jev-1.13-free", "jev-1.13"]
-    jev_provider: Literal["opencode"]
-    endpoint: Literal["https://opencode.ai/inference/systemone/v1/systemone"]
+    semantic_model_id: Literal["microsoft-decision-1:1"]
+    requested_model_id: str = Field(min_length=1)
+    classifier_provider: Literal["azure-foundry"]
+    endpoint: str
     resolved_model_id: str
     response_id: str | None
     upstream_provider: str | None
     model_pin_evidence: str
-    billing_basis: Literal["OPENCODE_REPORTED"]
+    billing_basis: Literal["AZURE_FOUNDRY_REPORTED"]
     billing_currency: Literal["USD"]
     prompt_version: str
-    questions: dict[str, JevQuestion] = Field(min_length=1)
+    questions: dict[str, DecisionQuestion] = Field(min_length=1)
     state_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     question_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     request_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     session_id: None
     score: float = Field(ge=0, le=1)
-    usage: JevUsage
+    usage: DecisionUsage
     input_tokens: int | None = Field(ge=0)
     output_tokens: int | None = Field(ge=0)
     effort: None
@@ -111,8 +111,8 @@ class JevScoreRecord(DomainModel):
             raise ValueError("Classification subject differs from its source item")
         if self.model != self.model_id or self.resolved_model_id != self.model_id:
             raise ValueError("Classification model identities disagree")
-        if self.model_id != self.requested_model_id:
-            raise ValueError("Classification resolved model differs from its pinned request")
+        if self.model_id != "microsoft-decision-1":
+            raise ValueError("Classification resolved model differs from Decision-1")
         expected = "relevant" if self.call == "FILTER" else "same_event"
         if set(self.questions) != {expected}:
             raise ValueError("Classification ledger questions disagree with its call")

@@ -158,6 +158,8 @@ async def seed(repo, *, status="OPEN", rich_message=None) -> None:
                     "message_id": "m0",
                     "payload": {"kind": "NEW_ITEM", "item_id": "itm_1"},
                     "remote_event_id": "in_0",
+                    "retry_count": 0,
+                    "native_input_attempts": {"in_0": 0},
                     "turn_status": "DONE" if status != "FAILED" else "FAILED",
                 }
             ],
@@ -1587,6 +1589,8 @@ async def test_answer_lookup_reads_history_only_back_to_the_question() -> None:
             "message_id": "mq",
             "payload": {"kind": "USER_QUESTION", "question_id": "q"},
             "remote_event_id": "in_q",
+            "retry_count": 0,
+            "native_input_attempts": {"in_q": 0},
         }
     )
     history = [{"id": f"old{n}", "type": "agent.message", "content": []} for n in range(250)] + [

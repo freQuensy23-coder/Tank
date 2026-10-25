@@ -695,3 +695,22 @@ async def test_latest_delivery_state_keeps_link_to_earlier_success(settings, sam
     assert card["code"] == ("ALERT_FAILED" if failed else "ALERT_QUEUED")
     assert "Предыдущая карточка в Alerts" in card["text"]
     assert "https://t.me/c/456/42" in card["html"]
+
+
+async def test_historical_jev_scores_are_not_relabelled_as_decision_1(settings: SimpleNamespace) -> None:
+    repo = MemoryRepository()
+    item = await source(
+        repo,
+        relevance={
+            "decision": "SKIP",
+            "p_relevant": 0.12,
+            "cutoff": 0.7,
+            "model": "jev-1.13",
+            "semantic_model_id": "jev-1.13.0",
+        },
+        extraction_status="SKIPPED",
+    )
+    await item_progress(repo, settings, item["item_id"], "JEV_REJECTED")
+    card = render(await snapshot(repo, item["item_id"]))
+    assert "Decision-1" not in card["text"]
+    assert "релевантность 12%, порог 70%" in card["text"]

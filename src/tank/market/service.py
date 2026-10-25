@@ -325,7 +325,7 @@ class MarketService:
                 "etherscan_api_key",
                 "tavily_api_key",
                 "typesafe_api_key",
-                "opencode_api_key",
+                "foundry_api_key",
                 "openma_api_key",
                 "codex_gateway_key",
                 "telegram_token",

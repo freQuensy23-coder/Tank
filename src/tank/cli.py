@@ -584,7 +584,7 @@ def readiness_checks(settings: Settings) -> list[ReadinessCheck]:
             if name == "thresholds":
                 checks.append(ReadinessCheck(check="calibration", ok=False, reason=type(exc).__name__))
     for name, setting_value in (
-        ("opencode_api_key", settings.opencode_api_key),
+        ("foundry_api_key", settings.foundry_api_key),
         ("openma_api_key", settings.openma_api_key),
         ("codex_gateway_key", settings.codex_gateway_key),
         ("etherscan_api_key", settings.etherscan_api_key),
@@ -654,7 +654,7 @@ def doctor() -> None:
 @click.argument("input_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--output-dir", required=True, type=click.Path(file_okay=False, path_type=Path))
 def calibrate(input_path: Path, output_dir: Path) -> None:
-    """Score >=200 frozen labeled news items with Jev and propose measured cutoffs."""
+    """Score >=200 frozen labeled news items with Decision-1 and propose measured cutoffs."""
     import httpx
 
     from tank.calibration import acquire

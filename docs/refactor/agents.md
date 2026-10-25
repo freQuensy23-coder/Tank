@@ -758,6 +758,73 @@ field, default or lifecycle behavior; 19 reader/tool-confirmation cases pass
 in 2.15 seconds, and the inward contract/adapter/test independent strict gate
 passes.
 
+## Durable outbound ownership work in progress
+
+The separate outbound branch begins with JournalInputLineage,
+ToolInputLineage and NativeInputOwner. Current input identity and its actual
+recorded retry count can prove ownership; explicit native_input_attempts entries
+prove older attempts. A superseded ID without an ordinal is unknown historical
+lineage, not an array-position retry count. A tool callback without a recorded
+retry count cannot acquire attempt zero. Conflicting journal owners refuse.
+
+A known native execution can still rebind an obsolete active pointer to its
+actual acknowledged journal owner. The owner resolver therefore validates the
+journal identities and accepted lineage before the process_event write guard
+validates the newly established pointer. It does not use an inconsistent active
+pointer to infer a source.
+
+Forty ownership/native-retry/execution-barrier cases pass in 4.97 seconds,
+including the actual acknowledged-execution rebind. The new pure model and
+service-boundary tests pass independent strict mypy. Pending/accepted/retry
+intent phase models and durable write/recovery migration remain work in
+progress; this checkpoint is not a release of the outbound slice.
+
+PendingOutboundInput and AcceptedOutboundInput now drive initial posting and
+outbound recovery. An accepted unreported or empty protocol receipt is retained
+as that exact observation; it is never fabricated into an event identity and
+never reposted merely because its ID is absent. Historical accepted rows whose
+receipt was not retained use LegacyUnreportedAcceptance with an explicit reason.
+A later retry ID cannot be substituted for an unknown original receipt.
+
+Posting compares the durable initial definition before committing acceptance.
+Concurrent confirmed receipts retain stronger identity evidence; an actual
+reported receipt can refine an unreported receipt only for the same unchanged
+initial input. Recovery by a new controller reuses the original durable body and
+idempotency key after a lost response. Invalid scalar aliases, null retained
+receipt, changed body and conflicting identities refuse before posting or
+before the acceptance write as appropriate. Source observation time remains
+explicitly unknown when unreported, distinct from the actual local acceptance
+clock.
+
+Seventy focused phase/lineage/native-retry/audit/barrier cases pass in 5.65
+seconds. Independent strict models/test checks pass. The generic private journal
+storage adapter remains a boundary under migration; these models do not pretend
+to be a full SessionService aggregate. The retry writer still requires its
+separate pending/reported/unknown-budget conversion before outbound release.
+
+Retry phase models now retain the declared budget, actual input definition,
+verified owner and real failure identity. Missing counts, missing current owner
+or missing original body refuse before posting without fabricating terminal
+native events. Declared legacy zero remains valid; a fresh journal input uses
+its own count even when unrelated origin history lacks that fact.
+
+The diagnostic cutoff requirement was removed after the complete consumer
+inventory proved the fields were write-only. No fixture was padded to satisfy
+it. The 642-case diagnostic (629 passes and 13 cutoff refusals) remains preserved
+in agents-outbound-diagnostic-unit.log/XML. Existing captured cutoff/index
+metadata remains unchanged. Operational late callback fencing continues to use
+message IDs and actual retry attempt identities. Optional replay ordinal
+reporting and the old tool ordering counter are separate open tool-ledger work;
+no discovery API or new sequence epoch was introduced for retry.
+
+Seventy phase/lineage/retry cases initially passed; the subsequent affected
+workflow selection passes all 127 cases after retiring the unused dependency.
+The actual missing-budget/owner tests prove zero HTTP, unchanged retained rows
+and no fabricated terminal failure. A new declared input is not blocked by
+unknown origin history. The behavior tests that call process_event remain
+outside independent strict enforcement until that legacy boundary is migrated;
+no suppression or protocol facade hides this open work.
+
 ## Native archive-clock companion
 
 NativeSessionState.actual_archive_clock uses the shared aware timestamp parser
@@ -768,3 +835,162 @@ Z and explicit-offset clocks retain their exact text. The actual continuation
 reader regression proves invalid input refuses before local state mutation or
 native input posting. All 27 reader/tool-boundary cases pass in 4.38 seconds;
 the inward model, HTTP adapter and test pass independent strict mypy.
+
+The unknown-budget behavior proof now covers actual process_event dispatch for
+a journal without a count, an origin-only retained row without a count, and stale
+journal history without a current owner. All three cases pass in 2.38 seconds:
+zero HTTP calls, unchanged retained row, and no fabricated terminal failure.
+The behavior test is not independently strict-complete while process_event
+remains an untyped legacy boundary; no test suppression or protocol facade was
+introduced to hide that open work.
+
+The complete consumer audit corrects the earlier ordinal-fence assumption:
+retry_call_ordinal_cutoffs and _host_retry_call_ordinal_cutoff are write-only.
+native_turn_call_index is reported as optional replay checkpoint metadata.
+Operational late callback supersession compares actual message and retry
+attempt identities. The WIP cutoff requirement therefore remains under review
+and must not be used to justify padding retained fixture metadata.
+
+
+Outbound receiver and recovery guards now verify the stored session identity
+before native effects, and refuse unmatched active pointers before reposting an
+otherwise valid pending intent. Native input resource IDs are required and
+encoded as one path segment. Acceptance cannot assign a prior native input ID
+to a different host retry attempt. Reported receipts preserve or refine existing
+evidence without discarding known IDs when a concurrent response omits them.
+Private initial/retry bodies are hidden from model representations; the actual
+wire is serialized through the typed JSON codec only at HTTP/storage boundaries.
+
+Owner proof on source/test checkpoint c4e119f9: all 649 unit cases pass in
+42.27 seconds, p90 0.534 seconds and maximum 4.459 seconds; all 78 actual
+integrations pass in 38.35 seconds, zero skips. Logs/XML/metrics are retained
+as agents-outbound-qualified-* in the isolated worktree. Four new/changed
+source targets and two actual HTTP/lineage test targets pass independent strict
+mypy with the official plugin and source/test roots. The retry behavior tests
+that call the legacy process_event boundary remain explicitly open for that
+gate. Configured mypy of all 143 source files has only the existing
+analysis/truth.py:5890 condition-cache annotation error on this ancestry; no
+owned source error remains. Ruff/format/source-comment checks pass.
+
+The inventory records 38 owned source files with 34 SessionService/free-helper
+functions and four Runtime functions still annotation-incomplete. The full
+journal/event stream, tool orchestration, usage, followup presentation layering,
+runtime worker domain and 42 assigned vendor programs remain open. This bounded
+migration does not approve their generic maps or remaining fallbacks.
+
+## Native chronology transport companion in progress
+
+The separate transport branch preserves the qualified outbound checkpoint.
+NativeRetryRefusal and NativeRefusalKey identify an actually observed native
+event/execution within its session. A host_retry_refusals namespace records the
+named host refusal, actual controller observation clock and required controller
+version facet. Historical producer metadata and retry budgets are not relabeled.
+The receipt and any genuinely reported cursor commit in one session-document
+write before memory dedup advances; committed-write acknowledgment loss is
+distinguished from a write that never committed.
+
+Page and stream callers now handle that permanent host outcome without inventing
+native termination or starving a later independently owned frame. Direct
+process_event still surfaces its named refusal. Existing durable refusal lookup
+skips only the exact recorded identity across restart; a different execution
+with the same event ID remains independently processable.
+
+Two source-backed HTTP paging contracts are explicit: managed data/next_page
+and native Node data/has_more with after_seq derived only from reported event
+sequences. Mixed, missing, repeated and non-progressing contracts refuse rather
+than guessing. Both source-backed SSE forms are flat events: cursor-free managed
+events and Node events with a reported seq, optionally bound to the same SSE id.
+The undocumented seq/event wrapper fallback is removed. Actual comment/ping
+heartbeats remain non-events; no event ID or cursor comes from list position,
+clock or inherited empty content.
+
+Actual native HTTP/SSE bytes opt into canonical decode_unique_json before
+ownership projection. Model serialization roundtrips and opaque tool/file text
+remain unparsed. First proof: 22 transport cases pass in 1.98 seconds, two actual
+PostgreSQL persistence/restart cases pass in 2.62 seconds, and the model/adapter
+plus behavior test pass independent strict mypy. The earlier 93 existing caller
+cases pass after authoring the already-declared Node seq in its SSE fixture and
+an explicit terminal managed cursor for the complete synthetic history page.
+Full owner and peer qualification remains pending.
+
+The first full 671-case owner diagnostic had 634 passes and 37 failures, all
+exactly the missing paging-contract error in five authored HTTP fixture families.
+Each handler returns its complete available history snapshot; those responses
+now declare terminal next_page=None. Frozen payloads, budgets, deadlines and
+behavior assertions were not changed. The 75 affected transport/workflow cases
+pass in 19.11 seconds after that correction. Full combined qualification is
+still pending.
+
+Final transport owner proof on source/test checkpoint 5b09c8ec: all 671 unit
+cases pass in 37.44 seconds, p90 0.484 seconds and maximum 4.382
+seconds; all 80 actual integrations pass in 38.20 seconds, zero skips. Logs,
+XML and metrics use agents-native-transport-final-* in the isolated worktree.
+Eight source/test targets pass the independent strict gate with both source
+and test roots and the official Pydantic plugin. Ruff/format/source-comment
+checks pass. Configured mypy checks 145 source files with only the existing
+analysis/truth.py:5890 condition-cache annotation error on this ancestry; no
+owned source error remains. Peer E2E/followup fixture qualification is pending.
+
+The transport adapter's dictionaries are actual native HTTP/SSE wire objects,
+not a permissive application record model. Full native process_event/tool/
+history execution domain migration remains open. The refreshed inventory lists
+30 SessionService/free-helper functions and four Runtime functions still
+annotation-incomplete, plus the separate assigned vendor backlog. The Telegram
+eligibility/presentation policy dependency is still explicitly open.
+
+## Foundry Decision-1 upstream integration, precommit checkpoint
+
+The upstream replacement of Jev/OpenCode is implemented through the existing
+extracted layers: agents.decision admits the provider protocol,
+classification.DecisionClassifier owns immutable score identities/accounting,
+routing projects typed source/event facts, and Pipeline orchestrates typed
+repositories and progress. The Jev runtime adapter is deleted; no compatibility
+alias, provider switch or raw-record classifier facade remains. The configured
+deployment, returned microsoft-decision-1 identity and declared
+microsoft-decision-1:1 configuration are separate facts. The response does not
+attest a version, and model_pin_evidence says so.
+
+Settings owns the declared endpoint/deployment defaults from upstream main.
+The adapter requires an explicit validated binding and never supplies a missing
+provider, credential or deployment. Binding admission requires an HTTPS Azure
+resource origin without credentials, query, fragment or nonstandard port.
+Live classification requires a nonblank key before HTTP, sends only api-key,
+and refuses redirects. Exact-cache and offline replay may operate without a
+credential; a missing replay score cannot invoke Foundry.
+
+DecisionItem optional author/title/text/quoted fields and DecisionState.event
+represent actual absent or duplicate-cleaned projection facts. DecisionEvent
+optional stage/entities/tokens retain existing event projection semantics.
+DecisionQuestion.criteria is genuinely optional in the verified provider
+contract. DecisionUsage token counts/cost and DecisionResponse id/provider
+remain genuinely optional provider reports. Omitted monetary cost is unknown
+with an explicit reason; reported zero remains known. Question/answer
+dictionaries are actual label-keyed protocol namespaces, serialized at the
+request, response and fingerprint boundaries; persisted scores use the closed
+DecisionScoreRecord. Raw responses pass unique-key admission before strict
+Pydantic validation, preventing duplicate ownership/answer facts from collapsing.
+
+Cache identity includes resource, deployment, provider, semantic declaration,
+prompt version and exact state/question fingerprints. Cache consumption
+crosschecks the corresponding closed record. Historical Jev rows remain
+untouched and cannot answer Decision-1 requests.
+
+Precommit verification: independent strict mypy passes twelve exact owned
+source/test targets with both real src/tests roots and the official Pydantic
+plugin. Ruff/format and staged whitespace checks pass. Nine directly invoked
+offline async smoke cases pass, including provider HTTP/cache, reported cost,
+raw duplicate refusal, old-provider cache separation with known zero cost,
+optional metadata, redirects and missing credentials. The smoke script's
+printed count eleven was a counting typo; nine cases actually ran. Formal
+pytest remains pending resolution of the other owners' active merge conflicts.
+The complete SessionService/Runtime and assigned vendor backlog remains open.
+
+Formal merged-tree owner selection is now green: all 155 classifier, pipeline,
+provenance/scalar and agent cases pass in 6.56 seconds, zero skips, using the
+shared pinned runner and -n auto. The first selection had one outdated
+authored routing-fixture assertion for the former OpenCode path; it now checks
+/providers/microsoft/v1/systemone. All original routing/model/effect assertions
+remain. Logs are agents-foundry-merge-unit.log (diagnostic) and
+agents-foundry-merge-unit-final.log (terminal green) under shared evidence.
+No live Foundry request occurred. Whole merged-tree and actual PostgreSQL/E2E
+qualification remain parent/peer gates.

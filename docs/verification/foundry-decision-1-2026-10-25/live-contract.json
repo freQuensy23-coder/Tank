@@ -1,0 +1,51 @@
+{
+  "checked_at": "2026-10-25T14:52:47.140777+00:00",
+  "scope": "Synthetic API contract and exact-cache verification; not quality calibration",
+  "requests": 3,
+  "cached_repeat_made_no_request": true,
+  "routing_score": 0.996827318529189,
+  "scores": [
+    {
+      "call": "FILTER",
+      "model_id": "microsoft-decision-1",
+      "semantic_model_id": "microsoft-decision-1:1",
+      "requested_model_id": "decision-1",
+      "classifier_provider": "azure-foundry",
+      "endpoint": "https://alexeym-4644-resource.services.ai.azure.com/providers/microsoft/v1/systemone",
+      "prompt_version": "decision-1-v1",
+      "score": 0.9978172828272834,
+      "input_tokens": 170,
+      "output_tokens": 1,
+      "cost_usd": null,
+      "cost_reason": "Azure Foundry does not report usage.cost"
+    },
+    {
+      "call": "FILTER",
+      "model_id": "microsoft-decision-1",
+      "semantic_model_id": "microsoft-decision-1:1",
+      "requested_model_id": "decision-1",
+      "classifier_provider": "azure-foundry",
+      "endpoint": "https://alexeym-4644-resource.services.ai.azure.com/providers/microsoft/v1/systemone",
+      "prompt_version": "decision-1-v1",
+      "score": 0.00048786005280962316,
+      "input_tokens": 166,
+      "output_tokens": 1,
+      "cost_usd": null,
+      "cost_reason": "Azure Foundry does not report usage.cost"
+    },
+    {
+      "call": "ROUTE",
+      "model_id": "microsoft-decision-1",
+      "semantic_model_id": "microsoft-decision-1:1",
+      "requested_model_id": "decision-1",
+      "classifier_provider": "azure-foundry",
+      "endpoint": "https://alexeym-4644-resource.services.ai.azure.com/providers/microsoft/v1/systemone",
+      "prompt_version": "decision-1-v1",
+      "score": 0.996827318529189,
+      "input_tokens": 124,
+      "output_tokens": 1,
+      "cost_usd": null,
+      "cost_reason": "Azure Foundry does not report usage.cost"
+    }
+  ]
+}
