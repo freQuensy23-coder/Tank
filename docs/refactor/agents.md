@@ -1034,3 +1034,78 @@ The separate followup-policy branch is preserved at dd9d1f9a and is not an
 ancestor of this bounded repair. The distinct UnprovedInputOwnership versus
 durable retry-refusal chronology audit is queued; this correction does not
 claim to resolve that unproven case.
+
+## Local Context3 and required followup reporting cohort
+
+Server development is frozen. This cohort uses the managed local agents worktree,
+normal canonical main 4d955ee0 and peer reporter lineage 664ab499/65740ba7/6397590d.
+The required-port composition is 87bac743; source checkpoint 43a2c7af contains
+that composition and the current-main peer fixture. No source was copied from a
+peer worktree and no inactive policy entered the parent main merge.
+
+SessionService now consumes pure inward followup eligibility and a required
+FollowupRefusalSink. Its target requires both actual question and session IDs;
+repository refusal formatting/persistence stays outside the core. The writer
+checks both identities inside the existing question lock/transaction and keeps
+first-answer/idempotent delivery behavior. Current/retained MISSING remains
+absence, not termination; known termination wins. Historical unknown lifecycle
+facts remain unknown and can only permit a native preflight, not input by
+themselves. Known retention with missing duration has an explicit unreported
+period variant. Concurrent termination after a 404 lookup, failed refusal
+persistence, foreign stored session identity and cross-session question binding
+have actual behavior oracles. The core imports answer persistence from inward
+question_answers; message/file formatting still imports Telegram helpers and
+is separate remaining layer work.
+
+Context3 preserves the incoming preliminary-card and timed-review instructions.
+Closed timed/metric fired-message variants preserve actual saved event/question/
+schedule and origin-session routing, without a fake token or metric predicate.
+Both require FIRED phase. The optional lifecycle-clock correction is consumed
+from its owner; no dummy firing/last-evaluation/cancellation times were authored.
+Condition-reference projection supports the actual timed expression and existing
+AGENT role.
+
+Archive selection uses strict card/delivery projections only in the phase that
+consumes them. CLOSED/MERGED do not demand unused denial metadata. INVALIDATED
+requires an actual aware finalization clock, required kind/positive revision,
+latest ordinary UPDATE or preliminary-only terminal correction and matching
+SENT delivery. No missing kind/revision/correction becomes ordinary/zero/false.
+The ordinary chain takes precedence over later preliminary cards.
+
+The actual tool validator implements the needed oneOf/const/not/allOf/if/then/
+else subset. It preserves numeric/boolean distinctions, object constraints in
+typeless branch schemas, schema-vs-instance failures and static no-input-echo
+errors. The existing single-WHY ordinary-card oracle still refuses before
+actual dispatch; preliminary one-WHY has a separate positive control. The
+watch manifest matches its three exclusive action schemas; validation does not
+insert defaults. The stated expiry72 default comes from the written policy.
+
+Local terminal proofs, with every log/XML outside the tested worktree:
+
+- 9e5542ba focused 370 cases: 19.14 s, zero skips, p90 0.193 s, max 4.608 s.
+- 43a2c7af owned 705 units: 41.47 s, zero skips, p90 0.557 s, max 5.114 s.
+- 43a2c7af selected actual native PostgreSQL cases: 13 passed in 6.82 s.
+- 43a2c7af full collected owned Linux integration selection: 130 passed in
+  40.26 s, zero skips, including actual pinned Node codec/pi gateway and service
+  lifecycle cases. The exact node-gateway lock matched the immutable tool image.
+- Independent strict 14 source/test targets and scoped Ruff pass. Configured
+  whole-source mypy on the tested prefix reports only the owner watch nullable
+  loop variable and existing analysis truth-cache annotation; no owned error.
+
+The local wrapper verified unchanged source identities and exact owned services;
+these are local results, not relabeled server evidence. Evidence prefixes are
+followup-9e5542ba-native-unit, followup-43a2c7af-owned-unit,
+followup-43a2c7af-native-integration and
+followup-43a2c7af-owned-linux-integration under the external agents evidence.
+The cohort remains held until replay and E2E required-constructor companions
+qualify together. Full SessionService/Runtime typing, legacy archival aggregate
+maps and assigned vendor programs remain open. The queued distinct
+UnprovedInputOwnership chronology concern still requires reproduction before
+any fix or completion claim.
+
+The final unknown-facts preflight fixture explicitly retains empty native and
+termination components; these carry no observed terminal fact. All 35 policy
+contract/actual-preflight cases pass again in 1.89 seconds, zero skips, with
+source identity verified (followup-final-unknown-facts external evidence).
+The refreshed inventory covers 41 owned active Python files and still lists
+30 SessionService/free-helper and four Runtime functions annotation-incomplete.

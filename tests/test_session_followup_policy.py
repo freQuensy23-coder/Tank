@@ -70,7 +70,12 @@ async def test_retained_missing_refuses_actual_question_without_native_or_input_
 @pytest.mark.asyncio
 async def test_unknown_retained_facts_require_actual_native_preflight_before_continuation() -> None:
     repo = MemoryRepository()
-    original: dict[str, JsonValue] = {"session_id": "session", "unrelated": {"unknown": None}}
+    original: dict[str, JsonValue] = {
+        "session_id": "session",
+        "termination_receipt": {},
+        "remote_state": {},
+        "unrelated": {"unknown": None},
+    }
     await repo.put("ops.agent_sessions", "session", original)
     requests: list[httpx.Request] = []
     refusals = RecordingRefusals()
