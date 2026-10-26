@@ -259,16 +259,16 @@ class SpotCalculationInputs(SpotCalculationFacts):
 class SpotCalculationSource(SpotCalculationFacts):
     @classmethod
     def from_inputs(cls, inputs: SpotCalculationInputs) -> Self:
-        validated = SpotCalculationInputs.model_validate(inputs)
+        """Validate copied calculation facts without admitting unused request assembly."""
         return cls(
-            token_id=validated.token_id,
-            start=validated.start,
-            cutoff=validated.cutoff,
-            instruments=validated.instruments,
-            minutes=validated.minutes,
-            boundaries=validated.boundaries,
-            tickers=validated.tickers,
-            policy=validated.policy,
+            token_id=inputs.token_id,
+            start=inputs.start,
+            cutoff=inputs.cutoff,
+            instruments=inputs.instruments,
+            minutes=inputs.minutes,
+            boundaries=inputs.boundaries,
+            tickers=inputs.tickers,
+            policy=inputs.policy,
         )
 
     def at(self, assembled_at: Timestamp) -> SpotCalculationInputs:

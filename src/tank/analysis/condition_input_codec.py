@@ -46,7 +46,11 @@ class FlowSourceProjection(DomainModel):
 
 def source_descriptor_digest(descriptor: FlowSourceDescriptor) -> str:
     validated = FlowSourceDescriptor.model_validate(descriptor)
-    return sha256(decode_json(validated.model_dump_json()))
+    return _admitted_source_descriptor_digest(validated)
+
+
+def _admitted_source_descriptor_digest(descriptor: FlowSourceDescriptor) -> str:
+    return sha256(descriptor.model_dump(mode="json"))
 
 
 class FlowEvidenceEntry(DomainModel):
@@ -85,7 +89,7 @@ class SpotSourceEvidence(DomainModel):
                 or descriptor.original_projection_sha256 != reference.source_projection_sha256
                 or sha256(projection.effective) != descriptor.effective_projection_sha256
                 or sha256(projection.scope_original) != descriptor.scope_projection_sha256
-                or source_descriptor_digest(descriptor) != reference.source_evidence_sha256
+                or _admitted_source_descriptor_digest(descriptor) != reference.source_evidence_sha256
                 or (descriptor.collection, descriptor.row_index, descriptor.parent_index) != slot
             ):
                 raise ValueError("Spot source descriptor disagrees with its actual evidence")
@@ -449,7 +453,7 @@ def decode_spot_inputs(
             row_index=index,
             parent_index=parent,
             source_projection_sha256=descriptor.original_projection_sha256,
-            source_evidence_sha256=source_descriptor_digest(descriptor),
+            source_evidence_sha256=_admitted_source_descriptor_digest(descriptor),
         )
         originals[reference] = FlowSourceProjection(
             original=original_payload,

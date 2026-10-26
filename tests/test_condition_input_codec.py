@@ -557,3 +557,27 @@ def test_strict_immutable_evidence_snapshots_survive_copy_and_reject_rebound_byt
     rebound = source.entries[0].model_copy(update={"projection": invalid})
     with pytest.raises(ValidationError, match="actual evidence"):
         SpotSourceEvidence(entries=(rebound,))
+
+
+def test_source_projection_revalidates_consumed_copied_facts() -> None:
+    from tank.analysis.condition_inputs import SpotCalculationSource
+
+    admitted = decoded([minute()]).inputs
+    invalid = admitted.minutes[0].model_copy(update={"buy_qty": Decimal(-1)})
+    with pytest.raises(ValidationError):
+        SpotCalculationSource.from_inputs(admitted.model_copy(update={"minutes": (invalid,)}))
+    with pytest.raises(ValidationError):
+        SpotCalculationSource.from_inputs(admitted.model_copy(update={"token_id": "OTHER"}))
+
+
+def test_public_descriptor_digest_and_nested_evidence_reject_invalid_copies() -> None:
+    from tank.analysis.condition_input_codec import SpotSourceEvidence
+
+    source = decoded([minute()]).source_evidence
+    entry = source.entries[0]
+    invalid = entry.projection.descriptor.model_copy(update={"row_index": True})
+    with pytest.raises(ValidationError):
+        source_descriptor_digest(invalid)
+    projection = entry.projection.model_copy(update={"descriptor": invalid})
+    with pytest.raises(ValidationError):
+        SpotSourceEvidence(entries=(entry.model_copy(update={"projection": projection}),))
