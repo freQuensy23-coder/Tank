@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/freQuensy23-coder/Tank/capture/internal/backfillstate"
 	"github.com/freQuensy23-coder/Tank/capture/internal/hotstate"
 	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"io"
@@ -169,7 +170,15 @@ func (noStore) HotTokens(context.Context) ([]hotstate.Record, error) { return ni
 func (noStore) BackfillAnchors(context.Context, []hotstate.Scope) ([]hotstate.AnchorRecord, error) {
 	return nil, nil
 }
-func (noStore) BackfillRuns(context.Context, []string) ([]map[string]any, error) { return nil, nil }
+func (noStore) BackfillObligations(context.Context) ([]backfillstate.Observation, error) {
+	return nil, errors.New("REST fixture has no backfill persistence")
+}
+func (noStore) StartBackfill(context.Context, backfillstate.Start) (backfillstate.Acknowledgement, error) {
+	return backfillstate.Acknowledgement{}, errors.New("REST fixture has no backfill persistence")
+}
+func (noStore) FinishBackfill(context.Context, backfillstate.Completion) (backfillstate.Acknowledgement, error) {
+	return backfillstate.Acknowledgement{}, errors.New("REST fixture has no backfill persistence")
+}
 func (noStore) ClaimRequest(context.Context, string, time.Time) (*requeststate.Claimed, error) {
 	return nil, nil
 }

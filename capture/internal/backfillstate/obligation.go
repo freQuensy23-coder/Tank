@@ -13,10 +13,11 @@ import (
 
 type Reference struct {
 	key, revision string
+	observed      bool
 }
 
 func NewReference(storageKey, revision string) (Reference, error) {
-	value := Reference{key: storageKey, revision: revision}
+	value := Reference{key: storageKey, revision: revision, observed: true}
 	if err := value.Validate(); err != nil {
 		return Reference{}, err
 	}
@@ -24,7 +25,7 @@ func NewReference(storageKey, revision string) (Reference, error) {
 }
 
 func (r Reference) Validate() error {
-	if strings.TrimSpace(r.key) == "" || strings.TrimSpace(r.revision) == "" || !utf8.ValidString(r.key) || !utf8.ValidString(r.revision) {
+	if !r.observed || strings.TrimSpace(r.revision) == "" || !utf8.ValidString(r.key) || !utf8.ValidString(r.revision) {
 		return errors.New("backfill reference requires its actual storage key and observed revision")
 	}
 	return nil

@@ -66,3 +66,23 @@ func (s *Store) backfillRows(ctx context.Context, statuses []string) ([]backfill
 	}
 	return result, rows.Err()
 }
+
+func (s *Store) BackfillObligations(ctx context.Context) ([]backfillstate.Observation, error) {
+	rows, err := s.backfillRows(ctx, []string{"PENDING", "RUNNING"})
+	if err != nil {
+		return nil, err
+	}
+	result := make([]backfillstate.Observation, 0, len(rows))
+	for _, row := range rows {
+		reference, err := backfillstate.NewReference(row.record.StorageKey, row.transaction)
+		if err != nil {
+			return nil, err
+		}
+		observation, err := backfillstate.Observe(reference, row.record)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, observation)
+	}
+	return result, nil
+}

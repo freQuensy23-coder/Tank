@@ -27,7 +27,7 @@ func TestObligationRequiresAnActuallyObservedReference(t *testing.T) {
 	if err := (Obligation{}).Validate(); err == nil {
 		t.Fatal("zero command acquired actual obligation facts")
 	}
-	for _, pair := range [][2]string{{"", "48123"}, {"BF-record", ""}, {"BF-record", " "}} {
+	for _, pair := range [][2]string{{"BF-record", ""}, {"BF-record", " "}} {
 		if _, err := NewReference(pair[0], pair[1]); err == nil {
 			t.Fatal("missing actual reference acquired a replacement")
 		}
@@ -39,6 +39,26 @@ func TestObligationRequiresAnActuallyObservedReference(t *testing.T) {
 	row.StorageKey = "another-row"
 	if _, err := Observe(observedReference(t), row); err == nil {
 		t.Fatal("projection was detached from its storage identity")
+	}
+}
+
+func TestObservedEmptyStorageKeyRemainsAddressableForAnExplicitRawRefusal(t *testing.T) {
+	reference, err := NewReference("", "48123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := queuedRecord()
+	row.StorageKey, row.BackfillID = "", ""
+	observation, err := Observe(reference, row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refusal, ok := observation.Selection().(Refused)
+	if !ok || refusal.Reason() != "BACKFILL_ID_INVALID" || observation.Reference().StorageKey() != "" {
+		t.Fatal("explicit empty historical key was replaced or blocked the batch")
+	}
+	if err := (Reference{}).Validate(); err == nil {
+		t.Fatal("zero unobserved reference became an explicit empty stored key")
 	}
 }
 

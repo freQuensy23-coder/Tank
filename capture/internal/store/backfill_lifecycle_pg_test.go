@@ -86,7 +86,7 @@ func TestBackfillSparseRefusalPreservesMalformedNullableEvidenceAndExactPriorRes
 	if err != nil {
 		t.Fatal(err)
 	}
-	acknowledgement, err := s.finishBackfill(ctx, completion)
+	acknowledgement, err := s.FinishBackfill(ctx, completion)
 	if err != nil || acknowledgement.Disposition() != backfillstate.WriteApplied {
 		t.Fatalf("explicit refusal was not durably acknowledged: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestBackfillSparseRefusalPreservesMalformedNullableEvidenceAndExactPriorRes
 	if err != nil {
 		t.Fatal(err)
 	}
-	acknowledgement, err = s.finishBackfill(ctx, completion)
+	acknowledgement, err = s.FinishBackfill(ctx, completion)
 	if err != nil || acknowledgement.Disposition() != backfillstate.WriteSuperseded {
 		t.Fatalf("old observation acquired another completion acknowledgement: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestBackfillStartCASHasOneWinnerAndCannotFinishOverARequeuedRevision(t *tes
 		callers.Add(1)
 		go func() {
 			defer callers.Done()
-			acknowledgement, err := s.startBackfill(ctx, start)
+			acknowledgement, err := s.StartBackfill(ctx, start)
 			results <- acknowledgement
 			errors <- err
 		}()
@@ -194,7 +194,7 @@ func TestBackfillStartCASHasOneWinnerAndCannotFinishOverARequeuedRevision(t *tes
 		t.Fatal(err)
 	}
 	_, requeued := actualBackfill(t, s, id)
-	acknowledgement, err := s.finishBackfill(ctx, completion)
+	acknowledgement, err := s.FinishBackfill(ctx, completion)
 	if err != nil || acknowledgement.Disposition() != backfillstate.WriteSuperseded {
 		t.Fatalf("old worker overwrote corrected queued input: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestBackfillStartCASHasOneWinnerAndCannotFinishOverARequeuedRevision(t *tes
 	if _, err := s.Pool.Exec(ctx, "DELETE FROM "+liveTable(backfillRuns)+" WHERE storage_key=$1", id); err != nil {
 		t.Fatal(err)
 	}
-	acknowledgement, err = s.finishBackfill(ctx, completion)
+	acknowledgement, err = s.FinishBackfill(ctx, completion)
 	if err != nil || acknowledgement.Disposition() != backfillstate.WriteMissing {
 		t.Fatalf("deleted row acquired a replacement write: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestBackfillStoreBindsActualLockedFactsBeforeAnyWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	acknowledgement, err := s.startBackfill(ctx, start)
+	acknowledgement, err := s.StartBackfill(ctx, start)
 	if err == nil || acknowledgement.Disposition() == backfillstate.WriteApplied {
 		t.Fatal("caller-provided facts replaced the actual locked command")
 	}
@@ -274,7 +274,7 @@ func TestBackfillCapturedOutcomePersistsNamedCompleteAndPartialWire(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		acknowledgement, err := s.startBackfill(ctx, start)
+		acknowledgement, err := s.StartBackfill(ctx, start)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -322,7 +322,7 @@ func TestBackfillCapturedOutcomePersistsNamedCompleteAndPartialWire(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		acknowledgement, err = s.finishBackfill(ctx, completion)
+		acknowledgement, err = s.FinishBackfill(ctx, completion)
 		if err != nil || acknowledgement.Disposition() != backfillstate.WriteApplied {
 			t.Fatalf("named capture outcome was not committed: %v", err)
 		}
@@ -347,6 +347,68 @@ func TestBackfillCapturedOutcomePersistsNamedCompleteAndPartialWire(t *testing.T
 			t.Fatal("actual empty coverage acquired a complete result")
 		}
 		requireBackfillFingerprint(t, stored)
+	}
+}
+
+func TestBackfillExplicitEmptyKeyRefusesWithoutBlockingValidPendingWork(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	id := "backfill-valid-batch-" + suffix()
+	cleanup(t, s, "backfill_id", id, backfillRuns)
+	anchor := time.Date(2026, 10, 25, 1, 2, 0, 0, time.UTC)
+	token, event := "observed-token", "observed-event"
+	seedBackfill(t, s, id, &anchor, &token, &event)
+	seedBackfill(t, s, "", &anchor, &token, &event)
+	cleanup(t, s, "backfill_id", "", backfillRuns)
+	validObservation, validBefore := actualBackfill(t, s, id)
+	observations, err := s.BackfillObligations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refused, ready int
+	for _, observation := range observations {
+		switch observation.Reference().StorageKey() {
+		case "":
+			refusal, ok := observation.Selection().(backfillstate.Refused)
+			if !ok || refusal.Reason() != "BACKFILL_ID_INVALID" {
+				t.Fatal("explicit empty stored identity became valid or acquired a replacement")
+			}
+			failure, err := backfillstate.RefusalOutcome(refusal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			clock := anchor.Add(time.Minute)
+			completion, err := backfillstate.Finish(observation, failure, clock, clock, backfillWriter(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			acknowledgement, err := s.FinishBackfill(ctx, completion)
+			if err != nil || acknowledgement.Disposition() != backfillstate.WriteApplied {
+				t.Fatalf("actual malformed row did not reach explicit terminal refusal: %v", err)
+			}
+			refused++
+		case id:
+			if _, ok := observation.Selection().(backfillstate.Obligation); !ok {
+				t.Fatal("valid sibling was refused with the malformed row")
+			}
+			ready++
+		}
+	}
+	if refused != 1 || ready != 1 {
+		t.Fatalf("one malformed stored key blocked the remaining batch: %d/%d", refused, ready)
+	}
+	_, invalid := actualBackfill(t, s, "")
+	if invalid.StorageKey != "" || invalid.BackfillID != "" || invalid.Status == nil || *invalid.Status != "FAILED" {
+		t.Fatal("malformed stored identity was fabricated or left pending")
+	}
+	currentObservation, current := actualBackfill(t, s, id)
+	beforeDocument, err := validBefore.SemanticDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterDocument, err := current.SemanticDocument()
+	if err != nil || !bytes.Equal(beforeDocument, afterDocument) || currentObservation.Reference() != validObservation.Reference() {
+		t.Fatal("malformed sibling changed valid pending work")
 	}
 }
 
@@ -378,7 +440,7 @@ func TestBackfillWriteFailureRollsBackWithoutAnAppliedAcknowledgement(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	acknowledgement, err := s.startBackfill(ctx, start)
+	acknowledgement, err := s.StartBackfill(ctx, start)
 	if err == nil || acknowledgement.Disposition() == backfillstate.WriteApplied {
 		t.Fatal("failed transaction acquired a durable write acknowledgement")
 	}

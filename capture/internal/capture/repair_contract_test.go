@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/freQuensy23-coder/Tank/capture/internal/pyjson"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
 )
 
@@ -67,10 +66,10 @@ func TestRepairFinalReadFailureDoesNotReuseInitialCounts(t *testing.T) {
 func TestBackfillReadFailureCannotPersistCompleteOrPartialCoverage(t *testing.T) {
 	r := newRESTRig(t, "coinbase")
 	r.s.store = &unavailableRepairStore{Store: r.mem, failAt: 1}
-	r.s.runObligation(context.Background(), map[string]any{
+	r.s.runObligation(context.Background(), queuedBackfill(t, r.mem, "BF-read-failed", map[string]any{
 		"backfill_id": "BF-read-failed", "event_id": "EVT-read-failed", "token_id": r.inst.TokenID,
 		"anchor": pytime.ISO(r.base), "status": "PENDING",
-	})
+	}))
 	stored := r.mem.rows["mkt.backfill_runs"]["BF-read-failed"]
 	if stored["status"] != "FAILED" || stored["reason"] != "REPAIR_FAILED" || stored["finished_at"] == nil || stored["result"] != nil {
 		t.Fatalf("backfill invented availability after a failed repair read: %v", stored)
@@ -124,10 +123,10 @@ func TestCaptureCoverageReadFailuresRemainUnavailable(t *testing.T) {
 func TestBackfillCoverageFailureCannotInventPartialResult(t *testing.T) {
 	r := newRESTRig(t, "coinbase")
 	r.s.store = &unavailableCoverageStore{Store: r.mem, failAt: 1}
-	r.s.runObligation(context.Background(), map[string]any{
+	r.s.runObligation(context.Background(), queuedBackfill(t, r.mem, "BF-range-failed", map[string]any{
 		"backfill_id": "BF-range-failed", "event_id": "EVT-range-failed", "token_id": r.inst.TokenID,
 		"anchor": pytime.ISO(r.base), "status": "PENDING",
-	})
+	}))
 	stored := r.mem.rows["mkt.backfill_runs"]["BF-range-failed"]
 	if stored["status"] != "FAILED" || stored["reason"] != "COVERAGE_READ_FAILED" || stored["result"] != nil {
 		t.Fatalf("unavailable coverage became invented terminal counters: %v", stored)
@@ -138,10 +137,10 @@ func TestBackfillBenchmarkFailureCannotSilentlyOmitObservation(t *testing.T) {
 	r := newRESTRig(t, "coinbase")
 	r.s.opt.Tokens = map[string]map[string]any{r.inst.TokenID: {"symbol": "BTC"}}
 	r.s.store = &unavailableCoverageStore{Store: r.mem, failAt: 1, benchmark: true}
-	r.s.runObligation(context.Background(), map[string]any{
+	r.s.runObligation(context.Background(), queuedBackfill(t, r.mem, "BF-benchmark-failed", map[string]any{
 		"backfill_id": "BF-benchmark-failed", "event_id": "EVT-benchmark-failed", "token_id": r.inst.TokenID,
 		"anchor": pytime.ISO(r.base), "status": "PENDING",
-	})
+	}))
 	stored := r.mem.rows["mkt.backfill_runs"]["BF-benchmark-failed"]
 	if stored["status"] != "FAILED" || stored["reason"] != "BENCHMARK_CAPTURE_FAILED" || stored["result"] != nil {
 		t.Fatalf("failed benchmark was silently omitted from terminal coverage: %v", stored)
@@ -194,7 +193,11 @@ func TestCoverageReferenceSelectsLatestAndPreservesIntegerIdentity(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wire := pyjson.Canonical(coverage.storageValue())
+	data, err := json.Marshal(coverage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire := string(data)
 	if !strings.Contains(wire, "\"trade_id\":9007199254740993") || strings.Contains(wire, "older-trade") {
 		t.Fatalf("latest reference selection or integer wire identity lost precision: %s", wire)
 	}
@@ -214,8 +217,26 @@ func TestCoverageCountsUniqueBucketsAndRejectsConflicts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	window := coverage.Windows.W1H.Flow
-	if window.Complete || window.CompleteMinutes != 59 || window.MissingOrIncompleteMinutes != 1 {
+	data, err := json.Marshal(coverage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Windows struct {
+			One struct {
+				Flow struct {
+					Complete                   *bool `json:"complete"`
+					CompleteMinutes            int64 `json:"complete_minutes"`
+					MissingOrIncompleteMinutes int64 `json:"missing_or_incomplete_minutes"`
+				} `json:"flow"`
+			} `json:"W1H"`
+		} `json:"windows"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatal(err)
+	}
+	window := wire.Windows.One.Flow
+	if window.Complete == nil || *window.Complete || window.CompleteMinutes != 59 || window.MissingOrIncompleteMinutes != 1 {
 		t.Fatalf("duplicate observation hid a genuinely missing minute: %+v", window)
 	}
 	rows["duplicate"]["complete"] = false

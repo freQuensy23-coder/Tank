@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/freQuensy23-coder/Tank/capture/internal/backfillstate"
 	"github.com/freQuensy23-coder/Tank/capture/internal/requeststate"
 	"sort"
 	"sync"
@@ -17,17 +18,17 @@ import (
 )
 
 func (s *Service) obligations(ctx context.Context) {
-	rows, err := s.store.BackfillRuns(ctx, []string{"PENDING", "RUNNING"})
+	rows, err := s.store.BackfillObligations(ctx)
 	if err != nil {
 		s.log.Warn("backfill runs unreadable", "error", err)
 		return
 	}
-	for _, row := range rows {
-		id, validID := row["backfill_id"].(string)
-		if !validID || id == "" {
-			s.log.Error("capture obligation has no backfill identity")
+	for _, observation := range rows {
+		if err := observation.Validate(); err != nil {
+			s.log.Error("capture obligation is not admitted", "error", err)
 			continue
 		}
+		id := observation.Reference().StorageKey()
 		s.mu.Lock()
 		if _, active := s.activeObligations[id]; active {
 			s.mu.Unlock()
@@ -36,36 +37,10 @@ func (s *Service) obligations(ctx context.Context) {
 		s.activeObligations[id] = struct{}{}
 		s.mu.Unlock()
 		s.spawn(func(ctx context.Context) {
-			defer func() {
-				s.mu.Lock()
-				delete(s.activeObligations, id)
-				s.mu.Unlock()
-			}()
-			s.runObligation(ctx, row)
+			defer func() { s.mu.Lock(); delete(s.activeObligations, id); s.mu.Unlock() }()
+			s.runObligation(ctx, observation)
 		})
 	}
-}
-
-func (s *Service) putRun(ctx context.Context, row map[string]any) {
-	row = copyRow(row)
-	for _, field := range []string{"started_at", "finished_at"} {
-		if row[field] != nil && row[field] != "" {
-			for k, v := range pytime.Fields(field, row[field], pytime.CollectionOnly) {
-				row[k] = v
-			}
-			continue
-		}
-		reason := "INCOMPLETE"
-		if st := text(row["status"]); st == "PENDING" || st == "RUNNING" {
-			reason = "PENDING"
-		}
-		row[field], row[field+"_prec"], row[field+"_prec_reason"] = nil, nil, reason
-	}
-	delete(row, "recorded_at")
-	delete(row, "recorded_at_prec")
-	delete(row, "recorded_at_prec_reason")
-	s.points.Put("mkt.backfill_runs", text(row["backfill_id"]), row)
-	s.flush(ctx)
 }
 
 func copyRow(row map[string]any) map[string]any {
@@ -76,29 +51,96 @@ func copyRow(row map[string]any) map[string]any {
 	return out
 }
 
-func (s *Service) runObligation(ctx context.Context, row map[string]any) {
-	row = copyRow(row)
-	for _, k := range []string{"semantic_fingerprint", "config_version", "code_version"} {
-		delete(row, k)
-	}
-	fail := func(reason string) {
-		row["status"], row["finished_at"], row["reason"] = "FAILED", pytime.ISO(s.clock.Now()), reason
-		s.putRun(context.WithoutCancel(ctx), row)
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			fail(fmt.Sprint(r))
-			s.log.Error("capture obligation panicked", "backfill_id", row["backfill_id"], "panic", r)
-		}
-	}()
-	anchor, err := pytime.Parse(row["anchor"])
-	if err != nil {
-		fail("anchor unreadable: " + err.Error())
+func (s *Service) runObligation(ctx context.Context, observation backfillstate.Observation) {
+	if err := observation.Validate(); err != nil {
+		s.log.Error("capture obligation is not admitted", "error", err)
 		return
 	}
-	token := text(row["token_id"])
-	row["status"], row["started_at"] = "RUNNING", pytime.ISO(s.clock.Now())
-	s.putRun(ctx, row)
+	writer, err := backfillstate.NewWriterIdentity(s.opt.ConfigVersion, s.opt.CodeVersion)
+	if err != nil {
+		s.log.Error("backfill writer identity unavailable", "error", err)
+		return
+	}
+	finish := func(outcome backfillstate.Outcome) {
+		completion, err := backfillstate.Finish(observation, outcome, s.clock.Now(), s.clock.Now(), writer)
+		if err != nil {
+			s.log.Error("backfill completion is not admitted", "storage_key", observation.Reference().StorageKey(), "error", err)
+			return
+		}
+		acknowledgement, err := s.store.FinishBackfill(context.WithoutCancel(ctx), completion)
+		if err != nil {
+			s.log.Warn("backfill completion not acknowledged", "storage_key", observation.Reference().StorageKey(), "error", err)
+			return
+		}
+		if err := acknowledgement.Validate(); err != nil {
+			s.log.Error("backfill acknowledgement is not admitted", "error", err)
+			return
+		}
+		if acknowledgement.Disposition() != backfillstate.WriteApplied {
+			s.log.Info("backfill completion no longer current", "storage_key", observation.Reference().StorageKey(), "disposition", acknowledgement.Disposition())
+		}
+	}
+	fail := func(kind backfillstate.FailureKind) {
+		failure, err := backfillstate.Failed(kind)
+		if err != nil {
+			s.log.Error("backfill failure is not admitted", "error", err)
+			return
+		}
+		finish(failure)
+	}
+	defer func() {
+		if value := recover(); value != nil {
+			failure, err := backfillstate.Panicked(fmt.Sprint(value))
+			if err == nil {
+				finish(failure)
+			} else {
+				s.log.Error("backfill panic evidence is not admitted", "error", err)
+			}
+			s.log.Error("capture obligation panicked", "storage_key", observation.Reference().StorageKey(), "panic", value)
+		}
+	}()
+	if refused, invalid := observation.Selection().(backfillstate.Refused); invalid {
+		failure, err := backfillstate.RefusalOutcome(refused)
+		if err != nil {
+			s.log.Error("backfill refusal is not admitted", "error", err)
+			return
+		}
+		finish(failure)
+		return
+	}
+	command, ready := observation.Selection().(backfillstate.Obligation)
+	if !ready {
+		s.log.Error("backfill command is not admitted")
+		return
+	}
+	start, err := backfillstate.Begin(observation, s.clock.Now(), s.clock.Now(), writer)
+	if err != nil {
+		s.log.Error("backfill start is not admitted", "error", err)
+		return
+	}
+	acknowledgement, err := s.store.StartBackfill(ctx, start)
+	if err != nil {
+		s.log.Warn("backfill start not acknowledged", "backfill_id", command.BackfillID(), "error", err)
+		return
+	}
+	if err := acknowledgement.Validate(); err != nil {
+		s.log.Error("backfill acknowledgement is not admitted", "error", err)
+		return
+	}
+	if acknowledgement.Disposition() != backfillstate.WriteApplied {
+		return
+	}
+	reference, err := acknowledgement.UpdatedReference()
+	if err != nil {
+		s.log.Error("backfill start has no actual acknowledgement", "error", err)
+		return
+	}
+	observation, err = observation.AcknowledgeStart(reference)
+	if err != nil {
+		s.log.Error("backfill start acknowledgement is not admitted", "error", err)
+		return
+	}
+	anchor, token := command.Anchor(), command.TokenID()
 	instruments := s.tokenInstruments(ctx, token)
 	ids := make([]string, len(instruments))
 	for i, inst := range instruments {
@@ -113,14 +155,13 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 		}
 		s.registerBoundaries(ids, cutoff, &begin)
 	}
-
 	benchmarks, err := s.backfillBenchmarkKlines(ctx, anchor)
 	if err != nil {
 		if ctx.Err() != nil {
 			return
 		}
-		s.log.Warn("benchmark capture unavailable", "backfill_id", row["backfill_id"], "error", err)
-		fail("BENCHMARK_CAPTURE_FAILED")
+		s.log.Warn("benchmark capture unavailable", "backfill_id", command.BackfillID(), "error", err)
+		fail(backfillstate.BenchmarkCaptureFailed)
 		return
 	}
 	var wg sync.WaitGroup
@@ -144,43 +185,35 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 	}
 	end := minTime(s.clock.Now(), anchor.Add(WindowAfter))
 	if _, err := s.repairWindows(ctx, token, anchor.Add(-WindowBefore), end, 0); err != nil {
-		s.log.Warn("pre-event repair coverage unavailable", "backfill_id", row["backfill_id"], "error", err)
-		fail("REPAIR_FAILED")
+		s.log.Warn("pre-event repair coverage unavailable", "backfill_id", command.BackfillID(), "error", err)
+		fail(backfillstate.RepairFailed)
 		return
 	}
-	coverage := make([]InstrumentCaptureCoverage, len(instruments))
+	coverage := make([]backfillstate.InstrumentCoverage, len(instruments))
 	for i, inst := range instruments {
 		coverage[i], err = s.captureWindowCoverage(ctx, inst, anchor)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			s.log.Warn("capture coverage unavailable", "backfill_id", row["backfill_id"], "instrument", inst.ID, "error", err)
-			fail("COVERAGE_READ_FAILED")
+			s.log.Warn("capture coverage unavailable", "backfill_id", command.BackfillID(), "instrument", inst.ID, "error", err)
+			fail(backfillstate.CoverageReadFailed)
 			return
 		}
 	}
-	ready := len(coverage) > 0
-	for _, c := range coverage {
-		ready = ready && c.Complete
+	result, err := backfillstate.NewResult(token, anchor, coverage, benchmarks)
+	if err != nil {
+		s.log.Error("captured backfill result is not admitted", "error", err)
+		fail(backfillstate.CoverageReadFailed)
+		return
 	}
-	for _, b := range benchmarks {
-		ready = ready && b.Complete
+	outcome, err := backfillstate.Captured(result)
+	if err != nil {
+		s.log.Error("captured backfill outcome is not admitted", "error", err)
+		fail(backfillstate.CoverageReadFailed)
+		return
 	}
-	row["status"], row["finished_at"], row["reason"] = "PARTIAL", pytime.ISO(s.clock.Now()), "INCOMPLETE_VENUE_WINDOWS_EXCLUDED"
-	if ready {
-		row["status"], row["reason"] = "COMPLETE", nil
-	}
-	instrumentsResult := make([]any, len(coverage))
-	for i, c := range coverage {
-		instrumentsResult[i] = c.storageValue()
-	}
-	benchResult := make([]any, len(benchmarks))
-	for i, b := range benchmarks {
-		benchResult[i] = b.storageValue()
-	}
-	row["result"] = map[string]any{"instruments": instrumentsResult, "benchmark_klines": benchResult}
-	s.putRun(ctx, row)
+	finish(outcome)
 }
 
 func (s *Service) tokenInstruments(ctx context.Context, token string) []*venue.Instrument {
@@ -456,25 +489,7 @@ func (s *Service) repairInstrument(ctx context.Context, inst *venue.Instrument, 
 	return RepairCoverage{IncompleteBefore: before, IncompleteAfter: minutesIn(runs)}, nil
 }
 
-type KlineCoverage struct {
-	InstrumentID        string
-	Start               string
-	End                 string
-	ExpectedMinutes     int64
-	CompleteMinutes     int64
-	Complete            bool
-	IncludesAnchorClose bool
-}
-
-func (r KlineCoverage) storageValue() map[string]any {
-	return map[string]any{
-		"instrument_id": r.InstrumentID, "start": r.Start, "end": r.End,
-		"expected_minutes": r.ExpectedMinutes, "complete_minutes": r.CompleteMinutes,
-		"complete": r.Complete, "includes_anchor_close": r.IncludesAnchorClose,
-	}
-}
-
-func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, start, end time.Time, includeReference bool, kind string) (KlineCoverage, error) {
+func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, start, end time.Time, includeReference bool, kind string) (backfillstate.BenchmarkCoverage, error) {
 	first, last := start, pytime.MinuteFloor(end)
 	if includeReference {
 		first = pytime.MinuteFloor(start).Add(-time.Minute)
@@ -482,7 +497,7 @@ func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, st
 	iid := inst.ID
 	expected := int(last.Sub(first) / time.Minute)
 	if expected < 0 || end.Before(start) {
-		return KlineCoverage{}, errors.New("capture kline interval end precedes start")
+		return backfillstate.BenchmarkCoverage{}, errors.New("capture kline interval end precedes start")
 	}
 	observed := func() (map[int64]bool, error) {
 		rows, err := s.store.Projection(ctx, "mkt.klines_1m", []string{"open_time", "complete"}, "open_time", first, last, []string{iid})
@@ -500,7 +515,7 @@ func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, st
 	}
 	points, err := observed()
 	if err != nil {
-		return KlineCoverage{}, err
+		return backfillstate.BenchmarkCoverage{}, err
 	}
 	v := s.venues.Venue(inst, 1)
 	for offset := 0; offset < expected; offset += 240 {
@@ -519,7 +534,7 @@ func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, st
 		rows, err := v.Klines(ctx, &lo, &hi)
 		if err != nil {
 			if ctx.Err() != nil {
-				return KlineCoverage{}, ErrStopped
+				return backfillstate.BenchmarkCoverage{}, ErrStopped
 			}
 			s.gap(inst, kind, err.Error(), &lo, &hi)
 			continue
@@ -538,26 +553,19 @@ func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, st
 	s.flush(ctx)
 	points, err = observed()
 	if err != nil {
-		return KlineCoverage{}, err
+		return backfillstate.BenchmarkCoverage{}, err
 	}
 	complete := 0
-	all := expected > 0
 	for n := 0; n < expected; n++ {
 		if points[first.Add(time.Duration(n)*time.Minute).Unix()] {
 			complete++
-		} else {
-			all = false
 		}
 	}
-	return KlineCoverage{
-		InstrumentID: iid, Start: pytime.ISO(first), End: pytime.ISO(last),
-		ExpectedMinutes: int64(expected), CompleteMinutes: int64(complete),
-		Complete: all, IncludesAnchorClose: includeReference,
-	}, nil
+	return backfillstate.NewBenchmarkCoverage(iid, first, last, int64(expected), int64(complete), includeReference)
 }
 
-func (s *Service) backfillBenchmarkKlines(ctx context.Context, anchor time.Time) ([]KlineCoverage, error) {
-	var result []KlineCoverage
+func (s *Service) backfillBenchmarkKlines(ctx context.Context, anchor time.Time) ([]backfillstate.BenchmarkCoverage, error) {
+	var result []backfillstate.BenchmarkCoverage
 	for _, symbol := range []string{"BTC", "ETH"} {
 		tokens := map[string]bool{}
 		for id, token := range s.opt.Tokens {
@@ -597,10 +605,9 @@ func benchmarkLess(a, b *venue.Instrument) bool {
 	return a.ID < b.ID
 }
 
-func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrument, anchor time.Time) (InstrumentCaptureCoverage, error) {
+func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrument, anchor time.Time) (backfillstate.InstrumentCoverage, error) {
 	end := anchor
-	var windows [3]CaptureWindowCoverage
-	allComplete := true
+	var windows [3]backfillstate.WindowCoverage
 	for index, hours := range []int{1, 4, 24} {
 		start := end.Add(-time.Duration(hours) * time.Hour)
 		lo := pytime.MinuteFloor(start)
@@ -610,80 +617,79 @@ func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrum
 		hi := pytime.MinuteFloor(end)
 		expected := int64(hi.Sub(lo) / time.Minute)
 		if expected < 0 {
-			return InstrumentCaptureCoverage{}, errors.New("capture coverage interval end precedes start")
+			return backfillstate.InstrumentCoverage{}, errors.New("capture coverage interval end precedes start")
 		}
-		var metrics [2]CoverageMinutes
-		windowComplete := true
+		var metrics [2]backfillstate.MinuteCoverage
 		for metricIndex, spec := range [][3]string{{"flow", "mkt.flow_bars_1m", "minute_start"}, {"klines", "mkt.klines_1m", "open_time"}} {
 			rows, err := s.store.Range(ctx, spec[1], spec[2], lo, hi, map[string]any{"instrument_id": inst.ID})
 			if err != nil {
-				return InstrumentCaptureCoverage{}, fmt.Errorf("%s %s coverage unavailable: %w", inst.ID, spec[0], err)
+				return backfillstate.InstrumentCoverage{}, fmt.Errorf("%s %s coverage unavailable: %w", inst.ID, spec[0], err)
 			}
 			metric, err := decodeCoverageMinutes(rows, spec[2], lo, hi)
 			if err != nil {
-				return InstrumentCaptureCoverage{}, err
+				return backfillstate.InstrumentCoverage{}, err
 			}
-			windowComplete = windowComplete && metric.Complete
 			metrics[metricIndex] = metric
 		}
 		unresolved := lo.Sub(start).Seconds() + end.Sub(hi).Seconds()
-		windows[index] = CaptureWindowCoverage{
-			Start: pytime.ISO(start), End: pytime.ISO(end), ObservedBucketStart: pytime.ISO(lo),
-			ObservedBucketEnd: pytime.ISO(hi), UnresolvedBoundarySeconds: unresolved,
-			Flow: metrics[0], Klines: metrics[1],
-		}
-		allComplete = allComplete && windowComplete && unresolved == 0
-	}
-	result := InstrumentCaptureCoverage{
-		InstrumentID: inst.ID, Windows: CaptureWindows{W1H: windows[0], W4H: windows[1], W24H: windows[2]}, Complete: allComplete,
-	}
-	if inst.Spot() {
-		boundary := end.Add(-24 * time.Hour)
-		bars, err := s.store.Range(ctx, "mkt.flow_bars_1m", "minute_start", pytime.MinuteFloor(boundary).Add(-time.Minute), pytime.MinuteFloor(boundary).Add(time.Minute), map[string]any{"instrument_id": inst.ID})
+		window, err := backfillstate.NewWindowCoverage(start, end, lo, hi, unresolved, metrics[0], metrics[1])
 		if err != nil {
-			return InstrumentCaptureCoverage{}, fmt.Errorf("%s pre24 reference unavailable: %w", inst.ID, err)
+			return backfillstate.InstrumentCoverage{}, err
 		}
-		var reference map[string]any
-		var referenceTS time.Time
-		for _, bar := range bars {
-			for _, raw := range pyval.List(bar["reference_points"]) {
-				point := pyval.Map(raw)
-				at, err := pytime.Parse(point["boundary"])
-				if point["complete"] != true || err != nil || !at.Equal(boundary) {
-					continue
-				}
-				trade := pyval.Map(point["last_trade"])
-				ts, err := pytime.Parse(trade["ts"])
-				if err == nil && (reference == nil || ts.After(referenceTS)) {
-					reference, referenceTS = trade, ts
-				}
-			}
-		}
-		reason := "INCOMPLETE"
-		pre := Pre24Reference{Reason: &reason}
-		if reference != nil {
-			identity, err := decodeReferenceTradeIdentity(reference["trade_id"])
-			if err != nil {
-				return InstrumentCaptureCoverage{}, err
-			}
-			ts, ok := reference["ts"].(string)
-			if !ok {
-				return InstrumentCaptureCoverage{}, errors.New("reference trade requires a JSON timestamp string")
-			}
-			var precision *string
-			if raw := reference["ts_prec"]; raw != nil {
-				value, ok := raw.(string)
-				if !ok {
-					return InstrumentCaptureCoverage{}, errors.New("reference trade precision requires text or null")
-				}
-				precision = &value
-			}
-			pre = Pre24Reference{Available: true, TradeID: &identity, TS: &ts, Precision: precision}
-		}
-		result.Pre24Reference = &pre
-		result.Complete = allComplete && pre.Available
+		windows[index] = window
 	}
-	return result, nil
+	coverage, err := backfillstate.NewCaptureWindows(windows[0], windows[1], windows[2])
+	if err != nil {
+		return backfillstate.InstrumentCoverage{}, err
+	}
+	if !inst.Spot() {
+		return backfillstate.NonSpotInstrumentCoverage(inst.ID, coverage)
+	}
+	boundary := end.Add(-24 * time.Hour)
+	bars, err := s.store.Range(ctx, "mkt.flow_bars_1m", "minute_start", pytime.MinuteFloor(boundary).Add(-time.Minute), pytime.MinuteFloor(boundary).Add(time.Minute), map[string]any{"instrument_id": inst.ID})
+	if err != nil {
+		return backfillstate.InstrumentCoverage{}, fmt.Errorf("%s pre24 reference unavailable: %w", inst.ID, err)
+	}
+	var reference map[string]any
+	var referenceTS time.Time
+	for _, bar := range bars {
+		for _, raw := range pyval.List(bar["reference_points"]) {
+			point := pyval.Map(raw)
+			at, err := pytime.Parse(point["boundary"])
+			if point["complete"] != true || err != nil || !at.Equal(boundary) {
+				continue
+			}
+			trade := pyval.Map(point["last_trade"])
+			ts, err := pytime.Parse(trade["ts"])
+			if err == nil && (reference == nil || ts.After(referenceTS)) {
+				reference, referenceTS = trade, ts
+			}
+		}
+	}
+	pre := backfillstate.MissingPre24Reference()
+	if reference != nil {
+		identity, err := decodeReferenceTradeIdentity(reference["trade_id"])
+		if err != nil {
+			return backfillstate.InstrumentCoverage{}, err
+		}
+		ts, ok := reference["ts"].(string)
+		if !ok {
+			return backfillstate.InstrumentCoverage{}, errors.New("reference trade requires a JSON timestamp string")
+		}
+		var precision *string
+		if raw := reference["ts_prec"]; raw != nil {
+			value, ok := raw.(string)
+			if !ok {
+				return backfillstate.InstrumentCoverage{}, errors.New("reference trade precision requires text or null")
+			}
+			precision = &value
+		}
+		pre, err = backfillstate.AvailablePre24Reference(identity, ts, precision)
+		if err != nil {
+			return backfillstate.InstrumentCoverage{}, err
+		}
+	}
+	return backfillstate.SpotInstrumentCoverage(inst.ID, coverage, pre)
 }
 
 func (s *Service) unrepaired(ctx context.Context, iid string, lo, hi time.Time) []span {

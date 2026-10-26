@@ -84,11 +84,11 @@ func (b backfillBindings) apply(row backfillstate.Record) backfillstate.Record {
 	return row
 }
 
-func (s *Store) startBackfill(ctx context.Context, start backfillstate.Start) (backfillstate.Acknowledgement, error) {
+func (s *Store) StartBackfill(ctx context.Context, start backfillstate.Start) (backfillstate.Acknowledgement, error) {
 	return s.applyBackfill(ctx, start)
 }
 
-func (s *Store) finishBackfill(ctx context.Context, completion backfillstate.Completion) (backfillstate.Acknowledgement, error) {
+func (s *Store) FinishBackfill(ctx context.Context, completion backfillstate.Completion) (backfillstate.Acknowledgement, error) {
 	return s.applyBackfill(ctx, completion)
 }
 

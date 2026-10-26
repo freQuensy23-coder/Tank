@@ -171,7 +171,7 @@ func newRESTRig(t *testing.T, venueName string) *restRig {
 	v := &fakeVenue{inst: inst}
 	mem := newMemStore()
 	clock := &testClock{base.Add(40 * time.Minute)}
-	s := New(Options{Instruments: map[string]*venue.Instrument{inst.ID: inst}, Order: []string{inst.ID}}, mem, mem, fakeVenues{v}, nil, clock)
+	s := New(Options{Instruments: map[string]*venue.Instrument{inst.ID: inst}, Order: []string{inst.ID}, ConfigVersion: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", CodeVersion: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}, mem, mem, fakeVenues{v}, nil, clock)
 	s.ctx = context.Background()
 	return &restRig{t: t, clock: clock, mem: mem, v: v, s: s, inst: inst, base: base}
 }

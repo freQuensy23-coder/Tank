@@ -21,12 +21,12 @@ func TestObligationRunsCoreRowToTerminalResult(t *testing.T) {
 	anchor := r.base.Add(30 * time.Minute)
 	r.prints(1, anchor.Add(-25*time.Hour), anchor.Add(5*time.Minute), 20*time.Second)
 	r.clock.set(anchor.Add(10 * time.Minute))
-	r.mem.runs = []map[string]any{{
+	r.mem.seedBackfill("BF-test", map[string]any{
 		"backfill_id": "BF-test", "event_id": "EVT-1", "token_id": r.inst.TokenID,
 		"anchor": pytime.ISO(anchor), "started_at": nil, "started_at_prec": nil,
 		"started_at_prec_reason": "PENDING", "status": "PENDING",
 		"reason": "PRE_EVENT_CAPTURE_PENDING",
-	}}
+	})
 	r.s.obligations(context.Background())
 	r.s.wg.Wait()
 	if err := r.mem.Flush(context.Background()); err != nil {
