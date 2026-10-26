@@ -248,3 +248,66 @@ def test_rendered_column_does_not_coerce_missing_flags_or_boolean_numbers() -> N
         SQLColumn.model_validate(
             {"name": "id", "sql_type": "text", "not_null": 1, "sequence_default": False, "precision": False}
         )
+
+
+def test_route_requires_recorded_side_and_preserves_actual_endpoints() -> None:
+    from scripts.render_db_schema import (
+        Box,
+        ColumnPosition,
+        ForeignKeyLink,
+        RouteSpec,
+        finish_pg,
+        parse_pg,
+        route,
+    )
+
+    tables, _ = parse_pg(iter(["CREATE TABLE qa.a (id text); CREATE TABLE qa.b (id text);"]))
+    rendered = finish_pg(tables)
+    boxes = {
+        "qa.a": Box(name="qa.a", x=0, y=0, w=100, rows=rendered["qa.a"].cols, head_h=20),
+        "qa.b": Box(name="qa.b", x=0, y=100, w=100, rows=rendered["qa.b"].cols, head_h=20),
+    }
+    link = ForeignKeyLink(
+        name="scope", source_table="qa.a", source_columns=("id",), target_table="qa.b", target_columns=("id",)
+    )
+    positions = {0: ColumnPosition(x=0, width=100)}
+    with pytest.raises(ValueError, match="requires a side"):
+        route(
+            link,
+            boxes,
+            {"qa.a": 0, "qa.b": 0},
+            positions,
+            {0: 46},
+            0,
+            RouteSpec(side=None, lanes=(0,), one_to_one=False),
+            "#000",
+        )
+    svg = route(
+        link,
+        boxes,
+        {"qa.a": 0, "qa.b": 0},
+        positions,
+        {0: 46},
+        0,
+        RouteSpec(side="R", lanes=(0,), one_to_one=False),
+        "#000",
+    )
+    assert "M100.0,28.5" in svg
+    assert "L100.0,128.5" in svg
+
+
+def test_requested_schema_assignment_must_be_literal(tmp_path: Path) -> None:
+    source = tmp_path / "metadata.py"
+    source.write_text("MARKET_COLUMNS = unknown_factory()\n")
+    with pytest.raises(ValueError):
+        literal_assignments(source, {"MARKET_COLUMNS"})
+    source.write_text("MARKET_COLUMNS: dict[str, str]\n")
+    with pytest.raises(ValueError, match="explicit literal"):
+        literal_assignments(source, {"MARKET_COLUMNS"})
+
+
+def test_unconsumed_constraint_is_refused_without_installing_facts() -> None:
+    table = new_table("qa.example")
+    with pytest.raises(ValueError, match="Unsupported diagram constraint"):
+        parse_constraint(table, "CONSTRAINT unsupported EXCLUDE USING gist (id WITH =)")
+    assert not table.constraints

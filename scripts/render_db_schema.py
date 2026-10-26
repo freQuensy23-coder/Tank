@@ -12,7 +12,6 @@ import re
 import subprocess
 import sys
 from collections.abc import Iterator, Mapping, Sequence, Set
-from contextlib import suppress
 from pathlib import Path
 from typing import Annotated, Literal, Self
 
@@ -520,6 +519,8 @@ def parse_constraint(t: ParsedTable, text: str, name: str | None = None) -> None
         t.constraints[name if name is not None else f"check_{len(t.constraints)}"] = CheckConstraint(
             kind="CK", columns=tuple(used), valid=valid
         )
+    else:
+        raise ValueError("Unsupported diagram constraint syntax")
 
 
 def drop_column(table: ParsedTable, name: str) -> None:
@@ -830,8 +831,7 @@ def literal_assignments(path: Path, names: Set[str]) -> dict[str, object]:
         if target.id in names:
             if value is None:
                 raise ValueError("Schema assignment requires an explicit literal")
-            with suppress(ValueError):
-                found[target.id] = ast.literal_eval(value)
+            found[target.id] = ast.literal_eval(value)
     return found
 
 
@@ -1065,9 +1065,9 @@ class Box(SchemaRecord):
     name: str
     x: Coordinate
     y: Coordinate
-    w: Coordinate
+    w: Annotated[Coordinate, Field(gt=0)]
     rows: tuple[RenderedColumn | ClickHouseRow, ...]
-    head_h: Coordinate
+    head_h: Annotated[Coordinate, Field(ge=0)]
 
     @property
     def h(self) -> Coordinate:
@@ -1261,45 +1261,70 @@ PG_COLUMNS = [
     ["mkt.backfill_runs", "mkt.unlocks", "mkt.supply_obs"],
 ]
 
-PG_GUTTERS = {0: 46, 1: 84, 2: 96, 3: 84, 4: 64, 5: 64, 6: 46, 7: 46}
+PG_GUTTERS = {0: 46, 1: 84, 2: 96, 3: 84, 4: 64, 5: 64, 6: 46, 7: 46, 8: 46}
+
+
+class RouteSpec(SchemaRecord):
+    side: Literal["L", "R"] | None
+    lanes: tuple[Annotated[int, Field(ge=0)], ...] = Field(min_length=1, max_length=2)
+    one_to_one: bool
+
+
+class ColumnPosition(SchemaRecord):
+    x: Coordinate
+    width: Annotated[Coordinate, Field(gt=0)]
+
 
 PG_ROUTES = {
-    "decision_state_heads_current_scope_fk": {"side": "R", "lanes": [1]},
-    "decision_state_heads_previous_scope_fk": {"side": "R", "lanes": [2]},
-    "session_origin": {"lanes": [0]},
-    "observation_item": {"lanes": [1]},
-    "claim_observation": {"side": "L", "lanes": [2]},
-    "tool_session": {"side": "L", "lanes": [3]},
-    "observation_event": {"lanes": [0]},
-    "session_event": {"lanes": [1], "one_to_one": True},
-    "change_event": {"side": "L", "lanes": [2]},
-    "assessment_event": {"side": "L", "lanes": [3]},
-    "event_merge_target": {"side": "L", "lanes": [4]},
-    "call_event": {"lanes": [0]},
-    "decision_event": {"lanes": [1]},
-    "truth_event": {"lanes": [2]},
-    "alert_event": {"lanes": [1, 3]},
-    "decision_truth": {"side": "R", "lanes": [0]},
-    "delivery_alert": {"side": "R", "lanes": [0]},
-    "delivery_notice": {"side": "R", "lanes": [1]},
+    "decision_state_heads_current_scope_fk": RouteSpec(side="R", lanes=(1,), one_to_one=False),
+    "decision_state_heads_previous_scope_fk": RouteSpec(side="R", lanes=(2,), one_to_one=False),
+    "session_origin": RouteSpec(side=None, lanes=(0,), one_to_one=False),
+    "observation_item": RouteSpec(side=None, lanes=(1,), one_to_one=False),
+    "claim_observation": RouteSpec(side="L", lanes=(2,), one_to_one=False),
+    "tool_session": RouteSpec(side="L", lanes=(3,), one_to_one=False),
+    "observation_event": RouteSpec(side=None, lanes=(0,), one_to_one=False),
+    "session_event": RouteSpec(side=None, lanes=(1,), one_to_one=True),
+    "change_event": RouteSpec(side="L", lanes=(2,), one_to_one=False),
+    "assessment_event": RouteSpec(side="L", lanes=(3,), one_to_one=False),
+    "event_merge_target": RouteSpec(side="L", lanes=(4,), one_to_one=False),
+    "call_event": RouteSpec(side=None, lanes=(0,), one_to_one=False),
+    "decision_event": RouteSpec(side=None, lanes=(1,), one_to_one=False),
+    "truth_event": RouteSpec(side=None, lanes=(2,), one_to_one=False),
+    "alert_event": RouteSpec(side=None, lanes=(1, 3), one_to_one=False),
+    "decision_truth": RouteSpec(side="R", lanes=(0,), one_to_one=False),
+    "delivery_alert": RouteSpec(side="R", lanes=(0,), one_to_one=False),
+    "delivery_notice": RouteSpec(side="R", lanes=(1,), one_to_one=False),
 }
 LANES = {0: 1, 1: 4, 2: 5, 3: 4, 4: 2, 5: 2}
 
 
-def route(fk, boxes, col_of, col_x, col_w, gut, channel_y, spec, color):
+def route(
+    fk: ForeignKeyLink,
+    boxes: Mapping[str, Box],
+    col_of: Mapping[str, int],
+    positions: Mapping[int, ColumnPosition],
+    gut: Mapping[int, int],
+    channel_y: Coordinate,
+    spec: RouteSpec,
+    color: str,
+) -> str:
     src, dst = boxes[fk.source_table], boxes[fk.target_table]
     ci, cj = col_of[fk.source_table], col_of[fk.target_table]
     sy, dy = src.row_y(fk.source_columns[0]), dst.row_y(fk.target_columns[0])
 
-    def lane_x(g, k):
-        left = col_x[g] + col_w[g]
+    def lane_x(g: int, k: int) -> Coordinate:
+        left = positions[g].x + positions[g].width
         width = gut[g]
-        n = LANES.get(g, 1)
+        n = LANES[g]
         return left + width * (k + 1) / (n + 1)
 
-    lanes = spec["lanes"]
+    lanes = spec.lanes
+    s_dir: Literal[-1, 1]
+    d_dir: Literal[-1, 1]
     if ci == cj:
-        side = spec["side"]
+        side = spec.side
+        if side is None or len(lanes) != 1:
+            raise ValueError("A same-column route requires a side and one lane")
         g = ci - 1 if side == "L" else ci
         lx = lane_x(g, lanes[0])
         sx = src.x if side == "L" else src.x + src.w
@@ -1307,6 +1332,8 @@ def route(fk, boxes, col_of, col_x, col_w, gut, channel_y, spec, color):
         pts = [(sx, sy), (lx, sy), (lx, dy), (dx, dy)]
         s_dir = d_dir = -1 if side == "L" else 1
     elif abs(ci - cj) == 1:
+        if len(lanes) != 1:
+            raise ValueError("An adjacent-column route requires one lane")
         g = min(ci, cj)
         lx = lane_x(g, lanes[0])
         if ci < cj:
@@ -1315,6 +1342,8 @@ def route(fk, boxes, col_of, col_x, col_w, gut, channel_y, spec, color):
             sx, dx, s_dir, d_dir = src.x, dst.x + dst.w, -1, 1
         pts = [(sx, sy), (lx, sy), (lx, dy), (dx, dy)]
     else:
+        if len(lanes) != 2:
+            raise ValueError("A multi-column route requires two lanes")
         if ci > cj:
             g1, g2 = ci - 1, cj
             sx, dx, s_dir, d_dir = src.x, dst.x + dst.w, -1, 1
@@ -1323,7 +1352,7 @@ def route(fk, boxes, col_of, col_x, col_w, gut, channel_y, spec, color):
             sx, dx, s_dir, d_dir = src.x + src.w, dst.x, 1, -1
         l1, l2 = lane_x(g1, lanes[0]), lane_x(g2, lanes[1])
         pts = [(sx, sy), (l1, sy), (l1, channel_y), (l2, channel_y), (l2, dy), (dx, dy)]
-    child = "one" if spec.get("one_to_one") else "many"
+    child: Literal["one", "many"] = "one" if spec.one_to_one else "many"
     parts = [
         f'<path d="{rounded(pts)}" fill="none" stroke="{color}" stroke-width="1.35" stroke-linejoin="round" opacity="0.92"/>',
         end_marker(pts[0][0], pts[0][1], s_dir, child, color),
@@ -1511,21 +1540,26 @@ def render_pg(root: Path, base_ref: str | None = None) -> str:
 
     margin, top = 40, 330
     channel_y = top - 22
-    col_x, col_w, mxs = {}, {}, {}
-    x = margin
+    col_x: dict[int, Coordinate] = {}
+    col_w: dict[int, Coordinate] = {}
+    mxs: dict[int, PostgreSQLMeasurements] = {}
+    x: Coordinate = margin
     for i, names in enumerate(layout):
         mx = pg_metrics([drawn[n] for n in names])
         title = max(tw(n, 12.5) * 1.05 + 70 for n in names)
         col_w[i] = max(mx.width, title)
         col_x[i] = x
         mxs[i] = mx
-        x += col_w[i] + PG_GUTTERS.get(i, 46)
-    width = x - PG_GUTTERS.get(len(layout) - 1, 46) + margin
+        x += col_w[i] + PG_GUTTERS[i]
+    width = x - PG_GUTTERS[len(layout) - 1] + margin
 
-    boxes, col_of, body = {}, {}, []
-    bottoms = {}
+    positions = {i: ColumnPosition(x=col_x[i], width=col_w[i]) for i in col_x}
+    boxes: dict[str, Box] = {}
+    col_of: dict[str, int] = {}
+    body: list[str] = []
+    bottoms: dict[int, Coordinate] = {}
     for i, names in enumerate(layout):
-        y = top
+        y: Coordinate = top
         for n in names:
             box, svg = pg_table(drawn[n], col_x[i], y, col_w[i], mxs[i])
             boxes[n] = box
@@ -1537,7 +1571,7 @@ def render_pg(root: Path, base_ref: str | None = None) -> str:
     edges = []
     for fk in fks:
         color = SCHEMA[fk.source_table.split(".")[0]][0]
-        edges.append(route(fk, boxes, col_of, col_x, col_w, PG_GUTTERS, channel_y, PG_ROUTES[fk.name], color))
+        edges.append(route(fk, boxes, col_of, positions, PG_GUTTERS, channel_y, PG_ROUTES[fk.name], color))
 
     fx, fy = col_x[1], bottoms[1] + 6
     fw = col_w[1]
@@ -1712,19 +1746,19 @@ def render_pg(root: Path, base_ref: str | None = None) -> str:
         counts[t.namespace] = counts.get(t.namespace, 0) + 1
     order = ["reg", "ingest", "evt", "ana", "out", "ops", "mkt", "qa", "scout"]
     for i, s in enumerate(order):
-        cx = lx4 + 16 + (i // 3) * ((bw4 - 20) / 3)
+        schema_x = lx4 + 16 + (i // 3) * ((bw4 - 20) / 3)
         cy = ly + 40 + (i % 3) * 46
         fill, _, desc = SCHEMA[s]
-        hdr.append(f'<rect x="{cx}" y="{cy}" width="16" height="16" rx="3" fill="{fill}"/>')
+        hdr.append(f'<rect x="{schema_x}" y="{cy}" width="16" height="16" rx="3" fill="{fill}"/>')
         hdr.append(
             text(
-                cx + 24,
+                schema_x + 24,
                 cy + 12.5,
                 f"<tspan font-weight='700'>{s}</tspan> · {counts.get(s, 0)} table{'' if counts.get(s, 0) == 1 else 's'}",
                 12,
             )
         )
-        hdr.append(text(cx + 24, cy + 28, esc(desc), 10, MUTED))
+        hdr.append(text(schema_x + 24, cy + 28, esc(desc), 10, MUTED))
 
     lx5 = lx4 + bw4 + 16
     bw5 = width - margin - lx5
@@ -1749,7 +1783,7 @@ def render_pg(root: Path, base_ref: str | None = None) -> str:
         hdr = [f'<g opacity="0.3">{"".join(hdr)}</g>', text(margin, 100, esc(diff_line), 14, DIFF_RED, 700)]
         edges = [f'<g opacity="0.3">{"".join(edges)}</g>']
         panel = [f'<g opacity="0.3">{"".join(panel)}</g>']
-    svg = [
+    svg_parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width:.0f}" height="{height:.0f}" viewBox="0 0 {width:.0f} {height:.0f}">',
         '<rect width="100%" height="100%" fill="#FFFFFF"/>',
         *hdr,
@@ -1758,7 +1792,7 @@ def render_pg(root: Path, base_ref: str | None = None) -> str:
         *panel,
         "</svg>",
     ]
-    return "\n".join(svg)
+    return "\n".join(svg_parts)
 
 
 CH_COLUMNS = [
@@ -1926,16 +1960,19 @@ def render_ch(root: Path) -> str:
     by = {t.name: t for t in tables}
     assert {n for c in CH_COLUMNS for n in c} == set(by)
     margin, top, gutter = 40, 330, 30
-    col_x, col_w, mxs = {}, {}, {}
-    x = margin
+    col_x: dict[int, Coordinate] = {}
+    col_w: dict[int, Coordinate] = {}
+    mxs: dict[int, ClickHouseMeasurements] = {}
+    x: Coordinate = margin
     for i, names in enumerate(CH_COLUMNS):
         mx = ch_metrics([by[n] for n in names])
         col_w[i], col_x[i], mxs[i] = mx.width, x, mx
         x += mx.width + gutter
     width = x - gutter + margin
-    body, bottoms = [], {}
+    body: list[str] = []
+    bottoms: dict[int, Coordinate] = {}
     for i, names in enumerate(CH_COLUMNS):
-        y = top
+        y: Coordinate = top
         for n in names:
             box, svg = ch_table(by[n], col_x[i], y, col_w[i], mxs[i], retentions[n])
             body.append(svg)
@@ -2079,7 +2116,7 @@ def render_ch(root: Path) -> str:
     for i, s in enumerate(eng):
         hdr.append(text(lx3 + 16, ly + 46 + i * 19, esc(s), 10.2))
 
-    svg = [
+    svg_parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width:.0f}" height="{height:.0f}" viewBox="0 0 {width:.0f} {height:.0f}">',
         '<rect width="100%" height="100%" fill="#FFFFFF"/>',
         *hdr,
@@ -2087,10 +2124,17 @@ def render_ch(root: Path) -> str:
         *panel,
         "</svg>",
     ]
-    return "\n".join(svg)
+    return "\n".join(svg_parts)
 
 
-def main() -> None:
+class RendererArguments(SchemaRecord):
+    root: Path
+    check: bool
+    png: bool
+    diff: Annotated[list[NonBlankText], Field(min_length=2, max_length=2)] | None
+
+
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Render diagrams/tank_postgres_schema.svg and diagrams/tank_clickhouse_schema.svg "
         "from src/tank/migrations, src/tank/market_schema.py and src/tank/clickhouse_market.py."
@@ -2106,7 +2150,7 @@ def main() -> None:
         nargs=2,
         help="write OUT_DIR/tank_postgres_schema.diff.{svg,png}: the schema against BASE_REF, changes in red",
     )
-    args = parser.parse_args()
+    args = RendererArguments.model_validate(vars(parser.parse_args()))
     if args.diff:
         ref, out = args.diff[0], Path(args.diff[1])
         out.mkdir(parents=True, exist_ok=True)
