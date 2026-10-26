@@ -5812,12 +5812,19 @@ async def test_publish_card_keeps_market_truth_once_and_bounds_evidence_and_ops_
     )
     reads = []
     original = service.repo.iter_all
+    metadata_reads = []
+    original_metadata = service.repo.iter_metadata
 
     def counting(collection, **kwargs):
         reads.append(collection)
         return original(collection, **kwargs)
 
+    def counting_metadata(collection, fields, **kwargs):
+        metadata_reads.append((collection, tuple(fields)))
+        return original_metadata(collection, fields, **kwargs)
+
     monkeypatch.setattr(service.repo, "iter_all", counting)
+    monkeypatch.setattr(service.repo, "iter_metadata", counting_metadata)
     result = await service.dispatch(
         "publish_card",
         {
@@ -5837,8 +5844,12 @@ async def test_publish_card_keeps_market_truth_once_and_bounds_evidence_and_ops_
         "evt.event_observations",
         "ana.contradictions",
     ):
-        expected = 2 if collection == "evt.event_observations" else 1
-        assert reads.count(collection) == expected, (collection, reads.count(collection))
+        assert reads.count(collection) == 1, (collection, reads.count(collection))
+    observation_metadata = [
+        fields for collection, fields in metadata_reads if collection == "evt.event_observations"
+    ]
+    assert observation_metadata == [("item_id",)]
+    assert reads.count("evt.event_observations") + len(observation_metadata) == 2
 
 
 @pytest.mark.parametrize("operation", ["record_event", "add_observation"])
