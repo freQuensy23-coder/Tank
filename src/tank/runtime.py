@@ -43,6 +43,7 @@ from tank.runtime_contracts import (
     replace_job_clock,
 )
 from tank.runtime_evaluation import evaluate_condition_job
+from tank.runtime_milestone import check_milestone_job
 from tank.runtime_reaction import ReactionClaimLost, ReactionJobInvocation, capture_reaction_job
 from tank.runtime_retry import worker_retry_schedule
 from tank.scheduler import REACTION_RETRY_S, Scheduler
@@ -158,7 +159,7 @@ class Runtime:
             "RUN_MARKET_TRUTH": self.assess_wire,
             "DELIVER": self.delivery.deliver,
             "EVAL_CONDITIONS": self.eval_conditions_wire,
-            "MILESTONE_CHECK": self.scheduler.milestone_check,
+            "MILESTONE_CHECK": self.milestone_check_wire,
             "REACTION_CAPTURE": CLAIMED_REACTION,
             "SCOUT_REVIEW": self.scout_review,
             "TELEGRAM_ANSWER": self.inbox.answer,
@@ -166,7 +167,7 @@ class Runtime:
 
     def validate(self) -> None:
         self._validate()
-        self.sessions.config()
+        self.sessions.config(role="ANALYST", replay=self.settings.replay)
         self.sessions.running_session_cap()
 
     async def prepare(self) -> None:
@@ -223,11 +224,14 @@ class Runtime:
             retry_delay=timedelta(seconds=REACTION_RETRY_S),
         )
 
+    async def milestone_check_wire(self, payload: dict[str, JsonValue]) -> None:
+        await check_milestone_job(self.scheduler, payload)
+
     async def scout_review(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
         reference = await self.sessions.scout_review(ScoutReviewJob.model_validate(payload))
         return reference.model_dump(mode="json")
 
-    async def worker(self, stop, number=0):
+    async def worker(self, stop: asyncio.Event, number: int = 0) -> None:
         if not hasattr(self, "active_jobs"):
             self.active_jobs = set()
         while not stop.is_set():

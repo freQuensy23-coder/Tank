@@ -1,18 +1,36 @@
 """Typed queue-envelope adapter; concrete application commands belong to dispatchers."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from typing import Protocol, Self
 
 from pydantic import JsonValue, ValidationError
 
-from tank.contracts.jobs import InvalidJobClaim, JobClaimRevision, JobEnvelope
-from tank.contracts.repository import Collection, DocumentStore
+from tank.contracts.jobs import (
+    ClaimedJob,
+    InvalidJobClaim,
+    JobClaimMutation,
+    JobClaimRevision,
+    JobClaimScope,
+    JobEnvelope,
+)
+from tank.contracts.repository import Collection
 from tank.time_precision import Timestamp
 from tank.util import JsonInput, TimeInput, sha256
 
 
-class QueueStore(DocumentStore, Protocol):
+class QueueStore(Protocol):
+    async def get(self, collection: str, key: str) -> dict[str, JsonValue] | None: ...
+
+    async def put(
+        self,
+        collection: str,
+        key: str,
+        record: dict[str, JsonValue],
+        *,
+        immutable: bool = False,
+    ) -> dict[str, JsonValue]: ...
+
     def transaction(self) -> AbstractAsyncContextManager[Self]: ...
 
     def lock(self, key: str) -> AbstractAsyncContextManager[Self]: ...
@@ -30,6 +48,12 @@ class QueueStore(DocumentStore, Protocol):
     ) -> dict[str, JsonValue]: ...
 
     async def claim_job(self) -> dict[str, JsonValue] | None: ...
+
+    async def transition_claimed_job(
+        self, scope: JobClaimScope, transform: Callable[[JobEnvelope], JobClaimMutation]
+    ) -> JobEnvelope | None: ...
+
+    async def quarantine_job_claim(self, invalid: InvalidJobClaim) -> bool: ...
 
     async def finish_job(self, job_id: str) -> None: ...
 
@@ -79,14 +103,19 @@ class JobRepository:
         return self._collection.decode(document)
 
     async def claim(self) -> JobEnvelope | InvalidJobClaim | None:
+        claimed = await self.claim_with_revision()
+        return claimed.envelope if isinstance(claimed, ClaimedJob) else claimed
+
+    async def claim_with_revision(self) -> ClaimedJob | InvalidJobClaim | None:
         document = await self._store.claim_job()
         if document is None:
             return None
         claim = JobClaimRevision.from_document(document)
         if claim.status != "RUNNING":
             raise ValueError("A queue claim must hold a RUNNING revision")
+        revision = sha256(document)
         try:
-            return self._collection.decode(document)
+            return ClaimedJob(envelope=self._collection.decode(document), revision=revision)
         except ValidationError as error:
             fields: set[str] = set()
             codes: set[str] = set()
@@ -100,10 +129,11 @@ class JobRepository:
                 else:
                     fields.add("extra_field")
             return InvalidJobClaim(
+                claim_token=claim.claim_token,
                 job_id=claim.job_id,
                 kind=claim.type,
                 attempts=claim.attempts,
-                revision=sha256(document),
+                revision=revision,
                 error_codes=tuple(sorted(codes)),
                 error_fields=tuple(sorted(fields)),
             )

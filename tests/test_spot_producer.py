@@ -298,3 +298,34 @@ def test_parent_bound_piece_identity_is_not_replaced_by_an_equal_flattened_proje
         source.source_evidence.original(standalone.evidence)["flattened_marker"]
         == "separate captured input projection"
     )
+
+
+def test_direct_window_keeps_actual_native_coverage_without_computing_other_windows() -> None:
+    from tank.analysis.spot import calculate_direct_spot
+
+    source = case([instrument("A", "A:T"), instrument("B", "B:T")], [flow("A:T"), flow("B:T")])
+    basic = calculate_spot(source.inputs)
+    direct = calculate_direct_spot(source.inputs, window="EVENT")
+    assert direct.venues == basic.venues
+    assert direct.composite_max == basic.composite_max
+    assert direct.interval.start == source.inputs.start
+    assert direct.interval.cutoff == source.inputs.cutoff
+    assert direct.coverage_through.value == "2026-10-19T12:01:00Z"
+    assert direct.coverage_through.precision is None
+    assert direct.composite_cohort.status == "NOT_REQUESTED"
+    assert direct.cohort_comparisons.status == "NOT_REQUESTED"
+    assert direct.size_profile.status == "NOT_REQUESTED"
+
+
+def test_direct_window_missing_receipt_does_not_invent_coverage_at_cutoff() -> None:
+    from tank.analysis.spot import calculate_direct_spot
+
+    row = flow("A:T")
+    row.pop("received_ts")
+    row.pop("received_ts_prec")
+    row.pop("received_ts_prec_reason")
+    source = case([instrument("A", "A:T")], [row])
+    direct = calculate_direct_spot(source.inputs, window="EVENT")
+    assert direct.venues == ()
+    assert direct.coverage_through.value is None
+    assert direct.coverage_through.precision_reason == "NO_COMPLETE_VENUES"
