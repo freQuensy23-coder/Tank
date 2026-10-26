@@ -1,0 +1,15 @@
+{
+  "base": "57d11814fe0475c3c521bbe4d7693282ac57a26f",
+  "after_source": "4d955ee0",
+  "verified_unchanged_at": "1cf959c35dc640036ddb8ae944ee4b8734ae769b",
+  "files": {
+    "tank_postgres_schema.before.png": "cf971af68aa02bd49ec92910f0941322529bca3bbe7a23088cb9f679ce959c88",
+    "tank_postgres_schema.diff.png": "1168a7ef078004b55e67712c8ae2f303379389dba08c2ba05fde20acb138afc8",
+    "../../../diagrams/tank_postgres_schema.png": "779383656bae8eeec1bfba90870d2e739fc9e20eddf415afe4ec9caf9689346b",
+    "../../../diagrams/tank_postgres_schema.svg": "e7e01d1199a71f0c48fa4939653f2b3bd016cacbb8945727834be72c0a8ea674",
+    "tank_clickhouse_schema.before.png": "836801935177ae21df237f92f7592659aac539daf9b8f53905ebcd55b91d49c9",
+    "tank_clickhouse_schema.diff.png": "ab1ea452ed174ad754eb4b6309a3b2e3b0752000dc007dc021d8b4163068f1f1",
+    "../../../diagrams/tank_clickhouse_schema.png": "836801935177ae21df237f92f7592659aac539daf9b8f53905ebcd55b91d49c9",
+    "../../../diagrams/tank_clickhouse_schema.svg": "5923670904d40775c8d02dca16babdd74002e78354dfebda9ba185fb2456d152"
+  }
+}
