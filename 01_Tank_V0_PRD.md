@@ -164,7 +164,7 @@ Rules:
 
 | ID | Source | What Tank reads | Max delay |
 |---|---|---|---|
-| S29 | X | Own posts of the 86 accounts in §4.3, with the posts they quote, reply to or link, read from their public profiles through an Apify actor (D3); reposts and replies to other accounts are not read | 1 min |
+| S29 | X | Own posts of the 86 accounts in §4.3, with the posts they quote, reply to or link, read from their public profiles through an Apify actor (D3); reposts and replies to other accounts are not read | 2 min |
 
 **News**
 
