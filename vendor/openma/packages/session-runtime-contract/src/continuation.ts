@@ -1,3 +1,4 @@
+import { decodeRuntimeJson, RuntimeJsonDocumentError } from "./json.ts";
 import type { SentSessionEvent, SessionEventView, SessionStopReason, UserMessageContentBlock, ToolResultContentBlock, ImageSource, DocumentSource, TextContentBlock, OutcomeRubric } from '@open-managed-agents/domain/sessions';
 import type { OrderedSessionEvent, ExecutionProgressReceipt } from './history';
 import type { SessionExecutionState } from './coordination';
@@ -637,59 +638,13 @@ function continuationSentEvent(value: unknown): SentSessionEvent {
   }
 }
 function continuationJson(document: string): unknown {
-  let value: unknown;
-  try { value = JSON.parse(document); }
-  catch { return continuationDocumentError(); }
-  function whitespace(start: number): number {
-    let index = start;
-    while (index < document.length && /\s/.test(document[index])) index++;
-    return index;
+  try { return decodeRuntimeJson(document); }
+  catch (error) {
+    if (error instanceof RuntimeJsonDocumentError) return continuationDocumentError();
+    throw error;
   }
-  function stringEnd(start: number): number {
-    let index = start + 1;
-    while (index < document.length) {
-      if (document[index] === '"') return index + 1;
-      if (document[index] === '\\') index++;
-      index++;
-    }
-    return continuationDocumentError();
-  }
-  function visit(start: number): number {
-    let index = whitespace(start);
-    const kind = document[index];
-    if (kind === '"') return stringEnd(index);
-    if (kind === '{') {
-      index = whitespace(index + 1);
-      const keys = new Set<string>();
-      if (document[index] === '}') return index + 1;
-      while (index < document.length) {
-        const end = stringEnd(index);
-        const key: unknown = JSON.parse(document.slice(index, end));
-        if (typeof key !== 'string' || keys.has(key)) return continuationDocumentError();
-        keys.add(key);
-        index = whitespace(end);
-        index = whitespace(visit(index + 1));
-        if (document[index] === '}') return index + 1;
-        index = whitespace(index + 1);
-      }
-      return continuationDocumentError();
-    }
-    if (kind === '[') {
-      index = whitespace(index + 1);
-      if (document[index] === ']') return index + 1;
-      while (index < document.length) {
-        index = whitespace(visit(index));
-        if (document[index] === ']') return index + 1;
-        index = whitespace(index + 1);
-      }
-      return continuationDocumentError();
-    }
-    while (index < document.length && !/[\s,}\]]/.test(document[index])) index++;
-    return index;
-  }
-  if (whitespace(visit(0)) !== document.length) return continuationDocumentError();
-  return value;
 }
+
 export function validateContinuationExecutionEvents(value: unknown): SentSessionEvent[] {
   const events = continuationArray(value).map(continuationSentEvent);
   const ids = events.map(event => event.id);
