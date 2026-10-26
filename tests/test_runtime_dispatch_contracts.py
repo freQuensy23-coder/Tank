@@ -3,6 +3,7 @@
 import pytest
 from postgres_helpers import PostgresTemplate
 from pydantic import JsonValue, ValidationError
+from test_storage import repo as repo
 
 from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import JobEnvelope
@@ -11,7 +12,7 @@ from tank.runtime_dispatch_contracts import (
     DependencyState,
     RuntimeCommandRecord,
 )
-from tank.storage import MemoryRepository
+from tank.storage import MemoryRepository, StorageBackend
 
 
 @pytest.mark.asyncio
@@ -174,3 +175,28 @@ async def test_missing_dependency_is_an_explicit_failure_not_a_completed_or_wait
         await queue.dependencies(work)
     assert isinstance(failure.value.failed, MissingDependency)
     assert failure.value.failed.job_id == "missing"
+
+
+@pytest.mark.asyncio
+async def test_worker_quarantine_uses_raw_revision_with_unreported_nested_receipt_clock_facets(
+    repo: StorageBackend,
+) -> None:
+    from test_job_claim_revision import requeued_job_with_partial_receipt_clock
+
+    from tank.contracts.jobs import InvalidJobClaim
+    from tank.runtime_worker_repository import RepositoryWorkerQueue
+    from tank.util import canonical_json
+
+    _, job_id = await requeued_job_with_partial_receipt_clock(repo)
+    original = await repo.get("ops.jobs", job_id)
+    assert original is not None
+    queue = RepositoryWorkerQueue(repo)
+    invalid = await queue.claim()
+    assert isinstance(invalid, InvalidJobClaim)
+    assert await queue.reject_invalid(invalid)
+    stored = await repo.get("ops.jobs", job_id)
+    assert stored is not None and stored["status"] == "FAILED"
+    assert canonical_json(stored["host_question_failure_refusals"]) == canonical_json(
+        original["host_question_failure_refusals"]
+    )
+    assert not await queue.reject_invalid(invalid)

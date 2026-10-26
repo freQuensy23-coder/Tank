@@ -1321,9 +1321,9 @@ application contract, not the persistence JobEnvelope renamed as a domain
 aggregate. RepositoryWorkerQueue uses the canonical JobRepository claim and
 invalid-revision quarantine. Original payload facts remain at that queue
 boundary; a concrete command refusal records only static validation codes
-and the payload field name. Its digest uses the strictly decoded envelope's
-canonical, exclude-unset serialization, preserving original optional-field
-omission and raw JSON payload/result numeric kinds. Quarantine still compares
+and the payload field name. The initial normalized-envelope digest was later found insufficient for
+omitted nested clock facets; the adapter now consumes the unprojected raw
+revision from canonical ClaimedJob (see the correction/proof below). Quarantine still compares
 the actual complete stored revision under the canonical job lock before any
 terminal change. The dependency adapter refuses mismatched storage identity;
 a truly missing dependency remains None for explicit worker policy.
@@ -1366,9 +1366,9 @@ fallback introduced.
 Correction to inactive worker claim-revision rationale: foundation identified
 that nested Timestamp serializers can add omitted nullable facets even under
 exclude_unset. Therefore normalized envelope serialization is not a reliable
-original raw revision in every valid ledger case. Checkpoint 57377441 remains
-inactive; its adapter must consume the forthcoming raw claim-revision API and
-qualify omitted nested facets before activation. The limited passing cases
+original raw revision in every valid ledger case. At checkpoint 57377441 the adapter therefore required a raw claim-revision
+API and an omitted-nested-facet regression before activation; that boundary
+is corrected in the qualified raw-revision checkpoint below. The limited passing cases
 above did not contain such a ledger and do not establish full parity.
 
 Send admission prerequisite in the inactive worker stream
@@ -1461,3 +1461,20 @@ Runtime's worker signature is present but its implementation remains open,
 so a zero annotation-gap count is not a Runtime migration claim. Exact
 retained sites/reasons and behavior controls are appended to the exception
 ledger. Retirement 4a362a56 remains immutable and separate.
+
+
+Original claim revision correction
+
+The worker stream normally joins foundation 641ac01c. RepositoryWorkerQueue
+now calls claim_with_revision and carries the actual raw claimed-document
+revision into InvalidJobClaim; it never recomputes a digest from a normalized
+Pydantic envelope. The actual command refusal with a valid nested historical
+receipt omitting precision_reason/bucket_anchor quarantines exactly once on
+Memory and PostgreSQL, preserves the ledger's original serialized omissions,
+and retains the canonical changed-revision refusal. All fourteen connected
+unit cases pass in 1.86 seconds and all six actual PostgreSQL cases pass in
+4.26 seconds, zero skips, wrapper/source guards exit zero. Independent strict
+contracts/adapter/test three targets and Ruff pass. Evidence
+worker-641-raw-revision-final-unit and worker-641-raw-revision-pg is external.
+This resolves the inactive adapter digest defect; worker dispatch/result
+activation and the remaining Session producer dependencies remain open.

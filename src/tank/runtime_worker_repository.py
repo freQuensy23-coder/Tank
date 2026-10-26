@@ -15,7 +15,6 @@ from tank.runtime_dispatch_contracts import (
     RuntimeCommandRecord,
     WaitingDependencies,
 )
-from tank.util import sha256
 
 
 class RepositoryWorkerQueue:
@@ -24,9 +23,10 @@ class RepositoryWorkerQueue:
         self.jobs = JobRepository(store)
 
     async def claim(self) -> ClaimedWork | InvalidJobClaim | None:
-        envelope = await self.jobs.claim()
-        if envelope is None or isinstance(envelope, InvalidJobClaim):
-            return envelope
+        claimed = await self.jobs.claim_with_revision()
+        if claimed is None or isinstance(claimed, InvalidJobClaim):
+            return claimed
+        envelope = claimed.envelope
         try:
             command = RuntimeCommandRecord.model_validate(
                 {"type": envelope.type, "payload": envelope.payload}
@@ -36,7 +36,7 @@ class RepositoryWorkerQueue:
                 job_id=envelope.job_id,
                 kind=envelope.type,
                 attempts=envelope.attempts,
-                revision=sha256(envelope.model_dump(mode="json", exclude_unset=True)),
+                revision=claimed.revision,
                 error_codes=tuple(
                     sorted(
                         {
