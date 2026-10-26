@@ -334,3 +334,69 @@ jobs:
           path: .test-results/openma-persistence.log
           include-hidden-files: true
           if-no-files-found: error
+
+  node-public-history:
+    name: Node public history contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    env:
+      TANK_TEST_DATABASE_URL: postgresql://tank_ci:tank-ci-disposable@127.0.0.1:5432/tank_test_openma_history
+      TANK_OPENMA_PERSISTENCE_DATABASE_HOST: 127.0.0.1
+    services:
+      postgres:
+        image: postgres:16-bookworm
+        env:
+          POSTGRES_USER: tank_ci
+          POSTGRES_PASSWORD: tank-ci-disposable
+          POSTGRES_DB: tank_test_openma_history
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tank_ci -d tank_test_openma_history"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24.22.0"
+          package-manager-cache: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+        with:
+          version: "0.11.7"
+          python-version: "3.13.13"
+          enable-cache: true
+      - run: uv sync --python 3.13.13 --frozen --extra dev
+      - name: Install existing frozen driver and TypeScript closures
+        run: |
+          node scripts/openma-persistence/verify-lock.mts
+          npm ci --prefix scripts/openma-persistence --ignore-scripts --no-audit --no-fund
+          npm ci --prefix scripts/typescript --ignore-scripts --no-audit --no-fund
+      - name: Verify and materialize frozen public history dependencies
+        run: |
+          mkdir -p .test-results
+          uv run --frozen --extra dev python -m scripts.openma_history.manifest --check
+          uv run --frozen --extra dev python -m scripts.openma_history.setup \
+            --cache "$RUNNER_TEMP/tank-openma-history-archives" \
+            --report .test-results/openma-history-setup.json
+      - name: Full public strict, unchanged upstream module and actual PostgreSQL
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/tank-openma-history-home" "$RUNNER_TEMP/tank-openma-history-tmp"
+          env -i HOME="$RUNNER_TEMP/tank-openma-history-home" \
+            TMPDIR="$RUNNER_TEMP/tank-openma-history-tmp" PATH="$PATH" \
+            TANK_TEST_DATABASE_URL="$TANK_TEST_DATABASE_URL" \
+            TANK_OPENMA_PERSISTENCE_DATABASE_HOST="$TANK_OPENMA_PERSISTENCE_DATABASE_HOST" \
+            node scripts/openma-persistence/history-module.mts | tee .test-results/openma-history.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: openma-public-history-results
+          path: |
+            .test-results/openma-history.log
+            .test-results/openma-history-setup.json
+          include-hidden-files: true
+          if-no-files-found: error
