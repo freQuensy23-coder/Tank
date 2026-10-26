@@ -185,3 +185,34 @@ class TelegramFileUncertain(DomainModel):
 
 
 type TelegramFileDeliveryOutcome = TelegramFileSent | TelegramFileAlreadySent | TelegramFileUncertain
+
+
+class QuestionReference(DomainModel):
+    kind: Literal["CARD", "ANSWER", "PROMPT", "USER_MESSAGE"]
+    text: str | None
+
+
+class QuestionOpsReference(DomainModel):
+    kind: Literal["OPS_CARD"]
+    item_id: NonblankText
+    text: str | None
+
+
+class QuestionUnreportedReference(DomainModel):
+    kind: None
+    text: str | None
+
+
+type QuestionPromptReference = QuestionReference | QuestionOpsReference | QuestionUnreportedReference
+
+
+class QuestionPromptAttachment(DomainModel):
+    filename: NonblankText
+    size: Annotated[int, Field(ge=0)]
+    path: NonblankText | None
+
+
+class QuestionPrompt(DomainModel):
+    text: str | None
+    reference: QuestionPromptReference | None
+    attachments: list[QuestionPromptAttachment] | None

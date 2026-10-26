@@ -8,9 +8,10 @@ from tank.analysis.watch_contracts import MilestoneSnapshot, TimedReviewConditio
 from tank.contracts import DomainModel
 from tank.contracts.progress import JobFailureProgressView
 from tank.contracts.question_retirement import QuestionFailureRefusalReceipt
-from tank.contracts.scalars import TrueFlag
+from tank.contracts.scalars import FalseFlag, TrueFlag
 from tank.contracts.session_followups import FollowupRefusalTarget
 from tank.time_precision import Timestamp, propagate_timestamp, timestamp_owned_fields
+from tank.util import parse_iso_time
 
 type BucketAnchor = Literal["START", "END", "UNSPECIFIED"]
 
@@ -133,6 +134,27 @@ class ReplayBinding(DomainModel):
     replay_source_session_id: str | None = None
     replay_evidence_sha256: str | None = None
     replay_cutoff: str | None = None
+    replay_at: str | None = None
+    replay_at_prec: str | None = None
+    replay_at_prec_reason: str | None = None
+    replay_at_bucket_anchor: BucketAnchor | None = None
+
+    @model_validator(mode="after")
+    def actual_replay_schedule(self) -> Self:
+        facets = (self.replay_at_prec, self.replay_at_prec_reason, self.replay_at_bucket_anchor)
+        if self.replay_at is None:
+            if any(value is not None for value in facets):
+                raise ValueError("Replay message clock metadata requires its actual occurrence")
+            return self
+        if self.replay_run_id is None:
+            raise ValueError("Replay message timing requires its bound run identity")
+        if any(value is not None for value in facets):
+            Timestamp(
+                self.replay_at, self.replay_at_prec, self.replay_at_prec_reason, self.replay_at_bucket_anchor
+            )
+        else:
+            parse_iso_time(self.replay_at)
+        return self
 
 
 class SourceMessage(JobPayload, ReplayBinding):
@@ -140,6 +162,22 @@ class SourceMessage(JobPayload, ReplayBinding):
     item_id: str
     event_id: str | None = None
     session_id: str | None = None
+    origin: Literal["FIXTURE_AUTHORED_REFERENCE"] | None = None
+    historical: FalseFlag | None = None
+
+    @model_validator(mode="after")
+    def authored_reference_is_bound(self) -> Self:
+        if self.origin is None and self.historical is None:
+            return self
+        if (
+            self.origin != "FIXTURE_AUTHORED_REFERENCE"
+            or self.historical is not False
+            or self.replay_run_id is None
+            or self.replay_at is None
+            or self.replay_source_session_id is not None
+        ):
+            raise ValueError("Authored reference messages require their nonhistorical bound replay scope")
+        return self
 
 
 class UserQuestionMessage(JobPayload):
@@ -220,6 +258,7 @@ class _FiredConditionRecord(RootModel[FiredConditionMessage]):
 class CallExpiredMessage(JobPayload, ReplayBinding):
     kind: Literal["CALL_EXPIRED"]
     event_id: str
+    session_id: str | None = Field(default=None, min_length=1)
     call: WatchCall
 
     @model_validator(mode="after")
@@ -234,6 +273,7 @@ class CallExpiredMessage(JobPayload, ReplayBinding):
 class MilestoneMessage(JobPayload, ReplayBinding):
     kind: Literal["MILESTONE"]
     event_id: str
+    session_id: str | None = Field(default=None, min_length=1)
     milestone: str | MilestoneSnapshot
     outcome: str | None = None
     quotes: list[str] = Field(default_factory=list)

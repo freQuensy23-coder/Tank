@@ -158,7 +158,7 @@ class Runtime:
 
     def validate(self) -> None:
         self._validate()
-        self.sessions.config()
+        self.sessions.config(role="ANALYST", replay=self.settings.replay)
         self.sessions.running_session_cap()
 
     async def prepare(self) -> None:
@@ -210,7 +210,7 @@ class Runtime:
         reference = await self.sessions.scout_review(ScoutReviewJob.model_validate(payload))
         return reference.model_dump(mode="json")
 
-    async def worker(self, stop, number=0):
+    async def worker(self, stop: asyncio.Event, number: int = 0) -> None:
         if not hasattr(self, "active_jobs"):
             self.active_jobs = set()
         while not stop.is_set():

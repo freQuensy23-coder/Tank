@@ -6,7 +6,7 @@ from typing import Protocol, Self
 
 from pydantic import JsonValue, ValidationError
 
-from tank.contracts.jobs import InvalidJobClaim, JobClaimRevision, JobEnvelope
+from tank.contracts.jobs import ClaimedJob, InvalidJobClaim, JobClaimRevision, JobEnvelope
 from tank.contracts.repository import Collection
 from tank.time_precision import Timestamp
 from tank.util import JsonInput, TimeInput, sha256
@@ -90,14 +90,19 @@ class JobRepository:
         return self._collection.decode(document)
 
     async def claim(self) -> JobEnvelope | InvalidJobClaim | None:
+        claimed = await self.claim_with_revision()
+        return claimed.envelope if isinstance(claimed, ClaimedJob) else claimed
+
+    async def claim_with_revision(self) -> ClaimedJob | InvalidJobClaim | None:
         document = await self._store.claim_job()
         if document is None:
             return None
         claim = JobClaimRevision.from_document(document)
         if claim.status != "RUNNING":
             raise ValueError("A queue claim must hold a RUNNING revision")
+        revision = sha256(document)
         try:
-            return self._collection.decode(document)
+            return ClaimedJob(envelope=self._collection.decode(document), revision=revision)
         except ValidationError as error:
             fields: set[str] = set()
             codes: set[str] = set()
@@ -114,7 +119,7 @@ class JobRepository:
                 job_id=claim.job_id,
                 kind=claim.type,
                 attempts=claim.attempts,
-                revision=sha256(document),
+                revision=revision,
                 error_codes=tuple(sorted(codes)),
                 error_fields=tuple(sorted(fields)),
             )

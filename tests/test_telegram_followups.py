@@ -793,9 +793,10 @@ async def test_answer_ledger_rows_satisfy_the_delivery_schema_and_route_replies(
 
 
 def test_question_message_is_plain_text_with_truncated_reference() -> None:
+    from tank.question_prompts import question_prompt
     from tank.telegram_inbox import question_message
 
-    text = question_message({"text": "А дальше?", "reference": {"text": "x" * 5000}})
+    text = question_message(question_prompt({"text": "А дальше?", "reference": {"text": "x" * 5000}}))
     assert text.count("x") == 1024 and text.index("А дальше?") > text.index("x")
 
 
@@ -1071,12 +1072,43 @@ async def test_reader_file_is_stored_for_the_session_and_named_in_the_agent_mess
     mounts = []
     uploads = []
 
+    resources = []
+
     def openma(request: httpx.Request):
+        assert "Idempotency-Key" not in request.headers
         if request.url.path == "/v1/files":
+            assert request.headers["anthropic-beta"] == "files-api-2025-04-14"
             uploads.append(request.content)
             return httpx.Response(200, json={"id": "file_private"})
-        mounts.append(json.loads(request.content))
-        return httpx.Response(200, json={"id": "resource_private"})
+        if request.url.path == "/v1/files/file_private":
+            assert request.headers["anthropic-beta"] == "files-api-2025-04-14"
+            return httpx.Response(
+                200,
+                json={
+                    "id": "file_private",
+                    "type": "file",
+                    "filename": item["filename"],
+                    "mime_type": item["mime"],
+                    "size_bytes": item["size"],
+                    "created_at": "2026-10-26T00:00:00Z",
+                    "scope": None,
+                },
+            )
+        assert request.url.path == "/v1/sessions/ses_1/resources"
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": resources, "next_page": None})
+        mount = json.loads(request.content)
+        mounts.append(mount)
+        resource = {
+            "id": "resource_private",
+            "type": "file",
+            "file_id": mount["file_id"],
+            "mount_path": mount["mount_path"],
+            "created_at": "2026-10-26T00:00:00Z",
+            "updated_at": "2026-10-26T00:00:00Z",
+        }
+        resources.append(resource)
+        return httpx.Response(200, json=resource)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma)) as http:
         sessions = SessionService(
@@ -1087,9 +1119,11 @@ async def test_reader_file_is_stored_for_the_session_and_named_in_the_agent_mess
             versions=fixture_versions(),
             refusals=RepositoryFollowupRefusals(repo),
         )
-        session = await repo.get("ops.agent_sessions", "ses_1")
-        ready = await sessions.prepare_attachments(session, question)
-        again = await sessions.prepare_attachments(session, question)
+        from tank.contracts.session_followups import FollowupRefusalTarget
+
+        target = FollowupRefusalTarget(question_id=question["question_id"], session_id="ses_1")
+        ready = await sessions.prepare_attachments(target)
+        again = await sessions.prepare_attachments(target)
     text = question_message(ready)
     assert "Посчитай по этому файлу" in text and item["file_key"] not in text
     assert ready == again and len(uploads) == len(mounts) == 1
@@ -1165,7 +1199,10 @@ async def test_numeric_watch_comparisons_need_numbers() -> None:
 def test_reopening_fails_queued_follow_ups_of_the_failed_session() -> None:
     service = object.__new__(SessionService)
     service.clock_timestamp = lambda: __import__("tank.time_precision", fromlist=["x"]).collection_clock()
+    from tank.runtime_contracts import UserQuestionMessage
+
     session = {
+        "session_id": "session",
         "status": "FAILED",
         "message_log": [
             {
@@ -1180,7 +1217,9 @@ def test_reopening_fails_queued_follow_ups_of_the_failed_session() -> None:
             },
         ],
     }
-    service.reopen_for_question(session, {"question_id": "q1"}, "new_q")
+    service.reopen_for_question(
+        session, UserQuestionMessage(kind="USER_QUESTION", session_id="session", question_id="q1"), "new_q"
+    )
     assert session["message_log"][0]["turn_status"] == "FAILED"
     assert session["message_log"][1]["turn_status"] == "ACCEPTING"
     assert session["retired_message_ids"] == ["old_q"] and session["status"] == "OPEN"

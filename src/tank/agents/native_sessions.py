@@ -47,6 +47,17 @@ class NativeSessionResolution(DomainModel):
                 raise ValueError("Fresh analyst sessions cannot claim a scout proposal identity")
         return self
 
+    def mapping_identity(self) -> str:
+        for value in (
+            self.target.session_id,
+            self.target.event_id,
+            self.target.proposal_id,
+            self.target.item_id,
+        ):
+            if value is not None:
+                return value
+        raise ValueError("Session mapping requires its actual declared routing identity")
+
     @classmethod
     def from_wire(
         cls, payload: dict[str, JsonValue], *, role: Literal["ANALYST", "SCOUT"], replay: bool
@@ -58,6 +69,12 @@ class NativeSessionResolution(DomainModel):
                 "replay_source_session_id",
                 "replay_evidence_sha256",
                 "replay_cutoff",
+                "replay_at",
+                "replay_at_prec",
+                "replay_at_prec_reason",
+                "replay_at_bucket_anchor",
+                "origin",
+                "historical",
             )
         ):
             raise ValueError("Replay identity requires explicit replay composition")

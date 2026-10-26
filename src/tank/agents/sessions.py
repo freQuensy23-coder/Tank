@@ -5,7 +5,6 @@ stream ignores Last-Event-ID, while the native Node transport honors it.
 """
 
 import asyncio
-import base64
 import copy
 import logging
 import time
@@ -46,6 +45,8 @@ from tank.agents.input_ownership import (
     ToolInputLineage,
     UnprovedInputOwnership,
 )
+from tank.agents.message_dispatch import PendingMessageDispatch, find_message_dispatch
+from tank.agents.native_file_preparation import NativeFilePreparationService, NativeFileTransport
 from tank.agents.native_inputs import (
     AcceptedNativeInput,
     NativeInput,
@@ -111,7 +112,17 @@ from tank.agents.session_contracts import (
     SessionPromptState,
     SessionToolBoundaryState,
 )
+from tank.agents.session_following import (
+    FollowedSession,
+    FollowerObservation,
+    FollowerReady,
+    FollowerUnavailable,
+    NativeFollowerUnavailable,
+    RecordedEventDecision,
+    native_runtime_status,
+)
 from tank.agents.session_ownership import put_owned_session, require_owned_session_identity
+from tank.agents.session_reopening import reopen_question_session
 from tank.agents.tool_contracts import (
     CapturedToolResult,
     FailedToolResponse,
@@ -156,11 +167,19 @@ from tank.contracts.source_items import (
     SkippedExtraction,
 )
 from tank.contracts.source_repository import SourceExtractionRepository
+from tank.contracts.telegram_state import QuestionPrompt
 from tank.delivery import DeliveryDeferred
 from tank.ops_progress import session_progress
 from tank.question_answers import record_answer, validate_question_identity
-from tank.runtime_contracts import ScoutMessage, ScoutReviewJob, UserQuestionMessage
-from tank.telegram_inbox import DOCUMENT_LIMIT, question_message
+from tank.question_prompts import question_message, question_prompt
+from tank.runtime_contracts import (
+    ScoutMessage,
+    ScoutReviewJob,
+    SourceMessage,
+    UserQuestionMessage,
+    parse_agent_message,
+)
+from tank.telegram_inbox import DOCUMENT_LIMIT
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, jsonable, parse_time, sha256, utcnow
 
@@ -288,11 +307,12 @@ class SessionService:
             remote, config, declared_agent_id=agent_id, declared_model_id=self.settings.openma_model
         )
 
-    def config(self):
-        config = self.settings.load_config("openma")
-        if not config.get("agent_id") or not config.get("environment_id"):
-            raise ConfigurationError("openma.yaml requires deployed agent_id and environment_id")
-        return config
+    def config(self, *, role: Literal["ANALYST", "SCOUT"], replay: bool) -> NativeSessionDeployment:
+        return NativeSessionDeployment.from_wire(
+            self.settings.load_config("openma"),
+            role=role,
+            replay=replay,
+        )
 
     def headers(self, idem: str | None = None) -> dict[str, str]:
         headers = {"anthropic-beta": "managed-agents-2026-04-01"}
@@ -364,9 +384,7 @@ class SessionService:
                         continue
                     cached.verify(request)
                     return session
-        deployment = NativeSessionDeployment.from_wire(
-            self.config(), role=request.role, replay=request.replay is not None
-        )
+        deployment = self.config(role=request.role, replay=request.replay is not None)
         scout = request.role == "SCOUT"
         if item_id is None and event_id is not None and not scout:
             async for observation in self.repo.iter_range(
@@ -492,29 +510,14 @@ class SessionService:
             return False
         return True
 
-    def reopen_for_question(self, session, payload, key):
-        """Under the session lock: reopen a FAILED session and retire its unfinished turns, never this one."""
-        retired = set(session.get("retired_message_ids", []))
-        if session.get("status") == "FAILED":
-            for row in session.get("message_log", []):
-                if row.get("turn_status") == "DONE" or row["message_id"] == key:
-                    continue
-                retired.add(row["message_id"])
-                if row.get("payload", {}).get("kind") == "USER_QUESTION":
-                    row["turn_status"] = "FAILED"
-            session.setdefault("reopened", []).append(
-                {
-                    "question_id": payload["question_id"],
-                    "previous_status": session["status"],
-                    **self.clock_timestamp().fields("at"),
-                }
-            )
-            session.update(
-                status="OPEN", runtime_status="IDLE", active_message_id=None, pending_retry_event=None
-            )
-        retired.discard(key)
-        if retired or "retired_message_ids" in session:
-            session["retired_message_ids"] = sorted(retired)
+    def reopen_for_question(
+        self,
+        session: dict[str, JsonValue],
+        request: UserQuestionMessage,
+        message_id: str,
+    ) -> None:
+        """Apply the typed reopening policy while the caller owns the session lock."""
+        reopen_question_session(session, request, message_id, self.clock_timestamp())
 
     def analyst_tools(self, *, scout: bool) -> ManagedToolManifest:
         name: ManagedAgentName = "tank-scout-reviewer" if scout else "tank-event-analyst"
@@ -593,43 +596,13 @@ class SessionService:
             await put_owned_session(self.repo, sid, current)
         return CONTEXT_TRANSITION[state.proposal_id is not None]
 
-    async def prepare_attachments(self, session, question):
-        question = copy.deepcopy(question)
-        for index, item in enumerate(question.get("attachments") or [], 1):
-            key = item["file_key"]
-            metadata = await self.repo.get("ops.telegram_files", key)
-            payload = await self.repo.get("ops.telegram_file_payloads", key)
-            if metadata is None or payload is None:
-                raise ValueError("The attached file is unavailable")
-            mount = (metadata.get("model_mounts") or {}).get(session["session_id"])
-            if not mount:
-                content = base64.b64decode(payload["content_base64"], validate=True)
-                uploaded = await self.request(
-                    "POST",
-                    "files",
-                    files={
-                        "file": (item["filename"], content, item.get("mime") or "application/octet-stream")
-                    },
-                )
-                uploaded = uploaded.get("data", uploaded)
-                stamp = str(
-                    question.get("created_at")
-                    or question.get("received_at")
-                    or metadata.get("stored_at")
-                    or "current-question"
-                ).replace(":", "-")
-                path = f"/workspace/uploads/{stamp}/attachment-{index}/{item['filename']}"
-                await self.request(
-                    "POST",
-                    f"sessions/{session['session_id']}/resources",
-                    json={"type": "file", "file_id": uploaded["id"], "mount_path": path},
-                    idem="mount:" + sha256({"session": session["session_id"], "file": key}),
-                )
-                mount = {"path": path, "file_id": uploaded["id"]}
-                metadata.setdefault("model_mounts", {})[session["session_id"]] = mount
-                await self.repo.put("ops.telegram_files", key, metadata)
-            item["path"] = mount["path"]
-        return question
+    async def prepare_attachments(self, target: FollowupRefusalTarget) -> QuestionPrompt:
+        return await NativeFilePreparationService(
+            self.repo,
+            NativeFileTransport(self.http, self.settings.openma_url, self.settings.openma_api_key),
+            self.versions,
+            clock=self.clock_timestamp,
+        ).prepare_question(target)
 
     async def send_file(self, session, arguments, call_id):
         """send_telegram_file: read an output of this session and reply with it to the active follow-up."""
@@ -675,35 +648,72 @@ class SessionService:
             payload["question_id"], call_id, filename, content, arguments.get("caption")
         )
 
-    async def send_message(self, payload):
-        if payload.get("kind") == "USER_QUESTION" and not await self.continuable(
-            UserQuestionMessage.model_validate(payload)
-        ):
-            return None
-        item = (
-            await self.repo.get("ingest.source_items", payload["item_id"]) if payload.get("item_id") else None
-        )
-        mapping_identity = (
-            payload.get("session_id")
-            or payload.get("event_id")
-            or payload.get("proposal_id")
-            or payload.get("item_id")
-        )
-        async with self.repo.lock("session-mapping:" + str(mapping_identity)):
-            session = await self.resolve(
-                NativeSessionResolution.from_wire(
-                    payload,
-                    role=native_role_for_message(payload["kind"]),
-                    replay=self.settings.replay,
+    async def validate_new_question_input(self, request: UserQuestionMessage, message_id: str) -> None:
+        """Admit actual question scope before any native read or fresh text/file effect."""
+        target = FollowupRefusalTarget(question_id=request.question_id, session_id=request.session_id)
+        async with self.send_locks.setdefault(request.session_id, asyncio.Lock()):
+            async with self.repo.lock("session:" + request.session_id):
+                current: dict[str, JsonValue] | None = await self.repo.get(
+                    "ops.agent_sessions", request.session_id
                 )
-            )
-            ContextBinding.from_session(session)
-        sid, key = session["session_id"], sha256(payload)
-        migrating = session.get("model_context_version", 0) < CONTEXT_VERSION
-        if migrating or payload.get("kind") == "USER_QUESTION":
+                if current is not None:
+                    require_owned_session_identity(request.session_id, current)
+                    ContextBinding.from_session(current)
+                    retained = find_message_dispatch(current, message_id)
+                    if retained is not None:
+                        if isinstance(retained, PendingMessageDispatch):
+                            row = outbound_message_record(current, message_id)
+                            original = row["payload"]
+                            if not isinstance(original, dict):
+                                raise ValueError(
+                                    "Retained question input requires its actual structured target"
+                                )
+                            owner = UserQuestionMessage.model_validate(original)
+                            if (
+                                owner.session_id != request.session_id
+                                or owner.question_id != request.question_id
+                                or sha256(original) != message_id
+                            ):
+                                raise ValueError(
+                                    "Retained question input differs from its actual requested owner"
+                                )
+                        return
+            async with self.repo.lock("question:" + request.question_id):
+                question: dict[str, JsonValue] | None = await self.repo.get(
+                    "out.user_questions", request.question_id
+                )
+                if question is None:
+                    raise KeyError(request.question_id)
+                validate_question_identity(question, target)
+                question_prompt(question)
+
+    async def send_message(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
+        message = parse_agent_message(payload)
+        if isinstance(message, UserQuestionMessage):
+            await self.validate_new_question_input(message, sha256(payload))
+            if not await self.continuable(message):
+                return None
+        item = (
+            await self.repo.get("ingest.source_items", message.item_id)
+            if isinstance(message, SourceMessage)
+            else None
+        )
+        request = NativeSessionResolution.from_wire(
+            payload,
+            role=native_role_for_message(message.kind),
+            replay=self.settings.replay,
+        )
+        async with self.repo.lock("session-mapping:" + request.mapping_identity()):
+            session = await self.resolve(request)
+            binding = ContextBinding.from_session(session)
+        sid, key = binding.session_id, sha256(payload)
+        migrating = LegacyToolContext.from_record(session).needs_migration(CONTEXT_VERSION)
+        if migrating or isinstance(message, UserQuestionMessage):
             if (await self.sync_tools(sid)).status == "BUSY":
                 raise DeliveryDeferred(offset_schedule(collection_clock(), timedelta(seconds=30)))
             session = await self.repo.get("ops.agent_sessions", sid)
+            if session is None:
+                raise KeyError(sid)
         content = await ModelContext(self.repo, self.settings, session).message(payload, item)
         note = CONTEXT_TRANSITION[bool(session.get("proposal_id"))]
         if migrating:
@@ -711,7 +721,7 @@ class SessionService:
         async with self.send_locks.setdefault(sid, asyncio.Lock()):
             async with self.repo.lock("session:" + sid):
                 session = await self.repo.get("ops.agent_sessions", sid)
-                if payload.get("kind") == "USER_QUESTION":
+                if isinstance(message, UserQuestionMessage):
                     if session is not None:
                         require_owned_session_identity(sid, session)
                     eligibility = followup_eligibility(
@@ -719,11 +729,11 @@ class SessionService:
                     )
                     if not isinstance(eligibility, FollowupCandidate):
                         await self.refusals.record(
-                            FollowupRefusalTarget(question_id=payload["question_id"], session_id=sid),
+                            FollowupRefusalTarget(question_id=message.question_id, session_id=sid),
                             eligibility,
                         )
                         return None
-                    self.reopen_for_question(session, payload, key)
+                    self.reopen_for_question(session, message, key)
                 if key in session.get("messages", []):
                     self.start_stream(sid)
                     return session
@@ -732,11 +742,12 @@ class SessionService:
                 )
                 if intent is None:
                     text = canonical_json(content)
-                    if payload.get("question_id"):
-                        question = await self.repo.get("out.user_questions", payload["question_id"])
-                        if question is None:
-                            raise KeyError(payload["question_id"])
-                        text = question_message(await self.prepare_attachments(session, question))
+                    if isinstance(message, UserQuestionMessage):
+                        text = question_message(
+                            await self.prepare_attachments(
+                                FollowupRefusalTarget(question_id=message.question_id, session_id=sid)
+                            )
+                        )
                         if migrating:
                             text = note + "\n\n" + text
                     body = {
@@ -1369,7 +1380,8 @@ class SessionService:
             await session_progress(self.repo, self.settings, current)
             return after
 
-    def start_stream(self, sid):
+    def start_stream(self, sid: str) -> None:
+        sid = NativeSessionReference(session_id=sid).session_id
         if not self.closed and (sid not in self.tasks or self.tasks[sid].done()):
             self.tasks[sid] = asyncio.create_task(self.follow(sid), name="openma:" + sid)
 
@@ -2457,36 +2469,56 @@ class SessionService:
                 return True
         return False
 
-    async def follow(self, sid):
+    async def follower_state(self, sid: str) -> FollowerObservation | None:
+        """Resolve only unreported runtime state from actual identity-bound native facts."""
+        session: dict[str, JsonValue] | None = await self.repo.get("ops.agent_sessions", sid)
+        if session is None:
+            return None
+        initial = FollowedSession.from_record(session, sid)
+        if initial.status in {"FAILED", "ENDED"} or initial.runtime_status is not None:
+            return FollowerReady(phase="READY", state=initial)
+        observed = await NativeSessionReader(self).state(sid)
+        async with self.repo.lock("session:" + sid):
+            current: dict[str, JsonValue] | None = await self.repo.get("ops.agent_sessions", sid)
+            if current is None:
+                return None
+            state = FollowedSession.from_record(current, sid)
+            if state != initial:
+                return FollowerReady(phase="READY", state=state)
+            current["remote_state"] = {
+                **observed.model_dump(mode="json"),
+                **self.clock_timestamp().fields("checked_at"),
+            }
+            if isinstance(observed, NativeSessionMissing) or observed.archived_at is not None:
+                await put_owned_session(self.repo, sid, current)
+                return FollowerUnavailable(phase="UNAVAILABLE", observation=observed)
+            current["runtime_status"] = native_runtime_status(observed.status)
+            if observed.status == "terminated":
+                current["status"] = "ENDED"
+            if state.event_id is None:
+                async for row in self.repo.iter_all("ops.tool_calls", filters={"session_id": sid}):
+                    if (
+                        row.get("tool") == "record_event"
+                        and RecordedEventDecision.from_record(row, sid).is_event is False
+                    ):
+                        current["no_event"] = True
+                        break
+            await put_owned_session(self.repo, sid, current)
+            return FollowerReady(phase="READY", state=FollowedSession.from_record(current, sid))
+
+    async def follow(self, sid: str) -> None:
         delay = 1
         while not self.closed:
-            stream_task = None
+            stream_task: asyncio.Task[None] | None = None
             try:
                 stream_task = asyncio.create_task(self.stream(sid))
                 await self.catch_up(sid)
-                session = await self.repo.get("ops.agent_sessions", sid)
-                if not session.get("runtime_status"):
-                    remote = await self.request("GET", f"sessions/{sid}")
-                    if remote.get("status") == "terminated":
-                        session["status"] = "ENDED"
-                    session["runtime_status"] = {
-                        "idle": "IDLE",
-                        "running": "RUNNING",
-                        "rescheduling": "PENDING",
-                        "terminated": "ENDED",
-                    }.get(remote.get("status"), "RUNNING")
-                    if not session.get("event_id"):
-                        session["no_event"] = any(
-                            [
-                                row.get("tool") == "record_event"
-                                and row.get("result", {}).get("is_event") is False
-                                async for row in self.repo.iter_all(
-                                    "ops.tool_calls", filters={"session_id": sid}
-                                )
-                            ]
-                        )
-                    await put_owned_session(self.repo, sid, session)
-                if session.get("status") in ("FAILED", "ENDED") or await self.finish_if_idle(sid):
+                observation = await self.follower_state(sid)
+                if observation is None:
+                    return
+                if isinstance(observation, FollowerUnavailable):
+                    raise NativeFollowerUnavailable(observation)
+                if observation.state.status in ("FAILED", "ENDED") or await self.finish_if_idle(sid):
                     return
                 while not self.closed:
                     done, _ = await asyncio.wait([stream_task], timeout=10)
@@ -2497,7 +2529,10 @@ class SessionService:
                         break
                     await self.catch_up(sid)
                     session = await self.repo.get("ops.agent_sessions", sid)
-                    if session.get("status") in ("FAILED", "ENDED") or await self.finish_if_idle(sid):
+                    if session is None:
+                        return
+                    state = FollowedSession.from_record(session, sid)
+                    if state.status in ("FAILED", "ENDED") or await self.finish_if_idle(sid):
                         return
                 delay = 1
             except asyncio.CancelledError:
@@ -2505,7 +2540,7 @@ class SessionService:
             except (httpx.HTTPError, ValueError, KeyError, RuntimeError):
                 delay = min(delay * 2, 30)
             finally:
-                if stream_task and not stream_task.done():
+                if stream_task is not None and not stream_task.done():
                     stream_task.cancel()
                     await asyncio.gather(stream_task, return_exceptions=True)
             await asyncio.sleep(delay)

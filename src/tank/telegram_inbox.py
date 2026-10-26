@@ -24,6 +24,7 @@ from pydantic import JsonValue
 
 from tank import ops_cards
 from tank.analysis.cards import telegram_card_html
+from tank.contracts.native_files import NativeFileNotRequested, NativeFileSourceScope
 from tank.contracts.native_readback import NativeSessionMissing
 from tank.contracts.session_followups import (
     FollowupCandidate,
@@ -66,6 +67,8 @@ from tank.question_answers import (
 from tank.question_answers import (
     validate_question_identity,
 )
+from tank.question_prompts import REFERENCE_LIMIT
+from tank.question_prompts import question_message as question_message
 from tank.runtime_contracts import TelegramAnswerJob
 from tank.telegram_api import FileTooLarge as FileTooLarge
 from tank.telegram_api import (
@@ -214,32 +217,10 @@ def chunks(text, limit=MESSAGE_LIMIT):
     return parts or [EMPTY_TEXT]
 
 
-REFERENCE_LIMIT = 1024
 DOCUMENT_LIMIT = 45 * 1024 * 1024
 UPLOAD_LIMIT = 20 * 1024 * 1024
 TOO_LARGE_TEXT = "Файл больше 20 МБ, Telegram не даёт боту его скачать. Пришлите файл поменьше."
 NOT_SENT = (TelegramResponseError, TelegramConfigurationError, httpx.ConnectError, httpx.ConnectTimeout)
-
-
-def question_message(question):
-    """The follow-up as the agent reads it: the referenced Telegram text, the reader's words and files."""
-    target = question.get("reference") or {}
-    reference = (target.get("text") or "")[:REFERENCE_LIMIT]
-    lines = [f"Пришёл фоллоуап через Telegram на сообщение с текстом:\n{reference}"]
-    if target.get("kind") == OPS_KIND:
-        lines.append(
-            f"Вопрос задан в чате Tank Ops о материале {target.get('item_id')}; ответ уйдёт туда же."
-        )
-    lines.append(question.get("text") or "(без текста)")
-    for item in question.get("attachments") or []:
-        lines.append(
-            f"Пользователь приложил файл {item['filename']} ({item['size']} байт): {item.get('path', 'файл недоступен')}."
-        )
-    lines.append(
-        "Твоё последнее сообщение в этом ходе уйдёт пользователю ответом в Telegram; "
-        "файл можно отправить тулом send_telegram_file."
-    )
-    return "\n\n".join(lines)
 
 
 def media(message: Mapping[str, JsonValue]) -> TelegramMediaSelection | None:
@@ -1228,6 +1209,20 @@ class TelegramInbox:
                         file_key=key, content_base64=base64.b64encode(content).decode()
                     )
                     async with self.repo.transaction():
+                        stored_at = collection_clock(utcnow())
+                        native_preparation = NativeFileNotRequested(
+                            phase="NOT_REQUESTED",
+                            recorded_at=stored_at,
+                            scope=NativeFileSourceScope(
+                                file_key=cached.file_key,
+                                question_id=cached.question_id,
+                                session_id=cached.session_id,
+                                cached_sha256=cached.sha256,
+                                filename=cached.filename,
+                                mime=cached.mime,
+                                size=cached.size,
+                            ),
+                        )
                         await self.repo.put(
                             "ops.telegram_file_payloads", key, payload.model_dump(mode="json")
                         )
@@ -1236,7 +1231,8 @@ class TelegramInbox:
                             key,
                             {
                                 **cached.model_dump(mode="json"),
-                                **collection_clock(utcnow()).fields("stored_at"),
+                                **stored_at.fields("stored_at"),
+                                "native_preparation": native_preparation.model_dump(mode="json"),
                             },
                         )
                 stored.append(
