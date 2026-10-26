@@ -7,6 +7,7 @@ import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture, source_record_fixture
 from pydantic import JsonValue, ValidationError
+from session_followup_fixtures import UnexpectedFollowupRefusals
 
 from tank.agents.native_inputs import NativeInputRequest
 from tank.agents.sessions import SessionService
@@ -132,7 +133,14 @@ async def setup(
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     return (
         repo,
-        SessionService(repo, settings, None, http=http, versions=declared_versions_fixture()),
+        SessionService(
+            repo,
+            settings,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        ),
         http,
         states,
         posts,
@@ -209,7 +217,14 @@ async def test_restart_keeps_native_retry_execution_and_does_not_post_again() ->
         await service.process_event("s", event("rescheduled", "session.status_rescheduled", RETRY))
         settings = service.settings
         await service.close()
-        service = SessionService(repo, settings, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            settings,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         await service.process_event("s", error("native-retrying", RETRY, "retrying"))
         assert not (await service.completed_turn("s"))["complete"]
         current = await repo.get("ops.agent_sessions", "s")

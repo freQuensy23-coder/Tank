@@ -26,7 +26,7 @@ from tank.scheduler import Scheduler
 from tank.settings import Settings, resolve_versions
 from tank.sources import SourceService
 from tank.storage import Repository
-from tank.telegram_inbox import TelegramInbox
+from tank.telegram_inbox import RepositoryFollowupRefusals, TelegramInbox
 
 log = logging.getLogger(__name__)
 
@@ -90,7 +90,9 @@ def build_runtime(repo: Repository, settings: Settings) -> Runtime:
         pages=LivePageAccess(admission),
     )
     inbox = TelegramInbox(repo, settings)
-    sessions = SessionService(repo, settings, tools.dispatch, versions=versions)
+    sessions = SessionService(
+        repo, settings, tools.dispatch, versions=versions, refusals=RepositoryFollowupRefusals(repo)
+    )
     delivery = DeliveryService(repo, settings)
     gateway = CodexGateway(settings)
     sessions.telegram = inbox

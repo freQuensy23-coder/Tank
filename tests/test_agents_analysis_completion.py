@@ -9,6 +9,7 @@ import pytest
 from agent_source_fixtures import declared_versions_fixture, source_record_fixture
 from native_input_fixtures import acknowledge_native_input
 from scheduling_support import RecordingReactionScheduling
+from session_followup_fixtures import UnexpectedFollowupRefusals
 from source_support import fixture_http_admission
 from test_agents_execution_barrier import config, idle
 from test_session_binding_concurrency import fixture_repo, seed
@@ -198,7 +199,12 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             service = SessionService(
-                repo, config(), domain.dispatch, http=client, versions=declared_versions_fixture()
+                repo,
+                config(),
+                domain.dispatch,
+                http=client,
+                versions=declared_versions_fixture(),
+                refusals=UnexpectedFollowupRefusals(),
             )
             sequence = 0
 
@@ -381,7 +387,12 @@ async def test_ignored_item_keeps_event_and_call_for_next_native_update(
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
             service = SessionService(
-                repo, config(), domain.dispatch, http=http, versions=declared_versions_fixture()
+                repo,
+                config(),
+                domain.dispatch,
+                http=http,
+                versions=declared_versions_fixture(),
+                refusals=UnexpectedFollowupRefusals(),
             )
 
             service.start_stream = lambda sid: None

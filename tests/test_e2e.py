@@ -36,7 +36,7 @@ from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.sources import SourceService
 from tank.storage import ImmutableRecordError, MemoryRepository
-from tank.telegram_inbox import TelegramInbox
+from tank.telegram_inbox import RepositoryFollowupRefusals, TelegramInbox
 from tank.telegram_rich import rich_message_text
 
 pytestmark = [pytest.mark.integration]
@@ -255,14 +255,28 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
             pages=LivePageAccess(reactions.admission),
             http=http,
         )
-        session = SessionService(repo, settings, toolservice.dispatch, versions=versions, http=http)
+        session = SessionService(
+            repo,
+            settings,
+            toolservice.dispatch,
+            versions=versions,
+            http=http,
+            refusals=RepositoryFollowupRefusals(repo),
+        )
 
         session.start_stream = lambda sid: None
         await session.send_message(routed_origin["routing_message"])
         await session.stream("s1")
         stored_read = await repo.get("ops.tool_calls", "s1:tool1")
         assert stored_read["result"].get("item_id") == item["item_id"], stored_read
-        resumed = SessionService(repo, settings, toolservice.dispatch, versions=versions, http=http)
+        resumed = SessionService(
+            repo,
+            settings,
+            toolservice.dispatch,
+            versions=versions,
+            http=http,
+            refusals=RepositoryFollowupRefusals(repo),
+        )
         before = len(event_posts)
         await resumed.stream("s1")
         assert len(event_posts) == before
@@ -706,7 +720,14 @@ async def test_full_sse_pipeline_postgres(
                 scheduler=scheduler,
                 pages=LivePageAccess(admission),
             )
-            session = SessionService(repo, settings, tools.dispatch, versions=versions, http=http)
+            session = SessionService(
+                repo,
+                settings,
+                tools.dispatch,
+                versions=versions,
+                http=http,
+                refusals=RepositoryFollowupRefusals(repo),
+            )
             services.push_async_callback(session.close)
             session.start_stream = lambda sid: None
             await session.send_message(routed_origin["routing_message"])
@@ -980,7 +1001,14 @@ async def test_full_sse_pipeline_postgres(
                 scheduler=scheduler,
                 pages=LivePageAccess(admission),
             )
-            resumed = SessionService(repo, settings, tools.dispatch, versions=versions, http=http)
+            resumed = SessionService(
+                repo,
+                settings,
+                tools.dispatch,
+                versions=versions,
+                http=http,
+                refusals=RepositoryFollowupRefusals(repo),
+            )
             services.push_async_callback(resumed.close)
             resumed.start_stream = lambda sid: None
             session = resumed
@@ -1571,7 +1599,14 @@ async def test_runtime_autonomous_source_to_telegram(
                 pages=LivePageAccess(admission),
                 http=http,
             )
-            sessions = SessionService(repo, settings, tools.dispatch, versions=versions, http=http)
+            sessions = SessionService(
+                repo,
+                settings,
+                tools.dispatch,
+                versions=versions,
+                http=http,
+                refusals=RepositoryFollowupRefusals(repo),
+            )
             delivery = DeliveryService(repo, settings, http=http)
             gateway = CodexGateway(settings)
             inbox = TelegramInbox(repo, settings, http=http)

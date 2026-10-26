@@ -28,6 +28,7 @@ from tank.models import Record
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository, Repository
+from tank.telegram_inbox import RepositoryFollowupRefusals
 from tank.util import clock_iso, iso, utcnow
 
 
@@ -609,6 +610,7 @@ async def test_denied_preliminary_gets_one_immediate_correction_in_its_thread(
             service.dispatch,
             http=http,
             versions=service.versions,
+            refusals=RepositoryFollowupRefusals(service.repo),
         )
         for job in await service.repo.list("ops.jobs"):
             await service.repo.put("ops.jobs", job["job_id"], {**job, "status": "DONE"})

@@ -5,6 +5,7 @@ import pytest
 from agent_source_fixtures import declared_versions_fixture
 from native_session_fixtures import native_session_record
 from pydantic import JsonValue
+from session_followup_fixtures import UnexpectedFollowupRefusals
 
 from tank.agents.context import CONTEXT_VERSION
 from tank.agents.sessions import SessionService
@@ -71,6 +72,7 @@ async def test_tool_update_requires_readback_and_recovers_lost_acceptance_withou
             None,
             http=http,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         expected_error = httpx.ReadError if accepted else OpenMAContractViolation
         with pytest.raises(expected_error):
@@ -135,6 +137,7 @@ async def test_local_owner_change_during_native_confirmation_cannot_commit_a_mig
             None,
             http=http,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         with pytest.raises(ValueError, match="ownership changed"):
             await service.sync_tools("session")
