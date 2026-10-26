@@ -50,12 +50,12 @@ def metric(rows):
     return TRUTH.supply_truth({"supply": rows}, END, END)["holders_revenue"]
 
 
-def render(truths, tokens=None, *, limit=20000, narrative=None, event_statement=None):
+def render(truths, tokens=None, *, narrative=None, event_claim_text: str | None = None):
     tokens = (["T"] if tokens is None else tokens)[:3]
     event, assessment, beneficiary, decision, market = wire_card_inputs()
     event.update(statement="A source reports a proposal.", token_labels={})
-    if event_statement is not None:
-        event["statement"] = event_statement
+    if event_claim_text is not None:
+        event["claims"][0]["object"] = event_claim_text
     assessment["dims"] = unassessed_score_dimensions()
     edges, decisions, markets = [], [], []
     supplied = {row["token_id"]: row for row in truths}
@@ -91,7 +91,7 @@ def render(truths, tokens=None, *, limit=20000, narrative=None, event_statement=
         )
         if narrative is None
         else narrative,
-        policy=PublicationPolicy(card_max_chars=limit, update_rate_limit_s=900),
+        policy=PublicationPolicy(update_rate_limit_s=900),
     )
     return CARDS.compose_card(inputs)
 
@@ -298,13 +298,12 @@ def test_provider_revenue_with_unknown_capture_never_authorizes_token_capture_cl
     assert "DIRECT" not in line and "INDIRECT" not in line
 
 
-def test_compact_display_prefers_24h_preserving_30d_details_and_default_limit() -> None:
+def test_compact_display_prefers_24h_preserving_30d_details() -> None:
     observed = metric([captured({"adapter": {"total24h": "123.456", "total30d": "8765.432"}})])
     truths = [
         {"token_id": token, "supply": {"holders_revenue": deepcopy(observed)}} for token in ["A", "B", "C"]
     ]
-    card = render(truths, ["A", "B", "C"], limit=3500)
-    assert len(card) <= 3500
+    card = render(truths, ["A", "B", "C"])
     assert card.count("123.456 USD/24h") == 3 and "8765.432" not in card
     assert observed["protocols"][0]["periods"][1]["value"] == "8765.432"
     line = next(line for line in card.splitlines() if line.startswith("• Token capture:"))
@@ -316,7 +315,7 @@ def ordinary_full_card_inputs():
     return wire_card_inputs()
 
 
-def test_full_ordinary_three_decision_tokens_with_observed_revenue_fit_default_limit() -> None:
+def test_full_ordinary_three_decision_tokens_with_observed_revenue() -> None:
     event, assessment, beneficiary, decision, truth = ordinary_full_card_inputs()
     edges, decisions, truths = [], [], []
     for token in ["A", "B", "C"]:
@@ -329,8 +328,7 @@ def test_full_ordinary_three_decision_tokens_with_observed_revenue_fit_default_l
                 supply={"holders_revenue": metric([captured({"adapter": {"total24h": "123.456"}})])},
             )
         )
-    card = render(truths, ["A", "B", "C"], limit=3500)
-    assert len(card) <= 3500
+    card = render(truths, ["A", "B", "C"])
     assert card.count("123.456 USD/24h") == 3
     assert card.count("──") == 6
     for section in [
@@ -347,10 +345,9 @@ def test_full_ordinary_three_decision_tokens_with_observed_revenue_fit_default_l
     ]:
         assert section in card
     assert "IMPACT:" not in card and "SECONDARIES:" not in card
-    import pytest
-
-    with pytest.raises(ValueError, match="CARD_LENGTH"):
-        render(truths, ["A", "B", "C"], limit=len(card) - 1)
+    long_statement = "x" * 3500
+    long_card = render(truths, ["A", "B", "C"], event_claim_text=long_statement)
+    assert long_statement in long_card and len(long_card) > 5000
 
 
 @pytest.mark.parametrize(

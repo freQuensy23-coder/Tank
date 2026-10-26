@@ -1135,7 +1135,9 @@ async def test_runtime_autonomous_source_to_telegram(
     from tank.event_tools import LAYERS
     from tank.runtime import Runtime
     from tank.runtime_composition import validate_runtime_settings
+    from tank.runtime_failure_repository import RepositoryRuntimeFailures
     from tank.scheduler import Scheduler
+    from tank.time_precision import collection_clock
     from tank.util import clock_iso, iso
 
     repo = isolated_e2e_database
@@ -1634,6 +1636,7 @@ async def test_runtime_autonomous_source_to_telegram(
                 budget_backend=budget_backend,
                 bootstrap=bootstrap_registry,
                 validate=validate_generation,
+                failures=RepositoryRuntimeFailures(repo, versions, collection_clock),
             )
             runtime_task = asyncio.create_task(runtime.run(stop))
             try:

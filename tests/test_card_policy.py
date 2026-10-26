@@ -50,7 +50,7 @@ def gate_inputs() -> PublicationGateInputs:
         assessment_class="MAJOR",
         decisions=(PublicationDecisionStatus(token_id="T", action="WATCH_TO_START", active=True),),
         previous=baseline(),
-        policy=PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900),
+        policy=PublicationPolicy(update_rate_limit_s=900),
         now=AT + timedelta(minutes=1),
     )
 

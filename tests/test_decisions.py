@@ -201,7 +201,7 @@ def test_card_diagnostics_and_probability() -> None:
         update={"move": "PERP_LED_CHASE", "unresolved": ("ABSORPTION_CANDIDATE",)}
     )
     text = compose_card(values.model_copy(update={"market_by_token": {"world:WLD": truth}}))
-    assert "ABSORPTION_CANDIDATE" in text and len(text) <= 3500
+    assert "ABSORPTION_CANDIDATE" in text
 
 
 def test_three_token_template_with_structured_figures() -> None:
@@ -234,7 +234,7 @@ def test_three_token_template_with_structured_figures() -> None:
         }
     )
     text = compose_card(values)
-    assert len(text) <= 3500 and text.count("WHAT TO DO:") == 3
+    assert text.count("WHAT TO DO:") == 3
 
 
 def test_all_no_call_action_rows() -> None:
@@ -693,14 +693,13 @@ def test_b16_fraction_percent_exclusions_and_header_proof() -> None:
     assert "Spot venue coverage is incomplete: only partial coverage" in text
 
 
-def test_versioned_card_limits_and_missing_decisions() -> None:
+def test_versioned_update_interval_and_missing_decisions() -> None:
     values = template_inputs()
-    policy = values.policy.model_copy(update={"card_max_chars": 10, "update_rate_limit_s": 1800})
+    policy = values.policy.model_copy(update={"update_rate_limit_s": 1800})
     partial = values.model_copy(
         update={"narrative": values.narrative.model_copy(update={"kind": "PARTIAL"}), "policy": policy}
     )
-    with pytest.raises(ValueError, match="CARD_LENGTH"):
-        compose_card(partial)
+    assert compose_card(partial)
     with pytest.raises(ValueError, match="MISSING_DECISION"):
         compose_card(values.model_copy(update={"decisions_by_token": {}}))
     case = publication_case()
@@ -708,7 +707,7 @@ def test_versioned_card_limits_and_missing_decisions() -> None:
     previous = previous.model_copy(update={"event": previous.event.model_copy(update={"state": "ANNOUNCED"})})
     case = case.model_copy(
         update={
-            "policy": policy.model_copy(update={"card_max_chars": 3500}),
+            "policy": policy,
             "previous": previous,
             "now": case.now + timedelta(minutes=15),
         }
