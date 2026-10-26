@@ -9,12 +9,12 @@ from pydantic import JsonValue, ValidationError, model_validator
 
 from tank.analysis.condition_graph_codec import encode_scoped_condition_spot, flow_aggregate_projection_sha256
 from tank.analysis.condition_graph_contracts import (
-    BasicConditionSpot,
     ConditionFlowAggregateProjection,
     ConditionInterval,
     ConditionSpotWindowGraph,
     ConditionWindow,
     ConditionWireClocks,
+    DirectWindowConditionSpot,
     FlowAggregateEvidenceRef,
 )
 from tank.analysis.condition_inputs import (
@@ -174,7 +174,7 @@ class DecodedSpotInputs(DomainModel):
 
 
 class SpotConditionEvaluation(DomainModel):
-    result: BasicConditionSpot
+    result: DirectWindowConditionSpot
     source_evidence: SpotSourceEvidence
 
 
