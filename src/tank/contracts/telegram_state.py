@@ -288,3 +288,92 @@ def attachment_delivery(
     ):
         raise ValueError("Telegram file delivery conflicts with its actual target")
     return result
+
+
+class TelegramInputTarget(DomainModel):
+    chat_id: ChatReference
+    message_id: MessageReference
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, JsonValue]) -> Self:
+        return cls.model_validate({field: record[field] for field in cls.model_fields if field in record})
+
+    @property
+    def storage_key(self) -> str:
+        return f"{self.chat_id}:{self.message_id}"
+
+    def same_message(self, other: Self) -> bool:
+        return str(self.chat_id) == str(other.chat_id) and int(self.message_id) == int(other.message_id)
+
+
+class TelegramInputPatch(DomainModel):
+    reason: NonblankText | None = None
+    item_id: NonblankText | None = None
+    paired_with: MessageReference | None = None
+    question_id: NonblankText | None = None
+    session_id: NonblankText | None = None
+    event_id: NonblankText | None = None
+
+
+class TelegramNoticeSubject(DomainModel):
+    item_id: NonblankText
+
+
+class TelegramNoticeIdentity(DomainModel):
+    question_id: NonblankText
+    channel: Literal["telegram:answer"]
+    purpose: Literal["NOTICE"]
+    chat_id: ChatReference
+    attempt: Annotated[int, Field(ge=1)]
+
+
+class TelegramGeneratedNotice(TelegramNoticeIdentity):
+    status: Literal["GENERATED"]
+
+
+class TelegramFailedNotice(TelegramNoticeIdentity):
+    status: Literal["FAILED"]
+
+
+class TelegramSentNotice(TelegramNoticeIdentity):
+    status: Literal["SENT"]
+    message_ref: MessageReference
+
+
+type TelegramNoticeAttempt = TelegramGeneratedNotice | TelegramFailedNotice | TelegramSentNotice
+
+
+def notice_attempt(
+    record: Mapping[str, JsonValue], target: TelegramInputTarget, question_id: str
+) -> TelegramNoticeAttempt:
+    match record.get("status"):
+        case "GENERATED":
+            result: TelegramNoticeAttempt = TelegramGeneratedNotice.model_validate(
+                {field: record[field] for field in TelegramGeneratedNotice.model_fields if field in record}
+            )
+        case "FAILED":
+            result = TelegramFailedNotice.model_validate(
+                {field: record[field] for field in TelegramFailedNotice.model_fields if field in record}
+            )
+        case "SENT":
+            result = TelegramSentNotice.model_validate(
+                {field: record[field] for field in TelegramSentNotice.model_fields if field in record}
+            )
+        case _:
+            raise ValueError("Telegram notice has no admitted attempt phase")
+    if result.question_id != question_id or str(result.chat_id) != str(target.chat_id):
+        raise ValueError("Telegram notice receipt conflicts with its actual input")
+    return result
+
+
+type TelegramInputStatus = Literal["IGNORED", "UNMATCHED", "PAIRED", "PROMPTED", "QUESTION", "NO_SESSION"]
+type TelegramNoticeStatus = Literal["IGNORED", "UNMATCHED", "NO_SESSION"]
+
+
+class TelegramInputDisposition(DomainModel):
+    status: TelegramInputStatus
+
+
+class TelegramNoticeRequest(DomainModel):
+    text: NonblankText
+    status: TelegramNoticeStatus
