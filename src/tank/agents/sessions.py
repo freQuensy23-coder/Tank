@@ -99,12 +99,6 @@ from tank.agents.outbound_inputs import (
 )
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.provenance import resolve_agent_provenance
-from tank.agents.question_lifecycle import (
-    ActiveQuestionIntent,
-    QueuedQuestionSession,
-    RetiredQuestionMessages,
-    UnprovedQuestionRetirement,
-)
 from tank.agents.security import redact_tool_arguments
 from tank.agents.session_contracts import (
     ExecutionPoll,
@@ -140,6 +134,14 @@ from tank.contracts.openma import (
     openma_tools_match,
 )
 from tank.contracts.provenance import AgentProvenance, ResolvedVersionIdentity
+from tank.contracts.question_retirement import (
+    ActiveQuestionIntent,
+    QueuedQuestionSession,
+    RetiredQuestionMessages,
+    UnknownQuestionAcceptance,
+    UnprovedQuestionRetirement,
+    UnretainedQuestionJournal,
+)
 from tank.contracts.session_followups import (
     FollowupCandidate,
     FollowupEligibility,
@@ -156,7 +158,7 @@ from tank.contracts.source_items import (
 from tank.contracts.source_repository import SourceExtractionRepository
 from tank.delivery import DeliveryDeferred
 from tank.ops_progress import session_progress
-from tank.question_answers import record_answer
+from tank.question_answers import record_answer, validate_question_identity
 from tank.runtime_contracts import ScoutMessage, ScoutReviewJob, UserQuestionMessage
 from tank.telegram_inbox import DOCUMENT_LIMIT, question_message
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
@@ -1200,9 +1202,21 @@ class SessionService:
             if session is None:
                 return True
             require_owned_session_identity(target.session_id, session)
+            async with self.repo.lock("question:" + target.question_id):
+                answered: dict[str, JsonValue] | None = await self.repo.get(
+                    "out.user_questions", target.question_id
+                )
+                if (
+                    answered is not None
+                    and validate_question_identity(answered, target).answer_status is not None
+                ):
+                    await record_answer(self.repo, target, None, status="FAILED")
+                    return False
             snapshot = QuestionSettlementSession.from_record(session)
             if snapshot.questions is None:
-                return True
+                raise UnprovedQuestionRetirement(
+                    UnretainedQuestionJournal(target=target, reason="INPUT_JOURNAL_NOT_RETAINED")
+                )
             questions = [
                 question for question in snapshot.questions if question.question_id == target.question_id
             ]
@@ -1216,9 +1230,19 @@ class SessionService:
                     continue
                 if retained_outbound_acceptance(row) is not None:
                     return False
-                if question.turn_status not in {"ACCEPTING", "FAILED"}:
-                    raise UnprovedQuestionRetirement("INITIAL_ACCEPTANCE_NOT_RETAINED")
                 records.append(row)
+            for question in questions:
+                if question.turn_status not in {"ACCEPTING", "FAILED"}:
+                    raise UnprovedQuestionRetirement(
+                        UnknownQuestionAcceptance.model_validate(
+                            {
+                                "target": target,
+                                "message_id": question.message_id,
+                                "turn_status": question.turn_status,
+                                "reason": "INITIAL_ACCEPTANCE_NOT_RETAINED",
+                            }
+                        )
+                    )
             if not records:
                 return True
             retired = set(

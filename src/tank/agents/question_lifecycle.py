@@ -1,29 +1,10 @@
-"""Known local question-retirement facts without inferred native acceptance."""
+"""Reexports of the inward question-retirement contract."""
 
-from typing import Annotated, Literal
-
-from pydantic import Field
-
-from tank.contracts import DomainModel
-
-type RetirementIdentity = Annotated[str, Field(min_length=1, pattern=r"\S")]
-type UnprovedRetirementReason = Literal["INITIAL_ACCEPTANCE_NOT_RETAINED"]
-
-
-class UnprovedQuestionRetirement(ValueError):
-    def __init__(self, reason: UnprovedRetirementReason) -> None:
-        super().__init__("Question retirement refused: " + reason)
-        self.reason = reason
-
-
-class RetiredQuestionMessages(DomainModel):
-    known_ids: list[RetirementIdentity]
-
-
-class QueuedQuestionSession(DomainModel):
-    session_id: RetirementIdentity | None
-    status: Literal["QUEUED"]
-
-
-class ActiveQuestionIntent(DomainModel):
-    message_id: RetirementIdentity | None
+from tank.contracts.question_retirement import ActiveQuestionIntent as ActiveQuestionIntent
+from tank.contracts.question_retirement import QueuedQuestionSession as QueuedQuestionSession
+from tank.contracts.question_retirement import RetiredQuestionMessages as RetiredQuestionMessages
+from tank.contracts.question_retirement import RetirementIdentity as RetirementIdentity
+from tank.contracts.question_retirement import UnknownQuestionAcceptance as UnknownQuestionAcceptance
+from tank.contracts.question_retirement import UnprovedQuestionRetirement as UnprovedQuestionRetirement
+from tank.contracts.question_retirement import UnprovedRetirementReason as UnprovedRetirementReason
+from tank.contracts.question_retirement import UnretainedQuestionJournal as UnretainedQuestionJournal

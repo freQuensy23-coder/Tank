@@ -22,11 +22,13 @@ from tank.market.service import MarketService
 from tank.ops_progress import RepositorySourceProgress
 from tank.request_budget import RequestBudgetScope, build_budget_backend
 from tank.runtime import Runtime
+from tank.runtime_failure_repository import RepositoryRuntimeFailures
 from tank.scheduler import Scheduler
 from tank.settings import Settings, resolve_versions
 from tank.sources import SourceService
 from tank.storage import Repository
 from tank.telegram_inbox import RepositoryFollowupRefusals, TelegramInbox
+from tank.time_precision import collection_clock
 
 log = logging.getLogger(__name__)
 
@@ -119,6 +121,7 @@ def build_runtime(repo: Repository, settings: Settings) -> Runtime:
         budget_backend=budget_backend,
         bootstrap=bootstrap_registry,
         validate=validate_generation,
+        failures=RepositoryRuntimeFailures(repo, versions, collection_clock),
     )
 
 
