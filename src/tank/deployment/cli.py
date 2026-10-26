@@ -4,15 +4,18 @@ import argparse
 import os
 import time
 from pathlib import Path
+from typing import Annotated, Literal
 
-from pydantic import ValidationError
+from pydantic import ConfigDict, Field, RootModel, ValidationError
 
+from tank.contracts import DomainModel
 from tank.deployment.apify_api import ApifyAPI, ApifyAPIError, ApifyEndpoint
 from tank.deployment.artifact_contracts import PackageRequest, PublisherArtifactRuntime
 from tank.deployment.artifacts import ArtifactError, FilesystemArtifacts, package_release
-from tank.deployment.commands import PUBLISHER_ACTIONS, PublisherCommand, execute_command
+from tank.deployment.commands import PUBLISHER_ACTIONS, PublisherAction, PublisherCommand, execute_command
 from tank.deployment.contracts import PublisherPolicy
 from tank.deployment.credentials import PublisherCredentialError, host_token
+from tank.deployment.identities import CommitSHA
 from tank.deployment.journal import JournalError, PublisherJournal
 from tank.deployment.markers import FilesystemTankReleaseState, ReleaseMarkerError
 from tank.deployment.package_runtime import verify_package_runtime
@@ -22,20 +25,40 @@ from tank.deployment.runtime_contracts import RuntimeInvocation
 from tank.deployment.source_runtime import verify_source_archive
 
 
-class Arguments(argparse.Namespace):
-    action: str
-    orchestrator_sha: str
-    selected_release_sha: str
-    transaction_release_sha: str
+class InvocationArguments(DomainModel):
+    orchestrator_sha: CommitSHA
+    selected_release_sha: CommitSHA
     runtime_root: Path
+
+
+class RuntimeInfoArguments(InvocationArguments):
+    action: Literal["runtime-info"]
+
+
+class PackageArguments(InvocationArguments):
+    action: Literal["package"]
+    repository: Path
+    destination: Path
+    image_repository: str
+
+
+class WorkerArguments(InvocationArguments):
+    action: PublisherAction
+    transaction_release_sha: CommitSHA
     package: Path
     state: Path
     credential_file: Path
     tank_marker: Path
-    build_timeout_s: float
-    repository: Path
-    destination: Path
-    image_repository: str
+    build_timeout_s: Annotated[float, Field(gt=0, allow_inf_nan=False)]
+
+
+type Arguments = Annotated[
+    RuntimeInfoArguments | PackageArguments | WorkerArguments, Field(discriminator="action")
+]
+
+
+class ArgumentDocument(RootModel[Arguments]):
+    model_config = ConfigDict(strict=True, hide_input_in_errors=True)
 
 
 def parse_arguments() -> Arguments:
@@ -59,7 +82,7 @@ def parse_arguments() -> Arguments:
     package.add_argument("--image-repository", required=True)
     for action in PUBLISHER_ACTIONS:
         actions.add_parser(action, parents=[worker])
-    return parser.parse_args(namespace=Arguments())
+    return ArgumentDocument.model_validate(vars(parser.parse_args())).root
 
 
 def run(arguments: Arguments) -> None:
@@ -67,10 +90,10 @@ def run(arguments: Arguments) -> None:
         orchestrator_sha=arguments.orchestrator_sha,
         selected_release_sha=arguments.selected_release_sha,
     )
-    if arguments.action == "runtime-info":
+    if isinstance(arguments, RuntimeInfoArguments):
         print(verify_runtime(invocation, arguments.runtime_root).model_dump_json())
         return
-    if arguments.action == "package":
+    if isinstance(arguments, PackageArguments):
         expected_program = arguments.runtime_root / "src/tank/deployment/cli.py"
         if Path(__file__).resolve() != expected_program.resolve():
             raise PublisherRuntimeError("Publisher packaging must execute the declared source archive")
@@ -115,9 +138,8 @@ def run(arguments: Arguments) -> None:
 
 
 def main() -> None:
-    arguments = parse_arguments()
     try:
-        run(arguments)
+        run(parse_arguments())
     except ApifyAPIError as error:
         raise SystemExit(str(error)) from None
     except (
