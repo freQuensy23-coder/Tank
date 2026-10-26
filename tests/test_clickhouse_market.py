@@ -13,6 +13,7 @@ from decimal import Decimal
 
 import pytest
 from foundation_helpers import present, text_field
+from pydantic import JsonValue
 
 from tank import clickhouse_market as chm
 from tank import market_storage as ms
@@ -311,7 +312,7 @@ async def test_key_bounds_preserve_latest_value_and_declared_utc_storage_clocks(
     ],
 )
 async def test_corrupt_key_bounds_refuse_before_any_final_value_query(
-    both: Both, monkeypatch: pytest.MonkeyPatch, field: str, invalid: JsonInput
+    both: Both, monkeypatch: pytest.MonkeyPatch, field: str, invalid: JsonValue
 ) -> None:
     _, routed, put = both
     original = kline(IIDS[0], 0, "100")
