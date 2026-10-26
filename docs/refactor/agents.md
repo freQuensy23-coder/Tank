@@ -1848,7 +1848,7 @@ no parent activation or complete native/worker migration is claimed.
 
 ### Qualified paired native file/source caller checkpoint
 
-The final native cohort joins current parent855a0c7a and fresh-cache writerf2552fa0
+The final native cohort joins current parent 855a0c7a and fresh-cache writer f2552fa0
 normally. Its actual Source/Runtime/Session/Telegram/native/replay/reference/E2E
 and Scheduler selection passes 1,605 units in 51.47 seconds, zero skips, p90 .284
 seconds and maximum 3.372 seconds including fixtures. The complete 167-case actual
@@ -1865,16 +1865,16 @@ canonical stored snapshot and validates actual CallExpiredMessage admission on
 Memory/PostgreSQL; the original real replay expiry/divergence oracles remain intact.
 No schema guard, actual timing or frozen fixture was relaxed. The first new PG
 control failed because its authored event was incomplete; the existing complete
-synthetic event factory corrected only that fixture before the whole167 passed.
+synthetic event factory corrected only that fixture before the whole 167 passed.
 
 The earlier setup refusal during autonomous PG recovery, preceding negative CAS
-race, 22 replay annotation refusals and7 old authored migration-shape failures
+race, 22 replay annotation refusals and 7 old authored migration-shape failures
 remain separately retained evidence. No service, deadline, worker limit or guard
 was changed for this cohort. A raw canonical phase revision now prevents equal
 Python numeric values of different JSON kinds from masking concurrent mutation.
 
 This qualifies native input file preparation and its actual callers; it does not
-complete whole SessionService or Runtime. Eighteen held-branch Session signature
+complete whole SessionService or Runtime. Eighteen Session signature
 gaps, untyped aggregate/body/tool/usage/event/barrier flows, required output-file
 sender migration, whole worker dispatch/body typing and assigned vendor programs
 remain active. The worker annotation is not an independently strict body claim.
