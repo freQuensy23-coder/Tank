@@ -92,7 +92,7 @@ class SourceProgressSink(Protocol):
 class PublicationReceipt(DomainModel):
     contract_version: OneInt
     event_id: SourceContextId
-    kind: Literal["FULL", "PARTIAL", "UPDATE"] | None
+    kind: Literal["FULL", "PARTIAL", "UPDATE", "PRELIMINARY"] | None
     ems_id: SourceContextId
     ems_class: str = Field(min_length=1)
     lifecycle: str = Field(min_length=1)

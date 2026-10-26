@@ -1,7 +1,6 @@
 """Historical unknown explanations stay unknown; current writes must explain absence."""
 
 from copy import deepcopy
-from typing import Literal
 
 import pytest
 from card_wire_support import card_inputs
@@ -11,7 +10,7 @@ from test_decision_contracts import frozen_decision_fixture, status_writer_fixtu
 
 from tank.analysis.card_contracts import ActiveCardDecision, CardInputs, CardScenarios
 from tank.analysis.cards import compose_card
-from tank.analysis.decision_codec import decode_decision, encode_decision, encode_outlook
+from tank.analysis.decision_codec import decode_decision, encode_decision
 from tank.analysis.decisions import end_decision_tracking
 from tank.time_precision import collection_clock
 
@@ -41,16 +40,10 @@ def test_literal_missing_historical_reason_has_an_explicit_unknown_classificatio
     assert wire == original
 
 
-@pytest.mark.parametrize("target", ["decision", "outlook"])
-def test_current_active_writes_cannot_fill_an_uncaptured_scenario_cause(
-    target: Literal["decision", "outlook"],
-) -> None:
+def test_current_active_embedded_outlook_cannot_fill_an_uncaptured_scenario_cause() -> None:
     record = decode_decision(historical_wire())
     with pytest.raises(ValueError, match="actual absence explanation"):
-        if target == "decision":
-            encode_decision(record)
-        else:
-            encode_outlook(record)
+        encode_decision(record)
 
 
 def test_ended_clone_keeps_literal_missing_reason_and_the_original_captured_cause() -> None:

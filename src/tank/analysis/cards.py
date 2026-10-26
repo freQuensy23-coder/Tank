@@ -24,6 +24,8 @@ from tank.analysis.card_contracts import (
     ChartRevenueProtocol,
     InactiveCardDecision,
     PeriodRevenueProtocol,
+    PreliminaryCardAnalysis,
+    PreliminaryNarrative,
     UnavailableCardRevenue,
 )
 from tank.analysis.decisions import POSITIVE_ACTIONS
@@ -529,6 +531,8 @@ def compose_card(inputs: CardInputs) -> str:
             unverified.append(
                 statement + " — " + _na(claim.verification_gap, "verification gap not supplied")
             )
+    if isinstance(narrative, PreliminaryNarrative) and narrative.unconfirmed is not None:
+        unverified.append(narrative.unconfirmed)
     stage = ("" if event.state_verified else "unverified ") + event.state
     lines = [
         assessment.classification.replace("STRUCTURAL_SHOCK", "STRUCTURAL SHOCK")
@@ -551,6 +555,8 @@ def compose_card(inputs: CardInputs) -> str:
         "",
         "WHY IT MATTERS",
     ]
+    if isinstance(inputs.mapping, PreliminaryCardAnalysis):
+        lines[0] = ("PRELIMINARY · DENIED · " if inputs.mapping.denied else "PRELIMINARY · ") + lines[0]
     capture: list[str] = []
     for beneficiary in inputs.beneficiaries:
         text = (
@@ -569,12 +575,13 @@ def compose_card(inputs: CardInputs) -> str:
         capture_text += " — " + _why_content(narrative.why[2], "Token capture")
     lines += [
         "• What changed: " + _why_content(narrative.why[0], "What changed"),
-        "• Economic effect: " + _why_content(narrative.why[1], "Economic effect"),
+        "• Economic effect: "
+        + (_why_content(narrative.why[1], "Economic effect") if len(narrative.why) > 1 else "not estimable"),
         "• Token capture: " + capture_text,
     ]
     if event.has_expired_call_fact:
         lines[-1] += " · No longer following: call expired."
-    if narrative.kind == "PARTIAL":
+    if narrative.kind in {"PARTIAL", "PRELIMINARY"}:
         lines.append("Market analysis pending — token actions and outlook unavailable.")
     else:
         lines += _who(inputs)

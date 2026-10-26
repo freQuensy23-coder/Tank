@@ -10,11 +10,15 @@
     },
     "cond_id": {
       "type": "string",
-      "description": "DISARM only: ID of the ARMED watch condition of the current event (CND-\u2026); find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abWatch conditions of an event\u00bb."
+      "description": "DISARM only: ID of the ARMED watch condition of the current event (CND-…); find it with read-only SQL (tank-data data guide, «Finding record IDs for tool arguments»), «Watch conditions of an event».",
+      "minLength": 1,
+      "pattern": "\\S"
     },
     "token_id": {
       "type": "string",
-      "description": "ARM only: Registry token key (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC in \u00abBitcoin (BTC) \u00b7 bitcoin:BTC\u00bb."
+      "description": "ARM only: Registry token key (reg.tokens), shown after « · » next to the name in Tank's messages and results, e.g. bitcoin:BTC in «Bitcoin (BTC) · bitcoin:BTC».",
+      "minLength": 1,
+      "pattern": "\\S"
     },
     "text": {
       "type": "string",
@@ -69,10 +73,135 @@
     "expires_in_hours": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 168
+      "maximum": 168,
+      "default": 72
+    },
+    "review_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ARM timed review: future UTC time before the condition expires. Mutually exclusive with token_id and metric conditions."
+    },
+    "review_question": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "\\S",
+      "description": "ARM timed review: concrete evidence question to investigate at review_at. Required with review_at."
     }
   },
   "required": [
     "action"
+  ],
+  "description": "Arm metric conditions with token_id and conditions, or one timed event review with review_at and review_question. Timed reviews need no token or MarketTruth. Both use existing watch storage and CONDITION_FIRED; a review fires once, can be disarmed, and expires normally.",
+  "oneOf": [
+    {
+      "properties": {
+        "action": {
+          "const": "DISARM"
+        }
+      },
+      "required": [
+        "cond_id"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "token_id"
+            ]
+          },
+          {
+            "required": [
+              "conditions"
+            ]
+          },
+          {
+            "required": [
+              "text"
+            ]
+          },
+          {
+            "required": [
+              "review_at"
+            ]
+          },
+          {
+            "required": [
+              "review_question"
+            ]
+          },
+          {
+            "required": [
+              "expires_in_hours"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "action": {
+          "const": "ARM"
+        }
+      },
+      "required": [
+        "token_id",
+        "conditions"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "cond_id"
+            ]
+          },
+          {
+            "required": [
+              "review_at"
+            ]
+          },
+          {
+            "required": [
+              "review_question"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "action": {
+          "const": "ARM"
+        }
+      },
+      "required": [
+        "review_at",
+        "review_question"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "cond_id"
+            ]
+          },
+          {
+            "required": [
+              "token_id"
+            ]
+          },
+          {
+            "required": [
+              "conditions"
+            ]
+          },
+          {
+            "required": [
+              "text"
+            ]
+          }
+        ]
+      }
+    }
   ]
 }

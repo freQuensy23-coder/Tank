@@ -4,6 +4,7 @@ import base64
 import hashlib
 import re
 from typing import Annotated, Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import (
     BaseModel,
@@ -11,6 +12,7 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
+    RootModel,
     field_validator,
     model_validator,
 )
@@ -85,6 +87,77 @@ class ActorRequest(ActorModel):
         return self
 
 
+class EmbeddedJsonDocument(RootModel[JsonValue]):
+    """External heterogeneous GraphQL tree, decoded only before named fact projection."""
+
+    model_config = ConfigDict(strict=True, allow_inf_nan=False, hide_input_in_errors=True)
+
+
+type ReferenceRelation = Literal["quoted", "replied_to", "linked"]
+
+
+class ReferencedPost(ActorModel):
+    relation: ReferenceRelation
+    id: str = Field(pattern=r"^[0-9]{1,20}$")
+    author: str | None = Field(pattern=r"^[A-Za-z0-9_]{1,15}$")
+    url: str
+    publishedAt: str | None
+    text: str | None
+    error: str | None = Field(default=None, min_length=1, pattern=r"\S")
+
+    @model_validator(mode="after")
+    def reported_identity(self) -> Self:
+        if self.error is not None and self.text is not None:
+            raise ValueError("REFERENCE_BODY_FAILURE_CONFLICT")
+        parts = urlsplit(self.url)
+        match = re.fullmatch(r"/([A-Za-z0-9_]{1,15})/status/([0-9]{1,20})/?", parts.path)
+        if (
+            parts.scheme != "https"
+            or parts.hostname not in {"x.com", "www.x.com", "twitter.com", "www.twitter.com"}
+            or parts.username is not None
+            or parts.password is not None
+            or match is None
+            or match[2] != self.id
+            or (self.author is not None and match[1].lower() != self.author.lower())
+        ):
+            raise ValueError("REFERENCE_IDENTITY_MISMATCH")
+        return self
+
+
+class ReferencedPostContent(ActorModel):
+    author: str | None = Field(pattern=r"^[A-Za-z0-9_]{1,15}$")
+    text: str
+    publishedAt: str | None
+
+
+class EmbeddedTweet(ActorModel):
+    """Only observed, usable enrichment facts from an optional external GraphQL node."""
+
+    id: str = Field(pattern=r"^[0-9]{1,20}$")
+    author: str | None = Field(pattern=r"^[A-Za-z0-9_]{1,15}$")
+    text: str | None
+    links: list[str]
+    created_at_ms: int | None = Field(gt=0)
+    edit_ids: list[str]
+    quoted_id: str | None = Field(pattern=r"^[0-9]{1,20}$")
+    quoted_unavailable: bool
+    replied_to_id: str | None = Field(pattern=r"^[0-9]{1,20}$")
+    reply_author: str | None = Field(pattern=r"^[A-Za-z0-9_]{1,15}$")
+
+
+class ReferenceReadSuccess(ActorModel):
+    post_id: str = Field(pattern=r"^[0-9]{1,20}$")
+    content: ReferencedPostContent
+
+
+class ReferenceReadFailure(ActorModel):
+    post_id: str = Field(pattern=r"^[0-9]{1,20}$")
+    error: str = Field(min_length=1, pattern=r"\S")
+
+
+type ReferenceResolution = ReferenceReadSuccess | ReferenceReadFailure
+
+
 class PublicPost(ActorModel):
     id: str = Field(pattern=r"^[0-9]{1,20}$")
     author: str = Field(min_length=1)
@@ -93,6 +166,7 @@ class PublicPost(ActorModel):
     publishedAt: str
     url: str
     source: Literal["x-public-profile"] = "x-public-profile"
+    referencedPosts: list[ReferencedPost] = Field(default_factory=list)
 
 
 class DiagnosticRequest(ActorModel):
