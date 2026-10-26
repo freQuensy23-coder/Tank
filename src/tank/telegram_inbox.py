@@ -60,6 +60,7 @@ from tank.question_answers import (
 from tank.runtime_contracts import TelegramAnswerJob
 from tank.telegram_api import FileTooLarge as FileTooLarge
 from tank.telegram_api import (
+    TelegramConfigurationError,
     TelegramResponseError,
     download_file,
     media_selection,
@@ -204,7 +205,7 @@ REFERENCE_LIMIT = 1024
 DOCUMENT_LIMIT = 45 * 1024 * 1024
 UPLOAD_LIMIT = 20 * 1024 * 1024
 TOO_LARGE_TEXT = "Файл больше 20 МБ, Telegram не даёт боту его скачать. Пришлите файл поменьше."
-NOT_SENT = (TelegramResponseError, httpx.ConnectError, httpx.ConnectTimeout)
+NOT_SENT = (TelegramResponseError, TelegramConfigurationError, httpx.ConnectError, httpx.ConnectTimeout)
 
 
 def question_message(question):
@@ -263,8 +264,11 @@ class TelegramInbox:
             getattr(self.settings, "telegram_alerts_chat", None)
         )
 
-    def url(self, method):
-        return f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}"
+    def active_token(self) -> str:
+        return require_telegram_token(self.settings.telegram_token)
+
+    def url(self, method: str) -> str:
+        return f"https://api.telegram.org/bot{self.active_token()}/{method}"
 
     async def call(self, method: str, body: dict[str, JsonValue]) -> JsonValue:
         response = await self.http.post(self.url(method), json=body)
@@ -913,6 +917,7 @@ class TelegramInbox:
                 "sent": "UNKNOWN",
                 "reason": "An earlier attempt of this call was interrupted after sending started; it may already have arrived. Call again to resend.",
             }
+        self.active_token()
         await self.repo.put(
             "out.deliveries",
             new_id("delivery"),
@@ -1001,6 +1006,7 @@ class TelegramInbox:
             delivery["status"] == "GENERATED" for delivery in ledger
         ) > sum(delivery["status"] == "FAILED" for delivery in ledger)
         if not settled:
+            self.active_token()
             base = {
                 "channel": ANSWER_CHANNEL,
                 "question_id": key,
@@ -1053,7 +1059,20 @@ class TelegramInbox:
                 state = validate_question_identity(existing, binding)
                 if state.answer_status is not None:
                     return
-            else:
+            prior = [
+                delivery
+                async for delivery in self.repo.iter_all(
+                    "out.deliveries",
+                    filters={"question_id": question_id, "channel": ANSWER_CHANNEL, "purpose": "PROMPT"},
+                )
+            ]
+            sent = any(delivery["status"] == "SENT" for delivery in prior)
+            unresolved = sum(delivery["status"] == "GENERATED" for delivery in prior) > sum(
+                delivery["status"] == "FAILED" for delivery in prior
+            )
+            if not sent and not unresolved:
+                self.active_token()
+            if existing is None:
                 await self.repo.put(
                     "out.user_questions",
                     question_id,
@@ -1068,17 +1087,6 @@ class TelegramInbox:
                         **collection_clock(utcnow()).fields("asked_at"),
                     },
                 )
-        prior = [
-            delivery
-            async for delivery in self.repo.iter_all(
-                "out.deliveries",
-                filters={"question_id": question_id, "channel": ANSWER_CHANNEL, "purpose": "PROMPT"},
-            )
-        ]
-        sent = any(row["status"] == "SENT" for row in prior)
-        unresolved = sum(row["status"] == "GENERATED" for row in prior) > sum(
-            row["status"] == "FAILED" for row in prior
-        )
         if not sent and not unresolved:
             ledger = {
                 "channel": ANSWER_CHANNEL,
@@ -1307,6 +1315,7 @@ class TelegramInbox:
             ):
                 unresolved = True
                 continue
+            self.active_token()
             base = {
                 "channel": ANSWER_CHANNEL,
                 "question_id": question["question_id"],

@@ -87,7 +87,9 @@ async def test_missing_required_file_identity_refuses_before_message_or_cursor_e
         return httpx.Response(200, json={"ok": True, "result": [{"update_id": 1, "message": message}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
-        inbox = TelegramInbox(repo, FileSettings(data_dir=tmp_path), http=http)
+        inbox = TelegramInbox(
+            repo, FileSettings(data_dir=tmp_path, telegram_token="synthetic-private-token"), http=http
+        )
         with pytest.raises(TelegramProtocolError):
             await inbox.poll(timeout=0)
     assert await repo.list("ops.telegram_messages") == []
