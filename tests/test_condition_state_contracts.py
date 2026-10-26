@@ -15,6 +15,7 @@ from tank.analysis.condition_graph_contracts import (
     SelectiveConditionValues,
     UnavailableConditionProposedMove,
 )
+from tank.time_precision import Timestamp
 
 
 def observed(value: bool) -> ConditionObservedPredicate:
@@ -177,6 +178,7 @@ def test_cache_identity_keeps_subject_and_all_actual_dependency_coordinates() ->
         window="W1H",
         requested_duration_s=3600,
         cutoff=cutoff,
+        assembled_at=Timestamp(value="2026-10-17T12:00:02Z", precision="COLLECTION_ONLY"),
         dependency_identity="explicit-provider-head",
         config_sha256="a" * 64,
         expected_direction_sha256="b" * 64,
@@ -203,6 +205,7 @@ def test_cache_identity_keeps_subject_and_all_actual_dependency_coordinates() ->
         token_id=key.token_id,
         start=cutoff - timedelta(hours=1),
         cutoff=cutoff,
+        assembled_at=Timestamp(value="2026-10-17T12:00:02Z", precision="COLLECTION_ONLY"),
         dependency_identity=key.dependency_identity,
         config_sha256=key.config_sha256,
         expected_direction_sha256=key.expected_direction_sha256,
@@ -257,6 +260,7 @@ def selective_close() -> SelectiveConditionValues:
                     window="W1H",
                     requested_duration_s=3600,
                     cutoff=datetime(2026, 10, 17, 12, tzinfo=UTC),
+                    assembled_at=Timestamp(value="2026-10-17T12:00:02Z", precision="COLLECTION_ONLY"),
                     dependency_identity="actual-head",
                     config_sha256="a" * 64,
                     expected_direction_sha256="b" * 64,
@@ -314,6 +318,7 @@ def test_proof_freshness_requires_real_observations_and_binds_actual_cutoff() ->
             window="W1H",
             requested_duration_s=3600,
             cutoff=AT,
+            assembled_at=Timestamp(value="2026-10-17T12:00:02Z", precision="COLLECTION_ONLY"),
             dependency_identity="book-head",
             config_sha256="a" * 64,
             expected_direction_sha256="b" * 64,
@@ -396,6 +401,7 @@ def test_selected_metric_cannot_pass_a_required_freshness_gate_without_observati
             window="W1H",
             requested_duration_s=3600,
             cutoff=datetime(2026, 10, 17, 12, tzinfo=UTC),
+            assembled_at=Timestamp(value="2026-10-17T12:00:02Z", precision="COLLECTION_ONLY"),
             dependency_identity="funding-head",
             config_sha256="a" * 64,
             expected_direction_sha256="b" * 64,
@@ -427,3 +433,54 @@ def test_direction_declaration_refuses_implicit_positive_or_scalar_coercion(valu
 
     with pytest.raises(ValidationError):
         DeclaredConditionDirection.model_validate({"status": "DECLARED", "value": value})
+
+
+def test_condition_cache_keys_require_actual_assembly_visibility_coordinates() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionStateNodeKey, ConditionTopCacheKey
+    from tank.contracts.json import decode_json, encode_json
+
+    cutoff = datetime(2026, 10, 17, 12, tzinfo=UTC)
+    initial = Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY")
+    admitted = Timestamp(value="2026-10-17T12:00:01Z", precision="COLLECTION_ONLY")
+    top = ConditionTopCacheKey(
+        domain="spot",
+        token_id="T",
+        window="W1H",
+        requested_duration_s=3600.0,
+        cutoff=cutoff,
+        assembled_at=initial,
+        dependency_identity="same-captured-flow-source-head",
+        config_sha256="a" * 64,
+        expected_direction_sha256="b" * 64,
+    )
+    state = ConditionStateNodeKey(
+        node="spot",
+        token_id="T",
+        start=cutoff - timedelta(hours=1),
+        cutoff=cutoff,
+        assembled_at=initial,
+        dependency_identity=top.dependency_identity,
+        config_sha256=top.config_sha256,
+        expected_direction_sha256=top.expected_direction_sha256,
+    )
+    changed_top = type(top).model_validate(top.model_copy(update={"assembled_at": admitted}))
+    changed_state = type(state).model_validate(state.model_copy(update={"assembled_at": admitted}))
+    assert changed_top not in {top} and changed_state not in {state}
+    for key in (top, state):
+        wire = decode_json(key.model_dump_json())
+        assert isinstance(wire, dict)
+        assert wire["assembled_at"] == {
+            "value": "2026-10-17T12:00:00Z",
+            "precision": "COLLECTION_ONLY",
+            "precision_reason": None,
+            "bucket_anchor": None,
+        }
+        del wire["assembled_at"]
+        with pytest.raises(ValidationError):
+            type(key).model_validate_json(encode_json(wire))
+    unknown = type(top).model_validate(
+        top.model_copy(
+            update={"assembled_at": Timestamp(value=None, precision=None, precision_reason="NOT_CAPTURED")}
+        )
+    )
+    assert unknown.assembled_at.value is None and unknown != top

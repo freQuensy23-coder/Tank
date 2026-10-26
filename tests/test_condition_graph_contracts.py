@@ -4282,6 +4282,7 @@ def selective_confidence_graph(token_id: str) -> SelectiveConditionValues:
                     window="W4H",
                     requested_duration_s=14400.0,
                     cutoff=AT,
+                    assembled_at=Timestamp(value="2026-10-17T12:00:02Z", precision="COLLECTION_ONLY"),
                     dependency_identity="fixture-confidence-source-generation",
                     config_sha256=sha256({"fixture": "confidence-policy"}),
                     expected_direction_sha256=sha256({"fixture": "no-direction-requested"}),
