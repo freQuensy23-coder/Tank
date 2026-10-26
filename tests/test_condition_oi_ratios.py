@@ -1,6 +1,7 @@
 """Exact OI endpoints remain usable when a display ratio cannot be represented."""
 
 from decimal import MAX_EMAX, Decimal
+from fractions import Fraction
 
 import pytest
 from pydantic import ValidationError
@@ -8,7 +9,14 @@ from test_condition_graph_contracts import observed_oi_without_usd
 
 from tank.analysis.condition_graph_codec import encode_condition_open_interest
 from tank.analysis.condition_graph_contracts import ObservedConditionOpenInterest
-from tank.analysis.oi_ratio import NativeOiChange, native_oi_change, usd_oi_change
+from tank.analysis.oi_ratio import (
+    NativeOiChange,
+    OiEndpoints,
+    OiFractionNotEstimable,
+    exact_oi_endpoint_fraction,
+    native_oi_change,
+    usd_oi_change,
+)
 from tank.analysis.positioning import (
     MissingOIDecomposition,
     decomposition,
@@ -268,3 +276,25 @@ def test_unestimable_population_range_preserves_current_native_endpoints_and_kno
     assert value.oi_native_chg_pct == base.oi_native_chg_pct and value.oi_native_chg_pct_reason is None
     assert wire["native_normal_range"] is None and wire["native_normal_range_reason"] == "NOT_ESTIMABLE"
     assert wire["native_beyond"] is None and wire["oi_class"] is None
+
+
+def test_public_endpoint_fraction_normalizes_huge_shared_scale_and_actual_zero_end() -> None:
+    one = Decimal((0, (1,), 1_000_000_000))
+    two = Decimal((0, (2,), 1_000_000_000))
+    assert exact_oi_endpoint_fraction(OiEndpoints(start=one, end=two)) == Fraction(1)
+    assert exact_oi_endpoint_fraction(OiEndpoints(start=two, end=one)) == Fraction(-1, 2)
+    assert exact_oi_endpoint_fraction(OiEndpoints(start=one, end=one)) == Fraction(0)
+    assert exact_oi_endpoint_fraction(OiEndpoints(start=one, end=Decimal(0))) == Fraction(-1)
+
+
+def test_public_endpoint_fraction_refuses_expansion_before_unrepresentable_gap_allocation() -> None:
+    huge = Decimal((0, (1,), 1_000_000_000))
+    for start, end in ((Decimal(1), huge), (huge, Decimal(1))):
+        points = OiEndpoints(start=start, end=end)
+        with pytest.raises(OiFractionNotEstimable, match="magnitude gap"):
+            exact_oi_endpoint_fraction(points)
+        assert points.start == start and points.end == end
+    with pytest.raises(ValueError, match="positive baseline"):
+        exact_oi_endpoint_fraction(OiEndpoints(start=Decimal(0), end=Decimal(0)))
+    with pytest.raises(ValidationError):
+        exact_oi_endpoint_fraction(OiEndpoints.model_construct(start=Decimal("NaN"), end=Decimal(0)))
