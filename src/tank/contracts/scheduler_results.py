@@ -22,7 +22,6 @@ class ConditionEvaluationResult(DomainModel):
     fired: list[SchedulerIdentity]
     deferred: list[DeferredCondition]
 
-
     @model_validator(mode="after")
     def unique_disjoint_outcomes(self) -> Self:
         evaluated = set(self.evaluated)
