@@ -3,10 +3,17 @@
 from pathlib import PurePosixPath
 from typing import Annotated, Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import (
+    Field,
+    JsonValue,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from tank.contracts import DomainModel
-from tank.contracts.json import decode_unique_json
+from tank.contracts.json import JsonDocument, decode_unique_json
 from tank.contracts.scalars import OneInt
 from tank.time_precision import Timestamp
 from tank.util import parse_time
@@ -67,6 +74,16 @@ class BackupManifest(DomainModel):
         if any(name not in self.files for name in self.database_dumps):
             raise ValueError("Backup requires both Tank and OpenMA database dumps")
         return self
+
+    @model_serializer(mode="wrap")
+    def preserve_reported_fields(self, handler: SerializerFunctionWrapHandler) -> dict[str, JsonValue]:
+        value = JsonDocument.validate_value(handler(self))
+        if not isinstance(value, dict):
+            raise TypeError("Backup manifest serialization requires an object")
+        for field in ("created_at_prec", "created_at_prec_reason", "scope"):
+            if field not in self.model_fields_set:
+                value.pop(field, None)
+        return value
 
     @classmethod
     def from_bytes(cls, payload: bytes) -> Self:

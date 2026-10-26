@@ -115,6 +115,9 @@ def test_unique_manifest_admission_preserves_original_bytes_and_unknown_historic
     admitted = verify_backup(backup)
     assert admitted.created_at_prec is None and admitted.scope is None
     assert admitted.model_dump(mode="json", exclude_unset=True) == manifest
+    assert admitted.model_dump(mode="json") == manifest
+    restored = BackupManifest.model_validate_json(admitted.model_dump_json())
+    assert restored == admitted and restored.model_fields_set == admitted.model_fields_set
     assert (backup / "manifest.json").read_bytes() == original
     duplicated = original[:-1] + b', "files": {}, "ignored-secret": "synthetic-private-value"}'
     (backup / "manifest.json").write_bytes(duplicated)
@@ -139,3 +142,16 @@ def test_resolver_rechecks_actual_bytes_against_the_admitted_digest(tmp_path: Pa
     with pytest.raises(ValueError, match="checksum"):
         resolve_backup_reference(backup, original / "item", manifest=admitted)
     assert item.read_bytes() == b"Synthetic changed bytes"
+
+
+def test_reported_unknown_precision_is_preserved_by_default_serialization(tmp_path: Path) -> None:
+    manifest = manifest_fixture(tmp_path / "backup", tmp_path / "original")
+    manifest["created_at_prec"] = None
+    manifest["created_at_prec_reason"] = "Historical source explicitly reported precision unavailable"
+    admitted = BackupManifest.model_validate(manifest)
+    assert admitted.model_dump(mode="json") == manifest
+    restored = BackupManifest.model_validate_json(admitted.model_dump_json())
+    assert restored.model_fields_set == admitted.model_fields_set
+    assert restored.created_at_prec is None
+    assert restored.created_at_prec_reason == manifest["created_at_prec_reason"]
+    assert admitted.model_dump(mode="json", include={"created_at"}) == {"created_at": manifest["created_at"]}
