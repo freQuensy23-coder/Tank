@@ -120,9 +120,18 @@ def test_retention_period_cannot_coerce_unknown_or_invalid_counts(days: JsonValu
         session(status="ENDED", archive_reason="RETENTION", archive_keep_days=days)
 
 
-def test_unidentified_termination_payload_cannot_become_a_terminal_reason() -> None:
+@pytest.mark.parametrize("receipt", [{}, {"reason": "unowned"}])
+def test_unidentified_termination_payload_cannot_become_a_terminal_reason(
+    receipt: dict[str, JsonValue],
+) -> None:
     with pytest.raises(KeyError):
-        session(termination_receipt={"reason": "unowned"})
+        session(termination_receipt=receipt)
+
+
+@pytest.mark.parametrize("identity", [None, "", " ", True])
+def test_declared_termination_identity_must_be_an_actual_nonblank_string(identity: JsonValue) -> None:
+    with pytest.raises(ValidationError):
+        session(termination_receipt={"event_id": identity})
 
 
 def test_checked_at_metadata_is_projection_only_and_preserves_actual_missing_identity() -> None:

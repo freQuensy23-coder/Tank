@@ -2328,12 +2328,13 @@
         }
       ],
       "kind": "historical lifecycle absence is not terminal evidence",
-      "reason": "Required nullable projection fields preserve genuinely unreported local/native facts. A candidate permits actual native readback only, never input by itself. Missing origin/native status is not replaced with OPEN/idle; absent or wholly empty retained termination evidence cannot establish termination. Known retention without a period has the explicit RETENTION_UNREPORTED variant and generic existing wording, never invented days. The projection reads existing document JSON and leaves unrelated captured bytes unchanged; no mapping-compatible model was added.",
+      "reason": "Required nullable projection fields preserve genuinely unreported local/native facts. A candidate permits actual native readback only, never input by itself. Missing origin/native status is not replaced with OPEN/idle. A present termination receipt requires its actual nonblank event identity; no empty-receipt compatibility path remains. Truly absent or None metadata carries no terminal fact. Known retention without a period has the explicit RETENTION_UNREPORTED variant and generic existing wording, never invented days. The projection reads existing document JSON and leaves unrelated captured bytes unchanged; no mapping-compatible model was added.",
       "validation": [
         "test_unknown_historical_facts_are_never_terminal_evidence_or_rewritten",
         "test_unknown_retained_facts_require_actual_native_preflight_before_continuation",
         "test_known_retention_with_unreported_duration_does_not_invent_days",
-        "test_recorded_termination_has_precedence_over_actual_missing_resource"
+        "test_recorded_termination_has_precedence_over_actual_missing_resource",
+        "test_present_termination_without_identity_refuses_before_native_or_question_effects"
       ]
     },
     {
@@ -2435,6 +2436,28 @@
         "test_publish_condition_preserves_two_why_bullets_for_ordinary_cards",
         "test_publish_condition_allows_one_preliminary_fact_without_mutating_the_payload",
         "test_conditional_schema_defects_are_not_instance_mismatches"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.turn_answers"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.deliver_answers"
+        },
+        {
+          "path": "src/tank/question_answers.py",
+          "symbol": "QuestionAnswerUpdate.text"
+        }
+      ],
+      "kind": "completed turn can have no observed textual answer",
+      "reason": "The active history reader only retains actual stripped nonblank text. An observed end_turn without final text yields None and is recorded ANSWERED as turn completion; separately delivered files do not invent textual content. Telegram displays its existing honest no-text message. No active producer requires blank whitespace; old empty-string storage normalization is not evidence for a broader new blank-text allowance. The question writer remains the ingestion-owned module and was not changed by this correction.",
+      "validation": [
+        "test_text_of_a_failed_attempt_is_never_the_answer",
+        "test_send_telegram_file_replies_with_the_session_output_once"
       ]
     }
   ]

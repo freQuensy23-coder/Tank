@@ -72,7 +72,7 @@ async def test_unknown_retained_facts_require_actual_native_preflight_before_con
     repo = MemoryRepository()
     original: dict[str, JsonValue] = {
         "session_id": "session",
-        "termination_receipt": {},
+        "termination_receipt": None,
         "remote_state": {},
         "unrelated": {"unknown": None},
     }
@@ -201,3 +201,31 @@ async def test_foreign_persisted_session_cannot_authorize_question_refusal() -> 
             await service.continuable(question())
     assert refusals.calls == []
     assert await repo.get("ops.agent_sessions", "session") == original
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("receipt", [{}, {"reason": "unowned"}])
+async def test_present_termination_without_identity_refuses_before_native_or_question_effects(
+    receipt: dict[str, JsonValue],
+) -> None:
+    repo = MemoryRepository()
+    original: dict[str, JsonValue] = {
+        "session_id": "session",
+        "status": "OPEN",
+        "termination_receipt": receipt,
+    }
+    await repo.put("ops.agent_sessions", "session", original)
+    refusals = RecordingRefusals()
+
+    def forbidden(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("Unidentified termination cannot authorize native I/O")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(forbidden)) as http:
+        service = SessionService(
+            repo, options(), None, versions=declared_versions_fixture(), refusals=refusals, http=http
+        )
+        with pytest.raises(KeyError, match="event_id"):
+            await service.continuable(question())
+    assert refusals.calls == []
+    assert await repo.get("ops.agent_sessions", "session") == original
+    assert await repo.list("ops.jobs") == []
