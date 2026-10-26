@@ -499,19 +499,12 @@ func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, st
 	if expected < 0 || end.Before(start) {
 		return backfillstate.BenchmarkCoverage{}, errors.New("capture kline interval end precedes start")
 	}
-	observed := func() (map[int64]bool, error) {
+	observed := func() (completedKlineMinutes, error) {
 		rows, err := s.store.Projection(ctx, "mkt.klines_1m", []string{"open_time", "complete"}, "open_time", first, last, []string{iid})
 		if err != nil {
 			return nil, err
 		}
-		out := map[int64]bool{}
-		for _, r := range rows {
-			t, err := pytime.Parse(r["open_time"])
-			if err == nil && r["complete"] == true && !t.Add(time.Minute).After(end) {
-				out[t.Unix()] = true
-			}
-		}
-		return out, nil
+		return decodeCompletedKlineMinutes(rows, first, last, end)
 	}
 	points, err := observed()
 	if err != nil {
@@ -523,7 +516,7 @@ func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, st
 		hi := minTime(lo.Add(240*time.Minute), last)
 		have := true
 		for t := lo; t.Before(hi); t = t.Add(time.Minute) {
-			if !points[t.Unix()] {
+			if !points.contains(t) {
 				have = false
 				break
 			}
@@ -557,7 +550,7 @@ func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, st
 	}
 	complete := 0
 	for n := 0; n < expected; n++ {
-		if points[first.Add(time.Duration(n)*time.Minute).Unix()] {
+		if points.contains(first.Add(time.Duration(n) * time.Minute)) {
 			complete++
 		}
 	}
@@ -650,45 +643,11 @@ func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrum
 	if err != nil {
 		return backfillstate.InstrumentCoverage{}, fmt.Errorf("%s pre24 reference unavailable: %w", inst.ID, err)
 	}
-	var reference map[string]any
-	var referenceTS time.Time
-	for _, bar := range bars {
-		for _, raw := range pyval.List(bar["reference_points"]) {
-			point := pyval.Map(raw)
-			at, err := pytime.Parse(point["boundary"])
-			if point["complete"] != true || err != nil || !at.Equal(boundary) {
-				continue
-			}
-			trade := pyval.Map(point["last_trade"])
-			ts, err := pytime.Parse(trade["ts"])
-			if err == nil && (reference == nil || ts.After(referenceTS)) {
-				reference, referenceTS = trade, ts
-			}
-		}
+	pre, err := decodePre24Reference(bars, boundary)
+	if err != nil {
+		return backfillstate.InstrumentCoverage{}, err
 	}
-	pre := backfillstate.MissingPre24Reference()
-	if reference != nil {
-		identity, err := decodeReferenceTradeIdentity(reference["trade_id"])
-		if err != nil {
-			return backfillstate.InstrumentCoverage{}, err
-		}
-		ts, ok := reference["ts"].(string)
-		if !ok {
-			return backfillstate.InstrumentCoverage{}, errors.New("reference trade requires a JSON timestamp string")
-		}
-		var precision *string
-		if raw := reference["ts_prec"]; raw != nil {
-			value, ok := raw.(string)
-			if !ok {
-				return backfillstate.InstrumentCoverage{}, errors.New("reference trade precision requires text or null")
-			}
-			precision = &value
-		}
-		pre, err = backfillstate.AvailablePre24Reference(identity, ts, precision)
-		if err != nil {
-			return backfillstate.InstrumentCoverage{}, err
-		}
-	}
+
 	return backfillstate.SpotInstrumentCoverage(inst.ID, coverage, pre)
 }
 

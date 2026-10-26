@@ -99,3 +99,27 @@ func TestBackfillCancellationAfterActualStartPreservesRunningEvidence(t *testing
 		t.Fatalf("cancellation invented a terminal capture observation: %v", row)
 	}
 }
+
+func TestMalformedStoredBackfillIdentityDoesNotBlockValidSiblingOrInventMetadata(t *testing.T) {
+	r := newRESTRig(t, "coinbase")
+	r.s.opt.Order = nil
+	r.mem.seedBackfill("", map[string]any{
+		"backfill_id": "", "event_id": "EVT-invalid", "token_id": r.inst.TokenID,
+		"anchor": pytime.ISO(r.base), "status": "PENDING",
+	})
+	r.mem.seedBackfill("BF-valid-sibling", map[string]any{
+		"backfill_id": "BF-valid-sibling", "event_id": "EVT-valid", "token_id": r.inst.TokenID,
+		"anchor": pytime.ISO(r.base), "status": "PENDING",
+	})
+	r.s.obligations(context.Background())
+	r.s.wg.Wait()
+	invalid := r.mem.rows[memoryBackfills][""]
+	valid := r.mem.rows[memoryBackfills]["BF-valid-sibling"]
+	_, fabricatedStart := invalid["started_at"]
+	if invalid["backfill_id"] != "" || invalid["status"] != "FAILED" || invalid["reason"] != "BACKFILL_ID_INVALID" || fabricatedStart || invalid["result"] != nil {
+		t.Fatalf("malformed stored identity became a fabricated valid failure: %v", invalid)
+	}
+	if valid["status"] != "PARTIAL" || valid["started_at"] == nil || valid["finished_at"] == nil || valid["result"] == nil || r.mem.writes[memoryBackfills] != 3 || r.v.calls != 0 || r.v.klineCalls.Load() != 0 {
+		t.Fatalf("malformed sibling blocked or duplicated valid pending work: %v", valid)
+	}
+}

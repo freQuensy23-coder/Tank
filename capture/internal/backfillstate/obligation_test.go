@@ -120,6 +120,20 @@ func TestUnverifiedAnchorTextCannotAcquireAnImplicitUnitOrZone(t *testing.T) {
 	}
 }
 
+func TestSubmicrosecondAnchorRefusesWithoutRoundingItsRecordedEvidence(t *testing.T) {
+	row := queuedRecord()
+	row.Anchor = stamp("2026-10-01T12:00:00.123456789Z")
+	prior := physicalDocument(t, row)
+	observation, err := Observe(observedReference(t), row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refusal, refused := observation.Selection().(Refused)
+	if !refused || refusal.Reason() != "ANCHOR_WIRE_RESOLUTION_UNSUPPORTED" || !bytes.Equal(prior, physicalDocument(t, row)) {
+		t.Fatal("unrepresentable anchor precision was silently truncated or admitted")
+	}
+}
+
 func TestMalformedNullableIdentityRemainsARefusalInsteadOfAValidFailedRecord(t *testing.T) {
 	for _, field := range []string{"backfill_id", "token_id", "event_id", "status"} {
 		row := queuedRecord()

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ type fakeVenue struct {
 	trades     []fakeTrade
 	retention  time.Time
 	calls      int
+	klineCalls atomic.Int32
 	multiplier string
 }
 
@@ -132,7 +134,10 @@ func (f *fakeVenue) Discover(context.Context) (map[string]any, error) {
 	}
 	return map[string]any{"contract_multiplier": "1"}, nil
 }
-func (f *fakeVenue) Klines(context.Context, *time.Time, *time.Time) ([]any, error) { return nil, nil }
+func (f *fakeVenue) Klines(context.Context, *time.Time, *time.Time) ([]any, error) {
+	f.klineCalls.Add(1)
+	return nil, nil
+}
 func (f *fakeVenue) Ticker(context.Context) (map[string]any, error) {
 	return nil, errors.New("no ticker")
 }

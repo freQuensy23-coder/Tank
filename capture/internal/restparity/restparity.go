@@ -171,13 +171,13 @@ func (noStore) BackfillAnchors(context.Context, []hotstate.Scope) ([]hotstate.An
 	return nil, nil
 }
 func (noStore) BackfillObligations(context.Context) ([]backfillstate.Observation, error) {
-	return nil, errors.New("REST fixture has no backfill persistence")
+	return nil, errors.New("rest fixture has no backfill persistence")
 }
 func (noStore) StartBackfill(context.Context, backfillstate.Start) (backfillstate.Acknowledgement, error) {
-	return backfillstate.Acknowledgement{}, errors.New("REST fixture has no backfill persistence")
+	return backfillstate.Acknowledgement{}, errors.New("rest fixture has no backfill persistence")
 }
 func (noStore) FinishBackfill(context.Context, backfillstate.Completion) (backfillstate.Acknowledgement, error) {
-	return backfillstate.Acknowledgement{}, errors.New("REST fixture has no backfill persistence")
+	return backfillstate.Acknowledgement{}, errors.New("rest fixture has no backfill persistence")
 }
 func (noStore) ClaimRequest(context.Context, string, time.Time) (*requeststate.Claimed, error) {
 	return nil, nil

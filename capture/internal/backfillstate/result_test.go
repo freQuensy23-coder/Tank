@@ -85,6 +85,25 @@ func TestNamedBackfillResultBindsActualScopeAndCompleteCoverage(t *testing.T) {
 	}
 }
 
+func TestNamedBackfillWireCannotSilentlyTruncateObservedNanoseconds(t *testing.T) {
+	anchor := time.Date(2026, 10, 26, 1, 0, 0, 123456789, time.UTC)
+	if _, err := NewResult("TOKEN-fixture", anchor, nil, nil); err == nil {
+		t.Fatal("named result silently admitted an anchor its wire formatter truncates")
+	}
+	minutes, err := NewMinuteCoverage(59, 59)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := anchor.Add(-time.Hour)
+	lo, hi := pytime.MinuteFloor(start).Add(time.Minute), pytime.MinuteFloor(anchor)
+	if _, err := NewWindowCoverage(start, anchor, lo, hi, lo.Sub(start).Seconds()+anchor.Sub(hi).Seconds(), minutes, minutes); err == nil {
+		t.Fatal("window silently admitted bounds its wire formatter truncates")
+	}
+	if _, err := NewBenchmarkCoverage("BENCH-fixture", start, anchor, 60, 60, true); err == nil {
+		t.Fatal("benchmark silently admitted bounds its wire formatter truncates")
+	}
+}
+
 func TestSpotMissingReferenceAndUnresolvedBoundaryNeverBecomeComplete(t *testing.T) {
 	aligned := time.Date(2026, 10, 26, 1, 0, 0, 0, time.UTC)
 	for _, anchor := range []time.Time{aligned, aligned.Add(17 * time.Second)} {

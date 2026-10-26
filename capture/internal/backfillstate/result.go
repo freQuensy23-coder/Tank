@@ -74,6 +74,11 @@ func (w WindowCoverage) Validate() error {
 	if !w.observed || !w.end.After(w.start) || math.IsNaN(w.unresolved) || math.IsInf(w.unresolved, 0) || w.unresolved < 0 {
 		return errors.New("capture window requires actual bounds and finite unresolved time")
 	}
+	for _, at := range []time.Time{w.start, w.end, w.observedStart, w.observedEnd} {
+		if at.Nanosecond()%1000 != 0 {
+			return errors.New("capture window bounds exceed the supported microsecond wire resolution")
+		}
+	}
 	lo := pytime.MinuteFloor(w.start)
 	if w.start.After(lo) {
 		lo = lo.Add(time.Minute)
@@ -325,7 +330,7 @@ type BenchmarkCoverage struct {
 }
 
 func NewBenchmarkCoverage(id string, start, end time.Time, expected, complete int64, anchorClose bool) (BenchmarkCoverage, error) {
-	if id == "" || !utf8.ValidString(id) || end.Before(start) || expected != int64(end.Sub(start)/time.Minute) {
+	if id == "" || !utf8.ValidString(id) || end.Before(start) || start.Nanosecond()%1000 != 0 || end.Nanosecond()%1000 != 0 || expected != int64(end.Sub(start)/time.Minute) {
 		return BenchmarkCoverage{}, errors.New("benchmark capture coverage requires declared interval and counts")
 	}
 	minutes, err := NewMinuteCoverage(expected, complete)
@@ -336,7 +341,7 @@ func NewBenchmarkCoverage(id string, start, end time.Time, expected, complete in
 }
 func (r BenchmarkCoverage) Complete() bool { return r.observed && r.minutes.Complete() }
 func (r BenchmarkCoverage) Validate() error {
-	if !r.observed || r.id == "" || !utf8.ValidString(r.id) || r.end.Before(r.start) || r.minutes.expected != int64(r.end.Sub(r.start)/time.Minute) {
+	if !r.observed || r.id == "" || !utf8.ValidString(r.id) || r.end.Before(r.start) || r.start.Nanosecond()%1000 != 0 || r.end.Nanosecond()%1000 != 0 || r.minutes.expected != int64(r.end.Sub(r.start)/time.Minute) {
 		return errors.New("benchmark capture coverage is not an admitted observation")
 	}
 	return r.minutes.Validate()
@@ -374,6 +379,9 @@ func NewResult(tokenID string, anchor time.Time, instruments []InstrumentCoverag
 func (r Result) Validate() error {
 	if !r.observed || r.tokenID == "" || !utf8.ValidString(r.tokenID) {
 		return errors.New("backfill result is not an admitted observation")
+	}
+	if r.anchor.Nanosecond()%1000 != 0 {
+		return errors.New("backfill result anchor exceeds the supported microsecond wire resolution")
 	}
 	seen := map[string]struct{}{}
 	for _, instrument := range r.instruments {

@@ -72,6 +72,7 @@ type refusalKind uint8
 const (
 	anchorMissing refusalKind = iota + 1
 	anchorUnreadable
+	anchorResolutionUnsupported
 	backfillIdentityInvalid
 	tokenIdentityInvalid
 	eventIdentityInvalid
@@ -101,7 +102,7 @@ func (r Refused) Validate() error {
 		if _, err := time.Parse(time.RFC3339Nano, raw); err == nil {
 			return errors.New("backfill anchor refusal cannot reject an admitted aware timestamp")
 		}
-	case anchorMissing, backfillIdentityInvalid, tokenIdentityInvalid, eventIdentityInvalid, statusInvalid:
+	case anchorMissing, anchorResolutionUnsupported, backfillIdentityInvalid, tokenIdentityInvalid, eventIdentityInvalid, statusInvalid:
 		if r.detail != "" {
 			return errors.New("backfill fixed refusal cannot carry another refusal's detail")
 		}
@@ -116,6 +117,8 @@ func (r Refused) Reason() string {
 		return "anchor unreadable: " + pytime.ErrTime.Error() + ": missing"
 	case anchorUnreadable:
 		return r.detail
+	case anchorResolutionUnsupported:
+		return "ANCHOR_WIRE_RESOLUTION_UNSUPPORTED"
 	case backfillIdentityInvalid:
 		return "BACKFILL_ID_INVALID"
 	case tokenIdentityInvalid:
@@ -152,6 +155,9 @@ func Observe(reference Reference, record Record) (Observation, error) {
 	anchor, err := time.Parse(time.RFC3339Nano, string(*record.Anchor))
 	if err != nil {
 		return refuse(anchorUnreadable, fmt.Sprintf("anchor unreadable: %s: %q", pytime.ErrTime, *record.Anchor))
+	}
+	if anchor.Nanosecond()%1000 != 0 {
+		return refuse(anchorResolutionUnsupported, "")
 	}
 	if !validIdentity(record.BackfillID) || record.BackfillID != record.StorageKey {
 		return refuse(backfillIdentityInvalid, "")
