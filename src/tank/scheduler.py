@@ -3,13 +3,13 @@
 import asyncio
 import contextlib
 import logging
-from collections.abc import Awaitable, Callable, Mapping
-from datetime import UTC, date, timedelta
+from collections.abc import Awaitable, Callable, Collection, Mapping
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, JsonValue
+from pydantic import Field, JsonValue, TypeAdapter
 
 from tank.analysis.watch_contracts import (
     CancelTimedReview,
@@ -27,6 +27,19 @@ from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
 from tank.contracts.json import decode_json
 from tank.contracts.provenance import ResolvedVersionIdentity
+from tank.contracts.scheduler_commands import (
+    InitialReactionCommand,
+    ManualReactionRevisionCommand,
+    ReactionAnchorFacts,
+    ReactionCaptureCommand,
+    ReactionCheckpoint,
+    ReactionLookupCommand,
+    ReactionRevision,
+    ReactionSubject,
+    ReactionTarget,
+    RevisedReactionCommand,
+    reaction_command_from_wire,
+)
 from tank.contracts.scheduler_results import (
     AppliedReactionChange,
     CoalescedReaction,
@@ -36,6 +49,9 @@ from tank.contracts.scheduler_results import (
     ReactionChangeOwnership,
     ReactionChangeState,
     ReactionChangeTarget,
+    ReactionFingerprint,
+    ReactionPackCheckpoint,
+    ReactionPackState,
     UnchangedReaction,
     applied_reaction_change_receipt,
     captured_reaction_receipt,
@@ -151,6 +167,60 @@ class BackupIdentity(DomainModel):
 
 class ReactionEventIdentity(DomainModel):
     event_id: str = Field(min_length=1, pattern=r"^\S+$")
+
+
+_REACTION_REVISION = TypeAdapter(int)
+
+
+class PriorReactionRevision(DomainModel):
+    expected_scope: ReactionTarget
+    checkpoint_key: str
+    revision: ReactionRevision
+    anchor: ReactionAnchorFacts | None
+    retro: bool | None
+    data_fingerprint: ReactionFingerprint | None
+
+
+class CompletedReactionPlan(DomainModel):
+    result: ReactionCaptureResult
+
+
+def completed_reaction_from_record(
+    target: ReactionTarget, key: str, record: Mapping[str, JsonValue]
+) -> CompletedReactionPlan:
+    receipt = recorded_reaction_receipt(key, record)
+    if (receipt.event_id, receipt.token_id, receipt.checkpoint) != (
+        target.event_id,
+        target.token_id,
+        target.checkpoint,
+    ):
+        raise ValueError("Stored reaction checkpoint conflicts with its requested scope")
+    return CompletedReactionPlan(result=receipt)
+
+
+class PendingReactionPlan(DomainModel):
+    source: InitialReactionCommand | ManualReactionRevisionCommand | RevisedReactionCommand
+    capture: InitialReactionCommand
+    key: str
+    latest: PriorReactionRevision | None
+    change: ReactionChangeTarget | None
+
+    def storage_fields(self, captured: InitialReactionCommand) -> dict[str, JsonValue]:
+        fields = self.source.storage_fields()
+        fields.update(anchor=captured.anchor.source_fields(), revision=captured.revision)
+        if self.latest is not None and captured.revision > 1:
+            fields.pop("retro", None)
+            if self.latest.retro is not None:
+                fields["retro"] = self.latest.retro
+        return fields
+
+
+class ReactionWindow(DomainModel):
+    anchor_stamp: Timestamp
+    start: datetime
+    end: datetime
+    start_stamp: Timestamp
+    end_stamp: Timestamp
 
 
 class Scheduler:
@@ -385,7 +455,7 @@ class Scheduler:
                 async def capture_pre(payloads=missing_pre):
 
                     for payload in payloads:
-                        await self.reaction_capture(payload, wait_for_slot=True)
+                        await self.reaction_capture(reaction_command_from_wire(payload), wait_for_slot=True)
 
                 self.launch(f"reaction-pre:{event['event_id']}:{token}", capture_pre)
 
@@ -1007,48 +1077,69 @@ class Scheduler:
             else "Accepted primary evidence resolved the scheduled milestone.",
         )
 
-    def _reaction_window(self, payload):
-        anchor_stamp = propagate_timestamp(payload["anchor"], "ts", precision_aliases=("precision",))
+    def _reaction_window(self, anchor: ReactionAnchorFacts, checkpoint: ReactionCheckpoint) -> ReactionWindow:
+        anchor_stamp = anchor.timestamp
+        if anchor_stamp.value is None:
+            raise ValueError("Reaction measurement requires its actual anchor")
         origin = parse_time(anchor_stamp.value)
-        offset = CHECKPOINTS[payload["checkpoint"]]
+        offset = CHECKPOINTS[checkpoint]
         start = origin + timedelta(seconds=offset) if offset < 0 else origin
         end = origin if offset < 0 else origin + timedelta(seconds=offset)
-        return {
-            "anchor_stamp": anchor_stamp,
-            "start": start,
-            "end": end,
-            "start_stamp": offset_schedule(anchor_stamp, start - origin),
-            "end_stamp": offset_schedule(anchor_stamp, end - origin),
-        }
+        return ReactionWindow(
+            anchor_stamp=anchor_stamp,
+            start=start,
+            end=end,
+            start_stamp=offset_schedule(anchor_stamp, start - origin),
+            end_stamp=offset_schedule(anchor_stamp, end - origin),
+        )
 
-    async def _benchmark_only(self, payload):
-        if payload["token_id"] not in BENCHMARK_TOKENS:
+    async def _benchmark_only(self, event_id: str, token_id: str) -> bool:
+        if token_id not in BENCHMARK_TOKENS:
             return False
-        event = await self.repo.get("evt.events", payload["event_id"]) or {"event_id": payload["event_id"]}
-        return payload["token_id"] not in await self.analysis_set(event)
+        event = await self.repo.get("evt.events", event_id)
+        if event is None:
+            raise ValueError("Benchmark reaction requires its actual event scope")
+        return token_id not in await self.analysis_set(event)
 
-    async def reaction_capture(self, payload, *, wait_for_slot: bool = False) -> ReactionCaptureResult:
-        if payload.get("automatic_revision"):
+    async def reaction_capture(
+        self, request: ReactionCaptureCommand, *, wait_for_slot: bool = False
+    ) -> ReactionCaptureResult:
+        if isinstance(request, ManualReactionRevisionCommand):
+            request = ManualReactionRevisionCommand.model_validate(request)
+        elif isinstance(request, InitialReactionCommand):
+            request = InitialReactionCommand.model_validate(request)
+        elif isinstance(request, RevisedReactionCommand):
+            request = RevisedReactionCommand.model_validate(request)
+        elif isinstance(request, ReactionLookupCommand):
+            request = ReactionLookupCommand.model_validate(request)
+        else:
+            raise ValueError("Reaction execution requires its admitted command")
+        if isinstance(request, RevisedReactionCommand):
             async for job in self.repo.iter_all(
                 "ops.jobs", filters={"type": "REACTION_CAPTURE", "status": "QUEUED"}
             ):
-                other = job["payload"]
-                if (
-                    other.get("automatic_revision")
-                    and other.get("change_id") != payload.get("change_id")
-                    and (other.get("event_id"), other.get("token_id"), other.get("checkpoint"))
-                    == (payload["event_id"], payload["token_id"], payload["checkpoint"])
-                ):
+                wire = job["payload"]
+                if not isinstance(wire, dict):
+                    raise ValueError("Queued reaction requires its actual payload")
+                if "automatic_revision" not in wire:
+                    continue
+                other = RevisedReactionCommand.model_validate(wire)
+                if other.change_id != request.change_id and (
+                    other.event_id,
+                    other.token_id,
+                    other.checkpoint,
+                ) == (request.event_id, request.token_id, request.checkpoint):
                     return CoalescedReaction.model_validate(
                         {"kind": "COALESCED", "coalesced_into": job["job_id"]}
                     )
-        lock = f"reaction:{payload['event_id']}:{payload['token_id']}:{payload['checkpoint']}"
+        lock = f"reaction:{request.event_id}:{request.token_id}:{request.checkpoint}"
         while True:
             async with self.repo.lock(lock):
-                plan = await self._reaction_plan(payload)
-                if plan["complete"]:
-                    return reaction_capture_result(plan["result"])
-
+                plan = await self._reaction_plan(request)
+                if isinstance(plan, CompletedReactionPlan):
+                    return reaction_capture_result(plan.result)
+            if self.market is None:
+                raise ValueError("New reaction capture requires its market read service")
             if self._reaction_slots.locked() and not wait_for_slot:
                 from tank.delivery import DeliveryDeferred
 
@@ -1056,12 +1147,12 @@ class Scheduler:
                     offset_schedule(collection_clock(), timedelta(seconds=REACTION_RETRY_S))
                 )
             async with self._reaction_slots:
-                measured = await self._measure_reaction(plan["payload"])
+                measured = await self._measure_reaction(plan.capture)
             async with self.repo.lock(lock):
-                current = await self._reaction_plan(payload)
-                if current["complete"]:
-                    return reaction_capture_result(current["result"])
-                if current["key"] != plan["key"] or current["payload"] != plan["payload"]:
+                current = await self._reaction_plan(request)
+                if isinstance(current, CompletedReactionPlan):
+                    return reaction_capture_result(current.result)
+                if current.key != plan.key or current.capture != plan.capture:
                     continue
                 return reaction_capture_result(await self._commit_reaction(current, measured))
 
@@ -1135,102 +1226,160 @@ class Scheduler:
             {"checkpoint_id": "reaction-capture-changes", **collection_clock(now).fields("at"), "state": {}},
         )
 
-    async def reaction_pack_id(self, event_id, token_id):
-        key = f"reaction-pack:{event_id}:{token_id}"
-        async with self.repo.lock(key):
-            row = await self.repo.get("ops.scheduler_checkpoints", key)
-            if row is None:
-                row = {
-                    "checkpoint_id": key,
-                    **collection_clock().fields("at"),
-                    "state": {"rwp_id": new_id("RWP"), "event_id": event_id, "token_id": token_id},
-                }
-                await self.repo.put("ops.scheduler_checkpoints", key, row)
-            return row["state"]["rwp_id"]
-
-    async def _latest_reaction_revision(self, payload):
-        """The newest stored revision of one checkpoint. Revisions are read as
-        metadata only and one full row is fetched: each row holds its whole
-        Market Truth (up to ~160 kB), and parsing every revision on the event
-        loop was ~5% of it on r102."""
-        filters = {
-            "event_id": payload["event_id"],
-            "token_id": payload["token_id"],
-            "checkpoint": payload["checkpoint"],
-        }
-        fields = ["revision", "anchor", "retro", "reason", "data_fingerprint"]
-        rows = [
-            row async for row in self.repo.iter_metadata("out.reaction_checkpoints", fields, filters=filters)
-        ]
-        if not rows:
+    async def _existing_reaction_pack(self, subject: ReactionSubject) -> ReactionPackCheckpoint | None:
+        key = f"reaction-pack:{subject.event_id}:{subject.token_id}"
+        record = await self.repo.get("ops.scheduler_checkpoints", key)
+        if record is None:
             return None
-        newest = max(rows, key=lambda row: int(row.get("revision") or 1))
-        newest["revision"] = int(newest.get("revision") or 1)
-        if newest.get("data_fingerprint") and newest.get("anchor"):
-            return newest
-        key = f"{payload['event_id']}:{payload['token_id']}:{payload['checkpoint']}:{newest['revision']}"
-        row = await self.repo.get("out.reaction_checkpoints", key)
-        if row is not None:
-            return row
-        latest = None
-        async for previous in self.repo.iter_all("out.reaction_checkpoints", filters=filters):
-            if latest is None or previous.get("revision", 1) > latest.get("revision", 1):
-                latest = previous
-        return latest
-
-    async def _reaction_plan(self, payload):
-        payload = dict(payload)
-        change_marker = (
-            "reaction-change:" + payload["change_id"] if payload.get("automatic_revision") else None
+        pack = ReactionPackCheckpoint.model_validate(
+            {field: record[field] for field in ("checkpoint_id", "state") if field in record}
         )
-        if change_marker:
-            applied = await self.repo.get("ops.scheduler_checkpoints", change_marker)
-            if applied:
-                return {
-                    "complete": True,
-                    "result": await self._applied_reaction_change(
-                        ReactionChangeTarget.model_validate(
-                            {
-                                field: payload[field]
-                                for field in ReactionChangeTarget.model_fields
-                                if field in payload
-                            }
-                        ),
-                        applied,
-                    ),
-                }
-            latest_auto = await self._latest_reaction_revision(payload)
-            if latest_auto is None:
-                raise ValueError("Automatic revision requires a captured checkpoint")
-            payload["revision"] = latest_auto["revision"] + 1
-        revision = int(payload.get("revision", 1))
-        if revision < 1:
-            raise ValueError("Reaction revision must be positive")
-        key = f"{payload['event_id']}:{payload['token_id']}:{payload['checkpoint']}:{revision}"
-        existing = await self.repo.get("out.reaction_checkpoints", key)
-        if existing:
-            if revision > 1 and payload.get("reason") != existing.get("reason"):
-                raise ValueError("Immutable reaction revision already exists with another reason")
-            return {"complete": True, "result": recorded_reaction_receipt(key, existing)}
-        latest = await self._latest_reaction_revision(payload)
-        if revision > 1:
-            if not str(payload.get("reason", "")).strip():
-                raise ValueError("Late-data reaction revision requires an explicit reason")
-            if not latest or revision != latest["revision"] + 1:
-                raise ValueError(
-                    "Reaction revisions must append the next revision after an existing checkpoint"
-                )
-            payload.update(anchor=latest["anchor"], retro=latest.get("retro", False))
-        return {
-            "complete": False,
-            "payload": payload,
-            "change_marker": change_marker,
-            "revision": revision,
-            "key": key,
-            "latest": latest,
-        }
+        if (
+            pack.checkpoint_id != key
+            or pack.state.event_id != subject.event_id
+            or pack.state.token_id != subject.token_id
+        ):
+            raise ValueError("Stored reaction pack conflicts with its requested scope")
+        return pack
 
-    async def _yield_to_market_truth(self, payload, checkpoint):
+    async def reaction_pack_id(self, event_id: str, token_id: str) -> str:
+        subject = ReactionSubject(event_id=event_id, token_id=token_id)
+        key = f"reaction-pack:{subject.event_id}:{subject.token_id}"
+        async with self.repo.lock(key):
+            pack = await self._existing_reaction_pack(subject)
+            if pack is None:
+                authored = ReactionPackCheckpoint(
+                    checkpoint_id=key,
+                    state=ReactionPackState(
+                        rwp_id=new_id("RWP"), event_id=subject.event_id, token_id=subject.token_id
+                    ),
+                )
+                await self.repo.put(
+                    "ops.scheduler_checkpoints",
+                    key,
+                    {**authored.model_dump(mode="json"), **collection_clock().fields("at")},
+                    immutable=True,
+                )
+                pack = await self._existing_reaction_pack(subject)
+                if pack is None:
+                    raise ValueError("Reaction pack is absent after successful storage")
+            return pack.state.rwp_id
+
+    async def _latest_reaction_revision(self, target: ReactionTarget) -> PriorReactionRevision | None:
+        """Admit only the newest revision header; financial evidence stays in its stored row."""
+        rows: list[PriorReactionRevision] = []
+        async for wire in self.repo.iter_metadata(
+            "out.reaction_checkpoints",
+            ["revision", "anchor", "retro", "data_fingerprint"],
+            filters={
+                "event_id": target.event_id,
+                "token_id": target.token_id,
+                "checkpoint": target.checkpoint,
+            },
+        ):
+            if "revision" not in wire:
+                raise ValueError("Stored reaction requires its actual revision")
+            revision = _REACTION_REVISION.validate_python(wire["revision"], strict=True)
+            key = f"{target.event_id}:{target.token_id}:{target.checkpoint}:{revision}"
+            rows.append(
+                PriorReactionRevision.model_validate(
+                    {
+                        "expected_scope": ReactionTarget(
+                            event_id=target.event_id, token_id=target.token_id, checkpoint=target.checkpoint
+                        ),
+                        "checkpoint_key": key,
+                        "revision": revision,
+                        "anchor": wire.get("anchor"),
+                        "retro": wire.get("retro"),
+                        "data_fingerprint": wire.get("data_fingerprint"),
+                    }
+                )
+            )
+        return max(rows, key=lambda row: row.revision) if rows else None
+
+    async def _reaction_plan(
+        self, request: ReactionCaptureCommand
+    ) -> CompletedReactionPlan | PendingReactionPlan:
+        if isinstance(request, ReactionLookupCommand):
+            key = f"{request.event_id}:{request.token_id}:{request.checkpoint}:{request.revision}"
+            existing = await self.repo.get("out.reaction_checkpoints", key)
+            if existing is None:
+                raise ValueError("Reaction lookup has no captured checkpoint")
+            return completed_reaction_from_record(request, key, existing)
+        change: ReactionChangeTarget | None = None
+        latest: PriorReactionRevision | None
+        if isinstance(request, RevisedReactionCommand):
+            change = ReactionChangeTarget(
+                change_id=request.change_id,
+                event_id=request.event_id,
+                token_id=request.token_id,
+                checkpoint=request.checkpoint,
+            )
+            marker = await self.repo.get("ops.scheduler_checkpoints", "reaction-change:" + request.change_id)
+            if marker is not None:
+                return CompletedReactionPlan(result=await self._applied_reaction_change(change, marker))
+            latest = await self._latest_reaction_revision(request)
+            if latest is None:
+                raise ValueError("Automatic revision requires a captured checkpoint")
+            if latest.anchor is None:
+                raise ValueError("Reaction revision requires the actual prior anchor")
+            capture = InitialReactionCommand(
+                event_id=request.event_id,
+                token_id=request.token_id,
+                checkpoint=request.checkpoint,
+                anchor=latest.anchor,
+                retro=latest.retro,
+                revision=latest.revision + 1,
+                reason=request.reason,
+            )
+        else:
+            key = f"{request.event_id}:{request.token_id}:{request.checkpoint}:{request.revision}"
+            existing = await self.repo.get("out.reaction_checkpoints", key)
+            if existing is not None:
+                if request.revision > 1 and request.reason != existing.get("reason"):
+                    raise ValueError("Immutable reaction revision already exists with another reason")
+                return completed_reaction_from_record(request, key, existing)
+            latest = await self._latest_reaction_revision(request)
+            if request.revision > 1:
+                if latest is None or request.revision != latest.revision + 1:
+                    raise ValueError(
+                        "Reaction revisions must append the next revision after an existing checkpoint"
+                    )
+                if latest.anchor is None:
+                    raise ValueError("Reaction revision requires the actual prior anchor")
+                capture = InitialReactionCommand(
+                    event_id=request.event_id,
+                    token_id=request.token_id,
+                    checkpoint=request.checkpoint,
+                    anchor=latest.anchor,
+                    retro=latest.retro,
+                    revision=request.revision,
+                    reason=request.reason,
+                )
+            else:
+                if not isinstance(request, InitialReactionCommand):
+                    raise ValueError("Initial reaction requires its actual capture command")
+                capture = InitialReactionCommand.model_validate(request)
+        key = f"{capture.event_id}:{capture.token_id}:{capture.checkpoint}:{capture.revision}"
+        await self._existing_reaction_pack(
+            ReactionSubject(event_id=capture.event_id, token_id=capture.token_id)
+        )
+        return PendingReactionPlan(source=request, capture=capture, key=key, latest=latest, change=change)
+
+    async def _prior_reaction_fingerprint(
+        self, prior: PriorReactionRevision, fields: Collection[str]
+    ) -> str | None:
+        if prior.data_fingerprint is not None:
+            return prior.data_fingerprint
+        record = await self.repo.get("out.reaction_checkpoints", prior.checkpoint_key)
+        if record is None:
+            raise ValueError("Prior reaction evidence is unavailable for comparison")
+        completed_reaction_from_record(prior.expected_scope, prior.checkpoint_key, record)
+        if any(field not in record for field in fields):
+            return None
+        return sha256({field: record[field] for field in fields})
+
+    async def _yield_to_market_truth(self, payload: ReactionTarget, checkpoint: datetime) -> None:
         """Wait while any RUN_MARKET_TRUTH is running, unless the capture nears its expiry."""
         waited = 0
         while waited < CAPTURE_YIELD_MAX_S:
@@ -1246,38 +1395,36 @@ class Scheduler:
         if waited:
             log.info(
                 "REACTION_CAPTURE %s %s %s yielded %d s to RUN_MARKET_TRUTH",
-                payload.get("event_id"),
-                payload.get("token_id"),
-                payload.get("checkpoint"),
+                payload.event_id,
+                payload.token_id,
+                payload.checkpoint,
                 waited,
             )
 
-    async def _measure_reaction(self, payload):
-        payload = dict(payload)
+    async def _measure_reaction(self, payload: InitialReactionCommand):
+        payload = payload.with_propagated_anchor()
         captured_stamp = collection_clock()
         from tank.analysis.truth import compute_market_truth
 
-        window = self._reaction_window(payload)
-        anchor_stamp = window["anchor_stamp"]
-        payload["anchor"] = {**payload["anchor"], **anchor_stamp.fields("ts")}
-        start, end = window["start"], window["end"]
-        start_stamp, end_stamp = window["start_stamp"], window["end_stamp"]
-        if await self._benchmark_only(payload):
+        window = self._reaction_window(payload.anchor, payload.checkpoint)
+        start, end = window.start, window.end
+        start_stamp, end_stamp = window.start_stamp, window.end_stamp
+        if await self._benchmark_only(payload.event_id, payload.token_id):
             return await self._measure_benchmark(payload, captured_stamp, start, end, start_stamp, end_stamp)
         await self._yield_to_market_truth(payload, end)
 
         captured_stamp = collection_clock()
 
         snapshot = await self.market.snapshot(
-            payload["token_id"],
+            payload.token_id,
             end_stamp,
-            anchor={**start_stamp.fields("ts"), "type": payload["anchor"]["type"]},
+            anchor={**start_stamp.fields("ts"), "type": payload.anchor.type},
             scope="REACTION",
         )
         snapshot = {
             **snapshot,
-            "event_id": payload["event_id"],
-            "token_id": payload["token_id"],
+            "event_id": payload.event_id,
+            "token_id": payload.token_id,
             **end_stamp.fields("cutoff"),
         }
         knobs = self.thresholds.model_dump(mode="json")
@@ -1320,7 +1467,15 @@ class Scheduler:
             "truth": truth,
         }
 
-    async def _measure_benchmark(self, payload, captured_stamp, start, end, start_stamp, end_stamp):
+    async def _measure_benchmark(
+        self,
+        payload: InitialReactionCommand,
+        captured_stamp: Timestamp,
+        start: datetime,
+        end: datetime,
+        start_stamp: Timestamp,
+        end_stamp: Timestamp,
+    ):
         """Lead ruling 2026-10-20 (03 §8.1): a benchmark outside the analysis set
         records the raw return from base-tier 1m kline closes of its largest spot
         venue; trade and derivative values are NOT_APPLICABLE. Only those klines
@@ -1328,10 +1483,10 @@ class Scheduler:
         BTC/ETH snapshots over 90 days of every collection cost gigabytes."""
         from tank.analysis.truth import benchmark_reaction_values
 
-        token = payload["token_id"]
+        token = payload.token_id
         lower = min(start, end - timedelta(hours=24)) - timedelta(hours=1)
         rows = []
-        for iid, instrument in (getattr(self.market, "instruments", None) or {}).items():
+        for iid, instrument in self.market.instruments.items():
             if instrument.get("token_id") != token or ":spot:" not in iid:
                 continue
             async for row in self.repo.iter_range(
@@ -1424,20 +1579,26 @@ class Scheduler:
             )
             return await self._applied_reaction_change(target, marker)
 
-    async def _commit_reaction(self, plan, measured):
-        if plan["change_marker"] is not None:
-            payload = measured["payload"]
-            target = ReactionChangeTarget.model_validate(
-                {field: payload[field] for field in ReactionChangeTarget.model_fields if field in payload}
-            )
-            async with self.repo.lock("reaction-change-write:" + target.change_id):
-                return await self._commit_reaction_owned(plan, measured, target)
-        return await self._commit_reaction_owned(plan, measured, None)
+    async def _commit_reaction(self, plan: PendingReactionPlan, measured):
+        if plan.change is not None:
+            async with self.repo.lock("reaction-change-write:" + plan.change.change_id):
+                return await self._commit_reaction_owned(plan, measured)
+        return await self._commit_reaction_owned(plan, measured)
 
-    async def _commit_reaction_owned(self, plan, measured, target: ReactionChangeTarget | None):
-        payload, change_marker = measured["payload"], plan["change_marker"]
-        revision, key, latest = plan["revision"], plan["key"], plan["latest"]
-        captured_stamp = measured["captured_stamp"]
+    async def _commit_reaction_owned(self, plan: PendingReactionPlan, measured):
+        payload = InitialReactionCommand.model_validate(measured["payload"])
+        target, key, latest = plan.change, plan.key, plan.latest
+        revision = payload.revision
+        if (payload.event_id, payload.token_id, payload.checkpoint, payload.revision) != (
+            plan.capture.event_id,
+            plan.capture.token_id,
+            plan.capture.checkpoint,
+            plan.capture.revision,
+        ) or payload.anchor.timestamp != plan.capture.anchor.timestamp:
+            raise ValueError("Reaction measurement conflicts with its planned scope")
+        captured_stamp = Timestamp.model_validate(measured["captured_stamp"])
+        if captured_stamp.value is None or captured_stamp.precision != "COLLECTION_ONLY":
+            raise ValueError("Reaction capture requires its actual collection clock")
         checkpoint_data, truth = measured["checkpoint_data"], measured["truth"]
         from tank.util import sha256
 
@@ -1447,21 +1608,16 @@ class Scheduler:
             if not name.endswith(("_prec", "_prec_reason"))
         }
         fingerprint = sha256(fingerprint_data)
-        if (
-            change_marker
-            and latest
-            and fingerprint
-            == (
-                latest.get("data_fingerprint")
-                or sha256({name: latest.get(name) for name in fingerprint_data})
-            )
-        ):
-            if target is None:
-                raise ValueError("Reaction change result requires its actual scope")
+        prior_fingerprint = (
+            await self._prior_reaction_fingerprint(latest, fingerprint_data.keys())
+            if latest is not None and target is not None
+            else None
+        )
+        if target is not None and latest is not None and fingerprint == prior_fingerprint:
             receipt = await self._record_reaction_change(
                 target,
                 ReactionChangeState.model_validate(
-                    {"changed": False, "revision": latest["revision"], "data_fingerprint": fingerprint}
+                    {"changed": False, "revision": latest.revision, "data_fingerprint": fingerprint}
                 ),
             )
             return UnchangedReaction.model_validate(
@@ -1478,8 +1634,8 @@ class Scheduler:
             )
         record = {
             "data_fingerprint": fingerprint,
-            "rwp_id": await self.reaction_pack_id(payload["event_id"], payload["token_id"]),
-            **payload,
+            "rwp_id": await self.reaction_pack_id(payload.event_id, payload.token_id),
+            **plan.storage_fields(payload),
             **captured_stamp.fields("captured_at"),
             "revision": revision,
             "supersedes_revision": revision - 1 if revision > 1 else None,

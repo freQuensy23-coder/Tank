@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 from source_support import fixture_versions
 
+from tank.contracts.scheduler_commands import reaction_command_from_wire
 from tank.contracts.scheduler_results import CapturedReaction, UnchangedReaction
 from tank.scheduler import Scheduler
 from tank.settings import Settings
@@ -106,12 +107,14 @@ async def test_reaction_windows_inherit_anchor_and_capture_clock_is_collection(
     if precision:
         anchor["ts_prec"] = precision
     receipt = await scheduler.reaction_capture(
-        {
-            "event_id": "e",
-            "token_id": "T",
-            "checkpoint": "PRE_1H",
-            "anchor": anchor,
-        }
+        reaction_command_from_wire(
+            {
+                "event_id": "e",
+                "token_id": "T",
+                "checkpoint": "PRE_1H",
+                "anchor": anchor,
+            }
+        )
     )
     assert isinstance(receipt, CapturedReaction)
     record = await repo.get("out.reaction_checkpoints", receipt.checkpoint_key)
@@ -194,12 +197,14 @@ async def test_provenance_only_addition_does_not_create_late_data_revision(
         versions=fixture_versions(),
     )
     original = await scheduler.reaction_capture(
-        {
-            "event_id": "e",
-            "token_id": "T",
-            "checkpoint": "POST_1H",
-            "anchor": {"type": "T1", "ts": STAMP},
-        }
+        reaction_command_from_wire(
+            {
+                "event_id": "e",
+                "token_id": "T",
+                "checkpoint": "POST_1H",
+                "anchor": {"type": "T1", "ts": STAMP},
+            }
+        )
     )
 
     assert isinstance(original, CapturedReaction)
@@ -212,14 +217,16 @@ async def test_provenance_only_addition_does_not_create_late_data_revision(
     scheduler.repo = repo
     await repo.put("out.reaction_checkpoints", "e:T:POST_1H:1", legacy)
     result = await scheduler.reaction_capture(
-        {
-            "event_id": "e",
-            "token_id": "T",
-            "checkpoint": "POST_1H",
-            "automatic_revision": True,
-            "change_id": "late",
-            "reason": "Late capture completed",
-        }
+        reaction_command_from_wire(
+            {
+                "event_id": "e",
+                "token_id": "T",
+                "checkpoint": "POST_1H",
+                "automatic_revision": True,
+                "change_id": "late",
+                "reason": "Late capture completed",
+            }
+        )
     )
     assert isinstance(result, UnchangedReaction) and result.changed is False
     assert len(await repo.list("out.reaction_checkpoints")) == 1

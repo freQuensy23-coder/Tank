@@ -13,6 +13,7 @@ from pydantic import JsonValue
 from pydantic_settings import SettingsConfigDict
 from source_support import fixture_versions
 
+from tank.contracts.scheduler_commands import ReactionLookupCommand, reaction_command_from_wire
 from tank.contracts.scheduler_results import (
     AppliedReactionChange,
     CapturedReaction,
@@ -36,42 +37,48 @@ async def test_reused_change_id_cannot_complete_a_foreign_reaction_target() -> N
     market = SimpleNamespace(snapshot=AsyncMock(return_value={}))
     scheduler = Scheduler(repo, ReceiptSettings(), market, None, versions=fixture_versions())
     original = await scheduler.reaction_capture(
-        {
-            "event_id": "e",
-            "token_id": "t",
-            "checkpoint": "PRE_1H",
-            "anchor": {
-                "type": "T1",
-                "ts": "2026-10-17T12:00:00Z",
-                "ts_prec": "EXACT",
-                "ts_prec_reason": None,
-            },
-        }
+        reaction_command_from_wire(
+            {
+                "event_id": "e",
+                "token_id": "t",
+                "checkpoint": "PRE_1H",
+                "anchor": {
+                    "type": "T1",
+                    "ts": "2026-10-17T12:00:00Z",
+                    "ts_prec": "EXACT",
+                    "ts_prec_reason": None,
+                },
+            }
+        )
     )
     assert isinstance(original, CapturedReaction)
     unchanged = await scheduler.reaction_capture(
-        {
-            "event_id": "e",
-            "token_id": "t",
-            "checkpoint": "PRE_1H",
-            "automatic_revision": True,
-            "change_id": "shared",
-            "reason": "Observed capture completion",
-        }
+        reaction_command_from_wire(
+            {
+                "event_id": "e",
+                "token_id": "t",
+                "checkpoint": "PRE_1H",
+                "automatic_revision": True,
+                "change_id": "shared",
+                "reason": "Observed capture completion",
+            }
+        )
     )
     assert isinstance(unchanged, UnchangedReaction)
     marker = await repo.get("ops.scheduler_checkpoints", "reaction-change:shared")
     before = await repo.list("out.reaction_checkpoints")
     with pytest.raises(ValueError, match="scope"):
         await scheduler.reaction_capture(
-            {
-                "event_id": "foreign",
-                "token_id": "another-token",
-                "checkpoint": "PRE_1H",
-                "automatic_revision": True,
-                "change_id": "shared",
-                "reason": "Another target completion",
-            }
+            reaction_command_from_wire(
+                {
+                    "event_id": "foreign",
+                    "token_id": "another-token",
+                    "checkpoint": "PRE_1H",
+                    "automatic_revision": True,
+                    "change_id": "shared",
+                    "reason": "Another target completion",
+                }
+            )
         )
     assert await repo.list("out.reaction_checkpoints") == before
     assert await repo.get("ops.scheduler_checkpoints", "reaction-change:shared") == marker
@@ -84,19 +91,21 @@ async def test_matching_change_replay_uses_stored_owner_without_new_measurement(
     market = SimpleNamespace(snapshot=AsyncMock(return_value={}))
     scheduler = Scheduler(repo, ReceiptSettings(), market, None, versions=fixture_versions())
     await scheduler.reaction_capture(
-        {
-            "event_id": "e",
-            "token_id": "t",
-            "checkpoint": "PRE_1H",
-            "anchor": {
-                "type": "T1",
-                "ts": "2026-10-17T12:00:00Z",
-                "ts_prec": "EXACT",
-                "ts_prec_reason": None,
-            },
-        }
+        reaction_command_from_wire(
+            {
+                "event_id": "e",
+                "token_id": "t",
+                "checkpoint": "PRE_1H",
+                "anchor": {
+                    "type": "T1",
+                    "ts": "2026-10-17T12:00:00Z",
+                    "ts_prec": "EXACT",
+                    "ts_prec_reason": None,
+                },
+            }
+        )
     )
-    request = {
+    request: dict[str, JsonValue] = {
         "event_id": "e",
         "token_id": "t",
         "checkpoint": "PRE_1H",
@@ -104,12 +113,12 @@ async def test_matching_change_replay_uses_stored_owner_without_new_measurement(
         "change_id": "same",
         "reason": "Observed completion",
     }
-    first = await scheduler.reaction_capture(request)
+    first = await scheduler.reaction_capture(reaction_command_from_wire(request))
     assert isinstance(first, UnchangedReaction)
     marker = await repo.get("ops.scheduler_checkpoints", "reaction-change:same")
     owner = await repo.get("ops.scheduler_checkpoints", "reaction-change-owner:same")
     restarted = Scheduler(repo, ReceiptSettings(), market, None, versions=fixture_versions())
-    replayed = await restarted.reaction_capture(request)
+    replayed = await restarted.reaction_capture(reaction_command_from_wire(request))
     assert isinstance(replayed, AppliedReactionChange)
     assert (replayed.event_id, replayed.token_id, replayed.checkpoint) == ("e", "t", "PRE_1H")
     assert replayed.revision == first.revision and replayed.data_fingerprint == first.data_fingerprint
@@ -132,14 +141,16 @@ async def test_unbound_retained_change_marker_stays_unbound_and_refuses_replay()
     scheduler = Scheduler(repo, ReceiptSettings(), None, None, versions=fixture_versions())
     with pytest.raises(ValueError, match="scope is unreported"):
         await scheduler.reaction_capture(
-            {
-                "event_id": "e",
-                "token_id": "t",
-                "checkpoint": "PRE_1H",
-                "automatic_revision": True,
-                "change_id": "old",
-                "reason": "Retained job replay",
-            }
+            reaction_command_from_wire(
+                {
+                    "event_id": "e",
+                    "token_id": "t",
+                    "checkpoint": "PRE_1H",
+                    "automatic_revision": True,
+                    "change_id": "old",
+                    "reason": "Retained job replay",
+                }
+            )
         )
     assert await repo.get("ops.scheduler_checkpoints", "reaction-change:old") == marker
     assert await repo.get("ops.scheduler_checkpoints", "reaction-change-owner:old") is None
@@ -170,17 +181,19 @@ async def concurrent_change_scope(repo: MemoryRepository | PostgresRepository) -
     ]
     for index, scheduler in enumerate(schedulers):
         await scheduler.reaction_capture(
-            {
-                "event_id": f"e{index}",
-                "token_id": f"t{index}",
-                "checkpoint": "PRE_1H",
-                "anchor": {
-                    "type": "T1",
-                    "ts": "2026-10-17T12:00:00Z",
-                    "ts_prec": "EXACT",
-                    "ts_prec_reason": None,
-                },
-            }
+            reaction_command_from_wire(
+                {
+                    "event_id": f"e{index}",
+                    "token_id": f"t{index}",
+                    "checkpoint": "PRE_1H",
+                    "anchor": {
+                        "type": "T1",
+                        "ts": "2026-10-17T12:00:00Z",
+                        "ts_prec": "EXACT",
+                        "ts_prec_reason": None,
+                    },
+                }
+            )
         )
     before = await repo.list("out.reaction_checkpoints")
     requests: list[dict[str, JsonValue]] = [
@@ -196,7 +209,7 @@ async def concurrent_change_scope(repo: MemoryRepository | PostgresRepository) -
     ]
     gated = True
     tasks = [
-        asyncio.create_task(scheduler.reaction_capture(request))
+        asyncio.create_task(scheduler.reaction_capture(reaction_command_from_wire(request)))
         for scheduler, request in zip(schedulers, requests, strict=True)
     ]
     try:
@@ -226,7 +239,7 @@ async def concurrent_change_scope(repo: MemoryRepository | PostgresRepository) -
     )
     assert owner.marker_sha256 == sha256(marker)
     repeated = await schedulers[0 if winner.event_id == "e0" else 1].reaction_capture(
-        requests[0 if winner.event_id == "e0" else 1]
+        reaction_command_from_wire(requests[0 if winner.event_id == "e0" else 1])
     )
     assert isinstance(repeated, AppliedReactionChange) and repeated.event_id == winner.event_id
     assert market.snapshot.await_count == 4
@@ -256,17 +269,19 @@ async def test_postgres_failed_scope_write_rolls_back_marker_and_retry_is_bound(
         market = SimpleNamespace(snapshot=AsyncMock(return_value={}))
         scheduler = Scheduler(repo, ReceiptSettings(), market, None, versions=fixture_versions())
         captured = await scheduler.reaction_capture(
-            {
-                "event_id": "e",
-                "token_id": "t",
-                "checkpoint": "PRE_1H",
-                "anchor": {
-                    "type": "T1",
-                    "ts": "2026-10-17T12:00:00Z",
-                    "ts_prec": "EXACT",
-                    "ts_prec_reason": None,
-                },
-            }
+            reaction_command_from_wire(
+                {
+                    "event_id": "e",
+                    "token_id": "t",
+                    "checkpoint": "PRE_1H",
+                    "anchor": {
+                        "type": "T1",
+                        "ts": "2026-10-17T12:00:00Z",
+                        "ts_prec": "EXACT",
+                        "ts_prec_reason": None,
+                    },
+                }
+            )
         )
         assert isinstance(captured, CapturedReaction)
         original = await repo.get("out.reaction_checkpoints", captured.checkpoint_key)
@@ -294,17 +309,17 @@ async def test_postgres_failed_scope_write_rolls_back_marker_and_retry_is_bound(
                 FOR EACH ROW EXECUTE FUNCTION public.reject_test_reaction_owner()
             """)
         with pytest.raises(CheckViolation, match="synthetic ownership persistence refusal"):
-            await scheduler.reaction_capture(request)
+            await scheduler.reaction_capture(reaction_command_from_wire(request))
         assert await repo.get("ops.scheduler_checkpoints", "reaction-change:rollback") is None
         assert await repo.get("ops.scheduler_checkpoints", "reaction-change-owner:rollback") is None
         assert await repo.list("out.reaction_checkpoints") == [original]
         async with await AsyncConnection.connect(repo.database_url, autocommit=True) as connection:
             await connection.execute("DROP TRIGGER reject_test_reaction_owner ON ops.scheduler_checkpoints")
             await connection.execute("DROP FUNCTION public.reject_test_reaction_owner()")
-        result = await scheduler.reaction_capture(request)
+        result = await scheduler.reaction_capture(reaction_command_from_wire(request))
         assert isinstance(result, UnchangedReaction) and result.event_id == "e"
         assert await repo.get("out.reaction_checkpoints", captured.checkpoint_key) == original
-        replayed = await scheduler.reaction_capture(request)
+        replayed = await scheduler.reaction_capture(reaction_command_from_wire(request))
         assert (
             isinstance(replayed, AppliedReactionChange)
             and replayed.data_fingerprint == result.data_fingerprint
@@ -318,17 +333,19 @@ async def test_retained_capture_without_fingerprint_is_explicit_and_never_rewrit
     market = SimpleNamespace(snapshot=AsyncMock(return_value={}))
     scheduler = Scheduler(original_repo, ReceiptSettings(), market, None, versions=fixture_versions())
     receipt = await scheduler.reaction_capture(
-        {
-            "event_id": "e",
-            "token_id": "t",
-            "checkpoint": "PRE_1H",
-            "anchor": {
-                "type": "T1",
-                "ts": "2026-10-17T12:00:00Z",
-                "ts_prec": "EXACT",
-                "ts_prec_reason": None,
-            },
-        }
+        reaction_command_from_wire(
+            {
+                "event_id": "e",
+                "token_id": "t",
+                "checkpoint": "PRE_1H",
+                "anchor": {
+                    "type": "T1",
+                    "ts": "2026-10-17T12:00:00Z",
+                    "ts_prec": "EXACT",
+                    "ts_prec_reason": None,
+                },
+            }
+        )
     )
     assert isinstance(receipt, CapturedReaction)
     original = await original_repo.get("out.reaction_checkpoints", receipt.checkpoint_key)
@@ -337,7 +354,9 @@ async def test_retained_capture_without_fingerprint_is_explicit_and_never_rewrit
     historical_repo = MemoryRepository()
     await historical_repo.put("out.reaction_checkpoints", receipt.checkpoint_key, retained, immutable=True)
     historical = Scheduler(historical_repo, ReceiptSettings(), None, None, versions=fixture_versions())
-    observed = await historical.reaction_capture({"event_id": "e", "token_id": "t", "checkpoint": "PRE_1H"})
+    observed = await historical.reaction_capture(
+        ReactionLookupCommand.model_validate({"event_id": "e", "token_id": "t", "checkpoint": "PRE_1H"})
+    )
     assert isinstance(observed, HistoricalCapturedReaction)
     assert observed.revision == 1 and observed.data_fingerprint is None
     assert observed.checkpoint_key == receipt.checkpoint_key

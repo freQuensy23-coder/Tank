@@ -5,11 +5,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 from foundation_helpers import object_field
+from pydantic import JsonValue
 from scheduler_support import operational_reaction_services
 from source_support import fixture_request_budgets, fixture_versions
 
 from tank.analysis.page_access import LivePageAccess
 from tank.analysis.watch_contracts import WatchCondition, WatchLeaf
+from tank.contracts.scheduler_commands import ReactionTarget, reaction_command_from_wire
 from tank.contracts.scheduler_results import CapturedReaction, CoalescedReaction
 from tank.models import Record
 from tank.runtime_contracts import ConditionFiredMessage, parse_agent_message
@@ -17,7 +19,7 @@ from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.time_precision import Timestamp, propagate_timestamp
-from tank.util import clock_iso, iso, utcnow
+from tank.util import clock_iso, iso, sha256, utcnow
 
 
 @pytest.mark.asyncio
@@ -124,8 +126,8 @@ async def test_pre_event_capture_uses_pre_window_and_is_immutable(monkeypatch: p
         "anchor": {"type": "T1", "ts": iso(now)},
         "retro": True,
     }
-    await scheduler.reaction_capture(payload)
-    await scheduler.reaction_capture(payload)
+    await scheduler.reaction_capture(reaction_command_from_wire(payload))
+    await scheduler.reaction_capture(reaction_command_from_wire(payload))
     args, kwargs = market.snapshot.call_args
     assert args[0] == "test:T"
     assert args[1].value == iso(now)
@@ -594,13 +596,15 @@ async def test_post72_reaction_uses_cumulative_event_derivatives(monkeypatch: py
         versions=fixture_versions(),
     )
     await scheduler.reaction_capture(
-        {
-            "event_id": "e",
-            "token_id": "T",
-            "checkpoint": "POST_72H",
-            "anchor": {"type": "T1", "ts": iso(now - timedelta(hours=72))},
-            "retro": False,
-        }
+        reaction_command_from_wire(
+            {
+                "event_id": "e",
+                "token_id": "T",
+                "checkpoint": "POST_72H",
+                "anchor": {"type": "T1", "ts": iso(now - timedelta(hours=72))},
+                "retro": False,
+            }
+        )
     )
     record = (await repo.list("out.reaction_checkpoints"))[0]
     assert record["oi_native_chg_pct"] == 12 and record["oi_class"] == "REAL_NATIVE"
@@ -768,13 +772,15 @@ async def test_reaction_cpu_computation_does_not_block_async_heartbeat(
     heartbeat_task = asyncio.create_task(heartbeat())
     try:
         await scheduler.reaction_capture(
-            {
-                "event_id": "e",
-                "token_id": "T",
-                "checkpoint": "POST_1H",
-                "anchor": {"type": "T1", "ts": iso(now - timedelta(hours=1))},
-                "retro": False,
-            }
+            reaction_command_from_wire(
+                {
+                    "event_id": "e",
+                    "token_id": "T",
+                    "checkpoint": "POST_1H",
+                    "anchor": {"type": "T1", "ts": iso(now - timedelta(hours=1))},
+                    "retro": False,
+                }
+            )
         )
         assert loop_advanced.is_set()
     finally:
@@ -813,11 +819,13 @@ async def test_reaction_revision_appends_reasoned_frozen_history_without_duplica
         "anchor": {"type": "T1", "ts": iso(now - timedelta(hours=1))},
         "retro": True,
     }
-    await scheduler.reaction_capture(original)
+    await scheduler.reaction_capture(reaction_command_from_wire(original))
     frozen = deepcopy(await repo.get("out.reaction_checkpoints", "e:T:POST_1H:1"))
     with pytest.raises(ValueError, match="reason"):
         await scheduler.reaction_capture(
-            {"event_id": "e", "token_id": "T", "checkpoint": "POST_1H", "revision": 2}
+            reaction_command_from_wire(
+                {"event_id": "e", "token_id": "T", "checkpoint": "POST_1H", "revision": 2}
+            )
         )
     revision = {
         "event_id": "e",
@@ -826,9 +834,9 @@ async def test_reaction_revision_appends_reasoned_frozen_history_without_duplica
         "revision": 2,
         "reason": "Late archive trades filled an exchange gap",
     }
-    await scheduler.reaction_capture(revision)
-    await scheduler.reaction_capture(revision)
-    await scheduler.reaction_capture(original)
+    await scheduler.reaction_capture(reaction_command_from_wire(revision))
+    await scheduler.reaction_capture(reaction_command_from_wire(revision))
+    await scheduler.reaction_capture(reaction_command_from_wire(original))
     rows = await repo.list("out.reaction_checkpoints")
     assert len(rows) == 2 and (await repo.get("out.reaction_checkpoints", "e:T:POST_1H:1")) == frozen
     latest = await repo.get("out.reaction_checkpoints", "e:T:POST_1H:2")
@@ -1300,7 +1308,8 @@ async def test_reaction_measurement_releases_database_scope_and_duplicate_commit
         "anchor": {"type": "T1", "ts": iso(utcnow() - timedelta(hours=1))},
     }
     first, duplicate = await asyncio.gather(
-        scheduler.reaction_capture(payload), scheduler.reaction_capture(payload)
+        scheduler.reaction_capture(reaction_command_from_wire(payload)),
+        scheduler.reaction_capture(reaction_command_from_wire(payload)),
     )
     assert first == duplicate
     assert len(await repo.list("out.reaction_checkpoints")) == 1
@@ -1313,26 +1322,28 @@ async def test_reaction_creation_registers_only_five_post_jobs_and_starts_pre_wi
     repo = MemoryRepository()
     now = utcnow()
     event = {"event_id": "new-major", "public_at": iso(now), "public_at_prec": "EXACT"}
+    started, release = asyncio.Event(), asyncio.Event()
+    measured_anchors: list[Timestamp] = []
+
+    async def snapshot(
+        token_id: str, cutoff: Timestamp, *, anchor: dict[str, JsonValue], scope: str
+    ) -> dict[str, JsonValue]:
+        measured_anchors.append(propagate_timestamp(anchor, "ts"))
+        started.set()
+        await release.wait()
+        return {}
+
+    market = SimpleNamespace(snapshot=AsyncMock(side_effect=snapshot))
     scheduler = Scheduler(
         repo,
         Settings(),
-        object(),
+        market,
         None,
         thresholds=Settings(_env_file=None).thresholds(),
         versions=fixture_versions(),
     )
     scheduler.latest_assessment = AsyncMock(return_value={"class": "MAJOR"})
     scheduler.analysis_tokens = AsyncMock(return_value={"token:T"})
-    started, release = asyncio.Event(), asyncio.Event()
-    captured = []
-
-    async def capture(payload, *, wait_for_slot=False) -> None:
-        assert wait_for_slot
-        captured.append(payload)
-        started.set()
-        await release.wait()
-
-    scheduler.reaction_capture = capture
     try:
         await asyncio.wait_for(scheduler.ensure_reactions(event, now=now), timeout=1)
         await asyncio.wait_for(started.wait(), timeout=1)
@@ -1347,12 +1358,18 @@ async def test_reaction_creation_registers_only_five_post_jobs_and_starts_pre_wi
         }
         assert len(jobs) == 5
         assert len(scheduler.background) == 1
-        assert len(captured) == 1 and captured[0]["checkpoint"] == "PRE_24H"
-        assert captured[0]["retro"] is True
+        assert len(measured_anchors) == 1
+        assert measured_anchors[0].value == iso(now - timedelta(hours=24))
         assert all(j["priority"] == 2 and j["max_attempts"] == 5 for j in jobs)
         release.set()
         await asyncio.gather(*scheduler.background.values())
-        assert [p["checkpoint"] for p in captured] == ["PRE_24H", "PRE_4H", "PRE_1H"]
+        checkpoints = await repo.list("out.reaction_checkpoints")
+        first = next(record for record in checkpoints if record["checkpoint"] == "PRE_24H")
+        assert first["retro"] is True and len(checkpoints) == 3
+        assert market.snapshot.await_count == 3
+        assert [stamp.value for stamp in measured_anchors] == [
+            iso(now - timedelta(hours=hours)) for hours in (24, 4, 1)
+        ]
     finally:
         await scheduler.close()
 
@@ -1380,13 +1397,15 @@ async def test_reaction_pre_capture_restart_resumes_only_missing_immutable_rows(
     first.latest_assessment = AsyncMock(return_value={"class": "MAJOR"})
     first.analysis_tokens = AsyncMock(return_value={"token:T"})
     original = await first.reaction_capture(
-        {
-            "event_id": event["event_id"],
-            "token_id": "token:T",
-            "checkpoint": "PRE_24H",
-            "anchor": first.anchor(event),
-            "retro": True,
-        }
+        reaction_command_from_wire(
+            {
+                "event_id": event["event_id"],
+                "token_id": "token:T",
+                "checkpoint": "PRE_24H",
+                "anchor": first.anchor(event),
+                "retro": True,
+            }
+        )
     )
     assert isinstance(original, CapturedReaction)
     original_record = await repo.get("out.reaction_checkpoints", original.checkpoint_key)
@@ -1781,7 +1800,13 @@ async def test_queued_duplicate_late_revision_is_skipped_at_run_time() -> None:
     """03 §8.6: with another automatic revision of the same checkpoint still
     queued, a running one returns at once; the queued one measures all data."""
     repo = MemoryRepository()
-    payload = {"event_id": "e", "token_id": "t", "checkpoint": "PRE_4H", "automatic_revision": True}
+    payload = {
+        "event_id": "e",
+        "token_id": "t",
+        "checkpoint": "PRE_4H",
+        "automatic_revision": True,
+        "reason": "Observed capture completion",
+    }
     queued = await repo.enqueue(
         "REACTION_CAPTURE", dict(payload, change_id="newer"), "reaction-late:x:PRE_4H", priority=2
     )
@@ -1794,7 +1819,7 @@ async def test_queued_duplicate_late_revision_is_skipped_at_run_time() -> None:
         thresholds=Settings(_env_file=None).thresholds(),
         versions=fixture_versions(),
     )
-    result = await scheduler.reaction_capture(dict(payload, change_id="older"))
+    result = await scheduler.reaction_capture(reaction_command_from_wire(dict(payload, change_id="older")))
     assert isinstance(result, CoalescedReaction) and result.coalesced_into == queued["job_id"]
     market.snapshot.assert_not_called()
 
@@ -1846,13 +1871,15 @@ async def test_reaction_measurements_are_limited_and_extra_jobs_requeue() -> Non
         for checkpoint in checkpoints
     ]
     running = [
-        asyncio.create_task(scheduler.reaction_capture(payload))
+        asyncio.create_task(scheduler.reaction_capture(reaction_command_from_wire(payload)))
         for payload in payloads[:REACTION_MEASUREMENT_SLOTS]
     ]
     await asyncio.wait_for(at_capacity.wait(), 1)
     with pytest.raises(DeliveryDeferred):
-        await scheduler.reaction_capture(payloads[-1])
-    waiting = asyncio.create_task(scheduler.reaction_capture(payloads[-1], wait_for_slot=True))
+        await scheduler.reaction_capture(reaction_command_from_wire(payloads[-1]))
+    waiting = asyncio.create_task(
+        scheduler.reaction_capture(reaction_command_from_wire(payloads[-1]), wait_for_slot=True)
+    )
     await asyncio.sleep(0)
     assert not waiting.done() and len(started) == REACTION_MEASUREMENT_SLOTS
     release.set()
@@ -1861,7 +1888,7 @@ async def test_reaction_measurements_are_limited_and_extra_jobs_requeue() -> Non
     assert {receipt.checkpoint for receipt in receipts if isinstance(receipt, CapturedReaction)} == set(
         checkpoints
     )
-    assert await scheduler.reaction_capture(payloads[-1]) == receipts[-1]
+    assert await scheduler.reaction_capture(reaction_command_from_wire(payloads[-1])) == receipts[-1]
     records = await repo.list("out.reaction_checkpoints")
     assert len(records) == 3 and market.snapshot.await_count == 3
     for receipt in receipts:
@@ -2129,7 +2156,7 @@ async def test_pre_windows_each_read_only_their_checkpoint_window(monkeypatch: p
             "anchor": {"type": "T1", "ts": iso(now)},
             "retro": True,
         }
-        await scheduler.reaction_capture(payload, wait_for_slot=True)
+        await scheduler.reaction_capture(reaction_command_from_wire(payload), wait_for_slot=True)
     assert sorted(calls) == sorted(
         (iso(now - timedelta(seconds=s)), "REACTION") for s in (86400, 14400, 3600)
     )
@@ -2147,10 +2174,10 @@ async def test_latest_revision_is_read_as_metadata_not_the_whole_row() -> None:
         "token_id": "t",
         "checkpoint": "PRE_1H",
         "revision": 2,
-        "anchor": {"ts": iso(utcnow())},
+        "anchor": {"type": "T1", "ts": iso(utcnow()), "ts_prec": "EXACT", "ts_prec_reason": None},
         "retro": True,
         "reason": "Late capture completed: x",
-        "data_fingerprint": "fp",
+        "data_fingerprint": sha256({"captured_fixture": "metadata-only"}),
         "market_truth": {"blob": "x" * 100_000},
     }
     await repo.put("out.reaction_checkpoints", "e:t:PRE_1H:1", dict(row, revision=1))
@@ -2168,8 +2195,12 @@ async def test_latest_revision_is_read_as_metadata_not_the_whole_row() -> None:
         raise AssertionError("full row read: " + key)
 
     repo.get = no_full_get
-    latest = await scheduler._latest_reaction_revision(row)
-    assert latest["revision"] == 2 and latest["data_fingerprint"] == "fp" and "market_truth" not in latest
+    latest = await scheduler._latest_reaction_revision(
+        ReactionTarget.model_validate({field: row[field] for field in ReactionTarget.model_fields})
+    )
+    assert latest is not None and latest.revision == 2
+    assert latest.data_fingerprint == row["data_fingerprint"]
+    assert "market_truth" not in latest.model_dump()
 
 
 @pytest.mark.asyncio

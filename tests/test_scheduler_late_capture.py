@@ -8,9 +8,11 @@ from pathlib import Path
 
 import httpx
 import pytest
+from pydantic import JsonValue
 from runtime_public_fixtures import public_runtime
 from source_support import fixture_http_admission, fixture_versions
 
+from tank.contracts.scheduler_commands import reaction_command_from_wire
 from tank.contracts.scheduler_results import CapturedReaction, UnchangedReaction
 from tank.market.service import MarketService
 from tank.scheduler import Scheduler
@@ -128,7 +130,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
             "anchor": {"type": "T1", "ts": iso(anchor), "ts_prec": "EXACT", "ts_prec_reason": None},
             "retro": True,
         }
-        receipt = await scheduler.reaction_capture(payload)
+        receipt = await scheduler.reaction_capture(reaction_command_from_wire(payload))
         assert isinstance(receipt, CapturedReaction)
         original = await repo.get("out.reaction_checkpoints", receipt.checkpoint_key)
         assert original is not None
@@ -248,7 +250,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         jobs = [j async for j in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE"})]
         assert jobs and all(job["payload"]["automatic_revision"] for job in jobs)
         for job in jobs:
-            await scheduler.reaction_capture(job["payload"])
+            await scheduler.reaction_capture(reaction_command_from_wire(job["payload"]))
 
             await repo.put("ops.jobs", job["job_id"], {**job, "status": "DONE"})
         revised = await repo.get("out.reaction_checkpoints", "e:test:T:PRE_1H:2")
@@ -258,7 +260,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         assert revised["reason"].startswith("Late capture completed:")
         assert await repo.get("out.reaction_checkpoints", "e:test:T:PRE_1H:1") == original
         await scheduler.detect_late_data(utcnow())
-        await scheduler.reaction_capture(jobs[0]["payload"])
+        await scheduler.reaction_capture(reaction_command_from_wire(jobs[0]["payload"]))
         assert len([row async for row in repo.iter_all("out.reaction_checkpoints")]) == 2
 
         unchanged = dict(
@@ -266,7 +268,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
             change_id=jobs[0]["payload"]["change_id"] + ":same",
             reason="Late duplicate capture",
         )
-        result = await scheduler.reaction_capture(unchanged)
+        result = await scheduler.reaction_capture(reaction_command_from_wire(unchanged))
         assert isinstance(result, UnchangedReaction) and result.changed is False
         assert len([row async for row in repo.iter_all("out.reaction_checkpoints")]) == 2
 
@@ -315,7 +317,12 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         assert len(live_jobs) == 1 and "CAP-LIVE-" in live_jobs[0]["payload"]["change_id"]
 
         async with public_runtime(repo, tmp_path / "runtime", monkeypatch) as (runtime, _):
-            runtime.handlers = {"REACTION_CAPTURE": scheduler.reaction_capture}
+
+            async def capture_wire(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
+                receipt = await scheduler.reaction_capture(reaction_command_from_wire(payload))
+                return receipt.model_dump(mode="json")
+
+            runtime.handlers = {"REACTION_CAPTURE": capture_wire}
             stop = asyncio.Event()
             worker = asyncio.create_task(runtime.worker(stop))
             try:

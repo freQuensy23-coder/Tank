@@ -7,6 +7,8 @@ from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.scalars import FalseFlag
+from tank.contracts.scheduler_commands import ReactionCheckpoint, ReactionSubject
+from tank.contracts.scheduler_commands import ReactionRevision as ReactionRevision
 from tank.util import sha256
 
 type SchedulerIdentity = Annotated[str, Field(min_length=1, pattern=r"\S")]
@@ -42,7 +44,6 @@ class ConditionEvaluationResult(DomainModel):
         return self
 
 
-type ReactionRevision = Annotated[int, Field(ge=1)]
 type ReactionFingerprint = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
@@ -50,7 +51,7 @@ class ReactionReceiptIdentity(DomainModel):
     checkpoint_key: SchedulerIdentity
     event_id: SchedulerIdentity
     token_id: SchedulerIdentity
-    checkpoint: SchedulerIdentity
+    checkpoint: ReactionCheckpoint
 
 
 class CapturedReaction(ReactionReceiptIdentity):
@@ -69,7 +70,7 @@ class ReactionChangeTarget(DomainModel):
     change_id: SchedulerIdentity
     event_id: SchedulerIdentity
     token_id: SchedulerIdentity
-    checkpoint: SchedulerIdentity
+    checkpoint: ReactionCheckpoint
 
 
 class UnchangedReaction(ReactionChangeTarget):
@@ -208,3 +209,12 @@ def reaction_capture_result(value: ReactionCaptureResult) -> ReactionCaptureResu
             return CoalescedReaction.model_validate(value)
         case _:
             raise ValueError("Reaction execution did not produce an admitted receipt")
+
+
+class ReactionPackState(ReactionSubject):
+    rwp_id: SchedulerIdentity
+
+
+class ReactionPackCheckpoint(DomainModel):
+    checkpoint_id: SchedulerIdentity
+    state: ReactionPackState
