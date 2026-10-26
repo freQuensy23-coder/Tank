@@ -1675,3 +1675,25 @@ and the assigned vendor programs remain open on their separate workstreams.
 Exact retained map/default/None classes and behavior controls are recorded by
 symbol/site in agents-exceptions.json. This bounded cohort does not waive any
 of the remaining global work.
+
+### Inactive native file preparation phases
+
+The preserved worker/native branch now defines inward native_files records for
+fresh NOT_REQUESTED cache state, durable UPLOAD_UNCONFIRMED intent, an actual
+FILE_ID_OBSERVED receipt, durable MOUNT_UNCONFIRMED intent and MOUNT_CONFIRMED
+resource receipt. Source scope carries the actual question/session/cache key,
+cached digest, filename, MIME and byte count. Controller occurrence and resolved
+versions are separate from native IDs; fresh cache state does not invent a
+controller version or native ID. Missing legacy preparation remains unreported.
+No parser or writer initializes missing state on reads.
+
+Ten pure phase controls pass in 1.33 seconds with zero skips, including known
+zero-byte cache, unknown occurrence refusal, nested constructed owner mutation
+refusal and canonical workspace target refusal. Independent source/test strict
+checks pass. This is an inactive contract checkpoint, not native upload or
+mount recovery proof. SessionService.prepare_attachments still has its old
+untyped upload/mount implementation. Required route beta selection, durable
+phase persistence, scoped resource reconciliation, historical pointer handling,
+pre-upload ownership admission and paired fresh-cache writer remain open.
+Pinned file/resource routes provide no upload/mount Idempotency-Key guarantee;
+an unconfirmed upload without an observed ID cannot authorize a blind repost.
