@@ -24,8 +24,10 @@ from pydantic import JsonValue
 from tank import ops_cards
 from tank.analysis.cards import telegram_card_html
 from tank.contracts.native_readback import NativeSessionMissing
+from tank.contracts.telegram_wire import TelegramMessageReceipt, TelegramUpdateCursor, TelegramUpdateReceipt
 from tank.ops_progress import STAGES
 from tank.runtime_contracts import TelegramAnswerJob
+from tank.telegram_api import message_receipt, response_result, update_receipts
 from tank.telegram_rich import message_text, rich_message_text
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import new_id, parse_time, sha256, utcnow
@@ -292,16 +294,9 @@ class TelegramInbox:
     def url(self, method):
         return f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}"
 
-    async def call(self, method, body):
+    async def call(self, method: str, body: dict[str, JsonValue]) -> JsonValue:
         response = await self.http.post(self.url(method), json=body)
-        data = response.json()
-        if response.status_code != 200 or not data.get("ok"):
-            retry = (data.get("parameters") or {}).get("retry_after", 1)
-            error = RuntimeError(f"Telegram {method} rejected (HTTP {response.status_code})")
-            error.retry_after = retry
-            error.status = response.status_code
-            raise error
-        return data["result"]
+        return response_result(response.content, method=method, status=response.status_code)
 
     async def download(self, file_id):
         try:
@@ -391,18 +386,24 @@ class TelegramInbox:
             self.bot_id = (await self.call("getMe", {}))["id"]
         return self.bot_id
 
-    async def poll(self, timeout=POLL_TIMEOUT_S):
-        state = await self.repo.get("ops.source_checkpoints", CURSOR_KEY) or {}
-        offset = int(state.get("cursor") or 0)
+    async def poll(self, timeout: int = POLL_TIMEOUT_S) -> int:
+        state = await self.repo.get("ops.source_checkpoints", CURSOR_KEY)
+        if state is None:
+            offset = 0
+        else:
+            cursor = TelegramUpdateCursor.model_validate(
+                {"source_id": state["source_id"], "cursor": state["cursor"]}
+            )
+            offset = int(cursor.cursor)
         updates = await self.call(
             "getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["message"]}
         )
-        for update in updates:
-            message = update.get("message")
-            if message and message.get("chat") and message.get("message_id") is not None:
-                await self.store(message, update["update_id"])
-            offset = max(offset, int(update["update_id"]) + 1)
-        if updates:
+        receipts = update_receipts(updates)
+        for update in receipts:
+            if isinstance(update.payload, TelegramMessageReceipt) and update.payload.identity.message_id != 0:
+                await self.store_receipt(update.payload, update.update_id)
+            offset = max(offset, update.update_id + 1)
+        if receipts:
             await self.repo.put(
                 "ops.source_checkpoints",
                 CURSOR_KEY,
@@ -412,24 +413,32 @@ class TelegramInbox:
                     **collection_clock(utcnow()).fields("updated_at"),
                 },
             )
-        return len(updates)
+        return len(receipts)
 
-    async def store(self, message, update_id):
-        key = f"{message['chat']['id']}:{message['message_id']}"
+    async def store(self, message: dict[str, JsonValue], update_id: int) -> None:
+        receipt = message_receipt(message)
+        update = TelegramUpdateReceipt.model_validate({"update_id": update_id, "payload": receipt})
+        return await self.store_receipt(receipt, update.update_id)
+
+    async def store_receipt(self, receipt: TelegramMessageReceipt, update_id: int) -> None:
+        identity = receipt.identity
+        if identity.message_id == 0:
+            raise ValueError("Telegram message is not yet usable")
+        key = f"{identity.chat.id}:{identity.message_id}"
         if await self.repo.get("ops.telegram_messages", key):
             return
         await self.repo.put(
             "ops.telegram_messages",
             key,
             {
-                "chat_id": str(message["chat"]["id"]),
-                "message_id": int(message["message_id"]),
-                "user_id": str((message.get("from") or {}).get("id", "")),
-                "update_id": int(update_id),
-                "date": int(message.get("date") or 0),
-                "pair_bucket": int(message.get("date") or 0) // PAIR_WINDOW_S,
+                "chat_id": str(identity.chat.id),
+                "message_id": identity.message_id,
+                "user_id": str(identity.sender.id) if identity.sender is not None else None,
+                "update_id": update_id,
+                "date": identity.date,
+                "pair_bucket": identity.date // PAIR_WINDOW_S,
                 "status": "RECEIVED",
-                "message": message,
+                "message": receipt.source_message,
                 **collection_clock(utcnow()).fields("received_at"),
             },
         )
@@ -606,7 +615,9 @@ class TelegramInbox:
 
     async def companion(self, row, *, forwarded):
         """The comment sent with a forward (or the forward sent with a comment) by the same user."""
-        date = row["message"].get("date", 0)
+        if row["user_id"] is None:
+            return None
+        date = row["message"]["date"]
         candidates = []
         bucket = date // PAIR_WINDOW_S
         nearby = []
