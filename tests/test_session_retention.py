@@ -265,3 +265,19 @@ async def test_sweep_skips_retained_sessions_until_their_retention_passes() -> N
         stop.clear()
         await service.run(stop)
     assert checked == ["ses_1"]
+
+
+@pytest.mark.parametrize("lifecycle_reported", [False, True])
+async def test_only_the_actual_event_lifecycle_can_authorize_native_archive(
+    lifecycle_reported: bool,
+) -> None:
+    repo = MemoryRepository()
+    await seed(repo, age_days=30, event="CLOSED")
+    event = {"event_id": "evt_1", "status": "CLOSED"}
+    if lifecycle_reported:
+        event["lifecycle"] = "CLOSED"
+    await repo.put("evt.events", "evt_1", event)
+    posts, session = await finish(repo)
+    assert bool(posts) is lifecycle_reported
+    assert session["status"] == ("ENDED" if lifecycle_reported else "OPEN")
+    assert "archived_at" in session if lifecycle_reported else "archived_at" not in session
