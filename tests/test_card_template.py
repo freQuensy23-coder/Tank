@@ -603,7 +603,7 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
         outlook = text.split("OUTLOOK:", 1)[1].split("WHAT TO DO:", 1)[0]
         assert all("• " + name + ": " in outlook for name in ("Base", "Upside", "Failure"))
         assert not any(now in line for line in lines if line.startswith("MARKET TRUTH:"))
-        assert len(text) <= 3500 and "linter" not in alert
+        assert "linter" not in alert
         assert len(await repo.list("ops.jobs", filters={"type": "DELIVER"})) == 1
         assert not any(row.get("status") == "SENT" for row in await repo.list("out.deliveries"))
         sent = []
@@ -667,7 +667,6 @@ def test_public_clock_preserves_declared_precision_without_inventing_intraday_ti
     card = render(inputs)
     assert "public " + expected + " · known 12:31Z" in card
     assert "WHAT TO DO: WAIT" in card
-    assert len(card) <= 3500
 
 
 def test_end_labelled_bucket_and_unknown_edge_are_not_reinterpreted():
@@ -773,27 +772,14 @@ def test_each_layer_reason_is_visible_without_generic_rule_reference_or_mutation
     assert "Additional independent uncertainty" in render(inputs)
 
 
-def test_card_length_diagnostics_preserve_full_preview_and_structured_guidance():
-    import json
-
+def test_long_card_is_rendered_whole_without_a_tank_length_limit():
     inputs = card_inputs()
     inputs[0]["claims"][0]["object"] = "Unchanged material uncertainty " * 170
     original = deepcopy(inputs)
-    with pytest.raises(ValueError, match="CARD_LENGTH") as caught:
-        render(inputs)
-    diagnostic = json.loads(str(caught.value).split(": ", 1)[1])
-    assert diagnostic["max"] == 5000
-    assert diagnostic["actual"] == len(diagnostic["preview"])
-    assert diagnostic["excess"] == diagnostic["actual"] - 5000
-    assert (
-        sum(s["chars"] for s in diagnostic["sections"]) + diagnostic["newline_chars"] == diagnostic["actual"]
-    )
-    assert inputs[0]["claims"][0]["object"] in diagnostic["preview"]
-    assert "publish-only shortening may be insufficient" in diagnostic["guidance"]
-    assert any("supersedes_claim_ids" in f for f in diagnostic["editable_fields"])
+    text = render(inputs)
+    assert len(text) > 5000
+    assert inputs[0]["claims"][0]["object"] in text
     assert inputs == original
-    inputs[0]["thresholds"] = {"card_max_chars": 100000}
-    assert render(inputs) == diagnostic["preview"]
 
 
 def test_market_truth_names_venue_oi_class_markup_and_spot_breadth():
@@ -985,24 +971,15 @@ def test_what_precedes_analysis_and_preserves_every_other_section(kind):
     assert rich_message_text(rich).splitlines()[1] == "WHAT: " + what
 
 
-def test_what_counts_toward_card_limit_without_truncation():
-    import json
-
+def test_what_is_kept_whole_and_cards_above_the_old_cap_publish():
     from tank.telegram_rich import card_rich_message, rich_message_text
 
     event, assessment, beneficiary, decision, truth = card_inputs()
     args = (event, assessment, [beneficiary], [decision], [truth])
     original = compose_card(*args)
     what = "The protocol now connects users to external trading venues."
-    event["thresholds"] = {"card_max_chars": len(original)}
-    with pytest.raises(ValueError, match="CARD_LENGTH") as caught:
-        compose_card(*args, what=what)
-    diagnostics = json.loads(str(caught.value).removeprefix("CARD_LENGTH: "))
-    assert diagnostics["excess"] == len("WHAT: " + what + "\n")
-    assert "WHAT: " + what in diagnostics["preview"]
-    assert "publish_card.what / verdict / why" in diagnostics["editable_fields"]
-    assert any(section["section"] == "WHAT" for section in diagnostics["sections"])
-    event.pop("thresholds")
-    rich_limit = len(rich_message_text(card_rich_message(original, assessment)))
-    with pytest.raises(ValueError, match="CARD_LENGTH"):
-        card_rich_message(compose_card(*args, what=what), assessment, max_chars=rich_limit)
+    assert len(compose_card(*args, what=what)) == len(original) + len("WHAT: " + what + "\n")
+    event["claims"][0]["object"] = "Unchanged material uncertainty " * 200
+    long_card = compose_card(*args, what=what)
+    assert len(long_card) > 5000 and "WHAT: " + what in long_card
+    assert "WHAT: " + what in rich_message_text(card_rich_message(long_card, assessment))

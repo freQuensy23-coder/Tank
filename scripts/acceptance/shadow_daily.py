@@ -49,7 +49,7 @@ WORDING = [
     "L11 accumulation only for move class SPOT_LED_ACCUMULATION",
     "L12 price up/flat with spot SELL: no weak/bearish, no absorption unless ABSORPTION CONFIRMED, alternatives printed",
     "VERIFIED / NOT VERIFIED line matches the stored claims (verified with source, unverified with what is missing)",
-    "<= 3 token blocks, <= 3,500 characters; an UPDATE replies to the first card's message",
+    "<= 3 token blocks; an UPDATE replies to the first card's message",
     "Delivery ledger: GENERATED -> SENT with message_ref; FAILED after retries has a DELIVERY_FAILED ops notice",
 ]
 

@@ -1,14 +1,13 @@
 """Template-first cards and publication policy; diagnostic wording is preserved."""
 
 import html
-import json
 import re
 from datetime import timedelta
 from decimal import Decimal
 from urllib.parse import urlsplit
 
 from tank.analysis.decisions import POSITIVE_ACTIONS
-from tank.telegram_rich import CARD_TEXT_LIMIT, score_summary
+from tank.telegram_rich import score_summary
 from tank.time_precision import bucket_duration, interval_bounds, propagate_timestamp
 from tank.util import parse_time, utcnow
 
@@ -104,7 +103,7 @@ def alert_gate(event, assessment, *, previous=None, decisions=None, now=None):
             not immediate
             and stamp
             and (parse_time(now) if now else utcnow()) - parse_time(stamp)
-            < timedelta(seconds=_limits(event)[1])
+            < timedelta(seconds=_update_interval_s(event))
         ):
             return False, "UPDATE_RATE_LIMIT"
         return True, "UPDATE"
@@ -201,9 +200,9 @@ def _percent(value):
     return _na(None) if value is None else format(Decimal(str(value)) * 100, ".2f") + "%"
 
 
-def _limits(event):
+def _update_interval_s(event):
     config = event.get("thresholds") or {}
-    return int(config.get("card_max_chars", CARD_TEXT_LIMIT)), int(config.get("update_rate_limit_s", 900))
+    return int(config.get("update_rate_limit_s", 900))
 
 
 def _unknown(dc):
@@ -325,7 +324,6 @@ def compose_card(
         market_truths = list(market_truths.values())
     dm = {d.get("token_id"): d for d in decisions}
     mm = {m.get("token_id"): m for m in market_truths}
-    max_chars, _ = _limits(event)
     token_labels = event.get("token_labels") or {}
     universe = set(token_labels)
 
@@ -638,33 +636,7 @@ def compose_card(
                 f"CONFIDENCE: {_na(outlook.get('confidence'), 'confidence unavailable')} — main unknown: "
                 + _main_unknown(outlook, decision, truth),
             ]
-    text = "\n".join(lines)
-    if len(text) > max_chars:
-        diagnostics = {
-            "actual": len(text),
-            "max": max_chars,
-            "excess": len(text) - max_chars,
-            "sections": [
-                {"line": i + 1, "section": line.split(":", 1)[0][:64], "chars": len(line)}
-                for i, line in enumerate(lines)
-            ],
-            "newline_chars": len(lines) - 1,
-            "editable_fields": [
-                "publish_card.what / verdict / why",
-                "claims.subject / predicate / object / verification_missing via explicit supersedes_claim_ids",
-                "set_beneficiaries.layer_reasons / no_credible_secondary_reason / edges[].causal_chain",
-                "set_assessment.assessment.impact_horizon.dependencies / time_to_materiality",
-            ],
-            "guidance": (
-                "Shorten agent-authored structured text as well as WHAT/verdict/WHY when needed; "
-                "publish-only shortening may be insufficient. Preserve all facts, remaining "
-                "uncertainties and required per-layer reasons. Replace claims explicitly; "
-                "do not invent verification or remove evidence. No text was truncated."
-            ),
-            "preview": text,
-        }
-        raise ValueError("CARD_LENGTH: " + json.dumps(diagnostics, ensure_ascii=False))
-    return text
+    return "\n".join(lines)
 
 
 def _market_breadth(truth, token):

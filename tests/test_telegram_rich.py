@@ -54,16 +54,16 @@ def test_native_table_preserves_zero_unknown_and_explanations_as_literal_text():
     assert set(message) == {"blocks"}
 
 
-def test_rich_size_check_counts_the_added_rationales_and_api_limits():
+def test_rich_size_check_counts_the_added_rationales_against_telegram_limits_only():
     data = assessment()
     data["dims"]["economic_directness"]["rationale"] = "x" * 5000
-    with pytest.raises(ValueError, match="CARD_LENGTH"):
-        card_rich_message(f"MAJOR\n{score_summary(data)}", data)
+    message = card_rich_message(f"MAJOR\n{score_summary(data)}", data)
+    assert len(rich_message_text(message)) > 5000
     data["dims"]["economic_directness"]["rationale"] = "x" * 32769
-    with pytest.raises(ValueError, match="maximum 32768"):
-        card_rich_message(f"MAJOR\n{score_summary(data)}", data, max_chars=100000)
+    with pytest.raises(ValueError, match="CARD_LENGTH: .*Telegram maximum 32768"):
+        card_rich_message(f"MAJOR\n{score_summary(data)}", data)
     with pytest.raises(ValueError, match="500 blocks"):
-        card_rich_message("\n".join(["line", score_summary({}), *(["line"] * 501)]), {}, max_chars=100000)
+        card_rich_message("\n".join(["line", score_summary({}), *(["line"] * 501)]), {})
 
 
 def test_rich_text_reader_handles_nested_blocks_and_formatting():

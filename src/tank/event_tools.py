@@ -2656,7 +2656,7 @@ class EventToolService:
             compose_card,
             publication_immediate,
         )
-        from tank.telegram_rich import CARD_TEXT_LIMIT, card_rich_message
+        from tank.telegram_rich import card_rich_message
 
         eid = a["event_id"]
         event = await self.require("evt.events", eid)
@@ -2968,9 +2968,7 @@ class EventToolService:
             verdict=verdict,
             why=why,
         )
-        rich_message = card_rich_message(
-            text, assessment, max_chars=event["thresholds"].get("card_max_chars", CARD_TEXT_LIMIT)
-        )
+        rich_message = card_rich_message(text, assessment)
         previous_failed = previous and bool(
             await self.repo.list_latest(
                 "out.deliveries",

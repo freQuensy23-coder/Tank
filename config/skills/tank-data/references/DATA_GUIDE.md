@@ -505,6 +505,7 @@ Fixture
 | `oi_obs`, `funding_obs`, `liq_obs`, `tickers_24h`, `trades` | (`instrument_id`, ts) | ClickHouse (daily partitions); `trades` (every print) 30 days. |
 | `market_truth`, `outlooks`, `decisions`, `contradictions`, `watch_conditions`, `calls` | ids | `market_truth` indexed by (`token_id`, `cutoff`). |
 | `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints`, `reviews` | ids | Append-only (UPDATE/DELETE rejected by trigger). |
+| `ops_cards` | (`chat_id`, `item_id`) | The "Tank Ops" card of each material and its Telegram message; mutable, edited as notices arrive (§7.6). |
 | `hot_tokens` | (`token_id`, `event_id`) | Hot set (§9); read on start to subscribe the hot tokens again. |
 | `jobs` | `job_id`; unique `idem_key` | The service's job queue (§3.8). |
 | `agent_sessions`, `tool_calls` | `session_id`, `call_id` | The OpenMA session of each event, and every tool call with its input, result and timing (§3.2). |
@@ -1122,11 +1123,19 @@ CREATE TABLE out.alerts (                              -- append-only, one row p
 
 CREATE TABLE out.ops_notices (                         -- append-only
   notice_id   text PRIMARY KEY,
-  kind        text NOT NULL CHECK (kind IN ('DELIVERY_FAILED','HEARTBEAT')),
-  subject_id  text,
+  kind        text NOT NULL CHECK (kind IN ('ITEM_PROGRESS','ENTRY_ERRORS','ENTRY_ERROR',
+                                            'DELIVERY_FAILED','HEARTBEAT')),
+  subject_id  text,                                    -- item_id / source_id / alert_id
   text        text NOT NULL,
   created_at  timestamptz NOT NULL,
-  created_by  text NOT NULL
+  created_by  text NOT NULL                            -- ops-progress | source-poller | delivery | scheduler
+);
+
+CREATE TABLE out.ops_cards (                           -- mutable: the Ops card of one material
+  item_id      text NOT NULL,
+  chat_id      text NOT NULL,
+  message_ref  text,                                   -- Telegram message edited in place
+  UNIQUE (chat_id, item_id)
 );
 
 CREATE TABLE out.deliveries (                          -- append-only ledger, one row per transition
@@ -1164,7 +1173,7 @@ CREATE INDEX ON ops.jobs (status, priority, run_after);
 CREATE TABLE ops.llm_usage (
   id                  bigserial PRIMARY KEY,
   at                  timestamptz NOT NULL,
-  call                text NOT NULL,                   -- FILTER | ROUTE (Jev) | SESSION | SCOUT
+  call                text NOT NULL,                   -- FILTER | ROUTE (Decision-1) | SESSION | SCOUT
   subject_id          text NOT NULL,                   -- item_id / event_id / alert_id / prp_id
   model               text NOT NULL,
   effort              text NOT NULL,
@@ -1172,7 +1181,8 @@ CREATE TABLE ops.llm_usage (
   cache_read_tokens   int NOT NULL,
   cache_write_tokens  int NOT NULL,
   output_tokens       int NOT NULL,
-  cost_usd            numeric(10,6) NOT NULL,
+  cost_usd            numeric(10,6),                   -- null when the provider reports no cost (Decision-1)
+  cost_reason         text,                            -- why cost_usd is null; unknown is never 0
   web_searches        int NOT NULL DEFAULT 0,
   stop_reason         text NOT NULL
 );

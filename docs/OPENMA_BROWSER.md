@@ -100,7 +100,7 @@ changes are not made durable by this adapter.
 
 ## Image
 
-`deploy/sandbox.Dockerfile` uses Python 3.12, includes the specified analysis
+`deploy/sandbox.Dockerfile` uses Python 3.13, includes the specified analysis
 libraries and PostgreSQL client, installs `playwright==1.64.0`, installs its
 matching Chromium with Linux system dependencies, and copies the worker.
 `PLAYWRIGHT_BROWSERS_PATH=/opt/playwright` locates image-owned browser binaries.
@@ -137,7 +137,7 @@ These checks were recorded on 17–18 October 2026 without application credentia
 | Default headless shell on 0.10.6, CPU1/2048, validated format-12 caches | Full 21-RPC real TS/VM contract passed: DOM/actions/PNG/continuity/isolation/profile persistence/real guest stderr framing; owned VM and record removed |
 | Combined default shell, daemon deadline cleanup and generated-cache image (4f) | Docker contracts passed; actual KVM cold and warm first open timed out, no DOM/PNG or fatal subtest reached |
 
-The image check imports every required analysis library, asserts Python 3.12
+The image check imports every required analysis library, asserts Python 3.13
 and Playwright 1.64.0, navigates a local HTTP fixture, fills/clicks/extracts text,
 validates a real PNG, and checks session isolation and profile persistence.
 Reproduce it against the built sandbox image:
@@ -145,7 +145,7 @@ Reproduce it against the built sandbox image:
 ```sh
 docker run --rm --network none \
   -v "$PWD/deploy/openma_browser/image-contract.py:/tmp/image-contract.py:ro" \
-  tank-analysis:python3.12-local python3 /tmp/image-contract.py
+  tank-analysis:python3.13-local python3 /tmp/image-contract.py
 ```
 
 The local adapter contract uses Node 24 or newer, a Python environment with

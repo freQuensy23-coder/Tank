@@ -14,11 +14,11 @@
 
 ## 1. Topology
 
-One Linux host runs everything in Docker Compose: the Tank service — one asynchronous Python process built from modules (§5) — in the container `tank`, the OpenMA server that hosts the agent sessions and their sandboxes in `openma`, PostgreSQL in `postgres` and ClickHouse, which holds all exchange market history, in `clickhouse`; data lives in Docker volumes. Nothing depends on the host beyond Docker and KVM for the sandboxes (§8). The service only reads (HTTPS/WSS); the agents' sandboxes have unrestricted internet access (§11).
+One Linux host runs everything in Docker Compose, five containers in all: the Tank service — one asynchronous Python process built from modules (§5) — in `tank`; `tank-capture`, a Go service and the only process that talks to the exchanges (§5.1), in `tank-capture`; ClickHouse, which holds all exchange market history, in `clickhouse`; PostgreSQL, which holds everything else, in `postgres`; and the OpenMA server that hosts the agent sessions and their sandboxes in `openma`. Data lives in Docker volumes. Nothing depends on the host beyond Docker and KVM for the sandboxes (§8). Tank and tank-capture only read from the outside world (HTTPS/WSS); the agents' sandboxes have unrestricted internet access (§11).
 
 ![Tank V0 — technical view](diagrams/tank_v0_technical_view.svg)
 
-*Technical view: the Tank service and its modules, PostgreSQL, ClickHouse, OpenMA, files, external sources and services. Modules call each other inside the service; work that must survive a restart is a job in PostgreSQL (§5), and only the `sessions` module talks to OpenMA. Data flows: §6.*
+*Technical view: the Tank service and its modules, tank-capture, ClickHouse, PostgreSQL, OpenMA, files, external sources and services. Modules call each other inside the service; Tank and tank-capture share state only through tables; work that must survive a restart is a job in PostgreSQL (§5), and only the `sessions` module talks to OpenMA. Data flows: §6.*
 
 ---
 
@@ -35,13 +35,13 @@ One Linux host runs everything in Docker Compose: the Tank service — one async
 9. Every escalation, retry and scheduled capture has an expiry.
 10. Tokens are identified by contract (03 §2.11), never by ticker.
 11. No silent fallbacks: when a dependency fails, the step waits and retries, and missing data shows as n/a with the reason. Tank never switches on its own to a broader, cheaper or proxy path (01 §9, Failures).
-12. One service: Tank is a single asyncio process built from modules; only PostgreSQL, ClickHouse and OpenMA run beside it, each in its own container, and every piece of work that must survive a restart is a job in PostgreSQL (§5).
+12. One service, one capture process: Tank is a single asyncio process built from modules. Beside it run tank-capture (exchange market data, §5.1), ClickHouse, PostgreSQL and OpenMA, each in its own container. Tank and tank-capture exchange nothing but table rows. Every piece of work that must survive a restart is a job in PostgreSQL (§5).
 
 ---
 
 ## 3. Information source catalog (S01–S34)
 
-Common to all HTTP sources: header `User-Agent: TankV0/1.0 (<operator contact e-mail>)`; conditional GET (`If-None-Match` / `If-Modified-Since`) where the server returns `ETag` / `Last-Modified`; timeout 20 s; 3 retries with 2/4/8 s backoff; escalated interval 15 s (01 FR-D-02). Each payload is stored raw with SHA-256 before parsing; items are deduplicated by the item key in the tables below.
+Common to all HTTP sources: header `User-Agent: TankV0/1.0 (<operator contact e-mail>)`; conditional GET (`If-None-Match` / `If-Modified-Since`) where the server returns `ETag` / `Last-Modified`; timeout 20 s; 3 retries with 2/4/8 s backoff; escalated interval 15 s (01 FR-D-02). Each payload is stored raw with SHA-256 before parsing; items are deduplicated by the item key in the tables below. Requests to exchange hosts — the announcement APIs of S09–S11 and the instrument lists of S14 — are sent by tank-capture, not by Tank: the `sources` loop writes an `HTTP_FETCH` row to `mkt.capture_requests`, tank-capture sends it within the shared venue budget and stores the response in that row, and `sources` parses it as usual (§5.1).
 
 HTML page sources: Tank collects every link on the page that matches the source's article pattern below, resolves it to an absolute URL, and treats each URL not seen before as a new item; the article page is then fetched for its full text. Zero matches on a successful fetch marks the source DEGRADED (layout change). Every source works from plain HTTP; Tank runs no browser. S19 reads the JSON search behind its page.
 
@@ -136,7 +136,7 @@ All RSS; item key `guid` (else `link`); fields title, link, pubDate, description
 
 ## 4. Market data catalog
 
-Tank-side request budgets are set at ≤ 50% of each venue's documented limit. Binance limits below were read from `exchangeInfo.rateLimits`. Instrument symbols per venue are listed in 03 §2.11.
+Every venue request and stream below is made by tank-capture (§5.1); Tank itself opens no exchange connection. Request budgets are set at ≤ 50% of each venue's documented limit and shared by both processes through one ledger (`ops.request_budget_ledger`). Binance limits below were read from `exchangeInfo.rateLimits`. Instrument symbols per venue are listed in 03 §2.11.
 
 ### 4.1 Binance Spot
 
@@ -258,27 +258,49 @@ Every token has at least three spot venues and two perpetual venues. Binance spo
 
 ---
 
-## 5. Service and modules (Python 3.12, asyncio)
+## 5. Service and modules (Python 3.13, asyncio)
 
-Tank is one service: a single Python 3.12 asyncio process, `tank serve`, built as a modular monolith. Modules call each other directly. Long-lived loops and stream tasks read the sources and the markets; every piece of work that must survive a restart or wait for its turn is a job in PostgreSQL (`ops.jobs`), run by the service's own async workers (03 §3.8). CPU-heavy steps (Market Truth) run in a thread pool, so the streams never stall.
+Tank is one service: a single Python 3.13 asyncio process, `tank serve`, built as a modular monolith. Modules call each other directly. Long-lived loops read the sources; the exchange streams and pollers run in tank-capture (§5.1). Every piece of work that must survive a restart or wait for its turn is a job in PostgreSQL (`ops.jobs`), run by the service's own async workers (03 §3.8). CPU-heavy steps (Market Truth) run in a thread pool, so ingestion never stalls.
 
 | Module | Libraries | Runs as | Responsibility |
 |---|---|---|---|
-| `sources` | `httpx`, `feedparser`, `selectolax` | One polling loop per source | S01–S18, S20–S28, S30–S34 at each source's cadence (15 s while escalated): conditional GET, raw capture, `source_items` row + FILTER_ITEM or ROUTE_ITEM job; S14 diffs |
+| `sources` | `httpx`, `feedparser`, `selectolax` | One polling loop per source | S01–S28, S30–S34 at each source's cadence (15 s while escalated): conditional GET (exchange hosts through tank-capture, §3), raw capture, `source_items` row + FILTER_ITEM or ROUTE_ITEM job; S14 diffs |
 | `xsensor` | `httpx`, `pydantic` | One Apify actor run per pass | S29 (the 86 X accounts, every 120 s): raw capture, `source_items` row + FILTER_ITEM or ROUTE_ITEM job |
-| `market` | `websockets`, `httpx`, `orjson`, `numpy` | One task per venue WebSocket connection; base-tier pollers | Hot tier: trades, books, liquidations and mark/funding streams of the hot set; REST backfill of trade-ID gaps after a reconnect; 1m per-venue flow bars, size buckets, 10 s book summaries, completeness flags; the series and every print go to ClickHouse. Base tier: klines, tickers, OI, funding. A token that turns hot is subscribed on every covered market and gets the pre-event backfill. Archive downloads; DefiLlama (unlock datasets daily); Etherscan |
+| `market` | `httpx` | Hot-set loop; supply loop | The hot set and what tank-capture must do for it: escalation and demotion in `mkt.hot_tokens`, pre-event backfill obligations in `mkt.backfill_runs` and window repairs before a Market Truth run in `mkt.capture_requests`, each waited on until tank-capture reports it done or failed. The snapshots Market Truth reads from ClickHouse. Supply context: DefiLlama (unlock datasets daily, fees, lending, stablecoins) and Etherscan. It opens no exchange connection |
 | `jobs` | `psycopg` | 8 async workers | Claim the next due job from `ops.jobs` by priority, run it under its timeout, write the result and the next job; on start, return jobs left RUNNING to the queue |
-| `pipeline` | `httpx` | FILTER_ITEM and ROUTE_ITEM jobs | Jev filter and routing (03 §3.1); a routed item becomes an AGENT_MESSAGE job |
+| `pipeline` | `httpx` | FILTER_ITEM and ROUTE_ITEM jobs | Decision-1 filter and routing (03 §3.1); a routed item becomes an AGENT_MESSAGE job |
 | `sessions` | `httpx`, `httpx-sse`, `ddgs` | AGENT_MESSAGE and SCOUT_REVIEW jobs; one stream task per working session | The only module that talks to OpenMA: opens one session per event and posts its messages (03 §3.2); follows a session's stream while the agent works; runs each custom tool the agent calls against PostgreSQL, DuckDuckGo and the web, and answers with `user.custom_tool_result`; a slow tool (`get_market_truth`) is answered when its job finishes; posts a reader's Telegram reply from "Tank Alerts" or "Tank Ops" into the session that handled the event or material (01 FR-P-03) |
 | `codex_gateway` | `httpx` | An HTTP endpoint on the Compose network (`http://tank:8790/v1`) | The model endpoint behind OpenMA's Model Card for `gpt-6.1-sol` (OpenAI Responses API): checks the internal key, adds the operator's ChatGPT (Codex) OAuth token and account id from the volume `codex-auth`, and forwards the call to the endpoint the Codex CLI uses; when the token expires it refreshes it with the refresh token and writes the new tokens back; a usage-limit answer goes back to OpenMA with its reset time |
 | `analysis` | `numpy`, `pandas` | ESCALATE_TOKENS, RUN_MARKET_TRUTH, EVAL_CONDITIONS, MILESTONE_CHECK and REACTION_CAPTURE jobs; the code behind the tools | State Tracker, EMS checks, Beneficiary rules, Market Truth, Outlook, Decision Engine, Alert Composer, evidence bundles; no LLM |
-| `delivery` | `httpx` | DELIVER jobs | Telegram send, threading, ledger; ops notices |
+| `delivery` | `httpx` | DELIVER jobs | Telegram send, threading, ledger; "Tank Ops" notices: the processing card of each material (sent once, then edited in place), entry-error notices with their diagnostic documents, DELIVERY_FAILED, the heartbeat (03 §7.6) |
 | `scheduler` | — | One loop | Runs each source loop at its cadence (normal or 15 s escalated); creates EVAL_CONDITIONS every minute, MILESTONE_CHECK at a milestone's time and REACTION_CAPTURE at each checkpoint; hot-set demotion; heartbeat notice; retention; nightly backup (`pg_dump` and `bundles/` to an external disk) |
 | CLI | `click` | Short commands of the same program | Review, scout decisions, replay, archive fetch, bundle reproduction, source and handle checks |
 
-Next to the service run three containers: `postgres` (PostgreSQL 16; database `tank`, plus OpenMA's database `oma`), `clickhouse` (ClickHouse; database `mkt`, the exchange market series and every print, written by tank-capture) and `openma`, the OpenMA server (`open-managed-agents` built from a pinned upstream commit with Tank's patches, §8; Node.js), listening on port 8787 of the Compose network. It hosts the agents `tank-event-analyst` and `tank-scout-reviewer` and their sessions, makes the model calls through Tank's `codex_gateway`, which signs them with the operator's ChatGPT subscription (Codex sign-in, §8), inlines the skills and keeps the append-only session logs. Each session gets its own litebox sandbox, a microVM with unrestricted internet access and read-only access to the database `tank` (§8).
+Next to the service run four containers: `tank-capture` (§5.1), `clickhouse` (ClickHouse; database `mkt`, the exchange market series and every print, written only by tank-capture), `postgres` (PostgreSQL 16; database `tank`, plus OpenMA's database `oma`) and `openma`, the OpenMA server (`open-managed-agents` built from a pinned upstream commit with Tank's patches, §8; Node.js), listening on port 8787 of the Compose network. It hosts the agents `tank-event-analyst` and `tank-scout-reviewer` and their sessions, makes the model calls through Tank's `codex_gateway`, which signs them with the operator's ChatGPT subscription (Codex sign-in, §8), inlines the skills and keeps the append-only session logs. Each session gets its own litebox sandbox, a microVM with unrestricted internet access and read-only access to the database `tank` (§8).
 
-On start, the service returns jobs left RUNNING to the queue, subscribes the tokens in `mkt.hot_tokens`, replays each open session's stream from its last stored event and keeps following the sessions still at work. A tool call left without a result runs again; a write tool that already ran returns its stored result (03 §3.2), so a restart loses nothing and writes nothing twice.
+On start, the service returns jobs left RUNNING to the queue, re-reads the hot set in `mkt.hot_tokens` and re-creates its missing backfill obligations, replays each open session's stream from its last stored event and keeps following the sessions still at work. A tool call left without a result runs again; a write tool that already ran returns its stored result (03 §3.2), so a restart loses nothing and writes nothing twice.
+
+### 5.1 tank-capture (Go)
+
+`tank-capture` is the only process that talks to the exchanges. It is a static Go binary (`capture/`, `cmd/tank-capture`) in its own container, with the versioned configuration baked into its image; from the host `.env` it receives only the database password. It holds the venue WebSocket streams, repairs trade-ID gaps over REST, polls klines, 24h tickers, open interest and funding, builds the 1-minute flow bars and 10-second book summaries with their completeness proofs, and writes them and every print into ClickHouse `mkt`. It also sends every other request to an exchange host on Tank's behalf (§3). Tank reads market data from ClickHouse only and starts no stream, poller, backfill or exchange request itself.
+
+The interface between the two processes is tables; no files pass between them:
+
+| Table | Store | Written by | Read by | Purpose |
+|---|---|---|---|---|
+| `mkt.klines_1m`, `mkt.flow_bars_1m`, `mkt.book_summaries`, `mkt.oi_obs`, `mkt.funding_obs`, `mkt.liq_obs`, `mkt.tickers_24h` | ClickHouse | tank-capture | Tank | Market series (ReplacingMergeTree, read with `FINAL`) |
+| `mkt.trades` | ClickHouse | tank-capture | Tank, agents | Every print |
+| `mkt.hot_tokens` | PostgreSQL | Tank | tank-capture | The hot set tank-capture subscribes |
+| `mkt.backfill_runs` | PostgreSQL | Tank creates, tank-capture runs | Tank | Pre-event backfill obligations and their readiness |
+| `mkt.capture_requests` | PostgreSQL | Tank creates, tank-capture runs | Tank | Window repairs before a Market Truth run; `HTTP_FETCH` requests to exchange hosts with their stored responses |
+| `mkt.capture_streams`, `mkt.capture_gaps` | PostgreSQL | tank-capture | Tank | Stream state per instrument (Data Confidence) and explicit gap evidence |
+| `ops.request_budget_ledger`, `ops.request_budget_blocks` | PostgreSQL | both | both | One request budget per provider and IP; a 429 or 418 closes the host for both processes |
+
+- **Single writer.** tank-capture holds the PostgreSQL advisory lock `tank:capture:writer` on a dedicated connection and is the only writer of the market tables; while the lock is lost, flushes keep their rows in memory, so nothing is written without the lock and nothing is dropped.
+- **Completeness.** A flow bar is sealed only when the minute's prints form one proven chain (consecutive trade IDs, or one uninterrupted connection where a venue has no consecutive IDs) and a later print or a head check proves the minute closed; a hole is repaired over REST by trade ID, and a minute REST cannot fill is sealed incomplete with its reason. A late print rewrites a sealed bar as a new revision; a complete bar is never replaced by an incomplete one.
+- **Restart.** tank-capture resumes from ClickHouse (the newest bar with a print is the trade cursor) and repairs the gap to the first print of the new socket over REST; nothing is re-parsed. A deploy replaces it make-before-break, so no minute of prints is lost (§8).
+- **Health.** `GET /healthz` on port 8791 inside the container (200 while the writer lock is held and the last flush is recent), `/readyz`, `/status`; no port is published.
+- **Parity.** Its parsing, normalization, bars and book summaries are ports of the Python reference `tank.market`; a parity harness feeds both the same recorded frames and requires identical trades, rows, bars and watermarks (`capture/README.md`).
 
 ---
 
@@ -294,18 +316,19 @@ sequenceDiagram
   participant DB as PostgreSQL
   participant CH as ClickHouse
   participant JOB as tank · job workers
-  participant JEV as Jev via OpenRouter
+  participant DEC as Decision-1 (Azure Foundry)
   participant SES as tank · sessions
   participant OMA as OpenMA (agent session)
   participant MKT as tank · market
+  participant CAP as tank-capture
   participant TG as Telegram
 
-  SRC->>ING: new article code in catalog 48
+  SRC->>ING: new article code in catalog 48 (exchange host, fetched through tank-capture)
   ING->>DB: raw + source_items row (observed_at) + FILTER_ITEM or ROUTE_ITEM job
   opt news, a GitHub commit or an X post outside the organization accounts
-    JOB->>JEV: FILTER_ITEM — about crypto at all? (probability)
+    JOB->>DEC: FILTER_ITEM — about crypto at all? (probability)
   end
-  JOB->>JEV: ROUTE_ITEM — the same event as one with news in the last 3 days? (per candidate)
+  JOB->>DEC: ROUTE_ITEM — the same event as one with news in the last 3 days? (per candidate)
   alt no matching event
     JOB->>DB: AGENT_MESSAGE job NEW_ITEM
     SES->>OMA: create the session + user.message (the item)
@@ -322,9 +345,12 @@ sequenceDiagram
   end
   OMA->>SES: set_beneficiaries, get_market_truth
   SES->>DB: ESCALATE_TOKENS and RUN_MARKET_TRUTH jobs
-  JOB->>MKT: ESCALATE_TOKENS: subscribe on every covered market, backfill −24h
-  MKT->>CH: flow bars, prints, books, OI, funding, liquidations
-  JOB->>DB: RUN_MARKET_TRUTH: Market Truth (no LLM)
+  JOB->>MKT: ESCALATE_TOKENS
+  MKT->>DB: mkt.hot_tokens + mkt.backfill_runs (backfill −24h)
+  CAP->>DB: reads the hot set and the obligation
+  CAP->>CH: subscribes every covered market, backfills: flow bars, prints, books, OI, funding, liquidations
+  JOB->>CH: RUN_MARKET_TRUTH reads the snapshot
+  JOB->>DB: Market Truth (no LLM)
   SES->>OMA: get_market_truth result
   OMA->>SES: get_decision, publish_card FULL
   SES->>DB: outlook, grades, action (code); gate; alert + DELIVER job
@@ -334,7 +360,7 @@ sequenceDiagram
 
 ### 6.2 Market data
 
-Inside `market`, one task per WebSocket connection: messages → per-venue parser applies semantics (aggressor side, units) → dedup by trade ID → 1m flow bar per venue/instrument (complete only if the stream was connected and IDs were continuous for that minute) → ClickHouse: the bar rows and every print (`mkt.trades`). Book diffs → in-memory book per venue → 10 s summaries (spread, depth bands, covered range). Its REST pollers write klines, OI, funding and 24h volumes to ClickHouse.
+Inside tank-capture (§5.1), one task per WebSocket connection: messages → per-venue parser applies semantics (aggressor side, units) → dedup by trade ID → 1m flow bar per venue/instrument (sealed complete only when the minute's prints form one proven chain, §5.1) → ClickHouse: the bar rows and every print (`mkt.trades`). Book diffs → in-memory book per venue → 10 s summaries (spread, depth bands, covered range). Its REST pollers write klines, OI, funding and 24h volumes to ClickHouse. Tank's `market` module only reads these tables.
 
 ### 6.3 Re-evaluation
 
@@ -355,11 +381,11 @@ A MAJOR+ class from the agent's `set_assessment` → pre-event windows computed 
 | `reg` | `sources`, `entities`, `entity_aliases`, `tokens`, `instruments`, `sector_baskets`, `dependency_map`, `metric_semantics`, `exchange_addresses` | Versioned with config |
 | `ingest` | `source_items` | Permanent |
 | `evt` | `events`, `event_entities`, `event_observations`, `claims`, `state_changes`, `ems_assessments`, `capture_chains`, `beneficiary_maps`, `beneficiary_edges` | Permanent |
-| `mkt` (PostgreSQL) | `unlocks`, `hot_tokens`, capture coordination (`backfill_runs`, `capture_requests`, `capture_streams`, `capture_gaps`) | Permanent / as declared |
-| `mkt` (ClickHouse) | `klines_1m`, `flow_bars_1m`, `book_summaries`, `oi_obs`, `funding_obs`, `liq_obs`, `tickers_24h`, `trades` | ReplacingMergeTree on the row identity (the last write wins), daily partitions, ZSTD/DoubleDelta codecs; base tier 90 days, `trades` 30 days, `book_summaries` 72 hours (summary fields only, no order-book levels); days overlapping a MAJOR+ event window kept permanently (except book summaries). Agents read it with a read-only user. |
+| `mkt` (PostgreSQL) | `unlocks`, `hot_tokens`, capture coordination with tank-capture (`backfill_runs`, `capture_requests`, `capture_streams`, `capture_gaps`, §5.1) | Permanent / as declared |
+| `mkt` (ClickHouse) | `klines_1m`, `flow_bars_1m`, `book_summaries`, `oi_obs`, `funding_obs`, `liq_obs`, `tickers_24h`, `trades` — written only by tank-capture | ReplacingMergeTree on the row identity (the last write wins), daily partitions, ZSTD/DoubleDelta codecs; base tier 90 days, `trades` 30 days, `book_summaries` 72 hours (summary fields only, no order-book levels); days overlapping a MAJOR+ event window kept permanently (except book summaries). Agents read it with a read-only user. |
 | `ana` | `market_truth`, `outlooks`, `decisions`, `contradictions`, `watch_conditions`, `calls` | Permanent |
-| `out` | `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints` | Permanent, append-only |
-| `ops` | `jobs`, `agent_sessions`, `tool_calls`, `llm_usage` | Jobs 30 days; LLM usage permanent |
+| `out` | `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints`; `ops_cards` (the "Tank Ops" processing card of each material and its Telegram message, edited in place) | Permanent, append-only; `ops_cards` mutable |
+| `ops` | `jobs`, `agent_sessions`, `tool_calls`, `llm_usage`, `request_budget_ledger`, `request_budget_blocks` (the venue request budget shared with tank-capture) | Jobs 30 days; LLM usage permanent |
 | `scout` | `expansion_proposals` | Permanent |
 | `qa` | `reviews`, `fixtures`, `replay_runs` | Permanent |
 | `oma` (OpenMA's own database) | Agents, skills, sessions and their append-only event logs | Permanent |
@@ -388,10 +414,10 @@ Sizing estimate (ClickHouse): prints ≈ 0.5 GB/day compressed at 15 hot tokens;
 | Database | Image `tank-postgres` (`postgres:16` with Tank's init script and `pg_hba.conf` baked in), data in the volume `pg-data`: the service and OpenMA connect over the Compose network; the read-only role `tank_agent` connects from the sandboxes, whose traffic leaves through OpenMA's address (`pg_hba.conf`: that role, that address, SCRAM); no port is published outside the host |
 | Market database | Image `tank-clickhouse` (`clickhouse/clickhouse-server:25.8` with Tank's config and users baked in), data in the volume `clickhouse-data`, at most 40% of the host's RAM and 4 GB per query (larger GROUP BY / ORDER BY spill to disk), no container caps, `query_log` kept 3 days and no other system log tables; tank-capture writes and the service reads over HTTP on the Compose network as user `tank`; the read-only user `tank_agent` (same password as the PostgreSQL role) is accepted only from the sandboxes' address; no port is published outside the host |
 | OpenMA | Container `openma` from the image `tank-openma`, built by CI from the checked-in `vendor/openma` application and its static `Dockerfile`, based on upstream `open-managed-agents` commit `85d5361f535c7221de975838dc48444e468cc02e`. Tank's compatibility changes are direct source changes in that tree; an external checkout, source generator and patch step are not part of deployment. The vendored application keeps these fixes: PostgreSQL 16 (untyped nullable query parameters, epoch timestamps stored as strings); tool arguments renamed by the case mapper (`item_id` → `itemId`); the agent tool config that cannot enable `browser` or disable the `schedule` tools; the browser running inside the session sandbox; an environment's network policy and credentials passed to the sandbox (upstream ignores networking, so the replay sandbox would have internet); custom-tool results that resume the model on the first result of a group (the session waits for every result of the tools called in one step, then resumes the model once; messages that arrive meanwhile queue in order and survive an OpenMA restart); BoxLite's file transfer, which refuses paths under the sandbox's mounts (`/tmp`, `/mnt/session/outputs`, `/replay/evidence`) because it writes to the image beneath them (OpenMA's file reads and writes run as a process inside the VM instead, BoxLite's own workaround, so the VM's mounts and permissions apply); a Dockerfile built on Node 22 although its pnpm needs Node 24; the console build, skipped with `SKIP_CONSOLE=1`. The litebox runtime is the architecture-matched BoxLite v0.10.6 native bundle under `vendor/openma/tank-native`, with source/rebuild contracts under `deploy/boxlite`; `DATABASE_URL` = database `oma` on `postgres`; `SANDBOX_PROVIDER=litebox` with `/dev/kvm` passed into the container (one libkrun microVM per session); the Model Card for `gpt-6.1-sol` is a custom provider (`pi_config.api: openai-responses`) whose `base_url` is Tank's `codex_gateway` (`http://tank:8790/v1`), called with the internal key `CODEX_GATEWAY_KEY`; OpenMA never holds the ChatGPT sign-in; port 8787 on the Compose network only; agents and skills uploaded by `tank` on start when their files changed |
-| Agent sandbox | Environment `tank-analysis`: image `tank-analysis`, built from `deploy/sandbox.Dockerfile` as an OCI layout baked into the `tank-openma` image (the OpenMA API takes no image per environment): Python 3.12 with `pandas`, `numpy`, `scipy`, `statsmodels`, `duckdb`, `psycopg[binary]`, `httpx`, `websockets`; `postgresql-client`, Node.js for the pi harness tools, Playwright 1.64.0 with its Chromium and Tank's browser worker; no network allowlist or denylist; env `TANK_DB_URL` (role `tank_agent`; the same credentials open ClickHouse at `http://clickhouse:8123` read-only), `ETHERSCAN_API_KEY` and `OPENROUTER_API_KEY` — in V0 the keys sit in the environment and the skill forbids printing them or sending them anywhere but their own API; a credential vault comes with production. Environment `tank-replay` for fixture replays: the same image; the only reachable address is the replay database (its resolved private IP is the single allowlist entry), and `TANK_DB_URL` points at it (03 §11.1) |
+| Agent sandbox | Environment `tank-analysis`: image `tank-analysis`, built from `deploy/sandbox.Dockerfile` as an OCI layout baked into the `tank-openma` image (the OpenMA API takes no image per environment): Python 3.13 with `pandas`, `numpy`, `scipy`, `statsmodels`, `duckdb`, `psycopg[binary]`, `httpx`, `websockets`; `postgresql-client`, Node.js for the pi harness tools, Playwright 1.64.0 with its Chromium and Tank's browser worker; no network allowlist or denylist; env `TANK_DB_URL` (role `tank_agent`; the same credentials open ClickHouse at `http://clickhouse:8123` read-only), `ETHERSCAN_API_KEY` and `OPENROUTER_API_KEY` — in V0 the keys sit in the environment and the skill forbids printing them or sending them anywhere but their own API; a credential vault comes with production. Environment `tank-replay` for fixture replays: the same image; the only reachable address is the replay database (its resolved private IP is the single allowlist entry), and `TANK_DB_URL` points at it (03 §11.1) |
 | Images | Built by CI from the repository and pushed to GHCR, tagged with the commit SHA: `tank` (the repository's `Dockerfile`: Python, `asyncio`, dependencies pinned in `uv.lock`, the whole `config/`), `tank-capture`, `tank-openma` (with the `tank-analysis` sandbox layout), `tank-postgres`, `tank-clickhouse`; volumes `tank-data` (`/data`), `codex-auth` (the ChatGPT sign-in) and `backup` (an external disk on the host) |
 | Configuration | The repository's `config/`, built into the `tank` image at `/app/config`: `sources.yaml` (incl. article patterns of §3), `semantics.yaml`, `registry.yaml` (tokens, identities, aliases, instruments, sector baskets), `dependency_map.yaml`, `exchange_addresses.yaml`, `thresholds.yaml`, `openma.yaml`, `skills/` (the agents' skills and tool schemas), `templates/`; loaded on start; a change is a commit and a deploy; the image's commit SHA is stored as `config_version` on every output |
-| Secrets | One file `/srv/tank-deploy/.env` on the host, outside the repository, readable only by root; Compose passes each container only its variables: `OMA_API_KEY`, `OMA_ROOT_SECRET`, `OMA_AUTH_SECRET`, `OPENROUTER_API_KEY`, `OPENCODE_API_KEY`, `TELEGRAM_BOT_TOKEN`, `ETHERSCAN_API_KEY`, the database passwords, `APIFY_API_TOKEN`, `CODEX_GATEWAY_KEY`; the ChatGPT sign-in sits in the `tank` volume `codex-auth` (writable: the gateway saves refreshed tokens there), the Etherscan and OpenRouter keys and the `tank_agent` password also by the environment `tank-analysis`; never written to logs or bundles |
+| Secrets | One file, `/srv/tank-deploy/.env` on the production host next to `compose.yaml` and `deploy.sh`, outside the repository, owned by root with mode 0600; there are no Docker secrets and no second credential store. Compose passes each container only its variables (`.env.example` lists them): the database passwords (`POSTGRES_PASSWORD`, `TANK_DB_PASSWORD`, `OMA_DB_PASSWORD`, `TANK_AGENT_DB_PASSWORD`, `TANK_REPLAY_AGENT_DB_PASSWORD`), `OMA_API_KEY`, `OMA_ROOT_SECRET`, `OMA_AUTH_SECRET`, `TANK_FOUNDRY_API_KEY` (Decision-1), `TELEGRAM_BOT_TOKEN`, `ETHERSCAN_API_KEY`, `OPENROUTER_API_KEY` (agents' sandboxes only), `CODEX_GATEWAY_KEY`, `APIFY_API_TOKEN`; tank-capture gets only `TANK_DB_PASSWORD`. The ChatGPT sign-in sits in the `tank` volume `codex-auth` (writable: the gateway saves refreshed tokens there); the Etherscan and OpenRouter keys and the `tank_agent` password also reach the environment `tank-analysis`; never written to logs or bundles |
 | Deployment | The GitHub workflow `deploy.yml`, started by hand for a commit of `main`, after that commit's CI built its images: it copies `compose.yaml` and `scripts/deploy/deploy.sh` to the host and runs it; the host pulls the images, restarts PostgreSQL, ClickHouse and OpenMA only when their image content changed, replaces `tank-capture` without losing a minute, restarts `tank` (which applies migrations and DDL and uploads changed agents and skills to OpenMA), checks the live system for up to 8 minutes and otherwise returns to the previous commit |
 | Time | The host's NTP client (e.g. `chrony`); containers use the host clock |
 | Backups | Nightly `pg_dump` + `bundles/` copy to the volume `backup` (an external disk on the host) |
@@ -406,9 +432,9 @@ Concurrency: one asyncio event loop with 8 job workers; CPU-heavy steps run in a
 
 | Interface | Contract |
 |---|---|
-| External services | OpenAI (`gpt-6.1-sol`) on the operator's ChatGPT subscription — Codex sign-in, no API key — called by OpenMA through Tank's `codex_gateway` (03 §3.2); DuckDuckGo search (the `web_search` tool; no key, no official API); Jev through OpenRouter (`typesafe/jev-1.13`; FILTER_ITEM and ROUTE_ITEM, API key; 03 §3.1); Telegram Bot API (bot token); the Apify actor `fdfsfsdfasfa/tank-x-notifier` for S29 (API token, billed per run); Etherscan API v2 (free key); DefiLlama API and datasets (no key); venue public APIs (no keys). The agents' sandboxes reach any public site and API, these included, with neither the Telegram bot token nor the X session (§11). |
-| Telegram Bot API | sendRichMessage with structured blocks to "Tank Alerts": scores are a compact native table with full names, values and explanations. The frozen rich payload is stored with the alert and evidence bundle; cards are capped at 5,000 rendered characters and 500 blocks. Legacy cards and "Tank Ops" notices use sendMessage with parse_mode=HTML. Updates use reply_parameters.message_id of the first card; the returned message_id is stored in the ledger. |
-| Jev via OpenRouter | `POST https://openrouter.ai/api/v1/systemone` (Jev's System One API on OpenRouter), header `Authorization: Bearer <key>`, model `typesafe/jev-1.13`; one `noul` question per item (FILTER_ITEM) and per item and candidate event (ROUTE_ITEM); answers stored on the item; usage logged to `ops.llm_usage` (03 §3.1). |
+| External services | OpenAI (`gpt-6.1-sol`) on the operator's ChatGPT subscription — Codex sign-in, no API key — called by OpenMA through Tank's `codex_gateway` (03 §3.2); DuckDuckGo search (the `web_search` tool; no key, no official API); Microsoft Decision-1 on Azure Foundry (FILTER_ITEM and ROUTE_ITEM, `api-key`; 03 §3.1); Telegram Bot API (bot token); the Apify actor `fdfsfsdfasfa/tank-x-notifier` for S29 (API token, billed per run); Etherscan API v2 (free key); DefiLlama API and datasets (no key); venue public APIs (no keys), reached only by tank-capture (§5.1). The agents' sandboxes reach any public site and API, these included, without the Telegram bot token, the Apify token or the Foundry key (§11). |
+| Telegram Bot API | sendRichMessage with structured blocks to "Tank Alerts": scores are a compact native table with full names, values and explanations. The frozen rich payload is stored with the alert and evidence bundle. Tank sets no length limit of its own; `publish_card` refuses only a card above Telegram's rich-message limits (32,768 characters, 500 blocks) and says by how much. Legacy cards and "Tank Ops" notices use sendMessage with parse_mode=HTML; the processing card of a material is edited in place with editMessageText; the HTTP responses of a failed X profile read go as documents (sendDocument) in reply to their notice. Updates use reply_parameters.message_id of the first card; the returned message_id is stored in the ledger. |
+| Decision-1 via Azure Foundry | `POST <TANK_FOUNDRY_ENDPOINT>/providers/microsoft/v1/systemone` (the HTTPS origin of the Azure Foundry resource), header `api-key: <TANK_FOUNDRY_API_KEY>`, body `{model: <TANK_FOUNDRY_DEPLOYMENT, default decision-1>, state, questions}` for a deployment of Microsoft-Decision-1 version 1; one `noul` question per item (FILTER_ITEM) and per item and candidate event (ROUTE_ITEM). The answer must name the model `microsoft-decision-1` and give every question a probability between 0 and 1, or the call fails; an HTTP error is neither retried nor sent to another provider. Answers are stored on the item; usage is logged to `ops.llm_usage` with the token counts and the cost unknown, because Azure reports none (03 §3.1). The agents' sandboxes get no Foundry key. |
 | OpenMA API | `http://openma:8787/v1/*` on the Compose network, with header `x-api-key`: `POST /v1/sessions`; `POST /v1/sessions/{id}/events` with `user.message` or `user.custom_tool_result`; `GET /v1/sessions/{id}/events/stream` (SSE, `Last-Event-ID` resume); `/v1/agents` and `/v1/skills` to deploy agent and skill versions (03 §3.2). OpenMA calls `gpt-6.1-sol` through Tank's `codex_gateway`; token usage from the sessions' model-request spans goes to `ops.llm_usage`. |
 | DuckDuckGo search | Python library `ddgs` 9.16.0: `DDGS().text(query, backend="duckduckgo", max_results=10)`. DuckDuckGo has no official web-search API; the library reads its results page, so there is no key and no charge (01 D9). At most one search every 2 s across the service; a rate-limit, block or timeout error is retried after 5, 15 and 45 s, then the error goes back to the agent; no other engine is used. Results (title, URL, snippet) are stored as evidence; searches are counted in `ops.llm_usage`. |
 | CLI | Inside the `tank` container (`docker exec tank-tank-1 tank …`): `tank review list`, `tank review show`, `tank review label`, `tank reaction`, `tank scout list`, `tank scout decide`, `tank sources check` (feeds, article patterns, X handles), `tank coverage`, `tank archive fetch {symbol} {date}`, `tank replay {fixture_id}`, `tank bundle reproduce {sha}` (01 §7.4). |
@@ -419,7 +445,7 @@ Concurrency: one asyncio event loop with 8 job workers; CPU-heavy steps run in a
 
 | Failure | Detection | Behavior |
 |---|---|---|
-| Venue WebSocket disconnect | Socket closed / no message 30 s / ID gap | Reconnect with backoff; REST backfill by trade ID; minutes without full backfill marked incomplete; the venue drops out of composites for those windows. |
+| Venue WebSocket disconnect (tank-capture) | Socket closed / no message 30 s / ID gap | Reconnect with backoff; REST backfill by trade ID; minutes without full backfill sealed incomplete with the reason; the venue drops out of composites for those windows. |
 | Binance archive checksum mismatch or gap | SHA-256 vs `.CHECKSUM`; continuity check | File rejected; window marked incomplete; re-download once after 1 h. |
 | Agent turn error or refusal | `session.error` in the session stream | The message is sent again once; then the event is marked FAILED; no card content generated from it. |
 | DuckDuckGo rate limit or block | `ddgs` rate-limit, block or timeout error | Retries after 5, 15 and 45 s; then `web_search` returns the error to the agent, and a fact it could not confirm stays MEDIUM. No other engine is used. DuckDuckGo blocks some cloud IP ranges, so a test search runs from the host before launch. |
@@ -429,8 +455,8 @@ Concurrency: one asyncio event loop with 8 job workers; CPU-heavy steps run in a
 
 ## 11. Security
 
-- No exchange API keys exist in V0; every market endpoint used is public. Etherscan and OpenRouter keys are service keys. OpenAI is reached with the operator's ChatGPT sign-in, which stays in the `tank` container (volume `codex-auth`): OpenMA and the sandboxes never see it, and `codex_gateway` answers only on the Compose network, to OpenMA's internal key.
+- No exchange API keys exist in V0; every market endpoint used is public, and only tank-capture calls them. The Foundry key (Decision-1), the Etherscan key and the OpenRouter key (sandboxes only) are service keys. OpenAI is reached with the operator's ChatGPT sign-in, which stays in the `tank` container (volume `codex-auth`): OpenMA and the sandboxes never see it, and `codex_gateway` answers only on the Compose network, to OpenMA's internal key.
 - Secrets are variables of the host's single `.env`, passed by Compose only to the containers that use them. PostgreSQL, ClickHouse and OpenMA are reachable only on the Compose network — PostgreSQL and ClickHouse also from the sandboxes, for `tank_agent` only — and no port is published outside the host.
-- Agent sandboxes: one microVM per session with unrestricted internet. Whatever the agent reads there is data, not instructions (skill `tank-data`, 03 §3.2). It reads Tank's data only as `tank_agent`, has the Etherscan and OpenRouter keys in its environment and is forbidden by the skill to print them or send them anywhere but their own API (a vault replaces this in production), holds neither the Telegram bot token nor the operator's X session, and changes Tank's state only through Tank's tools; cards leave only through `publish_card`.
+- Agent sandboxes: one microVM per session with unrestricted internet. Whatever the agent reads there is data, not instructions (skill `tank-data`, 03 §3.2). It reads Tank's data only as `tank_agent`, has the Etherscan and OpenRouter keys in its environment and is forbidden by the skill to print them or send them anywhere but their own API (a vault replaces this in production), holds neither the Telegram bot token, the Apify token nor the Foundry key, and changes Tank's state only through Tank's tools; cards leave only through `publish_card`.
 - The Apify token (`APIFY_API_TOKEN`) is a secret; the actor only reads public X profile pages.
 - Each source's terms and rate limits are recorded in `sources.yaml`; request budgets stay ≤ 50% of documented limits; sec.gov ≤ 10 requests/s with a declared User-Agent; DuckDuckGo at most one search every 2 s (no published limit; the terms-of-service risk is accepted, 01 D9).

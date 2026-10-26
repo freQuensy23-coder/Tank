@@ -46,7 +46,6 @@ def render(truths, tokens=None):
     event = {
         "statement": "A source reports a proposal.",
         "event_state": "PROPOSED",
-        "thresholds": {"card_max_chars": 20000},
     }
     edges = [
         {
@@ -263,7 +262,7 @@ def test_provider_revenue_with_unknown_capture_never_authorizes_token_capture_cl
     assert "DIRECT" not in line and "INDIRECT" not in line
 
 
-def test_compact_display_prefers_24h_preserving_30d_details_and_default_limit():
+def test_compact_display_prefers_24h_preserving_30d_details():
     observed = metric([captured({"adapter": {"total24h": "123.456", "total30d": "8765.432"}})])
     truths = [
         {"token_id": token, "supply": {"holders_revenue": deepcopy(observed)}} for token in ["A", "B", "C"]
@@ -281,7 +280,6 @@ def test_compact_display_prefers_24h_preserving_30d_details_and_default_limit():
     card = CARDS.compose_card(
         event, {}, edges, [{"token_id": token, "action": "WAIT"} for token in ["A", "B", "C"]], truths
     )
-    assert len(card) <= 3500
     assert card.count("123.456 USD/24h") == 3 and "8765.432" not in card
     assert observed["protocols"][0]["periods"][1]["value"] == "8765.432"
     line = next(line for line in card.splitlines() if line.startswith("• Token capture:"))
@@ -379,7 +377,7 @@ def ordinary_full_card_inputs():
     return event, assessment, beneficiary, decision, truth
 
 
-def test_full_ordinary_three_decision_tokens_with_observed_revenue_fit_default_limit():
+def test_full_ordinary_three_decision_tokens_with_observed_revenue():
     event, assessment, beneficiary, decision, truth = ordinary_full_card_inputs()
     edges, decisions, truths = [], [], []
     for token in ["A", "B", "C"]:
@@ -395,7 +393,6 @@ def test_full_ordinary_three_decision_tokens_with_observed_revenue_fit_default_l
     card = CARDS.compose_card(
         event, assessment, edges, decisions, truths, why=["The approval is confirmed", "not estimable"]
     )
-    assert len(card) <= 3500
     assert card.count("123.456 USD/24h") == 3
     assert card.count("──") == 6
     for section in [
@@ -412,10 +409,11 @@ def test_full_ordinary_three_decision_tokens_with_observed_revenue_fit_default_l
     ]:
         assert section in card
     assert "IMPACT:" not in card and "SECONDARIES:" not in card
-    import pytest
-
-    with pytest.raises(ValueError, match="CARD_LENGTH"):
-        CARDS.compose_card(dict(event, statement="x" * 3500), assessment, edges, decisions, truths)
+    long_statement = "x" * 3500
+    long_card = CARDS.compose_card(
+        dict(event, statement=long_statement), assessment, edges, decisions, truths
+    )
+    assert long_statement in long_card and len(long_card) > 5000
 
 
 @pytest.mark.parametrize(

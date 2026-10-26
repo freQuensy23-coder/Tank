@@ -102,7 +102,7 @@ def test_card_diagnostics_and_probability():
     m["divergence"] = {"state": "PERP_LED_MARKUP", "trigger": True, "unresolved": ["ABSORPTION_CANDIDATE"]}
     d = DecisionEngine().evaluate(e, a, b, m)
     text = compose_card(e, a, [b], [d], [m], verdict="A verified event changes the thesis.")
-    assert "ABSORPTION_CANDIDATE" in text and len(text) <= 3500
+    assert "ABSORPTION_CANDIDATE" in text
 
 
 def test_three_token_template_with_structured_figures():
@@ -130,7 +130,7 @@ def test_three_token_template_with_structured_figures():
         verdict="The approval advances a direct token mechanism.",
         why=["What changed: approval verified.", "Economic effect: not estimable."],
     )
-    assert len(text) <= 3500 and text.count("WHAT TO DO:") == 3
+    assert text.count("WHAT TO DO:") == 3
 
 
 def test_all_no_call_action_rows():
@@ -517,14 +517,12 @@ def test_b16_fraction_percent_exclusions_and_header_proof():
     assert "Spot venue coverage is incomplete: only partial coverage" in text
 
 
-def test_versioned_card_limits_and_missing_decisions():
+def test_versioned_update_interval_and_missing_decisions():
     e, a, b, m = inputs()
-    e["thresholds"] = {"version": "test-v1", "card_max_chars": 10, "update_rate_limit_s": 1800}
+    e["thresholds"] = {"version": "test-v1", "update_rate_limit_s": 1800}
     import pytest
 
-    with pytest.raises(ValueError, match="CARD_LENGTH"):
-        compose_card(e, a, [], [], [], kind="PARTIAL")
-    e["thresholds"]["card_max_chars"] = 3500
+    assert compose_card(e, a, [], [], [], kind="PARTIAL")
     with pytest.raises(ValueError, match="MISSING_DECISION"):
         compose_card(e, a, [b], [], [m])
     previous = {"class": "MAJOR", "event_state": "ANNOUNCED", "published_at": "2026-10-17T00:00:00Z"}

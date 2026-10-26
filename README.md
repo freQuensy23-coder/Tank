@@ -2,14 +2,14 @@
 
 The main branch contains the specifications and production code together. CI builds images from main; the manual Deploy workflow deploys a qualified commit from that branch.
 
-Tank collects public information and market data, maintains one OpenMA analysis session per event, computes market assessments and long-position guidance in Python, and delivers evidence-backed decision cards to Telegram. It has no exchange trading credentials or order execution path. The revised deployment uses three Linux Docker Compose services: Tank, OpenMA and PostgreSQL 16. Tank's internal Codex gateway connects OpenMA to the operator's ChatGPT subscription; there are no local token or spending caps.
+Tank collects public information and market data, maintains one OpenMA analysis session per event, computes market assessments and long-position guidance in Python, and delivers evidence-backed decision cards to Telegram. It has no exchange trading credentials or order execution path. The deployment runs five Docker Compose services on one Linux host: Tank, tank-capture (the Go exchange capture), ClickHouse (exchange market history), PostgreSQL 16 and OpenMA. Tank's internal Codex gateway connects OpenMA to the operator's ChatGPT subscription; there are no local token or spending caps.
 
 Tank filtering and event routing use Microsoft-Decision-1 version 1 through Azure Foundry, as requested on 2026-10-25. The service posts typed `state`/`questions` to the resource's `/providers/microsoft/v1/systemone` endpoint with `api-key` authentication and deployment name `decision-1`. Analyst/scout models continue through the Codex subscription gateway. See [Foundry setup](docs/FOUNDRY_DECISION.md). Current acceptance evidence is tracked in [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
 
 ## Development and tests
 
 ```sh
-uv sync --python 3.12 --frozen --extra dev
+uv sync --python 3.13.13 --frozen --extra dev
 uv run tank --help
 uv run tank doctor
 uv run pytest -q -n auto --dist loadfile
@@ -43,7 +43,8 @@ Pytest disables operator dotenv files, credential paths and external Python netw
 | `agents` | Decision-1 filtering/routing and durable OpenMA sessions with tool-result recovery |
 | `codex_gateway` | Internal Responses endpoint, subscription authentication, atomic OAuth refresh and streaming |
 | `event_tools` | Persistence of agent claims and judgments, registry identity resolution, beneficiary records and publication gate |
-| `market` | Venue discovery, REST/WS capture, normalization, archives and fundamentals |
+| `market` | Hot set and capture obligations for tank-capture, market snapshots read from ClickHouse, supply and fundamentals (DefiLlama, Etherscan) |
+| `capture/` (Go, `tank-capture`) | The only exchange client: venue WebSocket streams, REST pollers and gap repairs, 1m flow bars and book summaries written to ClickHouse, and every other request to an exchange host |
 | `analysis` | Market Truth, confidence, outlook, grades, actions, card composition |
 | `storage` | PostgreSQL migrations, immutable records and durable jobs; market series and prints routed to ClickHouse (`clickhouse_market`) |
 | `runtime`, `scheduler`, `delivery` | Eight job workers, conditions, milestones, reactions, operations and Telegram delivery |
