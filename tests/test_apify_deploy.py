@@ -1,5 +1,4 @@
 import base64
-import importlib.util
 import io
 import json
 import os
@@ -8,21 +7,20 @@ import stat
 import subprocess
 import sys
 import tarfile
-import threading
 from collections.abc import Iterator
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Literal
-from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from publisher_http_support import (
     LegacyFault,
     publisher_http_peer,
     publisher_legacy_fault_peer,
+    publisher_tag_limit_peer,
     publisher_upload_failure_peer,
     publisher_wrong_actor_peer,
 )
+from publisher_shell_support import shell_host as owned_shell_host
 from publisher_state_support import BuildState, rig, source_artifact
 from publisher_transition_support import HTTPPublisherRig, http_rig, write_artifact
 from publisher_workflow_support import execute, step
@@ -34,8 +32,11 @@ from tank.deployment.artifact_contracts import PublisherArtifactRuntime, SourceA
 from tank.deployment.artifacts import ArtifactError, FilesystemArtifacts, source_files
 from tank.deployment.contracts import (
     ActiveRelease,
+    BuildCacheKey,
+    CompatibilityDigest,
     DeploymentTransaction,
     HistoricalRelease,
+    RolledBackTransaction,
     SourceBuild,
     SourceRelease,
 )
@@ -45,14 +46,7 @@ from tank.deployment.markers import FilesystemTankReleaseState
 from tank.deployment.publisher import BASELINE_BUILD, BASELINE_DIGEST, Publisher, PublisherStateError
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("apify_deploy", ROOT / "scripts/deploy/apify_deploy.py")
-assert SPEC is not None and SPEC.loader is not None
-deploy = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(deploy)
 SHA = "a" * 40
-NEXT_SHA = "b" * 40
-BUILD = "A" * 17
-OTHER_BUILD = "B" * 17
 HISTORICAL_RELEASES = [
     "ec4f1e1ff6785d1e4aa39f13efefef0cfa4390ff",
     "002605350ca05fe3ea52d82dbdf74d169ebc954d",
@@ -73,13 +67,13 @@ def release(tmp_path: Path) -> Path:
     (worker / "Dockerfile").write_text('FROM python:3.13.13-slim\nCMD ["python", "main.py"]\n')
     (worker / ".actor").mkdir()
     (worker / ".actor/actor.json").write_text('{"actorSpecification":1,"name":"tank-x-notifier"}')
-    manifest = {
-        "release_sha": SHA,
-        "source_digest": deploy.digest(deploy.source_files(worker)),
-        "contract": deploy.CONTRACT,
-        "actor_id": deploy.ACTOR_ID,
-    }
-    (path / "manifest.json").write_bytes(deploy.canonical(manifest))
+    manifest = SourceRelease(
+        release_sha=SHA,
+        source_digest=source_files(worker).digest(),
+        contract="tank-x-reader-v1",
+        actor_id="rbf5CQKQgKNVl4SfO",
+    )
+    (path / "manifest.json").write_text(manifest.model_dump_json())
     return path
 
 
@@ -190,143 +184,6 @@ def test_invalid_staging_is_not_published_or_unowned_staging_removed(
         assert staging[0].is_symlink()
     else:
         assert not staging[0].exists()
-
-
-class ApifyStand:
-    def __init__(self):
-        self.direct = deploy.BASELINE_BUILD
-        self.versions = {}
-        self.builds = {
-            deploy.BASELINE_BUILD: {
-                "id": deploy.BASELINE_BUILD,
-                "actId": deploy.ACTOR_ID,
-                "status": "SUCCEEDED",
-                "buildNumber": "0.2.2",
-                "actVersion": {
-                    "sourceType": "SOURCE_FILES",
-                    "versionNumber": "0.2",
-                    "buildTag": "direct",
-                    "sourceFiles": [{"name": "main.py", "format": "TEXT", "content": "legacy fixture\n"}],
-                },
-            }
-        }
-        self.requests = []
-        self.fail_build = False
-        self.fail_upload = False
-        self.activation = "ok"
-        self.fail_rollback = False
-        self.snapshot_tamper = False
-        self.poll_status = None
-
-    def handle(self, method, path, body):
-        self.requests.append((method, path, body))
-        actor = "/v2/actors/" + deploy.ACTOR_ID
-        route = urlsplit(path).path
-        if route == actor:
-            if method == "PUT":
-                target = body["taggedBuilds"]["direct"]["buildId"]
-                if target == deploy.BASELINE_BUILD and self.fail_rollback:
-                    return 500, {"error": {"message": "synthetic failure"}}
-                if self.activation != "ignore":
-                    self.direct = target
-                if self.activation == "uncertain" and target != deploy.BASELINE_BUILD:
-                    return 500, {"error": {"message": "synthetic failure"}}
-            return 200, {
-                "data": {
-                    "id": deploy.ACTOR_ID,
-                    "taggedBuilds": {"direct": {"buildId": self.direct}},
-                    "versions": list(self.versions.values()),
-                }
-            }
-        if route == actor + "/versions" or route == actor + "/versions/" + deploy.VERSION:
-            if method in {"PUT", "POST"}:
-                if self.fail_upload:
-                    return 403, {"error": {"message": "must not log synthetic-token"}}
-                self.versions[deploy.VERSION] = body
-            return 200, {"data": self.versions[deploy.VERSION]}
-        if route == actor + "/builds" and method == "POST":
-            tag = parse_qs(urlsplit(path).query).get("tag", [""])[0]
-            if len(tag) > 30:
-                return 400, {
-                    "error": {
-                        "type": "invalid-input",
-                        "message": f"tag must be at most 30 characters long Received {tag!r}",
-                    }
-                }
-            build_id = BUILD if BUILD not in self.builds else OTHER_BUILD
-            snapshot = json.loads(json.dumps(self.versions[deploy.VERSION]))
-            if self.snapshot_tamper:
-                snapshot["sourceFiles"][0]["content"] = base64.b64encode(b"tampered").decode()
-            self.builds[build_id] = {
-                "id": build_id,
-                "actId": deploy.ACTOR_ID,
-                "status": "FAILED" if self.fail_build else "SUCCEEDED",
-                "actVersion": snapshot,
-            }
-            response = dict(self.builds[build_id])
-            if self.poll_status:
-                response["status"] = "RUNNING"
-            return 201, {"data": response}
-        if route.startswith("/v2/actor-builds/"):
-            build_id = route.rsplit("/", 1)[1]
-            if "waitForFinish" in path and self.poll_status:
-                return 200, {"data": {**self.builds[build_id], "status": self.poll_status}}
-            return 200, {"data": self.builds[build_id]}
-        return 404, {"error": {"message": "unknown route"}}
-
-
-@pytest.fixture
-def apify_stand(monkeypatch):
-    stand = ApifyStand()
-    monkeypatch.setattr(deploy, "BASELINE_DIGEST", deploy.digest({"main.py": b"legacy fixture\n"}))
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.respond()
-
-        def do_POST(self):
-            self.respond()
-
-        def do_PUT(self):
-            self.respond()
-
-        def respond(self):
-            assert self.headers["Authorization"] == "Bearer synthetic-token"
-            assert "token=" not in self.path
-            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or b"null")
-            code, value = stand.handle(self.command, self.path, body)
-            encoded = json.dumps(value).encode()
-            self.send_response(code)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(encoded)))
-            self.end_headers()
-            self.wfile.write(encoded)
-
-        def log_message(self, format, *args):
-            pass
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
-    thread.start()
-    stand.base = f"http://127.0.0.1:{server.server_port}/v2"
-    try:
-        yield stand
-    finally:
-        server.shutdown()
-        thread.join(timeout=2)
-        server.server_close()
-        assert not thread.is_alive()
-
-
-def publisher(stand, release, tmp_path, sha=SHA):
-    return deploy.Publisher(deploy.Api("synthetic-token", stand.base), release, tmp_path / "apify-state", sha)
-
-
-def finish_release(instance, tmp_path):
-    instance.activate()
-    instance.commit()
-    (tmp_path / "deployed").write_text(instance.sha + "\n")
-    instance.finish()
 
 
 @pytest.fixture
@@ -445,7 +302,7 @@ def test_failed_tag_readback_or_uncertain_update_restores_previous_build(
 @pytest.mark.integration
 def test_build_poll_failure_is_not_treated_as_success(typed_publisher: HTTPPublisherRig) -> None:
     fixture = typed_publisher
-    fixture.api.fault = "BUILD_FAIL"
+    fixture.api.fault = "BUILD_TIMED_OUT"
     with pytest.raises(PublisherStateError, match="failed"):
         fixture.publisher.prepare()
     assert fixture.api.direct == "A" * 17
@@ -620,122 +477,55 @@ def test_package_uses_selected_git_bytes_not_untracked_or_dirty_source(release: 
     "rollback_outcome", ["success", "tank_failure", "worker_failure", "interrupted_after_marker"]
 )
 def test_actual_deploy_shell_restores_actor_before_tank_rollback(
-    apify_stand, release, tmp_path, rollback_outcome
-):
-    host = tmp_path / "host"
-    host.mkdir()
-    shutil.copy(ROOT / "scripts/deploy/deploy.sh", host / "deploy.sh")
-    shutil.copytree(release, host / "releases" / SHA)
-    (host / "deployed").write_text(NEXT_SHA + "\n")
+    typed_publisher: HTTPPublisherRig,
+    rollback_outcome: str,
+) -> None:
+    fixture = typed_publisher
     if rollback_outcome == "interrupted_after_marker":
-        instance = publisher(apify_stand, host / "releases" / SHA, host)
-        instance.prepare()
-        instance.activate()
-        instance.commit()
-        (host / "deployed").write_text(SHA + "\n")
-    apify_stand.fail_rollback = rollback_outcome == "worker_failure"
-    binary = tmp_path / "bin"
-    binary.mkdir()
-    wrapper = tmp_path / "publisher_wrapper.py"
-    wrapper.write_text(
-        "import importlib.util, pathlib, sys\n"
-        f"spec = importlib.util.spec_from_file_location('publisher', {str(ROOT / 'scripts/deploy/apify_deploy.py')!r})\n"
-        "module = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\n"
-        f"module.BASELINE_DIGEST = {deploy.BASELINE_DIGEST!r}\n"
-        f"api = module.Api('synthetic-token', {apify_stand.base!r})\n"
-        "publisher = module.Publisher(api, pathlib.Path(sys.argv[4]), pathlib.Path('apify-state'), sys.argv[3])\n"
-        "getattr(publisher, sys.argv[2])()\n"
+        fixture.publisher.prepare()
+        fixture.publisher.activate()
+        fixture.publisher.commit()
+        fixture.marker.path.write_text(fixture.publisher.sha + "\n")
+    fixture.api.fault = "ROLLBACK_FAIL" if rollback_outcome == "worker_failure" else "NONE"
+    host = owned_shell_host(
+        fixture,
+        fixture.peer.endpoint,
+        selected=fixture.publisher.sha,
+        artifact=fixture.selected,
+        failure="ALL" if rollback_outcome == "tank_failure" else "SELECTED",
     )
-    (binary / "python3").write_text(f'#!/bin/bash\nexec {sys.executable} {wrapper} "$@"\n')
-    docker = binary / "docker"
-    docker.write_text(
-        '#!/bin/bash\nprintf \'%s %s\\n\' "$TANK_VERSION" "$*" >> docker-events\n'
-        f'if [[ "$*" == *\'pull -q\'* && "$TANK_VERSION" == {SHA} ]]; then exit 1; fi\n'
-        + ("if [[ \"$*\" == *'pull -q'* ]]; then exit 1; fi\n" if rollback_outcome == "tank_failure" else "")
-        + 'if [[ "$1" == inspect ]]; then if [[ "$*" == *State.Pid* ]]; then echo 42; else echo healthy; fi; fi\n'
-        'if [[ "$1" == ps && -f capture-created ]]; then echo capture-new; fi\n'
-        'if [[ "$*" == *--scale* ]]; then touch capture-created; fi\nexit 0\n'
-    )
-    (binary / "nsenter").write_text("#!/bin/bash\nexit 0\n")
-    for path in binary.iterdir():
-        path.chmod(0o755)
-    result = subprocess.run(
-        ["bash", str(host / "deploy.sh"), SHA],
-        cwd=host,
-        env={**os.environ, "PATH": str(binary) + os.pathsep + os.environ["PATH"]},
-        text=True,
-        capture_output=True,
-        timeout=10,
-    )
+    result = host.deploy(fixture.publisher.sha)
     assert result.returncode == 1
+    previous = fixture.previous.release.release_sha
     if rollback_outcome == "tank_failure":
         assert "Tank rollback failed" in result.stdout
     elif rollback_outcome == "worker_failure":
         assert "Tank rollback refused" in result.stdout
     else:
-        assert f"rolled back to {NEXT_SHA}" in result.stdout
+        assert f"rolled back to {previous}" in result.stdout
     assert "VERIFIED" not in result.stdout
-    assert apify_stand.direct == (BUILD if rollback_outcome == "worker_failure" else deploy.BASELINE_BUILD)
-    events = (host / "docker-events").read_text().splitlines()
+    assert fixture.api.direct == ("B" * 17 if rollback_outcome == "worker_failure" else "A" * 17)
+    events = (host.root / "effects.log").read_text().splitlines()
     pulls = [event for event in events if event.endswith("pull -q")]
-    expected_pulls = (
-        [] if rollback_outcome == "interrupted_after_marker" else [f"{SHA} compose -f compose.yaml pull -q"]
+    expected = (
+        []
+        if rollback_outcome == "interrupted_after_marker"
+        else [f"DOCKER {fixture.publisher.sha} compose -f compose.yaml pull -q"]
     )
     if rollback_outcome != "worker_failure":
-        expected_pulls.append(f"{NEXT_SHA} compose -f compose.yaml pull -q")
-    assert pulls == expected_pulls
-    assert (host / "deployed").read_text().strip() == NEXT_SHA
+        expected.append(f"DOCKER {previous} compose -f compose.yaml pull -q")
+        restored = next(i for i, line in enumerate(events) if line.startswith("PUBLISHER_DONE rollback "))
+        old_pull = events.index(f"DOCKER {previous} compose -f compose.yaml pull -q")
+        assert restored < old_pull
+    assert pulls == expected
+    assert fixture.marker.deployed() == previous
+    pending = fixture.journal.read_transaction()
     if rollback_outcome in {"tank_failure", "worker_failure"}:
-        pending = json.loads((host / "apify-state/pending.json").read_bytes())
-        assert pending.get("rolled_back", False) == (rollback_outcome == "tank_failure")
-        assert pending["previous_release_sha"] == NEXT_SHA
+        assert pending is not None and pending.previous_release_sha == previous
+        assert isinstance(pending, RolledBackTransaction) is (rollback_outcome == "tank_failure")
     else:
-        assert not (host / "apify-state/pending.json").exists()
-    tag_updates = [
-        body["taggedBuilds"]["direct"]["buildId"]
-        for method, path, body in apify_stand.requests
-        if method == "PUT" and path.endswith(deploy.ACTOR_ID)
-    ]
-    assert tag_updates == [BUILD, deploy.BASELINE_BUILD]
-
-
-def shell_host(tmp_path, stand, artifact, sha=SHA):
-    host = tmp_path / "host"
-    host.mkdir()
-    shutil.copy(ROOT / "scripts/deploy/deploy.sh", host / "deploy.sh")
-    shutil.copytree(artifact, host / "releases" / sha)
-    shutil.copy(ROOT / "scripts/deploy/apify_deploy.py", host / "releases" / sha / "apify_deploy.py")
-    binary = tmp_path / "bin"
-    binary.mkdir()
-    wrapper = tmp_path / "publisher_wrapper.py"
-    wrapper.write_text(
-        "import importlib.util, os, pathlib, stat, sys\n"
-        "spec = importlib.util.spec_from_file_location('publisher', sys.argv[1])\n"
-        "module = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\n"
-        f"module.BASELINE_DIGEST = {deploy.BASELINE_DIGEST!r}\n"
-        f"api = module.Api('synthetic-token', {stand.base!r})\n"
-        "publisher = module.Publisher(api, pathlib.Path(sys.argv[4]), pathlib.Path('apify-state'), sys.argv[3])\n"
-        "if os.environ.get('INTERRUPT_JOURNAL'):\n"
-        "    original = module.os.fsync\n"
-        "    def interrupted(descriptor):\n"
-        "        original(descriptor)\n"
-        "        if stat.S_ISREG(os.fstat(descriptor).st_mode): os._exit(73)\n"
-        "    module.os.fsync = interrupted\n"
-        "getattr(publisher, sys.argv[2])()\n"
-    )
-    (binary / "python3").write_text(f'#!/bin/bash\nexec {sys.executable} {wrapper} "$@"\n')
-    (binary / "docker").write_text(
-        '#!/bin/bash\nprintf \'%s %s\\n\' "$TANK_VERSION" "$*" >> docker-events\n'
-        f'if [[ "$*" == *\'pull -q\'* && "$TANK_VERSION" == {sha} ]]; then exit 1; fi\n'
-        'if [[ "$1" == inspect ]]; then if [[ "$*" == *State.Pid* ]]; then echo 42; else echo healthy; fi; fi\n'
-        'if [[ "$1" == ps && -f capture-created ]]; then echo capture-new; fi\n'
-        'if [[ "$*" == *--scale* ]]; then touch capture-created; fi\nexit 0\n'
-    )
-    (binary / "nsenter").write_text("#!/bin/bash\nexit 0\n")
-    for path in binary.iterdir():
-        path.chmod(0o755)
-    environment = {**os.environ, "PATH": str(binary) + os.pathsep + os.environ["PATH"]}
-    return host, environment
+        assert pending is None
+    assert fixture.api.tag_updates == ["B" * 17, "A" * 17]
 
 
 @pytest.mark.integration
@@ -743,64 +533,87 @@ def shell_host(tmp_path, stand, artifact, sha=SHA):
 @pytest.mark.parametrize("journal", ["pending", "active", "cache"])
 @pytest.mark.parametrize("retry_sha", [SHA, "c" * 40])
 def test_deploy_retry_recovers_process_death_before_journal_rename(
-    apify_stand, release, tmp_path, journal, retry_sha
-):
-    host, environment = shell_host(tmp_path, apify_stand, release, sha=retry_sha)
-    artifact = host / "releases" / retry_sha
-    manifest = json.loads((artifact / "manifest.json").read_bytes())
-    manifest["release_sha"] = NEXT_SHA
-    (artifact / "manifest.json").write_bytes(deploy.canonical(manifest))
-    original = publisher(apify_stand, artifact, host, NEXT_SHA)
-    original.prepare()
-    finish_release(original, host)
-    active = original.read("active.json")
-    (artifact / "worker/main.py").write_text("value = 2\n")
-    manifest.update(release_sha=SHA, source_digest=deploy.digest(deploy.source_files(artifact / "worker")))
-    (artifact / "manifest.json").write_bytes(deploy.canonical(manifest))
-    newer = publisher(apify_stand, artifact, host)
-    if journal != "cache":
-        newer.prepare()
-    if journal == "active":
-        newer.activate()
-    action = {"cache": "prepare", "pending": "activate", "active": "commit"}[journal]
-    interrupted = subprocess.run(
-        ["python3", str(artifact / "apify_deploy.py"), action, SHA, str(artifact)],
-        cwd=host,
-        env={**environment, "INTERRUPT_JOURNAL": "yes"},
-        capture_output=True,
-        timeout=10,
+    typed_publisher: HTTPPublisherRig,
+    journal: Literal["pending", "active", "cache"],
+    retry_sha: str,
+) -> None:
+    fixture = typed_publisher
+    fixture.publisher.prepare()
+    finish_typed(fixture.publisher, fixture.marker)
+    active = fixture.journal.read_active()
+    candidate = fixture.previous
+    retry_artifact = SourceArtifact(
+        release=SourceRelease(
+            release_sha=retry_sha,
+            source_digest=candidate.release.source_digest,
+            contract=candidate.release.contract,
+            actor_id=candidate.release.actor_id,
+        ),
+        bundle=candidate.bundle,
     )
-    assert interrupted.returncode == 73
-    staging = list(newer.state.glob("*.tmp"))
+    with publisher_http_peer(fixture.api, fixture.journal, candidate.release.release_sha) as peer:
+        host = owned_shell_host(
+            fixture, peer.endpoint, selected=retry_sha, artifact=retry_artifact, failure="SELECTED"
+        )
+        interrupted_artifact = host.root / "releases" / candidate.release.release_sha
+        if retry_sha != candidate.release.release_sha:
+            write_artifact(interrupted_artifact, candidate)
+        newer = actual_publisher(fixture, interrupted_artifact, candidate.release.release_sha, peer.endpoint)
+        if journal != "cache":
+            newer.prepare()
+        if journal == "active":
+            newer.activate()
+        action = {"cache": "prepare", "pending": "activate", "active": "commit"}[journal]
+        environment = dict(host.environment)
+        environment["TANK_PUBLISHER_STAND_INTERRUPT"] = journal
+        interrupted = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "tests/publisher_shell_worker.py"),
+                "ghcr.io/frequensy23-coder/tank/tank:" + host.orchestrator,
+                host.orchestrator,
+                candidate.release.release_sha,
+                candidate.release.release_sha,
+                action,
+                str(host.root),
+            ],
+            cwd=host.root,
+            env=environment,
+            capture_output=True,
+            timeout=10,
+        )
+        assert interrupted.returncode == 73, interrupted.stderr
+    staging = list(fixture.journal.state.glob("*.tmp"))
     assert len(staging) == 1
     abandoned = staging[0].read_bytes()
     assert abandoned
-    fixed_staging = newer.state / (
-        manifest["source_digest"] + ".tmp" if journal == "cache" else journal + ".tmp"
+    fixed_staging = fixture.journal.state / (
+        candidate.release.source_digest + ".tmp" if journal == "cache" else journal + ".tmp"
     )
     fixed_staging.write_text("abandoned old publisher staging")
     fixed_staging.chmod(0o600)
-    manifest["release_sha"] = retry_sha
-    (artifact / "manifest.json").write_bytes(deploy.canonical(manifest))
-    result = subprocess.run(
-        ["bash", str(host / "deploy.sh"), retry_sha],
-        cwd=host,
-        env=environment,
-        text=True,
-        capture_output=True,
-        timeout=10,
-    )
+    with publisher_http_peer(fixture.api, fixture.journal, retry_sha) as peer:
+        host.environment["TANK_PUBLISHER_STAND_ENDPOINT"] = peer.endpoint.base_url
+        result = host.deploy(retry_sha)
     assert result.returncode == 1
-    assert f"rolled back to {NEXT_SHA}" in result.stdout
+    assert f"rolled back to {fixture.publisher.sha}" in result.stdout
     assert "worker rollback failed" not in result.stdout
-    assert apify_stand.direct == BUILD
-    assert newer.read("active.json") == active
-    assert newer.read("pending.json") is None
-    assert (host / "deployed").read_text().strip() == NEXT_SHA
+    assert fixture.api.direct == "B" * 17
+    assert fixture.journal.read_active() == active
+    assert fixture.journal.read_transaction() is None
+    assert fixture.marker.deployed() == fixture.publisher.sha
     assert staging[0].read_bytes() == abandoned
     assert fixed_staging.read_text() == "abandoned old publisher staging"
     if journal == "cache":
-        assert newer.read(manifest["source_digest"] + ".json")["build_id"] == OTHER_BUILD
+        cached = fixture.journal.read_cached_build(
+            BuildCacheKey(source_digest=candidate.release.source_digest)
+        )
+        assert cached is not None
+        observed = fixture.api.completed_build(cached.build_id)
+        assert observed.actVersion.decoded()["main.py"] == candidate.bundle.files["main.py"]
+        assert len(fixture.api.started) == 3
+    else:
+        assert len(fixture.api.started) == 2
 
 
 @pytest.mark.integration(reason="Actual selected historical Git bytes and current archived publisher CLI")
@@ -874,7 +687,7 @@ def test_historical_worker_selection_never_rebuilds_or_relabels_source(
     fixture.publisher.prepare()
     finish_typed(fixture.publisher, fixture.marker)
     previous = fixture.journal.read_active()
-    compatibility = (
+    compatibility: CompatibilityDigest = (
         "67141bdf567e9c73678efb290e3cae04bae0f11bbd5ad2087db8520bd035035a"
         if mode == "unused"
         else "1dcfa5489d2f3622ddcad2d8d45a5515d9734407c4d5a3533e15e3fce6b3ba39"
@@ -975,11 +788,13 @@ def test_legacy_build_drift_blocks_bootstrap_and_rollback(
     assert fixture.api.tag_updates == ["B" * 17]
 
 
-def test_apify_error_names_reason_without_token(apify_stand):
-    """The fake rejects tags over Apify's 30-character limit, so every publishing test also checks the tag length."""
-
-    api = deploy.Api("synthetic-token", apify_stand.base)
-    with pytest.raises(deploy.DeployError) as error:
-        api.request("POST", f"/actors/{deploy.ACTOR_ID}/builds?version={deploy.VERSION}&tag={'x' * 31}")
-    assert "HTTP 400: invalid-input tag must be at most 30 characters long" in str(error.value)
-    assert "synthetic-token" not in str(error.value)
+def test_apify_error_names_reason_without_token(tmp_path: Path) -> None:
+    """The actual HTTP adapter preserves the provider's 30-character build-tag diagnostic."""
+    fixture = rig(tmp_path, fault="NONE")
+    with publisher_tag_limit_peer(fixture.api, fixture.journal, fixture.publisher.sha) as peer:
+        api = ApifyAPI(SecretStr("synthetic-publisher-image-token"), peer.endpoint)
+        with pytest.raises(ApifyAPIError) as error:
+            api._request("POST", "/actors/rbf5CQKQgKNVl4SfO/builds?version=0.3&tag=" + "x" * 31, None)
+        assert "HTTP 400: invalid-input tag must be at most 30 characters long" in str(error.value)
+        assert "synthetic-publisher-image-token" not in str(error.value)
+        assert not fixture.api.started

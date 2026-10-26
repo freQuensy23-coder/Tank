@@ -34,13 +34,20 @@ from tank.deployment.publisher import Publisher
 
 ROOT = Path(__file__).resolve().parents[1]
 type Fault = Literal[
-    "NONE", "UPLOAD_TAMPER", "BUILD_FAIL", "BUILD_RUNNING", "TAG_IGNORE", "TAG_UNCERTAIN", "ROLLBACK_FAIL"
+    "NONE",
+    "UPLOAD_TAMPER",
+    "BUILD_FAIL",
+    "BUILD_TIMED_OUT",
+    "BUILD_RUNNING",
+    "TAG_IGNORE",
+    "TAG_UNCERTAIN",
+    "ROLLBACK_FAIL",
 ]
 
 
 class BuildState(DomainModel):
     id: BuildID
-    status: Literal["RUNNING", "SUCCEEDED", "FAILED"]
+    status: Literal["RUNNING", "SUCCEEDED", "FAILED", "TIMED-OUT"]
     source: SourceSnapshot
 
 
@@ -178,9 +185,11 @@ class ProviderState:
 
     def wait_build(self, build_id: BuildID) -> BuildObservation:
         old = self.builds[build_id]
-        status: Literal["RUNNING", "SUCCEEDED", "FAILED"]
+        status: Literal["RUNNING", "SUCCEEDED", "FAILED", "TIMED-OUT"]
         status = (
-            "FAILED"
+            "TIMED-OUT"
+            if self.fault == "BUILD_TIMED_OUT"
+            else "FAILED"
             if self.fault == "BUILD_FAIL"
             else "RUNNING"
             if self.fault == "BUILD_RUNNING"

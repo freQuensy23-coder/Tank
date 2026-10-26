@@ -3,6 +3,7 @@
 import base64
 import json
 from collections.abc import Callable
+from typing import Final
 
 from tank.contracts.json import decode_unique_json
 from tank.deployment.api_contracts import (
@@ -33,9 +34,9 @@ from tank.deployment.contracts import (
 from tank.deployment.identities import SHA256, CommitSHA
 from tank.deployment.ports import PublisherAPI, PublisherArtifacts, PublisherState, TankReleaseState
 
-BASELINE_BUILD = "c99YRMlKXube5V0gV"
-BASELINE_DIGEST = "a9a53d45f1cdc30634da29a71ae9d6a0a4a5b57e1f60eaf8a443c7cb7568e310"
-MARKER = "tank-release.json"
+BASELINE_BUILD: Final = "c99YRMlKXube5V0gV"
+BASELINE_DIGEST: Final = "a9a53d45f1cdc30634da29a71ae9d6a0a4a5b57e1f60eaf8a443c7cb7568e310"
+MARKER: Final = "tank-release.json"
 
 
 class PublisherStateError(RuntimeError):

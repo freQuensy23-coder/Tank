@@ -45,7 +45,7 @@ def source_archive(tmp_path: Path) -> ArchiveFixture:
     git(repository, "init", "-q")
     for name, body in {
         "src/tank/deployment/cli.py": b'raise SystemExit("source evidence must not execute")\n',
-        "scripts/deploy/apify_deploy.py": b'raise SystemExit("archive only")\n',
+        "scripts/deploy/publisher_worker.sh": b"#!/bin/sh\nexit 1\n",
         "pyproject.toml": (ROOT / "pyproject.toml").read_bytes(),
         "uv.lock": (ROOT / "uv.lock").read_bytes(),
     }.items():

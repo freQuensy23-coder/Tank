@@ -13,16 +13,19 @@ from urllib.parse import parse_qs, urlsplit
 
 from publisher_state_support import ProviderState
 
+from tank.contracts import DomainModel
 from tank.deployment.api_contracts import (
     ActorSnapshot,
     ActorTagUpdate,
     BuildObservation,
     CompletedBuildSnapshot,
     HistoricalBuildSnapshot,
+    ProviderErrorDetail,
+    ProviderErrorEnvelope,
     UploadedVersion,
     VersionUpload,
 )
-from tank.deployment.apify_api import ApifyEndpoint
+from tank.deployment.apify_api import ApifyEndpoint, Method
 from tank.deployment.identities import CommitSHA
 from tank.deployment.journal import PublisherJournal
 
@@ -30,12 +33,11 @@ type Reply = (
     ActorSnapshot | BuildObservation | CompletedBuildSnapshot | UploadedVersion | HistoricalBuildSnapshot
 )
 type LegacyFault = Literal["source", "version", "build_number", "status", "actor"]
-type WireFault = Literal["ACTOR_IDENTITY", "UPLOAD_FAILURE"] | LegacyFault
+type WireFault = Literal["ACTOR_IDENTITY", "UPLOAD_FAILURE", "BUILD_TAG_LENGTH"] | LegacyFault
 
 
-@dataclass(frozen=True)
-class ObservedRequest:
-    method: str
+class ObservedRequest(DomainModel):
+    method: Method
     path: str
 
 
@@ -72,7 +74,7 @@ def serve_peer(
             if self.headers.get("Authorization") != "Bearer synthetic-publisher-image-token":
                 self.send_error(403)
                 return
-            requests.append(ObservedRequest(self.command, self.path))
+            requests.append(ObservedRequest.model_validate({"method": self.command, "path": self.path}))
             path = urlsplit(self.path)
             query = parse_qs(path.query)
             length = self.headers.get("Content-Length")
@@ -110,6 +112,20 @@ def serve_peer(
             elif self.command == "GET" and path.path == actor + "/versions/0.3":
                 reply = provider.uploaded_version()
             elif self.command == "POST" and path.path == actor + "/builds":
+                if wire_fault == "BUILD_TAG_LENGTH":
+                    assert len(query["tag"]) == 1 and len(query["tag"][0]) > 30
+                    failure = ProviderErrorEnvelope(
+                        error=ProviderErrorDetail(
+                            type="invalid-input", message="tag must be at most 30 characters long"
+                        )
+                    )
+                    document = failure.model_dump_json().encode()
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(document)))
+                    self.end_headers()
+                    self.wfile.write(document)
+                    return
                 assert query == {"version": ["0.3"], "tag": ["tank-" + selected_sha[:12]]}
                 reply = provider.start_build(selected_sha)
             elif self.command == "GET" and path.path == "/v2/actor-builds/c99YRMlKXube5V0gV":
@@ -241,5 +257,23 @@ def publisher_legacy_fault_peer(
 ) -> Iterator[PublisherHTTPPeer]:
     with serve_peer(
         provider, journal, selected_sha, port=0, context=None, after_tag_update=None, wire_fault=fault
+    ) as peer:
+        yield peer
+
+
+@contextmanager
+def publisher_tag_limit_peer(
+    provider: ProviderState,
+    journal: PublisherJournal,
+    selected_sha: CommitSHA,
+) -> Iterator[PublisherHTTPPeer]:
+    with serve_peer(
+        provider,
+        journal,
+        selected_sha,
+        port=0,
+        context=None,
+        after_tag_update=None,
+        wire_fault="BUILD_TAG_LENGTH",
     ) as peer:
         yield peer
