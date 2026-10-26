@@ -1881,6 +1881,7 @@ remain active. The worker annotation is not an independently strict body claim.
 New independent reaction/milestone adapters and narrowed queue dependencies will
 join only after this preserved checkpoint, through their canonical peer commits.
 
+
 ### Clean current-parent output-file caller companion
 
 This separate cohort starts at parent f24bd4a9 and normally joins ingestion's
@@ -1972,3 +1973,299 @@ evidence; only authored fixture provenance/cursor/publication declarations were
 completed, with no historical evidence padding or production/schema relaxation.
 External proof prefix is worker-message-final3. Whole worker command dispatch,
 remaining Session body/tool/usage/event responsibilities and vendor work stay open.
+
+Typed claimed-job admission checkpoint
+
+runtime_admission.worker_admission projects only admitted AgentMessage/Scout
+variants into the existing AdmissionCandidate, using actual envelope job ID,
+priority and slot_waiting_since or original creation clock. None denotes a
+non-session command, with no slot write. SessionService.admit_candidate requires
+and revalidates the named candidate; the existing queue-wire caller delegates to
+that same use case. Native resolution and admission share agent_message_target,
+so routing does not reverse-serialize a model into an anonymous business input.
+Independent strict four targets/Ruff pass, plus 16 connected units in 6.92 seconds
+and all 13 actual PostgreSQL cases in 8.51 seconds, zero skips/source guards.
+This is a whole-worker dependency checkpoint; dispatcher activation remains open.
+
+### Clean current-parent output-file caller companion
+
+This separate cohort starts at parent f24bd4a9 and normally joins ingestion's
+9b4443dd bound sender, without inactive native-input/worker/reaction APIs. The
+Session native-tool boundary admits filename/caption/call identity and resolves
+its actual owned journal message into the required question/session target before
+native GET. It never recovers a target from last_payload or a list position.
+Question identity is checked before reading the scoped output. The sender then
+rechecks the authoritative question and every matching delivery row under its
+question lock before a Telegram POST.
+
+The delegated sender lookup and send share one locked context producer. Known
+SENT/UNKNOWN outcomes return before native GET and need no active credential or
+unused bytes. Fresh lookup validates availability without returning credentials;
+actual send rechecks state. The use case keeps downloaded content opaque bytes,
+preserves the existing read attempts/delay/REST deadline and document limit, and
+validates the returned closed outcome before native-tool JSON serialization.
+Malformed cached model instances refuse. Binding changes during the native read
+cannot produce a Telegram POST or a GENERATED record for a foreign question.
+
+All 357 affected Telegram/ownership/migration/E2E units pass in 14.28 seconds,
+zero skips, p90 .144 seconds and maximum .993 seconds. The complete 45-case actual
+Linux integration selection passes in 20.96 seconds with zero skips/source guards,
+including actual PG binding/race/receipt cases and four E2Es. Independent strict
+helper/contracts/new-test three targets passes, as do scoped Ruff/format/comments/diff checks.
+The selected default Inbox/composition check reports only the imported baseline
+truth.py _condition_cache annotation at 6031; no suppression or unrelated edit was
+added. The first new PG controls omitted required at clocks; only their authored
+fixture receipts were completed before the whole actual selection passed.
+
+This does not close all SessionService typing. Constructor/aggregate/tool/event/
+usage/barrier flows, its existing unconfigured sender state, presentation-limit
+coupling and whole worker migration remain open. The separately qualified native
+input checkpoint db160129 stays immutable and is not an ancestor of this clean
+output companion. Exact retained maps/None sites are recorded in the machine
+exception ledger rather than a blanket legacy exemption.
+
+Inactive atomic claim contract prerequisite
+
+JobMetadata.claim_token preserves genuine historical/not-yet-claimed absence as
+omission, including bare JSON dump/read roundtrip; explicit reported null refuses.
+Current JobClaimScope and InvalidJobClaim require an observed nonblank token.
+Scope.matches checks the original raw payload digest and actual RUNNING identity,
+attempt and nullable observed recovery count before envelope admission. Recovery
+count None is unreported context, never a generated zero or the authority token.
+The backend must mint a fresh actual token on every claim, including same-attempt
+recovery and refunded admission/dependency deferral.
+
+QueueStore defines transition_claimed_job with a synchronous fresh-JobEnvelope to
+closed JobClaimMutation callback under actual row atomicity, and separate token/
+original-revision quarantine for malformed rows. Mutation.apply_to replaces only
+reported lifecycle scalars and complete named timestamp families on original raw
+wire; omitted fields remain untouched, explicit result None means actual void,
+and terminal mutations require an occurred completion clock. Optional patch fields
+represent an unrequested write, not guessed provider/domain facts. A None backend
+outcome means no matching owned RUNNING claim and no effect; physical implementation
+and consumer qualification are pending and must not be inferred from this API.
+
+This pure checkpoint is based on canonical 025240b8, with no held worker/native
+extras. Independent strict source/test three targets, Ruff/format and 21 pinned
+native pure cases pass (10.30 seconds total, zero skips/source guards). Proof prefix
+job-claim-mutations-roundtrip; backend Memory/PostgreSQL fencing and three stale
+controller races remain held for the paired cohort. These claims concern atomic
+queue acknowledgment/failure/requeue, not a distributed external-effect lease;
+network calls must not run inside this callback/row lock.
+
+The mutation's last_error field retains the existing storage str-or-None contract:
+RepositoryQueries.fail_job writes str(error), and str(Exception()) is genuinely
+empty. It must remain distinct from unreported None rather than become UNKNOWN.
+The current worker separately records the actual exception class name through
+WorkerFailureRequest.error_class. A direct empty-versus-None control extends the
+pure family to 22 cases, all passing in 6.34 seconds, zero skips/source guards;
+strict source/test and Ruff/format pass. No terminal-reconciliation policy is
+changed by this lower-level field correction.
+
+Controlled generation shutdown uses the same claim fence. The sparse mutation
+contract adds only existing interrupted_at and CONTROLLED_GENERATION_STOP facts,
+reported together for QUEUED state with an actual interruption occurrence. These
+fields remain untouched when unrequested; no old clock/reason is reconstructed.
+The pure family now passes all 23 pinned native cases in 5.94 seconds, zero skips
+with source guards; strict source/test and Ruff/format pass. Actual controlled-stop
+claim snapshot/cancellation/refund and stale-token consumer proof remain pending.
+
+Atomic worker consumer checkpoint (whole dispatcher still held)
+
+RunningJobClaim now carries the required actual token and observed nullable
+recovery count through canonical JobClaimScope. RepositoryWorkerQueue delegates
+completion/failure/requeue/expiry to transition_claimed_job with synchronous
+named mutations. The original result is validated/cloned before the first await;
+expiry's fresh not-due condition uses a named no-write exception, not a generic
+malformed-state catch. A current-scope read can refuse already-stale dispatch, but
+that observation is not an external network lease. Terminal effect commands use
+closed actual commands and the matching terminal token/subject; no normalized
+DTO is passed back as an anonymous service input.
+
+The earlier actual PostgreSQL evidence worker-claim-fencing-before contains both
+stale completion after recover/reclaim and read/recover/reclaim/write failures.
+The paired consumer now refuses old tokens after recovery and refunded-attempt
+ABA. Its concurrent control pauses the real put while the actual row lock is held,
+observes the recovery UPDATE waiting for a PostgreSQL lock, then verifies valid
+completion linearizes first and recovery changes zero rows. This replaces the old
+get hook because the real atomic storage read is now SELECT FOR UPDATE; no stale
+new claim is overwritten and every owned test task is drained on failure/cancel.
+
+On the exact paired source, all 35 focused units pass in 17.62 seconds (p90 .044,
+maximum .241 seconds), and all 21 collected actual PostgreSQL cases pass in 22.88
+seconds, zero skips with wrapper fingerprints. Independent strict five targets
+and Ruff/format pass. Proof prefixes worker-atomic-consumer-unit/actual; the
+foundation backend's 49-case physical proof remains attributed to its582 prefix.
+The complete Runtime worker, controlled-stop consumer, real producer/caller
+migration and remaining Session/vendor responsibilities remain open. This
+checkpoint is not whole-application activation or a cross-controller network lease.
+
+Dependency reads retain their separate historical phase: the unchanged two-field
+DependencyState now lives inward in contracts.jobs and is exactly re-exported by
+runtime_dispatch_contracts. A known DONE dependency needs its actual job ID and
+status, not an unrelated current claim token/full envelope. The one canonical
+model prevents a reaction/dispatcher import cycle; actual readers must still
+match the returned identity against the requested storage key. All 24 pure cases
+pass in 6.35 seconds, zero skips/source guards; independent strict3/Ruff pass.
+
+Closed whole-worker API checkpoint (caller cohort still held)
+
+Runtime.worker now claims through RepositoryWorkerQueue, quarantines invalid
+commands with the observed token/raw revision, and dispatches the closed command
+variants through actual Pipeline/Session/Market/Delivery/Scheduler/Inbox use cases.
+There is no handler dictionary or fabricated active_jobs fallback. The only
+JsonValue result is the actual durable ops.jobs.result serialization boundary;
+source, message, truth, condition and scout results are revalidated and bound to
+the requested identity before serialization. Existing void ports return explicit
+None without inventing a delivered/provider-success receipt. Reaction execution
+receives ReactionJobInvocation.from_envelope with the authoritative original
+claim, not an identity guessed from its payload.
+
+All completion/failure/dependency/admission/delivery deferral and due-expiry writes
+use the token-fenced atomic port. The current-scope read before dispatch is an
+observation, not a network lease; native/Telegram effects retain their own actual
+ownership and idempotency responsibilities. Active work is indexed by actual
+(job ID, claim token), so an old worker finishing cannot erase a newer same-job
+scope. active_jobs is a read-only view of those real owned records. Controlled
+shutdown snapshots scopes before cancelling/draining owned tasks, then refunds
+only still-owned attempts with the actual interruption clock. Unavailable commit
+acknowledgment is not reported as success and retry cannot refund twice.
+
+Malformed EVAL clocks are now admitted by the existing Timestamp contract at the
+queue DTO boundary, so they quarantine once before the evaluator rather than
+consume retries for a permanent malformed command. The original no-clock-guess,
+no-evaluator-call/no-condition-write assertions remain. The unused duplicate
+reaction DTOs were retired; strict flag tests now use the actual ChangedReactionJob.
+
+Independent strict six targets including the complete Runtime source and new
+controlled-stop caller tests pass; scoped Ruff/format pass. Configured whole-source
+mypy has only the separately owned truth _condition_cache annotation error (199
+sources); no Runtime errors remain. The selected 54 functional units pass in 23.70
+seconds and every case is below 10 seconds, but their subset p90 is 1.692 seconds
+(max 2.572). The failed subset-checker receipt is preserved, not a global unit-gate
+claim. Per the lead's docs/TESTING interpretation, the full default unit selection
+must still establish global p90. No fixture shrinking, caps or deadlines changed.
+All 28 selected actual PostgreSQL cases pass in 34.16 seconds, zero skips/source
+fingerprints. Proof prefixes whole-worker-controlled-smoke-unit/actual. The first
+smoke's missing-clock error-name assertion was updated from ValidationError to
+permanent INVALID_QUEUE_ENVELOPE and now additionally requires one attempt.
+
+This is an inactive concrete API for peer constructor/dispatcher caller migration.
+Existing raw handler/object.__new__ fixtures, all real producer/recovery callers,
+full financial/E2E/Go cohort and global timing qualification remain required.
+The existing strict-test dependency on untyped Scheduler.tick remains visible;
+no suppression was added. Remaining Session body/tool/usage/event work and the
+assigned vendor programs are still open.
+
+
+### Whole-worker real lifecycle caller continuation (held)
+
+The runtime timeout, malformed-kind continuation, failed dependency, generation drain
+and immediate-stop controls now compose actual Runtime ports and resources instead
+of assigning a handlers map to an unconstructed object. Domain evaluation delegates
+to the actual Scheduler; only owned intake-loop and gateway-start boundaries are
+recorded. The immediate-stop fixture declares the supported integer shutdown grace
+0 before immutable Settings capture (the retired fractional fake was not a valid
+Settings contract); the positive drain remains 1 second. Original attempt refund,
+clock, frozen-session/tool-result and explicit barrier assertions remain.
+
+The expiry-after-real-claim and question-refusal-persistence continuation cases now
+use actual Runtime dispatch. Later independently owned work is a real condition
+evaluation, not a mock FILTER result. The admission deferral uses the configured
+cap of two and two actual occupied sessions, preserves creation precision and
+refunds the attempt, and proves zero dispatch. Its prior alias-only job extras had
+no actual queue producer; the fixture now uses the admitted canonical bucket clock
+with an actual anchor and asserts the replacement removes that stale anchor.
+The separate timestamp-alias storage adapter regressions remain unchanged.
+
+Five lifecycle caller cases pass (21.53 seconds); all 13 precision/refusal unit cases
+pass (19.40 seconds), zero skips with source guards. These are selected functional
+proofs, not a full default-unit timing claim. Complete worker caller and actual
+financial/E2E/Go qualification remain held.
+Actual PostgreSQL refusal-write-failure/restart selection also passes both collected
+cases in 23.62 seconds, zero skips/source guards. The changed refusal module and two
+real composition helpers pass independent strict checks; scoped Ruff/format pass.
+
+The remaining gateway-before-intake fixture now uses actual composed resources and
+records only the gateway start barrier/real close order; budget binding and release
+assertions remain. The pending-dependency control now queues an admitted evaluation
+command and proves its actual evaluator is never called while the predecessor is
+pending, without error or attempt cost. Gateway control passed; both failed/pending
+dependency cases pass in 19.20 seconds, zero skips/source guards. The first pending
+control exposed a fixture-only datetime/string assertion mismatch, preserved in
+worker-gateway-dependency-callers; parsing both declared clocks corrected it without
+changing the original one-second deadline or application policy.
+
+Actual running-session admission caller migration now composes Runtime and all
+required ports rather than assigning a Session-only handler fragment. It retains
+the original real SessionService/native transport and delegates the reconciliation
+observation to the actual failure repository. Both Memory/PostgreSQL fairness,
+ordered wake, running-session bypass, unchanged source/event clocks, all jobs DONE
+and original one-second barriers pass. The slow admission case binds the actual
+Session service and blocks only its admission boundary, preserving 50 ms timeout,
+zero dispatch, original expiry and attempt refund. All three actual admission
+cases pass in 22.17 seconds, zero skips/source guards; Ruff/format pass. The older
+module's untyped fixture helpers remain explicit test typing debt, not strict proof.
+
+Both actual external-capture bounded-incomplete→PARTIAL/FAILED history controls now
+run the closed worker on actual composed Runtime ports, sharing the test's actual
+Market/Truth/Scheduler instances and retained capture transport. All original
+capture request/history, confidence, timing, request independence and stored result
+oracles remain. Both cases pass in 20.47 seconds, zero skips/source guards. Initial
+setup incorrectly attempted to close the pure MarketTruthService; removing that
+nonexistent cleanup call fixed the fixture only (first diagnostic preserved).
+
+All six Memory/PostgreSQL delivery ordering/contention controls now run the closed
+worker with actual composed required ports and the original actual DeliveryService.
+Recording wrappers delegate the real delivery and stop only after its observed
+outcome. The simulated application clock is passed through the real collection-clock
+boundary; no provider retry delay is invented. Original seven scheduling deferrals,
+attempt refunds, HTTP failure/retry count, expiry preservation, cancellation/lock
+lifetime, ledger phases and one-send/idempotency assertions all pass in 59.03 seconds,
+zero skips/source guards. All handler-map/object-fragment worker construction is now
+removed from test_runtime and test_session_admission; peer reaction/X/market-refresh
+caller migrations and global qualification remain open. The remaining isolated
+Runtime.__new__ adapter test does not run a worker and is not a whole-module typing
+completion claim.
+
+The combined six-module owned worker/dispatch/fencing/lifecycle unit selection now
+passes all 64 collected cases in 31.42 seconds, zero skips/source guards. This is
+selected functional proof, not a global p90 claim. An earlier command named a
+nonexistent test_runtime_worker_queue.py and collected zero; its exit-5 setup
+receipt remains separate, and the corrected selection uses the actual
+ test_runtime_dispatch_contracts.py module.
+
+Consolidated actual caller/fencing/lifecycle proof now passes all 33 collected cases
+in 68.87 seconds, zero skips/source guards (worker-owned-callers-actual). Independent
+strict eight targets pass, including complete Runtime and its wire/dispatch/queue
+contracts plus the actual helper/refusal/controlled-claim targets. Scoped six-file
+Ruff and formatting pass. Tested functional prefix b6a681c0 is unchanged except
+this report. Complete peer reaction/X/market-refresh/E2E producer qualification and
+full default-unit timing remain outstanding; this checkpoint is not global release.
+
+### Concrete queue adapter moved outward
+
+From caller-qualified worker 0d5bc86e, the concrete JobRepository now lives in
+src/tank/job_repository.py. contracts/job_repository.py retains only the precise
+ten-method QueueStore Protocol; required envelope/claim/mutation records remain
+in contracts/jobs.py. The concrete class AST is identical before and after the
+move/formatting (SHA256 4704fe313cd6cfa9e04beff8e93202d8a453d85ba8499b2ed7d82897189db6a8).
+External job-repository-relocation-ast.json records both hashes and all 24 actual
+caller paths. Pipeline and worker imports split port versus adapter; 22 test
+imports use the new outward path. No compatibility re-export, forwarding class,
+annotation suppression, storage algorithm or callback policy changed.
+
+All 58 selected existing queue/claim/quarantine/raw-revision/clock/controlled/atomic
+units pass in 7.93 s; all 37 actual PostgreSQL cases pass in 10.97 s, zero skips/source guards.
+These retain real minimal-store transaction/rollback, malformed original revision,
+raw payload/omitted clock metadata, fresh-token refund/recovery ABA and concurrent
+row-lock controls. Independent strict 8 targets including both modules and actual
+consumers pass; scoped Ruff/format and import search pass. Configured mypy across 202 sources has only the separately owned truth _condition_cache error. The proposed
+layout-only assertion was removed before qualification per lead review; no new
+mechanical-layout test remains. Quality will add the independently signed new
+adapter to explicit strict CI/inventory while keeping the inward port target.
+
+This closes this concrete inward-I/O violation, not the broader generic Repository,
+source-adapter or whole-application architecture/typing scope. Historical recovery,
+pending-demand and the separate completion-observation behavior correction remain
+held and are not implied by this worker candidate. No parent worktree was edited.

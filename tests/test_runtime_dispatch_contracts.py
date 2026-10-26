@@ -5,8 +5,8 @@ from postgres_helpers import PostgresTemplate
 from pydantic import JsonValue, ValidationError
 from test_storage import repo as repo
 
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import JobEnvelope
+from tank.job_repository import JobRepository
 from tank.runtime_dispatch_contracts import (
     DeliverCommand,
     DependencyState,

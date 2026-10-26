@@ -454,11 +454,11 @@
     },
     {
       "path": "src/tank/agents/context.py",
-      "lines": 894,
+      "lines": 896,
       "functions": [
         {
           "symbol": "identifier_field",
-          "line": 254,
+          "line": 255,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -466,7 +466,7 @@
         },
         {
           "symbol": "private_field",
-          "line": 261,
+          "line": 262,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -474,7 +474,7 @@
         },
         {
           "symbol": "clean_text",
-          "line": 266,
+          "line": 267,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -482,7 +482,7 @@
         },
         {
           "symbol": "clean_value",
-          "line": 273,
+          "line": 274,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -490,7 +490,7 @@
         },
         {
           "symbol": "labelled",
-          "line": 288,
+          "line": 289,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -498,7 +498,7 @@
         },
         {
           "symbol": "named",
-          "line": 293,
+          "line": 294,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -506,7 +506,7 @@
         },
         {
           "symbol": "record_kind",
-          "line": 297,
+          "line": 298,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -514,7 +514,7 @@
         },
         {
           "symbol": "id_kind",
-          "line": 306,
+          "line": 307,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -522,7 +522,7 @@
         },
         {
           "symbol": "references",
-          "line": 315,
+          "line": 316,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -530,7 +530,7 @@
         },
         {
           "symbol": "reject_text_ids",
-          "line": 329,
+          "line": 330,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -538,7 +538,7 @@
         },
         {
           "symbol": "legacy_reference",
-          "line": 346,
+          "line": 347,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -546,7 +546,7 @@
         },
         {
           "symbol": "novel_layers_allowed",
-          "line": 382,
+          "line": 383,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -554,7 +554,7 @@
         },
         {
           "symbol": "wire_string",
-          "line": 396,
+          "line": 397,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -562,7 +562,7 @@
         },
         {
           "symbol": "wire_strings",
-          "line": 402,
+          "line": 403,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -570,7 +570,7 @@
         },
         {
           "symbol": "ContextRecordReader.get",
-          "line": 409,
+          "line": 410,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -578,7 +578,7 @@
         },
         {
           "symbol": "ContextRecordReader.iter_all",
-          "line": 411,
+          "line": 412,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -586,7 +586,7 @@
         },
         {
           "symbol": "document_reference",
-          "line": 420,
+          "line": 421,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -594,7 +594,7 @@
         },
         {
           "symbol": "event_reference",
-          "line": 434,
+          "line": 435,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -602,7 +602,7 @@
         },
         {
           "symbol": "claim_reference",
-          "line": 438,
+          "line": 439,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -610,7 +610,7 @@
         },
         {
           "symbol": "ModelContext.__init__",
-          "line": 446,
+          "line": 447,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 2,
@@ -618,7 +618,7 @@
         },
         {
           "symbol": "ModelContext.token_label",
-          "line": 477,
+          "line": 478,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -626,7 +626,7 @@
         },
         {
           "symbol": "ModelContext.entity_label",
-          "line": 483,
+          "line": 484,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -634,7 +634,7 @@
         },
         {
           "symbol": "ModelContext.instrument_label",
-          "line": 489,
+          "line": 490,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -642,7 +642,7 @@
         },
         {
           "symbol": "ModelContext.source_label",
-          "line": 495,
+          "line": 496,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -650,7 +650,7 @@
         },
         {
           "symbol": "ModelContext.diagnostic_text",
-          "line": 499,
+          "line": 500,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -658,7 +658,7 @@
         },
         {
           "symbol": "ModelContext.condition_reference",
-          "line": 510,
+          "line": 511,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -666,7 +666,7 @@
         },
         {
           "symbol": "ModelContext.describe_claim",
-          "line": 524,
+          "line": 525,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -674,7 +674,7 @@
         },
         {
           "symbol": "ModelContext.describe",
-          "line": 550,
+          "line": 551,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -682,7 +682,7 @@
         },
         {
           "symbol": "ModelContext.reference",
-          "line": 563,
+          "line": 564,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -690,7 +690,7 @@
         },
         {
           "symbol": "ModelContext.project",
-          "line": 572,
+          "line": 573,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -698,7 +698,7 @@
         },
         {
           "symbol": "ModelContext.project_wire",
-          "line": 575,
+          "line": 576,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -706,7 +706,7 @@
         },
         {
           "symbol": "ModelContext.result",
-          "line": 672,
+          "line": 673,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -714,7 +714,7 @@
         },
         {
           "symbol": "ModelContext.message",
-          "line": 693,
+          "line": 694,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 3,
@@ -722,7 +722,7 @@
         },
         {
           "symbol": "ModelContext.lookup",
-          "line": 734,
+          "line": 736,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -730,7 +730,7 @@
         },
         {
           "symbol": "ModelContext.public_schema",
-          "line": 742,
+          "line": 744,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -738,7 +738,7 @@
         },
         {
           "symbol": "ModelContext.validate_shape",
-          "line": 751,
+          "line": 753,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -746,7 +746,7 @@
         },
         {
           "symbol": "ModelContext.bind",
-          "line": 773,
+          "line": 775,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -754,7 +754,7 @@
         },
         {
           "symbol": "ModelContext.check",
-          "line": 829,
+          "line": 831,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -762,7 +762,7 @@
         },
         {
           "symbol": "ModelContext.arguments",
-          "line": 884,
+          "line": 886,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1362,11 +1362,11 @@
     },
     {
       "path": "src/tank/agents/native_sessions.py",
-      "lines": 357,
+      "lines": 400,
       "functions": [
         {
           "symbol": "NativeReplayIdentity.bound_evidence",
-          "line": 22,
+          "line": 29,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1374,7 +1374,7 @@
         },
         {
           "symbol": "NativeSessionResolution.fresh_context_matches_role",
-          "line": 34,
+          "line": 41,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1382,7 +1382,15 @@
         },
         {
           "symbol": "NativeSessionResolution.mapping_identity",
-          "line": 50,
+          "line": 57,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "NativeSessionResolution.from_message",
+          "line": 69,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1390,7 +1398,7 @@
         },
         {
           "symbol": "NativeSessionResolution.from_wire",
-          "line": 62,
+          "line": 105,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -1398,7 +1406,7 @@
         },
         {
           "symbol": "NativeSessionDeployment.from_wire",
-          "line": 109,
+          "line": 152,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -1406,7 +1414,7 @@
         },
         {
           "symbol": "NativeSessionIdentity.marker",
-          "line": 128,
+          "line": 171,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1414,7 +1422,7 @@
         },
         {
           "symbol": "NativeSessionIdentityMetadata.from_binding",
-          "line": 139,
+          "line": 182,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1422,7 +1430,7 @@
         },
         {
           "symbol": "NativeSessionIdentityMetadata.complete_identity_binding",
-          "line": 148,
+          "line": 191,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1430,7 +1438,7 @@
         },
         {
           "symbol": "NativeSessionIdentityMetadata.expected_fields",
-          "line": 157,
+          "line": 200,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -1438,7 +1446,7 @@
         },
         {
           "symbol": "NativeSessionObservation.verify_binding",
-          "line": 187,
+          "line": 230,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1446,7 +1454,7 @@
         },
         {
           "symbol": "observe_native_session",
-          "line": 199,
+          "line": 242,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1454,7 +1462,7 @@
         },
         {
           "symbol": "observe_native_session_page",
-          "line": 215,
+          "line": 258,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -1462,7 +1470,7 @@
         },
         {
           "symbol": "NativeOpeningSource.consistent_origin",
-          "line": 234,
+          "line": 277,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1470,7 +1478,7 @@
         },
         {
           "symbol": "NativeOpeningSource.opening_item",
-          "line": 243,
+          "line": 286,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1478,7 +1486,7 @@
         },
         {
           "symbol": "NativeSessionEndpoint.request",
-          "line": 248,
+          "line": 291,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1486,7 +1494,7 @@
         },
         {
           "symbol": "NativeSessionDiscovery.__init__",
-          "line": 260,
+          "line": 303,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1494,7 +1502,7 @@
         },
         {
           "symbol": "NativeSessionDiscovery.discover_or_create",
-          "line": 264,
+          "line": 307,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -1502,7 +1510,7 @@
         },
         {
           "symbol": "NativeStoredSessionBinding.from_record",
-          "line": 311,
+          "line": 354,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -1510,7 +1518,7 @@
         },
         {
           "symbol": "NativeStoredSessionBinding.matches_origin_scope",
-          "line": 327,
+          "line": 370,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1518,7 +1526,7 @@
         },
         {
           "symbol": "NativeStoredSessionBinding.verify",
-          "line": 332,
+          "line": 375,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1526,7 +1534,7 @@
         },
         {
           "symbol": "native_role_for_message",
-          "line": 350,
+          "line": 393,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1756,11 +1764,11 @@
     },
     {
       "path": "src/tank/agents/pipeline.py",
-      "lines": 308,
+      "lines": 309,
       "functions": [
         {
           "symbol": "PipelineSettings.foundry_api_key",
-          "line": 53,
+          "line": 54,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1768,7 +1776,7 @@
         },
         {
           "symbol": "PipelineSettings.foundry_endpoint",
-          "line": 55,
+          "line": 56,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1776,7 +1784,7 @@
         },
         {
           "symbol": "PipelineSettings.foundry_deployment",
-          "line": 57,
+          "line": 58,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1784,7 +1792,7 @@
         },
         {
           "symbol": "PipelineSettings.replay",
-          "line": 59,
+          "line": 60,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1792,14 +1800,6 @@
         },
         {
           "symbol": "PipelineSettings.load_config",
-          "line": 61,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "PipelineSettings.thresholds",
           "line": 62,
           "missing_parameters": [],
           "missing_return": false,
@@ -1807,8 +1807,16 @@
           "get_calls": 0
         },
         {
+          "symbol": "PipelineSettings.thresholds",
+          "line": 63,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
           "symbol": "PipelineStore.iter_range",
-          "line": 66,
+          "line": 67,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1816,7 +1824,7 @@
         },
         {
           "symbol": "priority",
-          "line": 78,
+          "line": 79,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1824,7 +1832,7 @@
         },
         {
           "symbol": "Pipeline.__init__",
-          "line": 87,
+          "line": 88,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1832,7 +1840,7 @@
         },
         {
           "symbol": "Pipeline.cutoff",
-          "line": 106,
+          "line": 107,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1840,7 +1848,7 @@
         },
         {
           "symbol": "Pipeline.source_item",
-          "line": 119,
+          "line": 120,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1848,7 +1856,7 @@
         },
         {
           "symbol": "Pipeline.save_source",
-          "line": 130,
+          "line": 131,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1856,7 +1864,7 @@
         },
         {
           "symbol": "Pipeline.item_view",
-          "line": 137,
+          "line": 138,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1864,7 +1872,7 @@
         },
         {
           "symbol": "Pipeline.state",
-          "line": 141,
+          "line": 142,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1872,7 +1880,7 @@
         },
         {
           "symbol": "Pipeline.score",
-          "line": 144,
+          "line": 145,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1880,7 +1888,7 @@
         },
         {
           "symbol": "Pipeline.score_identity",
-          "line": 147,
+          "line": 148,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1888,7 +1896,7 @@
         },
         {
           "symbol": "Pipeline._score_record",
-          "line": 152,
+          "line": 153,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1896,7 +1904,7 @@
         },
         {
           "symbol": "Pipeline.filter_item_wire",
-          "line": 157,
+          "line": 158,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1904,7 +1912,7 @@
         },
         {
           "symbol": "Pipeline.filter_item",
-          "line": 161,
+          "line": 162,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1912,7 +1920,7 @@
         },
         {
           "symbol": "Pipeline.registry",
-          "line": 217,
+          "line": 218,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1920,7 +1928,7 @@
         },
         {
           "symbol": "Pipeline.selector",
-          "line": 220,
+          "line": 221,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1928,7 +1936,7 @@
         },
         {
           "symbol": "Pipeline.identities",
-          "line": 223,
+          "line": 224,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1936,7 +1944,7 @@
         },
         {
           "symbol": "Pipeline.event_view",
-          "line": 226,
+          "line": 227,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1944,7 +1952,7 @@
         },
         {
           "symbol": "Pipeline.routing_state",
-          "line": 229,
+          "line": 230,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1952,7 +1960,7 @@
         },
         {
           "symbol": "Pipeline._candidate_events",
-          "line": 232,
+          "line": 233,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1960,7 +1968,7 @@
         },
         {
           "symbol": "Pipeline.candidate_events",
-          "line": 237,
+          "line": 238,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1968,7 +1976,7 @@
         },
         {
           "symbol": "Pipeline.route_item_wire",
-          "line": 242,
+          "line": 243,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1976,7 +1984,7 @@
         },
         {
           "symbol": "Pipeline.route_item",
-          "line": 246,
+          "line": 247,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -1984,7 +1992,7 @@
         },
         {
           "symbol": "Pipeline.close",
-          "line": 306,
+          "line": 307,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2411,11 +2419,11 @@
     },
     {
       "path": "src/tank/agents/sessions.py",
-      "lines": 2592,
+      "lines": 2630,
       "functions": [
         {
           "symbol": "seen_key",
-          "line": 225,
+          "line": 231,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2423,7 +2431,7 @@
         },
         {
           "symbol": "material_event",
-          "line": 230,
+          "line": 236,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2431,7 +2439,7 @@
         },
         {
           "symbol": "SessionService.__init__",
-          "line": 246,
+          "line": 252,
           "missing_parameters": [
             "repo",
             "settings",
@@ -2445,7 +2453,7 @@
         },
         {
           "symbol": "SessionService.clock_timestamp",
-          "line": 288,
+          "line": 294,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2453,7 +2461,7 @@
         },
         {
           "symbol": "SessionService.event_timestamp",
-          "line": 291,
+          "line": 297,
           "missing_parameters": [
             "event"
           ],
@@ -2463,7 +2471,7 @@
         },
         {
           "symbol": "SessionService.agent_provenance",
-          "line": 298,
+          "line": 304,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2471,7 +2479,7 @@
         },
         {
           "symbol": "SessionService.config",
-          "line": 305,
+          "line": 311,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2479,7 +2487,7 @@
         },
         {
           "symbol": "SessionService.headers",
-          "line": 312,
+          "line": 318,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -2487,7 +2495,7 @@
         },
         {
           "symbol": "SessionService.url",
-          "line": 320,
+          "line": 326,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2495,7 +2503,7 @@
         },
         {
           "symbol": "SessionService.request",
-          "line": 323,
+          "line": 329,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2503,7 +2511,7 @@
         },
         {
           "symbol": "SessionService.resolve",
-          "line": 353,
+          "line": 359,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 10,
@@ -2511,7 +2519,7 @@
         },
         {
           "symbol": "SessionService.continuable",
-          "line": 472,
+          "line": 478,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -2519,7 +2527,7 @@
         },
         {
           "symbol": "SessionService.reopen_for_question",
-          "line": 508,
+          "line": 514,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2527,7 +2535,7 @@
         },
         {
           "symbol": "SessionService.analyst_tools",
-          "line": 517,
+          "line": 523,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2535,7 +2543,7 @@
         },
         {
           "symbol": "SessionService.legacy_contract",
-          "line": 524,
+          "line": 530,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2543,7 +2551,7 @@
         },
         {
           "symbol": "SessionService.sync_tools",
-          "line": 527,
+          "line": 533,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2551,7 +2559,7 @@
         },
         {
           "symbol": "SessionService.transition_note",
-          "line": 582,
+          "line": 588,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2559,7 +2567,7 @@
         },
         {
           "symbol": "SessionService.prepare_attachments",
-          "line": 594,
+          "line": 600,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2567,7 +2575,7 @@
         },
         {
           "symbol": "SessionService.send_file",
-          "line": 602,
+          "line": 608,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2575,7 +2583,7 @@
         },
         {
           "symbol": "SessionService.validate_new_question_input",
-          "line": 626,
+          "line": 632,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2583,15 +2591,23 @@
         },
         {
           "symbol": "SessionService.send_message",
-          "line": 665,
+          "line": 671,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 1
+        },
+        {
+          "symbol": "SessionService.dispatch_message",
+          "line": 682,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 4,
-          "get_calls": 8
+          "get_calls": 7
         },
         {
           "symbol": "SessionService.post_message_intent",
-          "line": 762,
+          "line": 789,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 4,
@@ -2599,7 +2615,7 @@
         },
         {
           "symbol": "SessionService.recover_outbound_inputs",
-          "line": 834,
+          "line": 861,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2607,7 +2623,7 @@
         },
         {
           "symbol": "SessionService.post_input",
-          "line": 853,
+          "line": 880,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2615,7 +2631,7 @@
         },
         {
           "symbol": "SessionService.accepted_input_id",
-          "line": 864,
+          "line": 891,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2623,7 +2639,7 @@
         },
         {
           "symbol": "SessionService.native_input_owner",
-          "line": 868,
+          "line": 895,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -2631,7 +2647,7 @@
         },
         {
           "symbol": "SessionService.execution_barrier",
-          "line": 894,
+          "line": 921,
           "missing_parameters": [
             "session",
             "calls",
@@ -2643,7 +2659,7 @@
         },
         {
           "symbol": "SessionService.source_completion_snapshot",
-          "line": 1026,
+          "line": 1053,
           "missing_parameters": [
             "session"
           ],
@@ -2653,7 +2669,7 @@
         },
         {
           "symbol": "SessionService.completed_turn",
-          "line": 1046,
+          "line": 1073,
           "missing_parameters": [
             "sid"
           ],
@@ -2663,7 +2679,7 @@
         },
         {
           "symbol": "SessionService.turn_answers",
-          "line": 1052,
+          "line": 1079,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 3,
@@ -2671,7 +2687,7 @@
         },
         {
           "symbol": "SessionService.deliver_answers",
-          "line": 1099,
+          "line": 1126,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 2,
@@ -2679,7 +2695,7 @@
         },
         {
           "symbol": "SessionService.abandon_question",
-          "line": 1178,
+          "line": 1205,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 4,
@@ -2687,7 +2703,7 @@
         },
         {
           "symbol": "SessionService.reconcile_answers",
-          "line": 1252,
+          "line": 1279,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 2,
@@ -2695,7 +2711,7 @@
         },
         {
           "symbol": "SessionService.settled_turn",
-          "line": 1271,
+          "line": 1298,
           "missing_parameters": [
             "sid"
           ],
@@ -2705,7 +2721,7 @@
         },
         {
           "symbol": "SessionService.start_stream",
-          "line": 1358,
+          "line": 1385,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2713,7 +2729,7 @@
         },
         {
           "symbol": "SessionService.stop_followers",
-          "line": 1363,
+          "line": 1390,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2721,7 +2737,7 @@
         },
         {
           "symbol": "SessionService.finalize_replay_abort",
-          "line": 1371,
+          "line": 1398,
           "missing_parameters": [
             "sid",
             "replay_run_id",
@@ -2733,7 +2749,7 @@
         },
         {
           "symbol": "SessionService.tool_context",
-          "line": 1398,
+          "line": 1425,
           "missing_parameters": [
             "session",
             "call_id"
@@ -2744,7 +2760,7 @@
         },
         {
           "symbol": "SessionService.hydrate_prompt_provenance",
-          "line": 1429,
+          "line": 1456,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2752,7 +2768,7 @@
         },
         {
           "symbol": "SessionService.invoke_tool",
-          "line": 1467,
+          "line": 1494,
           "missing_parameters": [
             "session",
             "tool",
@@ -2769,7 +2785,7 @@
         },
         {
           "symbol": "SessionService.tool_failure",
-          "line": 1530,
+          "line": 1557,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -2777,7 +2793,7 @@
         },
         {
           "symbol": "SessionService.tool",
-          "line": 1565,
+          "line": 1592,
           "missing_parameters": [
             "session",
             "event"
@@ -2788,7 +2804,7 @@
         },
         {
           "symbol": "SessionService.usage",
-          "line": 1793,
+          "line": 1820,
           "missing_parameters": [
             "session",
             "event"
@@ -2799,7 +2815,7 @@
         },
         {
           "symbol": "SessionService.process_event",
-          "line": 1856,
+          "line": 1883,
           "missing_parameters": [
             "sid",
             "event",
@@ -2811,7 +2827,7 @@
         },
         {
           "symbol": "SessionService.observe_native_event",
-          "line": 2210,
+          "line": 2237,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -2819,7 +2835,7 @@
         },
         {
           "symbol": "SessionService.catch_up",
-          "line": 2235,
+          "line": 2262,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -2827,7 +2843,7 @@
         },
         {
           "symbol": "SessionService.stream",
-          "line": 2259,
+          "line": 2286,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -2835,7 +2851,7 @@
         },
         {
           "symbol": "SessionService.can_archive",
-          "line": 2285,
+          "line": 2312,
           "missing_parameters": [
             "session",
             "event"
@@ -2846,7 +2862,7 @@
         },
         {
           "symbol": "SessionService.finish_if_idle",
-          "line": 2351,
+          "line": 2378,
           "missing_parameters": [
             "sid"
           ],
@@ -2856,7 +2872,7 @@
         },
         {
           "symbol": "SessionService.last_message_at",
-          "line": 2413,
+          "line": 2440,
           "missing_parameters": [
             "session"
           ],
@@ -2866,7 +2882,7 @@
         },
         {
           "symbol": "SessionService.followable",
-          "line": 2431,
+          "line": 2458,
           "missing_parameters": [
             "session"
           ],
@@ -2876,7 +2892,7 @@
         },
         {
           "symbol": "SessionService.follower_state",
-          "line": 2447,
+          "line": 2474,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 2,
@@ -2884,7 +2900,7 @@
         },
         {
           "symbol": "SessionService.follow",
-          "line": 2484,
+          "line": 2511,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2892,7 +2908,7 @@
         },
         {
           "symbol": "SessionService.admission",
-          "line": 2523,
+          "line": 2550,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2900,7 +2916,7 @@
         },
         {
           "symbol": "SessionService.running_session_cap",
-          "line": 2531,
+          "line": 2558,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2908,7 +2924,15 @@
         },
         {
           "symbol": "SessionService.admit",
-          "line": 2534,
+          "line": 2561,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "SessionService.admit_candidate",
+          "line": 2564,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2916,7 +2940,7 @@
         },
         {
           "symbol": "SessionService.wake_waiting",
-          "line": 2537,
+          "line": 2567,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -2924,15 +2948,15 @@
         },
         {
           "symbol": "SessionService.scout_review",
-          "line": 2540,
+          "line": 2570,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
-          "get_calls": 1
+          "get_calls": 2
         },
         {
           "symbol": "SessionService.run",
-          "line": 2560,
+          "line": 2598,
           "missing_parameters": [
             "stop"
           ],
@@ -2942,7 +2966,7 @@
         },
         {
           "symbol": "SessionService.close",
-          "line": 2586,
+          "line": 2624,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4462,11 +4486,11 @@
     },
     {
       "path": "src/tank/runtime.py",
-      "lines": 565,
+      "lines": 662,
       "functions": [
         {
           "symbol": "RuntimeFailureRepository.execute",
-          "line": 61,
+          "line": 91,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4474,7 +4498,7 @@
         },
         {
           "symbol": "RuntimeFailureRepository.mark",
-          "line": 65,
+          "line": 95,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4482,7 +4506,7 @@
         },
         {
           "symbol": "RuntimeFailureRepository.pending",
-          "line": 67,
+          "line": 97,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4490,7 +4514,7 @@
         },
         {
           "symbol": "RuntimeService.run",
-          "line": 71,
+          "line": 101,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4498,7 +4522,7 @@
         },
         {
           "symbol": "RuntimeService.close",
-          "line": 72,
+          "line": 102,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4506,7 +4530,7 @@
         },
         {
           "symbol": "GatewayPort.preflight",
-          "line": 76,
+          "line": 106,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4514,7 +4538,7 @@
         },
         {
           "symbol": "GatewayPort.start",
-          "line": 77,
+          "line": 107,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4522,7 +4546,7 @@
         },
         {
           "symbol": "GatewayPort.close",
-          "line": 78,
+          "line": 108,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4530,7 +4554,7 @@
         },
         {
           "symbol": "MarketTruthPort.assess_for_job",
-          "line": 82,
+          "line": 112,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4538,15 +4562,39 @@
         },
         {
           "symbol": "Runtime.__init__",
-          "line": 115,
+          "line": 145,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
           "get_calls": 0
         },
         {
+          "symbol": "Runtime.active_jobs",
+          "line": 177,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "Runtime.snapshot_active_claims",
+          "line": 180,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "Runtime.interrupt_claims",
+          "line": 183,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
           "symbol": "Runtime.validate",
-          "line": 159,
+          "line": 200,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4554,7 +4602,7 @@
         },
         {
           "symbol": "Runtime.prepare",
-          "line": 164,
+          "line": 205,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4562,46 +4610,6 @@
         },
         {
           "symbol": "Runtime.escalate_wire",
-          "line": 168,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "Runtime.assess_wire",
-          "line": 171,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "Runtime.escalate",
-          "line": 175,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "Runtime.assess",
-          "line": 178,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 1
-        },
-        {
-          "symbol": "Runtime.eval_conditions_wire",
-          "line": 206,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "Runtime.scout_review",
           "line": 209,
           "missing_parameters": [],
           "missing_return": false,
@@ -4609,16 +4617,80 @@
           "get_calls": 0
         },
         {
-          "symbol": "Runtime.worker",
-          "line": 213,
+          "symbol": "Runtime.assess_wire",
+          "line": 212,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 5,
-          "get_calls": 7
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "Runtime.escalate",
+          "line": 216,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "Runtime.assess",
+          "line": 219,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 1
+        },
+        {
+          "symbol": "Runtime.eval_conditions_wire",
+          "line": 247,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "Runtime.reaction_capture_wire",
+          "line": 250,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "Runtime.milestone_check_wire",
+          "line": 259,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "Runtime.scout_review",
+          "line": 262,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "Runtime.execute_work_wire",
+          "line": 266,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "Runtime.worker",
+          "line": 348,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
         },
         {
           "symbol": "Runtime.terminal_delivery_failure_wire",
-          "line": 340,
+          "line": 471,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4626,7 +4698,7 @@
         },
         {
           "symbol": "Runtime.terminal_delivery_failure",
-          "line": 351,
+          "line": 482,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4634,7 +4706,7 @@
         },
         {
           "symbol": "Runtime.terminal_delivery_failure.apply",
-          "line": 355,
+          "line": 486,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4642,7 +4714,7 @@
         },
         {
           "symbol": "Runtime.reconcile_delivery_failures",
-          "line": 389,
+          "line": 520,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4650,7 +4722,7 @@
         },
         {
           "symbol": "Runtime.pause",
-          "line": 409,
+          "line": 540,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4658,7 +4730,7 @@
         },
         {
           "symbol": "Runtime.supervise",
-          "line": 413,
+          "line": 544,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4666,7 +4738,7 @@
         },
         {
           "symbol": "Runtime.bootstrap",
-          "line": 425,
+          "line": 556,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4674,15 +4746,15 @@
         },
         {
           "symbol": "Runtime.run",
-          "line": 428,
+          "line": 559,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 3,
-          "get_calls": 2
+          "dict_nodes": 2,
+          "get_calls": 1
         },
         {
           "symbol": "Runtime.close",
-          "line": 547,
+          "line": 644,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4794,11 +4866,19 @@
     },
     {
       "path": "src/tank/runtime_contracts.py",
-      "lines": 630,
+      "lines": 603,
       "functions": [
         {
           "symbol": "MarketTruthJob.validate_cutoff",
-          "line": 42,
+          "line": 44,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "EvalConditionsJob.actual_cutoff",
+          "line": 59,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4806,7 +4886,7 @@
         },
         {
           "symbol": "parse_delivery_job",
-          "line": 118,
+          "line": 82,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4814,7 +4894,7 @@
         },
         {
           "symbol": "ReplayBinding.actual_replay_schedule",
-          "line": 143,
+          "line": 107,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4822,7 +4902,7 @@
         },
         {
           "symbol": "SourceMessage.authored_reference_is_bound",
-          "line": 169,
+          "line": 133,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4830,7 +4910,7 @@
         },
         {
           "symbol": "parse_direct_agent_message",
-          "line": 201,
+          "line": 165,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4838,7 +4918,7 @@
         },
         {
           "symbol": "ConditionFiredMessage.matches_condition",
-          "line": 221,
+          "line": 185,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4846,7 +4926,7 @@
         },
         {
           "symbol": "TimedReviewFiredMessage.matches_review",
-          "line": 238,
+          "line": 202,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4854,7 +4934,15 @@
         },
         {
           "symbol": "CallExpiredMessage.describes_expired_call",
-          "line": 265,
+          "line": 229,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "agent_message_target",
+          "line": 260,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4862,7 +4950,7 @@
         },
         {
           "symbol": "parse_agent_message",
-          "line": 296,
+          "line": 269,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4870,7 +4958,7 @@
         },
         {
           "symbol": "replace_job_clock",
-          "line": 319,
+          "line": 292,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4878,7 +4966,7 @@
         },
         {
           "symbol": "FailedAnswerNotification.actual_question_identity",
-          "line": 355,
+          "line": 328,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4886,7 +4974,7 @@
         },
         {
           "symbol": "FailureRecordIdentity.from_record",
-          "line": 373,
+          "line": 346,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -4894,7 +4982,7 @@
         },
         {
           "symbol": "read_failure_marker",
-          "line": 388,
+          "line": 361,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4902,7 +4990,7 @@
         },
         {
           "symbol": "failure_payload",
-          "line": 395,
+          "line": 368,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4910,7 +4998,7 @@
         },
         {
           "symbol": "failure_agent_kind",
-          "line": 402,
+          "line": 375,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4918,7 +5006,7 @@
         },
         {
           "symbol": "terminal_notification",
-          "line": 409,
+          "line": 382,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 2,
@@ -4926,7 +5014,7 @@
         },
         {
           "symbol": "terminal_progress",
-          "line": 439,
+          "line": 412,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -4934,7 +5022,7 @@
         },
         {
           "symbol": "failure_reason_text",
-          "line": 488,
+          "line": 461,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4942,7 +5030,7 @@
         },
         {
           "symbol": "recorded_failure_reason",
-          "line": 496,
+          "line": 469,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -4950,7 +5038,7 @@
         },
         {
           "symbol": "TerminalJobFailure.declared_failure_scope",
-          "line": 514,
+          "line": 487,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -4958,7 +5046,7 @@
         },
         {
           "symbol": "TerminalJobFailure.from_record",
-          "line": 545,
+          "line": 518,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -4966,7 +5054,7 @@
         },
         {
           "symbol": "FailureReconciliationItem.from_record",
-          "line": 573,
+          "line": 546,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -4974,7 +5062,7 @@
         },
         {
           "symbol": "FailureJournalUnavailable.__init__",
-          "line": 615,
+          "line": 588,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4982,7 +5070,7 @@
         },
         {
           "symbol": "FailureJournalRejected.__init__",
-          "line": 620,
+          "line": 593,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -4990,7 +5078,7 @@
         },
         {
           "symbol": "FailureJournalScopeChanged.__init__",
-          "line": 625,
+          "line": 598,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5000,19 +5088,19 @@
     },
     {
       "path": "src/tank/runtime_dispatch_contracts.py",
-      "lines": 189,
+      "lines": 206,
       "functions": [
         {
           "symbol": "ClaimedWork.actual_execution",
-          "line": 133,
+          "line": 126,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 0,
+          "dict_nodes": 1,
           "get_calls": 0
         },
         {
           "symbol": "ClaimedWork.scope",
-          "line": 140,
+          "line": 141,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -5020,7 +5108,7 @@
         },
         {
           "symbol": "DependencyFailure.__init__",
-          "line": 163,
+          "line": 165,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5028,7 +5116,15 @@
         },
         {
           "symbol": "RequeueRequest.actual_schedule",
-          "line": 186,
+          "line": 188,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "WorkerFailureRequest.actual_failure_scope",
+          "line": 201,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5176,11 +5272,11 @@
     },
     {
       "path": "src/tank/runtime_worker_repository.py",
-      "lines": 172,
+      "lines": 245,
       "functions": [
         {
           "symbol": "RepositoryWorkerQueue.__init__",
-          "line": 26,
+          "line": 30,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5188,7 +5284,7 @@
         },
         {
           "symbol": "RepositoryWorkerQueue.claim",
-          "line": 30,
+          "line": 34,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 2,
@@ -5196,7 +5292,7 @@
         },
         {
           "symbol": "RepositoryWorkerQueue.invalid_claim",
-          "line": 61,
+          "line": 58,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5204,7 +5300,39 @@
         },
         {
           "symbol": "RepositoryWorkerQueue.reject_invalid",
-          "line": 84,
+          "line": 82,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "RepositoryWorkerQueue.current",
+          "line": 85,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 1
+        },
+        {
+          "symbol": "RepositoryWorkerQueue.terminal",
+          "line": 91,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 1
+        },
+        {
+          "symbol": "RepositoryWorkerQueue.interrupt",
+          "line": 109,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "RepositoryWorkerQueue.interrupted",
+          "line": 115,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5212,43 +5340,83 @@
         },
         {
           "symbol": "RepositoryWorkerQueue.dependency",
-          "line": 87,
+          "line": 127,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 0,
+          "dict_nodes": 1,
           "get_calls": 1
         },
         {
           "symbol": "RepositoryWorkerQueue.dependencies",
-          "line": 98,
+          "line": 138,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
           "get_calls": 0
         },
         {
-          "symbol": "RepositoryWorkerQueue.owns_running_claim",
-          "line": 122,
+          "symbol": "RepositoryWorkerQueue.requeue",
+          "line": 161,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
           "get_calls": 0
         },
         {
-          "symbol": "RepositoryWorkerQueue.requeue",
-          "line": 131,
+          "symbol": "RepositoryWorkerQueue.defer",
+          "line": 164,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
-          "get_calls": 1
+          "get_calls": 0
         },
         {
           "symbol": "RepositoryWorkerQueue.expire",
-          "line": 155,
+          "line": 188,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
-          "get_calls": 1
+          "get_calls": 0
+        },
+        {
+          "symbol": "RepositoryWorkerQueue.expire_due",
+          "line": 195,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "RepositoryWorkerQueue.complete",
+          "line": 205,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "RepositoryWorkerQueue.complete_current",
+          "line": 216,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "RepositoryWorkerQueue.fail",
+          "line": 221,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "RepositoryWorkerQueue.fail_current",
+          "line": 227,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
         }
       ]
     },
@@ -5319,6 +5487,214 @@
           "missing_return": false,
           "dict_nodes": 0,
           "get_calls": 1
+        }
+      ]
+    },
+    {
+      "path": "src/tank/runtime_admission.py",
+      "lines": 27,
+      "functions": [
+        {
+          "symbol": "worker_admission",
+          "line": 9,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        }
+      ]
+    },
+    {
+      "path": "src/tank/runtime_failure_commands.py",
+      "lines": 115,
+      "functions": [
+        {
+          "symbol": "terminal_work_failure",
+          "line": 33,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 3,
+          "get_calls": 0
+        }
+      ]
+    },
+    {
+      "path": "src/tank/contracts/job_repository.py",
+      "lines": 57,
+      "functions": [
+        {
+          "symbol": "QueueStore.get",
+          "line": 20,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "QueueStore.put",
+          "line": 22,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "QueueStore.transaction",
+          "line": 31,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "QueueStore.lock",
+          "line": 33,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "QueueStore.enqueue",
+          "line": 35,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "QueueStore.claim_job",
+          "line": 47,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "QueueStore.transition_claimed_job",
+          "line": 49,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "QueueStore.quarantine_job_claim",
+          "line": 53,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "QueueStore.finish_job",
+          "line": 55,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "QueueStore.fail_job",
+          "line": 57,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        }
+      ]
+    },
+    {
+      "path": "src/tank/job_repository.py",
+      "lines": 101,
+      "functions": [
+        {
+          "symbol": "JobRepository.__init__",
+          "line": 16,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "JobRepository.transaction",
+          "line": 20,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "JobRepository.lock",
+          "line": 23,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "JobRepository.get",
+          "line": 26,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 1
+        },
+        {
+          "symbol": "JobRepository.put",
+          "line": 30,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "JobRepository.enqueue",
+          "line": 35,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "JobRepository.claim",
+          "line": 57,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "JobRepository.claim_with_revision",
+          "line": 61,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "JobRepository.reject_invalid",
+          "line": 93,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "JobRepository.finish",
+          "line": 97,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "JobRepository.fail",
+          "line": 100,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
         }
       ]
     }

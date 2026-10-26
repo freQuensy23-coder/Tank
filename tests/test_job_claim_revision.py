@@ -4,7 +4,6 @@ from agent_source_fixtures import declared_versions_fixture
 from pydantic import ValidationError
 from test_storage import repo as repo
 
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import ClaimedJob, InvalidJobClaim, JobEnvelope
 from tank.contracts.json import JsonDocument
 from tank.contracts.question_retirement import (
@@ -13,6 +12,7 @@ from tank.contracts.question_retirement import (
     UnretainedQuestionJournal,
 )
 from tank.contracts.session_followups import FollowupRefusalTarget
+from tank.job_repository import JobRepository
 from tank.models import Record
 from tank.runtime_contracts import ItemJob
 from tank.storage import StorageBackend
@@ -76,6 +76,7 @@ def command_refusal(claimed: ClaimedJob) -> InvalidJobClaim:
         raise AssertionError("The authored command contains a non-string item identifier")
     assert codes == ("string_type",)
     return InvalidJobClaim(
+        claim_token=claimed.claim_token,
         job_id=claimed.envelope.job_id,
         kind=claimed.envelope.type,
         attempts=claimed.envelope.attempts,

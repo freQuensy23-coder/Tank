@@ -10,6 +10,8 @@ import os
 import uuid
 from contextlib import asynccontextmanager
 from datetime import timedelta
+from pathlib import Path
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -18,12 +20,13 @@ from native_input_fixtures import acknowledge_native_input
 from native_session_fixtures import created_native_session
 from pydantic import JsonValue
 from pydantic_settings import SettingsConfigDict
+from runtime_failure_fixtures import runtime_failure_fixture
 from session_followup_fixtures import UnexpectedFollowupRefusals
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
+from tank.contracts.session_admission import AdmissionCandidate
 from tank.openma_sync import agent_tools
-from tank.runtime import Runtime
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.time_precision import collection_clock
@@ -185,7 +188,7 @@ async def release(repo, sid) -> None:
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
 async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasses(
-    backend, monkeypatch: pytest.MonkeyPatch, postgres_template
+    backend, monkeypatch: pytest.MonkeyPatch, postgres_template, tmp_path: Path
 ) -> None:
     async with fixture_repo(backend, postgres_template) as repo:
         await seed(repo)
@@ -236,7 +239,10 @@ async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasse
                 jobs[name] = (await repo.enqueue("AGENT_MESSAGE", payload, name, priority=1))["job_id"]
         expiries = {name: (await repo.get("ops.jobs", job))["expires_at"] for name, job in jobs.items()}
 
-        async with httpx.AsyncClient(transport=httpx.MockTransport(openma)) as http:
+        async with (
+            httpx.AsyncClient(transport=httpx.MockTransport(openma)) as http,
+            runtime_failure_fixture(repo, tmp_path, ops_progress_enabled=False) as runtime,
+        ):
             sessions = SessionService(
                 repo,
                 opts,
@@ -246,19 +252,19 @@ async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasse
                 refusals=UnexpectedFollowupRefusals(),
             )
             sessions.start_stream = lambda sid: None
-            runtime = object.__new__(Runtime)
-            runtime.repo, runtime.sessions, runtime.active_jobs = repo, sessions, set()
-            runtime.settings = opts
-            runtime.handlers = {"AGENT_MESSAGE": sessions.send_message}
+            await runtime.sessions.close()
+            runtime.sessions = sessions
 
             inspected_after_new = asyncio.Event()
 
-            async def no_delivery() -> None:
+            reconcile = runtime.reconcile_delivery_failures
 
+            async def observe_reconciliation() -> None:
+                await reconcile()
                 if (await repo.get("ops.jobs", jobs["new"]))["status"] == "DONE":
                     inspected_after_new.set()
 
-            runtime.reconcile_delivery_failures = no_delivery
+            monkeypatch.setattr(runtime, "reconcile_delivery_failures", observe_reconciliation)
             stop = asyncio.Event()
             worker = asyncio.create_task(runtime.worker(stop))
 
@@ -311,35 +317,29 @@ async def _waiting(repo, jobs, *names):
 @pytest.mark.asyncio
 async def test_slow_admission_check_waits_without_spending_an_attempt(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     repo = MemoryRepository()
     job = await repo.enqueue("AGENT_MESSAGE", {"kind": "NEW_ITEM", "item_id": "i"}, "slow", priority=1)
     expiry = (await repo.get("ops.jobs", job["job_id"]))["expires_at"]
     monkeypatch.setattr("tank.runtime.ADMISSION_TIMEOUT_S", 0.05)
-    handled = []
+    async with runtime_failure_fixture(repo, tmp_path, ops_progress_enabled=False) as runtime:
 
-    class SlowSessions:
-        async def admit(self, job) -> None:
+        async def slow_admission(candidate: AdmissionCandidate) -> None:
+            assert candidate.job_id == job["job_id"]
             await asyncio.Event().wait()
 
-    async def handler(payload) -> None:
-        handled.append(payload)
-
-    runtime = object.__new__(Runtime)
-    runtime.repo, runtime.sessions, runtime.active_jobs = repo, SlowSessions(), set()
-    runtime.handlers = {"AGENT_MESSAGE": handler}
-
-    async def no_delivery() -> None:
-        return None
-
-    runtime.reconcile_delivery_failures = no_delivery
-    stop = asyncio.Event()
-    worker = asyncio.create_task(runtime.worker(stop))
-    try:
-        await until(lambda: _waiting(repo, {"slow": job["job_id"]}, "slow"))
-    finally:
-        stop.set()
-        await asyncio.wait_for(worker, timeout=1)
-    row = await repo.get("ops.jobs", job["job_id"])
-    assert row["status"] == "QUEUED" and row["attempts"] == 0 and row["last_error"] is None
-    assert row["expires_at"] == expiry and handled == []
+        dispatch = AsyncMock(wraps=runtime.sessions.dispatch_message)
+        monkeypatch.setattr(runtime.sessions, "admit_candidate", slow_admission)
+        monkeypatch.setattr(runtime.sessions, "dispatch_message", dispatch)
+        stop = asyncio.Event()
+        worker = asyncio.create_task(runtime.worker(stop))
+        try:
+            await until(lambda: _waiting(repo, {"slow": job["job_id"]}, "slow"))
+        finally:
+            stop.set()
+            await asyncio.wait_for(worker, timeout=1)
+        row = await repo.get("ops.jobs", job["job_id"])
+        assert row["status"] == "QUEUED" and row["attempts"] == 0 and row["last_error"] is None
+        assert row["expires_at"] == expiry
+        dispatch.assert_not_awaited()

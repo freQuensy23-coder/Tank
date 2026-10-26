@@ -90,6 +90,7 @@ async def runtime_failure_fixture(
     tmp_path: Path,
     *,
     ops_progress_enabled: bool,
+    shutdown_grace_s: int = 10,
     http_routes: Callable[[respx.MockRouter], None] | None = None,
 ) -> AsyncIterator[Runtime]:
     settings = resolve_versions(
@@ -107,6 +108,7 @@ async def runtime_failure_fixture(
             codex_auth_path=tmp_path / "synthetic-auth.json",
             foundry_api_key="synthetic-foundry-key",
             ops_progress_enabled=ops_progress_enabled,
+            shutdown_grace_s=shutdown_grace_s,
         )
     )
     with (

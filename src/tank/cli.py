@@ -6,17 +6,29 @@ import signal
 import sys
 from collections.abc import Awaitable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
-from pydantic import Field
+from pydantic import Field, JsonValue
 
 from tank.contracts import DomainModel
 from tank.contracts.configuration import DeliveryConfiguration
+from tank.contracts.scheduler_commands import (
+    ManualReactionRevisionCommand,
+    ReactionCheckpoint,
+    ReactionListingQuery,
+    ReactionRevisionInventory,
+    ReactionTarget,
+)
 from tank.contracts.sources import SourceApiLimitsConfiguration, SourceConfiguration
 from tank.logging import configure_logging
 from tank.settings import Settings, configured_values, resolve_versions
 from tank.time_precision import collection_clock
 from tank.util import iso, jsonable, new_id
+
+if TYPE_CHECKING:
+    from tank.storage import Repository
+
 
 GIL_SWITCH_INTERVAL_S = 0.0005
 
@@ -333,37 +345,48 @@ def review_label(subject, label, miss_reason, notes, reviewer, version):
     ),
 )
 @click.option("--reason")
-def reaction(event_id, token_id, recapture, reason):
-    if recapture and (not token_id or not reason or not reason.strip()):
-        raise click.UsageError("--recapture requires --token-id and a nonempty --reason")
+def reaction(
+    event_id: str,
+    token_id: str | None,
+    recapture: ReactionCheckpoint | None,
+    reason: str | None,
+) -> None:
+    try:
+        listing = ReactionListingQuery(event_id=event_id, token_id=token_id)
+    except ValueError:
+        raise click.UsageError("Reaction requires nonblank event and supplied token identities") from None
+    target: ReactionTarget | None = None
+    if recapture is not None:
+        if token_id is None or reason is None or not reason.strip():
+            raise click.UsageError("--recapture requires --token-id and a nonempty --reason")
+        target = ReactionTarget(event_id=event_id, token_id=token_id, checkpoint=recapture)
 
-    async def command(repo, settings):
-        if recapture:
+    async def command(repo: "Repository", settings: Settings) -> JsonValue:
+        if target is not None:
             from datetime import timedelta
 
             from tank.util import utcnow
 
-            async with repo.lock(f"reaction:{event_id}:{token_id}:{recapture}"):
+            async with repo.lock(f"reaction:{target.event_id}:{target.token_id}:{target.checkpoint}"):
                 records = [
-                    row
+                    ReactionRevisionInventory.from_record(row, target)
                     async for row in repo.iter_all(
-                        "out.reaction_checkpoints",
-                        filters={"event_id": event_id, "token_id": token_id, "checkpoint": recapture},
+                        "out.reaction_checkpoints", filters=target.model_dump(mode="json")
                     )
                 ]
                 if not records:
                     raise ValueError("Recapture requires an existing immutable checkpoint")
-                revision = max(r["revision"] for r in records) + 1
+                request = ManualReactionRevisionCommand.model_validate(
+                    {
+                        **target.model_dump(mode="json"),
+                        "revision": max(row.revision for row in records) + 1,
+                        "reason": reason,
+                    }
+                )
                 return await repo.enqueue(
                     "REACTION_CAPTURE",
-                    {
-                        "event_id": event_id,
-                        "token_id": token_id,
-                        "checkpoint": recapture,
-                        "revision": revision,
-                        "reason": reason,
-                    },
-                    f"{event_id}:{token_id}:{recapture}:{revision}",
+                    request.storage_fields(),
+                    f"{target.event_id}:{target.token_id}:{target.checkpoint}:{request.revision}",
                     priority=2,
                     max_attempts=5,
                     expires_at=iso(utcnow() + timedelta(hours=6)),
@@ -372,7 +395,7 @@ def reaction(event_id, token_id, recapture, reason):
             row
             async for row in repo.iter_all(
                 "out.reaction_checkpoints",
-                filters={"event_id": event_id, **({"token_id": token_id} if token_id else {})},
+                filters=listing.model_dump(mode="json", exclude_none=True),
             )
         ]
 
