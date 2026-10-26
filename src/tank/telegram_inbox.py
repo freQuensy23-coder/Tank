@@ -18,11 +18,11 @@ from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
 
 import httpx
+import telegramify_markdown
 
 from tank import ops_cards
 from tank.analysis.cards import telegram_card_html
 from tank.ops_progress import STAGES
-from tank.telegram_markdown import render
 from tank.telegram_rich import message_text, rich_message_text
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import new_id, parse_time, sha256, utcnow
@@ -141,6 +141,23 @@ def chunks(text, limit=MESSAGE_LIMIT):
     if rest:
         parts.append(rest)
     return parts or [EMPTY_TEXT]
+
+
+def formatted_chunks(markdown, limit=MESSAGE_LIMIT):
+    """Agent Markdown as (text, entities) messages; the plain text when it cannot be converted.
+
+    Entities carry explicit offsets, so Telegram parses no markup and cannot reject malformed
+    Markdown; markup that forms no complete span stays literal.
+    """
+    try:
+        text, entities = telegramify_markdown.convert(markdown)
+        parts = telegramify_markdown.split_entities(text, entities, limit)
+    except Exception:
+        log.exception("Agent answer Markdown could not be converted; sending it as plain text")
+        parts = []
+    if not "".join(part for part, _ in parts).strip():
+        return [(part, []) for part in chunks(markdown, limit)]
+    return [(part, [entity.to_dict() for entity in found]) for part, found in parts]
 
 
 REFERENCE_LIMIT = 1024
@@ -1198,8 +1215,7 @@ class TelegramInbox:
                 "TERMINATED": TERMINATED_TEXT,
                 "ARCHIVED": ARCHIVED_TEXT,
             }.get(status, FAILED_TEXT)
-        parts = [render(part) if status == "ANSWERED" else (part, []) for part in chunks(text)]
-        parts = [(part, entities) if part else (EMPTY_TEXT, []) for part, entities in parts]
+        parts = formatted_chunks(text) if status == "ANSWERED" else [(part, []) for part in chunks(text)]
         ledger = [
             row
             async for row in self.repo.iter_all(

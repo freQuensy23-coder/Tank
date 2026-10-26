@@ -2190,3 +2190,38 @@ async def test_answer_with_markdown_is_delivered_formatted():
         {"type": "bold", "offset": 0, "length": 2},
         {"type": "italic", "offset": 7, "length": 9},
     ]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "unclosed **bold and `tick snake_case 2 * 3",
+        "Fees went from $5 to $10 for $UNI",
+        "```\nunclosed fence",
+    ],
+)
+def test_malformed_or_dollar_markdown_keeps_the_whole_answer(answer):
+    from tank.telegram_inbox import formatted_chunks
+
+    [(text, _)] = formatted_chunks(answer)
+    assert text.replace("```\n", "") == answer.replace("```\n", "")
+
+
+def test_unconvertible_markdown_is_sent_as_plain_chunks(monkeypatch):
+    import telegramify_markdown
+
+    from tank.telegram_inbox import formatted_chunks
+
+    def broken(markdown):
+        raise ValueError("parser failure")
+
+    monkeypatch.setattr(telegramify_markdown, "convert", broken)
+    assert formatted_chunks("**keep** watching") == [("**keep** watching", [])]
+
+
+def test_long_formatted_answers_split_below_telegram_limit():
+    from tank.telegram_inbox import formatted_chunks, utf16_length
+
+    parts = formatted_chunks("```python\n" + "value = '**literal**'\n" * 400 + "```")
+    assert len(parts) > 1 and all(utf16_length(text) <= 4000 for text, _ in parts)
+    assert all(entities[0]["type"] == "pre" and "**literal**" in text for text, entities in parts)
