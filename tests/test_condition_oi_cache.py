@@ -251,7 +251,7 @@ def test_explicit_empty_oi_read_retains_unavailability_without_zero_endpoints() 
     assert result.synchronized.status == "UNAVAILABLE"
 
 
-@pytest.mark.parametrize("excluded", ["FUTURE_RECEIPT", "UNRESOLVED_EDGE"])
+@pytest.mark.parametrize("excluded", ["FUTURE_RECEIPT", "UNRESOLVED_EDGE", "UNREPORTED_RECEIPT"])
 def test_freshness_uses_exact_selected_oi_evidence_with_excluded_duplicate(excluded: str) -> None:
     value = packet()
     rows = value["oi"]
@@ -260,8 +260,10 @@ def test_freshness_uses_exact_selected_oi_evidence_with_excluded_duplicate(exclu
     duplicate.update(metric_key="OTHER_OI", oi_usd="999")
     if excluded == "FUTURE_RECEIPT":
         duplicate["received_ts"] = "2026-10-16T12:00:03Z"
-    else:
+    elif excluded == "UNRESOLVED_EDGE":
         duplicate.update(ts_prec="BUCKET(60s)", ts_bucket_anchor="UNSPECIFIED")
+    else:
+        del duplicate["received_ts"]
     rows.append(duplicate)
     cache: dict[ConditionTopCacheKey, OIConditionLookup] = {}
     assert evaluate(value, cache, BaselineCaches.with_capacity(128)) == (False, True)
