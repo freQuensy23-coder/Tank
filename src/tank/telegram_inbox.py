@@ -22,6 +22,7 @@ import httpx
 from tank import ops_cards
 from tank.analysis.cards import telegram_card_html
 from tank.ops_progress import STAGES
+from tank.telegram_markdown import render
 from tank.telegram_rich import message_text, rich_message_text
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import new_id, parse_time, sha256, utcnow
@@ -843,11 +844,19 @@ class TelegramInbox:
         candidates.sort(key=lambda row: (row[0], row[1]), reverse=True)
         return candidates[0][2] if candidates[0][0] >= 0.5 or len(candidates) == 1 else None
 
-    async def send(self, chat_id, text, reply_to=None):
+    async def send(self, chat_id, text, reply_to=None, *, entities=None):
         body = {"chat_id": chat_id, "text": text, "link_preview_options": {"is_disabled": True}}
         if reply_to is not None:
             body["reply_parameters"] = {"message_id": int(reply_to), "allow_sending_without_reply": True}
-        return await self.call("sendMessage", body)
+        if not entities:
+            return await self.call("sendMessage", body)
+        try:
+            return await self.call("sendMessage", {**body, "entities": entities})
+        except RuntimeError as error:
+            if getattr(error, "status", None) != 400:
+                raise
+            log.warning("Telegram rejected answer formatting; sending it as plain text")
+            return await self.call("sendMessage", body)
 
     async def send_document(self, chat_id, filename, content, *, caption=None, reply_to=None):
         data = {"chat_id": str(chat_id)}
@@ -1189,7 +1198,8 @@ class TelegramInbox:
                 "TERMINATED": TERMINATED_TEXT,
                 "ARCHIVED": ARCHIVED_TEXT,
             }.get(status, FAILED_TEXT)
-        parts = chunks(text)
+        parts = [render(part) if status == "ANSWERED" else (part, []) for part in chunks(text)]
+        parts = [(part, entities) if part else (EMPTY_TEXT, []) for part, entities in parts]
         ledger = [
             row
             async for row in self.repo.iter_all(
@@ -1198,7 +1208,7 @@ class TelegramInbox:
             if row.get("purpose") == "ANSWER" and row.get("chunk") is not None
         ]
         previous = question.get("reply_to_message_id")
-        for index, part in enumerate(parts):
+        for index, (part, entities) in enumerate(parts):
             rows = [row for row in ledger if row["chunk"] == index]
             sent = next((row for row in rows if row["status"] == "SENT"), None)
             if sent:
@@ -1226,7 +1236,7 @@ class TelegramInbox:
                 immutable=True,
             )
             try:
-                result = await self.send(question["chat_id"], part, previous)
+                result = await self.send(question["chat_id"], part, previous, entities=entities)
             except NOT_SENT:
                 await self.repo.put(
                     "out.deliveries",

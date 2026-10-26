@@ -2142,3 +2142,51 @@ async def test_question_text_keeps_user_filenames_and_literal_hashes():
     text = posts[0][1]["events"][0]["content"][0]["text"]
     assert question["text"] in text
     assert question_id not in text and "session_id" not in text
+
+
+@pytest.mark.asyncio
+async def test_answer_is_sent_with_entities_and_falls_back_to_plain_text_on_rejection():
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    question = await repo.get("out.user_questions", question_id)
+    question.update(answer_status="ANSWERED", answer_text="Result: **keep watching**, don’t enter yet.")
+    await repo.put("out.user_questions", question_id, question)
+    telegram = FakeTelegram()
+    attempts = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        attempts.append(body)
+        if "entities" in body:
+            return httpx.Response(400, json={"ok": False, "description": "Bad Request: can't parse entities"})
+        return telegram(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        await TelegramInbox(repo, inbox_settings(), http=http).answer({"question_id": question_id})
+    assert attempts[0]["entities"] == [{"type": "bold", "offset": 8, "length": 13}]
+    assert telegram.sent == [
+        {
+            "chat_id": str(USER),
+            "text": "Result: keep watching, don’t enter yet.",
+            "link_preview_options": {"is_disabled": True},
+            "reply_parameters": {"message_id": 9, "allow_sending_without_reply": True},
+        }
+    ]
+    assert (await repo.get("out.user_questions", question_id))["status"] == "DELIVERED"
+
+
+@pytest.mark.asyncio
+async def test_answer_with_markdown_is_delivered_formatted():
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    question = await repo.get("out.user_questions", question_id)
+    question.update(answer_status="ANSWERED", answer_text="**Да**, но *осторожно*")
+    await repo.put("out.user_questions", question_id, question)
+    telegram = FakeTelegram()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
+        await TelegramInbox(repo, inbox_settings(), http=http).answer({"question_id": question_id})
+    assert telegram.sent[0]["text"] == "Да, но осторожно"
+    assert telegram.sent[0]["entities"] == [
+        {"type": "bold", "offset": 0, "length": 2},
+        {"type": "italic", "offset": 7, "length": 9},
+    ]
