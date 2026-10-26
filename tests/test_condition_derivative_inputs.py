@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from tank.analysis.condition_derivative_input_codec import decode_oi_inputs, resolve_oi_observation
 from tank.analysis.condition_derivative_inputs import OIReadSnapshot
+from tank.analysis.open_interest import OIWindowRequest, OpenInterestCalculator
 from tank.util import JsonInput
 
 
@@ -242,8 +243,234 @@ def test_registry_scope_qualifies_uncaptured_row_metadata_without_rewriting_evid
     row = observation() | {"token_id": None, "venue": None, "quote_asset": None}
     source = decode_oi_inputs(token_id="T", instruments=[instrument()], observations=[row])
     point = source.observations[0]
-    assert point.instrument.token_id == "T" and point.instrument.quote_asset == "USDT"
+    assert point.instrument.token_id == "T" and point.quote_asset == "USDT"
     original = resolve_oi_observation(source, point.evidence, expected=point)
     assert original["token_id"] is None
     assert original["venue"] is None
     assert original["quote_asset"] is None
+
+
+def historical_case(
+    *, spacing_h: int, quantities: tuple[str, str]
+) -> tuple[OpenInterestCalculator, OIWindowRequest]:
+    from datetime import timedelta
+
+    from tank.analysis.condition_derivative_inputs import OISelectionPolicy
+    from tank.analysis.open_interest import OIWindowRequest, OpenInterestCalculator
+    from tank.time_precision import chosen_boundary, collection_clock
+    from tank.util import iso, parse_iso_time
+
+    cutoff = parse_iso_time("2026-10-16T12:00:00Z")
+    start = cutoff - timedelta(hours=1)
+    rows = [
+        observation()
+        | {
+            "ts": iso(start - timedelta(hours=hour)),
+            "oi_native": quantities[hour % 2],
+        }
+        for hour in range(1, 241, spacing_h)
+    ]
+    rows.extend(
+        [
+            observation() | {"ts": iso(start + timedelta(seconds=10)), "oi_native": "10"},
+            observation() | {"ts": iso(cutoff - timedelta(seconds=10)), "oi_native": "12"},
+        ]
+    )
+    source = decode_oi_inputs(token_id="T", instruments=[instrument()], observations=rows)
+    return (
+        OpenInterestCalculator(
+            source,
+            OISelectionPolicy(
+                tolerance_s=60, minimum_history_days=7, lookback_days=28, quantiles=(0.025, 0.975)
+            ),
+        ),
+        OIWindowRequest(
+            start=chosen_boundary(start, precision="EXACT"),
+            cutoff=chosen_boundary(cutoff, precision="EXACT"),
+            assembled_at=collection_clock(cutoff + timedelta(seconds=2)),
+        ),
+    )
+
+
+def test_native_history_preserves_genuinely_observed_zero_changes() -> None:
+    calculator, request = historical_case(spacing_h=1, quantities=("10", "10"))
+    baseline = calculator.native_baseline(request, window="W1H")[0]
+    assert baseline.source_observation_count == baseline.distinct_source_time_count == 240
+    assert baseline.pair_count == 239 and baseline.rejected_pair_count == 1
+    assert baseline.normal_range.bounds is not None
+    assert baseline.normal_range.bounds.lower == baseline.normal_range.bounds.upper == 0
+    assert baseline.normal_range.reason is None
+    current = calculator.select(request)[0].native_change(normal_range=baseline.normal_range)
+    assert current is not None and current.value == 0.2
+    assert current.position == "ABOVE" and current.beyond is True
+
+
+def test_unrepresentable_history_does_not_drop_pairs_or_erase_native_endpoints() -> None:
+    calculator, request = historical_case(spacing_h=1, quantities=("1E400", "1"))
+    baseline = calculator.native_baseline(request, window="W1H")[0]
+    assert baseline.source_observation_count == 240
+    assert baseline.pair_count == 239 and baseline.rejected_pair_count == 1
+    assert baseline.normal_range.bounds is None
+    assert baseline.normal_range.reason == "NOT_ESTIMABLE"
+    current = calculator.select(request)[0].native_change(normal_range=baseline.normal_range)
+    assert current is not None and current.value == 0.2
+    assert current.endpoints.start == Decimal(10) and current.endpoints.end == Decimal(12)
+    assert current.position is None and current.beyond is None
+
+
+def test_sparse_history_cannot_pair_an_observation_with_itself_to_manufacture_zero() -> None:
+    calculator, request = historical_case(spacing_h=24, quantities=("10", "10"))
+    baseline = calculator.native_baseline(request, window="W1H")[0]
+    assert baseline.source_observation_count == 10
+    assert baseline.pair_count == 0 and baseline.rejected_pair_count == 10
+    assert baseline.normal_range.bounds is None
+    assert baseline.normal_range.reason == "INSUFFICIENT_HISTORY"
+    assert baseline.first_pair_end_at.value is None and baseline.last_pair_end_at.value is None
+
+
+def test_native_history_preserves_known_negative_and_positive_change_population() -> None:
+    calculator, request = historical_case(spacing_h=1, quantities=("20", "10"))
+    baseline = calculator.native_baseline(request, window="W1H")[0]
+    assert baseline.pair_count == 239
+    assert baseline.normal_range.bounds is not None
+    assert baseline.normal_range.bounds.lower == -0.5
+    assert baseline.normal_range.bounds.upper == 1.0
+    current = calculator.select(request)[0].native_change(normal_range=baseline.normal_range)
+    assert current is not None and current.value == 0.2
+    assert current.position == "WITHIN" and current.beyond is False
+
+
+@pytest.mark.parametrize(
+    "missing", ["first_observed_at", "last_observed_at", "first_pair_end_at", "last_pair_end_at"]
+)
+def test_observed_native_baseline_cannot_omit_one_actual_clock(missing: str) -> None:
+    from tank.analysis.open_interest import OINativeHistoryBaseline
+    from tank.time_precision import Timestamp
+
+    calculator, request = historical_case(spacing_h=1, quantities=("10", "10"))
+    baseline = calculator.native_baseline(request, window="W1H")[0]
+    with pytest.raises(ValidationError):
+        OINativeHistoryBaseline.model_validate(
+            baseline.model_copy(update={missing: Timestamp(None, None, "NOT_CAPTURED")})
+        )
+
+
+def test_observed_native_baseline_cannot_claim_a_longer_unobserved_history_policy() -> None:
+    from tank.analysis.open_interest import OINativeHistoryBaseline
+
+    calculator, request = historical_case(spacing_h=1, quantities=("10", "10"))
+    baseline = calculator.native_baseline(request, window="W1H")[0]
+    with pytest.raises(ValidationError, match="minimum history"):
+        OINativeHistoryBaseline.model_validate(baseline.model_copy(update={"minimum_history_days": 20}))
+
+
+def test_shared_huge_native_scale_does_not_expand_into_exponent_sized_integers() -> None:
+    calculator, request = historical_case(spacing_h=1, quantities=("2E1000000000", "1E1000000000"))
+    baseline = calculator.native_baseline(request, window="W1H")[0]
+    assert baseline.pair_count == 239 and baseline.unestimable_pair_count == 0
+    assert baseline.normal_range.bounds is not None
+    assert baseline.normal_range.bounds.lower == -0.5 and baseline.normal_range.bounds.upper == 1.0
+
+
+def test_extreme_magnitude_gap_keeps_every_actual_pair_without_integer_expansion() -> None:
+    calculator, request = historical_case(spacing_h=1, quantities=("1E1000000000", "1"))
+    baseline = calculator.native_baseline(request, window="W1H")[0]
+    assert baseline.pair_count == baseline.unestimable_pair_count == 239
+    assert baseline.rejected_pair_count == 1
+    assert baseline.normal_range.bounds is None and baseline.normal_range.reason == "NOT_ESTIMABLE"
+    current = calculator.select(request)[0].native_change(normal_range=baseline.normal_range)
+    assert current is not None and current.value == 0.2
+
+
+def test_valid_scalar_copy_cannot_relabel_an_original_oi_quantity() -> None:
+    from tank.analysis.condition_derivative_inputs import OISelectionPolicy, ReportedDerivativeNumber
+
+    value = decode_oi_inputs(token_id="T", instruments=[instrument()], observations=[observation()])
+    point = value.observations[0].model_copy(
+        update={"native_quantity": ReportedDerivativeNumber(status="OBSERVED", value=Decimal(999))}
+    )
+    with pytest.raises(ValidationError, match="canonical source read"):
+        OpenInterestCalculator(
+            value.model_copy(update={"observations": (point,)}),
+            OISelectionPolicy(
+                tolerance_s=60, minimum_history_days=7, lookback_days=28, quantiles=(0.025, 0.975)
+            ),
+        )
+
+
+def test_self_consistent_hashes_cannot_change_the_actual_scope_record() -> None:
+    from tank.analysis.condition_derivative_inputs import OISelectionPolicy
+    from tank.util import sha256
+
+    value = decode_oi_inputs(token_id="T", instruments=[instrument()], observations=[observation()])
+    original = value.source_projections[0]
+    wrong = value.instruments[0].model_copy(update={"venue": "other"})
+    descriptor = original.descriptor.model_copy(update={"instrument": wrong})
+    reference = original.reference.model_copy(update={"source_evidence_sha256": sha256(descriptor)})
+    source_projection = original.model_copy(update={"descriptor": descriptor, "reference": reference})
+    point = value.observations[0].model_copy(update={"instrument": wrong, "evidence": reference})
+    changed = value.model_copy(
+        update={"instruments": (wrong,), "observations": (point,), "source_projections": (source_projection,)}
+    )
+    with pytest.raises(ValidationError, match="actual scope read"):
+        OpenInterestCalculator(
+            changed,
+            OISelectionPolicy(
+                tolerance_s=60, minimum_history_days=7, lookback_days=28, quantiles=(0.025, 0.975)
+            ),
+        )
+
+
+def test_oi_sidecar_duplicate_keys_refuse_even_when_all_hashes_match() -> None:
+    from tank.analysis.condition_derivative_inputs import OISelectionPolicy, ReportedDerivativeNumber
+    from tank.util import sha256
+
+    value = decode_oi_inputs(token_id="T", instruments=[instrument()], observations=[observation()])
+    original = value.source_projections[0]
+    duplicated = original.original.replace(b'"oi_native":"0"', b'"oi_native":"0","oi_native":"2"')
+    assert duplicated != original.original
+    descriptor = original.descriptor.model_copy(update={"original_projection_sha256": sha256(duplicated)})
+    reference = original.reference.model_copy(
+        update={"source_projection_sha256": sha256(duplicated), "source_evidence_sha256": sha256(descriptor)}
+    )
+    source_projection = original.model_copy(
+        update={"original": duplicated, "descriptor": descriptor, "reference": reference}
+    )
+    point = value.observations[0].model_copy(
+        update={
+            "native_quantity": ReportedDerivativeNumber(status="OBSERVED", value=Decimal(2)),
+            "evidence": reference,
+        }
+    )
+    changed = value.model_copy(update={"observations": (point,), "source_projections": (source_projection,)})
+    with pytest.raises(ValidationError, match="keys must be unique"):
+        OpenInterestCalculator(
+            changed,
+            OISelectionPolicy(
+                tolerance_s=60, minimum_history_days=7, lookback_days=28, quantiles=(0.025, 0.975)
+            ),
+        )
+
+
+def test_quote_unit_is_a_value_fact_without_blocking_native_identity() -> None:
+    row = observation() | {"quote_asset": "USD"}
+    value = decode_oi_inputs(
+        token_id="T", instruments=[instrument() | {"quote_asset": None}], observations=[row]
+    )
+    assert value.observations[0].quote_asset == "USD"
+    assert value.observations[0].native_quantity.value == Decimal(0)
+    assert value.instruments[0].instrument_id == "venue:perp:T"
+    assert (
+        resolve_oi_observation(value, value.observations[0].evidence, expected=value.observations[0])[
+            "quote_asset"
+        ]
+        == "USD"
+    )
+
+
+def test_unregistered_row_cannot_lend_its_quote_unit_to_a_later_row() -> None:
+    first = observation() | instrument() | {"quote_asset": "USD"}
+    second = observation() | instrument() | {"quote_asset": None, "ts": "2026-10-16T12:01:00Z"}
+    value = decode_oi_inputs(token_id="T", instruments=[], observations=[first, second])
+    assert tuple(point.quote_asset for point in value.observations) == ("USD", None)
+    assert all(point.native_quantity.value == Decimal(0) for point in value.observations)

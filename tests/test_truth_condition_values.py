@@ -14,6 +14,7 @@ import tank.analysis.truth as module
 from tank.analysis import condition_input_codec as read_codec
 from tank.analysis.condition_graph_contracts import ConditionWindow, DirectWindowConditionSpot
 from tank.analysis.condition_inputs import SpotCalculationFacts
+from tank.analysis.open_interest import OINativeHistoryBaseline, OIWindowRequest, OpenInterestCalculator
 from tank.scheduler import metric_value
 from tank.settings import Settings
 from tank.time_precision import Timestamp
@@ -110,17 +111,20 @@ def test_native_baseline_reused_when_only_current_observation_changes(
 ) -> None:
     packet = snapshot()
     baseline = module.baseline_caches()
-    original = module.normal
-    calls = []
+    original = OpenInterestCalculator.native_baseline
+    calls: list[ConditionWindow] = []
 
-    def counted(values):
-        calls.append(1)
-        return original(values)
+    def counted(
+        calculator: OpenInterestCalculator, request: OIWindowRequest, *, window: ConditionWindow
+    ) -> tuple[OINativeHistoryBaseline, ...]:
+        calls.append(window)
+        return original(calculator, request, window=window)
 
-    monkeypatch.setattr(module, "normal", counted)
+    monkeypatch.setattr(OpenInterestCalculator, "native_baseline", counted)
     req = [dict(metric="deriv.native_oi_vs_normal", window="W1H")]
     module.compute_condition_values(packet, req, baseline_cache=baseline, config=fixture_truth_config())
     count = len(calls)
+    assert count == 1
     packet["oi"][-1]["oi_native"] = "1001"
     value = module.compute_condition_values(
         packet, req, baseline_cache=baseline, config=fixture_truth_config()

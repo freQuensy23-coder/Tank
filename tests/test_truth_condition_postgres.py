@@ -14,6 +14,8 @@ import pytest
 from source_support import fixture_http_admission, fixture_versions
 from truth_support import fixture_truth_config
 
+from tank.analysis.condition_graph_contracts import ConditionWindow
+from tank.analysis.open_interest import OINativeHistoryBaseline, OIWindowRequest, OpenInterestCalculator
 from tank.analysis.truth import MarketTruthService, compute_market_truth
 from tank.market.cadences import supply_cadences
 from tank.market.service import MarketService
@@ -242,6 +244,7 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
         async def forbidden(*args, **kwargs) -> None:
             raise AssertionError("No flush/full snapshot/MTA persistence in condition evaluation")
 
+        original_market_batch = repo.put_market_batch
         monkeypatch.setattr(repo, "put", forbidden)
         monkeypatch.setattr(repo, "put_market_batch", forbidden)
         async with httpx.AsyncClient() as http:
@@ -333,6 +336,77 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
             repeated = await truth.condition_values(event, "T", packet["cutoff"], composite_requirements)
             assert repeated["move_class"] == composite["move_class"]
             assert all(p["reused"] for p in repeated["_condition_evaluation"]["proofs"])
+
+            original_native_baseline = OpenInterestCalculator.native_baseline
+            population_calls: list[ConditionWindow] = []
+
+            def counted_native_baseline(
+                calculator: OpenInterestCalculator, request: OIWindowRequest, *, window: ConditionWindow
+            ) -> tuple[OINativeHistoryBaseline, ...]:
+                population_calls.append(window)
+                return original_native_baseline(calculator, request, window=window)
+
+            monkeypatch.setattr(OpenInterestCalculator, "native_baseline", counted_native_baseline)
+            oi_requirements = [
+                {"metric": "deriv.native_oi_vs_normal", "window": "W1H"},
+                {"metric": "deriv.oi_class", "window": "W1H"},
+            ]
+            reads.clear()
+            statements.clear()
+            oi_first = await truth.condition_values(event, "T", packet["cutoff"], oi_requirements)
+            initial_oi = oi_first["derivatives"]["windows"]["W1H"]["synchronized"]
+            assert Decimal(initial_oi["oi_native_start"]) == Decimal(initial_oi["oi_native_end"]) == 1000
+            assert Decimal(initial_oi["oi_usd_start"]) == Decimal(initial_oi["oi_usd_end"]) == 100000
+            assert population_calls == ["W1H"]
+            assert all(point["available"] for point in oi_first["_condition_evaluation"]["proofs"])
+            assert not {"mkt.funding_obs", "mkt.flow_bars_1m", "mkt.klines_1m", "mkt.book_summaries"} & {
+                table for table, _ in reads
+            }
+            assert not any(
+                query.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for query in statements
+            )
+            oi_repeated = await truth.condition_values(event, "T", packet["cutoff"], oi_requirements)
+            assert all(point["reused"] for point in oi_repeated["_condition_evaluation"]["proofs"])
+            assert oi_repeated["derivatives"] == oi_first["derivatives"]
+            assert population_calls == ["W1H"]
+
+            corrected_oi = dict(
+                packet["oi"][-1],
+                oi_native="1001",
+                raw_value="1001",
+                received_ts=clock_iso(),
+                recorded_at=clock_iso(),
+            )
+            await original_market_batch("mkt.oi_obs", [corrected_oi])
+            statements.clear()
+            oi_corrected = await truth.condition_values(event, "T", packet["cutoff"], oi_requirements)
+            current_oi = oi_corrected["derivatives"]["windows"]["W1H"]["synchronized"]
+            assert Decimal(current_oi["oi_native_end"]) == 1001
+            assert current_oi["oi_class"] == "MIXED"
+            assert population_calls == ["W1H"]
+            assert [point["reused"] for point in oi_corrected["_condition_evaluation"]["proofs"]] == [
+                False,
+                True,
+            ]
+            assert not any(
+                query.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for query in statements
+            )
+
+            future_oi = dict(
+                corrected_oi,
+                oi_native="5000",
+                raw_value="5000",
+                received_ts=iso(parse_time(clock_iso()) + timedelta(days=1)),
+                recorded_at=clock_iso(),
+            )
+            await original_market_batch("mkt.oi_obs", [future_oi])
+            statements.clear()
+            oi_invisible = await truth.condition_values(event, "T", packet["cutoff"], oi_requirements)
+            assert oi_invisible["derivatives"]["windows"]["W1H"]["synchronized"] is None
+            assert not any(point["available"] for point in oi_invisible["_condition_evaluation"]["proofs"])
+            assert not any(
+                query.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for query in statements
+            )
         repo._conn = original_conn
         async with repo.transaction():
             assert (

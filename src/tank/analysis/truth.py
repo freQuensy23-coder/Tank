@@ -27,8 +27,9 @@ from typing import overload
 
 from pydantic import JsonValue
 
+from tank.analysis.baseline_cache import BaselineCaches
 from tank.analysis.condition_fingerprints import condition_input_fingerprints
-from tank.analysis.condition_graph_codec import encode_scoped_condition_spot
+from tank.analysis.condition_graph_codec import encode_condition_derivatives, encode_scoped_condition_spot
 from tank.analysis.condition_graph_contracts import (
     ConditionStateNodeKey,
     ConditionTopCacheKey,
@@ -43,7 +44,10 @@ from tank.analysis.condition_inputs import (
     SpotCalculationPolicy,
     SpotPolicyConfiguration,
 )
+from tank.analysis.condition_oi_codec import OIConditionLookup, captured_oi_selection_policy
 from tank.analysis.execution import ExecutionLevelWire, ExecutionSide, execute_book_walk, execution_request
+from tank.analysis.oi_synchronization import OISynchronizationPolicy
+from tank.analysis.open_interest import OIWindowRequest
 from tank.analysis.positioning import (
     MissingOIDecomposition,
 )
@@ -65,7 +69,6 @@ from tank.analysis.spot import (
     spot_native_measurements,
 )
 from tank.analysis.statistics_contracts import (
-    BaselineCaches,
     BetaEstimate,
     BitcoinContextHistory,
     DecimalBounds,
@@ -5669,6 +5672,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
     parameters = _PARAMETERS.set(config)
     baselines = _BASELINE_CACHE.set(baseline_cache)
     try:
+        captured_read_collections: frozenset[str] = frozenset(snapshot)
         end = parse_time(snapshot["cutoff"])
         snapshot = bounded_market_snapshot(snapshot, end)
         result = {"cutoff": iso(end), "spot": {}, "derivatives": {"windows": {}}, "relative": {}}
@@ -5688,6 +5692,12 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 fields = ("flow_bars", "flow_segments", "flow_parent_bars", "tickers", "instruments")
             elif metric in DERIVATIVE_CONDITION_METRICS:
                 domain = "funding" if metric == "deriv.funding_vs_normal" else "oi"
+                if domain == "oi":
+                    missing = tuple(
+                        name for name in ("instruments", "oi") if name not in captured_read_collections
+                    )
+                    if missing:
+                        raise ValueError("Requested OI snapshot requires captured " + ", ".join(missing))
                 fields = (domain, "instruments", "semantics", "capture_metadata", "capture_tier")
             elif metric == "price.close_vs_level":
                 domain = "close"
@@ -5791,6 +5801,12 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     propagate_timestamp(snapshot, "assembled_at")
                 ):
                     hit = False
+            if domain == "oi" and hit:
+                previous_oi = cache[key]
+                if isinstance(previous_oi, OIConditionLookup) and not previous_oi.matches_visibility(
+                    propagate_timestamp(snapshot, "assembled_at")
+                ):
+                    hit = False
             if not hit:
                 selected = {field: snapshot[field] for field in fields if field in snapshot}
                 selected.update(
@@ -5822,6 +5838,26 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                         tickers=selected.get("tickers", []),
                         policy=policy,
                         native_ticker_volume_field="volume_native",
+                    )
+                elif domain == "oi":
+                    value = OIConditionLookup(
+                        token_id=selected["token_id"],
+                        instruments=selected["instruments"],
+                        observations=selected["oi"],
+                        semantics=selected.get("semantics"),
+                        request=OIWindowRequest(
+                            start=offset_schedule(
+                                propagate_timestamp(snapshot, "cutoff"), timedelta(seconds=-seconds)
+                            ),
+                            cutoff=propagate_timestamp(snapshot, "cutoff"),
+                            assembled_at=propagate_timestamp(snapshot, "assembled_at"),
+                        ),
+                        policy=captured_oi_selection_policy(config),
+                        history_cache=baseline_cache.oi_history,
+                        synchronization_policy=OISynchronizationPolicy(
+                            eligible_venues=("binance", "okx", "bybit")
+                        ),
+                        window=window,
                     )
                 elif domain == "close":
                     value = condition_reference_close(selected, end)
@@ -5868,16 +5904,44 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                         event_anchor=propagate_timestamp(snapshot.get("anchor") or {}, "ts"),
                     ),
                 )
+            elif domain == "oi":
+                if not isinstance(cached, OIConditionLookup):
+                    raise TypeError("OI condition cache requires its actual typed facts and owned read")
+                value = encode_condition_derivatives(cached.result)
             else:
                 value = deepcopy(cached)
             fresh = True
             observations = []
-            if domain in ("oi", "funding"):
-                for instrument in value.get("per_venue", []):
-                    if domain == "oi" and instrument["venue"] not in (value.get("synchronized") or {}).get(
-                        "venues", []
+            if domain == "oi":
+                if not isinstance(cached, OIConditionLookup):
+                    raise TypeError("OI freshness requires its actual selected source witnesses")
+                closing = cached.closing_observations()
+                fresh = bool(closing)
+                for point in closing:
+                    cadence, source = capture_cadence(
+                        snapshot,
+                        "oi",
+                        {"instrument_id": point.instrument.instrument_id, "metric_key": point.metric_key},
+                    )
+                    observed = point.observed_at
+                    observations.append(
+                        dict(
+                            instrument_id=point.instrument.instrument_id,
+                            **observed.fields("observed_at"),
+                            cadence_s=cadence,
+                            cadence_source=source,
+                        )
+                    )
+                    if (
+                        observed.value is None
+                        or cadence is None
+                        or (end - parse_time(observed.value)).total_seconds() > cadence
                     ):
-                        continue
+                        fresh = False
+                if not fresh:
+                    value["synchronized"] = None
+            if domain == "funding":
+                for instrument in value.get("per_venue", []):
                     rows = [
                         r
                         for r in snapshot.get(domain, [])
@@ -5917,8 +5981,6 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                         fresh = False
                         if domain == "funding":
                             instrument["funding_vs_normal"] = None
-                if domain == "oi" and not fresh:
-                    value["synchronized"] = None
             if domain == "depth":
                 observations = value.pop("observations")
                 fresh = bool(observations) and all(row["fresh"] for row in observations)

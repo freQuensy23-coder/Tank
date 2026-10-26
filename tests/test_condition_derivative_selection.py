@@ -35,9 +35,11 @@ from tank.analysis.condition_graph_contracts import (
     DeclaredMetadataCadenceOrigin,
     EnrichedConditionDerivativeVenue,
     InstrumentCadenceScope,
+    ObservedConditionBasis,
     UnavailableConditionFunding,
     UnavailableConditionOpenInterest,
     UncapturedCadenceIdentity,
+    UnrequestedConditionBasis,
     UnrequestedConditionFunding,
     UnrequestedConditionFundingDispersion,
     UnrequestedConditionIncrementalVolumes,
@@ -94,8 +96,7 @@ def derivative_view(
         funding=funding if domain == "funding" else UnrequestedConditionFunding(status="NOT_REQUESTED"),
         liquidations=UnrequestedConditionLiquidations(status="NOT_REQUESTED"),
         oi_temporal_exclusions=None,
-        basis_bps=None,
-        basis_reason="INCOMPLETE",
+        basis=UnrequestedConditionBasis(status="NOT_REQUESTED"),
     )
     source = BasicConditionDerivatives(
         kind="BASIC",
@@ -145,8 +146,7 @@ def derivative_view(
         ),
         liquidations=source_venue.liquidations,
         oi_temporal_exclusions=None,
-        basis_bps=Decimal(7),
-        basis_reason=None,
+        basis=ObservedConditionBasis(status="OBSERVED", value_bps=Decimal(7)),
         support=support,
     )
     state = type(base).model_validate(
@@ -484,3 +484,57 @@ def test_same_window_views_cannot_silently_change_the_token_instrument_universe(
         )
     with pytest.raises(ValidationError, match="same actual instrument universe"):
         type(view).model_validate(view.model_copy(update={"state": state}))
+
+
+def test_direct_oi_basis_is_unrequested_without_a_fabricated_mark_index_gap() -> None:
+    view = derivative_view("oi", 0)
+    source = ConditionRequestedDerivativeView.model_validate(view.model_copy(update={"state": None}))
+    wire = encode_requested_condition_derivatives(source)
+    rows = wire["per_venue"]
+    assert isinstance(rows, list) and isinstance(rows[0], dict)
+    assert rows[0]["basis_status"] == "NOT_REQUESTED"
+    assert rows[0]["basis_bps"] is None and rows[0]["basis_reason"] is None
+    assert source.requested.per_venue[0].basis == UnrequestedConditionBasis(status="NOT_REQUESTED")
+    enriched = encode_requested_condition_derivatives(view)["per_venue"]
+    assert isinstance(enriched, list) and isinstance(enriched[0], dict)
+    assert enriched[0]["basis_status"] == "OBSERVED" and enriched[0]["basis_bps"] == "7"
+
+
+def test_full_derivative_enrichment_cannot_label_an_unrequested_basis_complete() -> None:
+    view = derivative_view("oi", 0)
+    assert view.state is not None
+    venue = view.state.per_venue[0]
+    with pytest.raises(ValidationError, match="actual basis evaluation"):
+        EnrichedConditionDerivativeVenue.model_validate(
+            venue.model_copy(update={"basis": UnrequestedConditionBasis(status="NOT_REQUESTED")})
+        )
+
+
+def test_observed_zero_basis_remains_distinct_from_unavailable_or_unrequested() -> None:
+    from tank.analysis.condition_graph_codec import encode_condition_derivatives
+    from tank.analysis.condition_graph_contracts import UnavailableConditionBasis
+
+    view = derivative_view("oi", 0)
+    venue = view.requested.per_venue[0]
+    observed = ConditionDerivativeVenue.model_validate(
+        venue.model_copy(update={"basis": ObservedConditionBasis(status="OBSERVED", value_bps=Decimal(0))})
+    )
+    source = BasicConditionDerivatives.model_validate(
+        view.requested.model_copy(update={"per_venue": (observed,)})
+    )
+    rows = encode_condition_derivatives(source)["per_venue"]
+    assert isinstance(rows, list) and isinstance(rows[0], dict)
+    assert rows[0]["basis_bps"] == "0" and rows[0]["basis_status"] == "OBSERVED"
+    assert rows[0]["basis_reason"] is None
+    unavailable = ConditionDerivativeVenue.model_validate(
+        venue.model_copy(
+            update={"basis": UnavailableConditionBasis(status="UNAVAILABLE", reason="INCOMPLETE")}
+        )
+    )
+    source = BasicConditionDerivatives.model_validate(source.model_copy(update={"per_venue": (unavailable,)}))
+    rows = encode_condition_derivatives(source)["per_venue"]
+    assert isinstance(rows, list) and isinstance(rows[0], dict)
+    assert rows[0]["basis_bps"] is None and rows[0]["basis_status"] == "UNAVAILABLE"
+    assert rows[0]["basis_reason"] == "INCOMPLETE"
+    with pytest.raises(ValidationError):
+        ObservedConditionBasis.model_validate({"status": "OBSERVED", "value_bps": True})
