@@ -8,23 +8,25 @@ import { WorkspaceExports } from '../../../scripts/openma-persistence/workspace-
 const repository = fileURLToPath(new URL('../../../', import.meta.url));
 const module = resolve(repository, 'vendor/openma/packages/managed-agents-adapters-sql/test/session-event-source-position.test.ts');
 function report(): string {
-  return JSON.stringify({success: true, numTotalTests: 3, numPassedTests: 3, numFailedTests: 0, numPendingTests: 0,
+  return JSON.stringify({success: true, numTotalTests: 5, numPassedTests: 5, numFailedTests: 0, numPendingTests: 0,
     testResults: [{status: 'passed', name: module, assertionResults: [
       {fullName: 'snapshot', status: 'passed', duration: 1},
       {fullName: 'replay', status: 'passed', duration: 2},
       {fullName: 'legacy', status: 'passed', duration: 3},
+      {fullName: 'acceptance false', status: 'passed', duration: 4},
+      {fullName: 'acceptance true', status: 'passed', duration: 5},
     ]}],
   });
 }
 test('full module report verifies exact complete source and actual case metrics', () => {
   assert.deepEqual(verifyHistoryModuleReport(report(), module), {
-    schema: 'tank.persistence.history-module.v1', cases: 3, passed: 3, failed: 0, skipped: 0, todo: 0, max_ms: 3, p90_ms: 3,
+    schema: 'tank.persistence.history-module.v1', cases: 5, passed: 5, failed: 0, skipped: 0, todo: 0, max_ms: 5, p90_ms: 5,
   });
 });
 for (const [from, to] of [
   ['"success":true', '"success":1'], ['"numPendingTests":0', '"numPendingTests":false'],
-  ['"numPendingTests":0', '"numPendingTests":1'], ['"numTotalTests":3', '"numTotalTests":2'],
-  ['"numPassedTests":3', '"numPassedTests":2'], ['"numFailedTests":0', '"numFailedTests":1'],
+  ['"numPendingTests":0', '"numPendingTests":1'], ['"numTotalTests":5', '"numTotalTests":2'],
+  ['"numPassedTests":5', '"numPassedTests":2'], ['"numFailedTests":0', '"numFailedTests":1'],
   ['"status":"passed"', '"status":"pending"'], ['"fullName":"replay"', '"fullName":"snapshot"'],
   ['"duration":3', '"duration":1000'], ['"duration":3', '"duration":10000'],
 ]) {
@@ -34,6 +36,16 @@ for (const [from, to] of [
 }
 test('a different source file cannot stand in for the protected module', () => {
   assert.throws(() => verifyHistoryModuleReport(report(), module + '.other'), /incomplete or inconsistent/);
+});
+test('an internally consistent three-case report cannot omit the expanded parameter cases', () => {
+  const partial = JSON.stringify({success: true, numTotalTests: 3, numPassedTests: 3, numFailedTests: 0, numPendingTests: 0,
+    testResults: [{status: 'passed', name: module, assertionResults: [
+      {fullName: 'snapshot', status: 'passed', duration: 1},
+      {fullName: 'replay', status: 'passed', duration: 2},
+      {fullName: 'legacy', status: 'passed', duration: 3},
+    ]}],
+  });
+  assert.throws(() => verifyHistoryModuleReport(partial, module), /incomplete or inconsistent/);
 });
 test('workspace resolver uses actual public barrel and wildcard exports without leaf substitutions', () => {
   const exports = new WorkspaceExports(repository);

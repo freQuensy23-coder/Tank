@@ -35,7 +35,7 @@ export function verifyHistoryModuleReport(document: string, expectedModule: stri
   const report = decodeRuntimeJson(document);
   if (!object(report) || report.success !== true) return invalidReport();
   const total = integer(report.numTotalTests), passed = integer(report.numPassedTests);
-  if (total !== 3 || passed !== total || integer(report.numFailedTests) !== 0 || integer(report.numPendingTests) !== 0) return invalidReport();
+  if (total !== 5 || passed !== total || integer(report.numFailedTests) !== 0 || integer(report.numPendingTests) !== 0) return invalidReport();
   if (!Array.isArray(report.testResults) || report.testResults.length !== 1) return invalidReport();
   const file: unknown = report.testResults[0];
   if (!object(file) || file.status !== 'passed' || typeof file.name !== 'string' || !isAbsolute(file.name) || resolve(file.name) !== resolve(expectedModule)) return invalidReport();
@@ -97,9 +97,9 @@ export function runHistoryModule(): void {
     });
     process.stdout.write(result.stdout);
     process.stderr.write(result.stderr);
-    if (result.error !== undefined || result.status !== 0) throw new Error('History module execution did not pass');
     const document = readFileSync(report, 'utf8');
     process.stdout.write(document + '\n');
+    if (result.error !== undefined || result.status !== 0) throw new Error('History module execution did not pass');
     console.log(JSON.stringify(verifyHistoryModuleReport(document, resolve(repository, HISTORY_MODULE))));
   } finally { rmSync(temporary, {recursive: true}); }
 }
