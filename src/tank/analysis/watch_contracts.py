@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
 from typing import Literal, Self
 
-from pydantic import ConfigDict, Field, JsonValue, TypeAdapter, field_validator, model_validator
+from pydantic import ConfigDict, Field, JsonValue, RootModel, field_validator, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.json import decode_json
@@ -229,10 +229,10 @@ class TimedReviewCondition(WatchLifecycle):
                 self.cancelled_at_bucket_anchor,
             ),
         )
-        for value, precision, reason, anchor in lifecycle_clocks:
-            if value is None and precision is None and reason is None and anchor is None:
+        for occurrence, precision, reason, anchor in lifecycle_clocks:
+            if occurrence is None and precision is None and reason is None and anchor is None:
                 continue
-            Timestamp(value=value, precision=precision, precision_reason=reason, bucket_anchor=anchor)
+            Timestamp(value=occurrence, precision=precision, precision_reason=reason, bucket_anchor=anchor)
         created = parse_iso_time(self.created_at)
         due = parse_iso_time(self.expr.review_at)
         expiry = parse_iso_time(self.expires_at)
@@ -310,14 +310,13 @@ type TimedReviewAction = PendingTimedReview | FireTimedReview | ExpireTimedRevie
 
 type StoredWatchCondition = WatchCondition | TimedReviewCondition
 
-_WATCH_RECORDS: TypeAdapter[StoredWatchCondition] = TypeAdapter(
-    WatchCondition | TimedReviewCondition,
-    config=ConfigDict(hide_input_in_errors=True),
-)
+
+class _StoredWatchRecord(RootModel[StoredWatchCondition]):
+    model_config = ConfigDict(strict=True, hide_input_in_errors=True)
 
 
 def parse_watch_condition(value: Mapping[str, JsonValue]) -> StoredWatchCondition:
-    return _WATCH_RECORDS.validate_python(value, strict=True)
+    return _StoredWatchRecord.model_validate(value, strict=True).root
 
 
 def encode_watch_condition(value: StoredWatchCondition) -> dict[str, JsonValue]:
