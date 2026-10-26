@@ -10,11 +10,13 @@ from agent_source_fixtures import (
     source_record_fixture,
 )
 from native_session_fixtures import created_native_session, native_session_record
+from pydantic import JsonValue
 from session_followup_fixtures import UnexpectedFollowupRefusals
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
 from tank.agents.native_sessions import NativeSessionResolution
+from tank.contracts.json import decode_unique_json
 from tank.openma_sync import agent_tools
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -140,12 +142,17 @@ async def test_failed_turn_retries_original_message_and_new_message_cannot_reset
     repo = MemoryRepository()
     await seed(repo, runtime_status="IDLE")
     await repo.put("evt.events", "e", {"event_id": "e", "lifecycle": "TRACKED"})
-    posts = []
+    posts: list[JsonValue] = []
     await repo.put("ingest.source_items", "one", source_record_fixture({"item_id": "one", "text": "first"}))
     await repo.put("ingest.source_items", "two", source_record_fixture({"item_id": "two", "text": "second"}))
+    await repo.put(
+        "ingest.source_items",
+        "three",
+        source_record_fixture({"item_id": "three", "text": "third independent input"}),
+    )
 
-    def handler(request: httpx.Request):
-        posts.append(json.loads(request.content))
+    def handler(request: httpx.Request) -> httpx.Response:
+        posts.append(decode_unique_json(request.content))
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
@@ -163,7 +170,7 @@ async def test_failed_turn_retries_original_message_and_new_message_cannot_reset
         await service.send_message({"kind": "ITEM_ADDED", "item_id": "two", "event_id": "e"})
         await service.process_event("s", {"id": "failure1", "type": "session.error"})
         assert posts[2] == posts[0] and posts[2] != posts[1]
-        await service.send_message({"kind": "CONDITION_FIRED", "event_id": "e", "condition_id": "extra"})
+        await service.send_message({"kind": "ITEM_ADDED", "event_id": "e", "item_id": "three"})
         await service.process_event("s", {"id": "failure2", "type": "session.error"})
     session = await repo.get("ops.agent_sessions", "s")
     assert session["status"] == "FAILED" and session["message_log"][0]["retry_count"] == 1

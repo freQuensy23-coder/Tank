@@ -111,6 +111,15 @@ from tank.agents.session_contracts import (
     SessionPromptState,
     SessionToolBoundaryState,
 )
+from tank.agents.session_following import (
+    FollowedSession,
+    FollowerObservation,
+    FollowerReady,
+    FollowerUnavailable,
+    NativeFollowerUnavailable,
+    RecordedEventDecision,
+    native_runtime_status,
+)
 from tank.agents.session_ownership import put_owned_session, require_owned_session_identity
 from tank.agents.session_reopening import reopen_question_session
 from tank.agents.tool_contracts import (
@@ -1357,7 +1366,8 @@ class SessionService:
             await session_progress(self.repo, self.settings, current)
             return after
 
-    def start_stream(self, sid):
+    def start_stream(self, sid: str) -> None:
+        sid = NativeSessionReference(session_id=sid).session_id
         if not self.closed and (sid not in self.tasks or self.tasks[sid].done()):
             self.tasks[sid] = asyncio.create_task(self.follow(sid), name="openma:" + sid)
 
@@ -2445,36 +2455,56 @@ class SessionService:
                 return True
         return False
 
-    async def follow(self, sid):
+    async def follower_state(self, sid: str) -> FollowerObservation | None:
+        """Resolve only unreported runtime state from actual identity-bound native facts."""
+        session: dict[str, JsonValue] | None = await self.repo.get("ops.agent_sessions", sid)
+        if session is None:
+            return None
+        initial = FollowedSession.from_record(session, sid)
+        if initial.status in {"FAILED", "ENDED"} or initial.runtime_status is not None:
+            return FollowerReady(phase="READY", state=initial)
+        observed = await NativeSessionReader(self).state(sid)
+        async with self.repo.lock("session:" + sid):
+            current: dict[str, JsonValue] | None = await self.repo.get("ops.agent_sessions", sid)
+            if current is None:
+                return None
+            state = FollowedSession.from_record(current, sid)
+            if state != initial:
+                return FollowerReady(phase="READY", state=state)
+            current["remote_state"] = {
+                **observed.model_dump(mode="json"),
+                **self.clock_timestamp().fields("checked_at"),
+            }
+            if isinstance(observed, NativeSessionMissing) or observed.archived_at is not None:
+                await put_owned_session(self.repo, sid, current)
+                return FollowerUnavailable(phase="UNAVAILABLE", observation=observed)
+            current["runtime_status"] = native_runtime_status(observed.status)
+            if observed.status == "terminated":
+                current["status"] = "ENDED"
+            if state.event_id is None:
+                async for row in self.repo.iter_all("ops.tool_calls", filters={"session_id": sid}):
+                    if (
+                        row.get("tool") == "record_event"
+                        and RecordedEventDecision.from_record(row, sid).is_event is False
+                    ):
+                        current["no_event"] = True
+                        break
+            await put_owned_session(self.repo, sid, current)
+            return FollowerReady(phase="READY", state=FollowedSession.from_record(current, sid))
+
+    async def follow(self, sid: str) -> None:
         delay = 1
         while not self.closed:
-            stream_task = None
+            stream_task: asyncio.Task[None] | None = None
             try:
                 stream_task = asyncio.create_task(self.stream(sid))
                 await self.catch_up(sid)
-                session = await self.repo.get("ops.agent_sessions", sid)
-                if not session.get("runtime_status"):
-                    remote = await self.request("GET", f"sessions/{sid}")
-                    if remote.get("status") == "terminated":
-                        session["status"] = "ENDED"
-                    session["runtime_status"] = {
-                        "idle": "IDLE",
-                        "running": "RUNNING",
-                        "rescheduling": "PENDING",
-                        "terminated": "ENDED",
-                    }.get(remote.get("status"), "RUNNING")
-                    if not session.get("event_id"):
-                        session["no_event"] = any(
-                            [
-                                row.get("tool") == "record_event"
-                                and row.get("result", {}).get("is_event") is False
-                                async for row in self.repo.iter_all(
-                                    "ops.tool_calls", filters={"session_id": sid}
-                                )
-                            ]
-                        )
-                    await put_owned_session(self.repo, sid, session)
-                if session.get("status") in ("FAILED", "ENDED") or await self.finish_if_idle(sid):
+                observation = await self.follower_state(sid)
+                if observation is None:
+                    return
+                if isinstance(observation, FollowerUnavailable):
+                    raise NativeFollowerUnavailable(observation)
+                if observation.state.status in ("FAILED", "ENDED") or await self.finish_if_idle(sid):
                     return
                 while not self.closed:
                     done, _ = await asyncio.wait([stream_task], timeout=10)
@@ -2485,7 +2515,10 @@ class SessionService:
                         break
                     await self.catch_up(sid)
                     session = await self.repo.get("ops.agent_sessions", sid)
-                    if session.get("status") in ("FAILED", "ENDED") or await self.finish_if_idle(sid):
+                    if session is None:
+                        return
+                    state = FollowedSession.from_record(session, sid)
+                    if state.status in ("FAILED", "ENDED") or await self.finish_if_idle(sid):
                         return
                 delay = 1
             except asyncio.CancelledError:
@@ -2493,7 +2526,7 @@ class SessionService:
             except (httpx.HTTPError, ValueError, KeyError, RuntimeError):
                 delay = min(delay * 2, 30)
             finally:
-                if stream_task and not stream_task.done():
+                if stream_task is not None and not stream_task.done():
                     stream_task.cancel()
                     await asyncio.gather(stream_task, return_exceptions=True)
             await asyncio.sleep(delay)

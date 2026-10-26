@@ -2595,6 +2595,76 @@
         "test_new_running_observation_does_not_reuse_an_earlier_end_turn_as_completion",
         "test_send_telegram_file_replies_with_the_session_output_once"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/session_following.py",
+          "symbol": "FollowedSession",
+          "line": 12
+        },
+        {
+          "path": "src/tank/agents/session_following.py",
+          "symbol": "RecordedEventDecision",
+          "line": 38
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "follower_state",
+          "line": 2458
+        }
+      ],
+      "kind": "unreported lifecycle and tool-result facts",
+      "reason": "runtime_status/event_id are required nullable projections of genuinely unreported local state; a missing local row or a row removed during readback returns no owned follower state and never creates one. is_event=None is an unreported record_event result, including absent/null stored result, and never becomes no_event=True. Only actual false under the matching session scope authorizes that local fact. Native absence/archive is a typed unavailable observation; it never manufactures RUNNING/ENDED or a native termination receipt. Later changed local state wins an in-flight readback.",
+      "validation": [
+        "test_follower_recovers_only_actual_reported_native_status",
+        "test_unavailable_follower_preserves_unknown_runtime_and_does_not_invent_termination",
+        "test_invalid_follower_fact_refuses_before_local_state_changes",
+        "test_later_local_event_state_wins_over_inflight_native_readback",
+        "test_unreported_event_decision_is_not_an_observed_no_event_or_foreign_fact",
+        "test_postgres_missing_follower_records_observation_without_terminal_or_runtime_guess"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/session_following.py",
+          "symbol": "native_runtime_status",
+          "line": 56
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "follow",
+          "line": 2495
+        }
+      ],
+      "kind": "fixed protocol translation and owned-task startup absence",
+      "reason": "The states mapping is a closed NativeLifecycle-to-SessionRuntimeStatus translation, with no unknown-status default. stream_task=None is the not-yet-created owned task during startup/exception cleanup; only that actual task is cancelled and awaited. NativeFollowerUnavailable retains existing bounded retry/backoff rather than turning missing resources into terminal sessions or repeatedly creating fresh followers.",
+      "validation": [
+        "test_follower_recovers_only_actual_reported_native_status",
+        "test_missing_follower_cleans_owned_stream_and_preserves_retry_loop"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/session_reopening.py",
+          "symbol": "ReopenState",
+          "line": 22
+        },
+        {
+          "path": "src/tank/agents/session_reopening.py",
+          "symbol": "reopen_question_session",
+          "line": 83
+        }
+      ],
+      "kind": "unreported historical indexes and sparse persistence transition",
+      "reason": "retired=None means the old controller did not record a retired index; an explicitly null reported index rejects. Missing historical turn_status remains unknown and no native status is inferred. Sparse raw session/history objects are handled only by the named persistence mutation adapter, preserving unrelated bytes; lazy absent reopened history starts with the first actual controller observation, whereas reported null/non-array history rejects. New retired IDs come only from actual unfinished journal owners; completed/current owners survive. Reopening requires matching session/question target and a real clock before mutation.",
+      "validation": [
+        "test_reopening_retires_actual_unfinished_owners_and_preserves_completed_current_and_opaque_facts",
+        "test_invalid_reopening_refuses_before_mutating_observed_session",
+        "test_reopening_fails_queued_follow_ups_of_the_failed_session"
+      ]
     }
   ]
 }

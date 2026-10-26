@@ -1427,3 +1427,37 @@ WaitingDependencies requires at least one ID. All nine command/Memory queue
 cases pass in 1.89 seconds, zero skips, independent strict three targets
 (worker-e587-dependencies-unit). The raw revision correction remains pending
 foundation's additive API; this is still inactive worker work.
+
+Typed follower dependency on coherent parent 59b963cf
+
+start_stream/follow now declare their actual string/task lifecycle. The new
+FollowedSession projection distinguishes an unreported runtime state from
+known status; NativeSessionReader provides actual identity-bound lifecycle
+facts. Missing or archived resources are recorded as typed UNAVAILABLE
+observations with actual checked_at, without RUNNING/ENDED or termination
+receipt invention. NativeFollowerUnavailable retains the existing bounded
+follower backoff while the current stream task is cancelled/awaited. A later
+changed local state wins an in-flight readback. Only an actual matching
+record_event false result sets no_event; absent/null result remains unknown
+and does not become false or true. The protocol translation is an exhaustive
+closed map with no default.
+
+Seventy-six connected follower/session-audit/retention/REST/transport units
+pass in 3.02 seconds and the actual PostgreSQL missing-observation case passes
+in 3.05 seconds, zero skips (worker-491-follower-final-unit and
+worker-491-follower-pg-2). The first PG setup omitted required captured-session
+metadata and failed before the workflow; its corrected freshly authored
+scout declares actual synthetic identity/opening clock, explicit unavailable
+native-version/source reasons, and initial zero cursor (not a rewritten
+historical row). The initial connected test's unsupported CONDITION_FIRED
+marker was replaced by a real third source message: that test concerns new
+input not resetting original retry, and all original post-count/body/retry/
+event-state assertions remain. No unused financial condition was fabricated.
+Independent follower projection strict and scoped Ruff pass; default Session
+source passes. Whole Session strict still exposes the remaining real
+execution/attachment/presentation/constructor dependencies and is not claimed.
+AST inventory now has twenty Session functions lacking complete signatures;
+Runtime's worker signature is present but its implementation remains open,
+so a zero annotation-gap count is not a Runtime migration claim. Exact
+retained sites/reasons and behavior controls are appended to the exception
+ledger. Retirement 4a362a56 remains immutable and separate.
