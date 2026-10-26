@@ -2227,3 +2227,10 @@ removed from test_runtime and test_session_admission; peer reaction/X/market-ref
 caller migrations and global qualification remain open. The remaining isolated
 Runtime.__new__ adapter test does not run a worker and is not a whole-module typing
 completion claim.
+
+The combined six-module owned worker/dispatch/fencing/lifecycle unit selection now
+passes all 64 collected cases in 31.42 seconds, zero skips/source guards. This is
+selected functional proof, not a global p90 claim. An earlier command named a
+nonexistent test_runtime_worker_queue.py and collected zero; its exit-5 setup
+receipt remains separate, and the corrected selection uses the actual
+ test_runtime_dispatch_contracts.py module.
