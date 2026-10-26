@@ -1,71 +1,42 @@
 package capture
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
-	"math/big"
+	"fmt"
 	"strconv"
 	"time"
 
+	"github.com/freQuensy23-coder/Tank/capture/internal/backfillstate"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
 )
 
-type CoverageMinutes struct {
-	ExpectedMinutes            int64
-	CompleteMinutes            int64
-	MissingOrIncompleteMinutes int64
-	Complete                   bool
-}
-
-func (r CoverageMinutes) storageValue() map[string]any {
-	return map[string]any{
-		"expected_minutes": r.ExpectedMinutes, "complete_minutes": r.CompleteMinutes,
-		"missing_or_incomplete_minutes": r.MissingOrIncompleteMinutes, "complete": r.Complete,
+func storedBackfillClock(raw any) (time.Time, error) {
+	switch value := raw.(type) {
+	case string:
+		at, err := time.Parse(time.RFC3339Nano, value)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("%w: %q", pytime.ErrTime, value)
+		}
+		return at.UTC(), nil
+	case time.Time:
+		return value.UTC(), nil
+	case nil:
+		return time.Time{}, fmt.Errorf("%w: missing", pytime.ErrTime)
+	default:
+		return time.Time{}, fmt.Errorf("%w: %T", pytime.ErrTime, raw)
 	}
 }
 
-type CaptureWindowCoverage struct {
-	Start                     string
-	End                       string
-	ObservedBucketStart       string
-	ObservedBucketEnd         string
-	UnresolvedBoundarySeconds float64
-	Flow                      CoverageMinutes
-	Klines                    CoverageMinutes
-}
-
-func (r CaptureWindowCoverage) storageValue() map[string]any {
-	return map[string]any{
-		"start": r.Start, "end": r.End, "observed_bucket_start": r.ObservedBucketStart,
-		"observed_bucket_end": r.ObservedBucketEnd, "timestamp_precision": "BUCKET",
-		"unresolved_boundary_seconds": r.UnresolvedBoundarySeconds,
-		"flow":                        r.Flow.storageValue(), "klines": r.Klines.storageValue(),
-	}
-}
-
-type CaptureWindows struct {
-	W1H  CaptureWindowCoverage
-	W4H  CaptureWindowCoverage
-	W24H CaptureWindowCoverage
-}
-
-func (r CaptureWindows) storageValue() map[string]any {
-	return map[string]any{"W1H": r.W1H.storageValue(), "W4H": r.W4H.storageValue(), "W24H": r.W24H.storageValue()}
-}
-
-type referenceTradeIdentity struct {
-	text   *string
-	number *json.Number
-}
-
-func decodeReferenceTradeIdentity(raw any) (referenceTradeIdentity, error) {
+func decodeReferenceTradeIdentity(raw any) (backfillstate.TradeIdentity, error) {
 	var numeric string
 	switch value := raw.(type) {
 	case string:
 		if value == "" {
-			return referenceTradeIdentity{}, errors.New("reference trade identity is empty")
+			return backfillstate.TradeIdentity{}, errors.New("reference trade identity is empty")
 		}
-		return referenceTradeIdentity{text: &value}, nil
+		return backfillstate.TextTradeIdentity(value)
 	case int:
 		numeric = strconv.Itoa(value)
 	case int32:
@@ -77,83 +48,29 @@ func decodeReferenceTradeIdentity(raw any) (referenceTradeIdentity, error) {
 	case json.Number:
 		numeric = string(value)
 	default:
-		return referenceTradeIdentity{}, errors.New("reference trade identity requires text or an integer")
+		return backfillstate.TradeIdentity{}, errors.New("reference trade identity requires text or an integer")
 	}
-	if _, integer := new(big.Int).SetString(numeric, 10); !integer || !json.Valid([]byte(numeric)) {
-		return referenceTradeIdentity{}, errors.New("reference trade identity requires an integer")
-	}
-	number := json.Number(numeric)
-	return referenceTradeIdentity{number: &number}, nil
+	return backfillstate.IntegerTradeIdentity(json.Number(numeric))
 }
 
-func (r referenceTradeIdentity) storageValue() any {
-	if r.text != nil {
-		return *r.text
-	}
-	if r.number != nil {
-		return *r.number
-	}
-	return nil
-}
-
-type Pre24Reference struct {
-	Available bool
-	TradeID   *referenceTradeIdentity
-	TS        *string
-	Precision *string
-	Reason    *string
-}
-
-func (r Pre24Reference) storageValue() map[string]any {
-	out := map[string]any{"available": r.Available, "trade_id": nil, "ts": nil, "ts_prec": nil, "reason": nil}
-	if r.TradeID != nil {
-		out["trade_id"] = r.TradeID.storageValue()
-	}
-	if r.TS != nil {
-		out["ts"] = *r.TS
-	}
-	if r.Precision != nil {
-		out["ts_prec"] = *r.Precision
-	}
-	if r.Reason != nil {
-		out["reason"] = *r.Reason
-	}
-	return out
-}
-
-type InstrumentCaptureCoverage struct {
-	InstrumentID   string
-	Windows        CaptureWindows
-	Complete       bool
-	Pre24Reference *Pre24Reference
-}
-
-func (r InstrumentCaptureCoverage) storageValue() map[string]any {
-	out := map[string]any{"instrument_id": r.InstrumentID, "windows": r.Windows.storageValue(), "complete": r.Complete}
-	if r.Pre24Reference != nil {
-		out["pre24_reference"] = r.Pre24Reference.storageValue()
-	}
-	return out
-}
-
-func decodeCoverageMinutes(rows []map[string]any, field string, start, end time.Time) (CoverageMinutes, error) {
+func decodeCoverageMinutes(rows []map[string]any, field string, start, end time.Time) (backfillstate.MinuteCoverage, error) {
 	expected := int64(end.Sub(start) / time.Minute)
 	if expected < 0 {
-		return CoverageMinutes{}, errors.New("capture coverage interval end precedes start")
+		return backfillstate.MinuteCoverage{}, errors.New("capture coverage interval end precedes start")
 	}
 	buckets := make(map[int64]bool, len(rows))
 	for _, row := range rows {
-		at, err := pytime.Parse(row[field])
+		at, err := storedBackfillClock(row[field])
 		if err != nil || !at.Equal(pytime.MinuteFloor(at)) || at.Before(start) || !at.Before(end) {
-			return CoverageMinutes{}, errors.New("capture coverage requires an aligned bucket within its declared interval")
+			return backfillstate.MinuteCoverage{}, errors.New("capture coverage requires an aligned bucket within its declared interval")
 		}
 		complete, ok := row["complete"].(bool)
 		if !ok {
-			return CoverageMinutes{}, errors.New("capture coverage requires boolean completion flags")
+			return backfillstate.MinuteCoverage{}, errors.New("capture coverage requires boolean completion flags")
 		}
 		key := at.Unix()
 		if previous, exists := buckets[key]; exists && previous != complete {
-			return CoverageMinutes{}, errors.New("capture coverage contains conflicting observations for one bucket")
+			return backfillstate.MinuteCoverage{}, errors.New("capture coverage contains conflicting observations for one bucket")
 		}
 		buckets[key] = complete
 	}
@@ -163,8 +80,141 @@ func decodeCoverageMinutes(rows []map[string]any, field string, start, end time.
 			complete++
 		}
 	}
-	return CoverageMinutes{
-		ExpectedMinutes: expected, CompleteMinutes: complete,
-		MissingOrIncompleteMinutes: expected - complete, Complete: complete == expected && expected > 0,
-	}, nil
+	return backfillstate.NewMinuteCoverage(expected, complete)
+}
+
+type completedKlineMinutes map[int64]struct{}
+
+func (m completedKlineMinutes) contains(at time.Time) bool {
+	_, present := m[at.Unix()]
+	return present
+}
+
+func decodeCompletedKlineMinutes(rows []map[string]any, start, end, cutoff time.Time) (completedKlineMinutes, error) {
+	completed := make(completedKlineMinutes)
+	observations := make(map[int64]*bool, len(rows))
+	for _, row := range rows {
+		at, err := storedBackfillClock(row["open_time"])
+		if err != nil || !at.Equal(pytime.MinuteFloor(at)) || at.Before(start) || !at.Before(end) {
+			return nil, errors.New("capture kline coverage requires an aligned bucket within its declared interval")
+		}
+		var complete *bool
+		if raw := row["complete"]; raw != nil {
+			value, valid := raw.(bool)
+			if !valid {
+				return nil, errors.New("capture kline coverage requires boolean or unreported completion flags")
+			}
+			complete = &value
+		}
+		key := at.Unix()
+		if prior, present := observations[key]; present && ((prior == nil) != (complete == nil) || (prior != nil && *prior != *complete)) {
+			return nil, errors.New("capture kline coverage contains conflicting observations for one bucket")
+		}
+		observations[key] = complete
+		if complete != nil && *complete && !at.Add(time.Minute).After(cutoff) {
+			completed[key] = struct{}{}
+		}
+	}
+	return completed, nil
+}
+
+func decodePre24Trade(trade map[string]any) (backfillstate.Pre24Reference, error) {
+	identity, err := decodeReferenceTradeIdentity(trade["trade_id"])
+	if err != nil {
+		return backfillstate.Pre24Reference{}, err
+	}
+	ts, valid := trade["ts"].(string)
+	if !valid {
+		return backfillstate.Pre24Reference{}, errors.New("reference trade requires a JSON timestamp string")
+	}
+	var precision *string
+	if raw := trade["ts_prec"]; raw != nil {
+		value, valid := raw.(string)
+		if !valid {
+			return backfillstate.Pre24Reference{}, errors.New("reference trade precision requires text or null")
+		}
+		precision = &value
+	}
+	return backfillstate.AvailablePre24Reference(identity, ts, precision)
+}
+
+func decodePre24Reference(rows []map[string]any, boundary time.Time) (backfillstate.Pre24Reference, error) {
+	var latest time.Time
+	var candidates []map[string]any
+	for _, row := range rows {
+		if row["reference_points"] == nil {
+			continue
+		}
+		points, valid := row["reference_points"].([]any)
+		if !valid {
+			return backfillstate.Pre24Reference{}, errors.New("pre24 reference points require a JSON array or unreported value")
+		}
+		for _, raw := range points {
+			point, valid := raw.(map[string]any)
+			if !valid || point == nil {
+				return backfillstate.Pre24Reference{}, errors.New("pre24 reference point requires a JSON object")
+			}
+			if point["complete"] == nil {
+				continue
+			}
+			complete, valid := point["complete"].(bool)
+			if !valid {
+				return backfillstate.Pre24Reference{}, errors.New("pre24 reference completion requires a boolean or unreported value")
+			}
+			if !complete {
+				continue
+			}
+			at, err := storedBackfillClock(point["boundary"])
+			if err != nil {
+				return backfillstate.Pre24Reference{}, err
+			}
+			if !at.Equal(boundary) || point["last_trade"] == nil {
+				continue
+			}
+			trade, valid := point["last_trade"].(map[string]any)
+			if !valid {
+				return backfillstate.Pre24Reference{}, errors.New("pre24 reference trade requires a JSON object or unreported value")
+			}
+			if trade["ts"] == nil {
+				continue
+			}
+			ts, err := storedBackfillClock(trade["ts"])
+			if err != nil {
+				return backfillstate.Pre24Reference{}, err
+			}
+			if !ts.Before(boundary) {
+				return backfillstate.Pre24Reference{}, errors.New("pre24 reference trade must precede its declared boundary")
+			}
+			if len(candidates) == 0 || ts.After(latest) {
+				latest, candidates = ts, []map[string]any{trade}
+			} else if ts.Equal(latest) {
+				candidates = append(candidates, trade)
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		return backfillstate.MissingPre24Reference(), nil
+	}
+	reference, err := decodePre24Trade(candidates[0])
+	if err != nil {
+		return backfillstate.Pre24Reference{}, err
+	}
+	encoded, err := json.Marshal(reference)
+	if err != nil {
+		return backfillstate.Pre24Reference{}, err
+	}
+	for _, trade := range candidates[1:] {
+		other, err := decodePre24Trade(trade)
+		if err != nil {
+			return backfillstate.Pre24Reference{}, err
+		}
+		document, err := json.Marshal(other)
+		if err != nil {
+			return backfillstate.Pre24Reference{}, err
+		}
+		if !bytes.Equal(encoded, document) {
+			return backfillstate.Pre24Reference{}, errors.New("pre24 reference has conflicting trade evidence at its latest observed clock")
+		}
+	}
+	return reference, nil
 }
