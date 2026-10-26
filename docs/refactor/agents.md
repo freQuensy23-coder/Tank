@@ -2010,3 +2010,11 @@ WorkerFailureRequest.error_class. A direct empty-versus-None control extends the
 pure family to 22 cases, all passing in 6.34 seconds, zero skips/source guards;
 strict source/test and Ruff/format pass. No terminal-reconciliation policy is
 changed by this lower-level field correction.
+
+Controlled generation shutdown uses the same claim fence. The sparse mutation
+contract adds only existing interrupted_at and CONTROLLED_GENERATION_STOP facts,
+reported together for QUEUED state with an actual interruption occurrence. These
+fields remain untouched when unrequested; no old clock/reason is reconstructed.
+The pure family now passes all 23 pinned native cases in 5.94 seconds, zero skips
+with source guards; strict source/test and Ruff/format pass. Actual controlled-stop
+claim snapshot/cancellation/refund and stale-token consumer proof remain pending.

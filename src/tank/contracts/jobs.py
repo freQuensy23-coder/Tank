@@ -330,6 +330,8 @@ class JobClaimMutation(DomainModel):
     run_after: Timestamp | None = None
     finished_at: Timestamp | None = None
     slot_waiting_since: Timestamp | None = None
+    interrupted_at: Timestamp | None = None
+    interruption_reason: Literal["CONTROLLED_GENERATION_STOP"] | None = None
 
     @model_validator(mode="after")
     def actual_mutation(self) -> Self:
@@ -339,11 +341,18 @@ class JobClaimMutation(DomainModel):
             ("run_after", self.run_after),
             ("finished_at", self.finished_at),
             ("slot_waiting_since", self.slot_waiting_since),
+            ("interrupted_at", self.interrupted_at),
         ):
             if field in self.model_fields_set and stamp is None:
                 raise ValueError("A reported queue clock requires its named timestamp state")
             if field != "finished_at" and stamp is not None and stamp.value is None:
                 raise ValueError("A queue schedule or waiting clock requires its actual occurrence")
+        if "interruption_reason" in self.model_fields_set and self.interruption_reason is None:
+            raise ValueError("A reported interruption requires its actual reason")
+        if (self.interrupted_at is None) != (self.interruption_reason is None):
+            raise ValueError("Controlled interruption requires its actual clock and reason together")
+        if self.interrupted_at is not None and self.status != "QUEUED":
+            raise ValueError("Controlled interruption requeues its unfinished attempt")
         if self.status != "QUEUED" and (self.finished_at is None or self.finished_at.value is None):
             raise ValueError("A terminal queue mutation requires its actual completion occurrence")
         if self.status == "QUEUED" and self.finished_at is not None and self.finished_at.value is not None:
@@ -360,6 +369,7 @@ class JobClaimMutation(DomainModel):
             ("attempts", mutation.attempts),
             ("last_error", mutation.last_error),
             ("result", mutation.result),
+            ("interruption_reason", mutation.interruption_reason),
         ):
             if field in mutation.model_fields_set:
                 updated[field] = value
@@ -367,6 +377,7 @@ class JobClaimMutation(DomainModel):
             ("run_after", mutation.run_after),
             ("finished_at", mutation.finished_at),
             ("slot_waiting_since", mutation.slot_waiting_since),
+            ("interrupted_at", mutation.interrupted_at),
         ):
             if field in mutation.model_fields_set:
                 if stamp is None:
