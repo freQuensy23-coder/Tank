@@ -1467,7 +1467,12 @@ class MarketService:
         result["tokens"] = list(self.tokens.values())
         result["sector_baskets"] = deepcopy(self.sector_baskets)
         result["capture_metadata"] = await self._capture_metadata(token_id, end)
-        result["flow_bars"], result["flow_segments"], result["reference_points"] = [], [], []
+        (
+            result["flow_bars"],
+            result["flow_parent_bars"],
+            result["flow_segments"],
+            result["reference_points"],
+        ) = [], [], [], []
         heads = {}
         flow_heads = []
         for instrument in target if full_state else spot:
@@ -1506,6 +1511,8 @@ class MarketService:
                 )
                 if parse_time(bar["minute_start"]) + timedelta(minutes=1) <= end:
                     result["flow_bars"].append(bar)
+                else:
+                    result["flow_parent_bars"].append(bar)
         result["tickers"] = await self.repo.latest_market_records(
             "mkt.tickers_24h", cutoff=end, assembled_at=assembled, filters={"token_id": token_id}
         )
@@ -1897,6 +1904,9 @@ class MarketService:
             result["flow_bars"] = [
                 b for b in bars if parse_time(b["minute_start"]) + timedelta(minutes=1) <= end
             ]
+            result["flow_parent_bars"] = [
+                b for b in bars if parse_time(b["minute_start"]) + timedelta(minutes=1) > end
+            ]
         if domains & {"spot", "dc"}:
             result["tickers"] = []
             for instrument in spot:
@@ -2086,6 +2096,7 @@ class MarketService:
                     if domain == "depth"
                     else [
                         "flow_bars",
+                        "flow_parent_bars",
                         "flow_segments",
                         "books",
                         "oi",
@@ -2102,6 +2113,7 @@ class MarketService:
             else:
                 fields = [
                     "flow_bars",
+                    "flow_parent_bars",
                     "flow_segments",
                     "reference_points",
                     "tickers" if domain == "spot" else "klines",
@@ -2575,6 +2587,7 @@ class MarketService:
         instruments = [r for r in self.instruments.values() if r["token_id"] == token_id]
         ids = {r["instrument_id"] for r in instruments}
         result["flow_segments"] = []
+        result["flow_parent_bars"] = []
         result["reference_points"] = []
         for name, (collection, field) in COLLECTIONS.items():
             values = []
@@ -2654,6 +2667,8 @@ class MarketService:
                         name in ("flow_bars", "klines")
                         and parse_time(stamp) + timedelta(minutes=1) > cutoff_dt
                     ):
+                        if name == "flow_bars":
+                            result["flow_parent_bars"].append(row)
                         continue
                     if name == "books" and row.get("independent_rest"):
                         independent = row["independent_rest"]
