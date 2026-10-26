@@ -1773,3 +1773,12 @@ PostgreSQL cases pass in 3.33 seconds, zero skips. Independent adapter/test stri
 checks pass. The actual pre-writer attachment fixture currently refuses missing
 native preparation, as expected; its negative one-case evidence is preserved and
 must turn green only through the paired fresh writer, not fixture initialization.
+
+The refreshed held-branch signature inventory includes native preparation,
+closed worker commands/queue adapter and the qualified eval boundary. Eighteen
+SessionService methods still have incomplete signatures in this branch. Runtime
+worker now has an annotation, but its raw mapping/handler implementation has not
+been migrated or independently strict-qualified; this is still an open worker
+body, not a completed function. The inventory deliberately does not equate an
+annotation with precise body typing or waive remaining aggregate/transport/vendor
+work. Final current-main caller qualification remains required for this branch.
