@@ -1,5 +1,6 @@
 import json
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,6 +26,7 @@ from tank.telegram_inbox import (
     chunks,
     question_id_for,
 )
+from tank.util import iso
 
 BOT = 777
 ALERTS = "-100500"
@@ -1758,17 +1760,20 @@ async def test_notice_is_retried_after_a_transient_failure_and_sent_once() -> No
 
 
 @pytest.mark.asyncio
-async def test_watch_mutation_hydrates_prompt_provenance_first() -> None:
+async def test_watch_mutation_hydrates_prompt_provenance_first(monkeypatch: pytest.MonkeyPatch) -> None:
     repo = MemoryRepository()
     await seed(repo)
     session = await repo.get("ops.agent_sessions", "ses_1")
+    assert session is not None
     session.pop("prompt_version_basis")
     session["prompt_version"] = "legacy-label"
     await repo.put("ops.agent_sessions", "ses_1", session)
-    await repo.put("evt.events", session["event_id"], {"event_id": session["event_id"]})
-    calls = []
+    event_id = session["event_id"]
+    assert isinstance(event_id, str)
+    await repo.put("evt.events", event_id, {"event_id": event_id})
+    calls: list[str] = []
 
-    def handler(request: httpx.Request):
+    def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request.url.path)
         return httpx.Response(
             200,
@@ -1783,12 +1788,35 @@ async def test_watch_mutation_hydrates_prompt_provenance_first() -> None:
             ),
         )
 
-    async def dispatch(tool, arguments, context):
+    fixed_now = datetime(2027, 1, 15, 8, tzinfo=UTC)
+
+    def clock() -> datetime:
+        return fixed_now
+
+    monkeypatch.setattr("tank.agents.sessions.utcnow", clock)
+    due = iso(fixed_now + timedelta(hours=1))
+
+    async def dispatch(
+        tool: str, arguments: dict[str, JsonValue], context: dict[str, JsonValue]
+    ) -> dict[str, JsonValue]:
+        assert tool == "set_watch_condition"
+        assert arguments["event_id"] == event_id and arguments["review_at"] == due
+        assert arguments["review_question"] == "Has the official update been published?"
         return {"tool": tool, "prompt_version": context["prompt_version"]}
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, session_settings(), dispatch, http=http, versions=fixture_versions())
-        result = await service.invoke_tool(session, "set_watch_condition", {"action": "ARM"}, "call_w")
+        result = await service.invoke_tool(
+            session,
+            "set_watch_condition",
+            {
+                "action": "ARM",
+                "review_at": due,
+                "review_question": "Has the official update been published?",
+            },
+            "call_w",
+        )
+    assert isinstance(result["prompt_version"], str)
     assert calls == ["/v1/sessions/ses_1"] and len(result["prompt_version"]) == 64
 
 
