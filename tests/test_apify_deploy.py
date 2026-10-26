@@ -26,7 +26,7 @@ from publisher_transition_support import HTTPPublisherRig, http_rig, write_artif
 from publisher_workflow_support import execute, step
 from pydantic import SecretStr
 
-from tank.deployment.api_contracts import Base64SourceFile, BuildObservation, SourceSnapshot
+from tank.deployment.api_contracts import Base64SourceFile, BuildObservation, SourceFolder, SourceSnapshot
 from tank.deployment.apify_api import ApifyAPI, ApifyAPIError, ApifyEndpoint
 from tank.deployment.artifact_contracts import PublisherArtifactRuntime, SourceArtifact, SourceBundle
 from tank.deployment.artifacts import ArtifactError, FilesystemArtifacts, source_files
@@ -387,9 +387,12 @@ def test_provenance_drift_fails_closed(typed_publisher: HTTPPublisherRig, change
             index = next(
                 i
                 for i, entry in enumerate(entries)
-                if entry.name == ("tank-release.json" if change == "contract" else "main.py")
+                if not isinstance(entry, SourceFolder)
+                and entry.name == ("tank-release.json" if change == "contract" else "main.py")
             )
             entry = entries[index]
+            if isinstance(entry, SourceFolder):
+                raise AssertionError("Provenance mutation requires an actual file")
             body = b"tampered"
             if change == "contract":
                 marker = fixture.selected.release.model_dump(mode="json")
