@@ -18,10 +18,11 @@ from runtime_failure_fixtures import runtime_failure_fixture
 from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import JobEnvelope
 from tank.contracts.question_retirement import QuestionFailureRefusalLedger
+from tank.contracts.scheduler_results import ConditionEvaluationResult
 from tank.runtime_contracts import FailureRecordIdentity, SuppliedFailureReason, UserQuestionMessage
 from tank.runtime_failure_repository import RepositoryRuntimeFailures
 from tank.storage import MemoryRepository, PostgresRepository, Repository
-from tank.time_precision import collection_clock
+from tank.time_precision import Timestamp, collection_clock
 from tank.util import JsonInput
 
 
@@ -127,12 +128,16 @@ async def exercise_refusal_write_fault(
             fault, runtime.settings.require_versions(), collection_clock
         )
 
-        async def fresh_work(payload: dict[str, JsonValue]) -> None:
-            assert payload["item_id"] == "fresh"
+        evaluate = runtime.scheduler.eval_conditions
+
+        async def fresh_work(cutoff: Timestamp) -> ConditionEvaluationResult:
+            result = await evaluate(cutoff)
             output.write_text("actual fresh worker work")
             stop.set()
+            return result
 
-        runtime.handlers["FILTER_ITEM"] = fresh_work
+        patch = pytest.MonkeyPatch()
+        patch.setattr(runtime.scheduler, "eval_conditions", fresh_work)
         worker = asyncio.create_task(runtime.worker(stop))
         try:
             async with asyncio.timeout(2):
@@ -147,7 +152,9 @@ async def exercise_refusal_write_fault(
             else:
                 entries = observed["host_question_failure_refusals"]
                 assert isinstance(entries, dict) and len(entries) == 1
-            fresh = await repo.enqueue("FILTER_ITEM", {"item_id": "fresh"}, "fresh-worker-work")
+            fresh = await repo.enqueue(
+                "EVAL_CONDITIONS", collection_clock().fields("cutoff"), "fresh-worker-work"
+            )
             async with asyncio.timeout(2):
                 await worker
             completed = await repo.get("ops.jobs", FailureRecordIdentity.from_record(fresh).job_id)
@@ -156,6 +163,7 @@ async def exercise_refusal_write_fault(
         finally:
             stop.set()
             await worker
+            patch.undo()
     assert "persistence unavailable" in caplog.text and "private-token" not in caplog.text
     assert await repo.get("ops.agent_sessions", "session") == original
     question = await repo.get("out.user_questions", "question")
@@ -384,7 +392,7 @@ def test_terminal_failure_keeps_wire_alias_admission_and_revalidates_typed_paylo
     assert isinstance(command.notification, FailedDeliveryNotification)
     assert command.notification.payload.depends_on == ["prior"]
     assert TerminalJobFailure.model_validate(command, by_name=True) == command
-    wrong_wire = {
+    wrong_wire: dict[str, JsonValue] = {
         **record,
         "payload": {"alert_id": "alert", "version": 1, "channel": "telegram:alerts", "depends_on": ["prior"]},
     }

@@ -2156,3 +2156,32 @@ full financial/E2E/Go cohort and global timing qualification remain required.
 The existing strict-test dependency on untyped Scheduler.tick remains visible;
 no suppression was added. Remaining Session body/tool/usage/event work and the
 assigned vendor programs are still open.
+
+
+### Whole-worker real lifecycle caller continuation (held)
+
+The runtime timeout, malformed-kind continuation, failed dependency, generation drain
+and immediate-stop controls now compose actual Runtime ports and resources instead
+of assigning a handlers map to an unconstructed object. Domain evaluation delegates
+to the actual Scheduler; only owned intake-loop and gateway-start boundaries are
+recorded. The immediate-stop fixture declares the supported integer shutdown grace
+0 before immutable Settings capture (the retired fractional fake was not a valid
+Settings contract); the positive drain remains 1 second. Original attempt refund,
+clock, frozen-session/tool-result and explicit barrier assertions remain.
+
+The expiry-after-real-claim and question-refusal-persistence continuation cases now
+use actual Runtime dispatch. Later independently owned work is a real condition
+evaluation, not a mock FILTER result. The admission deferral uses the configured
+cap of two and two actual occupied sessions, preserves creation precision and
+refunds the attempt, and proves zero dispatch. Its prior alias-only job extras had
+no actual queue producer; the fixture now uses the admitted canonical bucket clock
+with an actual anchor and asserts the replacement removes that stale anchor.
+The separate timestamp-alias storage adapter regressions remain unchanged.
+
+Five lifecycle caller cases pass (21.53 seconds); all 13 precision/refusal unit cases
+pass (19.40 seconds), zero skips with source guards. These are selected functional
+proofs, not a full default-unit timing claim. Complete worker caller and actual
+financial/E2E/Go qualification remain held.
+Actual PostgreSQL refusal-write-failure/restart selection also passes both collected
+cases in 23.62 seconds, zero skips/source guards. The changed refusal module and two
+real composition helpers pass independent strict checks; scoped Ruff/format pass.
