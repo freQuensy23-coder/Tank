@@ -169,3 +169,95 @@ async def test_cursor_revision_and_failed_commit_preserve_the_previous_batch(
                 current, collection_clock(utcnow() + timedelta(seconds=2)), {}, {}
             )
         assert await repo.get("ops.scheduler_checkpoints", CHECKPOINT_KEY) == committed
+
+
+async def test_failed_target_drain_does_not_lose_independent_target_or_accept_unbound_marker(
+    repo: StorageBackend, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, router):
+        if repo.backend == "postgres":
+            endpoint = httpx.URL(os.environ["CLICKHOUSE_TEST_URL"])
+            router.route(
+                method="POST", scheme=endpoint.scheme, host=endpoint.host, port=endpoint.port, path="/"
+            ).pass_through()
+        now = utcnow().replace(microsecond=0)
+        anchor = now - timedelta(hours=2)
+        for event_id in ("blocked", "independent"):
+            await repo.put(
+                "out.reaction_checkpoints",
+                event_id + ":token:POST_1H:1",
+                {
+                    "event_id": event_id,
+                    "token_id": "token",
+                    "checkpoint": "POST_1H",
+                    "revision": 1,
+                    "anchor": {"type": "T0", **Timestamp(iso(anchor), "EXACT").fields("ts")},
+                    **collection_clock(now - timedelta(hours=1)).fields("captured_at"),
+                },
+            )
+            await repo.put(
+                "mkt.backfill_runs",
+                event_id,
+                {
+                    "backfill_id": event_id,
+                    "event_id": event_id,
+                    "token_id": "token",
+                    "status": "FAILED",
+                    **Timestamp(iso(anchor), "EXACT").fields("anchor"),
+                    **collection_clock(now - timedelta(seconds=1)).fields("finished_at"),
+                },
+            )
+        enqueue = repo.enqueue
+
+        async def failed_target_enqueue(
+            kind: str,
+            payload: Mapping[str, JsonValue],
+            idem_key: str,
+            *,
+            priority: int,
+            max_attempts: int,
+            run_after: Timestamp,
+            expires_at: Timestamp,
+        ) -> Record:
+            stored = await enqueue(
+                kind,
+                payload,
+                idem_key,
+                priority=priority,
+                max_attempts=max_attempts,
+                run_after=run_after,
+                expires_at=expires_at,
+            )
+            if payload["event_id"] == "blocked":
+                raise OSError("Authored target-specific failure")
+            return stored
+
+        with monkeypatch.context() as interruption:
+            interruption.setattr(repo, "enqueue", failed_target_enqueue)
+            with pytest.raises(ExceptionGroup, match="Reaction target demand drains failed"):
+                await runtime.scheduler.detect_late_data(now)
+        checkpoint = ledger(await repo.get("ops.scheduler_checkpoints", CHECKPOINT_KEY))
+        assert len(checkpoint.demands) == 2
+        by_event = {d.command.event_id: d for d in checkpoint.demands.values()}
+        assert by_event["blocked"].phase == "PENDING"
+        assert by_event["independent"].phase == "LINKED"
+        jobs = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
+        assert len(jobs) == 1
+        payload = jobs[0]["payload"]
+        assert isinstance(payload, dict) and payload["event_id"] == "independent"
+        blocked = by_event["blocked"]
+        marker_key = "reaction-change:" + blocked.command.change_id
+        marker = await repo.put(
+            "ops.scheduler_checkpoints",
+            marker_key,
+            {"checkpoint_id": marker_key, **collection_clock(now).fields("at"), "state": {}},
+            immutable=True,
+        )
+        await runtime.scheduler.detect_late_data(now + timedelta(seconds=1))
+        refused = ledger(await repo.get("ops.scheduler_checkpoints", CHECKPOINT_KEY))
+        retained = refused.demands[blocked.command.change_id]
+        assert retained.phase == "BLOCKED"
+        assert retained.reason == "APPLIED_MARKER_UNRESOLVED"
+        assert len(refused.demands) == 2
+        assert await repo.get("ops.scheduler_checkpoints", marker_key) == marker
+        assert await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"}) == jobs
