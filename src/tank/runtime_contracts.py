@@ -2,9 +2,9 @@
 
 from typing import Annotated, Literal, Self
 
-from pydantic import AliasChoices, Field, JsonValue, model_validator
+from pydantic import AliasChoices, ConfigDict, Field, JsonValue, TypeAdapter, model_validator
 
-from tank.analysis.watch_contracts import MilestoneSnapshot, WatchCall, WatchCondition
+from tank.analysis.watch_contracts import MilestoneSnapshot, TimedReviewCondition, WatchCall, WatchCondition
 from tank.contracts import DomainModel
 from tank.contracts.scalars import TrueFlag
 from tank.time_precision import Timestamp, timestamp_owned_fields
@@ -180,7 +180,39 @@ class ConditionFiredMessage(JobPayload, ReplayBinding):
     def matches_condition(self) -> Self:
         if self.condition.event_id != self.event_id or self.condition.token_id != self.token_id:
             raise ValueError("Condition notification identity differs from its snapshot")
+        if self.condition.status != "FIRED":
+            raise ValueError("Condition notification requires its fired snapshot")
         return self
+
+
+class TimedReviewFiredMessage(JobPayload, ReplayBinding):
+    kind: Literal["CONDITION_FIRED"]
+    event_id: str = Field(min_length=1)
+    condition: TimedReviewCondition
+    review_at: str
+    review_question: str = Field(min_length=1, max_length=500, pattern=r"\S")
+    session_id: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def matches_review(self) -> Self:
+        if self.condition.event_id != self.event_id or self.condition.status != "FIRED":
+            raise ValueError("Review notification differs from its fired event snapshot")
+        if (
+            self.review_at != self.condition.expr.review_at
+            or self.review_question != self.condition.expr.review_question
+        ):
+            raise ValueError("Review notification differs from its saved question or schedule")
+        if self.condition.session_id is not None and self.session_id != self.condition.session_id:
+            raise ValueError("Review notification differs from its saved originating session")
+        return self
+
+
+type FiredConditionMessage = ConditionFiredMessage | TimedReviewFiredMessage
+
+_FIRED_CONDITIONS: TypeAdapter[FiredConditionMessage] = TypeAdapter(
+    ConditionFiredMessage | TimedReviewFiredMessage,
+    config=ConfigDict(hide_input_in_errors=True),
+)
 
 
 class CallExpiredMessage(JobPayload, ReplayBinding):
@@ -213,6 +245,7 @@ type AgentMessage = (
     | UserQuestionMessage
     | ScoutMessage
     | ConditionFiredMessage
+    | TimedReviewFiredMessage
     | CallExpiredMessage
     | MilestoneMessage
 )
@@ -221,7 +254,7 @@ type AgentMessage = (
 def parse_agent_message(payload: dict[str, JsonValue]) -> AgentMessage:
     match payload["kind"]:
         case "CONDITION_FIRED":
-            return ConditionFiredMessage.model_validate(payload)
+            return _FIRED_CONDITIONS.validate_python(payload, strict=True)
         case "CALL_EXPIRED":
             return CallExpiredMessage.model_validate(payload)
         case "MILESTONE":

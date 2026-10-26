@@ -3,27 +3,43 @@
 from collections.abc import Mapping
 from copy import deepcopy
 from decimal import Decimal
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import JsonValue
 
 from tank.analysis.condition_graph_contracts import (
     AvailableConditionFunding,
     BasicConditionSpot,
+    CapturedConditionLending,
+    CapturedConditionUnlocks,
+    CapturedConditionWalletFlows,
+    ComparableConditionExchangeInventory,
     ConditionAggregateLiquidations,
+    ConditionBoundaryGroup,
+    ConditionCadence,
     ConditionClose,
+    ConditionComputedOutcomeRanges,
+    ConditionConfidence,
+    ConditionConfidenceFailure,
+    ConditionCoverageFailure,
+    ConditionDeclaredEventAnchor,
+    ConditionDepthNode,
     ConditionDerivatives,
     ConditionDerivativeSupportFeatures,
     ConditionDerivativeVenue,
+    ConditionFieldObservation,
     ConditionFlowAggregate,
     ConditionFlowAggregateProjection,
     ConditionFlowCaptureProjection,
     ConditionFlowCaptureWitness,
     ConditionFunding,
     ConditionFundingObservation,
+    ConditionGeneratedEmptyFlowProjection,
+    ConditionGeneratedEmptyFlowVisibility,
     ConditionIncrementalVolumes,
     ConditionLiquidations,
     ConditionNativeVolumeSupport,
+    ConditionObservedFieldFailure,
     ConditionObservedFundingDispersion,
     ConditionObservedIncrementalVolume,
     ConditionObservedPredicate,
@@ -31,18 +47,31 @@ from tank.analysis.condition_graph_contracts import (
     ConditionPredicate,
     ConditionReferenceTradeEvidenceRef,
     ConditionReferenceTradeProjection,
+    ConditionRelativeGraph,
+    ConditionRelativeNormalRange,
+    ConditionRelativeWindow,
+    ConditionScheduledUnlock,
     ConditionSpotValues,
     ConditionSynchronizedOpenInterest,
+    ConditionWalletFlow,
+    ConditionWalletFlowEvidenceRef,
     ConditionWireClocks,
+    DeclaredConditionCadence,
+    DeclaredConditionDirection,
     EnrichedConditionDerivatives,
     EnrichedConditionDerivativeVenue,
     EnrichedConditionSpot,
     FlowAggregateEvidenceRef,
     FlowCaptureEvidenceRef,
     KnownConditionTradeCount,
+    MetricSemanticsCadenceOrigin,
     ObservedConditionCohort,
     ObservedConditionCohortComparison,
+    ObservedConditionMarketContext,
+    ObservedConditionReferencePrice,
     ObservedConditionSizeProfile,
+    SelectiveConditionConfidence,
+    UnavailableConditionCirculatingShare,
     UnavailableConditionLeadLag,
     UnavailableConditionOpenInterest,
     UnavailableConditionSizeProfile,
@@ -50,11 +79,17 @@ from tank.analysis.condition_graph_contracts import (
     UnrequestedConditionOpenInterest,
     WindowedConditionSpot,
 )
-from tank.analysis.statistics_contracts import DecimalRange, FloatRange
+from tank.analysis.statistics_contracts import (
+    DecimalRange,
+    FloatRange,
+    HistoryDiagnostic,
+    UnavailableBeta,
+    UnavailableHistoryDiagnostics,
+)
 from tank.contracts import DomainModel
 from tank.contracts.json import JsonDocument
-from tank.time_precision import Timestamp
-from tank.util import iso, sha256
+from tank.time_precision import Timestamp, offset_schedule
+from tank.util import iso, parse_iso_time, sha256
 
 
 def _checked_projection(value: ConditionFlowAggregateProjection) -> ConditionFlowAggregateProjection:
@@ -310,7 +345,7 @@ def _decimal_wire(value: Decimal | None) -> str | None:
     return None if value is None else str(value)
 
 
-def _range_wire(value: DecimalRange | FloatRange) -> list[JsonValue] | None:
+def _range_wire(value: DecimalRange | FloatRange | ConditionRelativeNormalRange) -> list[JsonValue] | None:
     validated = type(value).model_validate(value)
     bounds = validated.bounds
     if bounds is None:
@@ -685,6 +720,8 @@ def encode_scoped_condition_spot(
 
 
 def reference_trade_projection_sha256(value: ConditionReferenceTradeProjection) -> str:
+    if type(value) is not ConditionReferenceTradeProjection:
+        raise TypeError("A declared reference trade projection is required")
     projection = ConditionReferenceTradeProjection.model_validate(value)
     serialized: JsonValue = _model_wire(projection)
     envelope: dict[str, JsonValue] = {
@@ -716,12 +753,654 @@ def reference_trade_evidence_wire(
     reference: ConditionReferenceTradeEvidenceRef,
     evidence: ConditionReferenceTradeLookup,
 ) -> dict[str, JsonValue]:
+    digest = reference_trade_projection_sha256(value)
     projection = ConditionReferenceTradeProjection.model_validate(value)
     validated = ConditionReferenceTradeEvidenceRef.model_validate(reference)
-    if validated.projection_sha256 != reference_trade_projection_sha256(projection):
+    if validated.projection_sha256 != digest:
         raise ValueError("Reference trade evidence does not match its declared projection")
     resolved = evidence.resolve_reference_trade(validated, expected=projection)
     checked = JsonDocument.validate_value(dict(resolved))
     if not isinstance(checked, dict):
         raise TypeError("Reference trade evidence must serialize as an object")
     return deepcopy(checked)
+
+
+def _boundary_wire(
+    value: ConditionBoundaryGroup, evidence: ConditionFlowEvidenceLookup
+) -> dict[str, JsonValue]:
+    boundary = ConditionBoundaryGroup.model_validate(value)
+    count = boundary.trade_count()
+    result: dict[str, JsonValue] = {
+        "start": iso(boundary.start),
+        "cutoff": iso(boundary.cutoff),
+        "trade_count": count.value,
+        "aggregates": [
+            flow_aggregate_evidence_wire(aggregate, evidence) for aggregate in boundary.aggregates
+        ],
+    }
+    if not isinstance(count, KnownConditionTradeCount):
+        result["trade_count_reason"] = count.reason
+    return result
+
+
+def _history_wire(value: HistoryDiagnostic) -> dict[str, JsonValue]:
+    validated = type(value).model_validate(value)
+    if isinstance(validated, UnavailableHistoryDiagnostics):
+        return {
+            "exact": validated.exact,
+            "reason": validated.reason,
+            "target_window_duration_s": validated.target_window_duration_s,
+            "resolution_s": validated.resolution_s,
+            "sample_count": validated.sample_count,
+        }
+    duration, staleness = validated.observed_duration_bounds_s, validated.endpoint_staleness_bounds_s
+    return {
+        "target_window_duration_s": validated.target_window_duration_s,
+        "observed_duration_bounds_s": None if duration is None else [duration.lower, duration.upper],
+        "endpoint_staleness_bounds_s": None if staleness is None else [staleness.lower, staleness.upper],
+        "exact": validated.exact,
+        "resolution_s": validated.resolution_s,
+        "alignment": validated.alignment,
+        "sample_count": validated.sample_count,
+        "latest_observed_at": None
+        if validated.latest_observed_at is None
+        else iso(validated.latest_observed_at),
+    }
+
+
+def _relative_window_wire(
+    value: ConditionRelativeWindow, root: ConditionRelativeGraph, clocks: ConditionWireClocks
+) -> dict[str, JsonValue]:
+    window = ConditionRelativeWindow.model_validate(value)
+    bounds = clocks.bounds(window.interval)
+    reference = root.reference_instrument_id
+    covered = False if reference is None else root.reference_coverage[reference].complete
+    result: dict[str, JsonValue] = {
+        "window": window.interval.window,
+        "start_origin": bounds.start_origin,
+        "precision": window.observed_at.precision,
+        "coverage": {"reference_venue": reference, "complete_24h": covered},
+        "r_raw": window.raw.value,
+        "r_raw_reason": window.raw.reason,
+        "r_btc_adj": window.btc_adjusted.value,
+        "r_btc_adj_reason": window.btc_adjusted.reason,
+        "r_eth_adj": window.eth_adjusted.value,
+        "r_eth_adj_reason": window.eth_adjusted.reason,
+        "r_sector_adj": window.sector_adjusted.value,
+        "sector_reason": window.sector_adjusted.reason,
+        "relative_measure": window.measure,
+        "relative_return": window.relative_return(),
+        "btc_reference_freshness": _model_wire(window.btc_reference.freshness()),
+        "eth_reference_freshness": _model_wire(window.eth_reference.freshness()),
+        "pctile": window.percentile,
+        "pctile_reason": window.percentile_reason,
+        "normal_range": _range_wire(window.normal_range),
+        "normal_range_reason": window.normal_range.reason,
+        "beyond_normal": window.beyond_normal(),
+        "historical_window_resolution_s": window.history.resolution_s,
+        "historical_window_duration_s": window.history.target_window_duration_s,
+        "requested_window_duration_s": (window.interval.cutoff - window.interval.start).total_seconds(),
+        "historical_alignment": "AS_OF_AT_EXACT_TARGET_BOUNDS",
+        "historical_measurement": _history_wire(window.history),
+    }
+    result.update(_clock_wire(bounds.start, "start"))
+    result.update(_clock_wire(bounds.cutoff, "cutoff"))
+    result.update(_clock_wire(window.observed_at, "observed_at"))
+    return result
+
+
+def encode_condition_relative(
+    value: ConditionRelativeGraph, evidence: ConditionRelativeEvidenceLookup, *, clocks: ConditionWireClocks
+) -> dict[str, JsonValue]:
+    validated = ConditionRelativeGraph.model_validate(value)
+    context = ConditionWireClocks.model_validate(clocks)
+    if validated.token_id != context.token_id:
+        raise ValueError("Relative serialization cannot borrow another subject's clock context")
+    event_window = validated.windows["EVENT"]
+    for window in validated.windows.values():
+        context.bounds(window.interval)
+    anchor = validated.anchor
+    anchor_type: Literal["T0", "T1", "KNOWN_TO_US_AT", "ANALYSIS_WINDOW_START"]
+    if isinstance(anchor.origin, ConditionDeclaredEventAnchor):
+        if context.event_anchor != anchor.origin.at:
+            raise ValueError("Relative event anchor metadata must preserve its captured clock")
+        anchor_clock = anchor.origin.at
+        anchor_type = anchor.origin.source
+        anchor_origin = "CAPTURED_EVENT_ANCHOR"
+    else:
+        if context.event_anchor.value is not None:
+            raise ValueError("An analysis-window start cannot be labeled as a captured event anchor")
+        if context.cutoff.value is None:
+            raise ValueError("Relative serialization requires its actual cutoff")
+        anchor_clock = offset_schedule(context.cutoff, anchor.origin.at - event_window.interval.cutoff)
+        anchor_type = "ANALYSIS_WINDOW_START"
+        anchor_origin = "CUTOFF_OFFSET"
+    coverage: dict[str, JsonValue] = {}
+    for iid, item in validated.reference_coverage.items():
+        coverage[iid] = {
+            "complete": item.complete,
+            "expected_duration_s": item.expected_duration_s,
+            "boundary_segments": [_boundary_wire(group, evidence) for group in item.boundary_segments],
+            "excluded": [_model_wire(exclusion) for exclusion in item.excluded],
+            "volume_unit": item.volume_unit,
+            "covered_volume_native": _decimal_wire(item.covered_volume_native),
+        }
+    anchor_wire: dict[str, JsonValue] = {
+        "type": anchor_type,
+        "start_origin": anchor_origin,
+        "ref_price": _decimal_wire(anchor.price.value),
+        "price_source": anchor.price.source,
+    }
+    anchor_wire.update(_clock_wire(anchor_clock, "ts"))
+    anchor_wire.update(_clock_wire(anchor.price.observed_at, "price_observed_at"))
+    if isinstance(anchor.price, ObservedConditionReferencePrice):
+        reference = anchor.trade_evidence_ref
+        if reference is None or anchor.price.source != "LAST_TRADE":
+            raise ValueError("An observed anchor requires its actual reference trade evidence")
+        projection = ConditionReferenceTradeProjection(
+            token_id=validated.token_id,
+            instrument_id=anchor.price.instrument_id,
+            market_type="SPOT",
+            source=anchor.price.source,
+            price=anchor.price.value,
+            observed_at=anchor.price.observed_at,
+        )
+        anchor_wire["evidence"] = reference_trade_evidence_wire(projection, reference, evidence)
+        anchor_wire["price_reason"] = None
+    else:
+        anchor_wire["evidence"] = None
+        anchor_wire["price_reason"] = anchor.price.reason
+    declaration = validated.direction_declaration
+    beta_btc, beta_eth = event_window.btc_beta, event_window.eth_beta
+    repricing = validated.repricing.band()
+    market = validated.context.classification()
+    inputs = validated.context
+    context_wire: dict[str, JsonValue] = {
+        "btc_return_24h": inputs.btc_return_24h,
+        "rv24": inputs.rv24,
+        "rv24_bound": iso(inputs.rv24_bound),
+        "rv24_resolution_s": inputs.rv24_resolution_s,
+        "return_normal_range": _range_wire(inputs.return_normal_range),
+        "return_normal_range_reason": inputs.return_normal_range.reason,
+        "return_lower_quartile": inputs.return_lower_quartile,
+        "rv_normal_range": _range_wire(inputs.rv_normal_range),
+        "rv_normal_range_reason": inputs.rv_normal_range.reason,
+        "rule": inputs.rule,
+    }
+    context_wire.update(_clock_wire(inputs.rv24_observed_at, "rv24_observed_cutoff"))
+    runup = validated.runup
+    runup_wire: dict[str, JsonValue] = {
+        "window": runup.window,
+        "anchor_kind": anchor_type,
+        "anchor_origin": anchor_origin,
+        "start_origin": "CUTOFF_OFFSET",
+        "ar": runup.value.value,
+        "ar_reason": runup.value.reason,
+        "pctile": runup.percentile,
+        "pctile_reason": runup.percentile_reason,
+        "flag": _predicate_wire(runup.beyond_normal),
+    }
+    runup_wire.update(_clock_wire(offset_schedule(anchor_clock, runup.start - runup.cutoff), "start"))
+    runup_wire.update(_clock_wire(anchor_clock, "cutoff"))
+    if not isinstance(runup.beyond_normal, ConditionObservedPredicate):
+        runup_wire["flag_reason"] = runup.beyond_normal.reason
+    outcome_reference = validated.outcome_btc_reference
+    btc_wire: dict[str, JsonValue] = {
+        "instrument_id": outcome_reference.instrument_id,
+        "entry_ref_price": _decimal_wire(outcome_reference.value),
+        "price_source": outcome_reference.source,
+        "reason": None
+        if isinstance(outcome_reference, ObservedConditionReferencePrice)
+        else outcome_reference.reason,
+    }
+    btc_wire.update(_clock_wire(outcome_reference.observed_at, "observed_at"))
+    ranges: dict[str, JsonValue] = {}
+    if isinstance(validated.outcome_ranges, ConditionComputedOutcomeRanges):
+        for name, baseline in validated.outcome_ranges.by_horizon.items():
+            serialized_range: dict[str, JsonValue] = {
+                "value": _range_wire(baseline.normal_range),
+                "unit": baseline.unit,
+                "relative_measure": baseline.measure,
+                "window": baseline.window,
+                "precision": baseline.observed_at.precision,
+                "coverage": {"sample_count": baseline.history.sample_count},
+                "reason": baseline.normal_range.reason,
+                "historical_measurement": _history_wire(baseline.history),
+            }
+            serialized_range.update(
+                _clock_wire(offset_schedule(anchor_clock, baseline.start - baseline.cutoff), "start")
+            )
+            serialized_range.update(_clock_wire(anchor_clock, "cutoff"))
+            serialized_range.update(_clock_wire(baseline.observed_at, "observed_at"))
+            ranges[name] = serialized_range
+    result: dict[str, JsonValue] = {
+        "expected_direction": declaration.value,
+        "repricing_sign": (1 if declaration.normalized() == "BUY" else -1)
+        if isinstance(declaration, DeclaredConditionDirection)
+        else None,
+        "outcome_btc_reference": btc_wire,
+        "normal_ranges": ranges,
+        "normal_ranges_status": validated.outcome_ranges.status,
+        "entry_ref_price": _decimal_wire(validated.entry.value),
+        "entry_price_source": validated.entry.source,
+        "ref_venue": validated.reference_instrument_id,
+        "reference_coverage": coverage,
+        "reference_reason": validated.reference_reason,
+        "anchor": anchor_wire,
+        "windows": {
+            name: _relative_window_wire(window, validated, context)
+            for name, window in validated.windows.items()
+        },
+        "beta_btc": beta_btc.value,
+        "beta_eth": beta_eth.value,
+        "beta_flags": {
+            "btc": beta_btc.reason if isinstance(beta_btc, UnavailableBeta) else None,
+            "eth": beta_eth.reason if isinstance(beta_eth, UnavailableBeta) else None,
+        },
+        "beta_estimates": {"btc": _model_wire(beta_btc), "eth": _model_wire(beta_eth)},
+        "pre_event_runup": runup_wire,
+        "repricing_band": repricing.value,
+        "repricing_reason": None if repricing.status == "OBSERVED" else repricing.reason,
+        "market_context": market.value,
+        "market_context_reason": None
+        if isinstance(market, ObservedConditionMarketContext)
+        else market.reason,
+        "context_inputs": context_wire,
+    }
+    result.update(_clock_wire(validated.entry.observed_at, "entry_price_observed_at"))
+    result.update(encode_condition_reference_close(validated.close_1h))
+    return result
+
+
+def generated_empty_flow_projection_sha256(value: ConditionGeneratedEmptyFlowProjection) -> str:
+    if type(value) not in (ConditionGeneratedEmptyFlowProjection, ConditionGeneratedEmptyFlowVisibility):
+        raise TypeError("A declared generated empty flow projection is required")
+    checked = type(value).model_validate(value)
+    projection = ConditionGeneratedEmptyFlowProjection(
+        token_id=checked.token_id,
+        venue=checked.venue,
+        market_type=checked.market_type,
+        segment=checked.segment,
+    )
+    serialized = JsonDocument.model_validate(projection.model_dump(mode="json"), strict=True).root
+    return sha256({"schema": "tank.condition.generated-empty-flow.v1", "projection": serialized})
+
+
+def validate_generated_empty_flow_evidence(value: ConditionGeneratedEmptyFlowVisibility) -> None:
+    if type(value) is not ConditionGeneratedEmptyFlowVisibility:
+        raise TypeError("A bound generated empty flow visibility is required")
+    validated = ConditionGeneratedEmptyFlowVisibility.model_validate(value)
+    if validated.evidence.projection_sha256 != generated_empty_flow_projection_sha256(validated):
+        raise ValueError("Generated empty flow evidence does not match its declared projection")
+
+
+def _cadence_wire(value: ConditionCadence) -> dict[str, JsonValue]:
+    cadence = type(value).model_validate(value)
+    known_label = isinstance(cadence.origin, MetricSemanticsCadenceOrigin)
+    return {
+        "cadence_s": cadence.seconds,
+        "cadence_source": "SCOPED_METRIC_SEMANTICS" if known_label else None,
+        "cadence_source_reason": None if known_label else "RULE_LABEL_NOT_CAPTURED",
+        "cadence_origin": None if cadence.origin is None else _model_wire(cadence.origin),
+        "cadence_scope": _model_wire(cadence.scope),
+        "cadence_reason": None if isinstance(cadence, DeclaredConditionCadence) else cadence.reason,
+    }
+
+
+def _field_observation_wire(value: ConditionFieldObservation) -> dict[str, JsonValue]:
+    observation = ConditionFieldObservation.model_validate(value)
+    result: dict[str, JsonValue] = {
+        "collection": observation.collection,
+        "token_id": observation.token_id,
+        "instrument_id": observation.instrument_id,
+        "metric_key": observation.metric_key,
+        "observation_kind": observation.observation_kind,
+        "chain": observation.chain,
+        "age_s": observation.age_s,
+        "fresh": observation.fresh,
+        "reason": observation.reason,
+    }
+    result.update(_clock_wire(observation.observed_at, "observed_at"))
+    result.update(_cadence_wire(observation.cadence))
+    if observation.stream is not None:
+        result["basis"] = observation.stream.basis
+        result["coverage_status"] = observation.stream.coverage_status
+        result["detail"] = observation.stream.detail
+    return result
+
+
+def _confidence_failure_wire(value: ConditionConfidenceFailure) -> dict[str, JsonValue]:
+    failure = type(value).model_validate(value)
+    if isinstance(failure, ConditionCoverageFailure):
+        return {"condition": failure.condition, "reason": failure.reason}
+    if isinstance(failure, ConditionObservedFieldFailure):
+        observed = _field_observation_wire(failure.observation)
+        del observed["fresh"]
+        observed["condition"] = failure.condition
+        return observed
+    result: dict[str, JsonValue] = {
+        "condition": failure.condition,
+        "reason": failure.reason,
+        "token_id": failure.token_id,
+        "collection": failure.collection,
+        "instrument_id": failure.instrument_id,
+        "metric_key": failure.metric_key,
+        "metric_family": failure.metric_family,
+    }
+    result.update(_cadence_wire(failure.cadence))
+    return result
+
+
+def encode_condition_confidence(
+    value: ConditionConfidence, *, clocks: ConditionWireClocks
+) -> dict[str, JsonValue]:
+    confidence = type(value).model_validate(value)
+    context = ConditionWireClocks.model_validate(clocks)
+    if confidence.subjects() - {context.token_id}:
+        raise ValueError("Confidence serialization cannot borrow another subject's observations or failures")
+    if context.cutoff.value is None:
+        raise ValueError("Confidence serialization requires its actual cutoff")
+    cutoff = parse_iso_time(context.cutoff.value)
+    for observation in confidence.freshness:
+        stamp = observation.observed_at.value
+        if stamp is None or observation.age_s != (cutoff - parse_iso_time(stamp)).total_seconds():
+            raise ValueError("Confidence serialization must preserve its actual observation age and cutoff")
+    result: dict[str, JsonValue] = {
+        "class": confidence.classification,
+        "failed": [_confidence_failure_wire(failure) for failure in confidence.failed],
+        "limiting": None if confidence.limiting is None else _confidence_failure_wire(confidence.limiting),
+        "derivatives_native_coverage_ready": confidence.derivatives_native_coverage_ready,
+        "derivatives_classification_ready": confidence.derivatives_classification_ready,
+        "freshness": [_field_observation_wire(observation) for observation in confidence.freshness],
+    }
+    if isinstance(confidence, SelectiveConditionConfidence):
+        bounds = context.bounds(confidence.analysis_window)
+        window: dict[str, JsonValue] = {
+            "window": confidence.analysis_window.window,
+            "start_origin": bounds.start_origin,
+        }
+        window.update(_clock_wire(bounds.start, "start"))
+        window.update(_clock_wire(bounds.cutoff, "cutoff"))
+        result["analysis_window"] = window
+        result["derivatives_classification_ready_reason"] = confidence.derivatives_classification_ready_reason
+    return result
+
+
+def encode_condition_depth(value: ConditionDepthNode, *, clocks: ConditionWireClocks) -> dict[str, JsonValue]:
+    depth = ConditionDepthNode.model_validate(value)
+    context = ConditionWireClocks.model_validate(clocks)
+    if context.cutoff.value is None or depth.cutoff != parse_iso_time(context.cutoff.value):
+        raise ValueError("Depth serialization requires its actual selected cutoff")
+    observations: list[JsonValue] = []
+    for observation in depth.observations:
+        if observation.token_id != context.token_id:
+            raise ValueError("Depth serialization cannot borrow another subject's selected book")
+        item: dict[str, JsonValue] = {
+            "token_id": observation.token_id,
+            "venue": observation.venue,
+            "instrument_id": observation.instrument_id,
+            "metric_key": observation.metric_key,
+            "fresh": observation.fresh,
+        }
+        item.update(_clock_wire(observation.observed_at, "observed_at"))
+        item.update(_cadence_wire(observation.cadence))
+        observations.append(item)
+    return {
+        "aggregate_depth_p1_usd": _decimal_wire(depth.aggregate_depth_p1_usd),
+        "pre_event_depth_p1_usd": _decimal_wire(depth.pre_event_depth_p1_usd),
+        "spread_ratio": depth.spread_ratio,
+        "observations": observations,
+    }
+
+
+class ConditionWalletFlowEvidenceLookup(Protocol):
+    def resolve_wallet_flow(
+        self, reference: ConditionWalletFlowEvidenceRef, *, expected: ConditionWalletFlow
+    ) -> Mapping[str, JsonValue]: ...
+
+
+class ConditionUnlockEvidenceLookup(Protocol):
+    def resolve_unlock(self, *, expected: ConditionScheduledUnlock) -> Mapping[str, JsonValue]: ...
+
+
+class ConditionLendingEvidenceLookup(Protocol):
+    def resolve_lending_observation(
+        self, *, expected: CapturedConditionLending
+    ) -> Mapping[str, JsonValue]: ...
+
+
+class ConditionSupplyEvidenceLookup(
+    ConditionWalletFlowEvidenceLookup, ConditionUnlockEvidenceLookup, ConditionLendingEvidenceLookup, Protocol
+):
+    """Reproject verified captured-observation facts without replacing absent evidence."""
+
+
+def _verified_supply_wire(value: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+    checked = JsonDocument.validate_value(dict(value))
+    if not isinstance(checked, dict):
+        raise ValueError("Supply source evidence must resolve to a verified object")
+    return deepcopy(checked)
+
+
+def encode_condition_wallet_flows(
+    value: CapturedConditionWalletFlows, evidence: ConditionWalletFlowEvidenceLookup
+) -> dict[str, JsonValue]:
+    captured = CapturedConditionWalletFlows.model_validate(value)
+    flows: list[JsonValue] = []
+    for flow in captured.flows:
+        visibility = flow.visibility.eligible()
+        if not isinstance(visibility, ConditionObservedPredicate) or not visibility.value:
+            continue
+        resolved = evidence.resolve_wallet_flow(flow.evidence, expected=flow)
+        wire = _verified_supply_wire(resolved)
+        wire.update(_clock_wire(flow.observed_at, "ts"))
+        wire.update(
+            {
+                "class": flow.classification,
+                "class_reason": flow.classification_reason,
+                "qty": _decimal_wire(flow.quantity_native),
+                "qty_reason": flow.quantity_reason,
+                "reaches_exchange": flow.reaches_exchange,
+                "destination_reason": flow.destination_reason,
+                "evidence": _model_wire(flow.evidence),
+            }
+        )
+        flows.append(wire)
+    return {
+        "flows": flows,
+        "observation": _model_wire(captured.observed_evidence()),
+        "successful_queries": captured.successful_queries,
+        "query_visibility": _model_wire(captured.query_visibility),
+        "coverage": _model_wire(captured.coverage),
+        "coverage_errors": [_model_wire(error) for error in captured.coverage_errors],
+    }
+
+
+def encode_condition_unlocks(
+    value: CapturedConditionUnlocks, evidence: ConditionUnlockEvidenceLookup
+) -> dict[str, JsonValue]:
+    captured = CapturedConditionUnlocks.model_validate(value)
+    visibility = captured.visibility.eligible()
+    available = isinstance(visibility, ConditionObservedPredicate) and visibility.value
+    schedules: list[JsonValue] = []
+    if available:
+        for unlock in captured.upcoming:
+            resolved = evidence.resolve_unlock(expected=unlock)
+            wire = _verified_supply_wire(resolved)
+            share = unlock.circulating_share
+            wire.update(_clock_wire(unlock.scheduled_at, "date"))
+            wire.update(
+                {
+                    "token_id": unlock.token_id,
+                    "qty": _decimal_wire(unlock.quantity_native),
+                    "qty_reason": unlock.quantity_reason,
+                    "label": unlock.label,
+                    "pct_circulating": _decimal_wire(share.value),
+                    "pct_circulating_unit": None
+                    if isinstance(share, UnavailableConditionCirculatingShare)
+                    else share.unit,
+                    "circulating_share": _model_wire(share),
+                    "recipient_class": unlock.recipient_class,
+                    "transferable": unlock.transferable,
+                    "transferability_reason": unlock.transferability_reason,
+                    "inference": "POTENTIAL_SUPPLY_IS_NOT_A_SALE",
+                    "source_observation_sha256": unlock.source_observation_sha256,
+                    "schedule_index": unlock.schedule_index,
+                }
+            )
+            schedules.append(wire)
+    result: dict[str, JsonValue] = {
+        "unlocks_next_14d": schedules,
+        "schedule_available": available,
+        "schedule_reason": None
+        if available
+        else "RECEIVED_AFTER_ASSEMBLY"
+        if isinstance(visibility, ConditionObservedPredicate)
+        else "RECEIPT_VISIBILITY_UNPROVEN",
+        "capture_visibility": _model_wire(captured.visibility),
+    }
+    result.update(_clock_wire(captured.observed_at, "observed_at"))
+    return result
+
+
+def encode_condition_lending(
+    value: CapturedConditionLending, evidence: ConditionLendingEvidenceLookup
+) -> dict[str, JsonValue]:
+    captured = CapturedConditionLending.model_validate(value)
+    visibility = captured.current_visibility.eligible()
+    if not isinstance(visibility, ConditionObservedPredicate) or not visibility.value:
+        return {
+            "status": "UNAVAILABLE",
+            "window": captured.requested_window,
+            "reason": "RECEIVED_AFTER_ASSEMBLY"
+            if isinstance(visibility, ConditionObservedPredicate)
+            else "RECEIPT_VISIBILITY_UNPROVEN",
+        }
+    wire = _verified_supply_wire(evidence.resolve_lending_observation(expected=captured))
+    raw_pools = wire["pools"]
+    if not isinstance(raw_pools, list):
+        raise ValueError("Verified lending observation requires its actual pool array")
+    pool_records: list[dict[str, JsonValue]] = []
+    actual_ids: set[str] = set()
+    expected_pools = {pool.pool_id: pool for pool in captured.pools}
+    for raw in raw_pools:
+        if not isinstance(raw, dict):
+            raise ValueError("Verified lending pool must be an object")
+        pool_id = raw["pool_id"]
+        if not isinstance(pool_id, str) or not pool_id.strip() or pool_id in actual_ids:
+            raise ValueError("Verified lending pools require distinct actual identities")
+        actual_ids.add(pool_id)
+        pool_records.append(raw)
+    if actual_ids != set(expected_pools):
+        raise ValueError("Verified lending pool identities differ from the requested captured observation")
+    prior_visibility = captured.previous_visibility.eligible()
+    prior_visible = isinstance(prior_visibility, ConditionObservedPredicate) and prior_visibility.value
+    for raw in pool_records:
+        pool_id = raw["pool_id"]
+        if not isinstance(pool_id, str):
+            raise ValueError("Verified lending pool requires its actual identity")
+        pool = expected_pools[pool_id]
+        utilization = pool.utilization()
+        change = pool.change()
+        raw.update(
+            {
+                "utilization": _decimal_wire(utilization.value),
+                "utilization_reason": utilization.reason,
+                "chg_24h": change.value if prior_visible else None,
+                "chg_24h_reason": "PRIOR_OBSERVATION_NOT_CAPTURED"
+                if captured.previous_source_observation_sha256 is None
+                else change.reason
+                if prior_visible
+                else "PRIOR_RECEIVED_AFTER_ASSEMBLY"
+                if isinstance(prior_visibility, ConditionObservedPredicate)
+                else "PRIOR_RECEIPT_VISIBILITY_UNPROVEN",
+                "borrow_apr": None,
+                "borrow_apr_reason": "NOT_ESTIMABLE",
+                "borrow_apr_policy_reason": pool.borrow_apr().reason,
+                "identity_qualification": _model_wire(pool.identity),
+            }
+        )
+    serialized_pools: list[JsonValue] = [pool for pool in pool_records]
+    wire.update(
+        {
+            "window": captured.requested_window,
+            "pools": serialized_pools,
+            "borrow_apr": None,
+            "reason": "APY_IS_NOT_APR",
+            "unmapped_pool_ids": list(captured.unmapped_pool_ids),
+            "source_observation_sha256": captured.source_observation_sha256,
+            "previous_source_observation_sha256": captured.previous_source_observation_sha256,
+            "capture_visibility": _model_wire(captured.current_visibility),
+            "previous_capture_visibility": _model_wire(captured.previous_visibility),
+        }
+    )
+    wire.update(_clock_wire(captured.observed_at, "observed_at"))
+    wire.update(_clock_wire(captured.previous_observed_at, "previous_observed_at"))
+    return wire
+
+
+def encode_condition_exchange_inventory(
+    value: ComparableConditionExchangeInventory, *, clocks: ConditionWireClocks
+) -> dict[str, JsonValue]:
+    inventory = ComparableConditionExchangeInventory.model_validate(value)
+    context = ConditionWireClocks.model_validate(clocks)
+    if (
+        inventory.token_id != context.token_id
+        or context.cutoff.value is None
+        or inventory.cutoff != parse_iso_time(context.cutoff.value)
+    ):
+        raise ValueError("Inventory serialization requires its actual token and cutoff context")
+    current_visibility = inventory.current_visibility.eligible()
+    if not isinstance(current_visibility, ConditionObservedPredicate) or not current_visibility.value:
+        return {
+            "value": None,
+            "reason": "RECEIVED_AFTER_ASSEMBLY"
+            if isinstance(current_visibility, ConditionObservedPredicate)
+            else "RECEIPT_VISIBILITY_UNPROVEN",
+            "window": inventory.requested_window,
+        }
+    prior_visibility = inventory.previous_visibility.eligible()
+    prior_visible = (
+        inventory.previous_observed_at.value is not None
+        and isinstance(prior_visibility, ConditionObservedPredicate)
+        and prior_visibility.value
+    )
+    prior_reason = (
+        "PRIOR_OBSERVATION_NOT_CAPTURED"
+        if inventory.previous_observed_at.value is None
+        else "PRIOR_RECEIVED_AFTER_ASSEMBLY"
+        if isinstance(prior_visibility, ConditionObservedPredicate)
+        else "PRIOR_RECEIPT_VISIBILITY_UNPROVEN"
+    )
+    native, fractional = inventory.native_change(), inventory.fractional_change()
+    balances: list[JsonValue] = []
+    for balance in inventory.balances:
+        share = balance.fractional_change()
+        balances.append(
+            {
+                "venue": balance.venue,
+                "chainid": balance.chain_id,
+                "contract": balance.contract,
+                "wallet_list_commit": balance.wallet_list_commit,
+                "qty_native": str(balance.current_qty_native),
+                "chg_native_24h": str(balance.change()) if prior_visible else None,
+                "chg_pct": share.value if prior_visible else None,
+                "chg_pct_reason": share.reason if prior_visible else prior_reason,
+            }
+        )
+    result: dict[str, JsonValue] = {
+        "window": inventory.requested_window,
+        "chg_native_24h": _decimal_wire(native.value) if prior_visible else None,
+        "chg_pct": fractional.value if prior_visible else None,
+        "chg_pct_reason": fractional.reason if prior_visible else prior_reason,
+        "normal_range": _range_wire(inventory.normal_range),
+        "normal_range_reason": inventory.normal_range.reason,
+        "per_venue": balances,
+        "coverage": _model_wire(inventory.coverage),
+        "reason": native.reason if prior_visible else prior_reason,
+        "capture_visibility": _model_wire(inventory.current_visibility),
+        "previous_capture_visibility": _model_wire(inventory.previous_visibility),
+    }
+    result.update(_clock_wire(inventory.current_observed_at, "observed_at"))
+    result.update(_clock_wire(inventory.previous_observed_at, "previous_observed_at"))
+    return result

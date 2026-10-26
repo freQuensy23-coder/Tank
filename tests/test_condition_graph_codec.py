@@ -15,10 +15,15 @@ from tank.analysis.condition_graph_codec import (
 )
 from tank.analysis.condition_graph_contracts import (
     BasicConditionDerivatives,
+    CapturedConditionLending,
     ConditionFlowAggregateProjection,
+    ConditionGeneratedEmptyFlowProjection,
     ConditionReferenceTradeEvidenceRef,
     ConditionReferenceTradeProjection,
+    ConditionScheduledUnlock,
     ConditionSizeProfile,
+    ConditionWalletFlow,
+    ConditionWalletFlowEvidenceRef,
     ConditionWireClocks,
     EnrichedConditionSpot,
     FlowAggregateEvidenceRef,
@@ -939,3 +944,674 @@ def test_reference_trade_wire_binds_source_descriptor_and_actual_projection_befo
     with pytest.raises(ValueError, match="source evidence mismatch"):
         reference_trade_evidence_wire(projection, reference, source)
     assert source.original["p"] == "12.50"
+
+
+class UnrequestedRelativeEvidence:
+    def resolve_flow_aggregate(
+        self, reference: FlowAggregateEvidenceRef, *, expected: ConditionFlowAggregateProjection
+    ) -> Mapping[str, JsonValue]:
+        raise AssertionError("No flow evidence is declared by this unavailable reference fixture")
+
+    def resolve_reference_trade(
+        self, reference: ConditionReferenceTradeEvidenceRef, *, expected: ConditionReferenceTradeProjection
+    ) -> Mapping[str, JsonValue]:
+        raise AssertionError("No anchor trade is declared by this unavailable reference fixture")
+
+
+def test_relative_wire_preserves_analysis_origin_unknown_precision_and_unavailable_beta() -> None:
+    from test_condition_graph_contracts import relative_graph_without_event
+
+    from tank.analysis.condition_graph_codec import encode_condition_relative
+
+    model = relative_graph_without_event()
+    wire = encode_condition_relative(model, UnrequestedRelativeEvidence(), clocks=condition_wire_clocks())
+    assert wire["expected_direction"] is None and wire["repricing_sign"] is None
+    assert wire["beta_btc"] is None and wire["beta_eth"] is None
+    assert wire["repricing_band"] is None and wire["repricing_reason"] == "NO_EVENT_ANCHOR"
+    anchor = wire["anchor"]
+    assert isinstance(anchor, dict)
+    assert anchor["type"] == "ANALYSIS_WINDOW_START" and anchor["start_origin"] == "CUTOFF_OFFSET"
+    assert anchor["ts"] == "2026-10-17T08:00:00Z"
+    assert anchor["ts_prec"] == "COLLECTION_ONLY" and anchor["evidence"] is None
+    runup = wire["pre_event_runup"]
+    assert isinstance(runup, dict)
+    assert runup["window"] == "PRE_ANALYSIS_W24H" and runup["anchor_kind"] == "ANALYSIS_WINDOW_START"
+    assert runup["start"] == "2026-10-16T08:00:00Z" and runup["cutoff"] == anchor["ts"]
+    assert wire["entry_price_observed_at_prec"] is None
+    assert wire["entry_price_observed_at_prec_reason"] == "PRECISION_NOT_CAPTURED"
+    context = wire["context_inputs"]
+    assert isinstance(context, dict)
+    assert context["rv24_observed_cutoff"] is None
+    assert context["rv24_observed_cutoff_prec_reason"] == "INCOMPLETE"
+    assert context["rv24_bound"] == "2026-10-17T12:00:00Z"
+
+
+def test_relative_wire_refuses_borrowed_subject_or_event_clock_context() -> None:
+    from test_condition_graph_contracts import relative_graph_without_event
+
+    from tank.analysis.condition_graph_codec import encode_condition_relative
+    from tank.time_precision import Timestamp
+
+    model = relative_graph_without_event()
+    context = condition_wire_clocks()
+    with pytest.raises(ValueError, match="another subject"):
+        encode_condition_relative(
+            model, UnrequestedRelativeEvidence(), clocks=context.model_copy(update={"token_id": "OTHER"})
+        )
+    with pytest.raises(ValueError):
+        encode_condition_relative(
+            model,
+            UnrequestedRelativeEvidence(),
+            clocks=context.model_copy(
+                update={"event_anchor": Timestamp(value="2026-10-17T08:00:00Z", precision="EXACT")}
+            ),
+        )
+
+
+def generated_empty_projection() -> ConditionGeneratedEmptyFlowProjection:
+    from tank.analysis.condition_graph_contracts import ConditionGeneratedEmptyFlowProjection
+    from tank.market.trade_contracts import EmptyBoundarySegment
+
+    end = datetime(2026, 10, 17, 12, tzinfo=UTC)
+    return ConditionGeneratedEmptyFlowProjection(
+        token_id="T",
+        venue="a",
+        market_type="SPOT",
+        segment=EmptyBoundarySegment(
+            instrument_id="fixture-instrument",
+            start=end - timedelta(seconds=30),
+            start_prec="EXACT",
+            start_prec_reason=None,
+            end=end,
+            end_prec="EXACT",
+            end_prec_reason=None,
+            complete=False,
+            observed_at=end + timedelta(seconds=1),
+            observed_at_prec="COLLECTION_ONLY",
+            observed_at_prec_reason=None,
+            coverage_reason="INCOMPLETE",
+            buy_qty=Decimal(0),
+            sell_qty=Decimal(0),
+            buy_notional=None,
+            sell_notional=None,
+            n_buy=0,
+            n_sell=0,
+            sum_sq_qty=Decimal(0),
+            open=None,
+            high=None,
+            low=None,
+            close=None,
+            vwap=None,
+            size_buckets=None,
+            first_trade=None,
+            last_trade=None,
+        ),
+    )
+
+
+def test_generated_empty_visibility_is_independent_of_capture_completeness_and_receipt() -> None:
+    from tank.analysis.condition_graph_codec import (
+        generated_empty_flow_projection_sha256,
+        validate_generated_empty_flow_evidence,
+    )
+    from tank.analysis.condition_graph_contracts import (
+        ConditionGeneratedEmptyFlowVisibility,
+        FlowCaptureEvidenceRef,
+    )
+    from tank.time_precision import Timestamp
+
+    projection = generated_empty_projection()
+    observed = ConditionGeneratedEmptyFlowVisibility(
+        token_id=projection.token_id,
+        venue=projection.venue,
+        market_type=projection.market_type,
+        segment=projection.segment,
+        basis="GENERATED_EMPTY_PIECE",
+        assembled_at=Timestamp(value="2026-10-17T12:00:02Z", precision="COLLECTION_ONLY"),
+        evidence=FlowCaptureEvidenceRef(
+            projection_sha256=generated_empty_flow_projection_sha256(projection),
+            source_evidence_sha256=sha256({"fixture": "actual-generated-empty-source"}),
+        ),
+    )
+    validate_generated_empty_flow_evidence(observed)
+    result = observed.eligible()
+    assert result.status == "OBSERVED" and result.value is True
+    assert not observed.segment.complete
+    future = observed.model_copy(
+        update={"assembled_at": Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY")}
+    )
+    result = future.eligible()
+    assert result.status == "OBSERVED" and result.value is False
+    modified = observed.model_copy(update={"venue": "OTHER"})
+    with pytest.raises(ValueError, match="does not match"):
+        validate_generated_empty_flow_evidence(modified)
+    with pytest.raises(ValidationError):
+        type(projection).model_validate(
+            projection.model_copy(
+                update={"segment": projection.segment.model_copy(update={"observed_at_prec": "EXACT"})}
+            )
+        )
+
+
+def test_generated_visibility_cannot_authorize_an_incomplete_or_different_capture_piece() -> None:
+    from test_condition_graph_contracts import capture_witness
+
+    from tank.analysis.condition_graph_codec import generated_empty_flow_projection_sha256
+    from tank.analysis.condition_graph_contracts import (
+        ConditionFlowCapturePiece,
+        ConditionGeneratedEmptyFlowVisibility,
+        FlowCaptureEvidenceRef,
+    )
+    from tank.time_precision import Timestamp
+
+    projection = generated_empty_projection()
+    witness = capture_witness(
+        projection.segment.instrument_id,
+        projection.venue,
+        projection.market_type,
+        projection.segment.start,
+        projection.segment.end,
+    )
+    visibility = ConditionGeneratedEmptyFlowVisibility(
+        token_id=projection.token_id,
+        venue=projection.venue,
+        market_type=projection.market_type,
+        segment=projection.segment,
+        basis="GENERATED_EMPTY_PIECE",
+        assembled_at=Timestamp(value="2026-10-17T12:00:02Z", precision="COLLECTION_ONLY"),
+        evidence=FlowCaptureEvidenceRef(
+            projection_sha256=generated_empty_flow_projection_sha256(projection),
+            source_evidence_sha256=witness.evidence.source_evidence_sha256,
+        ),
+    )
+    with pytest.raises(ValidationError, match="exact complete scoped source piece"):
+        ConditionFlowCapturePiece(basis="BOUNDARY", aggregate=witness, visibility=visibility)
+    complete_segment = type(projection.segment).model_validate(
+        projection.segment.model_copy(update={"complete": True, "coverage_reason": None})
+    )
+    complete_projection = type(projection).model_validate(
+        projection.model_copy(update={"segment": complete_segment})
+    )
+    visibility = type(visibility).model_validate(
+        visibility.model_copy(
+            update={
+                "segment": complete_segment,
+                "evidence": FlowCaptureEvidenceRef(
+                    projection_sha256=generated_empty_flow_projection_sha256(complete_projection),
+                    source_evidence_sha256=witness.evidence.source_evidence_sha256,
+                ),
+            }
+        )
+    )
+    piece = ConditionFlowCapturePiece(basis="BOUNDARY", aggregate=witness, visibility=visibility)
+    result = piece.visibility.eligible()
+    assert result.status == "OBSERVED" and result.value is True
+    for invalid in (
+        visibility.model_copy(update={"venue": "OTHER"}),
+        visibility.model_copy(
+            update={"evidence": visibility.evidence.model_copy(update={"source_evidence_sha256": "0" * 64})}
+        ),
+    ):
+        with pytest.raises(ValidationError, match="exact complete scoped source piece"):
+            ConditionFlowCapturePiece(basis="BOUNDARY", aggregate=witness, visibility=invalid)
+
+
+def test_confidence_wire_preserves_required_failure_and_qualified_cadence_without_rule_guess() -> None:
+    from test_condition_graph_contracts import selective_confidence_graph
+
+    from tank.analysis.condition_graph_codec import encode_condition_confidence
+    from tank.analysis.condition_graph_contracts import SelectiveConditionConfidence
+
+    graph = selective_confidence_graph("T")
+    confidence = graph.confidence
+    assert isinstance(confidence, SelectiveConditionConfidence)
+    wire = encode_condition_confidence(confidence, clocks=condition_wire_clocks())
+    assert wire["class"] == "MEDIUM"
+    assert wire["derivatives_classification_ready"] is None
+    assert wire["derivatives_classification_ready_reason"] == "NOT_ESTIMABLE"
+    failures = wire["failed"]
+    assert isinstance(failures, list) and len(failures) == 1
+    failure = failures[0]
+    assert isinstance(failure, dict)
+    assert failure["instrument_id"] == "venue:spot:T" and failure["metric_family"] == "depth"
+    assert failure["cadence_s"] == 10.0 and failure["cadence_source"] is None
+    assert failure["cadence_source_reason"] == "RULE_LABEL_NOT_CAPTURED"
+    origin = failure["cadence_origin"]
+    assert isinstance(origin, dict)
+    assert origin["kind"] == "DECLARED_METADATA"
+    assert origin["declaration_identity"] == {
+        "status": "UNRECORDED",
+        "reason": "DECLARATION_IDENTITY_NOT_CAPTURED",
+    }
+    assert wire["limiting"] == failure
+    window = wire["analysis_window"]
+    assert isinstance(window, dict)
+    assert window["start"] == "2026-10-17T08:00:00Z" and window["start_prec"] == "COLLECTION_ONLY"
+    with pytest.raises(ValueError, match="another subject"):
+        encode_condition_confidence(
+            confidence, clocks=condition_wire_clocks().model_copy(update={"token_id": "OTHER"})
+        )
+
+
+def test_confidence_wire_refuses_an_age_borrowed_from_another_cutoff() -> None:
+    from test_condition_graph_contracts import scoped_field_observation
+
+    from tank.analysis.condition_graph_codec import encode_condition_confidence
+    from tank.analysis.condition_graph_contracts import FullConditionConfidence
+    from tank.time_precision import Timestamp
+
+    confidence = FullConditionConfidence(
+        kind="FULL",
+        classification="HIGH",
+        failed=(),
+        limiting=None,
+        derivatives_native_coverage_ready=True,
+        derivatives_classification_ready=True,
+        freshness=(scoped_field_observation("INSTRUMENT"),),
+    )
+    wire = encode_condition_confidence(confidence, clocks=condition_wire_clocks())
+    assert wire["limiting"] is None and wire["failed"] == []
+    observations = wire["freshness"]
+    assert isinstance(observations, list) and len(observations) == 1
+    observation = observations[0]
+    assert isinstance(observation, dict)
+    assert observation["age_s"] == 5.0 and observation["observed_at_prec"] == "EXACT"
+    with pytest.raises(ValueError, match="observation age and cutoff"):
+        encode_condition_confidence(
+            confidence,
+            clocks=condition_wire_clocks().model_copy(
+                update={"cutoff": Timestamp(value="2026-10-17T12:01:00Z", precision="COLLECTION_ONLY")}
+            ),
+        )
+
+
+def test_depth_wire_preserves_source_precision_and_exact_usd_amounts() -> None:
+    from test_condition_graph_contracts import AT, declared_book_cadence
+
+    from tank.analysis.condition_graph_codec import encode_condition_depth
+    from tank.analysis.condition_graph_contracts import ConditionDepthNode, ConditionDepthObservation
+    from tank.time_precision import Timestamp
+
+    depth = ConditionDepthNode(
+        aggregate_depth_p1_usd=Decimal("10000000000000000000000000000000001"),
+        pre_event_depth_p1_usd=Decimal(0),
+        spread_ratio=None,
+        cutoff=AT,
+        observations=(
+            ConditionDepthObservation(
+                token_id="T",
+                instrument_id="venue:spot:T",
+                metric_key=None,
+                venue="venue",
+                observed_at=Timestamp(
+                    value="2026-10-17T11:59:55Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+                ),
+                cadence=declared_book_cadence(),
+                fresh=True,
+            ),
+        ),
+    )
+    wire = encode_condition_depth(depth, clocks=condition_wire_clocks())
+    assert wire["aggregate_depth_p1_usd"] == "10000000000000000000000000000000001"
+    assert wire["pre_event_depth_p1_usd"] == "0" and wire["spread_ratio"] is None
+    observations = wire["observations"]
+    assert isinstance(observations, list) and len(observations) == 1
+    observation = observations[0]
+    assert isinstance(observation, dict)
+    assert observation["observed_at_prec"] is None
+    assert observation["observed_at_prec_reason"] == "PRECISION_NOT_CAPTURED"
+    with pytest.raises(ValueError, match="another subject"):
+        encode_condition_depth(depth, clocks=condition_wire_clocks().model_copy(update={"token_id": "OTHER"}))
+    with pytest.raises(ValueError, match="selected cutoff"):
+        encode_condition_depth(
+            depth,
+            clocks=condition_wire_clocks().model_copy(
+                update={"cutoff": Timestamp(value="2026-10-17T12:01:00Z", precision="COLLECTION_ONLY")}
+            ),
+        )
+
+
+class SupplyWireEvidence:
+    def __init__(self, flow: ConditionWalletFlow, unlock: ConditionScheduledUnlock) -> None:
+        self.flow = flow
+        self.unlock = unlock
+        self.flow_calls = 0
+        self.unlock_calls = 0
+        self.flow_wire: dict[str, JsonValue] = {
+            "token_id": flow.token_id,
+            "classification": flow.classification,
+            "qty_native": str(flow.quantity_native),
+            "reaches_exchange": flow.reaches_exchange,
+            "source_note": {"exact_extension": ["retained"]},
+        }
+        self.unlock_wire: dict[str, JsonValue] = {
+            "token_id": unlock.token_id,
+            "source_note": {"exact_extension": ["retained"]},
+        }
+
+    def resolve_wallet_flow(
+        self, reference: ConditionWalletFlowEvidenceRef, *, expected: ConditionWalletFlow
+    ) -> Mapping[str, JsonValue]:
+        self.flow_calls += 1
+        if reference != self.flow.evidence or expected != self.flow:
+            raise ValueError("Captured wallet source does not reproject to the requested facts")
+        return self.flow_wire
+
+    def resolve_unlock(self, *, expected: ConditionScheduledUnlock) -> Mapping[str, JsonValue]:
+        self.unlock_calls += 1
+        if expected != self.unlock:
+            raise ValueError("Captured unlock source does not reproject to the requested facts")
+        return self.unlock_wire
+
+
+def test_supply_wire_preserves_extensions_explicit_absence_and_potential_supply_semantics() -> None:
+    from test_condition_graph_contracts import unlock_schedule, wallet_flows
+
+    from tank.analysis.condition_graph_codec import encode_condition_unlocks, encode_condition_wallet_flows
+
+    flows, unlocks = wallet_flows(), unlock_schedule()
+    evidence = SupplyWireEvidence(flows.flows[0], unlocks.upcoming[0])
+    flow_source_before, unlock_source_before = deepcopy(evidence.flow_wire), deepcopy(evidence.unlock_wire)
+    flow_wire = encode_condition_wallet_flows(flows, evidence)
+    assert flow_wire["coverage"] == {"status": "UNAVAILABLE", "reason": "QUERY_SCOPE_NOT_CAPTURED"}
+    observation = flow_wire["observation"]
+    assert isinstance(observation, dict)
+    assert observation["status"] == "NO_POSITIVE_OBSERVATION" and observation["observation_count"] == 1
+    records = flow_wire["flows"]
+    assert isinstance(records, list) and len(records) == 1
+    flow = records[0]
+    assert isinstance(flow, dict)
+    assert flow["class"] == "AMBIGUOUS" and flow["qty"] == "10"
+    assert flow["source_note"] == evidence.flow_wire["source_note"]
+    assert flow["ts"] == flows.flows[0].observed_at.value and flow["ts_prec"] == "EXACT"
+    unlock_wire = encode_condition_unlocks(unlocks, evidence)
+    assert unlock_wire["schedule_available"] is True and unlock_wire["schedule_reason"] is None
+    schedules = unlock_wire["unlocks_next_14d"]
+    assert isinstance(schedules, list) and len(schedules) == 1
+    unlock = schedules[0]
+    assert isinstance(unlock, dict)
+    assert unlock["date"] == unlocks.upcoming[0].scheduled_at.value
+    assert unlock["date_prec"] is None and unlock["date_prec_reason"] == "NOT_CAPTURED"
+    assert unlock["pct_circulating"] is None and unlock["pct_circulating_unit"] is None
+    assert unlock["label"] is None and unlock["transferable"] is True
+    assert unlock["inference"] == "POTENTIAL_SUPPLY_IS_NOT_A_SALE"
+    assert unlock["source_note"] == evidence.unlock_wire["source_note"]
+    for record in (flow, unlock):
+        note = record["source_note"]
+        assert isinstance(note, dict)
+        extension = note["exact_extension"]
+        assert isinstance(extension, list)
+        extension.append("changed")
+    assert evidence.flow_wire == flow_source_before and evidence.unlock_wire == unlock_source_before
+    assert evidence.flow_calls == evidence.unlock_calls == 1
+
+
+def test_future_received_supply_records_do_not_rejoin_original_evidence_as_available() -> None:
+    from test_condition_graph_contracts import unlock_schedule, wallet_flows
+
+    from tank.analysis.condition_graph_codec import encode_condition_unlocks, encode_condition_wallet_flows
+    from tank.time_precision import Timestamp
+
+    flows, unlocks = wallet_flows(), unlock_schedule()
+    evidence = SupplyWireEvidence(flows.flows[0], unlocks.upcoming[0])
+    future_visibility = flows.query_visibility.model_copy(
+        update={"received_at": Timestamp(value="2026-10-17T12:00:01Z", precision="COLLECTION_ONLY")}
+    )
+    later_flows = type(flows).model_validate(
+        flows.model_copy(
+            update={"flows": (flows.flows[0].model_copy(update={"visibility": future_visibility}),)}
+        )
+    )
+    later_unlocks = type(unlocks).model_validate(unlocks.model_copy(update={"visibility": future_visibility}))
+    assert encode_condition_wallet_flows(later_flows, evidence)["flows"] == []
+    result = encode_condition_unlocks(later_unlocks, evidence)
+    assert result["unlocks_next_14d"] == [] and result["schedule_available"] is False
+    assert result["schedule_reason"] == "RECEIVED_AFTER_ASSEMBLY"
+    assert evidence.flow_calls == evidence.unlock_calls == 0
+
+
+def test_supply_wire_propagates_source_reprojection_refusal_without_filling_expected_facts() -> None:
+    from test_condition_graph_contracts import unlock_schedule, wallet_flows
+
+    from tank.analysis.condition_graph_codec import encode_condition_unlocks, encode_condition_wallet_flows
+
+    flows, unlocks = wallet_flows(), unlock_schedule()
+    evidence = SupplyWireEvidence(flows.flows[0], unlocks.upcoming[0])
+    changed_flows = type(flows).model_validate(
+        flows.model_copy(
+            update={"flows": (flows.flows[0].model_copy(update={"quantity_native": Decimal(11)}),)}
+        )
+    )
+    with pytest.raises(ValueError, match="does not reproject"):
+        encode_condition_wallet_flows(changed_flows, evidence)
+    changed_unlocks = type(unlocks).model_validate(
+        unlocks.model_copy(
+            update={"upcoming": (unlocks.upcoming[0].model_copy(update={"schedule_index": 1}),)}
+        )
+    )
+    with pytest.raises(ValueError, match="does not reproject"):
+        encode_condition_unlocks(changed_unlocks, evidence)
+
+
+def captured_lending() -> CapturedConditionLending:
+    from test_condition_graph_contracts import AT, lending_pool, lending_storage_observation, wallet_flows
+
+    from tank.time_precision import Timestamp
+
+    visibility = wallet_flows().query_visibility
+    return CapturedConditionLending(
+        status="CAPTURED_POOLS",
+        token_id="T",
+        requested_window="W24H",
+        cutoff=AT,
+        observed_at=Timestamp(value="2026-10-17T12:00:00Z", precision=None, precision_reason="NOT_CAPTURED"),
+        previous_observed_at=Timestamp(
+            value="2026-10-16T12:00:00Z", precision=None, precision_reason="NOT_CAPTURED"
+        ),
+        source_observation_sha256=sha256(lending_storage_observation("2026-10-17T12:00:00Z")),
+        previous_source_observation_sha256=sha256(lending_storage_observation("2026-10-16T12:00:00Z")),
+        current_visibility=visibility,
+        previous_visibility=visibility,
+        pools=(lending_pool(),),
+        unmapped_pool_ids=(),
+    )
+
+
+class LendingWireEvidence:
+    def __init__(self, expected: CapturedConditionLending) -> None:
+        from test_condition_graph_contracts import lending_storage_observation
+
+        self.expected = expected
+        self.wire = lending_storage_observation("2026-10-17T12:00:00Z")
+        self.calls = 0
+
+    def resolve_lending_observation(self, *, expected: CapturedConditionLending) -> Mapping[str, JsonValue]:
+        self.calls += 1
+        if expected != self.expected or expected.source_observation_sha256 != sha256(self.wire):
+            raise ValueError("Captured lending observation does not match its source witness")
+        return self.wire
+
+
+def test_lending_wire_retains_provider_apy_lexical_form_and_never_infers_apr() -> None:
+    from tank.analysis.condition_graph_codec import encode_condition_lending
+
+    model = captured_lending()
+    evidence = LendingWireEvidence(model)
+    original = deepcopy(evidence.wire)
+    wire = encode_condition_lending(model, evidence)
+    pools = wire["pools"]
+    assert isinstance(pools, list) and len(pools) == 1
+    pool = pools[0]
+    assert isinstance(pool, dict)
+    assert pool["borrow_apy"] == "7.00" and pool["total_supply_usd"] == "100"
+    assert pool["utilization"] == "0" and pool["chg_24h"] == 0.0
+    assert pool["borrow_apr"] is None and pool["borrow_apr_reason"] == "NOT_ESTIMABLE"
+    assert pool["borrow_apr_policy_reason"] == "APY_IS_NOT_APR"
+    assert wire["observed_at_prec"] is None and wire["observed_at_prec_reason"] == "NOT_CAPTURED"
+    assert wire["source_observation_sha256"] == sha256(original)
+    pool["borrow_apy"] = "changed"
+    assert evidence.wire == original and evidence.calls == 1
+
+
+def test_lending_wire_does_not_expose_a_future_received_prior_comparison() -> None:
+    from tank.analysis.condition_graph_codec import encode_condition_lending
+    from tank.time_precision import Timestamp
+
+    model = captured_lending()
+    prior_future = type(model).model_validate(
+        model.model_copy(
+            update={
+                "previous_visibility": model.previous_visibility.model_copy(
+                    update={
+                        "received_at": Timestamp(value="2026-10-17T12:00:01Z", precision="COLLECTION_ONLY")
+                    }
+                )
+            }
+        )
+    )
+    wire = encode_condition_lending(prior_future, LendingWireEvidence(prior_future))
+    pools = wire["pools"]
+    assert isinstance(pools, list)
+    pool = pools[0]
+    assert isinstance(pool, dict)
+    assert pool["utilization"] == "0" and pool["chg_24h"] is None
+    assert pool["chg_24h_reason"] == "PRIOR_RECEIVED_AFTER_ASSEMBLY"
+    current_future = type(model).model_validate(
+        model.model_copy(update={"current_visibility": prior_future.previous_visibility})
+    )
+    evidence = LendingWireEvidence(current_future)
+    assert encode_condition_lending(current_future, evidence) == {
+        "status": "UNAVAILABLE",
+        "window": "W24H",
+        "reason": "RECEIVED_AFTER_ASSEMBLY",
+    }
+    assert evidence.calls == 0
+
+
+def test_lending_wire_requires_the_exact_current_and_prior_source_witnesses() -> None:
+    from tank.analysis.condition_graph_codec import encode_condition_lending
+
+    model = captured_lending()
+    evidence = LendingWireEvidence(model)
+    wrong_source = type(model).model_validate(
+        model.model_copy(update={"source_observation_sha256": "0" * 64})
+    )
+    with pytest.raises(ValueError, match="source witness"):
+        encode_condition_lending(wrong_source, evidence)
+    with pytest.raises(ValidationError, match="actual prior observation presence"):
+        type(model).model_validate(model.model_copy(update={"previous_source_observation_sha256": None}))
+
+
+def test_current_lending_observation_does_not_invent_a_missing_prior_row_or_receipt() -> None:
+    from tank.analysis.condition_graph_codec import encode_condition_lending
+    from tank.time_precision import Timestamp
+
+    model = captured_lending()
+    no_prior_clock = Timestamp(value=None, precision=None, precision_reason="PRIOR_OBSERVATION_NOT_CAPTURED")
+    no_prior = type(model).model_validate(
+        model.model_copy(
+            update={
+                "previous_observed_at": no_prior_clock,
+                "previous_source_observation_sha256": None,
+                "previous_visibility": model.previous_visibility.model_copy(
+                    update={"received_at": no_prior_clock}
+                ),
+                "pools": (model.pools[0].model_copy(update={"previous_utilization": None}),),
+            }
+        )
+    )
+    wire = encode_condition_lending(no_prior, LendingWireEvidence(no_prior))
+    pools = wire["pools"]
+    assert isinstance(pools, list)
+    pool = pools[0]
+    assert isinstance(pool, dict)
+    assert pool["utilization"] == "0" and pool["chg_24h"] is None
+    assert pool["chg_24h_reason"] == "PRIOR_OBSERVATION_NOT_CAPTURED"
+    assert wire["previous_source_observation_sha256"] is None
+    assert wire["previous_observed_at"] is None
+    with pytest.raises(ValidationError, match="absent prior.*source receipt"):
+        type(no_prior).model_validate(
+            no_prior.model_copy(update={"previous_visibility": model.previous_visibility})
+        )
+
+
+def test_lending_wire_does_not_match_a_pool_by_position_or_duplicate_identity() -> None:
+    from tank.analysis.condition_graph_codec import encode_condition_lending
+
+    model = captured_lending()
+    evidence = LendingWireEvidence(model)
+    pools = evidence.wire["pools"]
+    assert isinstance(pools, list)
+    pools.append(deepcopy(pools[0]))
+    duplicated = type(model).model_validate(
+        model.model_copy(update={"source_observation_sha256": sha256(evidence.wire)})
+    )
+    evidence.expected = duplicated
+    with pytest.raises(ValueError, match="distinct actual identities"):
+        encode_condition_lending(duplicated, evidence)
+
+
+def test_inventory_wire_keeps_exact_native_changes_and_does_not_invent_a_float_zero() -> None:
+    from test_condition_graph_contracts import inventory_comparison
+
+    from tank.analysis.condition_graph_codec import encode_condition_exchange_inventory
+
+    previous = Decimal("1" + "0" * 1001)
+    current = Decimal("1" + "0" * 1000 + "1")
+    model = inventory_comparison(current, previous)
+    wire = encode_condition_exchange_inventory(model, clocks=condition_wire_clocks())
+    assert wire["chg_native_24h"] == "1"
+    assert wire["chg_pct"] is None and wire["chg_pct_reason"] == "NOT_ESTIMABLE"
+    assert wire["observed_at_prec"] is None and wire["observed_at_prec_reason"] == "NOT_CAPTURED"
+    balances = wire["per_venue"]
+    assert isinstance(balances, list) and len(balances) == 1
+    balance = balances[0]
+    assert isinstance(balance, dict)
+    assert balance["qty_native"] == str(current) and balance["chg_native_24h"] == "1"
+    assert balance["chg_pct"] is None and balance["chg_pct_reason"] == "NOT_ESTIMABLE"
+    assert balance["contract"] == "token-contract" and balance["wallet_list_commit"] == "captured-list-1"
+    zero = encode_condition_exchange_inventory(
+        inventory_comparison(Decimal(0), Decimal(0)), clocks=condition_wire_clocks()
+    )
+    assert zero["chg_native_24h"] == "0" and zero["chg_pct"] is None
+    assert zero["chg_pct_reason"] == "ZERO_BASELINE"
+
+
+def test_inventory_wire_keeps_current_quantity_without_a_future_prior_comparison() -> None:
+    from test_condition_graph_contracts import inventory_comparison
+
+    from tank.analysis.condition_graph_codec import encode_condition_exchange_inventory
+    from tank.time_precision import Timestamp
+
+    model = inventory_comparison(Decimal(12), Decimal(10))
+    prior_future = type(model).model_validate(
+        model.model_copy(
+            update={
+                "previous_visibility": model.previous_visibility.model_copy(
+                    update={
+                        "received_at": Timestamp(value="2026-10-17T12:00:01Z", precision="COLLECTION_ONLY")
+                    }
+                )
+            }
+        )
+    )
+    wire = encode_condition_exchange_inventory(prior_future, clocks=condition_wire_clocks())
+    assert wire["chg_native_24h"] is None and wire["chg_pct"] is None
+    assert wire["reason"] == "PRIOR_RECEIVED_AFTER_ASSEMBLY"
+    balances = wire["per_venue"]
+    assert isinstance(balances, list)
+    balance = balances[0]
+    assert isinstance(balance, dict)
+    assert balance["qty_native"] == "12" and balance["chg_native_24h"] is None
+    current_future = type(model).model_validate(
+        model.model_copy(update={"current_visibility": prior_future.previous_visibility})
+    )
+    assert encode_condition_exchange_inventory(current_future, clocks=condition_wire_clocks()) == {
+        "value": None,
+        "reason": "RECEIVED_AFTER_ASSEMBLY",
+        "window": "W24H",
+    }
+    with pytest.raises(ValueError, match="actual token and cutoff"):
+        encode_condition_exchange_inventory(
+            model, clocks=condition_wire_clocks().model_copy(update={"token_id": "OTHER"})
+        )

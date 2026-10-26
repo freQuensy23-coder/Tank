@@ -3,10 +3,26 @@ import gzip
 import importlib
 import json
 import time
+from functools import partial
 from pathlib import Path
+from types import ModuleType
+from typing import TYPE_CHECKING, Protocol
 
 import httpx
 import pytest
+from pydantic import JsonValue
+
+if TYPE_CHECKING:
+    from actor_contracts import PublicPost
+
+
+class PublicProfileReader(Protocol):
+    httpx: ModuleType
+    REFERENCE_FETCH_LIMIT: int
+
+    def parse_profile(self, raw: str, handle: str) -> list["PublicPost"]: ...
+    def js_string(self, source: str, start: int) -> tuple[str, int]: ...
+
 
 HTTP_CLIENT = httpx.AsyncClient
 ACTOR_ROOT = Path(__file__).resolve().parents[1] / "apify" / "x-reader"
@@ -276,6 +292,196 @@ def test_credential_value_redaction_preserves_adjacent_response_evidence(reader,
     assert safe == expected
     assert evidence["bodySha256"] == reader.hashlib.sha256(expected).hexdigest()
     assert evidence["redacted"]
+
+
+def relay_script(data: JsonValue) -> str:
+    """A GraphQL result embedded the way signed-out x.com pages do: a JS string literal with < as \\x3C."""
+    value = json.dumps(json.dumps(data, ensure_ascii=False), ensure_ascii=False).replace("<", "\\x3C")
+    return (
+        '<script>($R=>$R[1].next($R[2]={kind:"GraphQLRequestStream.Completed",requestId:1,key:"k",'
+        f'result:$R[3]={{kind:"Result.Ok",value:{value}}}}}))($R["tsr"])</script>'
+    )
+
+
+def tweet(post_id: str, author: str, text: str, **fields: JsonValue) -> dict[str, JsonValue]:
+    return {
+        "__typename": "Tweet",
+        "rest_id": post_id,
+        "core": {"user_results": {"result": {"core": {"screen_name": author}}}},
+        "details": {"full_text": text, "created_at_ms": 1792957463000},
+        **fields,
+    }
+
+
+def article(post_id: str, text: str | None, *, author: str = "alice", nested: str = "") -> str:
+    body = f'<div data-testid="tweetText">{text}</div>' if text is not None else ""
+    return f'<article><a href="/{author}/status/{post_id}">t</a>{body}{nested}</article>'
+
+
+LONG = "Upgrade vote opens. " * 40
+PROFILE = (
+    "<title>Alice (@alice) / X</title>"
+    + article("101", "Look at this", nested=article("2000", "Bob, truncated", author="bob"))
+    + article("102", "@carol agreed x.com/dave/status…")
+    + article("103", None, nested=article("51", "Erin said <b>this</b>", author="erin"))
+    + article("105", "Edited text, Show more")
+    + article("106", "Quoting a removed post")
+    + relay_script(
+        {
+            "data": [
+                tweet(
+                    "101",
+                    "alice",
+                    "Look at this &lt;now&gt; https://t.co/media",
+                    quoted_tweet_results={
+                        "rest_id": "2000",
+                        "result": {
+                            "__typename": "TweetWithVisibilityResults",
+                            "tweet": {
+                                **tweet("2000", "bob", "Bob, truncated"),
+                                "__typename": None,
+                                "note_tweet": {"note_tweet_results": {"result": {"text": LONG + "<end>"}}},
+                            },
+                        },
+                    },
+                ),
+                tweet(
+                    "102",
+                    "alice",
+                    "@carol agreed https://t.co/abc",
+                    url_entities=[
+                        {"url": "https://t.co/abc", "expanded_url": "https://x.com/dave/status/4000?s=20"}
+                    ],
+                    reply_to_results={"rest_id": "3000"},
+                    reply_to_user_results={"result": {"core": {"screen_name": "carol"}}},
+                ),
+                tweet(
+                    "104",
+                    "alice",
+                    "Edited text",
+                    edit_control={"edit_tweet_ids": ["104", "105"]},
+                    note_tweet={"note_tweet_results": {"result": {"text": "Edited text, complete"}}},
+                ),
+                tweet(
+                    "106",
+                    "alice",
+                    "Quoting a removed post",
+                    quoted_tweet_results={"rest_id": "60", "result": {"__typename": "TweetTombstone"}},
+                ),
+            ]
+        }
+    )
+).encode()
+
+
+def status_page(post_id: str, author: str, text: str) -> bytes:
+    return (
+        f"<title>{author} on X</title>"
+        + article(post_id, text[:10], author=author)
+        + relay_script({"data": {"tweet_result_by_rest_id": {"result": tweet(post_id, author, text)}}})
+    ).encode()
+
+
+def test_profile_posts_carry_complete_text_and_the_posts_they_reference(reader: PublicProfileReader) -> None:
+    posts = {
+        row.id: row.model_dump(mode="json", exclude_unset=True)
+        for row in reader.parse_profile(PROFILE.decode(), "alice")
+    }
+    assert posts["101"]["text"] == "Look at this <now>"
+    assert posts["101"]["referencedPosts"] == [
+        {
+            "relation": "quoted",
+            "id": "2000",
+            "author": "bob",
+            "url": "https://x.com/bob/status/2000",
+            "publishedAt": "2026-10-25T19:44:23+00:00",
+            "text": (LONG + "<end>").strip(),
+        }
+    ]
+    assert posts["102"]["text"] == "@carol agreed https://x.com/dave/status/4000?s=20"
+    assert [(r["relation"], r["author"], r["url"], r["text"]) for r in posts["102"]["referencedPosts"]] == [
+        ("replied_to", "carol", "https://x.com/carol/status/3000", None),
+        ("linked", "dave", "https://x.com/dave/status/4000", None),
+    ]
+    assert posts["103"]["text"] == ""
+    assert posts["103"]["referencedPosts"][0] == {
+        "relation": "quoted",
+        "id": "51",
+        "author": "erin",
+        "url": "https://x.com/erin/status/51",
+        "publishedAt": None,
+        "text": "Erin said this",
+    }
+    assert posts["105"]["text"] == "Edited text, complete"
+    assert posts["106"]["referencedPosts"][0]["error"] == "QUOTED_POST_UNAVAILABLE"
+
+
+def test_unexpected_embedded_shapes_fall_back_to_the_visible_post(reader: PublicProfileReader) -> None:
+    odd = {
+        "__typename": "Tweet",
+        "rest_id": "101",
+        "core": [],
+        "details": "text",
+        "note_tweet": {"note_tweet_results": 5},
+        "quoted_tweet_results": ["2000"],
+        "reply_to_results": {"rest_id": 7},
+        "url_entities": [None, {"url": 1}, {"expanded_url": "https://x.com/bob/status/2000"}],
+        "edit_control": {"edit_tweet_ids": "101"},
+    }
+    raw = "<title>Alice (@alice) / X</title>" + article("101", "Visible text") + relay_script({"data": [odd]})
+    raw += '<script>kind:"Result.Ok",value:"\\ud800"</script><script>kind:"Result.Ok",value:"unterminated</script>'
+    [parsed] = reader.parse_profile(raw, "alice")
+    post = parsed.model_dump(mode="json", exclude_unset=True)
+    assert post["text"] == "Visible text"
+    assert [(r["relation"], r["author"], r["id"]) for r in post["referencedPosts"]] == [
+        ("linked", "bob", "2000")
+    ]
+
+
+def test_javascript_string_literals_decode_like_the_browser(reader: PublicProfileReader) -> None:
+    source = 'x"a\\x3Cb\\u00e9\\n\\"\\\\\\ud83d\\ude00"y'
+    assert reader.js_string(source, 1) == ('a<bé\n"\\😀', len(source) - 1)
+    with pytest.raises(ValueError):
+        reader.js_string('"unterminated', 0)
+
+
+@pytest.mark.parametrize("limit", [1, 24])
+async def test_new_posts_read_replied_and_linked_posts_from_their_status_pages(
+    reader: PublicProfileReader, monkeypatch: pytest.MonkeyPatch, limit: int
+) -> None:
+    pages = {
+        "/alice": PROFILE,
+        "/carol/status/3000": status_page("3000", "carol", "Carol's question &amp; context"),
+    }
+    requested: list[str] = []
+
+    def open_page(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url.path)
+        if request.url.path in pages:
+            return httpx.Response(200, stream=httpx.ByteStream(pages[request.url.path]))
+        return httpx.Response(404, stream=httpx.ByteStream(b"missing"))
+
+    monkeypatch.setattr(reader, "REFERENCE_FETCH_LIMIT", limit)
+    monkeypatch.setattr(
+        reader.httpx,
+        "AsyncClient",
+        partial(HTTP_CLIENT, transport=httpx.MockTransport(open_page)),
+    )
+    fetch_snapshot = importlib.import_module("direct_fetch").fetch_snapshot
+    baseline = await fetch_snapshot({"handles": ["alice"]})
+    assert requested == ["/alice"] and baseline["nextCursors"] == {"alice": "106"}
+    assert [r["text"] for r in baseline["posts"][1]["referencedPosts"]] == [None, None]
+    requested.clear()
+    result = await fetch_snapshot({"handles": ["alice"], "cursors": {"alice": "101"}})
+    reply = next(post for post in result["posts"] if post["id"] == "102")
+    assert reply["referencedPosts"][0]["text"] == "Carol's question & context"
+    assert reply["referencedPosts"][0]["publishedAt"] == "2026-10-25T19:44:23+00:00"
+    expected = "REFERENCE_FETCH_LIMIT" if limit == 1 else "PUBLIC_POST_HTTP_404"
+    assert reply["referencedPosts"][1]["text"] is None and reply["referencedPosts"][1]["error"] == expected
+    assert sorted(requested) == sorted(
+        ["/alice", "/carol/status/3000"] + (["/dave/status/4000"] if limit > 1 else [])
+    )
+    assert result["health"] == "healthy" and result["nextCursors"] == {"alice": "106"}
 
 
 @pytest.mark.integration

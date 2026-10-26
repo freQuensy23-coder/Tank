@@ -933,7 +933,7 @@ async def test_future_wording_does_not_override_agent_stage(service) -> None:
 async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(
     service, least_exposure: int | None
 ) -> None:
-    from tank.analysis.decision_codec import decode_decision, encode_outlook
+    from tank.analysis.decision_codec import decode_decision
     from tank.event_tools import LAYERS
 
     extracted = await seed(service)
@@ -979,8 +979,7 @@ async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(
             "ana.market_truth", truth_id, complete_truth_fixture(truth_id, eid, token, cutoff)
         )
         row = complete_decision_fixture(decision_id, eid, token, cutoff, truth_id)
-        record = decode_decision(row)
-        await service.repo.put("ana.outlooks", record.outlook_id, encode_outlook(record))
+        decode_decision(row)
         await service.repo.put("ana.decisions", decision_id, row)
 
     for index, (label, token) in enumerate(named.items()):
@@ -1567,7 +1566,6 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
 
     from tank.analysis.decisions import DecisionEngine
     from tank.event_tools import LAYERS
-    from tank.storage import TABLE_COLUMNS
     from tank.util import new_id
 
     base = service.repo
@@ -1670,14 +1668,6 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
             eid + "-history", eid, token, iso(now - timedelta(days=2)), eid + "-history"
         )
 
-        historic_truth = {
-            key: value for key, value in historic_truth.items() if key in TABLE_COLUMNS["ana.market_truth"]
-        }
-        historic_decision = {
-            key: value
-            for key, value in historic_decision.items()
-            if key in TABLE_COLUMNS["ana.decisions"] or key == "market_truth_id"
-        }
         async with base.transaction():
             for index in range(1001):
                 key = eid + f"-historic-{index}"
@@ -4887,7 +4877,6 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
     import copy
     import json
 
-    from tank.analysis.decision_codec import decode_decision, encode_outlook
     from tank.delivery import DeliveryError, DeliveryService
     from tank.storage import PostgresRepository
     from tank.util import new_id, parse_time
@@ -4938,7 +4927,6 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
             },
         ),
         ("ana.market_truth", eid + "-truth", complete_truth_fixture(eid + "-truth", eid, token, iso(base))),
-        ("ana.outlooks", decision["outlook_id"], encode_outlook(decode_decision(decision))),
         ("ana.decisions", decision["dec_id"], decision),
     ]:
         await repo.put(table, key, value)
@@ -5977,7 +5965,7 @@ async def test_expired_tracking_status_preserves_the_frozen_financial_calculatio
 
     from foundation_helpers import object_field
 
-    from tank.analysis.decision_codec import decode_decision, encode_decision, encode_outlook
+    from tank.analysis.decision_codec import decode_decision, encode_decision
     from tank.util import parse_time
 
     if backend == "postgres":
@@ -5997,7 +5985,6 @@ async def test_expired_tracking_status_preserves_the_frozen_financial_calculatio
         )
     )
     identity = frozen.metadata.identity
-    original_outlook = encode_outlook(frozen)
     original_wire = encode_decision(frozen)
     object_field(original_wire, "outlook")["scenarios"] = {
         "base": None,
@@ -6005,10 +5992,8 @@ async def test_expired_tracking_status_preserves_the_frozen_financial_calculatio
         "failure": "The captured failure scenario remains available.",
     }
     object_field(original_wire, "outlook")["scenario_reasons"] = {"upside": "ORIGINAL_CAUSE_AS_CAPTURED"}
-    original_outlook["scenarios"] = object_field(original_wire, "outlook")["scenarios"]
-    original_outlook["scenario_reasons"] = {"upside": "ORIGINAL_CAUSE_AS_CAPTURED"}
     literal_historical = deepcopy(original_wire)
-    literal_outlook = deepcopy(original_outlook)
+    literal_outlook = deepcopy(object_field(original_wire, "outlook"))
     expected = decode_decision(original_wire)
     prior_truth = complete_truth_fixture(
         identity.market_truth_id,
@@ -6053,7 +6038,6 @@ async def test_expired_tracking_status_preserves_the_frozen_financial_calculatio
             complete_truth_fixture("newer-truth", eid, token, clock_iso()),
         ),
         ("ana.market_truth", identity.market_truth_id, prior_truth),
-        ("ana.outlooks", frozen.outlook_id, original_outlook),
         ("ana.decisions", identity.decision_id, original_wire),
         (
             "ana.calls",
@@ -6094,7 +6078,10 @@ async def test_expired_tracking_status_preserves_the_frozen_financial_calculatio
     assert object_field(wire, "outlook")["scenario_reasons"] == {"upside": "ORIGINAL_CAUSE_AS_CAPTURED"}
     assert ended.calculation.outlook.scenario_explanations.base.state == "EXPLANATION_NOT_CAPTURED"
     assert await service.repo.get("ana.decisions", identity.decision_id) == literal_historical
-    assert await service.repo.get("ana.outlooks", frozen.outlook_id) == literal_outlook
+    assert (
+        object_field(await service.require("ana.decisions", identity.decision_id), "outlook")
+        == literal_outlook
+    )
 
     from tank.analysis.decision_state import DecisionScope, DecisionStateConflict, DecisionStateRepository
 
@@ -6178,11 +6165,13 @@ async def test_expired_tracking_status_preserves_the_frozen_financial_calculatio
         monkeypatch.setattr(service.repo, "put", original_put)
     assert await service.repo.get("ana.watch_conditions", watch.cond_id) is None
     assert await service.repo.get("ana.decisions", "DEC-rollback") is None
-    assert await service.repo.get("ana.outlooks", rollback_candidate.outlook_id) is None
     final = await states.current(scope)
     assert final is not None and final[0] == fresh_head and final[1] == fresh
     assert await service.repo.get("ana.decisions", identity.decision_id) == literal_historical
-    assert await service.repo.get("ana.outlooks", frozen.outlook_id) == literal_outlook
+    assert (
+        object_field(await service.require("ana.decisions", identity.decision_id), "outlook")
+        == literal_outlook
+    )
 
 
 @pytest.mark.parametrize(
@@ -6201,7 +6190,7 @@ async def test_first_active_decision_validates_legacy_state_before_persisting(
     """An actual as-of producer cannot install a first head over newer or ambiguous history."""
     import os
 
-    from tank.analysis.decision_codec import decode_decision, encode_outlook
+    from tank.analysis.decision_codec import decode_decision
     from tank.analysis.decision_state import DecisionStateConflict
     from tank.analysis.decision_watches import DecisionWatchReconciliation
     from tank.analysis.decisions import DecisionEngine
@@ -6268,7 +6257,6 @@ async def test_first_active_decision_validates_legacy_state_before_persisting(
             "legacy-guard-incoming",
             complete_truth_fixture("legacy-guard-incoming", eid, token, incoming_cutoff),
         ),
-        ("ana.outlooks", legacy.outlook_id, encode_outlook(legacy)),
     ]
     from tank.analysis.decision_codec import encode_decision
 
@@ -6286,7 +6274,6 @@ async def test_first_active_decision_validates_legacy_state_before_persisting(
         )
         rows.extend(
             [
-                ("ana.outlooks", sibling.outlook_id, encode_outlook(sibling)),
                 ("ana.decisions", sibling.metadata.identity.decision_id, encode_decision(sibling)),
             ]
         )
@@ -6294,7 +6281,7 @@ async def test_first_active_decision_validates_legacy_state_before_persisting(
         await repo.put(table, key, value)
     selected_truth = await service.latest_record("ana.market_truth", eid, token)
     assert selected_truth["mta_id"] == "legacy-guard-incoming"
-    protected = ("ana.watch_conditions", "ana.outlooks", "ana.decisions", "ana.decision_state_heads")
+    protected = ("ana.watch_conditions", "ana.decisions", "ana.decision_state_heads")
     before = {table: await repo.list(table) for table in protected}
     attempted_writes: list[str] = []
     attempted_reconciliation: list[str] = []

@@ -118,7 +118,6 @@ def _market_record(row):
         "mkt.book_summaries",
         "mkt.tickers_24h",
         "mkt.supply_obs",
-        "mkt.supply",
     }
 
 

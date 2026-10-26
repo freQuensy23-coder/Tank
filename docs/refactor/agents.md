@@ -994,3 +994,43 @@ remain. Logs are agents-foundry-merge-unit.log (diagnostic) and
 agents-foundry-merge-unit-final.log (terminal green) under shared evidence.
 No live Foundry request occurred. Whole merged-tree and actual PostgreSQL/E2E
 qualification remain parent/peer gates.
+
+## Exhausted retry phase correction on clean main 916300d1
+
+The complete parent matrix exposed two genuine overvalidation failures:
+known retry_count=1 terminal paths loaded a historical body containing only its
+actual retained type, but KnownRetryState demanded content even though that
+phase never posts the body. The original event-tools completion/native-failure
+race and replay terminal-failure fixtures remain unchanged.
+
+The computed retry projection now has distinct ReadyRetryState and
+ExhaustedRetryState models. Ready owns integer zero, its strict original
+NativeUserMessage when retained, and its genuinely nullable prior reported
+input identity. Missing ready body still produces the existing named refusal
+before HTTP; malformed declared ready bodies remain invalid. Exhausted owns
+only the actual journal/origin identity and positive strict integer count.
+It has no body/prior-input fields to fabricate or validate. Unknown count and
+owner remain the existing explicit unknown state. The session consumer matches
+the ready phase before posting; all positive exhausted counts perform the
+existing terminal bookkeeping. Captured bodies/prior IDs are preserved without
+reinterpretation, and original retry idempotency keys/cutoff policy are intact.
+
+Verification: 91 retry/lineage/outbound/transport unit cases and both original
+unmodified failing cases pass in 3.35 seconds, zero skips. This includes actual
+terminal writes with absent/partial/opaque retained bodies, unchanged completed
+siblings, no native HTTP, strict ready-body/count refusals and existing lost
+response recovery. Independent strict mypy passes native_retry.py and the new
+pure tests/test_native_retry_phases.py with both source/test roots. Ruff,
+formatting, comment policy and whitespace checks pass. Configured mypy checks
+154 source files and reports only the existing analysis/truth.py:5890
+_condition_cache annotation error on this exact ancestry; no owned source
+error was reported. Evidence is agents-exhausted-retry-unit.log under shared
+verification evidence.
+
+The actual SessionService lifecycle tests run normally; the whole
+process_event method and tests calling its still-untyped API are not claimed
+as independently strict-complete. Whole Session/Runtime typing remains open.
+The separate followup-policy branch is preserved at dd9d1f9a and is not an
+ancestor of this bounded repair. The distinct UnprovedInputOwnership versus
+durable retry-refusal chronology audit is queued; this correction does not
+claim to resolve that unproven case.

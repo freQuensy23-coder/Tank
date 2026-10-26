@@ -40,12 +40,18 @@ class OriginRetryOwner(DomainModel):
 type RetryOwner = JournalRetryOwner | OriginRetryOwner
 
 
-class KnownRetryState(DomainModel):
-    kind: Literal["KNOWN"]
+class ReadyRetryState(DomainModel):
+    kind: Literal["READY"]
     owner: RetryOwner
-    attempt: int = Field(ge=0)
+    attempt: ZeroInt
     body: NativeUserMessage | None = Field(repr=False)
     previous_input_id: str | None = Field(min_length=1)
+
+
+class ExhaustedRetryState(DomainModel):
+    kind: Literal["EXHAUSTED"]
+    owner: RetryOwner
+    attempt: int = Field(ge=1)
 
 
 class RetryCount(DomainModel):
@@ -90,13 +96,12 @@ class AcceptedNativeRetry(DomainModel):
 
 def retry_state(
     session: dict[str, JsonValue], active: dict[str, JsonValue] | None
-) -> KnownRetryState | UnknownRetryState:
+) -> ReadyRetryState | ExhaustedRetryState | UnknownRetryState:
     if active is not None:
         record = active
         owner: RetryOwner = JournalRetryOwner.model_validate(
             {"kind": "JOURNAL", "message_id": active["message_id"]}
         )
-        body = record.get("body")
     else:
         journal = session.get("message_log", [])
         if not isinstance(journal, list):
@@ -105,16 +110,17 @@ def retry_state(
             return UnknownRetryState(kind="UNKNOWN", reason="CURRENT_INPUT_OWNER_NOT_RETAINED")
         record = session
         owner = OriginRetryOwner.model_validate({"kind": "ORIGIN", "session_id": session["session_id"]})
-        body = record.get("last_message")
     count = RetryCount.model_validate({"attempt": record.get("retry_count")}).attempt
     if count is None:
         return UnknownRetryState(kind="UNKNOWN", reason="RETRY_COUNT_NOT_RETAINED")
-    return KnownRetryState.model_validate(
+    if count > 0:
+        return ExhaustedRetryState(kind="EXHAUSTED", owner=owner, attempt=count)
+    return ReadyRetryState.model_validate(
         {
-            "kind": "KNOWN",
+            "kind": "READY",
             "owner": owner,
             "attempt": count,
-            "body": body,
+            "body": record.get("body") if active is not None else record.get("last_message"),
             "previous_input_id": record.get("remote_event_id") if active is not None else None,
         }
     )

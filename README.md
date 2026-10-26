@@ -15,7 +15,7 @@ uv run tank doctor
 uv run pytest -q -n auto --dist loadfile
 ```
 
-Run development commands in an isolated checkout on the server. The pytest command runs the offline unit selection across available CPUs with a 10-second per-case timeout. Normal test runs use no artificial CPU or memory quotas. [Testing conventions and separate integration commands](docs/TESTING.md) include the p90 <1s check, resource prerequisites, and Node lanes.
+Run development commands in a local checkout; servers are not development environments, and production changes only through the Deploy workflow. The pytest command runs the offline unit selection across available CPUs with a 10-second per-case timeout. Normal test runs use no artificial CPU or memory quotas. [Testing conventions and separate integration commands](docs/TESTING.md) include the p90 <1s check, resource prerequisites, and Node lanes.
 
 `doctor` reports missing deployment configuration without printing credentials. Credentials remain outside the repository. Filter and routing cutoffs remain the user-selected **uncalibrated 0.5 midpoint**; Decision-1 needs its own labeled calibration.
 
