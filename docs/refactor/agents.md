@@ -2156,3 +2156,89 @@ full financial/E2E/Go cohort and global timing qualification remain required.
 The existing strict-test dependency on untyped Scheduler.tick remains visible;
 no suppression was added. Remaining Session body/tool/usage/event work and the
 assigned vendor programs are still open.
+
+
+### Whole-worker real lifecycle caller continuation (held)
+
+The runtime timeout, malformed-kind continuation, failed dependency, generation drain
+and immediate-stop controls now compose actual Runtime ports and resources instead
+of assigning a handlers map to an unconstructed object. Domain evaluation delegates
+to the actual Scheduler; only owned intake-loop and gateway-start boundaries are
+recorded. The immediate-stop fixture declares the supported integer shutdown grace
+0 before immutable Settings capture (the retired fractional fake was not a valid
+Settings contract); the positive drain remains 1 second. Original attempt refund,
+clock, frozen-session/tool-result and explicit barrier assertions remain.
+
+The expiry-after-real-claim and question-refusal-persistence continuation cases now
+use actual Runtime dispatch. Later independently owned work is a real condition
+evaluation, not a mock FILTER result. The admission deferral uses the configured
+cap of two and two actual occupied sessions, preserves creation precision and
+refunds the attempt, and proves zero dispatch. Its prior alias-only job extras had
+no actual queue producer; the fixture now uses the admitted canonical bucket clock
+with an actual anchor and asserts the replacement removes that stale anchor.
+The separate timestamp-alias storage adapter regressions remain unchanged.
+
+Five lifecycle caller cases pass (21.53 seconds); all 13 precision/refusal unit cases
+pass (19.40 seconds), zero skips with source guards. These are selected functional
+proofs, not a full default-unit timing claim. Complete worker caller and actual
+financial/E2E/Go qualification remain held.
+Actual PostgreSQL refusal-write-failure/restart selection also passes both collected
+cases in 23.62 seconds, zero skips/source guards. The changed refusal module and two
+real composition helpers pass independent strict checks; scoped Ruff/format pass.
+
+The remaining gateway-before-intake fixture now uses actual composed resources and
+records only the gateway start barrier/real close order; budget binding and release
+assertions remain. The pending-dependency control now queues an admitted evaluation
+command and proves its actual evaluator is never called while the predecessor is
+pending, without error or attempt cost. Gateway control passed; both failed/pending
+dependency cases pass in 19.20 seconds, zero skips/source guards. The first pending
+control exposed a fixture-only datetime/string assertion mismatch, preserved in
+worker-gateway-dependency-callers; parsing both declared clocks corrected it without
+changing the original one-second deadline or application policy.
+
+Actual running-session admission caller migration now composes Runtime and all
+required ports rather than assigning a Session-only handler fragment. It retains
+the original real SessionService/native transport and delegates the reconciliation
+observation to the actual failure repository. Both Memory/PostgreSQL fairness,
+ordered wake, running-session bypass, unchanged source/event clocks, all jobs DONE
+and original one-second barriers pass. The slow admission case binds the actual
+Session service and blocks only its admission boundary, preserving 50 ms timeout,
+zero dispatch, original expiry and attempt refund. All three actual admission
+cases pass in 22.17 seconds, zero skips/source guards; Ruff/format pass. The older
+module's untyped fixture helpers remain explicit test typing debt, not strict proof.
+
+Both actual external-capture bounded-incomplete→PARTIAL/FAILED history controls now
+run the closed worker on actual composed Runtime ports, sharing the test's actual
+Market/Truth/Scheduler instances and retained capture transport. All original
+capture request/history, confidence, timing, request independence and stored result
+oracles remain. Both cases pass in 20.47 seconds, zero skips/source guards. Initial
+setup incorrectly attempted to close the pure MarketTruthService; removing that
+nonexistent cleanup call fixed the fixture only (first diagnostic preserved).
+
+All six Memory/PostgreSQL delivery ordering/contention controls now run the closed
+worker with actual composed required ports and the original actual DeliveryService.
+Recording wrappers delegate the real delivery and stop only after its observed
+outcome. The simulated application clock is passed through the real collection-clock
+boundary; no provider retry delay is invented. Original seven scheduling deferrals,
+attempt refunds, HTTP failure/retry count, expiry preservation, cancellation/lock
+lifetime, ledger phases and one-send/idempotency assertions all pass in 59.03 seconds,
+zero skips/source guards. All handler-map/object-fragment worker construction is now
+removed from test_runtime and test_session_admission; peer reaction/X/market-refresh
+caller migrations and global qualification remain open. The remaining isolated
+Runtime.__new__ adapter test does not run a worker and is not a whole-module typing
+completion claim.
+
+The combined six-module owned worker/dispatch/fencing/lifecycle unit selection now
+passes all 64 collected cases in 31.42 seconds, zero skips/source guards. This is
+selected functional proof, not a global p90 claim. An earlier command named a
+nonexistent test_runtime_worker_queue.py and collected zero; its exit-5 setup
+receipt remains separate, and the corrected selection uses the actual
+ test_runtime_dispatch_contracts.py module.
+
+Consolidated actual caller/fencing/lifecycle proof now passes all 33 collected cases
+in 68.87 seconds, zero skips/source guards (worker-owned-callers-actual). Independent
+strict eight targets pass, including complete Runtime and its wire/dispatch/queue
+contracts plus the actual helper/refusal/controlled-claim targets. Scoped six-file
+Ruff and formatting pass. Tested functional prefix b6a681c0 is unchanged except
+this report. Complete peer reaction/X/market-refresh/E2E producer qualification and
+full default-unit timing remain outstanding; this checkpoint is not global release.
