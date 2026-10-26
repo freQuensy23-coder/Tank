@@ -1549,3 +1549,69 @@ def test_lending_wire_does_not_match_a_pool_by_position_or_duplicate_identity() 
     evidence.expected = duplicated
     with pytest.raises(ValueError, match="distinct actual identities"):
         encode_condition_lending(duplicated, evidence)
+
+
+def test_inventory_wire_keeps_exact_native_changes_and_does_not_invent_a_float_zero() -> None:
+    from test_condition_graph_contracts import inventory_comparison
+
+    from tank.analysis.condition_graph_codec import encode_condition_exchange_inventory
+
+    previous = Decimal("1" + "0" * 1001)
+    current = Decimal("1" + "0" * 1000 + "1")
+    model = inventory_comparison(current, previous)
+    wire = encode_condition_exchange_inventory(model, clocks=condition_wire_clocks())
+    assert wire["chg_native_24h"] == "1"
+    assert wire["chg_pct"] is None and wire["chg_pct_reason"] == "NOT_ESTIMABLE"
+    assert wire["observed_at_prec"] is None and wire["observed_at_prec_reason"] == "NOT_CAPTURED"
+    balances = wire["per_venue"]
+    assert isinstance(balances, list) and len(balances) == 1
+    balance = balances[0]
+    assert isinstance(balance, dict)
+    assert balance["qty_native"] == str(current) and balance["chg_native_24h"] == "1"
+    assert balance["chg_pct"] is None and balance["chg_pct_reason"] == "NOT_ESTIMABLE"
+    assert balance["contract"] == "token-contract" and balance["wallet_list_commit"] == "captured-list-1"
+    zero = encode_condition_exchange_inventory(
+        inventory_comparison(Decimal(0), Decimal(0)), clocks=condition_wire_clocks()
+    )
+    assert zero["chg_native_24h"] == "0" and zero["chg_pct"] is None
+    assert zero["chg_pct_reason"] == "ZERO_BASELINE"
+
+
+def test_inventory_wire_keeps_current_quantity_without_a_future_prior_comparison() -> None:
+    from test_condition_graph_contracts import inventory_comparison
+
+    from tank.analysis.condition_graph_codec import encode_condition_exchange_inventory
+    from tank.time_precision import Timestamp
+
+    model = inventory_comparison(Decimal(12), Decimal(10))
+    prior_future = type(model).model_validate(
+        model.model_copy(
+            update={
+                "previous_visibility": model.previous_visibility.model_copy(
+                    update={
+                        "received_at": Timestamp(value="2026-10-17T12:00:01Z", precision="COLLECTION_ONLY")
+                    }
+                )
+            }
+        )
+    )
+    wire = encode_condition_exchange_inventory(prior_future, clocks=condition_wire_clocks())
+    assert wire["chg_native_24h"] is None and wire["chg_pct"] is None
+    assert wire["reason"] == "PRIOR_RECEIVED_AFTER_ASSEMBLY"
+    balances = wire["per_venue"]
+    assert isinstance(balances, list)
+    balance = balances[0]
+    assert isinstance(balance, dict)
+    assert balance["qty_native"] == "12" and balance["chg_native_24h"] is None
+    current_future = type(model).model_validate(
+        model.model_copy(update={"current_visibility": prior_future.previous_visibility})
+    )
+    assert encode_condition_exchange_inventory(current_future, clocks=condition_wire_clocks()) == {
+        "value": None,
+        "reason": "RECEIVED_AFTER_ASSEMBLY",
+        "window": "W24H",
+    }
+    with pytest.raises(ValueError, match="actual token and cutoff"):
+        encode_condition_exchange_inventory(
+            model, clocks=condition_wire_clocks().model_copy(update={"token_id": "OTHER"})
+        )

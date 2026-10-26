@@ -5379,6 +5379,10 @@ class ConditionInventoryBalanceChange(DomainModel):
         validated = type(self).model_validate(self)
         return _sum_native(validated.current_qty_native, validated.previous_qty_native.copy_negate())
 
+    def fractional_change(self) -> "ConditionInventoryFractionalChange":
+        validated = type(self).model_validate(self)
+        return _condition_inventory_fractional_change(validated.change(), validated.previous_qty_native)
+
 
 class ConditionInventoryWalletCaptureError(DomainModel):
     kind: Literal["WALLET_CAPTURE_FAILED"]
@@ -5452,6 +5456,24 @@ class ConditionInventoryFractionalChange(DomainModel):
         return self
 
 
+def _condition_inventory_fractional_change(
+    change: Decimal, previous: Decimal
+) -> ConditionInventoryFractionalChange:
+    if previous == 0:
+        return ConditionInventoryFractionalChange(value=None, reason="ZERO_BASELINE")
+    span = (
+        max(change.adjusted(), previous.adjusted())
+        - min(int(change.as_tuple().exponent), int(previous.as_tuple().exponent))
+        + 1
+    )
+    with localcontext() as context:
+        context.prec = max(128, 2 * span + 16)
+        value = float(change / previous)
+    if not isfinite(value) or value == 0 and change != 0:
+        return ConditionInventoryFractionalChange(value=None, reason="NOT_ESTIMABLE")
+    return ConditionInventoryFractionalChange(value=value, reason=None)
+
+
 class UnavailableConditionExchangeInventory(DomainModel):
     status: Literal["UNAVAILABLE"]
     reason: str = Field(min_length=1, pattern=r"\S")
@@ -5520,19 +5542,7 @@ class ComparableConditionExchangeInventory(DomainModel):
         previous = Decimal(0)
         for balance in validated.balances:
             previous = _sum_native(previous, balance.previous_qty_native)
-        if previous == 0:
-            return ConditionInventoryFractionalChange(value=None, reason="ZERO_BASELINE")
-        span = (
-            max(change.adjusted(), previous.adjusted())
-            - min(int(change.as_tuple().exponent), int(previous.as_tuple().exponent))
-            + 1
-        )
-        with localcontext() as context:
-            context.prec = max(128, 2 * span + 16)
-            value = float(change / previous)
-        if not isfinite(value) or value == 0 and change != 0:
-            return ConditionInventoryFractionalChange(value=None, reason="NOT_ESTIMABLE")
-        return ConditionInventoryFractionalChange(value=value, reason=None)
+        return _condition_inventory_fractional_change(change, previous)
 
 
 type ConditionExchangeInventory = ComparableConditionExchangeInventory | UnavailableConditionExchangeInventory

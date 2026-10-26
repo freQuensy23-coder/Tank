@@ -13,6 +13,7 @@ from tank.analysis.condition_graph_contracts import (
     CapturedConditionLending,
     CapturedConditionUnlocks,
     CapturedConditionWalletFlows,
+    ComparableConditionExchangeInventory,
     ConditionAggregateLiquidations,
     ConditionBoundaryGroup,
     ConditionCadence,
@@ -1336,3 +1337,70 @@ def encode_condition_lending(
     wire.update(_clock_wire(captured.observed_at, "observed_at"))
     wire.update(_clock_wire(captured.previous_observed_at, "previous_observed_at"))
     return wire
+
+
+def encode_condition_exchange_inventory(
+    value: ComparableConditionExchangeInventory, *, clocks: ConditionWireClocks
+) -> dict[str, JsonValue]:
+    inventory = ComparableConditionExchangeInventory.model_validate(value)
+    context = ConditionWireClocks.model_validate(clocks)
+    if (
+        inventory.token_id != context.token_id
+        or context.cutoff.value is None
+        or inventory.cutoff != parse_iso_time(context.cutoff.value)
+    ):
+        raise ValueError("Inventory serialization requires its actual token and cutoff context")
+    current_visibility = inventory.current_visibility.eligible()
+    if not isinstance(current_visibility, ConditionObservedPredicate) or not current_visibility.value:
+        return {
+            "value": None,
+            "reason": "RECEIVED_AFTER_ASSEMBLY"
+            if isinstance(current_visibility, ConditionObservedPredicate)
+            else "RECEIPT_VISIBILITY_UNPROVEN",
+            "window": inventory.requested_window,
+        }
+    prior_visibility = inventory.previous_visibility.eligible()
+    prior_visible = (
+        inventory.previous_observed_at.value is not None
+        and isinstance(prior_visibility, ConditionObservedPredicate)
+        and prior_visibility.value
+    )
+    prior_reason = (
+        "PRIOR_OBSERVATION_NOT_CAPTURED"
+        if inventory.previous_observed_at.value is None
+        else "PRIOR_RECEIVED_AFTER_ASSEMBLY"
+        if isinstance(prior_visibility, ConditionObservedPredicate)
+        else "PRIOR_RECEIPT_VISIBILITY_UNPROVEN"
+    )
+    native, fractional = inventory.native_change(), inventory.fractional_change()
+    balances: list[JsonValue] = []
+    for balance in inventory.balances:
+        share = balance.fractional_change()
+        balances.append(
+            {
+                "venue": balance.venue,
+                "chainid": balance.chain_id,
+                "contract": balance.contract,
+                "wallet_list_commit": balance.wallet_list_commit,
+                "qty_native": str(balance.current_qty_native),
+                "chg_native_24h": str(balance.change()) if prior_visible else None,
+                "chg_pct": share.value if prior_visible else None,
+                "chg_pct_reason": share.reason if prior_visible else prior_reason,
+            }
+        )
+    result: dict[str, JsonValue] = {
+        "window": inventory.requested_window,
+        "chg_native_24h": _decimal_wire(native.value) if prior_visible else None,
+        "chg_pct": fractional.value if prior_visible else None,
+        "chg_pct_reason": fractional.reason if prior_visible else prior_reason,
+        "normal_range": _range_wire(inventory.normal_range),
+        "normal_range_reason": inventory.normal_range.reason,
+        "per_venue": balances,
+        "coverage": _model_wire(inventory.coverage),
+        "reason": native.reason if prior_visible else prior_reason,
+        "capture_visibility": _model_wire(inventory.current_visibility),
+        "previous_capture_visibility": _model_wire(inventory.previous_visibility),
+    }
+    result.update(_clock_wire(inventory.current_observed_at, "observed_at"))
+    result.update(_clock_wire(inventory.previous_observed_at, "previous_observed_at"))
+    return result
