@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { requireDisposablePostgresDsn } from '../../../scripts/openma-persistence/database.mts';
 import { randomUUID } from 'node:crypto';
 import { test, type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -18,8 +19,7 @@ interface Fixture {
   session: Session;
 }
 async function fixture(t: TestContext): Promise<Fixture> {
-  const dsn = process.env.TANK_TEST_DATABASE_URL;
-  assert.ok(dsn !== undefined && dsn.length > 0);
+  const dsn = requireDisposablePostgresDsn(process.env.TANK_TEST_DATABASE_URL);
   const schema = 'continuation_' + randomUUID().replaceAll('-', '');
   const connection = postgres(dsn);
   const configured = new URL(dsn);
