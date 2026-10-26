@@ -8,9 +8,11 @@ from tank.analysis.oi_usd import RecordedOIUsd, UnavailableRecordedOIUsd, record
 from tank.util import JsonInput
 
 
-@pytest.mark.parametrize("label", [None, "PROVIDER_REPORTED", "PREVIOUSLY_DERIVED"])
+@pytest.mark.parametrize(
+    "label", [None, "PROVIDER_REPORTED", "PREVIOUSLY_DERIVED", 7, {"writer": "retained"}]
+)
 @pytest.mark.parametrize("amount", ["0", "12.500"])
-def test_recorded_usd_preserves_known_amount_and_original_source(amount: str, label: str | None) -> None:
+def test_recorded_usd_preserves_known_amount_and_original_source(amount: str, label: JsonInput) -> None:
     row: dict[str, JsonInput] = {
         "instrument_id": "A",
         "token_id": "T",
@@ -27,7 +29,6 @@ def test_recorded_usd_preserves_known_amount_and_original_source(amount: str, la
     assert isinstance(result, RecordedOIUsd)
     assert result.value == Decimal(amount)
     assert result.source.evidence == point.evidence
-    assert result.source.usd_derivation_label == label
     assert result.source.received_at.value is None
     assert result.source.mark_observed_at.value is None
     assert resolve_oi_observation(snapshot, result.source.evidence, expected=result.source) == row

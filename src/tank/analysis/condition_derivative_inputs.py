@@ -90,7 +90,6 @@ class OIObservation(DomainModel):
     received_at: Timestamp
     native_quantity: ReportedDerivativeNumber
     reported_usd: ReportedDerivativeNumber
-    usd_derivation_label: str | None
     mark_price: ReportedDerivativeNumber
     mark_observed_at: Timestamp
     index_price: ReportedDerivativeNumber
@@ -135,7 +134,6 @@ class OIObservation(DomainModel):
             received_at=propagate_timestamp(row, "received_ts"),
             native_quantity=ReportedDerivativeNumber.from_value(row.get("oi_native")),
             reported_usd=ReportedDerivativeNumber.from_value(row.get("oi_usd")),
-            usd_derivation_label=_oi_text(row, "oi_usd_source"),
             mark_price=ReportedDerivativeNumber.from_value(row.get("mark_price")),
             mark_observed_at=propagate_timestamp(row, "mark_as_of"),
             index_price=ReportedDerivativeNumber.from_value(row.get("index_price")),
