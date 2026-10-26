@@ -1,6 +1,7 @@
 """The actual host validator enforces the declared mutually exclusive watch requests."""
 
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from pydantic import JsonValue
@@ -15,6 +16,14 @@ def watch_schema() -> JsonValue:
         (
             Path(__file__).resolve().parents[1]
             / "config/skills/tank-event-analyst/set_watch_condition.schema.json"
+        ).read_bytes()
+    )
+
+
+def publish_schema() -> JsonValue:
+    return decode_unique_json(
+        (
+            Path(__file__).resolve().parents[1] / "config/skills/tank-event-analyst/publish_card.schema.json"
         ).read_bytes()
     )
 
@@ -132,3 +141,88 @@ def test_negated_presence_and_exclusive_errors_do_not_echo_actual_input() -> Non
     with pytest.raises(ValueError) as exclusive:
         validate_schema(private, {"oneOf": [{"const": "A"}, {"const": "B"}]})
     assert private not in str(exclusive.value)
+
+
+@pytest.mark.parametrize("kind", ["FULL", "PARTIAL", "UPDATE"])
+def test_publish_condition_preserves_two_why_bullets_for_ordinary_cards(
+    kind: Literal["FULL", "PARTIAL", "UPDATE"],
+) -> None:
+    private = "SYNTHETIC_PRIVATE_FACT"
+    payload: dict[str, JsonValue] = {
+        "kind": kind,
+        "what": "A synthetic product shipped.",
+        "verdict": "Synthetic launch confirmed.",
+        "why": [private],
+    }
+    with pytest.raises(ValueError) as rejected:
+        validate_schema(payload, publish_schema())
+    assert not isinstance(rejected.value, ToolSchemaError)
+    assert private not in str(rejected.value)
+    payload["why"] = ["The release is published.", "The feature is available."]
+    validate_schema(payload, publish_schema())
+    with pytest.raises(ValueError):
+        validate_schema({**payload, "unconfirmed": private}, publish_schema())
+
+
+def test_publish_condition_allows_one_preliminary_fact_without_mutating_the_payload() -> None:
+    payload: dict[str, JsonValue] = {
+        "kind": "PRELIMINARY",
+        "what": "The issuer announced a proposed integration.",
+        "verdict": "A proposed integration is under review.",
+        "why": ["The issuer published the proposed scope."],
+        "unconfirmed": "The counterparty has not confirmed participation.",
+    }
+    before = canonical_json(payload)
+    validate_schema(payload, publish_schema())
+    assert canonical_json(payload) == before
+
+
+def test_all_of_applies_every_typeless_object_constraint() -> None:
+    schema: JsonValue = {
+        "allOf": [
+            {"required": ["count"]},
+            {"properties": {"count": {"type": "integer", "minimum": 1}}},
+        ]
+    }
+    validate_schema({"count": 1}, schema)
+    with pytest.raises(ValueError):
+        validate_schema({"count": 0}, schema)
+    with pytest.raises(ValueError):
+        validate_schema({}, schema)
+
+
+def test_conditional_branch_selection_preserves_boolean_and_numeric_distinctions() -> None:
+    schema: JsonValue = {
+        "if": {"properties": {"flag": {"const": True}}, "required": ["flag"]},
+        "then": {"required": ["yes"]},
+        "else": {"required": ["no"]},
+    }
+    validate_schema({"flag": True, "yes": 0}, schema)
+    validate_schema({"flag": 1, "no": 0}, schema)
+    with pytest.raises(ValueError):
+        validate_schema({"flag": 1, "yes": 0}, schema)
+    with pytest.raises(ValueError):
+        validate_schema({"flag": True, "no": 0}, schema)
+
+
+def test_then_and_else_without_if_do_not_constrain_an_instance() -> None:
+    validate_schema("unrelated instance", {"then": False, "else": False})
+    validate_schema("unrelated instance", {"if": False})
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"allOf": []},
+        {"allOf": {}},
+        {"allOf": [False, 17]},
+        {"if": 17},
+        {"if": True, "then": 17},
+        {"if": False, "else": 17},
+        {"if": True, "then": True, "else": {"type": "unsupported"}},
+        {"if": False, "then": {"type": "unsupported"}, "else": True},
+    ],
+)
+def test_conditional_schema_defects_are_not_instance_mismatches(schema: JsonValue) -> None:
+    with pytest.raises(ToolSchemaError):
+        validate_schema("PRIVATE_REQUEST_VALUE", schema)

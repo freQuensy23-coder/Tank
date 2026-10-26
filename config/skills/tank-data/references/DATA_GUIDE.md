@@ -4,7 +4,7 @@
 
 | Topic | Rule |
 |---|---|
-| IDs | ULID-based, typed prefixes: `ITM-` item (`web-<hash>` for a page read with `fetch_page` or a `web_search` result), `EVT-` event, `OBS-` observation, `CLM-` claim, `EMS-`, `EDG-` beneficiary edge, `MTA-` Market Truth assessment, `OUT-` outlook, `DEC-` decision, `CND-` watch condition, `CAL-` call, `ALR-` alert (+ integer version), `RWP-` reaction pack, `JOB-`, `PRP-` proposal, `FIX-` fixture. `source_id`, `entity_id`, `token_id`, `instrument_id` are readable registry keys (e.g. `binance:spot:UNIUSDT`). Evidence bundles are content-addressed: `EVB-<sha256>`. Tool arguments take these IDs and keys; how to find them: «Finding record IDs for tool arguments» below. |
+| IDs | ULID-based, typed prefixes: `ITM-` item (`web-<hash>` for a page read with `fetch_page` or a `web_search` result), `EVT-` event, `OBS-` observation, `CLM-` claim, `EMS-`, `EDG-` beneficiary edge, `MTA-` Market Truth assessment, `DEC-` decision, `CND-` watch condition, `CAL-` call, `ALR-` alert (+ integer version), `RWP-` reaction pack, `JOB-`, `PRP-` proposal, `FIX-` fixture. `source_id`, `entity_id`, `token_id`, `instrument_id` are readable registry keys (e.g. `binance:spot:UNIUSDT`). Evidence bundles are content-addressed: `EVB-<sha256>`. Tool arguments take these IDs and keys; how to find them: «Finding record IDs for tool arguments» below. |
 | Time | UTC everywhere; stored with microsecond resolution. Every timestamp field has a sibling precision: `EXACT`, `BUCKET(<size>)`, `COLLECTION_ONLY`. |
 | Units | Native token quantity and USD notional are separate decimal fields. Returns are decimal fractions. Funding is stored as rate per interval + `interval_h`, with derived `rate_8h_eq`. Basis in bps. |
 | Missing data | Never 0. Every measurable is `Measured{value, unit, window, observed_at, precision, coverage, reason}`; when `value = null`, `reason ∈ {NOT_SUPPORTED, SOURCE_FAILED, INCOMPLETE, NOT_APPLICABLE, NOT_ESTIMABLE, PENDING}`. |
@@ -365,8 +365,7 @@ MarketTruthAssessment
   data_confidence: DataConfidence
   class_confidence: Certainty
 
-MovementOutlook
-  out_id, token_id, event_id, cutoff
+MovementOutlook                      # stored as the decision's `outlook`, no id of its own
   direction: DirectionBias; direction_rule: str      # §6.1 row matched
   potential: MovePotential; potential_rule: str      # §6.2 row matched
   best_horizon: Horizon; horizon_reason: str
@@ -494,22 +493,22 @@ Fixture
 
 | Table | Key | Notes |
 |---|---|---|
-| `sources`, `entities`, `entity_aliases`, `tokens`, `instruments`, `sector_baskets`, `metric_semantics` | natural slugs | Loaded from the config repository; version stamped. |
+| `sources`, `entities`, `entity_aliases`, `tokens`, `instruments`, `sector_baskets`, `exchange_addresses` | natural slugs | Loaded from the config repository; version stamped. The dependency map and metric semantics stay in their YAML files; `get_registry` gives agents the dependency map. |
 | `source_items` | `item_id`; unique (`source_id`, `external_id`) | Index `content_hash`, `observed_at`. |
-| `events` | `event_id` | Index `known_to_us_at`, `lifecycle`; GIN on entities. |
+| `events` | `event_id` | Index `known_to_us_at`, `lifecycle`. |
 | `event_observations`, `claims` | `obs_id`, `claim_id` | FK to events/items. |
 | `state_changes` | serial | Append-only. |
 | `ems_assessments`, `capture_chains`, `beneficiary_maps`, `beneficiary_edges` | id + version | Versioned rows. |
 | `klines_1m`, `flow_bars_1m` | (`instrument_id`, minute) | ClickHouse `mkt.*` (ReplacingMergeTree, daily partitions); base tier 90 days ⚙. |
 | `book_summaries` | (`instrument_id`, ts) | ClickHouse; kept 72 hours; summary fields only (no order-book levels). |
 | `oi_obs`, `funding_obs`, `liq_obs`, `tickers_24h`, `trades` | (`instrument_id`, ts) | ClickHouse (daily partitions); `trades` (every print) 30 days. |
-| `market_truth`, `outlooks`, `decisions`, `contradictions`, `watch_conditions`, `calls` | ids | `market_truth` indexed by (`token_id`, `cutoff`). |
+| `market_truth`, `decisions`, `contradictions`, `watch_conditions`, `calls` | ids | `market_truth` indexed by (`token_id`, `cutoff`); a decision carries its outlook. |
 | `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints`, `reviews` | ids | Append-only (UPDATE/DELETE rejected by trigger). |
 | `hot_tokens` | (`token_id`, `event_id`) | Hot set (§9); read on start to subscribe the hot tokens again. |
 | `jobs` | `job_id`; unique `idem_key` | The service's job queue (§3.8). |
 | `agent_sessions`, `tool_calls` | `session_id`, `call_id` | The OpenMA session of each event, and every tool call with its input, result and timing (§3.2). |
 | `expansion_proposals` | `prp_id` | Only table the scout role may write, together with its own logs. |
-| `fixtures`, `replay_runs` | ids | Sealed outcomes stored outside the DB path the pipeline reads. |
+| `fixtures`, `replay_runs` | — | Files, not tables: fixtures are listed in `tests/fixtures/manifest.json`; a replay run freezes its inputs and outputs in its output directory. Sealed outcomes stay outside anything the pipeline reads. |
 
 Core DDL: §14.
 
@@ -880,7 +879,7 @@ Every token has at least three spot venues and two perpetual venues. Binance spo
 
 # Design table contracts and deployed schema (PostgreSQL 16 and ClickHouse)
 
-The DDL excerpt below records the design document's table vocabulary and field meanings. It is not an executable dump of the deployed database. Versioned migrations define the implementation. Non-market registry/event/operational rows retain JSONB `document` plus typed projections. Market series and prints are typed ClickHouse tables (the section "Market tables in ClickHouse"): no whole-row `document` or `extras`. Their named JSONB fields hold domain structures such as boundary segments, coverage and per-field missing reasons. Inspect the live read-only schema before composing a query; do not assume that an illustrative primary-key declaration is the physical storage key.
+The DDL excerpt below records the design document's table vocabulary and field meanings. It is not an executable dump of the deployed database. Versioned migrations define the implementation. Non-market registry/event/operational rows retain JSONB `document` plus typed projections. Nested objects such as EMS `dims`, Market Truth `divergence` and `data_confidence`, the decision `outlook`, the alert `card_struct`, the job `payload` and tool call `input`/`result` are only in `document`: read them as `document->'outlook'`. GIN indexes exist only on `evt.claims`, `ops.agent_sessions`, `ops.tool_calls`, `out.deliveries` and `out.user_questions`, and serve `document @> '{"key": "value"}'`, not `document->>'key' = 'value'`. Market series and prints are typed ClickHouse tables (the section "Market tables in ClickHouse"): no whole-row `document` or `extras`. Their named JSONB fields hold domain structures such as boundary segments, coverage and per-field missing reasons. Inspect the live read-only schema before composing a query; do not assume that an illustrative primary-key declaration is the physical storage key.
 
 ```sql
 SELECT table_schema, table_name
@@ -981,21 +980,12 @@ CREATE TABLE evt.events (
   certainty          text NOT NULL,
   timing_confidence  text NOT NULL,
   best_source_class  text NOT NULL,
-  next_milestone     jsonb,
   lifecycle          text NOT NULL,
   merged_into        text REFERENCES evt.events(event_id),
   current_ems_id     text
 );
 CREATE INDEX ON evt.events (known_to_us_at);
 CREATE INDEX ON evt.events (lifecycle);
-
-CREATE TABLE evt.event_entities (
-  event_id  text NOT NULL REFERENCES evt.events(event_id),
-  entity_id text NOT NULL,
-  role      text NOT NULL,
-  PRIMARY KEY (event_id, entity_id, role)
-);
-CREATE INDEX ON evt.event_entities (entity_id);
 
 CREATE TABLE evt.event_observations (
   obs_id        text PRIMARY KEY,
@@ -1039,12 +1029,9 @@ CREATE TABLE evt.ems_assessments (
   event_id        text NOT NULL REFERENCES evt.events(event_id),
   version         int  NOT NULL,
   cutoff          timestamptz NOT NULL,
-  dims            jsonb NOT NULL,                      -- 7 × DimScore
-  gates           jsonb NOT NULL,
   class           text NOT NULL,
   criterion       text NOT NULL,
   class_reasons   text[] NOT NULL,
-  impact_horizon  jsonb NOT NULL,
   config_version  text NOT NULL,
   model_id        text NOT NULL,
   prompt_version  text NOT NULL,
@@ -1060,12 +1047,9 @@ CREATE TABLE ana.market_truth (
   move_class        text NOT NULL,
   support           int,
   alternatives      text[] NOT NULL,                  -- other eligible move classes (§5.8)
-  divergence        jsonb NOT NULL,
   flags             text[] NOT NULL,
   decisive_facts    text[] NOT NULL,
-  data_confidence   jsonb NOT NULL,
   class_confidence  text NOT NULL,
-  detail            jsonb NOT NULL,                    -- SpotTruth per window, Derivatives, Liquidity, Supply, RelativePrice
   config_version    text NOT NULL,
   code_version      text NOT NULL
 );
@@ -1084,7 +1068,6 @@ CREATE TABLE ana.decisions (
   tactical      boolean NOT NULL,
   investigate   boolean NOT NULL,
   call_id       text,
-  outlook       jsonb NOT NULL,
   conditions    text[] NOT NULL                        -- cond_ids shown on the card (≤ 2)
 );
 
@@ -1109,7 +1092,6 @@ CREATE TABLE out.alerts (                              -- append-only, one row p
   event_id            text NOT NULL REFERENCES evt.events(event_id),
   generated_at        timestamptz NOT NULL,
   card_text           text NOT NULL,
-  card_struct         jsonb NOT NULL,
   decisions           text[] NOT NULL,
   evidence_bundle_id  char(64) NOT NULL,
   supersedes_version  int,
@@ -1150,7 +1132,6 @@ CREATE TABLE ops.jobs (
   type          text NOT NULL,
   priority      smallint NOT NULL,
   idem_key      text NOT NULL UNIQUE,
-  payload       jsonb NOT NULL,
   status        text NOT NULL DEFAULT 'QUEUED'
                 CHECK (status IN ('QUEUED','RUNNING','DONE','FAILED','EXPIRED')),
   attempts      int NOT NULL DEFAULT 0,
@@ -1192,8 +1173,6 @@ CREATE TABLE ops.tool_calls (
   call_id         text PRIMARY KEY,                    -- OpenMA custom tool_use id
   session_id      text NOT NULL REFERENCES ops.agent_sessions(session_id),
   tool            text NOT NULL,
-  input           jsonb NOT NULL,
-  result          jsonb,
   status          text NOT NULL CHECK (status IN ('PENDING','DONE','REFUSED','ERROR')),
   requested_at    timestamptz NOT NULL,
   answered_at     timestamptz
@@ -1733,43 +1712,6 @@ Ticker natural identity is instrument plus timestamp; funding identity is instru
 Read with `TANK_DB_URL`. These hold no exchange series or prints.
 
 ## mkt.supply_obs
-
-| Column | PostgreSQL type |
-|---|---|
-| `available` | `boolean` |
-| `chain` | `text` |
-| `classification_required` | `boolean` |
-| `code_version` | `text` |
-| `config_version` | `text` |
-| `fee_scope` | `text` |
-| `instrument_id` | `text` |
-| `kind` | `text` |
-| `reason` | `text` |
-| `received_ts` | `timestamptz` |
-| `received_ts_prec` | `text` |
-| `received_ts_prec_reason` | `text` |
-| `recorded_at` | `timestamptz` |
-| `recorded_at_prec` | `text` |
-| `recorded_at_prec_reason` | `text` |
-| `token_id` | `text` |
-| `transfer_queries_succeeded` | `bigint` |
-| `ts` | `timestamptz` |
-| `ts_prec` | `text` |
-| `ts_prec_reason` | `text` |
-| `unlocks` | `jsonb` |
-| `flows` | `jsonb` |
-| `coverage_errors` | `jsonb` |
-| `balances` | `jsonb` |
-| `pools` | `jsonb` |
-| `series` | `jsonb` |
-| `metrics` | `jsonb` |
-| `protocols` | `jsonb` |
-| `identity_evidence` | `jsonb` |
-| `inference_limits` | `text[]` |
-| `unsupported_venues` | `text[]` |
-| `semantic_fingerprint` | `text` |
-
-## mkt.supply
 
 | Column | PostgreSQL type |
 |---|---|

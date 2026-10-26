@@ -95,9 +95,9 @@ async def _sql_job(repo: PostgresRepository, key: str, *, created_at: str | None
         document["created_at"] = created_at
     async with repo.transaction():
         await repo._conn().execute(
-            """INSERT INTO ops.jobs(storage_key,document,job_id,type,priority,idem_key,payload,status,attempts,max_attempts,run_after,expires_at)
-          VALUES(%s,%s,%s,'CUSTOM',1,%s,%s,'QUEUED',0,2,%s,NULL)""",
-            (key, Jsonb(document), key, key, Jsonb({}), parse_time(run_after)),
+            """INSERT INTO ops.jobs(storage_key,document,job_id,type,priority,idem_key,status,attempts,max_attempts,run_after,expires_at)
+          VALUES(%s,%s,%s,'CUSTOM',1,%s,'QUEUED',0,2,%s,NULL)""",
+            (key, Jsonb(document), key, key, parse_time(run_after)),
         )
     return present(await repo.get("ops.jobs", key))
 

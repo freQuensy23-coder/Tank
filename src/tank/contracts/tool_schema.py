@@ -139,6 +139,12 @@ def _validate(value: JsonValue, schema: JsonValue, path: str) -> None:
         return
     if not isinstance(schema, dict):
         raise ToolSchemaError("Configured tool schema must be an object or boolean")
+    conjunction = _array(schema, "allOf")
+    if conjunction is not None and not conjunction:
+        raise ToolSchemaError("Configured tool schema allOf must not be empty")
+    for keyword in ("if", "then", "else"):
+        if keyword in schema and not isinstance(schema[keyword], (bool, dict)):
+            raise ToolSchemaError(f"Configured tool schema {keyword} must be an object or boolean")
     if "type" in schema:
         raw = schema["type"]
         if isinstance(raw, str):
@@ -154,6 +160,20 @@ def _validate(value: JsonValue, schema: JsonValue, path: str) -> None:
         raise ValueError(f"{path}: invalid enum; allowed: {choices}")
     if "const" in schema and not _equal(value, schema["const"]):
         raise ValueError(f"{path}: does not match the required constant")
+    if conjunction is not None:
+        matches = sum(_accepts(value, option, path) for option in conjunction)
+        if matches != len(conjunction):
+            raise ValueError(f"{path}: does not satisfy every required form")
+    if "if" in schema:
+        selected = "then" if _accepts(value, schema["if"], path) else "else"
+        selected_matches = True
+        for keyword in ("then", "else"):
+            if keyword in schema:
+                matches_branch = _accepts(value, schema[keyword], path)
+                if keyword == selected:
+                    selected_matches = matches_branch
+        if not selected_matches:
+            raise ValueError(f"{path}: does not satisfy its conditional form")
     if "not" in schema and _accepts(value, schema["not"], path):
         raise ValueError(f"{path}: matches a forbidden form")
     exclusive_forms = _array(schema, "oneOf")
