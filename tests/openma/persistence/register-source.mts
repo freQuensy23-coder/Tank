@@ -8,6 +8,8 @@ const aliases = new Map<string, URL>([
   ['@open-managed-agents/sql-client/db-errors', new URL('packages/sql-client/src/db-errors.ts', root)],
 ]);
 const relative = new Map<string, URL>([
+  [new URL('packages/session-runtime-contract/src/continuation.ts', root).href + '|./history', new URL('packages/session-runtime-contract/src/history.ts', root)],
+  [new URL('packages/session-runtime-contract/src/continuation.ts', root).href + '|./json', new URL('packages/session-runtime-contract/src/json.ts', root)],
   [new URL('packages/session-runtime-sql/src/continuation.ts', root).href + '|./history', new URL('packages/session-runtime-sql/src/history.ts', root)],
   [new URL('packages/session-runtime-sql/src/coordination.ts', root).href + '|./continuation', new URL('packages/session-runtime-sql/src/continuation.ts', root)],
   [new URL('packages/sql-client/src/adapters/postgres.ts', root).href + '|../db-errors', new URL('packages/sql-client/src/db-errors.ts', root)],

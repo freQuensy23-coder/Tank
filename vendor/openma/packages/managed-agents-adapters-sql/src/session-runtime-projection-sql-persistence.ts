@@ -1,4 +1,5 @@
-import { decodeSessionEventDocument, encodeSessionEventDocument } from '@open-managed-agents/session-runtime-contract/history';
+import { encodeContinuationSessionEventDocument } from '@open-managed-agents/session-runtime-contract/continuation';
+import { decodeSessionEventDocument } from '@open-managed-agents/session-runtime-contract/history';
 import type { SqlClient } from "@open-managed-agents/sql-client";
 import type {
   FindRuntimeProjectionSession,
@@ -141,7 +142,7 @@ export class SqlSessionRuntimeProjectionPersistence
                WHERE workspace_id = ? AND id = ? AND revision = ?
             )
               ${fenceSql}
-           ON CONFLICT (workspace_id, session_id, id) DO NOTHING`).bind(input.workspaceId, input.sessionId, "sessionThreadId" in event ? event.sessionThreadId ?? null : null, event.id, event.type, encodeSessionEventDocument(event, { revision: input.expectedRevision + 1, index }, fence?.executionId, fence === undefined ? undefined : { attemptId: fence.attemptId, generation: fence.generation }), timestamp(event.processedAt), input.workspaceId, input.sessionId, input.expectedRevision, ...fenceBindings);
+           ON CONFLICT (workspace_id, session_id, id) DO NOTHING`).bind(input.workspaceId, input.sessionId, "sessionThreadId" in event ? event.sessionThreadId ?? null : null, event.id, event.type, encodeContinuationSessionEventDocument(event, { revision: input.expectedRevision + 1, index }, fence?.executionId, fence === undefined ? undefined : { attemptId: fence.attemptId, generation: fence.generation }), timestamp(event.processedAt), input.workspaceId, input.sessionId, input.expectedRevision, ...fenceBindings);
     });
     // Thread CRUD is a projection of the same native lifecycle facts. Update
     // the existing Thread records under this Session CAS/fence, so a stale

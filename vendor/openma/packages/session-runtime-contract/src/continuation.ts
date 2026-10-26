@@ -1,6 +1,6 @@
-import { decodeRuntimeJson, RuntimeJsonDocumentError } from "./json.ts";
+import { decodeRuntimeJson, RuntimeJsonDocumentError } from "./json";
 import type { SentSessionEvent, SessionEventView, SessionStopReason, UserMessageContentBlock, ToolResultContentBlock, ImageSource, DocumentSource, TextContentBlock, OutcomeRubric } from '@open-managed-agents/domain/sessions';
-import type { OrderedSessionEvent, ExecutionProgressReceipt } from './history';
+import { encodeSessionEventDocument, type OrderedSessionEvent, type ExecutionProgressReceipt, type SessionEventSourcePosition, type SessionEventExecutionMetadata } from './history';
 import type { SessionExecutionState } from './coordination';
 export interface ContinuationExecution {
   id: string;
@@ -671,4 +671,75 @@ export function decodeContinuationImageRecovery(document: string): ContinuationI
   const retryAfterEventId = row.retryAfterEventId === undefined ? undefined : continuationString(row.retryAfterEventId, true);
   return { afterEventId: continuationString(row.afterEventId, true), interruptRequestedAt,
     ...(retryAfterEventId === undefined ? {} : { retryAfterEventId }) };
+}
+
+export interface ContinuationHistorySource {
+  position?: SessionEventSourcePosition;
+  executionId?: string;
+  executionMetadata?: SessionEventExecutionMetadata;
+}
+function invalidSessionEventSource(): never { throw new ContinuationProtocolError('Invalid persisted continuation history source'); }
+function sourceObject(value: unknown, keys: readonly string[]): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return invalidSessionEventSource();
+  if (Object.keys(value).some(key => !keys.includes(key))) return invalidSessionEventSource();
+  return Object.fromEntries(Object.entries(value));
+}
+function sourceString(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0) return invalidSessionEventSource();
+  return value;
+}
+function sourceInteger(value: unknown, minimum: number): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum) return invalidSessionEventSource();
+  return value;
+}
+function sourceIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return invalidSessionEventSource();
+  return value.map(sourceString);
+}
+function sourceProgress(value: unknown): ExecutionProgressReceipt {
+  const row = sourceObject(value, ['version', 'previousReceiptId', 'consumedInputIds', 'remainingInputIds', 'phaseInputIds', 'phaseStartEventId', 'terminalEventId', 'laneId', 'attemptId', 'generation']);
+  if (row.version !== 1) return invalidSessionEventSource();
+  return {
+    version: 1,
+    previousReceiptId: row.previousReceiptId === null ? null : sourceString(row.previousReceiptId),
+    consumedInputIds: sourceIds(row.consumedInputIds), remainingInputIds: sourceIds(row.remainingInputIds),
+    phaseInputIds: sourceIds(row.phaseInputIds), phaseStartEventId: sourceString(row.phaseStartEventId),
+    terminalEventId: sourceString(row.terminalEventId), laneId: sourceString(row.laneId),
+    attemptId: sourceString(row.attemptId), generation: sourceInteger(row.generation, 1),
+  };
+}
+function sourceExecution(value: unknown): SessionEventExecutionMetadata {
+  const row = sourceObject(value, ['attemptId', 'generation', 'progress']);
+  const attemptId = sourceString(row.attemptId), generation = sourceInteger(row.generation, 1);
+  const progress = row.progress === undefined ? undefined : sourceProgress(row.progress);
+  if (progress !== undefined && (progress.attemptId !== attemptId || progress.generation !== generation)) return invalidSessionEventSource();
+  return { attemptId, generation, ...(progress === undefined ? {} : { progress }) };
+}
+function decodeContinuationHistorySource(value: unknown): ContinuationHistorySource {
+  if (value === undefined) return {};
+  const row = sourceObject(value, ['revision', 'index', 'execution_id', 'execution_metadata']);
+  if (row.execution_metadata !== undefined && row.execution_id === undefined) return invalidSessionEventSource();
+  return {
+    position: { revision: sourceInteger(row.revision, 1), index: sourceInteger(row.index, 0) },
+    ...(row.execution_id === undefined ? {} : { executionId: sourceString(row.execution_id) }),
+    ...(row.execution_metadata === undefined ? {} : { executionMetadata: sourceExecution(row.execution_metadata) }),
+  };
+}
+
+export function decodeContinuationHistorySourceDocument(document: string): ContinuationHistorySource {
+  const value = continuationJson(document);
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return invalidSessionEventSource();
+  const row: Record<string, unknown> = Object.fromEntries(Object.entries(value));
+  return decodeContinuationHistorySource(row.source_position);
+}
+export function encodeContinuationSessionEventDocument(
+  event: SessionEventView, position: SessionEventSourcePosition, executionId?: string,
+  executionMetadata?: SessionEventExecutionMetadata,
+): string {
+  const admitted = decodeContinuationHistorySource({ ...position,
+    ...(executionId === undefined ? {} : {execution_id: executionId}),
+    ...(executionMetadata === undefined ? {} : {execution_metadata: executionMetadata}),
+  });
+  if (admitted.position === undefined) return invalidSessionEventSource();
+  return encodeSessionEventDocument(event, admitted.position, admitted.executionId, admitted.executionMetadata);
 }

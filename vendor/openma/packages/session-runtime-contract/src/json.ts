@@ -51,7 +51,10 @@ export function decodeRuntimeJson(document: string): unknown {
       }
       return invalidRuntimeJson();
     }
+    const tokenStart = index;
     while (index < document.length && !/[\s,}\]]/.test(document[index])) index++;
+    const token = document.slice(tokenStart, index);
+    if (Number(token) === 0 && /[1-9]/.test(token.split(/[eE]/, 1)[0])) return invalidRuntimeJson();
     return index;
   }
   if (whitespace(visit(0)) !== document.length) return invalidRuntimeJson();

@@ -14,6 +14,7 @@ const files = [
   'scripts/openma-persistence/verify-lock.test.mts',
   'tests/openma/persistence/continuation-input.test.mts',
   'tests/openma/persistence/runtime-json.test.mts',
+  'tests/openma/persistence/history-metadata.test.mts',
   'tests/openma/persistence/continuation-sql.test.mts',
   'tests/openma/lifecycle/image-recovery.test.mjs',
 ];

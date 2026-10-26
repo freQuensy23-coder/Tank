@@ -1,5 +1,5 @@
-import type { SqlClient } from '@open-managed-agents/sql-client';
-import { ContinuationProtocolError, decodeContinuationExecutionEvents, decodeContinuationImageRecovery,
+import type { SqlClient, SqlStatement, SqlSelectResult, SqlRunResult } from '@open-managed-agents/sql-client';
+import { ContinuationProtocolError, decodeContinuationExecutionEvents, decodeContinuationImageRecovery, decodeContinuationHistorySourceDocument,
   type ContinuationExecution, type ContinuationImageRecovery, type ContinuationSnapshot } from '@open-managed-agents/session-runtime-contract/continuation';
 import { SqlSessionRuntimeHistorySource } from './history';
 
@@ -65,7 +65,7 @@ export async function loadSessionContinuationSnapshot(sql: SqlClient, scope: {
     if (!identities.has(id) || recoveryBoundaries.has(id)) throw new ContinuationProtocolError('Invalid continuation recovery identity');
     recoveryBoundaries.set(id, decodeContinuationImageRecovery(rowString(row.after_event_id)));
   }
-  const history = await new SqlSessionRuntimeHistorySource(sql).load(scope);
+  const history = await new SqlSessionRuntimeHistorySource(continuationHistoryClient(sql)).load(scope);
   if (history === null) throw new SessionContinuationMissingError('Continuation Session no longer exists');
   if (history.revision === undefined) throw new ContinuationProtocolError('Missing continuation history revision');
   return {
@@ -79,4 +79,42 @@ export async function loadSessionContinuationSnapshot(sql: SqlClient, scope: {
         ...(recovery.retryAfterEventId === undefined ? {} : { imageRecoveryRetryAfterEventId: recovery.retryAfterEventId }) };
     })
   };
+}
+
+function continuationHistoryStatement(statement: SqlStatement): SqlStatement {
+  return {
+    bind(...parameters: unknown[]): SqlStatement { return continuationHistoryStatement(statement.bind(...parameters)); },
+    async run<T = unknown>(): Promise<SqlRunResult<T>> { return invalidHistoryOperation(); },
+    async first<T = unknown>(): Promise<T | null> { return invalidHistoryOperation(); },
+    async all<T = unknown>(): Promise<SqlSelectResult<T>> {
+      const result = await statement.all<T>();
+      let revision: number | undefined;
+      for (const value of requiredContinuationRows(result.results)) {
+        const row = continuationRow(value, ['revision', 'history_kind', 'document']);
+        const current = rowInteger(row.revision, 0);
+        if (revision !== undefined && current !== revision) throw new ContinuationProtocolError('Conflicting continuation history revision');
+        revision = current;
+        if (row.history_kind === null) {
+          if (row.document !== null) throw new ContinuationProtocolError('Invalid persisted continuation history row');
+        } else if (row.history_kind === 'event' || row.history_kind === 'initial') {
+          decodeContinuationHistorySourceDocument(rowString(row.document));
+        } else throw new ContinuationProtocolError('Invalid persisted continuation history row');
+      }
+      return result;
+    },
+  };
+}
+function continuationHistoryClient(client: SqlClient): SqlClient {
+  return {
+    prepare(query: string): SqlStatement {
+      if (!query.trimStart().startsWith('SELECT session.revision, history.history_kind, history.document')) return invalidHistoryOperation();
+      return continuationHistoryStatement(client.prepare(query));
+    },
+    async batch<T = unknown>(_statements: SqlStatement[]): Promise<SqlRunResult<T>[]> { return invalidHistoryOperation(); },
+    async exec(_query: string): Promise<void> { return invalidHistoryOperation(); },
+  };
+}
+
+function invalidHistoryOperation(): never {
+  throw new ContinuationProtocolError('Continuation history admission requires its read-only SELECT');
 }

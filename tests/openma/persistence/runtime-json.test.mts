@@ -7,6 +7,8 @@ for (const document of [
   '{"nested":{"a":1,"\\u0061":2}}',
   '[{"x":1,"x":2}]',
   '{"finite":1e400}',
+  '{"not_zero":1e-400}',
+  '{"not_zero":-1e-400}',
   '{"value":NaN}',
   '{"unterminated":"secret-marker}',
 ]) {
@@ -23,4 +25,11 @@ test('runtime JSON retains independent object keys and actual JSON scalar types'
   assert.deepEqual(decodeRuntimeJson('{"a":0,"b":false,"c":null,"nested":[{"a":"x"},{"a":1.25}]}'), {
     a: 0, b: false, c: null, nested: [{a: 'x'}, {a: 1.25}],
   });
+});
+
+test('runtime JSON preserves representable subnormals and semantic integral protocol numbers', () => {
+  assert.equal(decodeRuntimeJson('1.0'), 1);
+  assert.equal(decodeRuntimeJson('5e-324'), Number.MIN_VALUE);
+  assert.equal(Object.is(decodeRuntimeJson('-0'), -0), true);
+  assert.equal(decodeRuntimeJson('0e-400'), 0);
 });
