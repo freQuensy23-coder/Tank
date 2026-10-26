@@ -37,6 +37,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionVenueSignObservation,
     ConditionWeightedBreadth,
     ConditionWindow,
+    DirectWindowConditionSpot,
     FlowAggregateEvidenceRef,
     IncompleteConditionTradeCounts,
     ObservedConditionCohort,
@@ -763,6 +764,29 @@ def calculate_spot(inputs: SpotCalculationInputs) -> BasicConditionSpot:
     with _native_arithmetic((*values, *ticker_values, inputs.policy.significant_flow_sigma)):
         qualified = _qualify_spot(inputs, start=inputs.start, cutoff=inputs.cutoff)
         return _calculate_spot(inputs, qualified, start=inputs.start, cutoff=inputs.cutoff)
+
+
+def calculate_direct_spot(
+    inputs: SpotCalculationInputs, *, window: ConditionWindow
+) -> DirectWindowConditionSpot:
+    source = SpotCalculationInputs.model_validate(inputs)
+    values = tuple(
+        value
+        for row in (*source.minutes, *source.boundaries)
+        for value in (row.buy_qty, row.sell_qty, row.sum_sq_qty)
+        if value is not None
+    )
+    ticker_values = tuple(
+        row.trailing_day_native_volume for row in source.tickers if row.trailing_day_native_volume is not None
+    )
+    with _native_arithmetic((*values, *ticker_values, source.policy.significant_flow_sigma)):
+        qualified = _qualify_spot(source, start=source.start, cutoff=source.cutoff)
+        basic = _calculate_spot(source, qualified, start=source.start, cutoff=source.cutoff)
+        return DirectWindowConditionSpot.from_basic(
+            basic,
+            interval=ConditionInterval(window=window, start=source.start, cutoff=source.cutoff),
+            coverage_through=_coverage_through(qualified.observed),
+        )
 
 
 def _calculate_spot_sign_history(
