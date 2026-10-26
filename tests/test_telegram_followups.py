@@ -90,13 +90,15 @@ class FakeTelegram:
                 json={
                     "ok": True,
                     "result": {
+                        "file_id": body["file_id"],
+                        "file_unique_id": {"doc_1": "u1", "doc_a": "ua"}[body["file_id"]],
                         "file_path": "docs/" + body["file_id"],
                         "file_size": len(self.files[body["file_id"]]),
                     },
                 },
             )
         if method == "getMe":
-            return httpx.Response(200, json={"ok": True, "result": {"id": BOT}})
+            return httpx.Response(200, json={"ok": True, "result": {"id": BOT, "is_bot": True}})
         if method == "getUpdates":
             ready = [row for row in self.updates if row["update_id"] >= body.get("offset", 0)]
             return httpx.Response(200, json={"ok": True, "result": ready})
@@ -111,7 +113,7 @@ class FakeTelegram:
                         "parameters": {"retry_after": 1},
                     },
                 )
-            result = {"status": self.member}
+            result = {"status": self.member, "user": {"id": body["user_id"]}}
             if self.is_member is not None:
                 result["is_member"] = self.is_member
             return httpx.Response(200, json={"ok": True, "result": result})
@@ -1101,7 +1103,12 @@ async def test_files_over_20_mb_are_refused_with_a_notice() -> None:
         chat=int(ALERTS),
         chat_type="supergroup",
         caption="?",
-        document={"file_id": "big", "file_name": "a.zip", "file_size": 21 * 1024 * 1024},
+        document={
+            "file_id": "big",
+            "file_unique_id": "big-unique",
+            "file_name": "a.zip",
+            "file_size": 21 * 1024 * 1024,
+        },
         reply_to_message={"message_id": 55, "from": {"id": BOT}},
     )
     telegram = FakeTelegram([{"update_id": 1, "message": big}])
@@ -1183,7 +1190,7 @@ async def test_unsized_file_that_telegram_refuses_is_set_aside_without_blocking_
         chat=int(ALERTS),
         chat_type="supergroup",
         caption="?",
-        document={"file_id": "huge", "file_name": "big.bin"},
+        document={"file_id": "huge", "file_unique_id": "huge-unique", "file_name": "big.bin"},
         reply_to_message={"message_id": 55, "from": {"id": BOT}},
     )
     after = message(
@@ -1865,12 +1872,13 @@ def test_captions_are_cut_by_utf16_length_and_photos_fall_back_to_dimensions() -
         {
             "message_id": 1,
             "photo": [
-                {"file_id": "thumb", "width": 90, "height": 90},
-                {"file_id": "full", "width": 1280, "height": 960},
+                {"file_id": "thumb", "file_unique_id": "thumb-unique", "width": 90, "height": 90},
+                {"file_id": "full", "file_unique_id": "full-unique", "width": 1280, "height": 960},
             ],
         }
     )
-    assert photo["file_id"] == "full"
+    assert photo is not None and photo.file_id == "full"
+    assert photo.declared_size is None
 
 
 @pytest.mark.asyncio
@@ -2069,7 +2077,7 @@ async def test_too_large_file_in_a_pair_settles_both_messages() -> None:
         100,
         date=1_800_017_000,
         caption="Вот мой файл",
-        document={"file_id": "huge", "file_name": "big.bin"},
+        document={"file_id": "huge", "file_unique_id": "huge-unique", "file_name": "big.bin"},
     )
     forward = message(
         101,
@@ -2114,7 +2122,10 @@ async def test_paired_size_notice_failure_keeps_both_messages_retryable() -> Non
     repo = MemoryRepository()
     await seed(repo)
     comment = message(
-        110, date=1_800_018_000, caption="Файл", document={"file_id": "huge", "file_name": "b.bin"}
+        110,
+        date=1_800_018_000,
+        caption="Файл",
+        document={"file_id": "huge", "file_unique_id": "huge-unique", "file_name": "b.bin"},
     )
     forward = message(
         111,
@@ -2193,7 +2204,10 @@ async def test_paired_size_notice_settles_both_rows_in_one_transaction() -> None
     repo = MemoryRepository()
     await seed(repo)
     comment = message(
-        120, date=1_800_019_000, caption="Файл", document={"file_id": "huge", "file_name": "b.bin"}
+        120,
+        date=1_800_019_000,
+        caption="Файл",
+        document={"file_id": "huge", "file_unique_id": "huge-unique", "file_name": "b.bin"},
     )
     forward = message(
         121,
@@ -2246,7 +2260,12 @@ async def test_known_oversize_file_in_a_pair_settles_both_messages() -> None:
         130,
         date=1_800_020_000,
         caption="Файл",
-        document={"file_id": "big", "file_name": "b.zip", "file_size": 25 * 1024 * 1024},
+        document={
+            "file_id": "big",
+            "file_unique_id": "big-unique",
+            "file_name": "b.zip",
+            "file_size": 25 * 1024 * 1024,
+        },
     )
     forward = message(
         131,
@@ -2431,9 +2450,9 @@ async def test_reused_attachment_keeps_its_recorded_size() -> None:
             "message_id": 1,
             "document": {"file_id": "doc_a", "file_unique_id": "ua", "file_name": "a.txt"},
         }
-        first = await inbox.attachments(None, "q_r", "ses_1", body)
-        again = await inbox.attachments(None, "q_r", "ses_1", body)
-    assert first[0]["size"] == 5 and again[0]["size"] == 5
+        first = await inbox.attachments("q_r", "ses_1", body)
+        again = await inbox.attachments("q_r", "ses_1", body)
+    assert first[0].size == 5 and again[0].size == 5
 
 
 @pytest.mark.asyncio
