@@ -27,6 +27,9 @@ from typing import overload
 
 from pydantic import JsonValue
 
+from tank.analysis.condition_graph_codec import encode_scoped_condition_spot
+from tank.analysis.condition_input_codec import decode_spot_windows
+from tank.analysis.condition_inputs import SpotPolicyConfiguration
 from tank.analysis.execution import ExecutionLevelWire, ExecutionSide, execute_book_walk, execution_request
 from tank.analysis.positioning import (
     MissingOIDecomposition,
@@ -44,6 +47,7 @@ from tank.analysis.price_reference import (
     ReferencePriceSeries,
     decode_price_cadence,
 )
+from tank.analysis.spot import calculate_spot_window_graph
 from tank.analysis.statistics_contracts import (
     BaselineCaches,
     BetaEstimate,
@@ -4377,7 +4381,7 @@ def decisive_facts(spot, derivatives, liquidity, relative, supply, move_class, w
             )
         )
 
-    cvd = spot["composite_max"].get("cvd")
+    cvd = decimal(spot["composite_max"].get("cvd"))
     direction = spot.get("direction")
     venues = spot["composite_max"].get("venues", [])
     spot_instruments = [v.get("instrument_id", v["venue"]) for v in spot.get("venues", [])]
@@ -5025,60 +5029,39 @@ def bounded_market_snapshot(snapshot, end):
 
 
 def spot_window_graph(snapshot, start, end, av):
-    instruments = [
-        i for i in snapshot.get("instruments", []) if i.get("token_id") in (None, snapshot.get("token_id"))
-    ]
-    primary = "EVENT" if av and 900 <= (end - start).total_seconds() <= 86400 else "W4H"
-    snapshot["_primary"] = primary
-    windows = dict(WINDOWS, EVENT=(end - start).total_seconds())
+    parameters = _PARAMETERS.get()
+    if parameters is None:
+        raise ValueError("Spot computation requires captured policy")
+    policy = SpotPolicyConfiguration.model_validate(
+        {
+            name: parameters[name]
+            for name in ("significant_flow_sigma", "min_spot_venues")
+            if name in parameters
+        }
+    ).calculation_policy()
+    decoded = decode_spot_windows(
+        token_id=snapshot["token_id"],
+        cutoff=propagate_timestamp(snapshot, "cutoff"),
+        event_anchor=propagate_timestamp(snapshot, "anchor", missing_reason="NO_EVENT_ANCHOR"),
+        assembled_at=propagate_timestamp(snapshot, "assembled_at"),
+        instruments=snapshot["instruments"],
+        flow_bars=snapshot["flow_bars"],
+        flow_parent_bars=snapshot.get("flow_parent_bars", []),
+        flow_segments=flow_segments(snapshot),
+        tickers=snapshot["tickers"],
+        policy=policy,
+        native_ticker_volume_field="volume_native",
+    )
+    graph = calculate_spot_window_graph(decoded.inputs)
+    snapshot["_primary"] = graph.primary
     spots = {
-        name: spot_truth(
-            snapshot["flow_bars"],
-            snapshot["tickers"],
-            instruments,
-            end - timedelta(seconds=seconds),
-            end,
-            flow_segments=flow_segments(snapshot),
-            assembled_at=snapshot.get("assembled_at"),
-        )
-        for name, seconds in windows.items()
+        name: encode_scoped_condition_spot(value, decoded.source_evidence, clocks=decoded.clocks)
+        for name, value in graph.spots.items()
     }
-    cohort = set.intersection(*(set(v["venue"] for v in s["venues"]) for s in spots.values()))
-    for name, s in spots.items():
-        s.update(
-            window=name,
-            start=iso(end - timedelta(seconds=windows[name])),
-            cutoff=iso(end),
-            observed_at=iso(end) if s["venues"] else None,
-            precision="BUCKET(60s)" if s["venues"] else None,
-        )
-        selected = [v for v in s["venues"] if v["venue"] in cohort]
-        c = _composite(selected)
-        share = ratio(c["volume"], s["composite_max"]["volume"])
-        share_majority = strict_majority(c["volume"], s["composite_max"]["volume"])
-        valid = len(cohort) >= int(parameter("min_spot_venues", 2)) and share_majority is True
-        c.update(
-            cohort=sorted(cohort),
-            share_of_max=share,
-            share_majority=share_majority,
-            velocity=None,
-            reason=None if valid else "NOT_COHORT_CONSISTENT",
-        )
-        s["composite_cohort"] = c if valid else None
-        s["cohort_consistent"] = {other: valid for other in spots if other != name}
-        prev = spot_truth(
-            snapshot["flow_bars"],
-            snapshot["tickers"],
-            instruments,
-            end - timedelta(seconds=2 * windows[name]),
-            end - timedelta(seconds=windows[name]),
-            flow_segments=flow_segments(snapshot),
-            assembled_at=snapshot.get("assembled_at"),
-        )
-        pv = [v for v in prev["venues"] if v["venue"] in cohort]
-        if valid and len(pv) == len(cohort):
-            c["velocity"] = ratio(c["volume"], sum(v["volume_native"] for v in pv))
-    return spots, windows, primary, instruments
+    instruments = [
+        instrument for instrument in snapshot["instruments"] if instrument["token_id"] == snapshot["token_id"]
+    ]
+    return spots, graph.durations_s, graph.primary, instruments
 
 
 @precise

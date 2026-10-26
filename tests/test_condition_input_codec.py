@@ -12,7 +12,7 @@ from tank.analysis.condition_input_codec import (
     decode_spot_inputs,
     source_descriptor_digest,
 )
-from tank.analysis.condition_inputs import SpotCalculationPolicy
+from tank.analysis.condition_inputs import SpotCalculationPolicy, SpotPolicyConfiguration
 from tank.settings import Settings
 from tank.time_precision import Timestamp
 from tank.util import JsonInput
@@ -412,3 +412,28 @@ def test_unrequested_standalone_money_does_not_change_the_selected_scope_or_valu
     assert len(result.inputs.minutes) == 1
     assert result.inputs.minutes[0].buy_qty == Decimal(3)
     assert result.inputs.boundaries == ()
+
+
+@pytest.mark.parametrize("sigma", [2, 2.0, 0.05])
+def test_captured_spot_policy_retains_numeric_threshold_and_discrete_count(sigma: int | float) -> None:
+    policy = SpotPolicyConfiguration(significant_flow_sigma=sigma, min_spot_venues=2).calculation_policy()
+    assert policy.significant_flow_sigma == Decimal(str(sigma))
+    assert policy.min_spot_venues == 2
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {},
+        {"significant_flow_sigma": 2},
+        {"min_spot_venues": 2},
+        {"significant_flow_sigma": True, "min_spot_venues": 2},
+        {"significant_flow_sigma": "2", "min_spot_venues": 2},
+        {"significant_flow_sigma": float("inf"), "min_spot_venues": 2},
+        {"significant_flow_sigma": 2, "min_spot_venues": True},
+        {"significant_flow_sigma": 2, "min_spot_venues": 2.0},
+    ],
+)
+def test_captured_spot_policy_refuses_absent_or_coerced_facts(values: dict[str, JsonInput]) -> None:
+    with pytest.raises(ValidationError):
+        SpotPolicyConfiguration.model_validate(values)

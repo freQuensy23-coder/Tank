@@ -194,6 +194,17 @@ class SpotTickerObservation(DomainModel):
         )
 
 
+class SpotPolicyConfiguration(DomainModel):
+    significant_flow_sigma: float = Field(gt=0)
+    min_spot_venues: int = Field(ge=1)
+
+    def calculation_policy(self) -> "SpotCalculationPolicy":
+        return SpotCalculationPolicy(
+            significant_flow_sigma=Decimal(str(self.significant_flow_sigma)),
+            min_spot_venues=self.min_spot_venues,
+        )
+
+
 class SpotCalculationPolicy(DomainModel):
     significant_flow_sigma: Decimal = Field(gt=0)
     min_spot_venues: int = Field(ge=1)
