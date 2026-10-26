@@ -243,3 +243,28 @@ def test_integer_marker_cannot_be_a_known_baseline_predicate() -> None:
     invalid = observed_oi_without_usd().model_copy(update={"native_beyond": 1})
     with pytest.raises(ValueError, match="require booleans"):
         oi_class_from_comparisons(invalid.native_beyond, None, MissingOIDecomposition())
+
+
+def test_unestimable_population_range_preserves_current_native_endpoints_and_known_change() -> None:
+    unavailable = FloatRange(bounds=None, reason="NOT_ESTIMABLE")
+    change = native_oi_change(Decimal(10), Decimal(12), normal_range=unavailable)
+    assert change.value == 0.2 and change.reason is None
+    assert change.position is None and change.beyond is None
+    assert change.endpoints.start == Decimal(10) and change.endpoints.end == Decimal(12)
+    base = observed_oi_without_usd()
+    value = ObservedConditionOpenInterest.model_validate(
+        base.model_copy(
+            update={
+                "native_normal_range": unavailable,
+                "native_oi_vs_normal": None,
+                "native_beyond": None,
+                "oi_class": None,
+                "classification_ready": False,
+            }
+        )
+    )
+    wire = encode_condition_open_interest(value)
+    assert value.oi_native_start == base.oi_native_start and value.oi_native_end == base.oi_native_end
+    assert value.oi_native_chg_pct == base.oi_native_chg_pct and value.oi_native_chg_pct_reason is None
+    assert wire["native_normal_range"] is None and wire["native_normal_range_reason"] == "NOT_ESTIMABLE"
+    assert wire["native_beyond"] is None and wire["oi_class"] is None

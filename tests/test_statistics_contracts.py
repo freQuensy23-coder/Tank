@@ -178,3 +178,19 @@ def test_unavailable_history_never_invents_a_cadence_or_measured_endpoints() -> 
         RelativeHistory(samples=StatisticalPopulation([1.0]), diagnostics=diagnostic)
     with pytest.raises(ValidationError):
         UnavailableHistoryDiagnostics.model_validate(diagnostic.model_copy(update={"resolution_s": 0.0}))
+
+
+def test_float_baseline_not_estimable_never_supplies_numeric_or_infinite_bounds() -> None:
+    unavailable = FloatRange(bounds=None, reason="NOT_ESTIMABLE")
+    assert unavailable.bounds is None and unavailable.reason == "NOT_ESTIMABLE"
+    assert FloatRange.model_validate_json(unavailable.model_dump_json()) == unavailable
+    with pytest.raises(ValidationError, match="require a reason"):
+        FloatRange(bounds=FloatBounds(lower=0.0, upper=0.0), reason="NOT_ESTIMABLE")
+    with pytest.raises(ValidationError):
+        FloatRange.model_validate({"bounds": {"lower": 0.0, "upper": float("inf")}, "reason": None})
+    with pytest.raises(ValidationError):
+        FloatRange.model_validate({"bounds": None, "reason": "UNKNOWN"})
+    with pytest.raises(ValidationError):
+        DecimalRange.model_validate({"bounds": None, "reason": "NOT_ESTIMABLE"})
+    with pytest.raises(ValueError, match="finite real"):
+        StatisticalPopulation([float("inf")])
