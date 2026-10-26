@@ -9,7 +9,7 @@ from tank.contracts import DomainModel
 from tank.contracts.milestone_checks import ScheduledMilestoneCheck
 from tank.contracts.progress import JobFailureProgressView
 from tank.contracts.question_retirement import QuestionFailureRefusalReceipt
-from tank.contracts.scalars import FalseFlag, TrueFlag
+from tank.contracts.scalars import FalseFlag
 from tank.contracts.session_admission import SessionTarget
 from tank.contracts.session_followups import FollowupRefusalTarget
 from tank.time_precision import Timestamp, propagate_timestamp, timestamp_owned_fields
@@ -55,46 +55,14 @@ class EvalConditionsJob(JobPayload):
     cutoff_prec_reason: str | None
     cutoff_bucket_anchor: BucketAnchor | None = None
 
+    @model_validator(mode="after")
+    def actual_cutoff(self) -> Self:
+        Timestamp(self.cutoff, self.cutoff_prec, self.cutoff_prec_reason, self.cutoff_bucket_anchor)
+        return self
+
 
 class MilestoneCheckJob(ScheduledMilestoneCheck, JobPayload):
     pass
-
-
-class ReactionAnchor(DomainModel):
-    type: Literal["T0", "T1", "KNOWN_TO_US_AT"]
-    ts: str
-    ts_prec: str | None
-    ts_prec_reason: str | None
-    precision: str | None = None
-    ts_bucket_anchor: BucketAnchor | None = None
-
-
-type ReactionCheckpoint = Literal[
-    "PRE_24H", "PRE_4H", "PRE_1H", "POST_15M", "POST_1H", "POST_4H", "POST_24H", "POST_72H"
-]
-
-
-class ScheduledReactionJob(JobPayload):
-    event_id: str
-    token_id: str
-    checkpoint: ReactionCheckpoint
-    anchor: ReactionAnchor
-    cutoff: str
-    cutoff_prec: str | None
-    cutoff_prec_reason: str | None
-    cutoff_bucket_anchor: BucketAnchor | None = None
-    retro: bool
-    revision: int = Field(default=1, ge=1)
-    reason: str | None = None
-
-
-class RevisedReactionJob(JobPayload):
-    event_id: str
-    token_id: str
-    checkpoint: ReactionCheckpoint
-    automatic_revision: TrueFlag
-    change_id: str
-    reason: str = Field(min_length=1)
 
 
 class AlertDeliveryJob(JobPayload):

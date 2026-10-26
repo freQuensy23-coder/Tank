@@ -87,6 +87,42 @@ class RepositoryWorkerQueue:
         document = await self.store.get("ops.jobs", claim.job_id)
         return document is not None and claim.matches(document)
 
+    async def terminal(self, claim: RunningJobClaim) -> JobEnvelope | None:
+        claim = RunningJobClaim.model_validate(claim)
+        document = await self.store.get("ops.jobs", claim.job_id)
+        if document is None:
+            return None
+        current = JobEnvelope.model_validate(document)
+        if (
+            current.status not in {"FAILED", "EXPIRED"}
+            or current.job_id != claim.job_id
+            or current.type != claim.kind
+            or current.claim_token != claim.claim_token
+            or current.attempts != claim.attempts
+            or current.recovery_count != claim.recovery_count
+            or sha256(current.payload) != claim.payload_revision
+        ):
+            return None
+        return current
+
+    async def interrupt(self, claim: RunningJobClaim, observed_at: Timestamp) -> bool:
+        claim = RunningJobClaim.model_validate(claim)
+        observed_at = Timestamp.model_validate(observed_at)
+        if observed_at.value is None:
+            raise ValueError("Controlled interruption requires its actual controller clock")
+
+        def interrupted(current: JobEnvelope) -> JobClaimMutation:
+            return JobClaimMutation(
+                status="QUEUED",
+                attempts=current.attempts - 1,
+                run_after=observed_at,
+                finished_at=Timestamp(None, None, "PENDING"),
+                interrupted_at=observed_at,
+                interruption_reason="CONTROLLED_GENERATION_STOP",
+            )
+
+        return await self.store.transition_claimed_job(claim, interrupted) is not None
+
     async def dependency(self, job_id: str) -> DependencyState | None:
         record = await self.store.get("ops.jobs", job_id)
         if record is None:

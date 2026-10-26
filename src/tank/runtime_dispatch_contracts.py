@@ -15,11 +15,10 @@ from tank.runtime_contracts import (
     ItemJob,
     MarketTruthJob,
     MilestoneCheckJob,
-    RevisedReactionJob,
-    ScheduledReactionJob,
     ScoutReviewJob,
     TelegramAnswerJob,
 )
+from tank.runtime_reaction import ReactionInput
 from tank.runtime_retry import ApplicationBackoff, WorkerRetrySchedule
 from tank.time_precision import Timestamp
 from tank.util import sha256
@@ -81,7 +80,7 @@ class MilestoneCheckCommand(DomainModel):
 
 class ReactionCaptureCommand(DomainModel):
     type: Literal["REACTION_CAPTURE"]
-    payload: ScheduledReactionJob | RevisedReactionJob
+    payload: ReactionInput
 
 
 class ScoutReviewCommand(DomainModel):

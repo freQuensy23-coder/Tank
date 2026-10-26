@@ -2107,3 +2107,52 @@ status, not an unrelated current claim token/full envelope. The one canonical
 model prevents a reaction/dispatcher import cycle; actual readers must still
 match the returned identity against the requested storage key. All 24 pure cases
 pass in 6.35 seconds, zero skips/source guards; independent strict3/Ruff pass.
+
+Closed whole-worker API checkpoint (caller cohort still held)
+
+Runtime.worker now claims through RepositoryWorkerQueue, quarantines invalid
+commands with the observed token/raw revision, and dispatches the closed command
+variants through actual Pipeline/Session/Market/Delivery/Scheduler/Inbox use cases.
+There is no handler dictionary or fabricated active_jobs fallback. The only
+JsonValue result is the actual durable ops.jobs.result serialization boundary;
+source, message, truth, condition and scout results are revalidated and bound to
+the requested identity before serialization. Existing void ports return explicit
+None without inventing a delivered/provider-success receipt. Reaction execution
+receives ReactionJobInvocation.from_envelope with the authoritative original
+claim, not an identity guessed from its payload.
+
+All completion/failure/dependency/admission/delivery deferral and due-expiry writes
+use the token-fenced atomic port. The current-scope read before dispatch is an
+observation, not a network lease; native/Telegram effects retain their own actual
+ownership and idempotency responsibilities. Active work is indexed by actual
+(job ID, claim token), so an old worker finishing cannot erase a newer same-job
+scope. active_jobs is a read-only view of those real owned records. Controlled
+shutdown snapshots scopes before cancelling/draining owned tasks, then refunds
+only still-owned attempts with the actual interruption clock. Unavailable commit
+acknowledgment is not reported as success and retry cannot refund twice.
+
+Malformed EVAL clocks are now admitted by the existing Timestamp contract at the
+queue DTO boundary, so they quarantine once before the evaluator rather than
+consume retries for a permanent malformed command. The original no-clock-guess,
+no-evaluator-call/no-condition-write assertions remain. The unused duplicate
+reaction DTOs were retired; strict flag tests now use the actual ChangedReactionJob.
+
+Independent strict six targets including the complete Runtime source and new
+controlled-stop caller tests pass; scoped Ruff/format pass. Configured whole-source
+mypy has only the separately owned truth _condition_cache annotation error (199
+sources); no Runtime errors remain. The selected 54 functional units pass in 23.70
+seconds and every case is below 10 seconds, but their subset p90 is 1.692 seconds
+(max 2.572). The failed subset-checker receipt is preserved, not a global unit-gate
+claim. Per the lead's docs/TESTING interpretation, the full default unit selection
+must still establish global p90. No fixture shrinking, caps or deadlines changed.
+All 28 selected actual PostgreSQL cases pass in 34.16 seconds, zero skips/source
+fingerprints. Proof prefixes whole-worker-controlled-smoke-unit/actual. The first
+smoke's missing-clock error-name assertion was updated from ValidationError to
+permanent INVALID_QUEUE_ENVELOPE and now additionally requires one attempt.
+
+This is an inactive concrete API for peer constructor/dispatcher caller migration.
+Existing raw handler/object.__new__ fixtures, all real producer/recovery callers,
+full financial/E2E/Go cohort and global timing qualification remain required.
+The existing strict-test dependency on untyped Scheduler.tick remains visible;
+no suppression was added. Remaining Session body/tool/usage/event work and the
+assigned vendor programs are still open.
