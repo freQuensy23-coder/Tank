@@ -10,6 +10,8 @@ from pydantic import JsonValue
 from tank.analysis.condition_graph_contracts import (
     AvailableConditionFunding,
     BasicConditionSpot,
+    CapturedConditionUnlocks,
+    CapturedConditionWalletFlows,
     ConditionAggregateLiquidations,
     ConditionBoundaryGroup,
     ConditionCadence,
@@ -46,8 +48,11 @@ from tank.analysis.condition_graph_contracts import (
     ConditionRelativeGraph,
     ConditionRelativeNormalRange,
     ConditionRelativeWindow,
+    ConditionScheduledUnlock,
     ConditionSpotValues,
     ConditionSynchronizedOpenInterest,
+    ConditionWalletFlow,
+    ConditionWalletFlowEvidenceRef,
     ConditionWireClocks,
     DeclaredConditionCadence,
     DeclaredConditionDirection,
@@ -64,6 +69,7 @@ from tank.analysis.condition_graph_contracts import (
     ObservedConditionReferencePrice,
     ObservedConditionSizeProfile,
     SelectiveConditionConfidence,
+    UnavailableConditionCirculatingShare,
     UnavailableConditionLeadLag,
     UnavailableConditionOpenInterest,
     UnavailableConditionSizeProfile,
@@ -1143,3 +1149,101 @@ def encode_condition_depth(value: ConditionDepthNode, *, clocks: ConditionWireCl
         "spread_ratio": depth.spread_ratio,
         "observations": observations,
     }
+
+
+class ConditionSupplyEvidenceLookup(Protocol):
+    """Reproject verified captured-observation facts without replacing absent evidence."""
+
+    def resolve_wallet_flow(
+        self, reference: ConditionWalletFlowEvidenceRef, *, expected: ConditionWalletFlow
+    ) -> Mapping[str, JsonValue]: ...
+
+    def resolve_unlock(self, *, expected: ConditionScheduledUnlock) -> Mapping[str, JsonValue]: ...
+
+
+def _verified_supply_wire(value: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+    checked = JsonDocument.validate_value(dict(value))
+    if not isinstance(checked, dict):
+        raise ValueError("Supply source evidence must resolve to a verified object")
+    return deepcopy(checked)
+
+
+def encode_condition_wallet_flows(
+    value: CapturedConditionWalletFlows, evidence: ConditionSupplyEvidenceLookup
+) -> dict[str, JsonValue]:
+    captured = CapturedConditionWalletFlows.model_validate(value)
+    flows: list[JsonValue] = []
+    for flow in captured.flows:
+        visibility = flow.visibility.eligible()
+        if not isinstance(visibility, ConditionObservedPredicate) or not visibility.value:
+            continue
+        resolved = evidence.resolve_wallet_flow(flow.evidence, expected=flow)
+        wire = _verified_supply_wire(resolved)
+        wire.update(_clock_wire(flow.observed_at, "ts"))
+        wire.update(
+            {
+                "class": flow.classification,
+                "class_reason": flow.classification_reason,
+                "qty": _decimal_wire(flow.quantity_native),
+                "qty_reason": flow.quantity_reason,
+                "reaches_exchange": flow.reaches_exchange,
+                "destination_reason": flow.destination_reason,
+                "evidence": _model_wire(flow.evidence),
+            }
+        )
+        flows.append(wire)
+    return {
+        "flows": flows,
+        "observation": _model_wire(captured.observed_evidence()),
+        "successful_queries": captured.successful_queries,
+        "query_visibility": _model_wire(captured.query_visibility),
+        "coverage": _model_wire(captured.coverage),
+        "coverage_errors": [_model_wire(error) for error in captured.coverage_errors],
+    }
+
+
+def encode_condition_unlocks(
+    value: CapturedConditionUnlocks, evidence: ConditionSupplyEvidenceLookup
+) -> dict[str, JsonValue]:
+    captured = CapturedConditionUnlocks.model_validate(value)
+    visibility = captured.visibility.eligible()
+    available = isinstance(visibility, ConditionObservedPredicate) and visibility.value
+    schedules: list[JsonValue] = []
+    if available:
+        for unlock in captured.upcoming:
+            resolved = evidence.resolve_unlock(expected=unlock)
+            wire = _verified_supply_wire(resolved)
+            share = unlock.circulating_share
+            wire.update(_clock_wire(unlock.scheduled_at, "date"))
+            wire.update(
+                {
+                    "token_id": unlock.token_id,
+                    "qty": _decimal_wire(unlock.quantity_native),
+                    "qty_reason": unlock.quantity_reason,
+                    "label": unlock.label,
+                    "pct_circulating": _decimal_wire(share.value),
+                    "pct_circulating_unit": None
+                    if isinstance(share, UnavailableConditionCirculatingShare)
+                    else share.unit,
+                    "circulating_share": _model_wire(share),
+                    "recipient_class": unlock.recipient_class,
+                    "transferable": unlock.transferable,
+                    "transferability_reason": unlock.transferability_reason,
+                    "inference": "POTENTIAL_SUPPLY_IS_NOT_A_SALE",
+                    "source_observation_sha256": unlock.source_observation_sha256,
+                    "schedule_index": unlock.schedule_index,
+                }
+            )
+            schedules.append(wire)
+    result: dict[str, JsonValue] = {
+        "unlocks_next_14d": schedules,
+        "schedule_available": available,
+        "schedule_reason": None
+        if available
+        else "RECEIVED_AFTER_ASSEMBLY"
+        if isinstance(visibility, ConditionObservedPredicate)
+        else "RECEIPT_VISIBILITY_UNPROVEN",
+        "capture_visibility": _model_wire(captured.visibility),
+    }
+    result.update(_clock_wire(captured.observed_at, "observed_at"))
+    return result

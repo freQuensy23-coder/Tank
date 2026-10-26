@@ -19,7 +19,10 @@ from tank.analysis.condition_graph_contracts import (
     ConditionGeneratedEmptyFlowProjection,
     ConditionReferenceTradeEvidenceRef,
     ConditionReferenceTradeProjection,
+    ConditionScheduledUnlock,
     ConditionSizeProfile,
+    ConditionWalletFlow,
+    ConditionWalletFlowEvidenceRef,
     ConditionWireClocks,
     EnrichedConditionSpot,
     FlowAggregateEvidenceRef,
@@ -1265,3 +1268,125 @@ def test_depth_wire_preserves_source_precision_and_exact_usd_amounts() -> None:
                 update={"cutoff": Timestamp(value="2026-10-17T12:01:00Z", precision="COLLECTION_ONLY")}
             ),
         )
+
+
+class SupplyWireEvidence:
+    def __init__(self, flow: ConditionWalletFlow, unlock: ConditionScheduledUnlock) -> None:
+        self.flow = flow
+        self.unlock = unlock
+        self.flow_calls = 0
+        self.unlock_calls = 0
+        self.flow_wire: dict[str, JsonValue] = {
+            "token_id": flow.token_id,
+            "classification": flow.classification,
+            "qty_native": str(flow.quantity_native),
+            "reaches_exchange": flow.reaches_exchange,
+            "source_note": {"exact_extension": ["retained"]},
+        }
+        self.unlock_wire: dict[str, JsonValue] = {
+            "token_id": unlock.token_id,
+            "source_note": {"exact_extension": ["retained"]},
+        }
+
+    def resolve_wallet_flow(
+        self, reference: ConditionWalletFlowEvidenceRef, *, expected: ConditionWalletFlow
+    ) -> Mapping[str, JsonValue]:
+        self.flow_calls += 1
+        if reference != self.flow.evidence or expected != self.flow:
+            raise ValueError("Captured wallet source does not reproject to the requested facts")
+        return self.flow_wire
+
+    def resolve_unlock(self, *, expected: ConditionScheduledUnlock) -> Mapping[str, JsonValue]:
+        self.unlock_calls += 1
+        if expected != self.unlock:
+            raise ValueError("Captured unlock source does not reproject to the requested facts")
+        return self.unlock_wire
+
+
+def test_supply_wire_preserves_extensions_explicit_absence_and_potential_supply_semantics() -> None:
+    from test_condition_graph_contracts import unlock_schedule, wallet_flows
+
+    from tank.analysis.condition_graph_codec import encode_condition_unlocks, encode_condition_wallet_flows
+
+    flows, unlocks = wallet_flows(), unlock_schedule()
+    evidence = SupplyWireEvidence(flows.flows[0], unlocks.upcoming[0])
+    flow_source_before, unlock_source_before = deepcopy(evidence.flow_wire), deepcopy(evidence.unlock_wire)
+    flow_wire = encode_condition_wallet_flows(flows, evidence)
+    assert flow_wire["coverage"] == {"status": "UNAVAILABLE", "reason": "QUERY_SCOPE_NOT_CAPTURED"}
+    observation = flow_wire["observation"]
+    assert isinstance(observation, dict)
+    assert observation["status"] == "NO_POSITIVE_OBSERVATION" and observation["observation_count"] == 1
+    records = flow_wire["flows"]
+    assert isinstance(records, list) and len(records) == 1
+    flow = records[0]
+    assert isinstance(flow, dict)
+    assert flow["class"] == "AMBIGUOUS" and flow["qty"] == "10"
+    assert flow["source_note"] == evidence.flow_wire["source_note"]
+    assert flow["ts"] == flows.flows[0].observed_at.value and flow["ts_prec"] == "EXACT"
+    unlock_wire = encode_condition_unlocks(unlocks, evidence)
+    assert unlock_wire["schedule_available"] is True and unlock_wire["schedule_reason"] is None
+    schedules = unlock_wire["unlocks_next_14d"]
+    assert isinstance(schedules, list) and len(schedules) == 1
+    unlock = schedules[0]
+    assert isinstance(unlock, dict)
+    assert unlock["date"] == unlocks.upcoming[0].scheduled_at.value
+    assert unlock["date_prec"] is None and unlock["date_prec_reason"] == "NOT_CAPTURED"
+    assert unlock["pct_circulating"] is None and unlock["pct_circulating_unit"] is None
+    assert unlock["label"] is None and unlock["transferable"] is True
+    assert unlock["inference"] == "POTENTIAL_SUPPLY_IS_NOT_A_SALE"
+    assert unlock["source_note"] == evidence.unlock_wire["source_note"]
+    for record in (flow, unlock):
+        note = record["source_note"]
+        assert isinstance(note, dict)
+        extension = note["exact_extension"]
+        assert isinstance(extension, list)
+        extension.append("changed")
+    assert evidence.flow_wire == flow_source_before and evidence.unlock_wire == unlock_source_before
+    assert evidence.flow_calls == evidence.unlock_calls == 1
+
+
+def test_future_received_supply_records_do_not_rejoin_original_evidence_as_available() -> None:
+    from test_condition_graph_contracts import unlock_schedule, wallet_flows
+
+    from tank.analysis.condition_graph_codec import encode_condition_unlocks, encode_condition_wallet_flows
+    from tank.time_precision import Timestamp
+
+    flows, unlocks = wallet_flows(), unlock_schedule()
+    evidence = SupplyWireEvidence(flows.flows[0], unlocks.upcoming[0])
+    future_visibility = flows.query_visibility.model_copy(
+        update={"received_at": Timestamp(value="2026-10-17T12:00:01Z", precision="COLLECTION_ONLY")}
+    )
+    later_flows = type(flows).model_validate(
+        flows.model_copy(
+            update={"flows": (flows.flows[0].model_copy(update={"visibility": future_visibility}),)}
+        )
+    )
+    later_unlocks = type(unlocks).model_validate(unlocks.model_copy(update={"visibility": future_visibility}))
+    assert encode_condition_wallet_flows(later_flows, evidence)["flows"] == []
+    result = encode_condition_unlocks(later_unlocks, evidence)
+    assert result["unlocks_next_14d"] == [] and result["schedule_available"] is False
+    assert result["schedule_reason"] == "RECEIVED_AFTER_ASSEMBLY"
+    assert evidence.flow_calls == evidence.unlock_calls == 0
+
+
+def test_supply_wire_propagates_source_reprojection_refusal_without_filling_expected_facts() -> None:
+    from test_condition_graph_contracts import unlock_schedule, wallet_flows
+
+    from tank.analysis.condition_graph_codec import encode_condition_unlocks, encode_condition_wallet_flows
+
+    flows, unlocks = wallet_flows(), unlock_schedule()
+    evidence = SupplyWireEvidence(flows.flows[0], unlocks.upcoming[0])
+    changed_flows = type(flows).model_validate(
+        flows.model_copy(
+            update={"flows": (flows.flows[0].model_copy(update={"quantity_native": Decimal(11)}),)}
+        )
+    )
+    with pytest.raises(ValueError, match="does not reproject"):
+        encode_condition_wallet_flows(changed_flows, evidence)
+    changed_unlocks = type(unlocks).model_validate(
+        unlocks.model_copy(
+            update={"upcoming": (unlocks.upcoming[0].model_copy(update={"schedule_index": 1}),)}
+        )
+    )
+    with pytest.raises(ValueError, match="does not reproject"):
+        encode_condition_unlocks(changed_unlocks, evidence)
