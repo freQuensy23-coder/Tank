@@ -12,13 +12,14 @@ from tank.contracts.telegram_wire import (
     TelegramMessageIdentity,
     TelegramMessageReceipt,
     TelegramSenderIdentity,
+    TelegramSentMessageReceipt,
     TelegramSuccess,
     TelegramUnsupportedUpdate,
     TelegramUpdateReceipt,
 )
 
 
-class TelegramProtocolError(RuntimeError):
+class TelegramProtocolError(ValueError):
     """An API response cannot establish the required Telegram facts."""
 
 
@@ -44,7 +45,7 @@ def response_result(payload: bytes, *, method: str, status: int) -> JsonValue:
     except (ValueError, ValidationError):
         raise TelegramProtocolError(f"Telegram {method} response is invalid (HTTP {status})") from None
     if status != 200:
-        raise TelegramResponseError(method, status, retry_after=None)
+        raise TelegramProtocolError(f"Telegram {method} success conflicts with HTTP {status}")
     return success.result
 
 
@@ -121,3 +122,15 @@ def pairing_sender_id(record: Mapping[str, JsonValue]) -> str | None:
     if stored != str(identity.id):
         raise ValueError("Retained Telegram sender identity conflicts with its wire")
     return stored
+
+
+def sent_message_receipt(result: JsonValue) -> TelegramSentMessageReceipt:
+    """Admit consumed receipt identity before any caller records delivery success."""
+    try:
+        if not isinstance(result, dict):
+            raise ValueError("Telegram sent message result requires an object")
+        return TelegramSentMessageReceipt.model_validate(
+            {field: result[field] for field in TelegramSentMessageReceipt.model_fields if field in result}
+        )
+    except (ValueError, ValidationError):
+        raise TelegramProtocolError("Telegram sent message receipt is invalid") from None
