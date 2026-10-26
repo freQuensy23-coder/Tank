@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture
+from session_followup_fixtures import UnexpectedFollowupRefusals
 
 from tank.agents import SessionService
 from tank.settings import Settings
@@ -73,7 +74,12 @@ async def finish(repo, config=None):
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(
-            repo, config or settings(), None, http=http, versions=declared_versions_fixture()
+            repo,
+            config or settings(),
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
 
         async def complete(*args, **kwargs):
@@ -136,7 +142,14 @@ async def test_a_reader_question_counts_as_the_last_message() -> None:
         "out.user_questions", "q_1", {"question_id": "q_1", "session_id": "ses_1", "asked_at": asked}
     )
     async with httpx.AsyncClient() as http:
-        service = SessionService(repo, settings(), None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            settings(),
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         assert await service.last_message_at(await repo.get("ops.agent_sessions", "ses_1")) == parse_time(
             asked
         )
@@ -196,7 +209,14 @@ async def test_sweep_skips_retained_sessions_until_their_retention_passes() -> N
     _, session = await finish(repo)
     checked = []
     async with httpx.AsyncClient() as http:
-        service = SessionService(repo, settings(), None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            settings(),
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         stop = asyncio.Event()
 
         async def record(sid):

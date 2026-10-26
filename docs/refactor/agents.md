@@ -1034,3 +1034,174 @@ The separate followup-policy branch is preserved at dd9d1f9a and is not an
 ancestor of this bounded repair. The distinct UnprovedInputOwnership versus
 durable retry-refusal chronology audit is queued; this correction does not
 claim to resolve that unproven case.
+
+## Local Context3 and required followup reporting cohort
+
+Server development is frozen. This cohort uses the managed local agents worktree,
+normal canonical main 4d955ee0 and peer reporter lineage 664ab499/65740ba7/6397590d.
+The required-port composition is 87bac743; source checkpoint 43a2c7af contains
+that composition and the current-main peer fixture. No source was copied from a
+peer worktree and no inactive policy entered the parent main merge.
+
+SessionService now consumes pure inward followup eligibility and a required
+FollowupRefusalSink. Its target requires both actual question and session IDs;
+repository refusal formatting/persistence stays outside the core. The writer
+checks both identities inside the existing question lock/transaction and keeps
+first-answer/idempotent delivery behavior. Current/retained MISSING remains
+absence, not termination; known termination wins. Historical unknown lifecycle
+facts remain unknown and can only permit a native preflight, not input by
+themselves. Known retention with missing duration has an explicit unreported
+period variant. Concurrent termination after a 404 lookup, failed refusal
+persistence, foreign stored session identity and cross-session question binding
+have actual behavior oracles. The core imports answer persistence from inward
+question_answers; message/file formatting still imports Telegram helpers and
+is separate remaining layer work.
+
+Context3 preserves the incoming preliminary-card and timed-review instructions.
+Closed timed/metric fired-message variants preserve actual saved event/question/
+schedule and origin-session routing, without a fake token or metric predicate.
+Both require FIRED phase. The optional lifecycle-clock correction is consumed
+from its owner; no dummy firing/last-evaluation/cancellation times were authored.
+Condition-reference projection supports the actual timed expression and existing
+AGENT role.
+
+Archive selection uses strict card/delivery projections only in the phase that
+consumes them. CLOSED/MERGED do not demand unused denial metadata. INVALIDATED
+requires an actual aware finalization clock, required kind/positive revision,
+latest ordinary UPDATE or preliminary-only terminal correction and matching
+SENT delivery. No missing kind/revision/correction becomes ordinary/zero/false.
+The ordinary chain takes precedence over later preliminary cards.
+
+The actual tool validator implements the needed oneOf/const/not/allOf/if/then/
+else subset. It preserves numeric/boolean distinctions, object constraints in
+typeless branch schemas, schema-vs-instance failures and static no-input-echo
+errors. The existing single-WHY ordinary-card oracle still refuses before
+actual dispatch; preliminary one-WHY has a separate positive control. The
+watch manifest matches its three exclusive action schemas; validation does not
+insert defaults. The stated expiry72 default comes from the written policy.
+
+Local terminal proofs, with every log/XML outside the tested worktree:
+
+- 9e5542ba focused 370 cases: 19.14 s, zero skips, p90 0.193 s, max 4.608 s.
+- 43a2c7af owned 705 units: 41.47 s, zero skips, p90 0.557 s, max 5.114 s.
+- 43a2c7af selected actual native PostgreSQL cases: 13 passed in 6.82 s.
+- 43a2c7af full collected owned Linux integration selection: 130 passed in
+  40.26 s, zero skips, including actual pinned Node codec/pi gateway and service
+  lifecycle cases. The exact node-gateway lock matched the immutable tool image.
+- Independent strict 14 source/test targets and scoped Ruff pass. Configured
+  whole-source mypy on the tested prefix reports only the owner watch nullable
+  loop variable and existing analysis truth-cache annotation; no owned error.
+
+The local wrapper verified unchanged source identities and exact owned services;
+these are local results, not relabeled server evidence. Evidence prefixes are
+followup-9e5542ba-native-unit, followup-43a2c7af-owned-unit,
+followup-43a2c7af-native-integration and
+followup-43a2c7af-owned-linux-integration under the external agents evidence.
+The cohort remains held until replay and E2E required-constructor companions
+qualify together. Full SessionService/Runtime typing, legacy archival aggregate
+maps and assigned vendor programs remain open. The queued distinct
+UnprovedInputOwnership chronology concern still requires reproduction before
+any fix or completion claim.
+
+The final unknown-facts preflight fixture explicitly retains empty native and
+termination components; these carry no observed terminal fact. All 35 policy
+contract/actual-preflight cases pass again in 1.89 seconds, zero skips, with
+source identity verified (followup-final-unknown-facts external evidence).
+The refreshed inventory covers 41 owned active Python files and still lists
+30 SessionService/free-helper and four Runtime functions annotation-incomplete.
+
+Final bounded cohort readiness supersedes the earlier peer hold: canonical
+35cc6309 normally contains current parent ee54ddba, ingestion reporter/callers,
+quality c70f323e E2E/preliminary callers and analysis 8e8a5b65 replay/callers.
+Only the timed Telegram fixture constructor overlap needed reconciliation;
+all incoming typed guards/dynamic event identity and the real refusal writer
+were preserved. The complete joint selection covers 71 affected source/caller
+test files. All 1,165 units pass in 65.54 seconds, zero skips, p90 0.631 seconds,
+maximum 6.137 seconds. All 192 collected Linux integrations pass in 64.30
+seconds, zero skips. Both local wrappers exit zero and verify unchanged source
+identities and exact owned service/runtime identities. Evidence prefix is
+followup-35cc6309-joint-{unit,integration} under external agents evidence.
+Independent strict 14 targets, scoped Ruff and comment checks pass. Configured
+whole-source mypy checks 157 files with only the existing owner
+analysis/truth.py:5890 condition-cache annotation error; the nullable watch
+loop error is resolved by its canonical owner companion. This qualifies the
+required refusal/eligibility cohort and its current callers for parent review;
+it does not close the remaining whole-session/runtime/vendor work or claim
+that the queued ownership-chronology concern has been reproduced or fixed.
+
+### Durable ownership refusal preserves native chronology
+
+The immutable aedee0d2 diagnostic reproduces one historical acknowledged input
+with no retained attempt starving a later independently owned fresh frame in
+managed paging, Node paging and SSE, including a restarted controller. It is
+negative evidence, not an integrated success claim. The bounded correction
+adds four explicit UnprovedOwnershipReason tags at the actual journal/tool
+lineage readers and handles only that named exception beside the existing
+UnknownNativeRetryState. Generic ValueError, contradictory lineage and schema
+failures still propagate. No attempt, owner, body, terminal event or producer
+provenance is invented. Existing captured unknown fields remain unchanged.
+
+The existing closed host refusal receipt admits those four reasons. Its
+host_retry_refusals wire map and NativeRetryRefusal names are preserved for
+existing durable storage; values remain named strict records indexed by the
+actual frame/session/execution digest. Persistence precedes both in-memory
+seen state and cursor advancement. Exact duplicate receipts retain their
+original controller/version and observation clock. A lost commit response is
+reconciled from that exact receipt; a failure before persistence leaves the
+entire row and cursor unchanged. A subsequent independently owned turn keeps
+its declared zero and original turn-retry:session:fresh idempotency key.
+
+The event-kind audit found input lineage is consumed by custom-tool,
+running/rescheduled and failure/error turn effects. Actual
+session.status_terminated and span.model_request_end billing are outside that
+check. An actual service regression proves both still persist their native
+facts with unproved historical turn attempts and no input HTTP. Another
+regression leaves contradictory stored attempts unhandled, with no receipt,
+seen state, cursor or HTTP effects. SessionService.close and stop_followers
+now declare their actual None return while tests retain real owned cleanup.
+The inventory remains incomplete: 28 SessionService/free-helper and four
+Runtime functions still require full annotation/model migration; all vendor
+implementation work and broader session orchestration remain open.
+
+Pre-final proof: 52 focused units pass in 2.47 seconds, zero skips; all twelve
+collected actual PostgreSQL cases pass in 5.90 seconds, zero skips. The latter
+crosses managed/Node/SSE with failure-before-write/lost-commit-ack and both
+unknown retry and unproved input-owner states. Independent strict four
+source/test targets and scoped Ruff pass. A final unit run includes the added
+contradictory-lineage control and the final cleanup annotations; its terminal
+result is recorded below rather than relabelling these earlier proofs.
+
+Final source-prefix qualification: all 59 collected affected units pass in
+2.56 seconds, zero skips, including contradictory-lineage refusal and actual
+cleanup. External evidence prefixes are owner-chronology-qualified-unit and
+owner-chronology-pg. The final source adds only that negative control beyond
+the twelve-case PG-qualified prefix; no receipt persistence code changed.
+## Required termination identity correction beyond qualified fa1ca989
+
+The producer/caller audit does not justify the earlier empty-receipt allowance.
+The sole active termination writer is SessionService.process_event for an actual
+session.status_terminated event; it always writes event_id, event_type and the
+collection clock. No active writer emits termination_receipt={}. Old reader
+truthiness is not producer evidence. A present receipt now requires its actual
+nonblank event_id; empty/unidentified/malformed identity is rejected before
+native GET/POST, refusal reporting or delivery enqueue. True absence/None remains
+unknown and still uses actual native preflight. The earlier synthetic empty
+receipt positive fixture was corrected rather than used as compatibility proof;
+its historical qualified checkpoint is preserved unchanged.
+
+ANSWERED with text=None has an actual producer path: turn_answers only saves
+stripped nonblank agent text, and an observed end_turn can complete without a
+final textual message. deliver_answers records that completion with None.
+File delivery is separately owned/idempotent and need not create fake answer
+text. Telegram's existing EMPTY_TEXT honestly reports completion without text.
+The existing failed-attempt text test proves that its stale text is not reused
+when the accepted retry ends without text; the actual file-reply test covers
+separate delivery. No active producer requires blank whitespace. Existing old
+empty-string normalization is not a claim that a new required text field may
+be silently defaulted, and the ingestion-owned writer was not broadened.
+
+Focused policy/retention/refusal/binding proof: 68 units pass in 2.60 seconds,
+zero skips; independent strict three targets and Ruff pass. Evidence is
+termination-receipt-correction-unit.{log,xml} under external agents evidence.
+This is a separate bounded correction from the still-unfixed chronology
+reproduction; it does not alter the qualified fa1ca989 checkpoint.

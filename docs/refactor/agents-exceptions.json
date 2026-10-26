@@ -2311,6 +2311,183 @@
         "test_prompt_change_has_distinct_cache_identity",
         "test_old_provider_cache_cannot_answer_new_request_and_zero_cost_is_known"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/session_followups.py",
+          "symbol": "FollowupSession.from_record"
+        },
+        {
+          "path": "src/tank/contracts/session_followups.py",
+          "symbol": "LegacyNativeObservation"
+        },
+        {
+          "path": "src/tank/contracts/session_followups.py",
+          "symbol": "followup_eligibility"
+        }
+      ],
+      "kind": "historical lifecycle absence is not terminal evidence",
+      "reason": "Required nullable projection fields preserve genuinely unreported local/native facts. A candidate permits actual native readback only, never input by itself. Missing origin/native status is not replaced with OPEN/idle. A present termination receipt requires its actual nonblank event identity; no empty-receipt compatibility path remains. Truly absent or None metadata carries no terminal fact. Known retention without a period has the explicit RETENTION_UNREPORTED variant and generic existing wording, never invented days. The projection reads existing document JSON and leaves unrelated captured bytes unchanged; no mapping-compatible model was added.",
+      "validation": [
+        "test_unknown_historical_facts_are_never_terminal_evidence_or_rewritten",
+        "test_unknown_retained_facts_require_actual_native_preflight_before_continuation",
+        "test_known_retention_with_unreported_duration_does_not_invent_days",
+        "test_recorded_termination_has_precedence_over_actual_missing_resource",
+        "test_present_termination_without_identity_refuses_before_native_or_question_effects"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/session_followups.py",
+          "symbol": "FollowupRefusalTarget"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.continuable"
+        },
+        {
+          "path": "src/tank/runtime_composition.py",
+          "symbol": "build_runtime"
+        }
+      ],
+      "kind": "required refusal port with observed target ownership",
+      "reason": "The core receives a required refusal sink and typed nonblank question/session target. Production composition supplies the repository reporter; unrelated test fixtures use an explicit fail-if-called trap. The reporter validates both identities under its question lock/transaction before idempotent answer/enqueue. Session persistence-key identity is checked before native/readback or refusal effects. Native MISSING never fabricates termination; a concurrent actual termination wins the locked recheck. Reporter write failure propagates before native posting.",
+      "validation": [
+        "test_foreign_persisted_session_cannot_authorize_question_refusal",
+        "test_termination_recorded_during_missing_readback_wins_after_actual_locked_recheck",
+        "test_refusal_persistence_failure_never_posts_and_can_reconcile_retained_missing_fact",
+        "test_missing_native_followup_records_absence_without_termination_or_input"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/archive_contracts.py",
+          "symbol": "archive_card"
+        },
+        {
+          "path": "src/tank/agents/archive_contracts.py",
+          "symbol": "ArchiveFinalization"
+        },
+        {
+          "path": "src/tank/agents/archive_contracts.py",
+          "symbol": "terminal_archive_card"
+        },
+        {
+          "path": "src/tank/agents/archive_contracts.py",
+          "symbol": "ArchiveDelivery"
+        }
+      ],
+      "kind": "phase-specific archive projection and real delivery evidence",
+      "reason": "Document mappings are decoded at the stored alert/delivery boundary into named closed projections. CLOSED/MERGED only consume alert identity for pending-job scope; unused denial metadata is not demanded. INVALIDATED consumes required actual kind/revision/correction, known aware finalization clock and exact SENT alert/version. None is actual not-yet-finalized or no qualifying latest publication, never an invented clock/zero revision/ordinary kind. Ordinary chain precedence and strict positive revisions prevent preliminary or unknown metadata from satisfying ordinary finality. Full legacy can_archive session/job/tool aggregation remains open.",
+      "validation": [
+        "test_preliminary_denial_archive_requires_exact_corrected_revision_delivery",
+        "test_preliminary_correction_cannot_finalize_an_existing_ordinary_chain",
+        "test_closed_event_does_not_require_unused_denial_card_metadata",
+        "test_unknown_card_revision_cannot_be_ranked_below_a_sent_terminal_update"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/runtime_contracts.py",
+          "symbol": "TimedReviewFiredMessage"
+        },
+        {
+          "path": "src/tank/runtime_contracts.py",
+          "symbol": "ConditionFiredMessage"
+        },
+        {
+          "path": "src/tank/agents/context_records.py",
+          "symbol": "ConditionReference"
+        }
+      ],
+      "kind": "two actual fired-message and readable-expression variants",
+      "reason": "Metric and timed messages share CONDITION_FIRED but have distinct closed bodies; timed reviews do not invent token/metric facts. Both require actual FIRED snapshots; timed event/question/schedule must match saved facts. Optional routing session is genuine unknown legacy origin only; known origin requires the same supplied target. Readable condition references admit actual metric or timed expressions and genuine unavailable descriptive facts. Existing AGENT role and Context3 upstream transition wording are preserved.",
+      "validation": [
+        "test_runtime_decoder_admits_closed_timed_review_without_fabricating_a_token",
+        "test_known_review_origin_cannot_be_omitted_or_replaced",
+        "test_metric_firing_keeps_its_actual_token_and_requires_its_fired_phase",
+        "test_context_three_projects_saved_review_question_and_schedule_without_token"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/tool_schema.py",
+          "symbol": "_accepts"
+        },
+        {
+          "path": "src/tank/contracts/tool_schema.py",
+          "symbol": "_validate"
+        },
+        {
+          "path": "src/tank/contracts/tool_schema.py",
+          "symbol": "validate_schema"
+        }
+      ],
+      "kind": "actual JSON-schema/input wire grammar rather than domain dictionaries",
+      "reason": "These JSON-value maps are the tool protocol schema and actual JSON input boundary. oneOf/const/not/allOf/if/then/else enforce existing authored schema, including typeless object branches and boolean-vs-number constant distinctions. Malformed schema errors are not instance mismatches; new refusals are static and do not echo input. Optional conditional branches impose no restriction by JSON-schema semantics; validation never inserts application defaults. Declared expiry72 remains a separate explicit policy default. The validator remains a supported subset, not a claim to implement every JSON-schema keyword.",
+      "validation": [
+        "test_publish_card_requires_declared_verdict_and_two_factual_bullets",
+        "test_watch_modes_validate_before_actual_dispatch_mutates_conditions",
+        "test_publish_condition_preserves_two_why_bullets_for_ordinary_cards",
+        "test_publish_condition_allows_one_preliminary_fact_without_mutating_the_payload",
+        "test_conditional_schema_defects_are_not_instance_mismatches"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/input_ownership.py",
+          "symbol": "JournalInputLineage.owner"
+        },
+        {
+          "path": "src/tank/agents/input_ownership.py",
+          "symbol": "ToolInputLineage.owner"
+        },
+        {
+          "path": "src/tank/agents/native_transport.py",
+          "symbol": "NativeRetryRefusal.reason"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.observe_native_event"
+        }
+      ],
+      "kind": "actual historical lineage absence and durable controller refusal",
+      "reason": "Missing recorded journal/tool ownership or retry attempt remains unknown. Four closed ownership reason tags distinguish these phases; none supplies an owner, attempt or input body. The existing host_retry_refusals digest map and receipt names remain the persisted wire contract; its closed reason union now records named ownership refusals too. The key is actual session/frame/execution identity, not position or clock. Receipt persistence and controller provenance precede seen/cursor advancement; producer provenance and original retry keys remain untouched. Only named unknown-retry and unproved-ownership exceptions are handled; contradictory lineage and generic validation errors still propagate. Actual native termination and model-request billing do not require input lineage.",
+      "validation": [
+        "test_unproved_owner_is_durably_refused_without_starving_fresh_owner",
+        "test_refusal_persistence_failure_never_advances_memory_and_restart_keeps_chronology",
+        "test_actual_postgres_refusal_is_atomic_and_restarts_without_starving_fresh_input",
+        "test_unproved_turn_attempt_does_not_block_actual_billing_or_native_termination",
+        "test_contradictory_lineage_is_not_relabelled_as_a_handled_host_refusal"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.turn_answers"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.deliver_answers"
+        },
+        {
+          "path": "src/tank/question_answers.py",
+          "symbol": "QuestionAnswerUpdate.text"
+        }
+      ],
+      "kind": "completed turn can have no observed textual answer",
+      "reason": "The active history reader only retains actual stripped nonblank text. An observed end_turn without final text yields None and is recorded ANSWERED as turn completion; separately delivered files do not invent textual content. Telegram displays its existing honest no-text message. No active producer requires blank whitespace; old empty-string storage normalization is not evidence for a broader new blank-text allowance. The question writer remains the ingestion-owned module and was not changed by this correction.",
+      "validation": [
+        "test_text_of_a_failed_attempt_is_never_the_answer",
+        "test_send_telegram_file_replies_with_the_session_output_once"
+      ]
     }
   ]
 }

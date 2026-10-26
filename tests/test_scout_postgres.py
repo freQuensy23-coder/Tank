@@ -17,6 +17,7 @@ from native_input_fixtures import acknowledge_native_input
 from native_session_fixtures import created_native_session
 from pydantic import JsonValue
 from scheduling_support import RecordingReactionScheduling
+from session_followup_fixtures import UnexpectedFollowupRefusals
 from source_support import fixture_http_admission
 
 from tank.agents import SessionService
@@ -210,7 +211,12 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
     openma = FakeOpenMA()
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma)) as http:
         sessions = SessionService(
-            repository, settings, tools.dispatch, http=http, versions=declared_versions_fixture()
+            repository,
+            settings,
+            tools.dispatch,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         sessions.start_stream = lambda sid: None
         analyst, recorded = await seed_event(tools, sessions)

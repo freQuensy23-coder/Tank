@@ -24,6 +24,7 @@ from tank.replay import (
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
+from tank.telegram_inbox import RepositoryFollowupRefusals
 from tank.util import new_id
 
 
@@ -349,7 +350,9 @@ async def test_replay_abort_preserves_completed_state_and_refuses_other_ownershi
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda req: pytest.fail("No network required"))
     ) as http:
-        service = SessionService(repo, cfg, None, http=http, versions=fixture_versions())
+        service = SessionService(
+            repo, cfg, None, http=http, versions=fixture_versions(), refusals=RepositoryFollowupRefusals(repo)
+        )
         refusal = await service.finalize_replay_abort("foreign", "current", {"reason": "fixture unavailable"})
         assert refusal["finalized"] is False
         await service.finalize_replay_abort(
@@ -405,7 +408,14 @@ async def test_native_terminal_failure_clears_runtime_but_preserves_done_message
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda req: pytest.fail("Terminal failure does not retry"))
     ) as http:
-        service = SessionService(repo, Settings(_env_file=None), None, http=http, versions=fixture_versions())
+        service = SessionService(
+            repo,
+            Settings(_env_file=None),
+            None,
+            http=http,
+            versions=fixture_versions(),
+            refusals=RepositoryFollowupRefusals(repo),
+        )
         failure = {
             "id": "failure-final",
             "type": "session.error",
@@ -464,7 +474,14 @@ async def test_native_termination_clears_runtime_without_manufacturing_completio
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda req: pytest.fail("No network required"))
     ) as http:
-        service = SessionService(repo, Settings(_env_file=None), None, http=http, versions=fixture_versions())
+        service = SessionService(
+            repo,
+            Settings(_env_file=None),
+            None,
+            http=http,
+            versions=fixture_versions(),
+            refusals=RepositoryFollowupRefusals(repo),
+        )
         event = {
             "id": "actual-terminal",
             "type": "session.status_terminated",

@@ -9,6 +9,7 @@ import pytest
 from agent_source_fixtures import declared_versions_fixture
 from native_input_fixtures import acknowledge_native_input
 from scheduling_support import RecordingReactionScheduling
+from session_followup_fixtures import UnexpectedFollowupRefusals
 from source_support import fixture_http_admission
 from test_agents_execution_barrier import config, idle
 from test_event_tools import extraction, unknown_assessment
@@ -82,7 +83,12 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             service = SessionService(
-                repo, config(), tools.dispatch, http=client, versions=declared_versions_fixture()
+                repo,
+                config(),
+                tools.dispatch,
+                http=client,
+                versions=declared_versions_fixture(),
+                refusals=UnexpectedFollowupRefusals(),
             )
             system_context = service.tool_context(session, "fixture-setup") | {
                 "session_id": None,

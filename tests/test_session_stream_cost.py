@@ -3,6 +3,7 @@
 import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture
+from session_followup_fixtures import UnexpectedFollowupRefusals
 from test_agents import seed_session, settings
 
 from tank.agents import SessionService
@@ -45,7 +46,14 @@ async def test_inert_events_skip_session_io_and_cursor_advances_with_next_materi
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
     ) as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         for seq in range(1, 51):
             await service.process_event(
                 "ses_1", {"id": f"m{seq}", "type": "agent.message", "content": []}, seq
@@ -73,7 +81,14 @@ async def test_history_copy_with_execution_id_records_the_receipt_the_stream_cop
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
     ) as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         idle = {"id": "idle-1", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}}
         await service.process_event("ses_1", idle, 5)
         assert not (await repo.get("ops.agent_sessions", "ses_1")).get("native_execution_receipts")

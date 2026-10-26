@@ -9,6 +9,7 @@ from agent_source_fixtures import declared_versions_fixture
 from native_input_fixtures import acknowledge_native_input
 from native_session_fixtures import native_session_record
 from scheduling_support import RecordingReactionScheduling
+from session_followup_fixtures import UnexpectedFollowupRefusals
 from source_support import fixture_http_admission
 from test_agents_execution_barrier import config, idle
 from test_event_tools import unknown_assessment
@@ -115,7 +116,12 @@ async def test_actual_producer_consumer_workflow(tmp_path: Path, backend, case, 
             session_settings = config()
             session_settings.ops_progress_enabled = True
             service = SessionService(
-                repo, session_settings, tools.dispatch, http=client, versions=declared_versions_fixture()
+                repo,
+                session_settings,
+                tools.dispatch,
+                http=client,
+                versions=declared_versions_fixture(),
+                refusals=UnexpectedFollowupRefusals(),
             )
             count = 0
             execution_id = "input"
@@ -299,7 +305,14 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
         return {"ok": True}
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        service = SessionService(repo, config(), dispatch, http=client, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            config(),
+            dispatch,
+            http=client,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
 
         async def hydrate(session) -> None:
             pass
