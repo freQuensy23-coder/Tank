@@ -6,7 +6,6 @@ import sys
 import time
 from pathlib import Path
 from typing import Literal, Self
-from unittest.mock import patch
 from urllib.parse import urlsplit
 
 from pydantic import SecretStr, ValidationError, model_validator
@@ -93,10 +92,14 @@ def run(invocation: StandInvocation, configuration: StandConfiguration) -> None:
     )
     with (root / "effects.log").open("a") as stream:
         stream.write(f"PUBLISHER_START {invocation.action} {invocation.transaction}\n")
-    with patch("tank.deployment.journal.os.replace", replace):
-        result = execute_command(
-            PublisherCommand(action=invocation.action, release_sha=invocation.transaction), publisher
-        )
+    command = PublisherCommand(action=invocation.action, release_sha=invocation.transaction)
+    if target is None:
+        result = execute_command(command, publisher)
+    else:
+        from unittest.mock import patch
+
+        with patch("tank.deployment.journal.os.replace", replace):
+            result = execute_command(command, publisher)
     with (root / "effects.log").open("a") as stream:
         stream.write(f"PUBLISHER_DONE {invocation.action} {invocation.transaction}\n")
     for line in result.lines:
