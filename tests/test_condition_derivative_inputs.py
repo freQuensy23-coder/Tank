@@ -66,7 +66,10 @@ def test_each_unregistered_oi_row_needs_its_own_scope_evidence() -> None:
     assert snapshot.observations[0].evidence != snapshot.observations[1].evidence
 
 
-@pytest.mark.parametrize("field,value", [("token_id", "OTHER"), ("venue", "other"), ("market_type", "SPOT")])
+@pytest.mark.parametrize(
+    "field,value",
+    [("token_id", "OTHER"), ("venue", "other"), ("market_type", "SPOT"), ("quote_asset", "USD")],
+)
 def test_oi_registry_scope_cannot_be_overridden(field: str, value: str) -> None:
     row = observation()
     row[field] = value
@@ -113,6 +116,10 @@ def test_endpoint_selection_retains_nearest_source_clocks_and_exact_native_chang
     assert change.value is None and change.reason == "NOT_ESTIMABLE"
     assert change.position == "ABOVE" and change.beyond is True
     assert selected.end.observation.reported_usd.value is None
+    with pytest.raises(ValidationError):
+        selected.model_copy(update={"end": selected.start}).native_change(
+            normal_range=FloatRange(bounds=FloatBounds(lower=-0.1, upper=0.1), reason=None)
+        )
 
 
 @pytest.mark.parametrize("late", [False, True])
@@ -207,3 +214,14 @@ def test_actual_derivative_producer_and_typed_selection_preserve_native_endpoint
     assert selected.start.observation.native_quantity.value == actual["oi_native_start"] == Decimal(10)
     assert selected.end.observation.native_quantity.value == actual["oi_native_end"] == Decimal(12)
     assert actual["oi_usd_start"] is None and actual["oi_usd_end"] is None
+
+
+def test_registry_scope_qualifies_uncaptured_row_metadata_without_rewriting_evidence() -> None:
+    row = observation() | {"token_id": None, "venue": None, "quote_asset": None}
+    source = decode_oi_inputs(token_id="T", instruments=[instrument()], observations=[row])
+    point = source.observations[0]
+    assert point.instrument.token_id == "T" and point.instrument.quote_asset == "USDT"
+    original = resolve_oi_observation(source, point.evidence, expected=point)
+    assert original["token_id"] is None
+    assert original["venue"] is None
+    assert original["quote_asset"] is None

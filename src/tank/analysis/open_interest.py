@@ -114,10 +114,13 @@ class OIInstrumentWindow(DomainModel):
         return self
 
     def native_change(self, *, normal_range: FloatRange) -> NativeOiChange | None:
-        if not isinstance(self.start, SelectedOIEndpoint) or not isinstance(self.end, SelectedOIEndpoint):
+        selected = type(self).model_validate(self)
+        if not isinstance(selected.start, SelectedOIEndpoint) or not isinstance(
+            selected.end, SelectedOIEndpoint
+        ):
             return None
-        initial = self.start.observation.native_quantity.value
-        final = self.end.observation.native_quantity.value
+        initial = selected.start.observation.native_quantity.value
+        final = selected.end.observation.native_quantity.value
         if initial is None or final is None:
             raise ValueError("Observed OI endpoints must retain their actual native quantities")
         return native_oi_change(initial, final, normal_range=normal_range)

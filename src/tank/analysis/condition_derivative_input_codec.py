@@ -77,8 +77,9 @@ def _point(
         ("token_id", instrument.token_id),
         ("venue", instrument.venue),
         ("market_type", instrument.market_type),
+        ("quote_asset", instrument.quote_asset),
     ):
-        if field in row and row[field] != expected:
+        if row.get(field) is not None and row[field] != expected:
             raise ValueError("OI source scope contradicts its qualified instrument: " + field)
     eligible = row.get("synchronized_eligible")
     if eligible is not None and not isinstance(eligible, bool):
