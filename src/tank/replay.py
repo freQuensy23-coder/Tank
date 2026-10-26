@@ -27,6 +27,7 @@ from tank.contracts.source_items import SourceRelevance
 from tank.fixture_reference_code import CURRENT_PROJECTION_CODE, ProjectionCodeEvidence
 from tank.fixture_reference_sources import FILESYSTEM_RETAINED_SOURCES, RetainedSourceReader
 from tank.market_schema import MARKET_COLUMNS
+from tank.telegram_inbox import RepositoryFollowupRefusals
 from tank.time_precision import Timestamp, interval_bounds, propagate_timestamp
 from tank.util import canonical_json, iso, parse_time
 
@@ -1768,7 +1769,12 @@ async def replay_agent_session(
 
     versions = ResolvedVersionIdentity(config_version=inputs.config_version, code_version=inputs.code_version)
     service = CapturedExternalSessionService(
-        repo, settings, event_tools.dispatch, http=http, versions=versions
+        repo,
+        settings,
+        event_tools.dispatch,
+        http=http,
+        versions=versions,
+        refusals=RepositoryFollowupRefusals(repo),
     )
     delivery_receipts = []
     active_delivery_receipt = None

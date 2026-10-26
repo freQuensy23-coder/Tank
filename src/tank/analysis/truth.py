@@ -35,6 +35,7 @@ from tank.analysis.condition_input_codec import (
     decode_spot_windows,
 )
 from tank.analysis.condition_inputs import SpotPolicyConfiguration
+from tank.analysis.condition_visibility import condition_visibility
 from tank.analysis.execution import ExecutionLevelWire, ExecutionSide, execute_book_walk, execution_request
 from tank.analysis.positioning import (
     MissingOIDecomposition,
@@ -5478,6 +5479,63 @@ COMPOSITE_CONDITION_METRICS = {"mt.move_class", "mt.divergence_state"}
 RELATIVE_CONDITION_METRICS = {"price.repricing_band", "price.vs_anchor_pct"}
 
 
+def condition_input_fingerprints(snapshot, fields, domain):
+    if "assembled_at" in fields:
+        raise ValueError("Processing assembly must remain a fresh evaluation context")
+    consumed = {field: snapshot.get(field) for field in fields}
+    series_facts = (
+        "times_us",
+        "values",
+        "complete",
+        "instrument_id",
+        "token_id",
+        "venue",
+        "market_type",
+        "source_market_type",
+        "interval_s",
+        "intervals_s",
+        "time_basis",
+        "cadence_s",
+        "metric_key",
+        "precision",
+        "precision_reason",
+        "coverage_count",
+    )
+    for field in ("stat_price_series", "stat_volume_series"):
+        if field not in consumed or consumed[field] is None:
+            continue
+        series = consumed[field]
+        if not isinstance(series, Mapping) or any(
+            not isinstance(value, Mapping) for value in series.values()
+        ):
+            raise ValueError("Compact condition input requires scoped series projections")
+        consumed[field] = {
+            iid: {name: value[name] for name in series_facts if name in value}
+            for iid, value in series.items()
+        }
+    identity = {
+        "inputs": consumed,
+        "cutoff_clock": propagate_timestamp(snapshot, "cutoff").fields("cutoff"),
+    }
+    if "anchor" in fields:
+        identity["anchor_clock"] = propagate_timestamp(
+            snapshot, "anchor", missing_reason="NO_EVENT_ANCHOR"
+        ).fields("anchor")
+    content = fingerprint(identity)
+    supplied = (snapshot.get("domain_dependency_fingerprints") or {}).get(domain)
+    dependency = (
+        content if supplied is None else supplied if isinstance(supplied, str) else fingerprint(supplied)
+    )
+    visibility = condition_visibility(
+        domain=domain,
+        token_id=snapshot["token_id"],
+        assembled_at=propagate_timestamp(snapshot, "assembled_at"),
+        content_sha256=content,
+        consumed=consumed,
+    )
+    return dependency, content, visibility.projection.fingerprint()
+
+
 def condition_market_state(snapshot, end, cache):
     """The required primary-window state graph, without MTA/outcome/card persistence work."""
     av = (snapshot.get("anchor") or {}).get("ts")
@@ -5490,17 +5548,14 @@ def condition_market_state(snapshot, end, cache):
         }
 
     def node(name, fields, build):
-        head = (snapshot.get("domain_dependency_fingerprints") or {}).get(name)
-        if head is None:
-            head = fingerprint({field: snapshot.get(field) for field in fields})
-        elif not isinstance(head, str):
-            head = fingerprint(head)
+        head, content, visibility = condition_input_fingerprints(snapshot, fields, name)
         key = ConditionStateNodeKey(
             node=name,
             token_id=snapshot["token_id"],
             start=start,
             cutoff=end,
-            assembled_at=propagate_timestamp(snapshot, "assembled_at"),
+            content_sha256=content,
+            visibility_sha256=visibility,
             dependency_identity=head,
             config_sha256=fingerprint(_PARAMETERS.get()),
             expected_direction_sha256=fingerprint(snapshot.get("expected_direction")),
@@ -5533,13 +5588,29 @@ def condition_market_state(snapshot, end, cache):
             "sector_baskets",
             "instruments",
             "expected_direction",
+            "anchor",
+            "capture_metadata",
+            "capture_tier",
+            "semantics",
+            "series_coverage_counts",
+            "relative_history_dependency_fingerprint",
         ),
         lambda: relative_truth(scoped, start, end, include_outcome=False),
     )
     wstart = end - timedelta(seconds=windows[primary])
     derivatives = node(
         "derivatives",
-        ("oi", "funding", "liquidations", "semantics", "instruments", "klines"),
+        (
+            "oi",
+            "funding",
+            "liquidations",
+            "semantics",
+            "instruments",
+            "klines",
+            "stat_volume_series",
+            "capture_metadata",
+            "capture_tier",
+        ),
         lambda: derivatives_truth(scoped, wstart, end),
     )
     liquidity = liquidity_truth(scoped, wstart, end, spots[primary], relative)
@@ -5581,6 +5652,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
         requested = sorted({(r["metric"], r.get("window", "W1H")) for r in requirements})
         pending = []
         proofs = []
+        identities = {}
         for metric, window in requested:
             seconds = WINDOWS.get(window)
             if window == "EVENT" and snapshot.get("anchor"):
@@ -5593,7 +5665,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 fields = ("flow_bars", "flow_segments", "flow_parent_bars", "tickers", "instruments")
             elif metric in DERIVATIVE_CONDITION_METRICS:
                 domain = "funding" if metric == "deriv.funding_vs_normal" else "oi"
-                fields = (domain, "instruments", "semantics", "capture_metadata")
+                fields = (domain, "instruments", "semantics", "capture_metadata", "capture_tier")
             elif metric == "price.close_vs_level":
                 domain = "close"
                 fields = ("flow_bars", "flow_segments", "flow_parent_bars", "klines", "instruments")
@@ -5607,6 +5679,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     "instruments",
                     "semantics",
                     "capture_metadata",
+                    "capture_tier",
                     "oi",
                     "funding",
                     "klines",
@@ -5618,7 +5691,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 seconds = (end - condition_primary_bounds(snapshot, end)[0]).total_seconds()
             elif metric in ("liq.depth_p1_vs_pre", "liq.spread_ratio"):
                 domain = "depth"
-                fields = ("books", "instruments", "anchor", "capture_metadata")
+                fields = ("books", "instruments", "anchor", "capture_metadata", "capture_tier")
             elif metric in COMPOSITE_CONDITION_METRICS:
                 domain = "state"
                 fields = (
@@ -5632,6 +5705,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     "sector_baskets",
                     "semantics",
                     "capture_metadata",
+                    "capture_tier",
                     "oi",
                     "funding",
                     "klines",
@@ -5655,6 +5729,9 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     "flow_parent_bars",
                     "reference_points",
                     "instruments",
+                    "semantics",
+                    "capture_metadata",
+                    "capture_tier",
                     "tokens",
                     "sector_baskets",
                     "klines",
@@ -5668,18 +5745,18 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
             else:
                 pending.append(dict(metric=metric, window=window, reason="NOT_SUPPORTED"))
                 continue
-            dependency = (snapshot.get("domain_dependency_fingerprints") or {}).get(domain)
-            if dependency is None:
-                dependency = fingerprint({field: snapshot.get(field) for field in fields})
-            elif not isinstance(dependency, str):
-                dependency = fingerprint(dependency)
+            identity_slot = (domain, fields)
+            if identity_slot not in identities:
+                identities[identity_slot] = condition_input_fingerprints(snapshot, fields, domain)
+            dependency, content, visibility = identities[identity_slot]
             key = ConditionTopCacheKey(
                 domain=domain,
                 token_id=snapshot["token_id"],
                 window=window,
                 requested_duration_s=seconds,
                 cutoff=end,
-                assembled_at=propagate_timestamp(snapshot, "assembled_at"),
+                content_sha256=content,
+                visibility_sha256=visibility,
                 dependency_identity=dependency,
                 config_sha256=fingerprint(config),
                 expected_direction_sha256=fingerprint(snapshot.get("expected_direction")),
@@ -5885,6 +5962,9 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     metric=metric,
                     window=window,
                     dependency_fingerprint=dependency,
+                    content_sha256=content,
+                    visibility_sha256=visibility,
+                    **propagate_timestamp(snapshot, "assembled_at").fields("assembled_at"),
                     reused=hit,
                     reason=None if fresh and available else "INCOMPLETE",
                     observations=observations,
@@ -5906,6 +5986,10 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     dependencies=snapshot.get(
                         "dependency_fingerprint", [p["dependency_fingerprint"] for p in proofs]
                     ),
+                    evaluated_inputs=[
+                        (p["metric"], p["window"], p["content_sha256"], p["visibility_sha256"])
+                        for p in proofs
+                    ],
                     anchor=snapshot.get("anchor"),
                     assembled_at=propagate_timestamp(snapshot, "assembled_at").fields("assembled_at"),
                     config=config,
@@ -5913,6 +5997,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
             ),
             "proofs": proofs,
             "transient": True,
+            **propagate_timestamp(snapshot, "assembled_at").fields("assembled_at"),
         }
         result.update(propagate_timestamp(snapshot, "cutoff").fields("cutoff"))
         return jsonable(result)

@@ -68,10 +68,14 @@ def test_selective_same_input_parity_and_no_unrequested_domains(
     assert "_condition_evaluation" in selected and "mta_id" not in selected
 
 
+@pytest.mark.parametrize("opaque_head", [False, True])
 def test_identical_closed_window_inputs_reused_but_corrected_row_invalidates(
     monkeypatch: pytest.MonkeyPatch,
+    opaque_head: bool,
 ) -> None:
     packet = snapshot()
+    if opaque_head:
+        packet["domain_dependency_fingerprints"] = {"spot": "same-captured-source-head"}
     cache = {}
     calls = []
     original = module.calculate_spot
@@ -790,7 +794,11 @@ def test_spot_cache_recomputes_when_same_source_head_has_later_eligible_receipts
     assert first["spot"][window]["coverage"]["n_complete"] == 0
     assert second["spot"][window]["coverage"]["n_complete"] == 2
     assert all(isinstance(key, (module.ConditionTopCacheKey, module.ConditionStateNodeKey)) for key in cache)
-    assert {key.assembled_at.value for key in cache} == {iso(cutoff), iso(received_at)}
+    assert first["_condition_evaluation"]["assembled_at"] == iso(cutoff)
+    assert second["_condition_evaluation"]["assembled_at"] == iso(received_at)
+    assert all(
+        proof["assembled_at"] == iso(received_at) for proof in second["_condition_evaluation"]["proofs"]
+    )
     if state_graph:
         assert any(isinstance(key, module.ConditionStateNodeKey) for key in cache)
     assert all(not proof["reused"] for proof in second["_condition_evaluation"]["proofs"][:1])

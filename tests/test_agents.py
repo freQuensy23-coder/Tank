@@ -14,6 +14,7 @@ from agent_source_fixtures import (
 from native_session_fixtures import created_native_session
 from pydantic import JsonValue
 from scheduling_support import RecordingReactionScheduling
+from session_followup_fixtures import UnexpectedFollowupRefusals
 from source_support import fixture_http_admission
 from truth_support import fixture_truth_config
 
@@ -253,7 +254,14 @@ async def test_tool_result_lost_reply_restart_reuses_completed_result() -> None:
         "input": native_tool_arguments_fixture("record_event"),
     }
     async with httpx.AsyncClient(transport=httpx.MockTransport(broken)) as http:
-        service = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            dispatch,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         with pytest.raises(httpx.ReadError):
             await service.process_event("ses_1", event, 7)
     assert count == 1
@@ -265,7 +273,14 @@ async def test_tool_result_lost_reply_restart_reuses_completed_result() -> None:
         return httpx.Response(200, json={"data": []})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(works)) as http:
-        restarted = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
+        restarted = SessionService(
+            repo,
+            opts,
+            dispatch,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         await restarted.process_event("ses_1", event, 7)
         await restarted.process_event("ses_1", event, 7)
     assert count == 1 and len(posts) == 2
@@ -298,7 +313,14 @@ async def test_failed_dispatch_rolls_back_and_replays() -> None:
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
     ) as http:
-        service = SessionService(repo, opts, bad, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            bad,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         await service.process_event(
             "ses_1",
             {
@@ -343,7 +365,14 @@ async def test_sse_resume_and_paginated_recovery_dedup_usage() -> None:
         return httpx.Response(200, json={"data": [], "next_page": "next"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         await service.stream("ses_1")
         await service.catch_up("ses_1")
     usage = await repo.list("ops.llm_usage")
@@ -381,7 +410,14 @@ async def test_message_running_session_posted_and_retry_failure() -> None:
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         service.start_stream = lambda sid: None
         payload = {"kind": "ITEM_ADDED", "event_id": "evt_1", "item_id": "itm_2"}
         await service.send_message(payload)
@@ -442,7 +478,14 @@ async def test_canonical_event_routing_and_added_message() -> None:
         routed = await Pipeline(
             repo, opts, http=http, progress=DisabledSourceProgress(), versions=declared_versions_fixture()
         ).route_item_wire({"item_id": "i"})
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         service.start_stream = lambda sid: None
         await service.send_message(routed["routing_message"])
     assert routed["route"]["decision"] == "ADDED"
@@ -466,7 +509,14 @@ async def test_new_scout_session_wire_protocol_and_isolation() -> None:
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         service.start_stream = lambda sid: None
         session = await service.scout_review(ScoutReviewJob(proposal_id="p"))
         await service.scout_review(ScoutReviewJob(proposal_id="p"))
@@ -501,7 +551,14 @@ async def test_stream_processing_preserves_concurrent_added_message() -> None:
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
     ) as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         service.start_stream = lambda sid: None
         original_usage = service.usage
 
@@ -709,7 +766,14 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
     ) as http:
-        service = SessionService(repo, opts, tools.dispatch, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            tools.dispatch,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
 
         def original_card(inputs: CardInputs) -> str:
             return "Original product card" + "\n" + score_summary(inputs.assessment.scores)
@@ -849,7 +913,14 @@ async def test_unpublished_invalidated_event_can_end_when_idle_without_marker() 
     await repo.put("evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": "evt_1", "class": "LOW"})
     session = await seed_session(repo, runtime_status="RUNNING")
     async with httpx.AsyncClient() as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         assert not await service.can_archive(session, event)
         await service.process_event(
             "ses_1", {"id": "idle", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}}
@@ -901,7 +972,14 @@ async def test_concurrent_items_without_event_candidates_open_distinct_idempoten
             for item in (first, second)
             for field in ("route", "routing_message")
         )
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         service.start_stream = lambda sid: None
         one = await service.send_message(first["routing_message"])
         two = await service.send_message(second["routing_message"])
@@ -934,7 +1012,12 @@ async def test_live_slow_and_recovered_tool_context_keep_session_provenance() ->
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
         live = SessionService(
-            repo, opts, dispatch, http=http, versions=declared_versions_fixture("new_config", "new_code")
+            repo,
+            opts,
+            dispatch,
+            http=http,
+            versions=declared_versions_fixture("new_config", "new_code"),
+            refusals=UnexpectedFollowupRefusals(),
         )
         await live.process_event(
             "ses_1", {"id": "live", "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
@@ -961,7 +1044,12 @@ async def test_live_slow_and_recovered_tool_context_keep_session_provenance() ->
             },
         )
         recovered = SessionService(
-            repo, opts, dispatch, http=http, versions=declared_versions_fixture("new_config", "new_code")
+            repo,
+            opts,
+            dispatch,
+            http=http,
+            versions=declared_versions_fixture("new_config", "new_code"),
+            refusals=UnexpectedFollowupRefusals(),
         )
         await recovered.process_event(
             "ses_1", {"id": "recover", "type": "agent.custom_tool_use", "name": "get_item", "input": {}}
@@ -1012,7 +1100,14 @@ async def test_market_truth_wire_omits_internal_metadata_full_result_survives_re
         "input": native_tool_arguments_fixture("get_market_truth"),
     }
     async with httpx.AsyncClient(transport=httpx.MockTransport(lost)) as http:
-        first = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
+        first = SessionService(
+            repo,
+            opts,
+            dispatch,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         with pytest.raises(httpx.ReadError):
             await first.process_event("ses_1", event, 7)
     stored = await repo.get("ops.tool_calls", "ses_1:mt_call")
@@ -1023,7 +1118,14 @@ async def test_market_truth_wire_omits_internal_metadata_full_result_survives_re
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(accepted)) as http:
-        recovered = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
+        recovered = SessionService(
+            repo,
+            opts,
+            dispatch,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         await recovered.process_event("ses_1", event, 7)
     assert dispatched == 1 and requests[0] == requests[1]
     wire = json.loads(requests[1]["events"][0]["content"][0]["text"])
@@ -1132,7 +1234,14 @@ async def test_routing_and_resume_find_late_history_with_one_row_pages() -> None
         ).route_item_wire({"item_id": "incoming"})
         assert result["route_event_id"] == "zz_event"
         assert len(seen) == 1
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         assert (
             await service.resolve(
                 NativeSessionResolution.from_wire({"event_id": "zz_event"}, role="ANALYST", replay=False)
@@ -1180,7 +1289,14 @@ async def test_session_acceptance_and_tools_keep_clock_and_source_precision_sepa
         return {"ok": True}
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-        service = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            dispatch,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         service.start_stream = lambda sid: None
         session = await service.send_message({"kind": "NEW_ITEM", "item_id": "item"})
         await service.process_event(
@@ -1228,7 +1344,14 @@ async def test_usage_propagates_provider_processed_precision_without_inference(p
     if precision:
         event["processed_at_prec"] = precision
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200))) as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         await service.usage(session, event)
     row = await repo.get("ops.llm_usage", "ses_1:usage")
     assert row["at"] == event["processed_at"]
@@ -1270,13 +1393,27 @@ async def test_tool_execution_error_is_durable_returned_and_never_redispatched_a
         "input": native_tool_arguments_fixture(tool_name),
     }
     async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
-        first = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
+        first = SessionService(
+            repo,
+            opts,
+            dispatch,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         with pytest.raises(httpx.ConnectError):
             await first.process_event("ses_1", event)
         failed = await repo.get("ops.tool_calls", "ses_1:failure")
         assert failed["status"] == "ERROR" and not failed.get("returned_at")
         assert "failure" not in (await repo.get("ops.agent_sessions", "ses_1")).get("processed_events", [])
-        resumed = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
+        resumed = SessionService(
+            repo,
+            opts,
+            dispatch,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         await resumed.process_event("ses_1", event)
         await resumed.process_event("ses_1", event)
     stored = await repo.get("ops.tool_calls", "ses_1:failure")
@@ -1316,7 +1453,14 @@ async def test_new_session_prompt_version_binds_actual_resolved_agent_not_static
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         service.start_stream = lambda sid: None
         for item_id in ("one", "two"):
             await repo.put(
@@ -1397,7 +1541,13 @@ async def test_publish_card_requires_declared_verdict_and_two_factual_bullets(
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(native)) as client:
         service = SessionService(
-            repo, opts, dispatch, http=client, stream_http=client, versions=declared_versions_fixture()
+            repo,
+            opts,
+            dispatch,
+            http=client,
+            stream_http=client,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         await service.process_event(
             "ses_1",
@@ -1433,7 +1583,14 @@ async def test_new_native_session_records_observed_effort_without_relabeling_int
         return httpx.Response(201, json=created_native_session(request, "observed", agent_snapshot=snapshot))
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         result = await service.resolve(
             NativeSessionResolution.from_wire({"item_id": "item"}, role="ANALYST", replay=False)
         )
@@ -1487,7 +1644,14 @@ async def test_native_creation_binding_failure_never_commits_a_local_session(def
         return httpx.Response(201, json=wire)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         with pytest.raises(ValueError) as caught:
             await service.send_message(payload)
         await service.close()
@@ -1518,7 +1682,14 @@ async def test_live_native_creation_cannot_borrow_a_replay_only_opening_source()
         raise AssertionError("An undeclared replay source cannot initiate native creation")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(unexpected)) as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         with pytest.raises(ValueError, match="durable opening source"):
             await service.resolve(
                 NativeSessionResolution.from_wire({"event_id": "event"}, role="ANALYST", replay=False)
@@ -1552,7 +1723,14 @@ async def test_explicit_native_continuation_preserves_the_actual_stored_context(
         raise AssertionError("Existing native session lookup must not create a fresh resource")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(unexpected)) as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         resolved = await service.resolve(
             NativeSessionResolution.from_wire({"session_id": "existing"}, role=creation_role, replay=False)
         )
@@ -1576,7 +1754,14 @@ async def test_explicit_missing_native_session_never_falls_back_to_creation(
         raise AssertionError("An explicit missing session must not become a fresh role")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(unexpected)) as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         with pytest.raises(KeyError, match="missing"):
             await service.resolve(
                 NativeSessionResolution.from_wire({"session_id": "missing"}, role=creation_role, replay=False)
@@ -1588,7 +1773,7 @@ async def test_explicit_missing_native_session_never_falls_back_to_creation(
 
 @pytest.mark.asyncio
 async def test_missing_native_followup_records_absence_without_termination_or_input() -> None:
-    from tank.telegram_inbox import GONE_TEXT
+    from tank.telegram_inbox import GONE_TEXT, RepositoryFollowupRefusals
 
     repo = MemoryRepository()
     opts, _ = settings()
@@ -1611,7 +1796,14 @@ async def test_missing_native_followup_records_absence_without_termination_or_in
         return httpx.Response(404, json={"error": "synthetic-private-provider-message"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=RepositoryFollowupRefusals(repo),
+        )
         result = await service.send_message(
             {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": "question"}
         )
@@ -1653,7 +1845,14 @@ async def test_preliminary_denial_archive_requires_exact_corrected_revision_deli
         raise AssertionError("Archive eligibility must not invoke native HTTP")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(forbidden)) as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         assert not await service.can_archive(session, event)
         event["session_finalized_at"] = clock_iso()
         assert not await service.can_archive(session, event)
@@ -1715,7 +1914,14 @@ async def test_preliminary_correction_cannot_finalize_an_existing_ordinary_chain
         {"alert_id": "preliminary", "version": 9, "status": "SENT"},
     )
     async with httpx.AsyncClient() as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         assert not await service.can_archive(session, event)
         await repo.put(
             "out.alerts",
@@ -1737,7 +1943,14 @@ async def test_closed_event_does_not_require_unused_denial_card_metadata() -> No
     opts, _ = settings()
     await repo.put("out.alerts", "retained", {"event_id": "event", "alert_id": "retained"})
     async with httpx.AsyncClient() as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         assert await service.can_archive(
             {"session_id": "session", "runtime_status": "IDLE"},
             {"event_id": "event", "lifecycle": "CLOSED"},
@@ -1764,7 +1977,14 @@ async def test_unknown_card_revision_cannot_be_ranked_below_a_sent_terminal_upda
         {"alert_id": "ordinary", "version": 1, "status": "SENT"},
     )
     async with httpx.AsyncClient() as http:
-        service = SessionService(repo, opts, None, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         with pytest.raises(KeyError, match="version"):
             await service.can_archive(
                 {"session_id": "session", "runtime_status": "IDLE"},

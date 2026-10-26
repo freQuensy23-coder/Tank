@@ -6,6 +6,7 @@ import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture
 from pydantic import JsonValue, field_validator
+from session_followup_fixtures import UnexpectedFollowupRefusals
 from test_agents_session_audit import seed, settings
 
 from tank.agents.sessions import SessionService
@@ -45,7 +46,12 @@ async def test_schema_failure_never_enters_tool_capture_native_body_or_logs(
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(native)) as client:
         service = SessionService(
-            repo, settings(), dispatch, http=client, versions=declared_versions_fixture()
+            repo,
+            settings(),
+            dispatch,
+            http=client,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         await service.process_event(
             "s",

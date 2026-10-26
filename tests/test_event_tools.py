@@ -18,6 +18,7 @@ from tank.contracts.json import JsonDocument
 from tank.event_tools import EventToolService, freshness, validate_schema
 from tank.settings import Settings
 from tank.storage import MemoryRepository
+from tank.telegram_inbox import RepositoryFollowupRefusals
 from tank.telegram_rich import score_summary
 from tank.util import JsonInput, canonical_json, clock_iso, iso, utcnow
 
@@ -772,7 +773,13 @@ async def test_real_session_tool_refuses_cross_event_mutation(service) -> None:
         "item_id": "i",
     }
     await service.repo.put("ops.agent_sessions", session["session_id"], session)
-    sessions = SessionService(service.repo, service.settings, service.dispatch, versions=fixture_versions())
+    sessions = SessionService(
+        service.repo,
+        service.settings,
+        service.dispatch,
+        versions=fixture_versions(),
+        refusals=RepositoryFollowupRefusals(service.repo),
+    )
     replies = []
 
     async def request(*args, **kwargs):
@@ -828,7 +835,13 @@ async def test_novel_layer_proposal_survives_real_session_transaction(service) -
         "item_id": "i",
     }
     await service.repo.put("ops.agent_sessions", session["session_id"], session)
-    sessions = SessionService(service.repo, service.settings, service.dispatch, versions=fixture_versions())
+    sessions = SessionService(
+        service.repo,
+        service.settings,
+        service.dispatch,
+        versions=fixture_versions(),
+        refusals=RepositoryFollowupRefusals(service.repo),
+    )
 
     async def request(*args, **kwargs):
         if args and args[0] == "GET":
@@ -1950,7 +1963,13 @@ async def test_other_tank_item_quote_read_through_real_session_is_admissible(ser
         "item_id": "i",
     }
     await service.repo.put("ops.agent_sessions", session["session_id"], session)
-    sessions = SessionService(service.repo, service.settings, service.dispatch, versions=fixture_versions())
+    sessions = SessionService(
+        service.repo,
+        service.settings,
+        service.dispatch,
+        versions=fixture_versions(),
+        refusals=RepositoryFollowupRefusals(service.repo),
+    )
 
     async def request(*a, **kw):
         if a and a[0] == "GET":
@@ -3804,7 +3823,14 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
             item = await service.dispatch(
                 "fetch_page", {"url": "https://www.sec.gov/news/native-provenance-fixture"}, {}
             )
-            native = SessionService(repo, service.settings, dispatch, http=http, versions=fixture_versions())
+            native = SessionService(
+                repo,
+                service.settings,
+                dispatch,
+                http=http,
+                versions=fixture_versions(),
+                refusals=RepositoryFollowupRefusals(repo),
+            )
             session = await native.resolve(
                 NativeSessionResolution.from_wire(
                     {"kind": "NEW_ITEM", "item_id": item["item_id"]}, role="ANALYST", replay=False
@@ -3978,7 +4004,12 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
         service.http = http
         service.engine = DecisionEngine()
         first = SessionService(
-            service.repo, service.settings, service.dispatch, http=http, versions=fixture_versions()
+            service.repo,
+            service.settings,
+            service.dispatch,
+            http=http,
+            versions=fixture_versions(),
+            refusals=RepositoryFollowupRefusals(service.repo),
         )
         first.start_stream = lambda session_id: None
         session = await first.send_message({"kind": "NEW_ITEM", "item_id": iid})
@@ -3993,7 +4024,12 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
         ledger = await service.repo.get("ops.tool_calls", sid + ":http-failure")
         assert ledger["status"] == "ERROR" and not ledger.get("returned_at")
         resumed = SessionService(
-            service.repo, service.settings, service.dispatch, http=http, versions=fixture_versions()
+            service.repo,
+            service.settings,
+            service.dispatch,
+            http=http,
+            versions=fixture_versions(),
+            refusals=RepositoryFollowupRefusals(service.repo),
         )
         resumed.start_stream = lambda session_id: None
         await resumed.process_event(sid, failed_call)
@@ -4011,7 +4047,12 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
         assert (await service.repo.get("ops.agent_sessions", sid))["status"] == "OPEN"
         replay_options = service.settings.model_copy(update={"replay": True})
         replay = SessionService(
-            service.repo, replay_options, service.dispatch, http=http, versions=fixture_versions()
+            service.repo,
+            replay_options,
+            service.dispatch,
+            http=http,
+            versions=fixture_versions(),
+            refusals=RepositoryFollowupRefusals(service.repo),
         )
         replay.start_stream = lambda session_id: None
         await replay.send_message(
@@ -5904,7 +5945,14 @@ async def test_accepted_completion_and_native_failure_preserve_done_without_dead
         raise AssertionError("Native terminal failure must not retry the provider")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(no_network)) as http:
-        native = SessionService(repo, service.settings, None, http=http, versions=fixture_versions())
+        native = SessionService(
+            repo,
+            service.settings,
+            None,
+            http=http,
+            versions=fixture_versions(),
+            refusals=RepositoryFollowupRefusals(repo),
+        )
 
         async def accept_fact() -> JsonValue:
             return JsonDocument.validate_value(
