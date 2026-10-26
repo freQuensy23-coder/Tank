@@ -171,6 +171,8 @@ class Publisher:
                     budget_s=self.policy.build_timeout_s,
                 )
                 self.state.write_submission(intent)
+                if intent.remaining(self.collection_clock()) <= 0:
+                    raise PublisherStateError("Worker build exceeded deadline before submission")
                 started = self.clock()
                 build = self.api.start_build(self.sha)
                 submission = ReceivedBuildSubmission(

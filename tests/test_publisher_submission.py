@@ -1,10 +1,15 @@
 """Real durable journals prevent duplicate builds across acceptance crash gaps."""
 
+import subprocess
+import sys
 from datetime import timedelta
 from pathlib import Path
+from typing import Literal
 
 import pytest
+from publisher_shell_support import shell_host
 from publisher_state_support import PublisherRig, rig
+from publisher_transition_support import http_rig
 
 from tank.deployment.api_contracts import BuildObservation
 from tank.deployment.contracts import BuildCacheKey, BuildProvenance
@@ -142,3 +147,66 @@ def test_restart_keeps_original_budget_and_remote_success_fact(
     assert len(fixture.api.started) == 1
     assert fixture.api.tag_updates == []
     assert fixture.journal.read_cached_build(key) is None
+
+
+@pytest.mark.integration(
+    reason="Actual child process death at durable receipt/cache rename with loopback provider"
+)
+@pytest.mark.parametrize("interrupt", ["receipt", "cache"])
+def test_actual_child_acceptance_crash_never_posts_another_build(
+    tmp_path: Path, interrupt: Literal["receipt", "cache"]
+) -> None:
+    with http_rig(tmp_path, fault="NONE") as fixture:
+        host = shell_host(
+            fixture,
+            fixture.peer.endpoint,
+            selected=fixture.selected.release.release_sha,
+            artifact=fixture.selected,
+            failure="SELECTED",
+        )
+        command = [
+            sys.executable,
+            str(Path(__file__).with_name("publisher_shell_worker.py")),
+            "ghcr.io/frequensy23-coder/tank/tank:" + host.orchestrator,
+            host.orchestrator,
+            fixture.selected.release.release_sha,
+            fixture.selected.release.release_sha,
+            "prepare",
+            str(host.root),
+        ]
+        environment = dict(host.environment)
+        environment["TANK_PUBLISHER_STAND_INTERRUPT"] = interrupt
+        interrupted = subprocess.run(
+            command,
+            cwd=host.root,
+            env=environment,
+            capture_output=True,
+            timeout=10,
+        )
+        assert interrupted.returncode == 73, interrupted.stderr
+        assert len(fixture.api.started) == 1
+        key = BuildCacheKey(source_digest=fixture.selected.release.source_digest)
+        recorded = fixture.journal.read_submission(key)
+        assert fixture.journal.read_transaction() is None
+        recovered = subprocess.run(
+            command,
+            cwd=host.root,
+            env=host.environment,
+            capture_output=True,
+            timeout=10,
+        )
+        assert len(fixture.api.started) == 1
+        assert fixture.api.tag_updates == []
+        assert fixture.api.direct == "A" * 17
+        if interrupt == "receipt":
+            assert recovered.returncode != 0
+            assert isinstance(recorded, UnknownBuildSubmission)
+            assert fixture.journal.read_submission(key) == recorded
+            assert fixture.journal.read_transaction() is None
+        else:
+            assert recovered.returncode == 0, recovered.stderr
+            assert isinstance(recorded, ReceivedBuildSubmission)
+            pending = fixture.journal.read_transaction()
+            assert pending is not None
+            assert pending.candidate.build_id == recorded.observation.id
+            assert fixture.journal.read_submission(key) is None

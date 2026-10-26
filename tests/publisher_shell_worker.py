@@ -42,7 +42,7 @@ class StandInvocation(DomainModel):
 
 class StandConfiguration(DomainModel):
     endpoint: ApifyEndpoint
-    interrupt: Literal["cache", "pending", "active"] | None
+    interrupt: Literal["cache", "pending", "active", "receipt"] | None
 
     @model_validator(mode="after")
     def loopback_only(self) -> Self:
@@ -56,17 +56,27 @@ def run(invocation: StandInvocation, configuration: StandConfiguration) -> None:
     artifact = root / "releases" / invocation.selected
     target: str | None = None
     match configuration.interrupt:
-        case "cache":
+        case "cache" | "receipt":
             release = load_release(artifact, selected_sha=invocation.selected)
             if not isinstance(release, SourceRelease):
                 raise ValueError("A cache interruption requires a source release")
-            target = release.source_digest + ".json"
+            target = (
+                ("submission-" if configuration.interrupt == "receipt" else "")
+                + release.source_digest
+                + ".json"
+            )
         case "pending" | "active":
             target = configuration.interrupt + ".json"
     original_replace = os.replace
+    matching_writes = 0
 
     def replace(source: str, destination: str, *, src_dir_fd: int, dst_dir_fd: int) -> None:
+        nonlocal matching_writes
         if destination == target:
+            matching_writes += 1
+            if configuration.interrupt == "receipt" and matching_writes == 1:
+                original_replace(source, destination, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+                return
             assert re.fullmatch(r"\.[A-Za-z0-9_.]+\.tmp", source)
             os._exit(73)
         original_replace(source, destination, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
