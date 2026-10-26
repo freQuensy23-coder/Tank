@@ -114,6 +114,40 @@ def alert_gate(event, assessment, *, previous=None, decisions=None, now=None):
     return True, "INITIAL"
 
 
+def preliminary_gate(event, assessment, previous=None, previous_failed=False):
+    if (
+        event.get("lifecycle") == "INVALIDATED"
+        and previous
+        and (
+            _new_fatal(event, assessment, previous)
+            or (previous_failed and previous.get("terminal_correction"))
+        )
+    ):
+        return True, "PRELIMINARY_CORRECTION"
+    if assessment.get("class", assessment.get("ems_class")) != "MATERIAL":
+        return False, "PRELIMINARY_REQUIRES_MATERIAL"
+    if event.get("lifecycle") in {"CLOSED", "MERGED", "INVALIDATED"}:
+        return False, "TERMINAL_EVENT"
+    if event.get("freshness") == "STALE" or event.get("publication_trigger_freshness") == "STALE":
+        return False, "STALE"
+    claims = event.get("claims", [])
+    superseded = {
+        ref
+        for claim in claims
+        if claim.get("accepted") is not False
+        for ref in claim.get("supersedes_claim_ids", [])
+    }
+    if not any(
+        claim.get("accepted") is not False
+        and claim.get("claim_id") not in superseded
+        and claim.get("quote", "").strip()
+        and claim.get("evidence")
+        for claim in claims
+    ):
+        return False, "PRELIMINARY_REQUIRES_EVIDENCE"
+    return True, "PRELIMINARY"
+
+
 def _na(value, reason="NOT_AVAILABLE"):
     return str(value) if value is not None else "n/a (" + str(reason).replace("_", " ").lower() + ")"
 
@@ -318,7 +352,17 @@ def _holders_revenue_text(truth):
 
 
 def compose_card(
-    event, assessment, beneficiaries, decisions, market_truths, *, kind="FULL", what="", verdict="", why=None
+    event,
+    assessment,
+    beneficiaries,
+    decisions,
+    market_truths,
+    *,
+    kind="FULL",
+    what="",
+    verdict="",
+    why=None,
+    unconfirmed="",
 ):
     if isinstance(market_truths, dict):
         market_truths = list(market_truths.values())
@@ -370,6 +414,8 @@ def compose_card(
                 + " — "
                 + str(claim.get("verification_missing") or "n/a (verification gap not supplied)")
             )
+    if kind == "PRELIMINARY" and unconfirmed:
+        unverified.append(unconfirmed)
     scores = score_summary(assessment)
     stage = ("" if event.get("state_verified", event.get("verified")) is True else "unverified ") + _na(
         event.get("event_state", event.get("state"))
@@ -386,6 +432,10 @@ def compose_card(
         "",
         "WHY IT MATTERS",
     ]
+    if kind == "PRELIMINARY":
+        lines[0] = (
+            "PRELIMINARY · DENIED · " if event.get("lifecycle") == "INVALIDATED" else "PRELIMINARY · "
+        ) + lines[0]
     why = list(why or [])
     changed = _why_content(why[0], "What changed") if why else "n/a (change description unavailable)"
     economic = _why_content(why[1], "Economic effect") if len(why) > 1 else "not estimable"
@@ -416,7 +466,7 @@ def compose_card(
     lines += ["• What changed: " + changed, "• Economic effect: " + economic, "• Token capture: " + capture]
     if event.get("call_expired"):
         lines[-1] += " · No longer following: call expired."
-    if kind == "PARTIAL":
+    if kind in {"PARTIAL", "PRELIMINARY"}:
         lines.append("Market analysis pending — token actions and outlook unavailable.")
     else:
         mapping = event.get("beneficiary_map") or {}

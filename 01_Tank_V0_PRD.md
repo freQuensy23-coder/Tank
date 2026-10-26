@@ -7,6 +7,7 @@
 | Companions | 02 — System Architecture (components, integrations, data flows, deployment) · 03 — Technical Design (data structures, algorithms, thresholds, field semantics, tests) |
 | Version | 2.3 — fixed MVP baseline |
 | Date | 2026-10-16 |
+| Amendment | 2026-10-26 — preliminary cards and timed event reviews (MR #42); open implementation gaps: 03 §11.6 |
 | Scope | Tank V0 only (spec v0.4-1 incl. Rev 0.2, Addendum 001, Addendum 002-A "promoted changes", Addendum 002-B "capital-weighted breadth & price-flow divergence") |
 | Verification | Sources, accounts, tokens and venue listings named here were checked live on 16 Oct 2026. |
 
@@ -22,9 +23,9 @@ Tank V0 is an always-on service that:
 
 1. watches **34 named information sources** — US regulators, exchanges and brokers, protocols and issuers, governance forums, GitHub, 86 X accounts, BBC, Bloomberg, Reuters, CoinDesk, The Block (§4.2–4.3);
 2. watches **market data on 6 venues** — Binance, Coinbase, OKX, Bybit and Kraken spot markets; Binance, OKX, Bybit and Hyperliquid perpetuals (§4.4);
-3. turns new information into verified **events** about a **22-token universe** and its ecosystem (§4.1), each handled as **one continuous analysis** that later news about the event joins (D8);
+3. turns new information into **events** about a **22-token universe** and its ecosystem (§4.1), each handled as **one continuous analysis** that later news about the event joins (D8);
 4. grades each event, maps who benefits and who loses, measures what the market is really doing underneath the price, and forecasts movement as scenarios;
-5. sends a **decision card to Telegram** only for major events and material changes after them — otherwise it stays silent.
+5. sends **ordinary decision cards to Telegram** for major events and their material changes; a selected MATERIAL lead may receive a clearly marked preliminary card under FR-A-08.
 
 Tank V0 never places orders. All decisions stay with the operator.
 
@@ -39,9 +40,9 @@ Tank V0 never places orders. All decisions stay with the operator.
 | Item | One new piece of content from one source: a press release, an exchange announcement, an X post, a governance proposal, a new market in a venue's instrument list. | Bybit announcement "New listing: Listing of DNAUSDT on Bybit Perpetual on Oct 16, 2026, 11:45AM UTC". |
 | Event | The real-world change behind one or more items. Every item about the same fact belongs to one event, handled as one continuous analysis (D8), so Tank reacts once and keeps the time it first knew. | "The Clearing House partners with Quant on on-chain money" (24 Sep 2026): the TCH press release, the posts on X and the news articles about it are one event. |
 | State | How far the event has really progressed: rumor → proposed → approved → signed → deployed → live → money flowing. The card shows the stage and whether it is verified. | The Aave proposal to onboard USAT, voting until 18 Oct 2026 → proposed. |
-| Certainty | How credible the fact is. HIGH: an official source — the organization's site or announcements, a regulator's publication or filing, its official X account, or its founders and C-level team speaking about their own organization — or a fact Tank observes itself (the new market already trades). MEDIUM: likely true but not verified — a reliable reporter, or a founder speaking about another organization. LOW: implausible, or an unknown author; never a card. | Sam Altman posts "we will integrate WLD and OpenAI" → HIGH. An unknown account posts "Bybit pivots to making condoms" → LOW. |
+| Certainty | How credible the fact is. HIGH: an official source — the organization's site or announcements, a regulator's publication or filing, its official X account, or its founders and C-level team speaking about their own organization — or a fact Tank observes itself (the new market already trades). MEDIUM: likely true but not verified — a reliable reporter, or a founder speaking about another organization. LOW: implausible, or an unknown author; never an ordinary card. A sourced MATERIAL lead may qualify for a preliminary card under FR-A-08. | Sam Altman posts "we will integrate WLD and OpenAI" → HIGH. An unknown account posts "Bybit pivots to making condoms" → LOW. |
 | Freshness | How long before Tank learned it the event really became public. Tank judges this from the content and its sources, not from the time of the post: FRESH ≤ 1 h, NORMAL ≤ 4 h, MEDIUM ≤ 8 h, POOR ≤ 24 h, OLD ≤ 48 h, STALE beyond. | A founder posts now: "yesterday we shipped X and told all the press" → public yesterday → not fresh, even though the post is new. |
-| Grade | LOW, MATERIAL, MAJOR or STRUCTURAL SHOCK, set by the class criteria of §6.3. Only MAJOR and STRUCTURAL SHOCK lead to cards. | — |
+| Grade | LOW, MATERIAL, MAJOR or STRUCTURAL SHOCK, set by the class criteria of §6.3. MAJOR and STRUCTURAL SHOCK qualify for ordinary cards; MATERIAL may qualify for the preliminary exception in FR-A-08. LOW event class never produces a card. | — |
 | Thesis and Trade grades | A–D per token on the card. Thesis: how strong the event is for this token — its class, how much value reaches the token, how exposed the token is, how far the stage has progressed. Trade: how good an entry is right now — what is moving the price, how much is already priced, liquidity, data confidence. | WLD, 16 Oct 2026: a perp-led move gives Trade C → DON'T CHASE. |
 | Card | The Telegram message about one event (§7.1); later changes arrive as replies in its thread. | — |
 | Call | A START that Tank gave on a token. Tank follows it until EXIT, at most 7 days, and says in the card's thread when it stops. | — |
@@ -59,7 +60,7 @@ Tank V0 never places orders. All decisions stay with the operator.
 | P5 | Activity confused with token value | "World Money live in 150+ countries" does not, by itself, pay WLD holders. | Shows how much of the activity actually reaches the token: direct, indirect, narrative-only or unknown. |
 | P6 | Market response misread | QNT on 26 Sep 2026, 19:00–23:00 UTC: open interest in dollars rose ~20% while the number of open positions barely moved (+0.4%) — the "growth" was price. One venue's headline open-interest figure counts both sides of every position. | Measures positions in token units, separates price effects, compares venues by the volume they carry. |
 | P7 | No usable forward view | Either no forecast or "67% chance of +14%". | Direction, potential, horizon and base/upside/failure scenarios; no probabilities. |
-| P8 | Noise or silence at the wrong time | Dozens of pings per day, or nothing when it matters. | Cards only for major events and material changes; one daily heartbeat to the ops chat. |
+| P8 | Noise or silence at the wrong time | Dozens of pings per day, or nothing when it matters. | Ordinary cards for major events and material changes; selected preliminary leads under FR-A-08; one daily heartbeat to the ops chat. |
 | P9 | Silent data gaps and wrong identities | Some venues publish only a sample of liquidations; a ticker can belong to two different projects (LIT). | Every gap is shown as a gap, sampled data is labeled, tokens are identified by project, never by ticker. |
 
 ---
@@ -234,15 +235,15 @@ On the list: every official account of a universe project's organizations (proje
 |---|---|---|
 | 1 | Watch sources and market data | New items and market data, each with time and origin |
 | — | Filter and route | News, GitHub commits and non-organization posts that are not about crypto are kept but not analyzed (FR-D-06). An item that repeats or develops an event with news in the last 3 days joins that event's analysis, even while it is running (FR-E-02). Any other item starts a new analysis |
-| 2 | Work out what happened | One event per real-world fact: verified facts with quotes, state, freshness, first-known time; an item with no new fact (opinion, price talk) is recorded and goes no further |
-| 3 | Grade the event | LOW / MATERIAL / MAJOR / STRUCTURAL SHOCK, with value-capture and timing |
+| 2 | Work out what happened | One event per asserted development: facts and unverified claims with quotes, certainty, state, freshness and first-known time; an item with no new fact (opinion, price talk) is recorded and goes no further |
+| 3 | Grade the event | LOW / MATERIAL / MAJOR / STRUCTURAL SHOCK, with value-capture and timing. LOW stops. MATERIAL normally stops; a selected sourced lead may take the preliminary-publication and timed-review branch (FR-A-08–09) without stages 4–6 |
 | 4 | Map beneficiaries | Primary, secondary, competitor and loser tokens; least-repriced beneficiary |
 | 5 | Measure the market response | What is moving the price, with the decisive facts and data confidence |
 | 6 | Forecast movement | Direction, potential, horizon, scenarios, what would change the view |
-| 7 | Decide and notify | Telegram card with an action, or silence |
+| 7 | Decide and notify | Ordinary Telegram card with an action, preliminary card without market/action blocks, or silence |
 | 8 | Record the reaction | Market record from 24 h before to 72 h after each major event |
 
-Stages 2–7 are one continuous analysis per event (D8). The first item starts it; later news about the event, fired conditions, milestones and expiring calls are added to the same analysis, and the card changes only through threaded updates (FR-A-04). During the analysis Tank can read any public site or API, query everything it has stored and run its own calculations; the figures on a card still come only from its fixed market formulas.
+Stages 2–7 are one continuous analysis per event (D8). The first item starts it; later news about the event, fired conditions (including timed review questions), milestones and expiring calls are added to the same analysis. Published versions stay in one Telegram thread. After a preliminary card, the first ordinary card still meets the ordinary publication requirements (FR-A-03–04, FR-A-08). During the analysis Tank can read any public site or API, query everything it has stored and run its own calculations; the figures on a card still come only from its fixed market formulas.
 
 Side capability: flagging events that fit no known pattern (scout).
 
@@ -332,11 +333,13 @@ Each requirement describes behavior the operator can observe or a test can check
 |---|---|
 | FR-A-01 | Each analyzed token MUST get one action: START, WATCH-TO-START, WAIT, DON'T CHASE, HOLD, ADD, REDUCE or EXIT. Actions are for long positions only: a bearish view means WAIT, or REDUCE/EXIT on a position Tank previously started. On a call it started, Tank says EXIT when the thesis breaks or the price closes an hour below its pre-event price (or the entry, if lower), REDUCE when the entry turns poor or broad spot selling lasts 2 h, and ADD when an upgrade condition fires with a good entry. (Decision rules: 03 §7.) |
 | FR-A-02 | A perp-led move MUST lead to DON'T CHASE or WAIT; unconfirmed passive absorption to WATCH-TO-START or WAIT; a liquidity vacuum to DON'T CHASE, or WAIT when the thesis is weak; fragmentation and unknown to WAIT. A token already heavily priced gets DON'T CHASE when its thesis is strong. DON'T CHASE never means EXIT. |
-| FR-A-03 | Tank MUST send a new card only for MAJOR or STRUCTURAL SHOCK events of HIGH or MEDIUM certainty that are not STALE and not cancelled; a card about a MEDIUM fact MUST say in words what is verified and what is not. LOW-certainty facts never produce cards. A STRUCTURAL SHOCK MUST produce a first card within 3 min of Tank learning about it, completed by a full card in the same thread. |
-| FR-A-04 | Updates MUST be replies in the card's thread, sent only when an action, the event grade, the stage or its verification, or a decisive condition changes, when the event is denied, or when Tank stops following a call, at most one per event per 15 min — START, EXIT and broken theses go immediately. LOW and MATERIAL events, STALE facts and repeated coverage of a known event never produce cards. |
+| FR-A-03 | Tank MUST send a new ordinary card only for MAJOR or STRUCTURAL SHOCK events of HIGH or MEDIUM certainty that are not STALE and not cancelled; a card about a MEDIUM fact MUST say in words what is verified and what is not. LOW-certainty facts never produce ordinary cards. FR-A-08 defines the separate MATERIAL preliminary exception. A STRUCTURAL SHOCK MUST produce a first ordinary card within 3 min of Tank learning about it, completed by a full card in the same thread; an earlier preliminary card does not satisfy this deadline. |
+| FR-A-04 | Updates MUST be replies in the card's thread, sent only when an action, the event grade, the stage or its verification, or a decisive condition changes, when the event is denied, or when Tank stops following a call, at most one per event per 15 min — START, EXIT and broken theses go immediately. LOW and MATERIAL events never produce ordinary cards. FR-A-08 permits preliminary publication for selected MATERIAL leads. STALE facts and repeated coverage without a meaningful change do not justify a new card. The preliminary-path gaps in enforcing these rules are recorded in 03 §11.6. |
 | FR-A-05 | A card MUST follow §7.1 and cover at most 3 tokens: the tradable primary, the least-repriced credible secondary, then the next most relevant secondary or loser; updates follow these tokens. |
 | FR-A-06 | Every card MUST follow the hard rules in §8. The card template's own text never breaks them, and the agent writes its verdict and WHY lines by them. The reviewer checks every card against them in the daily review (V0-H). |
 | FR-A-07 | Every card version MUST be kept unchanged with the evidence it was based on and its delivery status. |
+| FR-A-08 | The analyst MAY select a MATERIAL event for a PRELIMINARY card when there is a concrete sourced lead with a potentially substantial consequence. This is not automatic publication of every MATERIAL event. Preserve the actual event class, stage and certainty, including LOW certainty; state the finding, possible consequence and missing confirmation. Require current quoted evidence and refuse STALE, INVALIDATED, CLOSED or MERGED events, except one denial correction: when an official denial invalidates an event whose cards are only PRELIMINARY, Tank sends at once, in the same thread, a PRELIMINARY marked DENIED that states the denial. Reuse the PARTIAL presentation with a PRELIMINARY headline marker and the existing NOT VERIFIED section; no completed Market Truth, token action or outlook is required. Do not create a second event or a separate card thread. Once an ordinary card exists, use the ordinary update path instead. |
+| FR-A-09 | The analyst MAY schedule one future review of a concrete unresolved question using the existing event-monitoring mechanism. The review needs a question, due time and expiry; it must not invent an announced product milestone. It fires once, may be cancelled, and returns to the event's analyst without requiring a token or market data. Further reviews require explicit new scheduling. Original discovery/publication times remain unchanged. |
 
 ### 6.8 Reaction record
 
@@ -366,7 +369,7 @@ Each requirement describes behavior the operator can observe or a test can check
 
 ### 7.1 Telegram decision card
 
-One card per event; up to 3 token blocks.
+One Telegram thread per event; ordinary full cards cover up to 3 token blocks. A PRELIMINARY version reuses the PARTIAL layout: the same score table, stage, certainty, freshness, VERIFIED / NOT VERIFIED and WHY IT MATTERS blocks, with a PRELIMINARY headline marker and explicit missing confirmation in NOT VERIFIED. It has no market, outlook or action blocks. The ordinary template below remains unchanged.
 
 Telegram uses a native Rich Message table for the seven scores: full dimension name, score out of 10 or Not assessed, and the saved explanation for every row. The renderer prints the existing assessment; it does not ask the agent to reassess or translate it. The compact Scores line remains only in the internal legacy text representation.
 
@@ -476,14 +479,14 @@ Shadow-mode success criteria (V0-H):
 
 | # | Criterion | Target |
 |---|---|---|
-| S1 | Median time from first public appearance to Tank knowing (sources S01–S24) / from Tank knowing to card sent | ≤ 2 min / ≤ 8 min |
+| S1 | Median time from first public appearance to Tank knowing (sources S01–S24) / from Tank knowing to first ordinary card sent | ≤ 2 min / ≤ 8 min |
 | S2 | Cards on facts that were public more than 48 h before Tank learned them | 0 |
 | S3 | States or verification overstated | 0 |
 | S4 | New-position claims based on dollar open interest | 0 |
 | S5 | Accumulation claims without flow and price-response checks | 0 |
 | S6 | Token blocks with a named move cause and decisive facts | 100% |
 | S7 | MAJOR+ events with a reviewer-accepted secondary beneficiary (where one exists) | ≥ 70% |
-| S8 | Cards for LOW/MATERIAL events; MAJOR+ cards labeled NOISE | 0; ≤ 20% |
+| S8 | Ordinary cards for LOW/MATERIAL events; MAJOR+ cards labeled NOISE | 0; ≤ 20%. Review PRELIMINARY cards separately; they do not count as ordinary MAJOR+ decisions |
 | S9 | Cards with evidence, delivery record and reproducible verdict | 100% |
 
 ---

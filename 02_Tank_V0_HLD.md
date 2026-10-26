@@ -7,6 +7,7 @@
 | Companions | 01 — PRD · 03 — Technical Design |
 | Version | 2.2 — fixed MVP baseline |
 | Date | 2026-10-16 |
+| Amendment | 2026-10-26 — preliminary cards and timed event reviews (MR #42); open implementation gaps: 03 §11.6 |
 | Scope | Tank V0 only (V0.4) |
 | Verification | Endpoints, response fields, link patterns, limits and feed coverage below were called or read live on 16 Oct 2026, 14:00–16:30 UTC. |
 
@@ -273,7 +274,7 @@ Tank is one service: a single Python 3.13 asyncio process, `tank serve`, built a
 | `codex_gateway` | `httpx` | An HTTP endpoint on the Compose network (`http://tank:8790/v1`) | The model endpoint behind OpenMA's Model Card for `gpt-6.1-sol` (OpenAI Responses API): checks the internal key, adds the operator's ChatGPT (Codex) OAuth token and account id from the volume `codex-auth`, and forwards the call to the endpoint the Codex CLI uses; when the token expires it refreshes it with the refresh token and writes the new tokens back; a usage-limit answer goes back to OpenMA with its reset time |
 | `analysis` | `numpy`, `pandas` | ESCALATE_TOKENS, RUN_MARKET_TRUTH, EVAL_CONDITIONS, MILESTONE_CHECK and REACTION_CAPTURE jobs; the code behind the tools | State Tracker, EMS checks, Beneficiary rules, Market Truth, Outlook, Decision Engine, Alert Composer, evidence bundles; no LLM |
 | `delivery` | `httpx` | DELIVER jobs | Telegram send, threading, ledger; "Tank Ops" notices: the processing card of each material (sent once, then edited in place), entry-error notices with their diagnostic documents, DELIVERY_FAILED, the heartbeat (03 §7.6) |
-| `scheduler` | — | One loop | Runs each source loop at its cadence (normal or 15 s escalated); creates EVAL_CONDITIONS every minute, MILESTONE_CHECK at a milestone's time and REACTION_CAPTURE at each checkpoint; hot-set demotion; heartbeat notice; retention; nightly backup (`pg_dump` and `bundles/` to an external disk) |
+| `scheduler` | — | One loop | Runs each source loop at its cadence (normal or 15 s escalated); creates EVAL_CONDITIONS every minute for metric conditions and timed review questions, MILESTONE_CHECK at a source-announced milestone's time and REACTION_CAPTURE at each checkpoint; hot-set demotion; heartbeat notice; retention; nightly backup (`pg_dump` and `bundles/` to an external disk) |
 | CLI | `click` | Short commands of the same program | Review, scout decisions, replay, archive fetch, bundle reproduction, source and handle checks |
 
 Next to the service run four containers: `tank-capture` (§5.1), `clickhouse` (ClickHouse; database `mkt`, the exchange market series and every print, written only by tank-capture), `postgres` (PostgreSQL 16; database `tank`, plus OpenMA's database `oma`) and `openma`, the OpenMA server (`open-managed-agents` built from a pinned upstream commit with Tank's patches, §8; Node.js), listening on port 8787 of the Compose network. It hosts the agents `tank-event-analyst` and `tank-scout-reviewer` and their sessions, makes the model calls through Tank's `codex_gateway`, which signs them with the operator's ChatGPT subscription (Codex sign-in, §8), inlines the skills and keeps the append-only session logs. Each session gets its own litebox sandbox, a microVM with unrestricted internet access and read-only access to the database `tank` (§8).
@@ -338,24 +339,40 @@ sequenceDiagram
   end
   OMA->>SES: tool calls: record_event, set_assessment
   SES->>DB: validate and write; results back to the session
-  alt STRUCTURAL SHOCK
-    OMA->>SES: publish_card PARTIAL
-    SES->>DB: alert + DELIVER job
-    JOB->>TG: sendRichMessage
+  alt LOW
+    Note over OMA,DB: retain the event, no card
+  else MATERIAL
+    opt analyst selects a concrete sourced lead
+      OMA->>SES: publish_card PRELIMINARY
+      SES->>DB: preliminary gate, immutable alert + DELIVER
+      JOB->>TG: existing PARTIAL layout, marked PRELIMINARY
+      JOB->>DB: ledger SENT with message_id
+    end
+    opt a concrete question merits later review
+      OMA->>SES: set_watch_condition(review_at, review_question)
+      SES->>DB: ana.watch_conditions, same event
+    end
+  else MAJOR or STRUCTURAL SHOCK
+    opt STRUCTURAL SHOCK
+      OMA->>SES: publish_card PARTIAL
+      SES->>DB: alert + DELIVER job
+      JOB->>TG: sendRichMessage
+      JOB->>DB: ledger SENT with message_id
+    end
+    OMA->>SES: set_beneficiaries, get_market_truth
+    SES->>DB: ESCALATE_TOKENS and RUN_MARKET_TRUTH jobs
+    JOB->>MKT: ESCALATE_TOKENS
+    MKT->>DB: mkt.hot_tokens + mkt.backfill_runs (backfill −24h)
+    CAP->>DB: reads the hot set and the obligation
+    CAP->>CH: subscribes every covered market, backfills: flow bars, prints, books, OI, funding, liquidations
+    JOB->>CH: RUN_MARKET_TRUTH reads the snapshot
+    JOB->>DB: Market Truth (no LLM)
+    SES->>OMA: get_market_truth result
+    OMA->>SES: get_decision, publish_card FULL
+    SES->>DB: outlook, grades, action (code); gate; alert + DELIVER job
+    JOB->>TG: sendRichMessage in the event thread
+    JOB->>DB: ledger SENT with message_id
   end
-  OMA->>SES: set_beneficiaries, get_market_truth
-  SES->>DB: ESCALATE_TOKENS and RUN_MARKET_TRUTH jobs
-  JOB->>MKT: ESCALATE_TOKENS
-  MKT->>DB: mkt.hot_tokens + mkt.backfill_runs (backfill −24h)
-  CAP->>DB: reads the hot set and the obligation
-  CAP->>CH: subscribes every covered market, backfills: flow bars, prints, books, OI, funding, liquidations
-  JOB->>CH: RUN_MARKET_TRUTH reads the snapshot
-  JOB->>DB: Market Truth (no LLM)
-  SES->>OMA: get_market_truth result
-  OMA->>SES: get_decision, publish_card FULL
-  SES->>DB: outlook, grades, action (code); gate; alert + DELIVER job
-  JOB->>TG: sendRichMessage (or reply to the partial)
-  JOB->>DB: ledger SENT with message_id
 ```
 
 ### 6.2 Market data
@@ -364,7 +381,11 @@ Inside tank-capture (§5.1), one task per WebSocket connection: messages → per
 
 ### 6.3 Re-evaluation
 
-A new item about the event reaches its session as ITEM_ADDED; a fired watch condition, a milestone outcome or an expiring call reaches it as CONDITION_FIRED, MILESTONE or CALL_EXPIRED. The agent calls `get_market_truth` at a new cutoff when it needs one, then `get_decision` and `publish_card` UPDATE; the update policy sends a threaded update only on a material change (01 FR-A-04).
+A new item about the event reaches its session as ITEM_ADDED; a fired metric condition, a milestone outcome or an expiring call reaches it as CONDITION_FIRED, MILESTONE or CALL_EXPIRED. The ordinary analysis refreshes Market Truth and decisions as needed. UPDATE requires an ordinary original: after a PRELIMINARY-only history, the first ordinary publication is still FULL or STRUCTURAL_SHOCK PARTIAL in the same Telegram thread. An official denial of a PRELIMINARY-only event is published as a PRELIMINARY denial correction in that thread; the session is archived only after it is delivered.
+
+A timed review also uses CONDITION_FIRED, carrying review_at and review_question instead of a token prerequisite. The analyst investigates that question, records new evidence and reassesses the same event before deciding whether to publish. The scheduler uses the existing ana.watch_conditions rows and AGENT_MESSAGE jobs; no lead table, new scheduler or automatic recurring research loop is added. Each review fires once or ends by cancellation/expiry.
+
+PRELIMINARY shares the existing composer, evidence bundle, alert-version store and delivery queue. It reuses PARTIAL presentation and does not satisfy ordinary first-card timing. Conditions for publication and the current implementation gaps are in 03 §7.4 and §11.6.
 
 ### 6.4 Reaction windows
 

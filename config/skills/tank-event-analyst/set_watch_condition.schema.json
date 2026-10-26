@@ -70,9 +70,22 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 168
+    },
+    "review_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ARM timed review: future UTC time before the condition expires. Mutually exclusive with token_id and metric conditions."
+    },
+    "review_question": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "\\S",
+      "description": "ARM timed review: concrete evidence question to investigate at review_at. Required with review_at."
     }
   },
   "required": [
     "action"
-  ]
+  ],
+  "description": "Arm metric conditions with token_id and conditions, or one timed event review with review_at and review_question. Timed reviews need no token or MarketTruth. Both use existing watch storage and CONDITION_FIRED; a review fires once, can be disarmed, and expires normally."
 }
