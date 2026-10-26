@@ -1,5 +1,6 @@
 """Exercise the unchanged CLI against a loopback TLS provider with networking disabled."""
 
+import argparse
 import os
 import subprocess
 import sys
@@ -19,6 +20,8 @@ from tank.deployment.contracts import (
     SourceBuild,
 )
 from tank.deployment.journal import PublisherJournal
+from tank.deployment.package_runtime import verify_package_runtime
+from tank.deployment.runtime_contracts import RuntimeDescriptor, RuntimeInvocation
 from tank.deployment.submissions import ReceivedBuildSubmission, UnknownBuildSubmission
 
 
@@ -38,9 +41,21 @@ class CLIProof(DomainModel):
     actual_cli: TrueFlag
     api_host: Literal["loopback-only-api.apify.com"]
     cases: tuple[CLIOutcome, ...]
+    observed_runtime: RuntimeDescriptor
+    identity_mode: Literal["equal", "distinct"]
 
 
-def run_probe(root: Path, package: Path, orchestrator_sha: str, sha: str) -> None:
+def run_probe(
+    root: Path, package: Path, orchestrator_sha: str, sha: str, *, identity_mode: Literal["equal", "distinct"]
+) -> None:
+    invocation = RuntimeInvocation(orchestrator_sha=orchestrator_sha, selected_release_sha=sha)
+    declared = verify_package_runtime(package, invocation, Path("/app"))
+    if sys.executable != "/opt/tank/venv/bin/python":
+        raise ValueError("The CLI probe requires the actual application image interpreter")
+    if (identity_mode == "equal") != (
+        declared.runtime.orchestrator_sha == declared.runtime.selected_release_sha
+    ):
+        raise ValueError("Actual package identities do not match the requested proof mode")
     results: list[CLIOutcome] = []
     for name in (
         "forward",
@@ -205,10 +220,39 @@ def run_probe(root: Path, package: Path, orchestrator_sha: str, sha: str) -> Non
             )
     print(
         CLIProof(
-            actual_cli=True, api_host="loopback-only-api.apify.com", cases=tuple(results)
+            actual_cli=True,
+            api_host="loopback-only-api.apify.com",
+            cases=tuple(results),
+            observed_runtime=declared.runtime,
+            identity_mode=identity_mode,
         ).model_dump_json()
     )
 
 
+class ProbeArguments(argparse.Namespace):
+    root: Path
+    package: Path
+    orchestrator_sha: str
+    selected_sha: str
+    identity_mode: Literal["equal", "distinct"]
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("root", type=Path)
+    parser.add_argument("package", type=Path)
+    parser.add_argument("orchestrator_sha")
+    parser.add_argument("selected_sha")
+    parser.add_argument("--identity-mode", required=True, choices=["equal", "distinct"])
+    arguments = parser.parse_args(namespace=ProbeArguments())
+    run_probe(
+        arguments.root,
+        arguments.package,
+        arguments.orchestrator_sha,
+        arguments.selected_sha,
+        identity_mode=arguments.identity_mode,
+    )
+
+
 if __name__ == "__main__":
-    run_probe(Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4])
+    main()
