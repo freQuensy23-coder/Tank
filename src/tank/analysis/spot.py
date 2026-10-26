@@ -19,7 +19,9 @@ from tank.analysis.condition_graph_contracts import (
     ConditionFlowAggregate,
     ConditionFlowAggregateProjection,
     ConditionIncompleteMinuteCoverage,
+    ConditionInterval,
     ConditionMissingFlowMetrics,
+    ConditionSignHistoryWindow,
     ConditionSpotBreadth,
     ConditionSpotConcentration,
     ConditionSpotCoverage,
@@ -29,8 +31,10 @@ from tank.analysis.condition_graph_contracts import (
     ConditionSpotVenue,
     ConditionSpotWindowGraph,
     ConditionStatisticalNullReason,
+    ConditionTopVenueSignHistory,
     ConditionTradeCounts,
     ConditionUnavailableBoundaryCoverage,
+    ConditionVenueSignObservation,
     ConditionWeightedBreadth,
     ConditionWindow,
     FlowAggregateEvidenceRef,
@@ -759,6 +763,52 @@ def calculate_spot(inputs: SpotCalculationInputs) -> BasicConditionSpot:
     with _native_arithmetic((*values, *ticker_values, inputs.policy.significant_flow_sigma)):
         qualified = _qualify_spot(inputs, start=inputs.start, cutoff=inputs.cutoff)
         return _calculate_spot(inputs, qualified, start=inputs.start, cutoff=inputs.cutoff)
+
+
+def calculate_spot_sign_history(
+    inputs: SpotCalculationInputs, *, interval: ConditionInterval, selected_venues: tuple[str, ...]
+) -> ConditionTopVenueSignHistory:
+    source = SpotCalculationInputs.model_validate(inputs)
+    interval = ConditionInterval.model_validate(interval)
+    if interval.start < source.start or interval.cutoff > source.cutoff:
+        raise ValueError("Sign history must remain inside the actual source interval")
+    declared = {instrument.venue for instrument in source.instruments}
+    if len(set(selected_venues)) != len(selected_venues) or not set(selected_venues) <= declared:
+        raise ValueError("Sign history requires distinct actual declared venues")
+    amounts = tuple(
+        value
+        for row in (*source.minutes, *source.boundaries)
+        for value in (row.buy_qty, row.sell_qty, row.sum_sq_qty)
+        if value is not None
+    )
+    windows: list[ConditionSignHistoryWindow] = []
+    with _native_arithmetic((*amounts, source.policy.significant_flow_sigma)):
+        cursor = interval.start
+        while selected_venues and cursor + timedelta(minutes=15) <= interval.cutoff:
+            cutoff = cursor + timedelta(minutes=15)
+            observations: list[ConditionVenueSignObservation] = []
+            for venue in selected_venues:
+                qualified = _selected_venue(source, venue, start=cursor, cutoff=cutoff)
+                observations.append(
+                    ConditionVenueSignObservation(
+                        venue=venue,
+                        value=qualified.sign if isinstance(qualified, _Venue) else None,
+                        reason=None if isinstance(qualified, _Venue) else "INCOMPLETE",
+                    )
+                )
+            windows.append(
+                ConditionSignHistoryWindow(
+                    interval=ConditionInterval(window="W15M", start=cursor, cutoff=cutoff),
+                    observations=tuple(observations),
+                )
+            )
+            cursor = cutoff
+    return ConditionTopVenueSignHistory(
+        token_id=source.token_id,
+        interval=interval,
+        selected_venues=selected_venues,
+        windows=tuple(windows),
+    )
 
 
 def _coverage_through(venues: Sequence[_Venue]) -> Timestamp:

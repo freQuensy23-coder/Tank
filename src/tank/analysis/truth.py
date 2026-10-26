@@ -29,13 +29,21 @@ from pydantic import JsonValue
 
 from tank.analysis.condition_fingerprints import condition_input_fingerprints
 from tank.analysis.condition_graph_codec import encode_basic_condition_spot, encode_scoped_condition_spot
-from tank.analysis.condition_graph_contracts import ConditionStateNodeKey, ConditionTopCacheKey
+from tank.analysis.condition_graph_contracts import (
+    ConditionInterval,
+    ConditionStateNodeKey,
+    ConditionTopCacheKey,
+)
 from tank.analysis.condition_input_codec import (
     SpotConditionEvaluation,
     decode_spot_inputs,
     decode_spot_windows,
 )
-from tank.analysis.condition_inputs import SpotPolicyConfiguration
+from tank.analysis.condition_inputs import (
+    SpotCalculationInputs,
+    SpotCalculationSource,
+    SpotPolicyConfiguration,
+)
 from tank.analysis.execution import ExecutionLevelWire, ExecutionSide, execute_book_walk, execution_request
 from tank.analysis.positioning import (
     MissingOIDecomposition,
@@ -53,7 +61,12 @@ from tank.analysis.price_reference import (
     ReferencePriceSeries,
     decode_price_cadence,
 )
-from tank.analysis.spot import calculate_spot, calculate_spot_window_graph, spot_native_measurements
+from tank.analysis.spot import (
+    calculate_spot,
+    calculate_spot_sign_history,
+    calculate_spot_window_graph,
+    spot_native_measurements,
+)
 from tank.analysis.statistics_contracts import (
     BaselineCaches,
     BetaEstimate,
@@ -2539,7 +2552,9 @@ def _usd_mid(row, mid):
     return mid * rate if rate else None
 
 
-def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liquidity):
+def enrich_evidence(
+    snapshot, start, end, spots, primary, deriv, relative, liquidity, *, spot_inputs: SpotCalculationInputs
+):
     """Compute cross-window claims only on pairwise common, complete venues."""
     for name, left in spots.items():
         left["cohort_comparisons"] = {}
@@ -2906,41 +2921,14 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
     deriv["funding_dispersion_normal_range_8h"] = normal_dispersion
     deriv["funding_dispersion_beyond_normal"] = funding_beyond
 
-    top = set(spots[primary]["topn"]["venues"]) if spots[primary].get("topn") else set()
-    signs = {v: [] for v in top}
-    cursor = start
-    while top and cursor + timedelta(minutes=15) <= end:
-        sub = spot_truth(
-            snapshot.get("flow_bars", []),
-            [],
-            [
-                i
-                for i in snapshot.get("instruments", [])
-                if _venue(i) in top
-                and i.get("token_id", snapshot.get("token_id")) == snapshot.get("token_id")
-            ],
-            cursor,
-            cursor + timedelta(minutes=15),
-            flow_segments=flow_segments(snapshot),
-            assembled_at=snapshot.get("assembled_at"),
-        )
-        found = {v["venue"]: v["sign"] for v in sub["venues"]}
-        for venue in top:
-            signs[venue].append(found.get(venue))
-        if any(venue not in found for venue in top):
-            break
-        cursor += timedelta(minutes=15)
-    flips = []
-    for values in signs.values():
-        if None in values or len(values) < 3:
-            continue
-        directional = [v for v in values if v != 0]
-        flips.append(sum(a != b for a, b in zip(directional, directional[1:], strict=False)))
-    top_flips = (
-        any(n > 1 for n in flips)
-        if signs and all(len(v) >= 3 and None not in v for v in signs.values())
-        else None
+    selected_top = tuple(spots[primary]["topn"]["venues"]) if spots[primary].get("topn") else ()
+    sign_history = calculate_spot_sign_history(
+        spot_inputs,
+        interval=ConditionInterval(window="EVENT", start=start, cutoff=end),
+        selected_venues=selected_top,
     )
+    flips = sign_history.multiple_flips()
+    top_flips = flips.value if flips.status == "OBSERVED" else None
     liquidity["fragmentation"] = dict(
         window="W15M",
         cutoff=iso(end),
@@ -5088,7 +5076,14 @@ def spot_window_graph(snapshot, start, end, av):
         for instrument in snapshot.get("instruments", [])
         if instrument["token_id"] == snapshot["token_id"]
     ]
-    return spots, graph.durations_s, graph.primary, instruments, graph
+    return (
+        spots,
+        graph.durations_s,
+        graph.primary,
+        instruments,
+        graph,
+        SpotCalculationSource.from_inputs(decoded.inputs.source),
+    )
 
 
 @precise
@@ -5114,7 +5109,10 @@ def _compute_market_truth(snapshot, *, config=None):
             [point[0] for point in points],
             [point[1] for point in points],
         )
-    spots, windows, primary, instruments, spot_graph = spot_window_graph(snapshot, start, end, av)
+    spots, windows, primary, instruments, spot_graph, spot_source = spot_window_graph(
+        snapshot, start, end, av
+    )
+    spot_inputs = spot_source.at(propagate_timestamp(snapshot, "assembled_at"))
     snapshot["_has_event"] = bool(av)
     snapshot["_lead_start"] = start
     snapshot["_event_anchor"] = start if av else None
@@ -5137,7 +5135,9 @@ def _compute_market_truth(snapshot, *, config=None):
             window_liquidity["observed_at"] = min(v["observed_at"] for v in window_liquidity["per_venue"])
         window_liquidity["elasticity"].update(window=name, start=iso(wstart), cutoff=iso(end))
         window_liquidity["replenishment"].update(window=name, start=iso(wstart), cutoff=iso(end))
-        enrich_evidence(scoped, wstart, end, spots, name, d, relative, window_liquidity)
+        enrich_evidence(
+            scoped, wstart, end, spots, name, d, relative, window_liquidity, spot_inputs=spot_inputs
+        )
         d["support_features"] = support_features(scoped, wstart, end, spots[name], d, window_liquidity, su)
         if name == "EVENT" and not av:
             d = derivatives_truth(dict(scoped, oi=[], funding=[], liquidations=[], klines=[]), wstart, end)
@@ -5506,11 +5506,12 @@ def condition_market_state(snapshot, end, cache):
 
         return deepcopy(remember(cache, key, build))
 
-    spots, windows, primary, instruments, _spot_graph = node(
+    spots, windows, primary, instruments, _spot_graph, spot_source = node(
         "spot",
         ("flow_bars", "flow_segments", "flow_parent_bars", "tickers", "instruments", "anchor"),
         lambda: spot_window_graph(snapshot, start, end, av),
     )
+    spot_inputs = spot_source.at(propagate_timestamp(snapshot, "assembled_at"))
     scoped = dict(
         snapshot,
         _primary=primary,
@@ -5558,7 +5559,9 @@ def condition_market_state(snapshot, end, cache):
     )
     liquidity = liquidity_truth(scoped, wstart, end, spots[primary], relative)
     supply = node("supply", ("supply", "anchor"), lambda: supply_truth(scoped, wstart, end))
-    enrich_evidence(scoped, wstart, end, spots, primary, derivatives, relative, liquidity)
+    enrich_evidence(
+        scoped, wstart, end, spots, primary, derivatives, relative, liquidity, spot_inputs=spot_inputs
+    )
     derivatives["support_features"] = support_features(
         scoped, wstart, end, spots[primary], derivatives, liquidity, supply
     )

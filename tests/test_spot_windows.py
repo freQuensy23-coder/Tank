@@ -298,3 +298,83 @@ def test_native_composite_refuses_mixed_subjects_and_duplicated_venue_evidence()
         compose_native_flow(
             source, ("A", "A"), SpotCalculationPolicy(significant_flow_sigma=Decimal(2), min_spot_venues=2)
         )
+
+
+@pytest.mark.parametrize(
+    "directions,expected", [((1, -1, 1, 0), True), ((1, 0, -1), False), ((0, 0, 0), False)]
+)
+def test_native_sign_history_preserves_directional_flips_and_measured_neutral(
+    directions: tuple[int, ...], expected: bool
+) -> None:
+    from tank.analysis.condition_graph_contracts import ConditionInterval, ConditionObservedPredicate
+    from tank.analysis.spot import calculate_spot_sign_history
+
+    instrument, rows = source_rows()
+    start = END - timedelta(minutes=15 * len(directions))
+    for row in rows:
+        at = datetime.fromisoformat(str(row["minute_start"]).replace("Z", "+00:00"))
+        if at >= start:
+            direction = directions[int((at - start).total_seconds() // 900)]
+            row["buy_qty"], row["sell_qty"] = (
+                ("3", "1") if direction == 1 else ("1", "3") if direction == -1 else ("2", "2")
+            )
+    decoded = decode_windows([instrument], rows, chosen_boundary(start, precision="EXACT"))
+    original = decoded.inputs.model_dump_json()
+    history = calculate_spot_sign_history(
+        decoded.inputs.source,
+        interval=ConditionInterval(window="EVENT", start=start, cutoff=END),
+        selected_venues=("VENUE",),
+    )
+    assert tuple(window.observations[0].value for window in history.windows) == directions
+    conclusion = history.multiple_flips()
+    assert isinstance(conclusion, ConditionObservedPredicate) and conclusion.value is expected
+    assert decoded.inputs.model_dump_json() == original
+
+
+def test_native_sign_history_preserves_a_missing_piece_without_a_neutral_vote() -> None:
+    from tank.analysis.condition_graph_contracts import ConditionInterval, ConditionUnavailablePredicate
+    from tank.analysis.spot import calculate_spot_sign_history
+
+    instrument, rows = source_rows()
+    start = END - timedelta(hours=1)
+    rows = [row for row in rows if row["minute_start"] != iso(start + timedelta(minutes=17))]
+    decoded = decode_windows([instrument], rows, chosen_boundary(start, precision="EXACT"))
+    history = calculate_spot_sign_history(
+        decoded.inputs.source,
+        interval=ConditionInterval(window="EVENT", start=start, cutoff=END),
+        selected_venues=("VENUE",),
+    )
+    assert len(history.windows) == 4
+    missing = history.windows[1].observations[0]
+    assert missing.value is None and missing.reason == "INCOMPLETE"
+    assert isinstance(history.multiple_flips(), ConditionUnavailablePredicate)
+    with pytest.raises(ValueError, match="distinct actual declared venues"):
+        calculate_spot_sign_history(
+            decoded.inputs.source,
+            interval=history.interval,
+            selected_venues=("VENUE", "VENUE"),
+        )
+
+
+def test_cached_source_facts_bind_fresh_assembly_without_relabeling_source_clocks() -> None:
+    from dataclasses import fields
+
+    from tank.analysis.condition_inputs import SpotCalculationSource
+    from tank.analysis.spot import calculate_spot
+
+    instrument, rows = source_rows()
+    decoded = decode_windows([instrument], rows, chosen_boundary(END - timedelta(hours=1), precision="EXACT"))
+    facts = SpotCalculationSource.from_inputs(decoded.inputs.source)
+    original_receipt = facts.minutes[-1].received_at
+    assert "assembled_at" not in {field.name for field in fields(facts)}
+    early = facts.at(Timestamp(iso(END), "COLLECTION_ONLY"))
+    later = facts.at(Timestamp(iso(END + timedelta(seconds=2)), "COLLECTION_ONLY"))
+    assert calculate_spot(early).coverage.n_complete == 0
+    assert calculate_spot(later).coverage.n_complete == 1
+    assert (
+        facts.minutes[-1].received_at
+        == early.minutes[-1].received_at
+        == later.minutes[-1].received_at
+        == original_receipt
+    )
+    assert early.assembled_at != later.assembled_at

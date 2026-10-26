@@ -1,5 +1,6 @@
 """Consumed spot inputs, independent of transport, storage and output serialization."""
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Literal, Self
@@ -251,6 +252,45 @@ class SpotCalculationInputs(DomainModel):
             if identities.get(ticker.instrument.instrument_id) != ticker.instrument:
                 raise ValueError("Spot ticker must bind to its actual declared input scope")
         return self
+
+
+@dataclass(frozen=True, slots=True)
+class SpotCalculationSource:
+    token_id: str
+    start: datetime
+    cutoff: datetime
+    instruments: tuple[SpotInstrument, ...]
+    minutes: tuple[SpotFlowObservation, ...]
+    boundaries: tuple[SpotFlowObservation, ...]
+    tickers: tuple[SpotTickerObservation, ...]
+    policy: SpotCalculationPolicy
+
+    @classmethod
+    def from_inputs(cls, inputs: SpotCalculationInputs) -> Self:
+        validated = SpotCalculationInputs.model_validate(inputs)
+        return cls(
+            token_id=validated.token_id,
+            start=validated.start,
+            cutoff=validated.cutoff,
+            instruments=validated.instruments,
+            minutes=validated.minutes,
+            boundaries=validated.boundaries,
+            tickers=validated.tickers,
+            policy=validated.policy,
+        )
+
+    def at(self, assembled_at: Timestamp) -> SpotCalculationInputs:
+        return SpotCalculationInputs(
+            token_id=self.token_id,
+            start=self.start,
+            cutoff=self.cutoff,
+            assembled_at=Timestamp.model_validate(assembled_at),
+            instruments=self.instruments,
+            minutes=self.minutes,
+            boundaries=self.boundaries,
+            tickers=self.tickers,
+            policy=self.policy,
+        )
 
 
 class SpotWindowCalculationInputs(DomainModel):
