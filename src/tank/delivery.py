@@ -11,9 +11,9 @@ import httpx
 from pydantic import JsonValue
 
 from tank.analysis.cards import telegram_card_html
+from tank.diagnostic_documents import documents
 from tank.ops_progress import event_progress
 from tank.runtime_contracts import AlertDeliveryJob, DeliveryJob, NoticeDeliveryJob, parse_delivery_job
-from tank.sources.x_diagnostics import documents
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import new_id, parse_time, sha256, utcnow
 
@@ -208,14 +208,13 @@ class DeliveryService:
         parent = messages[0]["message_ref"]
         attachments = documents(notice["entry_errors"])
         manifest = [
-            {"filename": row["filename"], "sha256": row["sha256"], "bytes": len(row["content"])}
-            for row in attachments
+            {"filename": row.filename, "sha256": row.sha256, "bytes": len(row.content)} for row in attachments
         ]
         if manifest != notice["document_manifest"]:
             raise DeliveryError("Ops diagnostic document manifest mismatch")
         terminal_failure = None
         for document in attachments:
-            document_id = sha256({"filename": document["filename"], "sha256": document["sha256"]})
+            document_id = sha256({"filename": document.filename, "sha256": document.sha256})
             history = [row for row in ledger if row.get("document_id") == document_id]
             if any(row["status"] == "SENT" for row in history):
                 continue
@@ -231,9 +230,9 @@ class DeliveryService:
                 "channel": "telegram:ops",
                 "method": "sendDocument",
                 "document_id": document_id,
-                "document_sha256": document["sha256"],
-                "document_bytes": len(document["content"]),
-                "filename": document["filename"],
+                "document_sha256": document.sha256,
+                "document_bytes": len(document.content),
+                "filename": document.filename,
                 "attempt": attempt,
                 "request_reply_to_message_ref": parent,
                 **collection_clock(utcnow()).fields("at"),
@@ -247,12 +246,10 @@ class DeliveryService:
                     data={
                         "chat_id": chat,
                         "reply_parameters": json.dumps({"message_id": int(parent)}),
-                        "caption": f"{notice['notice_id']} · {document['filename']}\nsha256={document['sha256']} · {len(document['content'])} bytes",
+                        "caption": f"{notice['notice_id']} · {document.filename}\nsha256={document.sha256} · {len(document.content)} bytes",
                         "disable_content_type_detection": "true",
                     },
-                    files={
-                        "document": (document["filename"], document["content"], "application/octet-stream")
-                    },
+                    files={"document": (document.filename, document.content, "application/octet-stream")},
                 )
                 data = response.json()
                 if response.status_code != 200 or not data.get("ok"):
@@ -520,7 +517,7 @@ class DeliveryService:
                 raise ValueError("Delivery subject does not exist")
             if not notice:
                 prior = await self._all("out.alerts", filters={"event_id": record["event_id"]})
-                if record.get("kind") == "UPDATE" and any(
+                if record.get("kind") in {"UPDATE", "PRELIMINARY"} and any(
                     row["alert_id"] == record["alert_id"] and row["version"] > record["version"]
                     for row in prior
                 ):
@@ -538,7 +535,11 @@ class DeliveryService:
                 boundaries = []
                 if record.get("delivery_not_before"):
                     boundaries.append(propagate_timestamp(record, "delivery_not_before"))
-                if record.get("kind") == "UPDATE" and not record.get("delivery_immediate", False) and sent:
+                if (
+                    record.get("kind") in {"UPDATE", "PRELIMINARY"}
+                    and not record.get("delivery_immediate", False)
+                    and sent
+                ):
                     latest_sent = max(sent, key=lambda row: parse_time(row["at"]))
                     limits = ((record.get("card_struct") or {}).get("event") or {}).get("thresholds") or {}
                     boundaries.append(
@@ -657,6 +658,15 @@ class DeliveryService:
                         f"Карточка {subject}; Telegram message_id={message_ref}",
                         key=subject,
                     )
+                    if record.get("kind") == "PRELIMINARY":
+                        event = await self.repo.get("evt.events", record["event_id"])
+                        if (
+                            event
+                            and event.get("lifecycle") == "INVALIDATED"
+                            and record.get("terminal_correction")
+                        ):
+                            await self._finalize_invalidated(event, record)
+                        return None
                     await self._activate_calls(record, sent_at)
                     event = await self.repo.get("evt.events", record["event_id"])
                     if event and not event.get("first_card_delivered_at"):
@@ -704,16 +714,7 @@ class DeliveryService:
                             "ana.calls", filters={"event_id": event["event_id"], "status": "OPEN"}
                         )
                         if not open_calls:
-                            await self.repo.put(
-                                "evt.events",
-                                event["event_id"],
-                                {
-                                    **event,
-                                    **collection_clock(utcnow()).fields("session_finalized_at"),
-                                    "terminal_alert_id": record["alert_id"],
-                                    "terminal_alert_version": record["version"],
-                                },
-                            )
+                            await self._finalize_invalidated(event, record)
                 if not notice and record.get("milestone_resolution_id"):
                     event = await self.repo.get("evt.events", record["event_id"])
                     if event and event.get("milestone_resolution_id") == record["milestone_resolution_id"]:
@@ -745,6 +746,19 @@ class DeliveryService:
                         )
 
         return None
+
+    async def _finalize_invalidated(self, event, record):
+        """The delivered denial correction lets the invalidated event's session finish."""
+        await self.repo.put(
+            "evt.events",
+            event["event_id"],
+            {
+                **event,
+                **collection_clock(utcnow()).fields("session_finalized_at"),
+                "terminal_alert_id": record["alert_id"],
+                "terminal_alert_version": record["version"],
+            },
+        )
 
     async def _activate_calls(self, alert, sent_at=None):
         sent_at = sent_at or collection_clock(utcnow())

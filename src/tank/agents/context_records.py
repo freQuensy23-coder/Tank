@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import Field, JsonValue
 
-from tank.analysis.watch_contracts import WatchExpression
+from tank.analysis.watch_contracts import TimedReviewExpression, WatchExpression
 from tank.contracts import DomainModel
 
 
@@ -32,7 +32,7 @@ class ClaimReference(DomainModel):
 
 class ConditionReference(DomainModel):
     text: str | None
-    conditions: WatchExpression | None
+    conditions: WatchExpression | TimedReviewExpression | None
     token: str | None
     role: Literal["UPGRADE", "DOWNGRADE", "INVALIDATION", "AGENT"] | None
     created_at: str | None

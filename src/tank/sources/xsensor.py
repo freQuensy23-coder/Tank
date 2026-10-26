@@ -1,4 +1,8 @@
-"""Validated public-profile X collection through the configured Apify actor."""
+"""Validated public-profile X collection through the configured Apify actor.
+
+Quoted, replied-to and linked post context retains its reported origin while the
+original actor response remains the raw evidence and cursor admission boundary.
+"""
 
 import base64
 import binascii
@@ -14,10 +18,10 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, m
 from tank.contracts import DomainModel
 from tank.contracts.http_policy import HttpAdmission, HttpRefused
 from tank.contracts.json import JsonDocument, decode_unique_json
+from tank.contracts.source_errors import XDiagnostics
 from tank.contracts.source_items import DiscoveryEnvelope, DiscoveryObservation, SocialDiscovery
 from tank.contracts.sources import HttpFetchPlan
 from tank.logging import redact_text
-from tank.sources.errors import XDiagnostics
 from tank.sources.http_client import RequestStarted, SourceHttpTransport
 from tank.sources.x_diagnostics import sanitize
 from tank.util import iso
@@ -87,7 +91,7 @@ def diagnostic_projection(value: JsonValue, *, token: str, secrets: Sequence[str
         raw_diagnostics = original["diagnostics"]
         if not isinstance(raw_diagnostics, dict):
             raise ValueError("X response contains credential material")
-        approved = XDiagnostics.model_validate(sanitize(raw_diagnostics, token))
+        approved = sanitize(raw_diagnostics, token)
         wire = JsonDocument.validate_value(approved.model_dump(mode="json"))
         if contains_credential(wire, secrets):
             raise ValueError("X response contains credential material")
@@ -106,12 +110,65 @@ class ApifyModel(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="ignore", hide_input_in_errors=True)
 
 
+class ApifyReferencedPost(ApifyModel):
+    """A post that a monitored post quotes, replies to or links; text is None when unreadable."""
+
+    relation: Literal["quoted", "replied_to", "linked"]
+    id: str = Field(pattern=r"^[0-9]{1,20}$")
+    author: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_]{1,15}$")
+    url: str
+    published_at: str | None = Field(default=None, alias="publishedAt")
+    text: str | None = None
+    error: str | None = Field(default=None, min_length=1, pattern=r"\S")
+
+    @model_validator(mode="after")
+    def referenced_identity(self) -> Self:
+        if self.error is not None and self.text is not None:
+            raise ValueError("Referenced X body conflicts with its recorded failure")
+        parts = urlsplit(self.url)
+        match = re.fullmatch(r"/([A-Za-z0-9_]{1,15})/status/([0-9]{1,20})/?", parts.path)
+        if (
+            parts.scheme != "https"
+            or parts.hostname not in {"x.com", "www.x.com", "twitter.com", "www.twitter.com"}
+            or parts.username is not None
+            or parts.password is not None
+            or match is None
+            or match[2] != self.id
+            or (self.author is not None and account_key(match[1]) != account_key(self.author))
+        ):
+            raise ValueError("Referenced X URL conflicts with its reported identity")
+        return self
+
+    @field_validator("published_at")
+    @classmethod
+    def utc_time(cls, value: str | None) -> str | None:
+        """The publish time in Tank's UTC form; an unreadable time is left out, not fatal to the run."""
+        if value is None:
+            return None
+        try:
+            return iso(value)
+        except (ValueError, OverflowError, OSError):
+            return None
+
+    def context(self, monitored: str) -> str:
+        """The referenced post with its origin stated, as the agent and the classifier read it."""
+        verb = {"quoted": "quoted", "replied_to": "replied to", "linked": "linked"}[self.relation]
+        origin = f"@{self.author}" if self.author else "an unknown account"
+        when = f", published {self.published_at}" if self.published_at else ""
+        if self.text is None:
+            body = f"[text unavailable: {self.error if self.error is not None else 'NOT_RETURNED'}]"
+        else:
+            body = self.text or "[the post has no text]"
+        return f"@{monitored} {verb} a post by {origin} ({self.url}{when}):\n{body}"
+
+
 class ApifyPost(ApifyModel):
     id: str = Field(pattern=r"^[0-9]+$")
     author: str
     text: str
     url: str
     published_at: str = Field(alias="publishedAt")
+    referenced_posts: list[ApifyReferencedPost] = Field(default_factory=list, alias="referencedPosts")
 
     @field_validator("author")
     @classmethod
@@ -141,22 +198,27 @@ class ApifyPost(ApifyModel):
         return self
 
     def row(self, raw: bytes) -> XPostObservation:
-        return XPostObservation(
-            discovery=SocialDiscovery(
-                source_id="S29",
-                external_id=self.id,
-                author=self.author,
-                monitored_author=self.author,
-                title="",
-                text=self.text,
-                url=self.url,
-                published_at=iso(self.published_at),
-                published_at_precision="EXACT",
-                published_prec="EXACT",
-            ),
-            observation=DiscoveryObservation(),
-            payload=raw,
+        discovery = SocialDiscovery(
+            source_id="S29",
+            external_id=self.id,
+            author=self.author,
+            monitored_author=self.author,
+            title="",
+            text=self.text,
+            url=self.url,
+            published_at=iso(self.published_at),
+            published_at_precision="EXACT",
+            published_prec="EXACT",
         )
+        if self.referenced_posts:
+            discovery = SocialDiscovery.model_validate(
+                discovery.model_copy(
+                    update={
+                        "quoted": "\n\n".join(post.context(self.author) for post in self.referenced_posts)
+                    }
+                )
+            )
+        return XPostObservation(discovery=discovery, observation=DiscoveryObservation(), payload=raw)
 
 
 class ApifyOkAccount(ApifyModel):
@@ -298,9 +360,7 @@ def scan(
         AccountFailure(
             account=account.handle,
             reason=account.error,
-            diagnostics=None
-            if account.diagnostics is None
-            else XDiagnostics.model_validate(sanitize(account.diagnostics, token)),
+            diagnostics=None if account.diagnostics is None else sanitize(account.diagnostics, token),
         )
         for account in run.accounts
         if isinstance(account, ApifyFailedAccount) and account_key(account.handle) in requested

@@ -20,6 +20,7 @@ from pydantic import JsonValue
 from tank.contracts.configuration import Thresholds
 from tank.contracts.http_policy import HttpRefused
 from tank.contracts.provenance import ResolvedVersionIdentity
+from tank.contracts.source_errors import SourceEntryError
 from tank.contracts.source_items import CapturedItem, SourceItem, SourceText, captured_item
 from tank.contracts.sources import (
     AccountProbeFailure,
@@ -39,7 +40,6 @@ from tank.http_admission import ConfiguredHttpAdmission
 from tank.ops_progress import RepositorySourceProgress
 from tank.request_budget import BudgetConstraint, RequestBudgets
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
-from tank.sources.errors import SourceEntryError
 from tank.sources.fetch import (
     FetchEvidence,
     FetchResult,
@@ -281,8 +281,10 @@ class SourceService:
         seen_at: str,
     ) -> None:
         from tank.ops_entry_errors import report_entry_errors
+        from tank.sources.x_diagnostics import admit_source_errors
 
-        await report_entry_errors(self.repo, self.settings, source, feed, errors, seen_at)
+        admitted = admit_source_errors(errors, self.settings.apify_api_token)
+        await report_entry_errors(self.repo, self.settings, source, feed, admitted, seen_at)
 
     async def poll_once(
         self, source_id: str, *, due_only: bool = False, escalated: bool = False

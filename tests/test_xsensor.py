@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Mapping, Sequence
+from functools import partial
 from pathlib import Path
 from typing import Literal
 
@@ -13,11 +14,12 @@ from pydantic import JsonValue
 from source_support import fixture_http_admission, fixture_request_budgets, fixture_versions
 from test_sources import settings
 
+from tank.agents.routing import item_view
 from tank.contracts.json import decode_json
 from tank.contracts.source_items import SocialSourceItem, parse_feed_source_item
 from tank.contracts.sources import SourceAccount
 from tank.sources import SourceService
-from tank.sources.xsensor import AccountFailure, XSensor
+from tank.sources.xsensor import AccountFailure, ApifyPost, XSensor
 from tank.storage import MemoryRepository
 
 URL = "https://api.apify.com/v2/actors/actor/run-sync?build=direct&memory=256&timeout=110"
@@ -574,3 +576,151 @@ async def test_first_gapped_scan_preserves_explicit_baseline_policy_and_gap_repo
     assert result.rows == [] and result.cursors == {"ethereum": "110"}
     assert result.gaps == ["ethereum"] and not result.failures
     assert "cursors" not in actor.body(0)
+
+
+@pytest.mark.asyncio
+async def test_referenced_posts_reach_the_item_with_their_origin(tmp_path: Path) -> None:
+    references = [
+        {
+            "relation": "quoted",
+            "id": "50",
+            "author": "KeystoneWallet",
+            "url": "https://x.com/KeystoneWallet/status/50",
+            "publishedAt": "2026-10-24T17:59:04+00:00",
+            "text": "We detected unauthorized access to our website.",
+        },
+        {
+            "relation": "replied_to",
+            "id": "40",
+            "author": None,
+            "url": "https://x.com/i/status/40",
+            "publishedAt": None,
+            "text": None,
+            "error": "PUBLIC_POST_HTTP_404",
+        },
+        {
+            "relation": "linked",
+            "id": "30",
+            "author": "aave",
+            "url": "https://x.com/aave/status/30",
+            "publishedAt": "not a time",
+            "text": "",
+        },
+    ]
+    source = {"source_id": "S29", "name": "X", "feeds": [{"kind": "x", "url": URL}]}
+    config = settings(tmp_path, [source])
+    config.apify_api_token = "FAKE-token"
+    actor = Actor(
+        (201, run([post("100", "cz_binance")], [account("cz_binance")], {"cz_binance": "100"})),
+        (
+            201,
+            run(
+                [
+                    {**post("105", "cz_binance", "Stay SAFU!"), "referencedPosts": references},
+                    post("100", "cz_binance"),
+                ],
+                [account("cz_binance")],
+                {"cz_binance": "105"},
+            ),
+        ),
+    )
+    repo = MemoryRepository()
+    budgets = fixture_request_budgets()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(actor)) as http:
+        svc = SourceService(repo, config, http=http, versions=fixture_versions(), budgets=budgets)
+        try:
+            svc.accounts = {
+                "cz_binance": SourceAccount(
+                    handle="cz_binance", role="FOUNDER_C_LEVEL", entity_id="binance", token_id=None
+                )
+            }
+            await svc.poll_once("S29")
+            await svc.poll_once("S29")
+            [item] = await repo.list("ingest.source_items")
+            assert item["text"] == "Stay SAFU!" and item["author"] == "cz_binance"
+            assert item["quoted"] == (
+                "@cz_binance quoted a post by @KeystoneWallet "
+                "(https://x.com/KeystoneWallet/status/50, published 2026-10-24T17:59:04Z):\n"
+                "We detected unauthorized access to our website.\n\n"
+                "@cz_binance replied to a post by an unknown account (https://x.com/i/status/40):\n"
+                "[text unavailable: PUBLIC_POST_HTTP_404]\n\n"
+                "@cz_binance linked a post by @aave (https://x.com/aave/status/30):\n"
+                "[the post has no text]"
+            )
+            rendered = item_view(parse_feed_source_item(item))
+            assert isinstance(rendered.quoted, str)
+            assert rendered.quoted.startswith(
+                "@cz_binance quoted a post by @KeystoneWallet (https://x.com/KeystoneWallet/status/50"
+            )
+            assert [job["type"] for job in await repo.list("ops.jobs")] == ["FILTER_ITEM"]
+        finally:
+            await svc.close()
+    await budgets.shutdown()
+    assert "quoted" not in ApifyPost.model_validate(post("1")).row(b"{}").discovery.model_fields_set
+
+
+@pytest.mark.asyncio
+async def test_actor_author_conflict_cannot_create_source_rows_or_advance_cursor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "apify" / "x-reader"))
+    import public_profile as reader
+    from direct_fetch import fetch_snapshot
+
+    wire = json.dumps(
+        {
+            "__typename": "Tweet",
+            "rest_id": "101",
+            "core": {"user_results": {"result": {"core": {"screen_name": "bob"}}}},
+            "details": {"full_text": "Other author body"},
+        }
+    )
+    page = (
+        '<title>Alice (@alice) / X</title><article><a href="/alice/status/101">t</a>'
+        '<div data-testid="tweetText">Visible Alice body</div></article>'
+        '<script>kind:"Result.Ok",value:' + json.dumps(wire) + "</script>"
+    ).encode()
+    original_client = httpx.AsyncClient
+    requests: list[httpx.Request] = []
+
+    def profile_request(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.method == "GET" and request.url == "https://x.com/alice"
+        return httpx.Response(200, stream=httpx.ByteStream(page))
+
+    with monkeypatch.context() as scope:
+        scope.setattr(
+            reader.httpx,
+            "AsyncClient",
+            partial(original_client, transport=httpx.MockTransport(profile_request)),
+        )
+        failed = await fetch_snapshot({"handles": ["alice"], "cursors": {"alice": "100"}})
+    assert len(requests) == 1 and failed["posts"] == [] and failed["health"] == "failed"
+    assert failed["nextCursors"] == {"alice": "100"}
+    source = {"source_id": "S29", "name": "X", "feeds": [{"kind": "x", "url": URL}]}
+    config = settings(tmp_path, [source])
+    config.apify_api_token = "synthetic-actor-token"
+    repo = MemoryRepository()
+    await repo.put("ops.source_checkpoints", "S29:0", {"account_cursors": {"alice": "100"}})
+    budgets = fixture_request_budgets()
+
+    def actor_result(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST" and str(request.url) == URL
+        assert decode_json(request.content) == {"handles": ["alice"], "cursors": {"alice": "100"}}
+        return httpx.Response(201, json=failed)
+
+    async with original_client(transport=httpx.MockTransport(actor_result)) as http:
+        service = SourceService(repo, config, http=http, versions=fixture_versions(), budgets=budgets)
+        service.accounts = {
+            "alice": SourceAccount(handle="alice", role="OTHER", entity_id="alice", token_id=None)
+        }
+        try:
+            result = await service.poll_once("S29")
+            assert result.status == "DEGRADED" and result.items == 0
+            checkpoint = await repo.get("ops.source_checkpoints", "S29:0")
+            assert checkpoint is not None and checkpoint["account_cursors"] == {"alice": "100"}
+            assert await repo.list("ingest.source_items") == [] and await repo.list("ops.jobs") == []
+            assert not list(tmp_path.rglob("*.zst"))
+        finally:
+            await service.close()
+    await budgets.shutdown()
