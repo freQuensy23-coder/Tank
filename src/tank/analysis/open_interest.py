@@ -1,7 +1,7 @@
 """Pure OI endpoint selection over owned, validated source observations."""
 
 from bisect import bisect_left
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
 from fractions import Fraction
@@ -195,11 +195,11 @@ def _endpoint(
     return SelectedOIEndpoint(status="OBSERVED", at=at, observation=selected, tolerance_s=tolerance_s)
 
 
-class OINativeHistoryBaseline(DomainModel):
+class _OIHistoryBaseline(DomainModel):
     instrument: DerivativeInstrument
     interval: ConditionInterval
     normal_range: FloatRange
-    population_basis: Literal["OBSERVED_NATIVE_ENDPOINT_PAIRS"]
+    population_basis: Literal["OBSERVED_NATIVE_ENDPOINT_PAIRS", "RECORDED_USD_ENDPOINT_PAIRS"]
     source_observation_count: int = Field(ge=0)
     distinct_source_time_count: int = Field(ge=0)
     pair_count: int = Field(ge=0)
@@ -264,6 +264,14 @@ class OINativeHistoryBaseline(DomainModel):
         return self
 
 
+class OINativeHistoryBaseline(_OIHistoryBaseline):
+    population_basis: Literal["OBSERVED_NATIVE_ENDPOINT_PAIRS"]
+
+
+class OIRecordedUsdHistoryBaseline(_OIHistoryBaseline):
+    population_basis: Literal["RECORDED_USD_ENDPOINT_PAIRS"]
+
+
 def _quantile(values: Sequence[Fraction], probability: float) -> float | None:
     if not values:
         raise ValueError("OI quantiles require an actual nonempty observed population")
@@ -288,9 +296,16 @@ def _display_bound(value: Fraction) -> float | None:
     return displayed
 
 
-def _native_history(
-    source: OIReadSnapshot, policy: OISelectionPolicy, request: OIWindowRequest, *, window: ConditionWindow
-) -> tuple[OINativeHistoryBaseline, ...]:
+def _history[Result: _OIHistoryBaseline](
+    source: OIReadSnapshot,
+    policy: OISelectionPolicy,
+    request: OIWindowRequest,
+    *,
+    window: ConditionWindow,
+    quantity: Callable[[OIObservation], Decimal | None],
+    result_model: type[Result],
+    population_basis: Literal["OBSERVED_NATIVE_ENDPOINT_PAIRS", "RECORDED_USD_ENDPOINT_PAIRS"],
+) -> tuple[Result, ...]:
     if request.start.value is None or request.cutoff.value is None:
         raise ValueError("OI history requires the actual requested logical interval")
     start, cutoff = parse_iso_time(request.start.value), parse_iso_time(request.cutoff.value)
@@ -298,7 +313,7 @@ def _native_history(
     duration = cutoff - start
     horizon = start - timedelta(days=policy.lookback_days)
     minimum = timedelta(days=policy.minimum_history_days)
-    baselines: list[OINativeHistoryBaseline] = []
+    baselines: list[Result] = []
     for instrument in source.instruments:
         by_time: dict[datetime, OIObservation] = {}
         clocks: dict[datetime, Timestamp] = {}
@@ -337,8 +352,8 @@ def _native_history(
                     and abs((times[position] - target).total_seconds()) <= tolerance
                 ]
                 old = by_time[min(candidates)[1]] if candidates else None
-                initial = None if old is None else old.native_quantity.value
-                final = by_time[at].native_quantity.value
+                initial = None if old is None else quantity(old)
+                final = quantity(by_time[at])
                 if initial is None or initial <= 0 or final is None or final < 0:
                     rejected += 1
                     continue
@@ -373,11 +388,11 @@ def _native_history(
             else:
                 bounds, reason = FloatBounds(lower=lower, upper=upper), None
         baselines.append(
-            OINativeHistoryBaseline(
+            result_model(
                 instrument=instrument,
                 interval=interval,
                 normal_range=FloatRange(bounds=bounds, reason=reason),
-                population_basis="OBSERVED_NATIVE_ENDPOINT_PAIRS",
+                population_basis=population_basis,
                 source_observation_count=observation_count,
                 distinct_source_time_count=len(times),
                 pair_count=len(ends),
@@ -446,7 +461,29 @@ class OpenInterestCalculator:
         self, request: OIWindowRequest, *, window: ConditionWindow
     ) -> tuple[OINativeHistoryBaseline, ...]:
         actual = OIWindowRequest.model_validate(request)
-        return _native_history(self._source, self._policy, actual, window=window)
+        return _history(
+            self._source,
+            self._policy,
+            actual,
+            window=window,
+            quantity=lambda point: point.native_quantity.value,
+            result_model=OINativeHistoryBaseline,
+            population_basis="OBSERVED_NATIVE_ENDPOINT_PAIRS",
+        )
+
+    def recorded_usd_baseline(
+        self, request: OIWindowRequest, *, window: ConditionWindow
+    ) -> tuple[OIRecordedUsdHistoryBaseline, ...]:
+        actual = OIWindowRequest.model_validate(request)
+        return _history(
+            self._source,
+            self._policy,
+            actual,
+            window=window,
+            quantity=lambda point: point.reported_usd.value,
+            result_model=OIRecordedUsdHistoryBaseline,
+            population_basis="RECORDED_USD_ENDPOINT_PAIRS",
+        )
 
     def select(self, request: OIWindowRequest) -> tuple[OIInstrumentWindow, ...]:
         actual = OIWindowRequest.model_validate(request)
