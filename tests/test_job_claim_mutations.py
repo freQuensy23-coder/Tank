@@ -148,3 +148,14 @@ def test_mutation_refuses_unknown_ownership_fields_and_invalid_lifecycle_facts(
 ) -> None:
     with pytest.raises(ValidationError):
         JobClaimMutation.model_validate(wire)
+
+
+def test_empty_observed_error_text_is_distinct_from_unreported_error() -> None:
+    message = str(Exception())
+    assert message == ""
+    stamp = Timestamp("2026-10-26T00:01:00Z", "COLLECTION_ONLY")
+    mutation = JobClaimMutation(status="FAILED", last_error=message, finished_at=stamp)
+    updated = mutation.apply_to(job_document())
+    assert JobEnvelope.model_validate(updated).last_error == ""
+    unreported = JobClaimMutation(status="FAILED", last_error=None, finished_at=stamp)
+    assert unreported.apply_to(job_document())["last_error"] is None
