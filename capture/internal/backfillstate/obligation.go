@@ -3,6 +3,7 @@ package backfillstate
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -65,10 +66,66 @@ func validIdentity(value string) bool {
 	return strings.TrimSpace(value) != "" && utf8.ValidString(value)
 }
 
-type Refused struct{ reason string }
+type refusalKind uint8
+
+const (
+	anchorMissing refusalKind = iota + 1
+	anchorUnreadable
+	backfillIdentityInvalid
+	tokenIdentityInvalid
+	eventIdentityInvalid
+	statusInvalid
+)
+
+type Refused struct {
+	kind   refusalKind
+	detail string
+}
 
 func (Refused) backfillSelection() {}
-func (r Refused) Reason() string   { return r.reason }
+func (r Refused) Validate() error {
+	switch r.kind {
+	case anchorUnreadable:
+		if r.detail == "" || !utf8.ValidString(r.detail) {
+			return errors.New("backfill anchor refusal requires its actual parse failure")
+		}
+		prefix := "anchor unreadable: " + pytime.ErrTime.Error() + ": "
+		if !strings.HasPrefix(r.detail, prefix) {
+			return errors.New("backfill anchor refusal cannot borrow another failure reason")
+		}
+		raw, err := strconv.Unquote(strings.TrimPrefix(r.detail, prefix))
+		if err != nil {
+			return errors.New("backfill anchor refusal requires its quoted failed timestamp")
+		}
+		if _, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+			return errors.New("backfill anchor refusal cannot reject an admitted aware timestamp")
+		}
+	case anchorMissing, backfillIdentityInvalid, tokenIdentityInvalid, eventIdentityInvalid, statusInvalid:
+		if r.detail != "" {
+			return errors.New("backfill fixed refusal cannot carry another refusal's detail")
+		}
+	default:
+		return errors.New("backfill refusal kind is not supported")
+	}
+	return nil
+}
+func (r Refused) Reason() string {
+	switch r.kind {
+	case anchorMissing:
+		return "anchor unreadable: " + pytime.ErrTime.Error() + ": missing"
+	case anchorUnreadable:
+		return r.detail
+	case backfillIdentityInvalid:
+		return "BACKFILL_ID_INVALID"
+	case tokenIdentityInvalid:
+		return "TOKEN_ID_INVALID"
+	case eventIdentityInvalid:
+		return "EVENT_ID_INVALID"
+	case statusInvalid:
+		return "BACKFILL_STATUS_INVALID"
+	}
+	return ""
+}
 
 type Observation struct {
 	reference Reference
@@ -85,24 +142,24 @@ func Observe(reference Reference, record Record) (Observation, error) {
 	if reference.StorageKey() != record.StorageKey {
 		return Observation{}, errors.New("backfill observation differs from its actual storage key")
 	}
-	refuse := func(reason string) (Observation, error) {
-		return Observation{reference: reference, selection: Refused{reason: reason}}, nil
+	refuse := func(kind refusalKind, detail string) (Observation, error) {
+		return Observation{reference: reference, selection: Refused{kind: kind, detail: detail}}, nil
 	}
 	if record.Anchor == nil {
-		return refuse("anchor unreadable: " + pytime.ErrTime.Error() + ": missing")
+		return refuse(anchorMissing, "")
 	}
 	anchor, err := time.Parse(time.RFC3339Nano, string(*record.Anchor))
 	if err != nil {
-		return refuse(fmt.Sprintf("anchor unreadable: %s: %q", pytime.ErrTime, *record.Anchor))
+		return refuse(anchorUnreadable, fmt.Sprintf("anchor unreadable: %s: %q", pytime.ErrTime, *record.Anchor))
 	}
 	if !validIdentity(record.BackfillID) || record.BackfillID != record.StorageKey {
-		return refuse("BACKFILL_ID_INVALID")
+		return refuse(backfillIdentityInvalid, "")
 	}
 	if record.TokenID == nil || !validIdentity(*record.TokenID) {
-		return refuse("TOKEN_ID_INVALID")
+		return refuse(tokenIdentityInvalid, "")
 	}
 	if record.EventID == nil || !validIdentity(*record.EventID) {
-		return refuse("EVENT_ID_INVALID")
+		return refuse(eventIdentityInvalid, "")
 	}
 	var phase Phase
 	if record.Status != nil {
@@ -114,7 +171,7 @@ func Observe(reference Reference, record Record) (Observation, error) {
 		}
 	}
 	if phase == 0 {
-		return refuse("BACKFILL_STATUS_INVALID")
+		return refuse(statusInvalid, "")
 	}
 	return Observation{reference: reference, selection: Obligation{
 		backfillID: record.BackfillID, eventID: *record.EventID, tokenID: *record.TokenID,
