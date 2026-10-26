@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal, overload
 
@@ -40,6 +41,8 @@ type TimeInput = datetime | str
 type EpochInput = str | int | float | Decimal
 type EpochUnit = Literal["s", "ms", "us"]
 _EPOCH_DIVISORS: dict[EpochUnit, int] = {"s": 1, "ms": 1000, "us": 1000000}
+_ISO_PARSE_CACHE_MAX_ENTRIES = 4096
+_ISO_PARSE_CACHE_MAX_KEY_CHARS = 128
 
 
 def utcnow() -> datetime:
@@ -79,12 +82,22 @@ def _iso_datetime(value: datetime | str) -> datetime:
         raise ValueError("Invalid ISO timestamp") from None
 
 
-def parse_iso_time(value: datetime | str) -> datetime:
-    """Decode an ISO timestamp with a declared timezone; never infer epoch units or zone."""
-    parsed = _iso_datetime(value)
+def _aware_utc(parsed: datetime) -> datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError("Timestamp requires an explicit timezone")
     return parsed.astimezone(UTC)
+
+
+@lru_cache(maxsize=_ISO_PARSE_CACHE_MAX_ENTRIES)
+def _plain_iso_time(value: str) -> datetime:
+    return _aware_utc(_iso_datetime(value))
+
+
+def parse_iso_time(value: datetime | str) -> datetime:
+    """Decode an ISO timestamp with a declared timezone; never infer epoch units or zone."""
+    if type(value) is str and len(value) <= _ISO_PARSE_CACHE_MAX_KEY_CHARS:
+        return _plain_iso_time(value)
+    return _aware_utc(_iso_datetime(value))
 
 
 def parse_utc_time(value: datetime | str) -> datetime:
