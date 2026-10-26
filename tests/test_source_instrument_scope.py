@@ -14,7 +14,6 @@ from source_support import fixture_request_budgets, source_definition
 from tank.contracts import DomainModel
 from tank.contracts.json import decode_json
 from tank.contracts.provenance import ResolvedVersionIdentity
-from tank.contracts.repository import Repository as TypedRepository
 from tank.contracts.source_checkpoints import (
     INSTRUMENT_BASELINE_ARCHIVES,
     InstrumentAcquisitionScope,
@@ -23,6 +22,7 @@ from tank.contracts.source_checkpoints import (
 )
 from tank.contracts.source_items import InstrumentSourceItem, captured_item, parse_source_item
 from tank.contracts.sources import SourceDefinition
+from tank.repository import Repository as TypedRepository
 from tank.settings import Settings
 from tank.sources import SourceService
 from tank.storage import MemoryRepository, Repository
