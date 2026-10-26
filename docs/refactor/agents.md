@@ -1478,3 +1478,18 @@ contracts/adapter/test three targets and Ruff pass. Evidence
 worker-641-raw-revision-final-unit and worker-641-raw-revision-pg is external.
 This resolves the inactive adapter digest defect; worker dispatch/result
 activation and the remaining Session producer dependencies remain open.
+
+Phase-specific native deployment configuration
+
+SessionService.config now returns NativeSessionDeployment for the explicitly
+requested ANALYST/SCOUT and live/replay phase, rather than a raw configuration
+map with agent/environment truthiness fallbacks. resolve consumes that typed
+deployment directly; Runtime.validate supplies its actual replay mode. The
+existing required prompt/effort/selected agent/environment contract validates
+before creation effects. Unused role identities and admission capacity are
+not required merely to decode a selected native deployment; running-session
+capacity remains its separately validated composition/admission policy.
+All 96 native/config/runtime/composition/version unit callers pass in 5.92
+seconds, zero skips (worker-6f646-native-config-unit), scoped Ruff clean.
+This closes that configuration accessor, not the still-open whole Session
+constructor or worker body. No permissive settings default was introduced.

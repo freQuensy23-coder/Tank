@@ -304,11 +304,12 @@ class SessionService:
             remote, config, declared_agent_id=agent_id, declared_model_id=self.settings.openma_model
         )
 
-    def config(self):
-        config = self.settings.load_config("openma")
-        if not config.get("agent_id") or not config.get("environment_id"):
-            raise ConfigurationError("openma.yaml requires deployed agent_id and environment_id")
-        return config
+    def config(self, *, role: Literal["ANALYST", "SCOUT"], replay: bool) -> NativeSessionDeployment:
+        return NativeSessionDeployment.from_wire(
+            self.settings.load_config("openma"),
+            role=role,
+            replay=replay,
+        )
 
     def headers(self, idem: str | None = None) -> dict[str, str]:
         headers = {"anthropic-beta": "managed-agents-2026-04-01"}
@@ -380,9 +381,7 @@ class SessionService:
                         continue
                     cached.verify(request)
                     return session
-        deployment = NativeSessionDeployment.from_wire(
-            self.config(), role=request.role, replay=request.replay is not None
-        )
+        deployment = self.config(role=request.role, replay=request.replay is not None)
         scout = request.role == "SCOUT"
         if item_id is None and event_id is not None and not scout:
             async for observation in self.repo.iter_range(

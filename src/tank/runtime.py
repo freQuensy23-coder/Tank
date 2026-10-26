@@ -156,7 +156,7 @@ class Runtime:
 
     def validate(self) -> None:
         self._validate()
-        self.sessions.config()
+        self.sessions.config(role="ANALYST", replay=self.settings.replay)
         self.sessions.running_session_cap()
 
     async def prepare(self) -> None:
