@@ -6,10 +6,7 @@ on:
 
 permissions:
   contents: read
-
-concurrency:
-  group: pr-description-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  pull-requests: read
 
 jobs:
   template:
@@ -26,5 +23,8 @@ jobs:
           python-version: "3.13.13"
       - name: Template blocks are present and in order
         env:
-          PR_BODY: ${{ github.event.pull_request.body }}
-        run: uv run --no-project python scripts/ci/check_pr_description.py
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          body=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
+          PR_BODY="$body" uv run --no-project python scripts/ci/check_pr_description.py

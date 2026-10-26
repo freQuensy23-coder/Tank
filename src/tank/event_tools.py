@@ -2453,17 +2453,6 @@ class EventToolService:
                 invalidation_price=str(min(Decimal(str(anchor)), Decimal(str(entry)))),
             )
         await self.reconcile_conditions(result, conditions, calls, c)
-        if isinstance(result.get("outlook"), dict):
-            outlook = dict(
-                result["outlook"],
-                out_id=new_id("out"),
-                event_id=eid,
-                token_id=token,
-                **propagate_timestamp(result, "cutoff").fields("cutoff"),
-                **self.provenance(c),
-            )
-            await self.repo.put("ana.outlooks", outlook["out_id"], outlook)
-            result["outlook_id"] = outlook["out_id"]
         await self.repo.put("ana.decisions", result["dec_id"], result)
         return result
 
@@ -3093,11 +3082,7 @@ class EventToolService:
             "beneficiary_edges": all_edges,
             "market_truth": truths,
             "outlooks": [
-                (await self.require("ana.outlooks", decision["outlook_id"]))
-                if decision.get("outlook_id")
-                else decision["outlook"]
-                for decision in decisions
-                if decision.get("outlook_id") or isinstance(decision.get("outlook"), dict)
+                decision["outlook"] for decision in decisions if isinstance(decision.get("outlook"), dict)
             ],
             "decisions": decisions,
             "contradictions": list(event["contradictions"]),

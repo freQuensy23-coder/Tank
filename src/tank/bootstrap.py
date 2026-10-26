@@ -103,19 +103,22 @@ def validate_registry(settings):
     for basket in registry.get("sector_baskets", []):
         identifier = basket.get("basket_id") or basket["sector"]
         add("reg.sector_baskets", identifier, {**basket, "basket_id": identifier}, "registry.yaml", registry)
-    dependencies = settings.load_config("dependency_map")
-    for edge in dependencies.get("edges", []):
-        identifier = edge.get("edge_id") or _key(edge["entity_id"], edge.get("token_id"))
-        add(
-            "reg.dependency_map",
-            identifier,
-            {**edge, "edge_id": identifier},
+    for name, keys in (
+        (
             "dependency_map.yaml",
-            dependencies,
-        )
-    semantics = settings.load_config("semantics")
-    for metric in semantics.get("metrics", []):
-        add("reg.metric_semantics", metric["metric_key"], metric, "semantics.yaml", semantics)
+            [
+                edge.get("edge_id") or _key(edge["entity_id"], edge.get("token_id"))
+                for edge in settings.load_config("dependency_map").get("edges", [])
+            ],
+        ),
+        (
+            "semantics.yaml",
+            [metric["metric_key"] for metric in settings.load_config("semantics").get("metrics", [])],
+        ),
+    ):
+        repeated = sorted({key for key in keys if keys.count(key) > 1})
+        if repeated:
+            raise ValueError(f"Duplicate configured registry key: {name}/{repeated[0]}")
     addresses = settings.load_config("exchange_addresses")
     for wallet in addresses.get("wallet_lists", []):
         for address in wallet.get("addresses", []):
@@ -136,8 +139,6 @@ def validate_registry(settings):
         "entities",
         "entity_aliases",
         "sector_baskets",
-        "dependency_map",
-        "metric_semantics",
         "exchange_addresses",
     ):
         rows.setdefault("reg." + table, {})
