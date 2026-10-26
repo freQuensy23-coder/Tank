@@ -1773,7 +1773,7 @@ async def test_watch_modes_validate_before_actual_dispatch_mutates_conditions(tm
     from scheduler_support import operational_reaction_services
     from source_support import fixture_request_budgets
 
-    from tank.analysis.decision import DecisionEngine
+    from tank.analysis.decisions import DecisionEngine
     from tank.analysis.watch_contracts import TimedReviewCondition, WatchCondition, parse_watch_condition
     from tank.contracts.tool_schema import ToolSchemaError
     from tank.event_tools import EventToolService

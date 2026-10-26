@@ -21,7 +21,7 @@ from tank.market_codec import StoredRow, _prepare_records
 from tank.market_schema import MARKET_COLUMNS
 from tank.models import Record
 from tank.storage import MemoryRepository, PostgresRepository, StorageBackend
-from tank.util import JsonInput, canonical_json, iso
+from tank.util import JsonInput, canonical_json, iso, parse_utc_time
 
 type PutRecords = Callable[[str, Sequence[Mapping[str, JsonInput]]], Awaitable[None]]
 type Both = tuple[MemoryRepository, PostgresRepository, PutRecords]
@@ -270,3 +270,69 @@ async def test_latest_per_instrument_reaches_past_the_recent_day(both: Both) -> 
     )
     assert got == expected
     assert [(r["instrument_id"], r["c"]) for r in got] == [(IIDS[0], "2"), (IIDS[1], "4")]
+
+
+async def test_key_bounds_preserve_latest_value_and_declared_utc_storage_clocks(both: Both) -> None:
+    memory, routed, put = both
+    original = kline(IIDS[0], 0, "100")
+    await put("mkt.klines_1m", [original])
+    replacement = kline(IIDS[0], 0, "200", recorded=T0 + timedelta(minutes=2))
+    await memory.put_market_batch("mkt.klines_1m", [replacement])
+    prepared = _prepare_records("mkt.klines_1m", [replacement], None)
+    key, record = next(iter(prepared.items()))
+    replacement_row = ch_row("mkt.klines_1m", record, key)
+    replacement_row["_version"] = 2
+    ch = routed.clickhouse
+    assert ch is not None
+    await ch.insert("mkt.klines_1m", [replacement_row])
+    expected = present(await memory.get("mkt.klines_1m", key))
+    actual = present(await routed.get("mkt.klines_1m", key))
+    assert actual == expected and actual["c"] == "200"
+    naive = chm.MarketPredicateSpan(
+        instrument_id=IIDS[0], lo="2026-10-21 12:00:00.000000", hi="2026-10-21 12:00:00.000000"
+    )
+    zoned = chm.MarketPredicateSpan(
+        instrument_id=IIDS[0], lo="2026-10-21T14:00:00+02:00", hi="2026-10-21T12:00:00Z"
+    )
+    assert parse_utc_time(naive.lo) == parse_utc_time(zoned.lo) == T0
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("instrument_id", "   "),
+        ("instrument_id", 1),
+        ("lo", None),
+        ("lo", True),
+        ("lo", 1),
+        ("lo", "2026-10-21"),
+        ("lo", "2026-02-30 12:00:00"),
+        ("lo", "2026-10-21 12:00:01"),
+    ],
+)
+async def test_corrupt_key_bounds_refuse_before_any_final_value_query(
+    both: Both, monkeypatch: pytest.MonkeyPatch, field: str, invalid: JsonInput
+) -> None:
+    _, routed, put = both
+    original = kline(IIDS[0], 0, "100")
+    await put("mkt.klines_1m", [original])
+    key = next(iter(_prepare_records("mkt.klines_1m", [original], None)))
+    ch = routed.clickhouse
+    assert ch is not None
+    actual_rows = ch.rows
+    queries: list[str] = []
+
+    async def corrupted_rows(query: str, params: dict[str, tuple[str, str]] | None = None) -> list[Record]:
+        queries.append(query)
+        rows = await actual_rows(query, params)
+        assert " FINAL" not in query
+        assert len(rows) == 1
+        malformed = dict(rows[0])
+        malformed[field] = JsonDocument.validate_value(invalid)
+        return [rows[0], malformed]
+
+    monkeypatch.setattr(ch, "rows", corrupted_rows)
+    with pytest.raises(ValueError):
+        await routed.get("mkt.klines_1m", key)
+    assert len(queries) == 1
+    assert "min(`open_time`) AS lo" in queries[0] and " FINAL" not in queries[0]

@@ -30,14 +30,12 @@ from tank.analysis.decision_contracts import (
     DecisionProvenance,
     DecisionRecord,
     DecisionRelative,
-    DecisionScenarioReasons,
     DecisionSpot,
     DecisionStatusWriter,
     DecisionTracking,
     DecisionTriggers,
     EndedDecisionTracking,
     OutlookConditionRefs,
-    ReconciledOutlook,
     UnavailableDecisionLiquidity,
 )
 from tank.analysis.watch_contracts import WatchAll, WatchCondition, WatchLeaf, WatchProposal
@@ -481,29 +479,6 @@ class _DecisionRecordWire(_DecisionWireCore):
         return _DecisionOutlookWire.model_validate(payload)
 
 
-class _OutlookRowWire(_DecisionOutlookWire, GenerationProvenance, ResolvedVersionIdentity):
-    out_id: str = Field(min_length=1)
-    event_id: str = Field(min_length=1)
-    token_id: str = Field(min_length=1)
-    cutoff: str
-    cutoff_prec: str | None
-    cutoff_prec_reason: str | None
-    cutoff_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
-
-    @field_validator("scenario_reasons", mode="before")
-    @classmethod
-    def decode_sparse_scenario_reasons(
-        cls, value: JsonValue | DecisionScenarioReasons
-    ) -> DecisionScenarioReasons:
-        if isinstance(value, DecisionScenarioReasons):
-            return DecisionScenarioReasons.model_validate(value)
-        reasons = dict(_object(value, "scenario_reasons"))
-        for name in ("base", "upside", "failure"):
-            if name not in reasons:
-                reasons[name] = None
-        return DecisionScenarioReasons.model_validate(reasons)
-
-
 def _wire_payload(
     model: DecisionCore
     | GenerationProvenance
@@ -512,8 +487,7 @@ def _wire_payload(
     | _DecisionDraftWire
     | _DecisionRecordWire
     | DecisionStatusWriter
-    | DecisionOutlook
-    | _OutlookRowWire,
+    | DecisionOutlook,
 ) -> dict[str, JsonValue]:
     value = decode_json(model.model_dump_json(exclude_unset=True, warnings="error"))
     return _object(value, "serialized decision record")
@@ -749,40 +723,4 @@ def decode_decision(payload: Mapping[str, JsonValue]) -> DecisionRecord:
         conditions=wire.conditions,
         conditions_shown=tuple(wire.conditions_shown),
         outlook_id=wire.outlook_id,
-    )
-
-
-def encode_outlook(record: DecisionRecord) -> dict[str, JsonValue]:
-    record = DecisionRecord.model_validate(record)
-    metadata = record.metadata
-    if isinstance(metadata.tracking, EndedDecisionTracking):
-        raise ValueError("Ended tracking cannot overwrite its historical outlook row")
-    _require_current_scenario_explanations(record.calculation.outlook)
-    identity = metadata.identity
-    payload = _wire_payload(record.calculation.outlook)
-    payload["conditions"] = JsonDocument.validate_value(
-        OutlookConditionRefs.from_conditions(record.conditions).model_dump(mode="json")
-    )
-    payload.update(_wire_payload(identity.generation))
-    payload.update(identity.cutoff.fields("cutoff"))
-    payload.update(out_id=record.outlook_id, event_id=identity.event_id, token_id=identity.token_id)
-    wire = _OutlookRowWire.model_validate(payload, strict=True)
-    encoded = _wire_payload(wire)
-    reasons = _object(_required(encoded, "scenario_reasons"), "scenario_reasons")
-    encoded["scenario_reasons"] = {name: value for name, value in reasons.items() if value is not None}
-    decode_outlook(encoded)
-    return encoded
-
-
-def decode_outlook(payload: Mapping[str, JsonValue]) -> ReconciledOutlook:
-    wire = _OutlookRowWire.model_validate(dict(payload), strict=True)
-    return ReconciledOutlook(
-        outlook_id=wire.out_id,
-        event_id=wire.event_id,
-        token_id=wire.token_id,
-        cutoff=Timestamp(wire.cutoff, wire.cutoff_prec, wire.cutoff_prec_reason, wire.cutoff_bucket_anchor),
-        versions=ResolvedVersionIdentity(config_version=wire.config_version, code_version=wire.code_version),
-        generation=_generation(wire),
-        calculation=_pure_outlook(wire),
-        conditions=wire.conditions.domain(),
     )

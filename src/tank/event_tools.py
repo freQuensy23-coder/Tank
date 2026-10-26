@@ -3191,13 +3191,7 @@ class EventToolService:
             "beneficiary_map": list(active_maps),
             "beneficiary_edges": all_edges,
             "market_truth": truths,
-            "outlooks": [
-                (await self.require("ana.outlooks", decision["outlook_id"]))
-                if decision.get("outlook_id")
-                else decision["outlook"]
-                for decision in decisions
-                if decision.get("outlook_id") or isinstance(decision.get("outlook"), dict)
-            ],
+            "outlooks": [decision["outlook"] for decision in decisions],
             "decisions": decisions,
             "contradictions": list(event["contradictions"]),
             "data_confidence": [m["data_confidence"] for m in truths],

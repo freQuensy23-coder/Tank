@@ -479,27 +479,3 @@ class OutlookConditionRefs(DomainModel):
             upgrade=tuple(value.cond_id for value in conditions if value.role == "UPGRADE"),
             downgrade=tuple(value.cond_id for value in conditions if value.role == "DOWNGRADE"),
         )
-
-
-class ReconciledOutlook(DomainModel):
-    outlook_id: str = Field(min_length=1)
-    event_id: str = Field(min_length=1)
-    token_id: str = Field(min_length=1)
-    cutoff: Timestamp
-    versions: ResolvedVersionIdentity
-    generation: GenerationProvenance
-    calculation: DecisionOutlook
-    conditions: OutlookConditionRefs
-
-    @model_validator(mode="after")
-    def actual_projection_origin(self) -> Self:
-        if any(not value.strip() for value in (self.outlook_id, self.event_id, self.token_id)):
-            raise ValueError("An outlook row requires actual identities")
-        if self.cutoff.value is None:
-            raise ValueError("An outlook row requires its actual semantic cutoff")
-        if (
-            self.generation.config_version != self.versions.config_version
-            or self.generation.code_version != self.versions.code_version
-        ):
-            raise ValueError("Outlook generation must match its actual version identity")
-        return self
