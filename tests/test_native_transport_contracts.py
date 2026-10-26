@@ -144,6 +144,33 @@ async def test_refused_old_frame_does_not_starve_fresh_owned_input(
     assert "Fresh opaque text" in canonical_json(posts[0][1])
 
 
+def transport_reply(
+    transport: Literal["managed-page", "node-page", "stream"], events: list[dict[str, JsonValue]]
+) -> httpx.Response:
+    if transport == "stream":
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text="".join(f"id: {event['seq']}\ndata: {json.dumps(event)}\n\n" for event in events),
+        )
+    return httpx.Response(
+        200,
+        json={
+            "data": events,
+            **({"next_page": None} if transport == "managed-page" else {"has_more": False}),
+        },
+    )
+
+
+async def consume_transport(
+    service: SessionService, transport: Literal["managed-page", "node-page", "stream"]
+) -> None:
+    if transport == "stream":
+        await service.stream("session")
+    else:
+        await service.catch_up("session")
+
+
 class RefusalWriteFailure:
     def __init__(self, store: Repository, mode: Literal["BEFORE", "AFTER"]) -> None:
         self.store = store
@@ -176,21 +203,29 @@ class RefusalWriteFailure:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["BEFORE", "AFTER"])
+@pytest.mark.parametrize("unproved_owner", [False, True])
+@pytest.mark.parametrize("transport", ["managed-page", "node-page", "stream"])
 async def test_refusal_persistence_failure_never_advances_memory_and_restart_keeps_chronology(
     mode: Literal["BEFORE", "AFTER"],
+    unproved_owner: bool,
+    transport: Literal["managed-page", "node-page", "stream"],
 ) -> None:
     repo = MemoryRepository()
     original = transport_state()
+    if unproved_owner:
+        journal = original["message_log"]
+        assert isinstance(journal, list) and isinstance(journal[0], dict)
+        journal[0].pop("native_input_attempts")
     await repo.put("ops.agent_sessions", "session", original)
-    old = failure("old-failure", "old-input", 1)
-    fresh = failure("fresh-failure", "fresh-input", 2)
+    old = failure("old-failure", "old-input", None if transport == "managed-page" else 1)
+    fresh = failure("fresh-failure", "fresh-input", None if transport == "managed-page" else 2)
     posts: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
             posts.append(request.headers["idempotency-key"])
             return httpx.Response(200, json=acknowledge_native_input(request, "fresh-retry"))
-        return httpx.Response(200, json={"data": [old, old, fresh], "has_more": False})
+        return transport_reply(transport, [old, old, fresh])
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         first = SessionService(
@@ -205,14 +240,14 @@ async def test_refusal_persistence_failure_never_advances_memory_and_restart_kee
             RefusalWriteFailure(repo, mode), declared_versions_fixture(), collection_clock
         )
         with pytest.raises(RuntimeError, match="persistence acknowledgement"):
-            await first.catch_up("session")
+            await consume_transport(first, transport)
         assert seen_key(old) not in first.seen_events.get("session", set())
         after_failure = await repo.get("ops.agent_sessions", "session")
         assert after_failure is not None and posts == []
         if mode == "BEFORE":
             assert after_failure == original
         else:
-            assert after_failure["last_event_seq"] == 1
+            assert after_failure["last_event_seq"] == (0 if transport == "managed-page" else 1)
             assert len(NativeRetryRefusalLedger.from_record("session", after_failure).entries) == 1
         restarted = SessionService(
             repo,
@@ -222,9 +257,9 @@ async def test_refusal_persistence_failure_never_advances_memory_and_restart_kee
             versions=declared_versions_fixture(),
             refusals=UnexpectedFollowupRefusals(),
         )
-        await restarted.catch_up("session")
+        await consume_transport(restarted, transport)
         snapshot = await repo.get("ops.agent_sessions", "session")
-        await restarted.catch_up("session")
+        await consume_transport(restarted, transport)
         assert await repo.get("ops.agent_sessions", "session") == snapshot
     assert posts == ["turn-retry:session:fresh"]
 
@@ -401,22 +436,31 @@ async def test_native_stream_duplicate_frame_never_reaches_refusal_or_budget_sta
 @pytest.mark.integration
 @pytest.mark.postgres
 @pytest.mark.parametrize("mode", ["BEFORE", "AFTER"])
+@pytest.mark.parametrize("unproved_owner", [False, True])
+@pytest.mark.parametrize("transport", ["managed-page", "node-page", "stream"])
 async def test_actual_postgres_refusal_is_atomic_and_restarts_without_starving_fresh_input(
-    postgres_template: PostgresTemplate, mode: Literal["BEFORE", "AFTER"]
+    postgres_template: PostgresTemplate,
+    mode: Literal["BEFORE", "AFTER"],
+    unproved_owner: bool,
+    transport: Literal["managed-page", "node-page", "stream"],
 ) -> None:
     async with postgres_template.repository(os.environ["TANK_TEST_DATABASE_URL"]) as repo:
         await repo.migrate()
         original = transport_state()
+        if unproved_owner:
+            journal = original["message_log"]
+            assert isinstance(journal, list) and isinstance(journal[0], dict)
+            journal[0].pop("native_input_attempts")
         await repo.put("ops.agent_sessions", "session", original)
-        old = failure("old-failure", "old-input", 1)
-        fresh = failure("fresh-failure", "fresh-input", 2)
+        old = failure("old-failure", "old-input", None if transport == "managed-page" else 1)
+        fresh = failure("fresh-failure", "fresh-input", None if transport == "managed-page" else 2)
         posts: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             if request.method == "POST":
                 posts.append(request.headers["idempotency-key"])
                 return httpx.Response(200, json=acknowledge_native_input(request, "fresh-retry"))
-            return httpx.Response(200, json={"data": [old, old, fresh], "has_more": False})
+            return transport_reply(transport, [old, old, fresh])
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
             first = SessionService(
@@ -431,14 +475,14 @@ async def test_actual_postgres_refusal_is_atomic_and_restarts_without_starving_f
                 RefusalWriteFailure(repo, mode), declared_versions_fixture(), collection_clock
             )
             with pytest.raises(RuntimeError, match="persistence acknowledgement"):
-                await first.catch_up("session")
+                await consume_transport(first, transport)
             assert seen_key(old) not in first.seen_events.get("session", set()) and posts == []
             after_failure = await repo.get("ops.agent_sessions", "session")
             assert after_failure is not None
             if mode == "BEFORE":
                 assert after_failure == original
             else:
-                assert after_failure["last_event_seq"] == 1
+                assert after_failure["last_event_seq"] == (0 if transport == "managed-page" else 1)
                 assert len(NativeRetryRefusalLedger.from_record("session", after_failure).entries) == 1
             restarted = SessionService(
                 repo,
@@ -448,9 +492,9 @@ async def test_actual_postgres_refusal_is_atomic_and_restarts_without_starving_f
                 versions=declared_versions_fixture(),
                 refusals=UnexpectedFollowupRefusals(),
             )
-            await restarted.catch_up("session")
+            await consume_transport(restarted, transport)
             saved = await repo.get("ops.agent_sessions", "session")
-            await restarted.catch_up("session")
+            await consume_transport(restarted, transport)
             assert await repo.get("ops.agent_sessions", "session") == saved
         assert posts == ["turn-retry:session:fresh"]
 

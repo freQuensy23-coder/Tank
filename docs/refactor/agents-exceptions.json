@@ -2436,6 +2436,35 @@
         "test_publish_condition_allows_one_preliminary_fact_without_mutating_the_payload",
         "test_conditional_schema_defects_are_not_instance_mismatches"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/input_ownership.py",
+          "symbol": "JournalInputLineage.owner"
+        },
+        {
+          "path": "src/tank/agents/input_ownership.py",
+          "symbol": "ToolInputLineage.owner"
+        },
+        {
+          "path": "src/tank/agents/native_transport.py",
+          "symbol": "NativeRetryRefusal.reason"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.observe_native_event"
+        }
+      ],
+      "kind": "actual historical lineage absence and durable controller refusal",
+      "reason": "Missing recorded journal/tool ownership or retry attempt remains unknown. Four closed ownership reason tags distinguish these phases; none supplies an owner, attempt or input body. The existing host_retry_refusals digest map and receipt names remain the persisted wire contract; its closed reason union now records named ownership refusals too. The key is actual session/frame/execution identity, not position or clock. Receipt persistence and controller provenance precede seen/cursor advancement; producer provenance and original retry keys remain untouched. Only named unknown-retry and unproved-ownership exceptions are handled; contradictory lineage and generic validation errors still propagate. Actual native termination and model-request billing do not require input lineage.",
+      "validation": [
+        "test_unproved_owner_is_durably_refused_without_starving_fresh_owner",
+        "test_refusal_persistence_failure_never_advances_memory_and_restart_keeps_chronology",
+        "test_actual_postgres_refusal_is_atomic_and_restarts_without_starving_fresh_input",
+        "test_unproved_turn_attempt_does_not_block_actual_billing_or_native_termination",
+        "test_contradictory_lineage_is_not_relabelled_as_a_handled_host_refusal"
+      ]
     }
   ]
 }

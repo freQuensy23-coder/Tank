@@ -1128,3 +1128,51 @@ loop error is resolved by its canonical owner companion. This qualifies the
 required refusal/eligibility cohort and its current callers for parent review;
 it does not close the remaining whole-session/runtime/vendor work or claim
 that the queued ownership-chronology concern has been reproduced or fixed.
+
+### Durable ownership refusal preserves native chronology
+
+The immutable aedee0d2 diagnostic reproduces one historical acknowledged input
+with no retained attempt starving a later independently owned fresh frame in
+managed paging, Node paging and SSE, including a restarted controller. It is
+negative evidence, not an integrated success claim. The bounded correction
+adds four explicit UnprovedOwnershipReason tags at the actual journal/tool
+lineage readers and handles only that named exception beside the existing
+UnknownNativeRetryState. Generic ValueError, contradictory lineage and schema
+failures still propagate. No attempt, owner, body, terminal event or producer
+provenance is invented. Existing captured unknown fields remain unchanged.
+
+The existing closed host refusal receipt admits those four reasons. Its
+host_retry_refusals wire map and NativeRetryRefusal names are preserved for
+existing durable storage; values remain named strict records indexed by the
+actual frame/session/execution digest. Persistence precedes both in-memory
+seen state and cursor advancement. Exact duplicate receipts retain their
+original controller/version and observation clock. A lost commit response is
+reconciled from that exact receipt; a failure before persistence leaves the
+entire row and cursor unchanged. A subsequent independently owned turn keeps
+its declared zero and original turn-retry:session:fresh idempotency key.
+
+The event-kind audit found input lineage is consumed by custom-tool,
+running/rescheduled and failure/error turn effects. Actual
+session.status_terminated and span.model_request_end billing are outside that
+check. An actual service regression proves both still persist their native
+facts with unproved historical turn attempts and no input HTTP. Another
+regression leaves contradictory stored attempts unhandled, with no receipt,
+seen state, cursor or HTTP effects. SessionService.close and stop_followers
+now declare their actual None return while tests retain real owned cleanup.
+The inventory remains incomplete: 28 SessionService/free-helper and four
+Runtime functions still require full annotation/model migration; all vendor
+implementation work and broader session orchestration remain open.
+
+Pre-final proof: 52 focused units pass in 2.47 seconds, zero skips; all twelve
+collected actual PostgreSQL cases pass in 5.90 seconds, zero skips. The latter
+crosses managed/Node/SSE with failure-before-write/lost-commit-ack and both
+unknown retry and unproved input-owner states. Independent strict four
+source/test targets and scoped Ruff pass. A final unit run includes the added
+contradictory-lineage control and the final cleanup annotations; its terminal
+result is recorded below rather than relabelling these earlier proofs.
+
+Final source-prefix qualification: all 59 collected affected units pass in
+2.56 seconds, zero skips, including contradictory-lineage refusal and actual
+cleanup. External evidence prefixes are owner-chronology-qualified-unit and
+owner-chronology-pg. The final source adds only that negative control beyond
+the twelve-case PG-qualified prefix; no receipt persistence code changed.

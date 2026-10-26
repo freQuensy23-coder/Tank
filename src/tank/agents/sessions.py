@@ -30,7 +30,12 @@ from tank.agents.archive_contracts import (
 )
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
 from tank.agents.context_binding import ContextBinding
-from tank.agents.input_ownership import JournalInputLineage, NativeInputOwner, ToolInputLineage
+from tank.agents.input_ownership import (
+    JournalInputLineage,
+    NativeInputOwner,
+    ToolInputLineage,
+    UnprovedInputOwnership,
+)
 from tank.agents.native_inputs import (
     AcceptedNativeInput,
     NativeInput,
@@ -1274,7 +1279,7 @@ class SessionService:
         if not self.closed and (sid not in self.tasks or self.tasks[sid].done()):
             self.tasks[sid] = asyncio.create_task(self.follow(sid), name="openma:" + sid)
 
-    async def stop_followers(self):
+    async def stop_followers(self) -> None:
         """Retire this controller's followers before finalizing owned local state."""
         tasks = list(self.tasks.values())
         for task in tasks:
@@ -2137,10 +2142,10 @@ class SessionService:
             return NativeEventRetryRefused(status="RETRY_REFUSED", receipt=recorded)
         try:
             await self.process_event(sid, event, sequence)
-        except UnknownNativeRetryState as refused:
+        except (UnknownNativeRetryState, UnprovedInputOwnership) as refused:
             receipt = await self.retry_refusals.record(sid, frame, refused.reason, sequence)
             self.seen_events.setdefault(sid, set()).add(seen_key(event))
-            log.warning("Native host retry refused: %s", receipt.reason)
+            log.warning("Native host input effect refused: %s", receipt.reason)
             return NativeEventRetryRefused(status="RETRY_REFUSED", receipt=receipt)
         return NativeEventObserved(status="OBSERVED")
 
@@ -2472,7 +2477,7 @@ class SessionService:
             with suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=5)
 
-    async def close(self):
+    async def close(self) -> None:
         self.closed = True
         await self.stop_followers()
         if self.owns_stream_http:
