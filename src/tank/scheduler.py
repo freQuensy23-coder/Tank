@@ -26,6 +26,12 @@ from tank.analysis.watch_policy import evaluate_timed_review
 from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
 from tank.contracts.json import decode_json
+from tank.contracts.milestone_checks import (
+    MilestoneCheckCommand,
+    MilestoneKind,
+    MilestoneResolutionHistory,
+    ScheduledMilestoneCheck,
+)
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.scheduler_results import ConditionEvaluationResult, DeferredCondition
 from tank.runtime_contracts import TimedReviewFiredMessage
@@ -224,8 +230,7 @@ class Scheduler:
                 and parse_time(milestone["due_at"]) <= now
             ):
                 due_stamp = propagate_timestamp(milestone, "due_at")
-                due = due_stamp.value
-                kind = milestone.get("kind", milestone.get("milestone"))
+                kind = MilestoneKind.from_record(milestone).kind
                 expiry_stamp = (
                     propagate_timestamp(milestone, "expires_at")
                     if milestone.get("expires_at")
@@ -233,15 +238,18 @@ class Scheduler:
                 )
                 expires = expiry_stamp.value
                 if parse_time(expires) > now:
-                    await self.repo.enqueue(
-                        "MILESTONE_CHECK",
+                    scheduled = ScheduledMilestoneCheck.model_validate(
                         {
                             "event_id": event["event_id"],
                             "milestone": kind,
                             **due_stamp.fields("due_at"),
                             "source_id": milestone.get("source_id"),
-                        },
-                        f"{event['event_id']}:{kind}:{due}",
+                        }
+                    )
+                    await self.repo.enqueue(
+                        "MILESTONE_CHECK",
+                        scheduled.model_dump(mode="json", exclude_unset=True),
+                        f"{scheduled.event_id}:{scheduled.milestone}:{scheduled.due_at}",
                         priority=1,
                         expires_at=expiry_stamp,
                     )
@@ -967,26 +975,21 @@ class Scheduler:
                 )
             return "fired" if isinstance(action, FireTimedReview) else "evaluated"
 
-    async def milestone_check(self, payload):
-        event = await self.repo.get("evt.events", payload["event_id"])
+    async def milestone_check(self, command: MilestoneCheckCommand) -> None:
+        command = MilestoneCheckCommand.model_validate(command)
+        event = await self.repo.get("evt.events", command.event_id)
         if event is None:
             raise ValueError("Milestone event does not exist")
-        matches = [
-            row
-            for row in event.get("milestone_resolutions", [])
-            if row.get("kind", row.get("milestone")) == payload["milestone"]
-            and (not payload.get("due_at") or row.get("due_at") == payload["due_at"])
-        ]
-        resolution = matches[-1] if matches else None
-
+        resolution = MilestoneResolutionHistory.from_record(event, command).latest(command)
+        due_key = "" if command.due_at is None else command.due_at
         await self.message(
             "MILESTONE",
-            payload["event_id"],
-            str(payload["milestone"]) + ":" + str(payload.get("due_at", "")),
-            milestone=payload["milestone"],
-            outcome=resolution.get("outcome") if resolution else None,
-            quotes=resolution.get("quotes", []) if resolution else [],
-            evidence=resolution.get("evidence", []) if resolution else [],
+            command.event_id,
+            command.milestone + ":" + due_key,
+            milestone=command.milestone,
+            outcome=resolution.outcome if resolution is not None else None,
+            quotes=resolution.quotes if resolution is not None else [],
+            evidence=resolution.evidence if resolution is not None else [],
             verification_required=resolution is None,
             instruction="Verify outcome against the scheduled official source; retain a quote. Mark a missed window explicitly."
             if resolution is None
