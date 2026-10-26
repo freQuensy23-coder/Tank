@@ -10,6 +10,7 @@ import pytest
 from publisher_shell_support import shell_host
 from publisher_state_support import PublisherRig, rig
 from publisher_transition_support import http_rig
+from pydantic import ValidationError
 
 from tank.deployment.api_contracts import BuildObservation
 from tank.deployment.contracts import BuildCacheKey, BuildProvenance
@@ -210,3 +211,44 @@ def test_actual_child_acceptance_crash_never_posts_another_build(
             assert pending is not None
             assert pending.candidate.build_id == recorded.observation.id
             assert fixture.journal.read_submission(key) is None
+
+
+@pytest.mark.parametrize("status", ["UNKNOWN", "", "SUCCESS", 1, True])
+def test_submission_does_not_admit_an_invented_provider_status(status: object) -> None:
+    with pytest.raises(ValidationError):
+        BuildObservation.model_validate({"id": "B" * 17, "status": status})
+
+
+def test_submission_requires_declared_clock_and_original_positive_budget(tmp_path: Path) -> None:
+    fixture = rig(tmp_path, fault="NONE")
+    facts = {
+        "phase": "ACCEPTANCE_UNKNOWN",
+        "release_sha": fixture.publisher.sha,
+        "source_digest": fixture.selected.release.source_digest,
+        "requested_at": Timestamp(value=None, precision=None, precision_reason="NOT_OBSERVED"),
+        "budget_s": 600.0,
+    }
+    with pytest.raises(ValidationError):
+        UnknownBuildSubmission.model_validate(facts)
+    facts["requested_at"] = collection_clock()
+    facts["budget_s"] = 0.0
+    with pytest.raises(ValidationError):
+        UnknownBuildSubmission.model_validate(facts)
+
+
+def test_received_build_rejects_clock_regression_without_resetting_budget(tmp_path: Path) -> None:
+    fixture = rig(tmp_path, fault="NONE")
+    requested = collection_clock()
+    value = requested.value
+    assert value is not None
+    receipt = ReceivedBuildSubmission(
+        phase="BUILD_RECEIVED",
+        release_sha=fixture.publisher.sha,
+        source_digest=fixture.selected.release.source_digest,
+        requested_at=requested,
+        budget_s=600.0,
+        observation=BuildObservation(id="B" * 17, status="RUNNING"),
+    )
+    with pytest.raises(ValueError, match="precedes"):
+        receipt.remaining(collection_clock(parse_utc_time(value) - timedelta(seconds=1)))
+    assert receipt.remaining(collection_clock(parse_utc_time(value) + timedelta(seconds=599))) == 1.0

@@ -119,7 +119,9 @@ class ActorSnapshot(ApifyProjection):
 
 class BuildObservation(ApifyProjection):
     id: BuildID
-    status: str = Field(min_length=1)
+    status: Literal[
+        "READY", "RUNNING", "SUCCEEDED", "FAILED", "TIMING-OUT", "TIMED-OUT", "ABORTING", "ABORTED"
+    ]
 
 
 class CompletedBuildSnapshot(ApifyProjection):
