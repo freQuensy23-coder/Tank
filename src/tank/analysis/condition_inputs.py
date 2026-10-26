@@ -218,11 +218,10 @@ class SpotCalculationPolicy(DomainModel):
         )
 
 
-class SpotCalculationInputs(DomainModel):
+class SpotCalculationFacts(DomainModel):
     token_id: str = Field(min_length=1, pattern=r"\S")
     start: datetime
     cutoff: datetime
-    assembled_at: Timestamp
     instruments: tuple[SpotInstrument, ...]
     minutes: tuple[SpotFlowObservation, ...]
     boundaries: tuple[SpotFlowObservation, ...]
@@ -251,6 +250,39 @@ class SpotCalculationInputs(DomainModel):
             if identities.get(ticker.instrument.instrument_id) != ticker.instrument:
                 raise ValueError("Spot ticker must bind to its actual declared input scope")
         return self
+
+
+class SpotCalculationInputs(SpotCalculationFacts):
+    assembled_at: Timestamp
+
+
+class SpotCalculationSource(SpotCalculationFacts):
+    @classmethod
+    def from_inputs(cls, inputs: SpotCalculationInputs) -> Self:
+        validated = SpotCalculationInputs.model_validate(inputs)
+        return cls(
+            token_id=validated.token_id,
+            start=validated.start,
+            cutoff=validated.cutoff,
+            instruments=validated.instruments,
+            minutes=validated.minutes,
+            boundaries=validated.boundaries,
+            tickers=validated.tickers,
+            policy=validated.policy,
+        )
+
+    def at(self, assembled_at: Timestamp) -> SpotCalculationInputs:
+        return SpotCalculationInputs(
+            token_id=self.token_id,
+            start=self.start,
+            cutoff=self.cutoff,
+            assembled_at=Timestamp.model_validate(assembled_at),
+            instruments=self.instruments,
+            minutes=self.minutes,
+            boundaries=self.boundaries,
+            tickers=self.tickers,
+            policy=self.policy,
+        )
 
 
 class SpotWindowCalculationInputs(DomainModel):

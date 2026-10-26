@@ -564,6 +564,13 @@ def test_composite_primary_graph_reused_across_requested_windows(
             assert metric_value(result, {}, metric, window) == metric_value(full, {}, metric, window)
         assert result["_condition_evaluation"]["requires_market_truth"] == []
     assert len(calls) == 1
+    from tank.analysis.condition_graph_contracts import ConditionStateNodeKey
+    from tank.analysis.condition_input_codec import SpotWindowEvaluation
+
+    spot_nodes = [
+        value for key, value in cache.items() if isinstance(key, ConditionStateNodeKey) and key.node == "spot"
+    ]
+    assert len(spot_nodes) == 1 and isinstance(spot_nodes[0], SpotWindowEvaluation)
 
 
 def test_composite_conditions_change_from_unknown_when_actual_evidence_arrives() -> None:

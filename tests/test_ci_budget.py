@@ -355,3 +355,7 @@ def test_both_unit_lanes_and_the_aggregate_are_required_before_ci_can_pass() -> 
     assert budget.result(jobs, deadline)
     for missing in required:
         assert not budget.result([job for job in jobs if job.name != missing], deadline)
+
+
+def test_active_persistence_contracts_are_required_before_ci_can_pass() -> None:
+    assert "test / Node persistence contracts" in budget.REQUIRED_JOBS

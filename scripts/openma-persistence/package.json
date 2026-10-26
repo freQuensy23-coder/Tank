@@ -1,0 +1,10 @@
+{
+  "name": "tank-owned-openma-persistence",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "postgres": "3.4.9",
+    "effect": "3.22.1"
+  }
+}
