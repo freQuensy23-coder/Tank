@@ -17,6 +17,12 @@ from tank.storage import MemoryRepository, Repository
 from tank.time_precision import Timestamp, collection_clock
 from tank.util import TimeInput, clock_iso, sha256
 
+FIXTURE_CONTEXT: Record = {
+    "model_id": "declared-fixture-model",
+    "prompt_version": "declared-fixture-prompt",
+    "role": "system",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class FrozenPublicationClock:
@@ -57,7 +63,7 @@ async def actual_material_lead(service: EventToolService) -> Record:
     authored = extraction()
     authored.update(certainty="LOW", certainty_reason="The authored lead is not confirmed")
     authored["claims"][0].update(verified=False, verification_missing="No counterparty confirmation")
-    created = await service.dispatch("record_event", authored, {"session_id": "s"})
+    created = await service.dispatch("record_event", authored, {**FIXTURE_CONTEXT, "session_id": "s"})
     event_id = created["event_id"]
     claims = [row async for row in service.repo.iter_all("evt.claims", filters={"event_id": event_id})]
     assert claims
@@ -69,7 +75,7 @@ async def actual_material_lead(service: EventToolService) -> Record:
             "event_id": event_id,
             "assessment": unknown_assessment(criterion="MATERIAL", klass="MATERIAL", claim=claim_id),
         },
-        {},
+        FIXTURE_CONTEXT,
     )
     assert assessed["class"] == "MATERIAL"
     return {
@@ -99,7 +105,7 @@ async def actual_denial(service: EventToolService, event_id: str) -> Record:
             "public_at": authored["public_at"],
             "freshness": "FRESH",
         },
-        {},
+        FIXTURE_CONTEXT,
     )
     event = await service.repo.get("evt.events", event_id)
     assert event is not None
@@ -118,7 +124,7 @@ async def promote_with_actual_analysis(service: EventToolService, event_id: str)
     assessment = await service.dispatch(
         "set_assessment",
         {"event_id": event_id, "assessment": unknown_assessment(claim=claim_id)},
-        {},
+        FIXTURE_CONTEXT,
     )
     assert assessment["class"] == "MAJOR"
     mapped = await service.dispatch(
@@ -141,12 +147,14 @@ async def promote_with_actual_analysis(service: EventToolService, event_id: str)
             ],
             "layer_reasons": {layer: "No intermediary evidence in the authored fixture" for layer in LAYERS},
         },
-        {},
+        FIXTURE_CONTEXT,
     )
     assert mapped["analysis_set"] == ["world:WLD"]
     truth = await service.truth.assess(event_id, "world:WLD", clock_iso())
     assert truth["data_confidence"]["class"] == "LOW"
-    decision = await service.dispatch("get_decision", {"event_id": event_id, "token_id": "world:WLD"}, {})
+    decision = await service.dispatch(
+        "get_decision", {"event_id": event_id, "token_id": "world:WLD"}, FIXTURE_CONTEXT
+    )
     assert decision["action"] == "WAIT"
 
 
@@ -166,7 +174,7 @@ async def exercise_actual_revision_eleven(
             result = await service.dispatch(
                 "publish_card",
                 {**arguments, "what": f"The repository contains an adapter; authored revision {revision}."},
-                {},
+                FIXTURE_CONTEXT,
             )
             assert result["published"] and result["version"] == revision
             published.append(result)
@@ -182,7 +190,7 @@ async def exercise_actual_revision_eleven(
             tenth = await service.dispatch(
                 "publish_card",
                 {**arguments, "what": "The repository contains an adapter; authored revision 10."},
-                {},
+                FIXTURE_CONTEXT,
             )
             assert tenth["published"] and tenth["version"] == 10
             alert_id = tenth["alert_id"]
@@ -208,7 +216,7 @@ async def exercise_actual_revision_eleven(
                     "why": ["The partner officially denied the integration."],
                 }
                 del final_arguments["unconfirmed"]
-            eleventh = await service.dispatch("publish_card", final_arguments, {})
+            eleventh = await service.dispatch("publish_card", final_arguments, FIXTURE_CONTEXT)
             assert eleventh["published"] and eleventh["version"] == 11
             assert eleventh["alert_id"] == alert_id
             final_row = await repo.get("out.alerts", f"{alert_id}:11")
@@ -222,7 +230,7 @@ async def exercise_actual_revision_eleven(
             assert requests[0].get("reply_parameters") is None
             assert requests[1]["reply_parameters"]["message_id"] == 101
             if final_kind == "FULL":
-                denied = await service.dispatch("publish_card", arguments, {})
+                denied = await service.dispatch("publish_card", arguments, FIXTURE_CONTEXT)
                 assert denied["reason"] == "ORDINARY_CARD_EXISTS"
                 first = await service.first_full_alert(event_id)
                 assert first is not None and first["version"] == 11
