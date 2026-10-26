@@ -608,6 +608,7 @@ def _derivative_window_wire(
     if isinstance(synchronized, ConditionSynchronizedOpenInterest):
         sync = encode_condition_open_interest(synchronized.values)
         sync["venues"] = list(synchronized.venues)
+        sync["synchronization"] = _model_wire(synchronized.synchronization)
         result["synchronized"] = sync
     else:
         result["synchronized"] = None

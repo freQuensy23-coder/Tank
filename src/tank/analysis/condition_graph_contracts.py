@@ -1646,15 +1646,102 @@ class ConditionDerivativeVenue(DomainModel):
         return self
 
 
+class ConditionOISynchronizationContribution(DomainModel):
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    venue: str = Field(min_length=1, pattern=r"\S")
+    observed_at: Timestamp
+    oi_native: Decimal = Field(ge=0)
+    oi_usd: Decimal | None = Field(ge=0)
+
+    @model_validator(mode="after")
+    def actual_source_clock(self) -> Self:
+        if self.observed_at.value is None:
+            raise ValueError("A synchronized OI contribution requires its actual source clock")
+        return self
+
+
+class ConditionOISynchronizationEndpoint(DomainModel):
+    at: Timestamp
+    contributions: tuple[ConditionOISynchronizationContribution, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def actual_grid_and_sources(self) -> Self:
+        if self.at.value is None:
+            raise ValueError("A synchronized OI endpoint requires its actual grid clock")
+        identities = [value.instrument_id for value in self.contributions]
+        if len(identities) != len(set(identities)):
+            raise ValueError("A synchronized OI endpoint cannot repeat an instrument contribution")
+        return self
+
+    def native_total(self) -> Decimal:
+        return sum_condition_native(value.oi_native for value in self.contributions)
+
+    def usd_total(self) -> Decimal | None:
+        values: list[Decimal] = []
+        for contribution in self.contributions:
+            if contribution.oi_usd is None:
+                return None
+            values.append(contribution.oi_usd)
+        return sum_condition_native(values)
+
+
+class ConditionOISynchronization(DomainModel):
+    aggregation_class: str = Field(min_length=1, pattern=r"\S")
+    tolerance_s: float = Field(ge=0)
+    start: ConditionOISynchronizationEndpoint
+    end: ConditionOISynchronizationEndpoint
+
+    @model_validator(mode="after")
+    def actual_matching_contributions(self) -> Self:
+        start = {value.instrument_id: value for value in self.start.contributions}
+        end = {value.instrument_id: value for value in self.end.contributions}
+        if set(start) != set(end):
+            raise ValueError("Synchronized OI endpoints must retain the same actual instrument cohort")
+        for endpoint in (self.start, self.end):
+            if endpoint.at.value is None:
+                raise ValueError("Synchronized OI requires its actual grid clocks")
+            grid = parse_iso_time(endpoint.at.value)
+            for contribution in endpoint.contributions:
+                stamp = contribution.observed_at.value
+                if stamp is None or abs((parse_iso_time(stamp) - grid).total_seconds()) > self.tolerance_s:
+                    raise ValueError(
+                        "Synchronized OI source clocks must satisfy the actual declared tolerance"
+                    )
+        for identity, initial in start.items():
+            final = end[identity]
+            if initial.venue != final.venue:
+                raise ValueError("Synchronized OI cannot relabel an instrument's venue between endpoints")
+            if initial.observed_at.value is None or final.observed_at.value is None:
+                raise ValueError("Synchronized OI requires actual contribution clocks")
+            if parse_iso_time(initial.observed_at.value) > parse_iso_time(final.observed_at.value):
+                raise ValueError("Synchronized OI source endpoints cannot run backwards")
+        return self
+
+
 class ConditionSynchronizedOpenInterest(DomainModel):
     status: Literal["OBSERVED"]
     venues: tuple[Annotated[str, Field(min_length=1, pattern=r"\S")], ...] = Field(min_length=1)
     values: ObservedConditionOpenInterest
+    synchronization: ConditionOISynchronization
 
     @model_validator(mode="after")
     def actual_distinct_cohort(self) -> Self:
         if len(self.venues) != len(set(self.venues)):
             raise ValueError("Observed synchronized OI requires distinct actual cohort venues")
+        witness = self.synchronization
+        if set(self.venues) != {value.venue for value in witness.end.contributions}:
+            raise ValueError("Synchronized OI venue summary must preserve actual instrument contributions")
+        for endpoint, stamp, native, usd in (
+            (
+                witness.start,
+                self.values.start_observed_at,
+                self.values.oi_native_start,
+                self.values.oi_usd_start,
+            ),
+            (witness.end, self.values.end_observed_at, self.values.oi_native_end, self.values.oi_usd_end),
+        ):
+            if endpoint.at != stamp or endpoint.native_total() != native or endpoint.usd_total() != usd:
+                raise ValueError("Synchronized OI totals and grid clocks must preserve actual contributions")
         return self
 
 
@@ -1837,6 +1924,19 @@ class ConditionDerivativeWindow[Venue: ConditionDerivativeVenue](DomainModel):
                 )
         if isinstance(self.synchronized, ConditionSynchronizedOpenInterest):
             self.validate_oi_window(self.synchronized.values)
+            source_venues = {value.instrument_id: value.venue for value in self.per_venue}
+            for endpoint in (self.synchronized.synchronization.start, self.synchronized.synchronization.end):
+                for contribution in endpoint.contributions:
+                    if (
+                        contribution.instrument_id not in source_venues
+                        or source_venues[contribution.instrument_id] != contribution.venue
+                    ):
+                        raise ValueError("Synchronized OI cannot borrow an absent derivative instrument")
+                    if (
+                        contribution.observed_at.value is None
+                        or parse_iso_time(contribution.observed_at.value) > self.interval.cutoff
+                    ):
+                        raise ValueError("Synchronized OI contributions cannot occur after the actual cutoff")
         if isinstance(self.liquidations, ConditionAggregateLiquidations):
             for coverage, totals in (
                 ("COMPLETE", self.liquidations.complete_venues_total),
@@ -6979,12 +7079,15 @@ type ConditionProofFreshness = (
 
 
 class ConditionOpenInterestCoverage(DomainModel):
+    instruments: tuple[Annotated[str, Field(min_length=1, pattern=r"\S")], ...]
     venues: tuple[Annotated[str, Field(min_length=1, pattern=r"\S")], ...]
 
     @model_validator(mode="after")
     def distinct_actual_cohort(self) -> Self:
         if len(self.venues) != len(set(self.venues)):
             raise ValueError("OI proof coverage must preserve distinct actual synchronized venues")
+        if len(self.instruments) != len(set(self.instruments)):
+            raise ValueError("OI proof coverage must preserve distinct actual synchronized instruments")
         return self
 
 
@@ -7177,6 +7280,12 @@ class SelectiveConditionValues(DomainModel):
                 if (
                     not isinstance(proof.coverage, ConditionOpenInterestCoverage)
                     or proof.coverage.venues != expected_venues
+                    or proof.coverage.instruments
+                    != (
+                        tuple(value.instrument_id for value in synchronized.synchronization.end.contributions)
+                        if isinstance(synchronized, ConditionSynchronizedOpenInterest)
+                        else ()
+                    )
                 ):
                     raise ValueError("OI proof coverage cannot differ from its actual selected cohort")
             fresh = isinstance(proof.freshness, UnappliedConditionProofFreshness) or (
@@ -7449,6 +7558,15 @@ class ConditionRequestedDerivativeView(DomainModel):
                 if (
                     not isinstance(proof.coverage, ConditionOpenInterestCoverage)
                     or proof.coverage.venues != expected_cohort
+                    or proof.coverage.instruments
+                    != (
+                        tuple(
+                            value.instrument_id
+                            for value in source.synchronized.synchronization.end.contributions
+                        )
+                        if isinstance(source.synchronized, ConditionSynchronizedOpenInterest)
+                        else ()
+                    )
                 ):
                     raise ValueError("Requested OI proof must preserve its actual synchronized cohort")
             if proof.available != (
@@ -7465,12 +7583,14 @@ class ConditionRequestedDerivativeView(DomainModel):
                     raise ValueError("Derivative freshness requires distinct actual instruments")
                 expected_ids = set(identities)
                 if key.domain == "oi":
-                    expected_ids = {
-                        venue.instrument_id
-                        for venue in source.per_venue
+                    expected_ids = (
+                        {
+                            value.instrument_id
+                            for value in source.synchronized.synchronization.end.contributions
+                        }
                         if isinstance(source.synchronized, ConditionSynchronizedOpenInterest)
-                        and venue.venue in source.synchronized.venues
-                    }
+                        else set()
+                    )
                 if set(observation_ids) != expected_ids:
                     raise ValueError(
                         "Freshness observations must match the actual selected derivative cohort"
@@ -7483,8 +7603,14 @@ class ConditionRequestedDerivativeView(DomainModel):
                         raise ValueError("Derivative freshness requires its actual instrument")
                     venue = identities[identity]
                     stamp: Timestamp | None = None
-                    if key.domain == "oi" and isinstance(venue.open_interest, ObservedConditionOpenInterest):
-                        stamp = venue.open_interest.end_observed_at
+                    if key.domain == "oi" and isinstance(
+                        source.synchronized, ConditionSynchronizedOpenInterest
+                    ):
+                        contributions = {
+                            value.instrument_id: value
+                            for value in source.synchronized.synchronization.end.contributions
+                        }
+                        stamp = contributions[identity].observed_at
                     if key.domain == "funding" and isinstance(venue.funding, AvailableConditionFunding):
                         point = (
                             venue.funding.estimate

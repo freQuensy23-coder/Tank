@@ -38,6 +38,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionReplenishmentScope,
     ConditionSplitExecution,
     ConditionSupplyGraph,
+    ConditionSynchronizedOpenInterest,
     ConditionTopVenueSignHistory,
     DeclaredConditionCadence,
     EnrichedConditionDerivatives,
@@ -994,7 +995,6 @@ def test_derivative_window_refuses_invented_funding_dispersion_and_absent_sync_v
         BasicConditionDerivatives,
         ConditionDerivativeVenue,
         ConditionObservedFundingDispersion,
-        ConditionSynchronizedOpenInterest,
         ConditionUnavailableFundingDispersion,
         UnavailableConditionSynchronizedOpenInterest,
         UnrequestedConditionIncrementalVolumes,
@@ -1047,8 +1047,8 @@ def test_derivative_window_refuses_invented_funding_dispersion_and_absent_sync_v
         BasicConditionDerivatives.model_validate(
             graph.model_copy(
                 update={
-                    "synchronized": ConditionSynchronizedOpenInterest(
-                        status="OBSERVED", venues=("unobserved",), values=observed_oi_without_usd()
+                    "synchronized": synchronized_oi_fixture(
+                        observed_oi_without_usd(), venue="unobserved", instrument_id="unobserved"
                     )
                 }
             )
@@ -4351,3 +4351,47 @@ def test_selected_confidence_cannot_borrow_another_subjects_failed_requirement()
     assert model.confidence.classification == "MEDIUM"
     with pytest.raises(ValidationError):
         selective_confidence_graph("OTHER")
+
+
+def synchronized_oi_fixture(
+    point: ObservedConditionOpenInterest, *, venue: str, instrument_id: str
+) -> ConditionSynchronizedOpenInterest:
+    from tank.analysis.condition_graph_contracts import (
+        ConditionOISynchronization,
+        ConditionOISynchronizationContribution,
+        ConditionOISynchronizationEndpoint,
+    )
+
+    return ConditionSynchronizedOpenInterest(
+        status="OBSERVED",
+        venues=(venue,),
+        values=point,
+        synchronization=ConditionOISynchronization(
+            aggregation_class="SYNTHETIC_NATIVE_QUANTITY",
+            tolerance_s=0.0,
+            start=ConditionOISynchronizationEndpoint(
+                at=point.start_observed_at,
+                contributions=(
+                    ConditionOISynchronizationContribution(
+                        instrument_id=instrument_id,
+                        venue=venue,
+                        observed_at=point.start_observed_at,
+                        oi_native=point.oi_native_start,
+                        oi_usd=point.oi_usd_start,
+                    ),
+                ),
+            ),
+            end=ConditionOISynchronizationEndpoint(
+                at=point.end_observed_at,
+                contributions=(
+                    ConditionOISynchronizationContribution(
+                        instrument_id=instrument_id,
+                        venue=venue,
+                        observed_at=point.end_observed_at,
+                        oi_native=point.oi_native_end,
+                        oi_usd=point.oi_usd_end,
+                    ),
+                ),
+            ),
+        ),
+    )

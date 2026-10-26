@@ -10,6 +10,7 @@ from test_condition_graph_contracts import (
     AT,
     enriched_derivatives_without_observations,
     observed_oi_without_usd,
+    synchronized_oi_fixture,
 )
 
 from tank.analysis.condition_graph_codec import encode_requested_condition_derivatives
@@ -101,7 +102,7 @@ def derivative_view(
         token_id="T",
         interval=base.interval,
         per_venue=(source_venue,),
-        synchronized=ConditionSynchronizedOpenInterest(status="OBSERVED", venues=("bybit",), values=oi)
+        synchronized=synchronized_oi_fixture(oi, venue="bybit", instrument_id=source_venue.instrument_id)
         if domain == "oi"
         else UnrequestedConditionSynchronizedOpenInterest(status="NOT_REQUESTED"),
         funding_dispersion=ConditionUnavailableFundingDispersion(
@@ -218,7 +219,9 @@ def derivative_view(
         available=age_s == 0,
         reason=None if age_s == 0 else "INCOMPLETE",
         freshness=AssessedConditionProofFreshness(kind="ASSESSED", observations=(observed,)),
-        coverage=ConditionOpenInterestCoverage(venues=("bybit",)) if domain == "oi" else None,
+        coverage=ConditionOpenInterestCoverage(venues=("bybit",), instruments=(source_venue.instrument_id,))
+        if domain == "oi"
+        else None,
     )
     return ConditionRequestedDerivativeView(requested=source, state=state, proofs=(proof,))
 
@@ -312,11 +315,13 @@ def test_requested_view_rejects_foreign_freshness_instrument_and_other_observati
 
 
 def test_observed_synchronized_oi_requires_an_actual_nonempty_distinct_cohort() -> None:
-    point = observed_oi_without_usd()
+    point = synchronized_oi_fixture(observed_oi_without_usd(), venue="bybit", instrument_id="perp")
     with pytest.raises(ValidationError):
-        ConditionSynchronizedOpenInterest(status="OBSERVED", venues=(), values=point)
+        ConditionSynchronizedOpenInterest.model_validate(point.model_copy(update={"venues": ()}))
     with pytest.raises(ValidationError, match="distinct actual cohort"):
-        ConditionSynchronizedOpenInterest(status="OBSERVED", venues=("bybit", "bybit"), values=point)
+        ConditionSynchronizedOpenInterest.model_validate(
+            point.model_copy(update={"venues": ("bybit", "bybit")})
+        )
 
 
 @pytest.mark.parametrize("domain", ["oi", "funding"])
@@ -352,8 +357,8 @@ def test_shared_observed_derivatives_cannot_change_native_endpoints_or_raw_rates
             state.model_copy(
                 update={
                     "per_venue": (venue,),
-                    "synchronized": ConditionSynchronizedOpenInterest(
-                        status="OBSERVED", venues=(venue.venue,), values=changed_oi
+                    "synchronized": synchronized_oi_fixture(
+                        changed_oi, venue=venue.venue, instrument_id=venue.instrument_id
                     ),
                 }
             )
