@@ -1802,3 +1802,22 @@ targets pass. Contradictory name/size/MIME/session scope and bool-as-size contro
 prove the ID survives while mount count stays zero; corrected readback finishes
 with one original upload. The fresh-cache writer/connected caller cohort remains
 held until its normal join and whole selection proof.
+
+### Paired writer and current-parent caller qualification
+
+The candidate normally joins ingestion's fresh writer f2552fa0 and current parent
+855a0c7a. The first full affected selection passed 1,201 cases and found seven
+old authored callback fixtures in test_model_context_migration that omitted their
+actual variant's required facts. Those controls now send the canonical source,
+milestone, fired timed-review, expired-call or proposal message. Their existing
+migration, untouched prior history, ID refusal, exact POST counts and failed-update
+no-delivery assertions are unchanged. The timed review adds no financial fields;
+the expired-call control explicitly declares its synthetic call snapshot instead
+of pretending an incomplete callback is a valid historical row.
+
+All 1,208 affected units now pass in 18.37 seconds, zero skips, p90 .148 seconds
+and maximum 2.992 seconds including fixtures. The callback factory independently
+passes strict typing; the older migration test module's whole typing remains open.
+The actual fresh Inbox-to-Session attachment ready/again control is green using
+real writer state and scoped metadata/resource readbacks. Full collected actual
+integration proof is still pending; no parent activation is claimed here.
