@@ -1,5 +1,11 @@
 """Evidence-gated eligibility for a retained lost coalescing obligation."""
 
+from collections.abc import Mapping
+from typing import Literal
+
+from pydantic import JsonValue
+
+from tank.contracts import DomainModel
 from tank.contracts.reaction_recovery import (
     ReactionRecoveryAlreadyApplied,
     ReactionRecoveryEligibility,
@@ -8,8 +14,46 @@ from tank.contracts.reaction_recovery import (
     ReactionRecoveryUnresolved,
     RecoveryMarkerApplied,
     RecoveryMarkerUnresolved,
+    RecoveryStorageKey,
+    RecoveryTerminalBackfill,
 )
-from tank.util import parse_time
+from tank.time_precision import propagate_timestamp
+from tank.util import parse_time, sha256
+
+
+class RecoveryBackfillProjection(DomainModel):
+    """Only durable source identity and clocks consumed by recovery admission."""
+
+    backfill_id: RecoveryStorageKey
+    event_id: RecoveryStorageKey
+    token_id: RecoveryStorageKey
+    status: Literal["COMPLETE", "PARTIAL", "FAILED"]
+    anchor: str | None
+    anchor_prec: str | None = None
+    anchor_prec_reason: str | None = None
+    finished_at: RecoveryStorageKey
+    finished_at_prec: str | None = None
+    finished_at_prec_reason: str | None = None
+
+
+def recovery_backfill_from_record(record: Mapping[str, JsonValue]) -> RecoveryTerminalBackfill:
+    """Hash the actual source fields before normalizing their clock projection."""
+    wire = RecoveryBackfillProjection.model_validate(
+        {field: record[field] for field in RecoveryBackfillProjection.model_fields if field in record}
+    )
+    change_id = "CAP-" + sha256(
+        {"backfill_id": wire.backfill_id, "status": wire.status, "finished_at": wire.finished_at}
+    )
+    clocks = wire.model_dump(mode="json", exclude_unset=True)
+    return RecoveryTerminalBackfill(
+        backfill_id=wire.backfill_id,
+        change_id=change_id,
+        event_id=wire.event_id,
+        token_id=wire.token_id,
+        status=wire.status,
+        anchor=propagate_timestamp(clocks, "anchor"),
+        finished_at=propagate_timestamp(clocks, "finished_at"),
+    )
 
 
 def recovery_eligibility(evidence: ReactionRecoveryEvidence) -> ReactionRecoveryEligibility:

@@ -8,7 +8,7 @@ from tank.contracts.reaction_recovery import (
     ReactionRecoveryWitnessRequest,
     RetainedCoalescedReaction,
 )
-from tank.reaction_recovery import recovery_eligibility
+from tank.reaction_recovery import recovery_backfill_from_record, recovery_eligibility
 from tank.time_precision import Timestamp, collection_clock
 from tank.util import sha256
 
@@ -193,3 +193,113 @@ def test_unbound_marker_is_not_missing_marker() -> None:
     result = recovery_eligibility(ReactionRecoveryEvidence.model_validate(fields))
     assert result.kind == "UNRESOLVED"
     assert result.reason == "MARKER_UNRESOLVED"
+
+
+@pytest.mark.parametrize(
+    ("subject", "field", "value", "reason"),
+    [
+        ("peer", "job_id", "unrelated", "PEER_SCOPE_MISMATCH"),
+        ("source", "event_id", "foreign", "SOURCE_SCOPE_MISMATCH"),
+        ("source", "change_id", "foreign", "SOURCE_SCOPE_MISMATCH"),
+        (
+            "source",
+            "finished_at",
+            {"value": "2026-10-20T12:00:00Z", "precision": None, "precision_reason": "UNREPORTED"},
+            "SOURCE_CLOCK_UNREPORTED",
+        ),
+        (
+            "checkpoint",
+            "captured_at",
+            {"value": None, "precision": None, "precision_reason": "UNREPORTED"},
+            "CHECKPOINT_CLOCK_UNREPORTED",
+        ),
+    ],
+)
+def test_recovery_requires_actual_identity_and_collection_chronology(
+    subject: str, field: str, value: JsonValue, reason: str
+) -> None:
+    fields = recovery_evidence_fields()
+    witness = fields[subject]
+    assert isinstance(witness, dict)
+    witness[field] = value
+    result = recovery_eligibility(ReactionRecoveryEvidence.model_validate(fields))
+    assert result.kind == "UNRESOLVED"
+    assert result.reason == reason
+
+
+def test_validated_actual_marker_supersedes_failed_peer_recovery() -> None:
+    fields = recovery_evidence_fields()
+    original = fields["original"]
+    assert isinstance(original, dict)
+    command = original["command"]
+    assert isinstance(command, dict)
+    fields["marker"] = {
+        "kind": "APPLIED",
+        "receipt": {
+            "kind": "CHANGE_ALREADY_APPLIED",
+            "event_id": command["event_id"],
+            "token_id": command["token_id"],
+            "checkpoint": command["checkpoint"],
+            "change_id": command["change_id"],
+            "changed": False,
+            "revision": 1,
+            "data_fingerprint": sha256({"declared_fixture": "checkpoint"}),
+        },
+    }
+    fields["peer"] = None
+    fields["source"] = None
+    fields["checkpoint"] = None
+    result = recovery_eligibility(ReactionRecoveryEvidence.model_validate(fields))
+    assert result.kind == "ALREADY_APPLIED"
+    assert result.receipt.changed is False
+
+
+@pytest.mark.parametrize("status", ["QUEUED", "RUNNING", "DONE"])
+def test_nonterminal_or_successful_peer_is_not_a_failed_peer_witness(status: str) -> None:
+    fields = recovery_evidence_fields()
+    peer = fields["peer"]
+    assert isinstance(peer, dict)
+    peer["status"] = status
+    with pytest.raises(ValidationError):
+        ReactionRecoveryEvidence.model_validate(fields)
+
+
+def test_source_identity_uses_actual_offset_wire_not_normalized_timestamp() -> None:
+    source: dict[str, JsonValue] = {
+        "backfill_id": "backfill",
+        "event_id": "event",
+        "token_id": "token",
+        "status": "FAILED",
+        "anchor": None,
+        "finished_at": "2026-10-20T15:00:00+03:00",
+        "finished_at_prec": "COLLECTION_ONLY",
+        "reason": "Original retained provider diagnostic",
+    }
+    admitted = recovery_backfill_from_record(source)
+    assert admitted.change_id == "CAP-" + sha256(
+        {
+            "backfill_id": "backfill",
+            "status": "FAILED",
+            "finished_at": "2026-10-20T15:00:00+03:00",
+        }
+    )
+    assert admitted.finished_at.value == "2026-10-20T12:00:00Z"
+    assert admitted.anchor.value is None
+    assert source["finished_at"] == "2026-10-20T15:00:00+03:00"
+    assert source["reason"] == "Original retained provider diagnostic"
+
+
+@pytest.mark.parametrize("field", ["backfill_id", "event_id", "token_id", "status", "finished_at"])
+def test_source_admission_does_not_invent_missing_required_facts(field: str) -> None:
+    source: dict[str, JsonValue] = {
+        "backfill_id": "backfill",
+        "event_id": "event",
+        "token_id": "token",
+        "status": "FAILED",
+        "anchor": None,
+        "finished_at": "2026-10-20T12:00:00Z",
+        "finished_at_prec": "COLLECTION_ONLY",
+    }
+    del source[field]
+    with pytest.raises(ValidationError):
+        recovery_backfill_from_record(source)
