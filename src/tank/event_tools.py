@@ -73,10 +73,10 @@ from tank.contracts.page_evidence import (
 )
 from tank.contracts.progress import PublicationReceipt
 from tank.contracts.provenance import GenerationProvenance, ResolvedVersionIdentity
-from tank.contracts.source_repository import SourceExtractionRepository
 from tank.contracts.tool_schema import SCOPED_TOOLS as SCOPED_TOOLS
 from tank.contracts.tool_schema import validate_schema as validate_schema
 from tank.ops_progress import event_progress, item_progress, tool_progress
+from tank.source_repository import SourceExtractionRepository
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.time_precision import (
     Timestamp,

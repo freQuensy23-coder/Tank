@@ -20,7 +20,6 @@ from pydantic import JsonValue
 
 import tank.sources.parsers as parsers
 from tank.contracts.provenance import ResolvedVersionIdentity
-from tank.contracts.repository import Repository as TypedRepository
 from tank.contracts.source_checkpoints import (
     INSTRUMENT_BASELINE_ARCHIVES,
     CompletedPendingRow,
@@ -55,6 +54,7 @@ from tank.contracts.sources import (
     SourcePollOutcome,
     UnconfiguredSource,
 )
+from tank.repository import Repository as TypedRepository
 from tank.sources.checkpoints import (
     ArticleFailure,
     CheckpointStore,

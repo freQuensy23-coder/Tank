@@ -1159,6 +1159,27 @@ Qualified source `d0b21695` passes 154 selected Settings, configuration, JSON, m
 
 `core-foundation-dispositions-d0b2.json` refreshes the thirteen-module core/helper slice at this tested head: 309 functions, 170 syntax candidates, 27 reviewed purposes and 143 open. Its predecessor's twelve sources are proven identical between exact parent826 and pushed4e; the new snapshot records changed Settings/helper hashes and the qualified YAML symbols. This inventory is not completion of all shared contracts, Record consumers, full graph/cache producers or the twenty Tank-owned persistence programs. Concrete repository implementation relocation remains coordinated with agents rather than duplicated here.
 
+### Concrete typed repository adapter responsibility
+
+`Repository` performed real asynchronous DocumentStore I/O inside `contracts/repository.py`. Its unchanged class now lives at `src/tank/repository.py`; pure `Collection` encode/decode and the abstract `DocumentStore` port remain inward. All eleven actual import sites across ten production/test files use the outward implementation, including the delegated source and pipeline imports. There is no old-path compatibility export or layout-only test. The normal coherent join includes the caller-qualified worker/job-adapter cohort rather than copying an isolated class out of its ancestry. Both independent analysis/quality appendices were preserved during that join.
+
+Current per-symbol dispositions are attached to the actual outward path:
+
+| Symbol | Retained contract |
+| --- | --- |
+| `tank.repository.Repository.__init__` | Requires the actual store and typed Collection; neither has a fallback implementation. |
+| `Repository.get` / `latest_before` | `None` means the actual store returned no matching row. Empty/malformed reported documents still enter strict schema decoding. |
+| `Repository.put` | Collection validation precedes the store await; the actual immutable argument is forwarded, and the returned stored document is decoded. Its ordinary mutable-write default is preserved, not inferred from missing row metadata. |
+| `Repository.list` / `iter_all` / `list_range` | Every returned/yielded document is decoded. Optional predicates, open range ends and first-page cursor retain their declared mechanical query meaning; no missing domain field, timestamp or financial value is supplied. Existing limits/page sizes remain unchanged. |
+| `Repository.delete` | Forwards the actual typed collection/key; the store retains immutable/deletion policy. Void return is not an invented deletion observation. |
+| `contracts.repository.Collection` / `DocumentStore` | Codec and port class ASTs are unchanged. The generic seven-method store dependency remains broad; capability splitting is a separate open responsibility audit. |
+
+External `repository-outward-ast-proof.json` binds the exact pre-move join, class AST equality, unchanged pure codec/port ASTs and unchanged non-import caller ASTs. The initial import-inventory script omitted root-level tests through its Git pathspec; its explicit count check stopped before any runtime qualification. The corrected complete tracked-file inventory accounts for all eleven sites. No source/test bodies were adapted to make the move pass.
+
+Qualified source `8f12af04` passes 123 existing adapter/caller units in 9.74 s (maximum 0.903 s, p90 0.167 s) and all eight collected actual PostgreSQL cases in 7.78 s, zero skips and unchanged wrapper/source guards. Evidence is `foundation/repository-outward-{unit,pg}-1.log/xml`. The new adapter/pure port pair passes strict mypy; ten signed source/test targets pass. A deliberately broader twelve-target check reports fifty errors confined to existing polling/ingestion typing. A real pre-move `359c27a0` check reproduces the exact same fifty error lines, with no new or removed diagnostics (`repository-outward-strict-baseline-comparison.json` and complete logs). Those modules are not declared strict-complete and no suppression or body change conceals them. Ruff check/format and diff checks pass.
+
+The complete scoped contracts-class async syntax scan at the qualified source is retained as `repository-outward-contract-await-scan.json`. After generic and job adapters moved outward, it still identifies the concrete `SourceExtractionRepository` methods, assigned separately to agents. Await/async-with/async-for detection is architecture evidence, not proof of all synchronous/indirect effects or global dependency policy. Historical inventory snapshots remain unchanged; this table records current exception locations. Codec collision diagnostics, raw numeric evidence qualification, whole Record coverage and the global foundation/vendor audit remain separate and open.
+
 
 ### Invalid recorded OI USD qualification cause
 

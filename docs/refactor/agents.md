@@ -2275,3 +2275,25 @@ held and are not implied by this worker candidate. No parent worktree was edited
 On clean parent b026dd0e, the six missing-required-fact milestone queue cases now assert the closed worker's declared `INVALID_QUEUE_ENVELOPE` quarantine result rather than the retired dispatch-time `ValidationError` label. The controls retain FAILED, the exact original payload, absent result, zero HTTP, and no AGENT_MESSAGE jobs; they additionally verify one actual claim attempt and zero event reads before quarantine. No production policy or milestone behavior changed.
 
 The approved read-only dependency runner passed all six Memory cases in 8.71 seconds and all six PostgreSQL cases in 10.41 seconds, with zero skips and unchanged source guards. External receipts are `evidence/agents/milestone-quarantine-{unit,pg}.{log,xml}` under the local tool root. Ruff and format checks pass. Independent strict checking of the existing test file still reports its prior untyped Scheduler.tick call at line 149; this bounded caller repair neither suppresses nor claims to close that dependency.
+
+### Source lifecycle I/O adapter moved outward
+
+On coherent parent b026dd0e, SourceExtractionRepository and its two raw-document
+admission helpers _identity/_state now live in tank/source_repository.py. Their
+ASTs are identical to the base after formatting, recorded independently in
+source-repository-relocation-ast.json. Pure SourceExtractionIdentity/State and the
+four-method SourceLifecycleStore remain in contracts/source_repository.py. All
+three actual callers (EventTools, SessionService and source lifecycle tests) use
+the outward adapter; analysis delegated only its import hunk. There is no
+compatibility re-export, behavior change, new layout-only test or storage rewrite.
+
+All 37 existing lifecycle/Session/EventTools completion units pass in 16.45 s;
+all 23 actual PostgreSQL caller cases pass in 17.81 s, zero skips/source guards.
+Original historical-field/byte preservation, terminal/missing no-write guards,
+identity refusal, capture-lock reload/concurrent metadata and actual observation
+completion assertions remain. Independent strict three adapter/port/test targets
+and scoped Ruff/format pass. Active exception/inventory locations are updated;
+quality owns explicit strict CI/global inventory addition while retaining the
+pure contract target. Generic Repository relocation is independently foundation
+owned. The observation-CAS behavior branch is separate and remains held for its
+full caller/boundary cohort; no parent files or immutable evidence changed here.
