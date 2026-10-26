@@ -1,7 +1,7 @@
 import { encodeSessionEventDocument, type ExecutionProgressReceipt } from '@open-managed-agents/session-runtime-contract/history';
 import type { YieldSessionExecutionProgress, YieldSessionExecutionProgressResult } from '@open-managed-agents/session-runtime-contract/coordination';
-import { imageRecoveryRetryBoundary, lastMatching, pendingImageRecoveries, planSessionContinuation, resultCallId, verifiedProgress, type ContinuationSnapshot } from '@open-managed-agents/session-runtime-contract/continuation';
-import { loadSessionContinuationSnapshot, SessionContinuationMissingError } from './continuation';
+import { decodeContinuationExecutionEvents, validateContinuationExecutionEvents, imageRecoveryRetryBoundary, lastMatching, pendingImageRecoveries, planSessionContinuation, resultCallId, verifiedProgress, type ContinuationSnapshot } from '@open-managed-agents/session-runtime-contract/continuation';
+import { loadSessionContinuationSnapshot, requiredContinuationRows, SessionContinuationMissingError } from './continuation';
 import type {
   AdmitSessionExecution,
   AdmitSessionExecutionResult,
@@ -303,7 +303,7 @@ function toExecution(row: ExecutionRow): SessionExecution {
     admittedAt: new Date(
       safeInteger(row.admitted_at_ms, "admission time"),
     ).toISOString(),
-    events: JSON.parse(row.events_json) as SessionExecution["events"],
+    events: decodeContinuationExecutionEvents(row.events_json),
     state: row.state,
     attempt,
     attemptCount: safeInteger(row.attempt_count, "execution attempt count"),
@@ -366,7 +366,8 @@ export class SqlSessionExecutionStore
   async admit(
     input: AdmitSessionExecution,
   ): Promise<AdmitSessionExecutionResult> {
-    if (input.execution.events.length === 0) {
+    const events = validateContinuationExecutionEvents(input.execution.events);
+    if (events.length === 0) {
       throw new Error("A Session Execution requires at least one event");
     }
     const maxAttempts = input.policy?.maxAttempts ?? 10;
@@ -382,7 +383,7 @@ export class SqlSessionExecutionStore
     if (!Number.isSafeInteger(deadlineAt)) {
       throw new Error("Session Execution deadline exceeds safe timestamp range");
     }
-    const eventsJson = stableJson(input.execution.events);
+    const eventsJson = stableJson(events);
     const inserted = await this.sql.prepare(`
       INSERT INTO managed_session_executions (
         workspace_id, session_id, lane_id, id, admitted_at_ms, events_json,
@@ -486,9 +487,10 @@ export class SqlSessionExecutionStore
           OR (state = 'failed' AND failure = 'retained_configuration_changed' AND interrupt_requested_at_ms IS NULL))
         AND attempt_count < max_attempts AND deadline_at_ms > ?
       ORDER BY admitted_at_ms, id`).bind(input.workspaceId ?? null, input.workspaceId ?? null, input.sessionId ?? null, input.sessionId ?? null, input.laneId ?? null, input.laneId ?? null, claimedAt, input.ownerId, claimedAt).all<ExecutionRow>();
-    const ordered = (candidates.results ?? []).map(row => ({
+    const rows = requiredContinuationRows(candidates.results);
+    const ordered = rows.map(row => ({
       row,
-      callback: (JSON.parse(row.events_json) as SessionExecution['events']).some(event => resultCallId(event) !== undefined)
+      callback: decodeContinuationExecutionEvents(row.events_json).some(event => resultCallId(event) !== undefined)
     })).sort((left, right) => Number(right.callback) - Number(left.callback));
     for (const { row } of ordered) {
       const active = await this.sql.prepare(`SELECT 1 AS active FROM managed_session_executions
@@ -514,7 +516,7 @@ export class SqlSessionExecutionStore
           .bind(claimedAt, row.workspace_id, row.id, row.revision, claimedAt, input.ownerId, row.workspace_id, row.session_id).run();
         continue;
       }
-      const eligible = (candidates.results ?? []).filter(candidate => candidate.workspace_id === row.workspace_id
+      const eligible = rows.filter(candidate => candidate.workspace_id === row.workspace_id
         && candidate.session_id === row.session_id && candidate.lane_id === row.lane_id && candidate.state === 'failed'
         && snapshot.executions.some(execution => execution.id === candidate.id && execution.revision === Number(candidate.revision)));
       let planning = pendingImageRecoveries(snapshot, eligible.map(candidate => candidate.id));
@@ -547,8 +549,8 @@ export class SqlSessionExecutionStore
     id: string;
     revision: number | string;
   } | null> {
-    return this.sql.prepare(`
-      SELECT candidate.workspace_id, candidate.session_id, candidate.id, candidate.revision
+    const selected = await this.sql.prepare(`
+      SELECT candidate.workspace_id, candidate.session_id, candidate.id, candidate.revision, candidate.events_json
         FROM managed_session_executions AS candidate
        WHERE (CAST(? AS VARCHAR(191)) IS NULL OR candidate.workspace_id = ?)
          AND (CAST(? AS VARCHAR(191)) IS NULL OR candidate.session_id = ?)
@@ -586,7 +588,10 @@ export class SqlSessionExecutionStore
       session_id: string;
       id: string;
       revision: number | string;
+      events_json: string;
     }>();
+    if (selected !== null) decodeContinuationExecutionEvents(selected.events_json);
+    return selected;
   }
 
   /**
