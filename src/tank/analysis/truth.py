@@ -27,6 +27,7 @@ from typing import overload
 
 from pydantic import JsonValue
 
+from tank.analysis.condition_fingerprints import condition_input_fingerprints
 from tank.analysis.condition_graph_codec import encode_basic_condition_spot, encode_scoped_condition_spot
 from tank.analysis.condition_graph_contracts import ConditionStateNodeKey, ConditionTopCacheKey
 from tank.analysis.condition_input_codec import (
@@ -35,7 +36,6 @@ from tank.analysis.condition_input_codec import (
     decode_spot_windows,
 )
 from tank.analysis.condition_inputs import SpotPolicyConfiguration
-from tank.analysis.condition_visibility import condition_visibility
 from tank.analysis.execution import ExecutionLevelWire, ExecutionSide, execute_book_walk, execution_request
 from tank.analysis.positioning import (
     MissingOIDecomposition,
@@ -5477,63 +5477,6 @@ def condition_depth(snapshot, end):
 
 COMPOSITE_CONDITION_METRICS = {"mt.move_class", "mt.divergence_state"}
 RELATIVE_CONDITION_METRICS = {"price.repricing_band", "price.vs_anchor_pct"}
-
-
-def condition_input_fingerprints(snapshot, fields, domain):
-    if "assembled_at" in fields:
-        raise ValueError("Processing assembly must remain a fresh evaluation context")
-    consumed = {field: snapshot.get(field) for field in fields}
-    series_facts = (
-        "times_us",
-        "values",
-        "complete",
-        "instrument_id",
-        "token_id",
-        "venue",
-        "market_type",
-        "source_market_type",
-        "interval_s",
-        "intervals_s",
-        "time_basis",
-        "cadence_s",
-        "metric_key",
-        "precision",
-        "precision_reason",
-        "coverage_count",
-    )
-    for field in ("stat_price_series", "stat_volume_series"):
-        if field not in consumed or consumed[field] is None:
-            continue
-        series = consumed[field]
-        if not isinstance(series, Mapping) or any(
-            not isinstance(value, Mapping) for value in series.values()
-        ):
-            raise ValueError("Compact condition input requires scoped series projections")
-        consumed[field] = {
-            iid: {name: value[name] for name in series_facts if name in value}
-            for iid, value in series.items()
-        }
-    identity = {
-        "inputs": consumed,
-        "cutoff_clock": propagate_timestamp(snapshot, "cutoff").fields("cutoff"),
-    }
-    if "anchor" in fields:
-        identity["anchor_clock"] = propagate_timestamp(
-            snapshot, "anchor", missing_reason="NO_EVENT_ANCHOR"
-        ).fields("anchor")
-    content = fingerprint(identity)
-    supplied = (snapshot.get("domain_dependency_fingerprints") or {}).get(domain)
-    dependency = (
-        content if supplied is None else supplied if isinstance(supplied, str) else fingerprint(supplied)
-    )
-    visibility = condition_visibility(
-        domain=domain,
-        token_id=snapshot["token_id"],
-        assembled_at=propagate_timestamp(snapshot, "assembled_at"),
-        content_sha256=content,
-        consumed=consumed,
-    )
-    return dependency, content, visibility.projection.fingerprint()
 
 
 def condition_market_state(snapshot, end, cache):
