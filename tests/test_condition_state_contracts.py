@@ -671,3 +671,50 @@ def test_selected_depth_instrument_cannot_borrow_a_second_venue() -> None:
         ConditionDepthNode.model_validate(
             selected.depth.model_copy(update={"observations": (original, other)})
         )
+
+
+def test_selective_spot_requires_scoped_source_coverage_instead_of_basic_cache_facts() -> None:
+    from test_condition_graph_contracts import basic_spot_graph, windowed_spot_graph
+
+    from tank.analysis.condition_graph_contracts import (
+        ConditionRequirement,
+        UnrequestedConditionFacet,
+    )
+
+    base = selective_close()
+    spot = windowed_spot_graph()
+    requirement = ConditionRequirement(metric="spot.cohort.direction", window="W1H")
+    original = base.proofs[0]
+    proof = type(original).model_validate(
+        original.model_copy(
+            update={
+                "requirement": requirement,
+                "cache_key": original.cache_key.model_copy(update={"domain": "spot"}),
+                "coverage": spot.coverage,
+                "available": True,
+                "reason": None,
+            }
+        )
+    )
+    graph = SelectiveConditionValues.model_validate(
+        base.model_copy(
+            update={
+                "requested": (requirement,),
+                "spot": {"W1H": spot},
+                "close": UnrequestedConditionFacet(status="NOT_REQUESTED"),
+                "proofs": (proof,),
+                "unavailable_metrics": (),
+            }
+        )
+    )
+    assert graph.spot["W1H"].coverage_through.precision == "BUCKET(60s)"
+    assert graph.spot["W1H"].coverage_through.bucket_anchor == "END"
+    with pytest.raises(ValidationError):
+        SelectiveConditionValues.model_validate(
+            graph.model_copy(update={"spot": {"W1H": basic_spot_graph()}})
+        )
+    wrong_key = proof.cache_key.model_copy(update={"requested_duration_s": 1800.0})
+    with pytest.raises(ValidationError, match="actual interval and proof duration"):
+        SelectiveConditionValues.model_validate(
+            graph.model_copy(update={"proofs": (proof.model_copy(update={"cache_key": wrong_key}),)})
+        )

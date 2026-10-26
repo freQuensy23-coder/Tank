@@ -7220,7 +7220,7 @@ class SelectiveConditionValues(DomainModel):
     cutoff: Timestamp
     assembled_at: Timestamp
     requested: tuple[ConditionRequirement, ...]
-    spot: dict[ConditionWindow, BasicConditionSpot]
+    spot: dict[ConditionWindow, WindowedConditionSpot]
     derivatives: dict[ConditionWindow, BasicConditionDerivatives]
     close: ConditionClose | UncomputedConditionFacet
     confidence: SelectiveConditionConfidence | UncomputedConditionFacet
@@ -7325,6 +7325,17 @@ class SelectiveConditionValues(DomainModel):
             if (proof.available and proof.reason is None) != (proof.requirement not in unavailable):
                 raise ValueError("Unavailable facts must preserve their actual proof result")
         for window, spot in self.spot.items():
+            if (
+                spot.interval.window != window
+                or spot.interval.cutoff != end
+                or any(
+                    proof.cache_key.requested_duration_s
+                    != (spot.interval.cutoff - spot.interval.start).total_seconds()
+                    for proof in self.proofs
+                    if proof.cache_key.domain == "spot" and proof.requirement.window == window
+                )
+            ):
+                raise ValueError("Selected spot facts require their actual interval and proof duration")
             if spot.token_id != self.token_id or not any(
                 value.window == window and condition_metric_domain(value.metric) == "spot"
                 for value in self.requested

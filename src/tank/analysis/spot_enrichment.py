@@ -169,3 +169,49 @@ def finish_spot_enrichment(
             else UnrequestedConditionSizeProfile(status="NOT_REQUESTED"),
         )
     return ConditionEnrichedSpotGraph(spots=spots, durations_s=dict(phase.durations_s), primary=phase.primary)
+
+
+class ConditionRequestedSpotView(DomainModel):
+    requested: WindowedConditionSpot
+    state: CohortEnrichedConditionSpot | EnrichedConditionSpot | None
+
+    @model_validator(mode="after")
+    def same_consumed_spot_facts(self) -> Self:
+        source, state = self.requested, self.state
+        if state is None:
+            return self
+        if (source.token_id, source.interval, source.coverage_through) != (
+            state.token_id,
+            state.interval,
+            state.coverage_through,
+        ):
+            raise ValueError(
+                "Requested and enriched spot views require the same actual subject/window/source clock"
+            )
+        if (
+            source.venues,
+            source.composite_max,
+            source.breadth,
+            source.cw_breadth,
+            source.exact_majority,
+            source.topn,
+            source.concentration,
+            source.direction,
+            source.direction_reason,
+            source.classification,
+            source.coverage,
+        ) != (
+            state.venues,
+            state.composite_max,
+            state.breadth,
+            state.cw_breadth,
+            state.exact_majority,
+            state.topn,
+            state.concentration,
+            state.direction,
+            state.direction_reason,
+            state.classification,
+            state.coverage,
+        ):
+            raise ValueError("Enrichment cannot replace the actual selected spot financial or coverage facts")
+        return self

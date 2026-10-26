@@ -108,7 +108,7 @@ from tank.analysis.condition_graph_contracts import (
     WindowedConditionSpot,
     sum_condition_native,
 )
-from tank.analysis.spot_enrichment import CohortEnrichedConditionSpot
+from tank.analysis.spot_enrichment import CohortEnrichedConditionSpot, ConditionRequestedSpotView
 from tank.analysis.statistics_contracts import (
     DecimalRange,
     FloatRange,
@@ -2201,3 +2201,15 @@ def encode_requested_condition_derivatives(value: ConditionRequestedDerivativeVi
             result["synchronized_reason"] = "FRESHNESS_GATE_FAILED"
     result["requested_evaluation"] = [encode_condition_evaluation_proof(proof) for proof in view.proofs]
     return result
+
+
+def encode_requested_condition_spot(
+    value: ConditionRequestedSpotView,
+    evidence: ConditionFlowEvidenceLookup,
+    *,
+    clocks: ConditionWireClocks,
+) -> dict[str, JsonValue]:
+    view = ConditionRequestedSpotView.model_validate(value)
+    if view.state is None:
+        return encode_scoped_condition_spot(view.requested, evidence, clocks=clocks)
+    return encode_scoped_condition_spot(view.state, evidence, clocks=clocks)
