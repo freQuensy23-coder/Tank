@@ -6,7 +6,7 @@ import logging
 import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import JsonValue
 
@@ -44,8 +44,9 @@ from tank.runtime_contracts import (
 )
 from tank.runtime_evaluation import evaluate_condition_job
 from tank.runtime_milestone import check_milestone_job
+from tank.runtime_reaction import ReactionClaimLost, ReactionJobInvocation, capture_reaction_job
 from tank.runtime_retry import worker_retry_schedule
-from tank.scheduler import Scheduler
+from tank.scheduler import REACTION_RETRY_S, Scheduler
 from tank.settings import Settings
 from tank.storage import Repository
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
@@ -56,6 +57,10 @@ if TYPE_CHECKING:
     from tank.agents.sessions import SessionService
     from tank.market.service import MarketService
     from tank.telegram_inbox import TelegramInbox
+
+
+type PayloadJobHandler = Callable[[dict[str, JsonValue]], Awaitable[JsonValue]]
+CLAIMED_REACTION: Literal["CLAIMED_REACTION"] = "CLAIMED_REACTION"
 
 
 class RuntimeFailureRepository(QuestionFailureRefusalSink, Protocol):
@@ -143,7 +148,10 @@ class Runtime:
         self.budget_scope, self.budget_backend = budget_scope, budget_backend
         self.budget_binding: SharedRequestBudgets | None = None
         self.active_jobs: set[str] = set()
-        self.handlers = {
+        self.reaction_handler: Callable[[ReactionJobInvocation], Awaitable[dict[str, JsonValue]]] = (
+            self.reaction_capture_wire
+        )
+        self.handlers: dict[str, PayloadJobHandler | Literal["CLAIMED_REACTION"]] = {
             "FILTER_ITEM": pipeline.filter_item_wire,
             "ROUTE_ITEM": pipeline.route_item_wire,
             "AGENT_MESSAGE": sessions.send_message,
@@ -152,7 +160,7 @@ class Runtime:
             "DELIVER": self.delivery.deliver,
             "EVAL_CONDITIONS": self.eval_conditions_wire,
             "MILESTONE_CHECK": self.milestone_check_wire,
-            "REACTION_CAPTURE": self.scheduler.reaction_capture,
+            "REACTION_CAPTURE": CLAIMED_REACTION,
             "SCOUT_REVIEW": self.scout_review,
             "TELEGRAM_ANSWER": self.inbox.answer,
         }
@@ -206,6 +214,15 @@ class Runtime:
 
     async def eval_conditions_wire(self, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
         return await evaluate_condition_job(self.scheduler, payload)
+
+    async def reaction_capture_wire(self, invocation: ReactionJobInvocation) -> dict[str, JsonValue]:
+        return await capture_reaction_job(
+            self.scheduler,
+            self.repo,
+            invocation,
+            clock=collection_clock,
+            retry_delay=timedelta(seconds=REACTION_RETRY_S),
+        )
 
     async def milestone_check_wire(self, payload: dict[str, JsonValue]) -> None:
         await check_milestone_job(self.scheduler, payload)
@@ -275,10 +292,20 @@ class Runtime:
                             offset_schedule(collection_clock(utcnow()), timedelta(seconds=5))
                         ) from slow
                 async with asyncio.timeout(TIMEOUTS[kind]):
-                    result = await self.handlers[kind](job["payload"])
+                    handler = self.handlers[kind]
+                    if handler == CLAIMED_REACTION:
+                        if kind != "REACTION_CAPTURE":
+                            raise ValueError("Claimed reaction handler has a foreign job kind")
+                        result = await self.reaction_handler(ReactionJobInvocation.from_record(job))
+                    elif kind == "REACTION_CAPTURE":
+                        raise ValueError("Reaction capture requires its claimed-job handler")
+                    else:
+                        result = await handler(job["payload"])
                 async with self.repo.transaction():
                     await self.repo.put("ops.jobs", job["job_id"], {**job, "result": result})
                     await self.repo.finish_job(job["job_id"])
+            except ReactionClaimLost:
+                log.info("Reaction claim changed; leaving the current queue owner untouched")
             except DeliveryDeferred as deferred:
                 async with self.repo.transaction():
                     current = await self.repo.get("ops.jobs", job["job_id"])
