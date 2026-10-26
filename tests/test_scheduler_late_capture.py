@@ -20,6 +20,7 @@ from source_support import fixture_http_admission, fixture_versions
 from tank.contracts import DomainModel
 from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import JobEnvelope
+from tank.contracts.reaction_demands import ReactionDemandLedger
 from tank.contracts.scheduler_commands import (
     ReactionCaptureCommand,
     RevisedReactionCommand,
@@ -431,13 +432,48 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         assert await repo.get("out.reaction_checkpoints", "e:test:T:PRE_1H:1") == original
         assert await repo.get("out.reaction_checkpoints", "e:test:T:PRE_1H:2") == revised
 
+        before_duplicate = [
+            JobEnvelope.model_validate(row)
+            async for row in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE"})
+        ]
+        assert len(before_duplicate) == len(jobs) + 1 + len(live_run.auxiliary_job_ids)
+        demand_record = present(await repo.get("ops.scheduler_checkpoints", "reaction-capture-changes"))
+        before_demand = ReactionDemandLedger.model_validate(demand_record["state"])
+        pending_ids = {key for key, demand in before_demand.demands.items() if demand.phase == "PENDING"}
+        assert pending_ids
         duplicate = await go_capture("duplicate", frames)
         assert duplicate == late
         await persist_capture(duplicate, observed=late_observed, minute=late_minute)
         await scheduler.detect_late_data(utcnow())
+        after_duplicate = [
+            JobEnvelope.model_validate(row)
+            async for row in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE"})
+        ]
+        before_ids = {job.job_id for job in before_duplicate}
+        resumed_jobs = [job for job in after_duplicate if job.job_id not in before_ids]
+        assert len(resumed_jobs) == 1
+        for job in resumed_jobs:
+            resumed_command = reaction_command_from_wire(job.payload)
+            assert isinstance(resumed_command, RevisedReactionCommand)
+            assert resumed_command.change_id in pending_ids
+        after_record = present(await repo.get("ops.scheduler_checkpoints", "reaction-capture-changes"))
+        after_demand = ReactionDemandLedger.model_validate(after_record["state"])
+        assert set(after_demand.demands) <= set(before_demand.demands)
+        resumed_run = await run_claimed_reactions(
+            repo,
+            scheduler,
+            tuple(job.job_id for job in resumed_jobs),
+            tmp_path / "pending-runtime",
+            monkeypatch,
+        )
+        assert len(resumed_run.receipts) == 1
+        assert isinstance(resumed_run.receipts[0], UnchangedReaction)
+        assert resumed_run.receipts[0].revision == 3
+        assert len([row async for row in repo.iter_all("out.reaction_checkpoints")]) == 3
+        await scheduler.detect_late_data(utcnow())
         assert len(
-            [job async for job in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE"})]
-        ) == len(jobs) + 1 + len(live_run.auxiliary_job_ids)
+            [row async for row in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE"})]
+        ) == len(after_duplicate)
         request.node.user_properties.extend(
             [
                 ("revision2_r_raw", revised["r_raw"]),

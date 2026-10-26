@@ -1,9 +1,11 @@
 """Actual source batches retain every deferred change across cursor advancement."""
 
+import asyncio
 import os
 from collections.abc import Mapping
 from datetime import timedelta
 from pathlib import Path
+from typing import Literal
 
 import httpx
 import pytest
@@ -24,8 +26,12 @@ def ledger(row: Record | None) -> ReactionDemandLedger:
     return ReactionDemandLedger.model_validate(row["state"])
 
 
+@pytest.mark.parametrize("interrupt_enqueue", ["NONE", "ERROR", "CANCEL"])
 async def test_actual_source_batch_retains_skipped_change_and_empty_batch_resumes(
-    repo: StorageBackend, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    repo: StorageBackend,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    interrupt_enqueue: Literal["NONE", "ERROR", "CANCEL"],
 ) -> None:
     async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, router):
         if repo.backend == "postgres":
@@ -61,6 +67,41 @@ async def test_actual_source_batch_retains_skipped_change_and_empty_batch_resume
                 },
             )
         originals = await repo.list("mkt.backfill_runs")
+        if interrupt_enqueue != "NONE":
+            enqueue = repo.enqueue
+
+            async def failed_enqueue(
+                kind: str,
+                payload: Mapping[str, JsonValue],
+                idem_key: str,
+                *,
+                priority: int,
+                max_attempts: int,
+                run_after: Timestamp,
+                expires_at: Timestamp,
+            ) -> Record:
+                await enqueue(
+                    kind,
+                    payload,
+                    idem_key,
+                    priority=priority,
+                    max_attempts=max_attempts,
+                    run_after=run_after,
+                    expires_at=expires_at,
+                )
+                if interrupt_enqueue == "CANCEL":
+                    raise asyncio.CancelledError
+                raise OSError("Authored interruption after actual enqueue")
+
+            with monkeypatch.context() as interruption:
+                interruption.setattr(repo, "enqueue", failed_enqueue)
+                expected = asyncio.CancelledError if interrupt_enqueue == "CANCEL" else ExceptionGroup
+                with pytest.raises(expected):
+                    await runtime.scheduler.detect_late_data(now)
+            interrupted = ledger(await repo.get("ops.scheduler_checkpoints", CHECKPOINT_KEY))
+            assert len(interrupted.demands) == 2
+            assert all(d.phase == "PENDING" for d in interrupted.demands.values())
+            assert await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"}) == []
         await runtime.scheduler.detect_late_data(now)
         first = ledger(await repo.get("ops.scheduler_checkpoints", CHECKPOINT_KEY))
         assert len(first.demands) == 2
