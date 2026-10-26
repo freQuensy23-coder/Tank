@@ -2,10 +2,12 @@
 
 from typing import Annotated, Literal, Self
 
-from pydantic import ConfigDict, RootModel, StringConstraints, model_validator
+from pydantic import ConfigDict, Field, JsonValue, RootModel, StringConstraints, model_validator
 
 from tank.contracts import DomainModel
-from tank.contracts.scalars import TrueFlag
+from tank.contracts.jobs import DependencyState
+from tank.contracts.provenance import ResolvedVersionIdentity
+from tank.contracts.scalars import OneInt, TrueFlag
 from tank.contracts.scheduler_commands import ReactionAnchorFacts, ReactionSubject, RevisedReactionCommand
 from tank.contracts.scheduler_results import (
     AppliedReactionChange,
@@ -31,6 +33,59 @@ class RetainedCoalescedReaction(RootModel[LegacyCoalescedReaction | CoalescedRea
     """Recognize only the two actual historical coalescing result contracts."""
 
     model_config = ConfigDict(strict=True, hide_input_in_errors=True, revalidate_instances="always")
+
+
+class RecoveryOriginalQueueWitness(DomainModel):
+    job_id: RecoveryStorageKey
+    type: Literal["REACTION_CAPTURE"]
+    status: Literal["DONE"]
+    payload: dict[str, JsonValue]
+    result: RetainedCoalescedReaction
+
+
+class RecoveryPeerQueueWitness(DomainModel):
+    job_id: RecoveryStorageKey
+    type: Literal["REACTION_CAPTURE"]
+    status: Literal["FAILED", "EXPIRED"]
+    payload: dict[str, JsonValue]
+
+
+class RecoveryRetryBudget(DomainModel):
+    priority: Annotated[int, Field(ge=0, le=4)]
+    max_attempts: Annotated[int, Field(ge=1)]
+
+
+class RecoveryLinkedQueueWitness(DependencyState, RecoveryRetryBudget):
+    type: Literal["REACTION_CAPTURE"]
+    idem_key: RecoveryStorageKey
+    payload: dict[str, JsonValue]
+    expires_at: str
+    expires_at_prec: Literal["COLLECTION_ONLY"]
+    expires_at_prec_reason: str | None
+
+
+class RecoveryQueuedWitness(RecoveryRetryBudget):
+    job_id: RecoveryStorageKey
+    type: Literal["REACTION_CAPTURE"]
+    status: Literal["QUEUED"]
+    idem_key: RecoveryStorageKey
+    payload: dict[str, JsonValue]
+    run_after: str
+    run_after_prec: Literal["COLLECTION_ONLY"]
+    run_after_prec_reason: str | None
+    expires_at: str
+    expires_at_prec: Literal["COLLECTION_ONLY"]
+    expires_at_prec_reason: str | None
+
+
+class ReactionRecoveryCommand(DomainModel):
+    original_job_id: RecoveryStorageKey
+    source_backfill_id: RecoveryStorageKey
+
+
+class ReactionRecoveryExecution(DomainModel):
+    versions: ResolvedVersionIdentity
+    replay: bool
 
 
 class RecoveryOriginalJob(DomainModel):
@@ -121,11 +176,68 @@ class ReactionRecoveryUnresolved(DomainModel):
         "SOURCE_MAY_ALREADY_BE_CAPTURED",
         "WITNESS_UNADMITTED",
         "RECOVERY_LINK_UNADMITTED",
+        "WORK_WITHOUT_LINK",
+        "SOURCE_MODE_UNSUPPORTED",
+        "RETRY_BUDGET_UNREPORTED",
+        "OPERATION_CLOCK_UNREPORTED",
     ]
 
 
 type ReactionRecoveryEligibility = (
     ReactionRecoveryEligible | ReactionRecoveryAlreadyApplied | ReactionRecoveryUnresolved
+)
+
+
+class ReactionRecoveryLinkState(DomainModel):
+    contract_version: OneInt
+    policy: Literal["FAILED_LEGACY_COALESCING"]
+    policy_revision: ReactionFingerprint
+    original_job_id: RecoveryStorageKey
+    peer_job_id: RecoveryStorageKey
+    original_payload_revision: ReactionFingerprint
+    recovered_job_id: RecoveryStorageKey
+    retry_budget: RecoveryRetryBudget
+    source: RecoveryTerminalBackfill
+    checkpoint: CapturedReaction
+    original_record_revision: ReactionFingerprint
+    peer_record_revision: ReactionFingerprint
+    source_record_revision: ReactionFingerprint
+    checkpoint_record_revision: ReactionFingerprint
+    versions: ResolvedVersionIdentity
+
+
+class ReactionRecoveryLink(DomainModel):
+    checkpoint_id: RecoveryStorageKey
+    at: RecoveryStorageKey
+    at_prec: Literal["COLLECTION_ONLY"]
+    at_prec_reason: str | None
+    state: ReactionRecoveryLinkState
+
+    @model_validator(mode="after")
+    def actual_operation_clock(self) -> Self:
+        Timestamp(self.at, self.at_prec, self.at_prec_reason)
+        return self
+
+
+class ReactionRecoveryQueued(DomainModel):
+    kind: Literal["QUEUED"]
+    job_id: RecoveryStorageKey
+    recovery_link_key: RecoveryStorageKey
+
+
+class ReactionRecoveryExistingWork(DomainModel):
+    """Observed work identity/status, never an assertion that source coverage was applied."""
+
+    kind: Literal["EXISTING_WORK"]
+    recovery_link_key: RecoveryStorageKey
+    work: DependencyState
+
+
+type ReactionRecoveryOutcome = (
+    ReactionRecoveryQueued
+    | ReactionRecoveryExistingWork
+    | ReactionRecoveryAlreadyApplied
+    | ReactionRecoveryUnresolved
 )
 
 

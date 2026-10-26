@@ -1,25 +1,36 @@
-"""Mechanical witness admission before recovery eligibility or storage effects."""
+"""Evidence-gated recovery admission and actual transactional queue/link effects."""
+
+import asyncio
+from collections.abc import Mapping
 
 import pytest
 from pydantic import JsonValue, ValidationError
+from source_support import fixture_versions
+from test_storage import repo as repo
 
 from tank.contracts.reaction_recovery import (
+    ReactionRecoveryCommand,
     ReactionRecoveryEvidence,
+    ReactionRecoveryExecution,
+    ReactionRecoveryLink,
     ReactionRecoveryUnresolved,
     ReactionRecoveryWitnessRequest,
     RetainedCoalescedReaction,
 )
 from tank.contracts.stored_documents import ImmutableDocument, NativeBackfillWitness
+from tank.models import Record
 from tank.reaction_recovery import (
+    ReactionRecovery,
     RecoveryWitnessIndex,
     admit_recovery_witnesses,
     recovery_backfill_from_record,
     recovery_eligibility,
     recovery_idempotency_key,
+    recovery_link_key,
 )
-from tank.storage import MemoryRepository
-from tank.time_precision import Timestamp, collection_clock
-from tank.util import sha256
+from tank.storage import ImmutableRecordError, MemoryRepository, StorageBackend
+from tank.time_precision import Timestamp, collection_clock, propagate_timestamp
+from tank.util import JsonInput, parse_time, sha256
 
 
 def request_fields() -> dict[str, str]:
@@ -339,7 +350,7 @@ async def recovery_witness_rows() -> tuple[ReactionRecoveryWitnessRequest, Recov
         checkpoint_key="event:token:POST_24H:1",
         change_marker_key="reaction-change:" + change_id,
         change_owner_key="reaction-change-owner:" + change_id,
-        recovery_link_key=identity,
+        recovery_link_key=recovery_link_key(original_id),
     )
     checkpoint = fields["checkpoint"]
     assert isinstance(checkpoint, dict)
@@ -465,3 +476,215 @@ def test_equivalent_known_bucket_units_preserve_the_same_declared_scope() -> Non
     }
     result = recovery_eligibility(ReactionRecoveryEvidence.model_validate(fields))
     assert result.kind == "ELIGIBLE"
+
+
+async def seed_recovery_history(backend: StorageBackend) -> ReactionRecoveryCommand:
+    request, rows = await recovery_witness_rows()
+    source = rows[("mkt.backfill_runs", request.source_backfill_id)]
+    assert isinstance(source, NativeBackfillWitness)
+    await backend.put("mkt.backfill_runs", request.source_backfill_id, source.record)
+    stored_source = await backend.get("mkt.backfill_runs", request.source_backfill_id)
+    assert stored_source is not None
+    change = recovery_backfill_from_record(stored_source)
+    for (collection, key), row in rows.items():
+        if isinstance(row, ImmutableDocument):
+            record = dict(row.document)
+            if key == request.original_job_id:
+                payload = record["payload"]
+                assert isinstance(payload, dict)
+                record["payload"] = payload | {"change_id": change.change_id + ":POST_24H"}
+            await backend.put(collection, key, record, immutable=row.immutable)
+    return ReactionRecoveryCommand(
+        original_job_id=request.original_job_id, source_backfill_id=request.source_backfill_id
+    )
+
+
+async def test_recovery_atomically_links_one_current_budget_and_preserves_originals(
+    repo: StorageBackend,
+) -> None:
+    command = await seed_recovery_history(repo)
+    original = await repo.get("ops.jobs", command.original_job_id)
+    source = await repo.get("mkt.backfill_runs", command.source_backfill_id)
+    assert original is not None
+    old_result = original["result"]
+    assert isinstance(old_result, dict)
+    peer_id = old_result["coalesced_into"]
+    assert isinstance(peer_id, str)
+    peer_before = await repo.get("ops.jobs", peer_id)
+    checkpoint_before = await repo.get("out.reaction_checkpoints", "event:token:POST_24H:1")
+    operation = collection_clock()
+    recovery = ReactionRecovery(
+        repo,
+        execution=ReactionRecoveryExecution(versions=fixture_versions(), replay=False),
+        clock=lambda: operation,
+    )
+    outcome = await recovery.recover(command)
+    assert outcome.kind == "QUEUED"
+    queued = await repo.get("ops.jobs", outcome.job_id)
+    assert queued is not None
+    assert queued["payload"] == original["payload"]
+    assert queued["priority"] == original["priority"]
+    assert queued["max_attempts"] == original["max_attempts"]
+    assert queued["status"] == "QUEUED"
+    assert queued["result"] is None
+    due = propagate_timestamp(queued, "run_after")
+    expiry = propagate_timestamp(queued, "expires_at")
+    assert operation.value is not None and due.value is not None and expiry.value is not None
+    assert (parse_time(due.value) - parse_time(operation.value)).total_seconds() == 1800
+    assert (parse_time(expiry.value) - parse_time(operation.value)).total_seconds() == 21600
+    wire = await repo.get("ops.scheduler_checkpoints", outcome.recovery_link_key)
+    assert wire is not None
+    link = ReactionRecoveryLink.model_validate(wire)
+    assert link.state.recovered_job_id == outcome.job_id
+    assert link.state.original_payload_revision == sha256(original["payload"])
+    assert link.at == operation.value
+    assert await repo.get("ops.jobs", command.original_job_id) == original
+    assert await repo.get("mkt.backfill_runs", command.source_backfill_id) == source
+    assert await repo.get("ops.jobs", peer_id) == peer_before
+    assert await repo.get("out.reaction_checkpoints", "event:token:POST_24H:1") == checkpoint_before
+    with pytest.raises(ImmutableRecordError):
+        await repo.put(
+            "ops.scheduler_checkpoints",
+            outcome.recovery_link_key,
+            wire | {"at": "2026-10-27T00:00:00Z"},
+        )
+    restarted = ReactionRecovery(
+        repo,
+        execution=ReactionRecoveryExecution(versions=fixture_versions(), replay=False),
+        clock=lambda: collection_clock("2030-01-01T00:00:00Z"),
+    )
+    again = await restarted.recover(command)
+    assert again.kind == "EXISTING_WORK"
+    assert again.work.job_id == outcome.job_id
+    assert await repo.get("ops.jobs", outcome.job_id) == queued
+    assert await repo.get("ops.scheduler_checkpoints", outcome.recovery_link_key) == wire
+
+
+async def test_concurrent_recovery_allocates_only_one_generation(repo: StorageBackend) -> None:
+    command = await seed_recovery_history(repo)
+    operation = collection_clock()
+    recovery = ReactionRecovery(
+        repo,
+        execution=ReactionRecoveryExecution(versions=fixture_versions(), replay=False),
+        clock=lambda: operation,
+    )
+    results = await asyncio.gather(recovery.recover(command), recovery.recover(command))
+    assert sorted(result.kind for result in results) == ["EXISTING_WORK", "QUEUED"]
+    linked = [result for result in results if result.kind == "QUEUED"]
+    assert len(linked) == 1
+    assert len(await repo.list("ops.jobs")) == 3
+
+
+async def test_replay_execution_does_not_recover_into_ordinary_runtime(repo: StorageBackend) -> None:
+    command = await seed_recovery_history(repo)
+    before = await repo.list("ops.jobs")
+    recovery = ReactionRecovery(
+        repo,
+        execution=ReactionRecoveryExecution(versions=fixture_versions(), replay=True),
+        clock=collection_clock,
+    )
+    result = await recovery.recover(command)
+    assert result.kind == "UNRESOLVED"
+    assert result.reason == "SOURCE_MODE_UNSUPPORTED"
+    assert await repo.list("ops.jobs") == before
+    assert await repo.get("ops.scheduler_checkpoints", recovery_link_key(command.original_job_id)) is None
+
+
+@pytest.mark.parametrize("changed", ["payload", "peer", "source", "policy"])
+async def test_changed_witness_cannot_allocate_a_second_recovery_generation(
+    repo: StorageBackend, monkeypatch: pytest.MonkeyPatch, changed: str
+) -> None:
+    command = await seed_recovery_history(repo)
+    operation = collection_clock()
+    recovery = ReactionRecovery(
+        repo,
+        execution=ReactionRecoveryExecution(versions=fixture_versions(), replay=False),
+        clock=lambda: operation,
+    )
+    first = await recovery.recover(command)
+    assert first.kind == "QUEUED"
+    link_before = await repo.get("ops.scheduler_checkpoints", first.recovery_link_key)
+    original = await repo.get("ops.jobs", command.original_job_id)
+    assert original is not None
+    if changed == "payload":
+        payload = original["payload"]
+        assert isinstance(payload, dict)
+        await repo.put(
+            "ops.jobs",
+            command.original_job_id,
+            original | {"payload": payload | {"reason": "Different retained request"}},
+        )
+    elif changed == "peer":
+        payload = original["payload"]
+        assert isinstance(payload, dict)
+        peer = await repo.enqueue(
+            "REACTION_CAPTURE",
+            payload | {"change_id": "changed-peer:POST_24H"},
+            "changed-peer",
+            max_attempts=1,
+        )
+        peer_id = peer["job_id"]
+        assert isinstance(peer_id, str)
+        await repo.put(
+            "ops.jobs",
+            peer_id,
+            peer | {"status": "FAILED", "attempts": 1, **collection_clock().fields("finished_at")},
+        )
+        await repo.put(
+            "ops.jobs", command.original_job_id, original | {"result": {"coalesced_into": peer_id}}
+        )
+    elif changed == "source":
+        source = await repo.get("mkt.backfill_runs", command.source_backfill_id)
+        assert source is not None
+        await repo.put(
+            "mkt.backfill_runs",
+            command.source_backfill_id,
+            source | {"reason": "Known later source diagnostic"},
+        )
+    else:
+        monkeypatch.setattr(
+            "tank.reaction_recovery.recovery_policy_revision", lambda: sha256("different-policy")
+        )
+    jobs_before = await repo.list("ops.jobs")
+    original_before = await repo.get("ops.jobs", command.original_job_id)
+    again = await recovery.recover(command)
+    assert again.kind == "UNRESOLVED"
+    assert again.reason == "RECOVERY_LINK_UNADMITTED"
+    assert await repo.list("ops.jobs") == jobs_before
+    assert await repo.get("ops.jobs", command.original_job_id) == original_before
+    assert await repo.get("ops.scheduler_checkpoints", first.recovery_link_key) == link_before
+
+
+async def test_recovery_enqueue_and_link_failure_roll_back_as_one_effect(
+    repo: StorageBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = await seed_recovery_history(repo)
+    before = await repo.list("ops.jobs")
+    original_put = repo.put
+    key = recovery_link_key(command.original_job_id)
+
+    async def fail_link(
+        collection: str,
+        storage_key: str,
+        record: Mapping[str, JsonInput],
+        *,
+        immutable: bool = False,
+    ) -> Record:
+        if collection == "ops.scheduler_checkpoints" and storage_key == key:
+            raise RuntimeError("Injected recovery link failure")
+        return await original_put(collection, storage_key, record, immutable=immutable)
+
+    recovery = ReactionRecovery(
+        repo,
+        execution=ReactionRecoveryExecution(versions=fixture_versions(), replay=False),
+        clock=collection_clock,
+    )
+    monkeypatch.setattr(repo, "put", fail_link)
+    with pytest.raises(RuntimeError, match="Injected recovery link failure"):
+        await recovery.recover(command)
+    assert await repo.list("ops.jobs") == before
+    assert await repo.get("ops.scheduler_checkpoints", key) is None
+    monkeypatch.setattr(repo, "put", original_put)
+    recovered = await recovery.recover(command)
+    assert recovered.kind == "QUEUED"
+    assert len(await repo.list("ops.jobs")) == 3
