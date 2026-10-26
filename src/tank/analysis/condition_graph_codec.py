@@ -111,6 +111,13 @@ from tank.analysis.condition_graph_contracts import (
     WindowedConditionSpot,
     sum_condition_native,
 )
+from tank.analysis.recorded_oi_decomposition import (
+    DecimalPowerTerm,
+    DefinedRecordedOiDecomposition,
+    RecordedOiDecomposition,
+    SparseDecimalPolynomial,
+    UndefinedRecordedOiDecomposition,
+)
 from tank.analysis.spot_enrichment import CohortEnrichedConditionSpot, ConditionRequestedSpotView
 from tank.analysis.statistics_contracts import (
     DecimalRange,
@@ -370,6 +377,45 @@ def _model_wire(value: DomainModel) -> dict[str, JsonValue]:
     return result
 
 
+def _decimal_power_wire(value: DecimalPowerTerm) -> dict[str, JsonValue]:
+    return {"coefficient": str(value.coefficient), "exponent": str(value.exponent)}
+
+
+def _sparse_decimal_wire(value: SparseDecimalPolynomial) -> dict[str, JsonValue]:
+    return {"terms": [_decimal_power_wire(term) for term in value.terms]}
+
+
+def encode_recorded_oi_decomposition(value: RecordedOiDecomposition) -> dict[str, JsonValue]:
+    validated = type(value).model_validate(value)
+    points = validated.endpoints
+    result: dict[str, JsonValue] = {
+        "status": validated.status,
+        "basis": validated.basis,
+        "endpoints": {
+            "native_start": str(points.native_start),
+            "native_end": str(points.native_end),
+            "usd_start": str(points.usd_start),
+            "usd_end": str(points.usd_end),
+        },
+        "native_majority": validated.native_majority,
+        "native_majority_reason": validated.native_majority_reason,
+        "pos_share": validated.pos_share,
+        "pos_share_reason": validated.pos_share_reason,
+    }
+    if isinstance(validated, DefinedRecordedOiDecomposition):
+        terms = validated.terms
+        result["terms"] = {
+            "representation": "SPARSE_DECIMAL",
+            "position": _sparse_decimal_wire(terms.position),
+            "markup": _sparse_decimal_wire(terms.markup),
+            "interaction": _sparse_decimal_wire(terms.interaction),
+            "denominator": _decimal_power_wire(terms.denominator),
+        }
+    else:
+        result.update(reason=validated.reason, zero_endpoint=validated.zero_endpoint)
+    return result
+
+
 def _clock_wire(value: Timestamp, prefix: str) -> dict[str, JsonValue]:
     validated = Timestamp.model_validate(value)
     return {name: scalar for name, scalar in validated.fields(prefix).items()}
@@ -424,7 +470,13 @@ def encode_condition_open_interest(value: ConditionOpenInterest) -> dict[str, Js
         "oi_usd_chg_pct_reason": validated.oi_usd_chg_pct_reason,
         "oi_usd_reason": validated.oi_usd_reason,
         "oi_usd_detail": validated.oi_usd_detail,
-        "decomposition": _model_wire(validated.decomposition),
+        "decomposition": (
+            encode_recorded_oi_decomposition(validated.decomposition)
+            if isinstance(
+                validated.decomposition, (DefinedRecordedOiDecomposition, UndefinedRecordedOiDecomposition)
+            )
+            else _model_wire(validated.decomposition)
+        ),
         "native_normal_range": _range_wire(validated.native_normal_range),
         "native_normal_range_reason": validated.native_normal_range.reason,
         "usd_normal_range": _range_wire(validated.usd_normal_range),

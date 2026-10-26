@@ -7,7 +7,10 @@ import pytest
 from pydantic import ValidationError
 from test_condition_graph_contracts import observed_oi_without_usd
 
-from tank.analysis.condition_graph_codec import encode_condition_open_interest
+from tank.analysis.condition_graph_codec import (
+    encode_condition_open_interest,
+    encode_recorded_oi_decomposition,
+)
 from tank.analysis.condition_graph_contracts import ObservedConditionOpenInterest
 from tank.analysis.oi_ratio import (
     NativeOiChange,
@@ -23,11 +26,156 @@ from tank.analysis.positioning import (
     oi_class,
     oi_class_from_comparisons,
 )
+from tank.analysis.recorded_oi_decomposition import (
+    DefinedRecordedOiDecomposition,
+    RecordedOiEndpoints,
+    recorded_oi_decomposition,
+)
 from tank.analysis.statistics_contracts import FloatBounds, FloatRange
 
 
 def zero_range() -> FloatRange:
     return FloatRange(bounds=FloatBounds(lower=0.0, upper=0.0), reason=None)
+
+
+def recorded_point(points: RecordedOiEndpoints) -> ObservedConditionOpenInterest:
+    native = native_oi_change(points.native_start, points.native_end, normal_range=zero_range())
+    usd = usd_oi_change(points.usd_start, points.usd_end, normal_range=zero_range())
+    exact = recorded_oi_decomposition(points)
+    classification = oi_class_from_comparisons(native.beyond, usd.beyond, exact)
+    return ObservedConditionOpenInterest.model_validate(
+        observed_oi_without_usd().model_copy(
+            update={
+                "oi_native_start": points.native_start,
+                "oi_native_end": points.native_end,
+                "oi_native_chg_pct": native.value,
+                "oi_native_chg_pct_reason": native.reason,
+                "oi_usd_start": points.usd_start,
+                "oi_usd_end": points.usd_end,
+                "oi_usd_chg_pct": usd.value,
+                "oi_usd_chg_pct_reason": usd.reason,
+                "oi_usd_reason": None,
+                "oi_usd_detail": None,
+                "decomposition": exact,
+                "native_normal_range": zero_range(),
+                "usd_normal_range": zero_range(),
+                "native_oi_vs_normal": native.position,
+                "native_beyond": native.beyond,
+                "usd_beyond": usd.beyond,
+                "oi_class": classification,
+                "classification_ready": classification is not None,
+            }
+        )
+    )
+
+
+def test_recorded_implied_price_boundary_is_mixed_without_rounding_the_mark() -> None:
+    point = recorded_point(
+        RecordedOiEndpoints(
+            native_start=Decimal(3), native_end=Decimal(4), usd_start=Decimal(1), usd_end=Decimal(1)
+        )
+    )
+    assert point.native_beyond is True and point.usd_beyond is False
+    assert point.oi_class == "MIXED" and point.classification_ready
+    exact = point.decomposition
+    assert isinstance(exact, DefinedRecordedOiDecomposition)
+    assert exact.pos_share == 0.5 and exact.native_majority is False
+    wire = encode_condition_open_interest(point)
+    assert wire["oi_class"] == "MIXED"
+    encoded = wire["decomposition"]
+    assert isinstance(encoded, dict) and encoded["basis"] == "RECORDED_USD_IMPLIED_PRICE"
+    assert encoded["native_majority"] is False
+
+
+def test_unmaterialized_share_does_not_block_an_exact_recorded_native_conclusion() -> None:
+    point = recorded_point(
+        RecordedOiEndpoints(
+            native_start=Decimal(1),
+            native_end=Decimal("1E1000000000"),
+            usd_start=Decimal(1),
+            usd_end=Decimal(3),
+        )
+    )
+    assert point.oi_native_chg_pct is None and point.oi_native_chg_pct_reason == "NOT_ESTIMABLE"
+    assert point.native_beyond is True
+    assert point.oi_class == "REAL_NATIVE" and point.classification_ready
+    exact = point.decomposition
+    assert isinstance(exact, DefinedRecordedOiDecomposition)
+    assert exact.pos_share is None and exact.pos_share_reason == "DISPLAY_NOT_MATERIALIZED"
+    assert exact.native_majority is True
+    encoded = encode_recorded_oi_decomposition(exact)
+    assert encoded["pos_share"] is None and encoded["native_majority"] is True
+    assert encoded["pos_share_reason"] == "DISPLAY_NOT_MATERIALIZED"
+
+
+def test_sparse_wire_preserves_exponents_beyond_javascript_integer_precision_as_text() -> None:
+    power = 10_000_000_000_000_000
+    point = recorded_point(
+        RecordedOiEndpoints(
+            native_start=Decimal(f"1E{power}"),
+            native_end=Decimal(f"2E{power}"),
+            usd_start=Decimal(f"1E{power}"),
+            usd_end=Decimal(f"2E{power}"),
+        )
+    )
+    encoded = encode_condition_open_interest(point)["decomposition"]
+    assert isinstance(encoded, dict)
+    terms = encoded["terms"]
+    assert isinstance(terms, dict) and terms["representation"] == "SPARSE_DECIMAL"
+    denominator = terms["denominator"]
+    assert isinstance(denominator, dict)
+    assert denominator["exponent"] == str(2 * power)
+    position = terms["position"]
+    assert isinstance(position, dict)
+    monomials = position["terms"]
+    assert isinstance(monomials, list) and len(monomials) == 1
+    monomial = monomials[0]
+    assert isinstance(monomial, dict) and monomial["exponent"] == str(3 * power)
+    assert point.oi_class == "REAL_NATIVE"
+
+
+@pytest.mark.parametrize("native_start,native_end,usd_start,usd_end", [(0, 4, 1, 2), (3, 4, 0, 0)])
+def test_recorded_zero_endpoint_and_zero_terms_keep_known_values_without_inventing_majority(
+    native_start: int, native_end: int, usd_start: int, usd_end: int
+) -> None:
+    point = recorded_point(
+        RecordedOiEndpoints(
+            native_start=Decimal(native_start),
+            native_end=Decimal(native_end),
+            usd_start=Decimal(usd_start),
+            usd_end=Decimal(usd_end),
+        )
+    )
+    assert point.oi_native_start == Decimal(native_start) and point.oi_usd_start == Decimal(usd_start)
+    assert point.oi_class is None and not point.classification_ready
+    encoded = encode_condition_open_interest(point)["decomposition"]
+    assert isinstance(encoded, dict)
+    assert encoded["native_majority"] is None and encoded["pos_share"] is None
+    assert encoded["native_majority_reason"] == (
+        "NATIVE_ENDPOINT_ZERO" if native_start == 0 else "ZERO_ABSOLUTE_TERMS"
+    )
+
+
+def test_recorded_decomposition_cannot_borrow_another_endpoint_scope_or_mutated_predicate() -> None:
+    point = recorded_point(
+        RecordedOiEndpoints(
+            native_start=Decimal(3), native_end=Decimal(4), usd_start=Decimal(1), usd_end=Decimal(1)
+        )
+    )
+    foreign = recorded_oi_decomposition(
+        RecordedOiEndpoints(
+            native_start=Decimal(3), native_end=Decimal(5), usd_start=Decimal(1), usd_end=Decimal(1)
+        )
+    )
+    with pytest.raises(ValidationError, match="bind the actual native and USD endpoints"):
+        ObservedConditionOpenInterest.model_validate(point.model_copy(update={"decomposition": foreign}))
+    exact = point.decomposition
+    assert isinstance(exact, DefinedRecordedOiDecomposition)
+    mutated = exact.model_copy(update={"native_majority": True})
+    with pytest.raises(ValidationError, match="exact endpoint-bound mathematics"):
+        oi_class_from_comparisons(True, False, mutated)
+    with pytest.raises(ValidationError, match="exact endpoint-bound mathematics"):
+        encode_recorded_oi_decomposition(mutated)
 
 
 def tiny_increase() -> tuple[Decimal, Decimal]:
