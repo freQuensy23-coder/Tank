@@ -62,6 +62,7 @@ from tank.analysis.price_reference import (
     decode_price_cadence,
 )
 from tank.analysis.spot import (
+    SpotNativeMeasurement,
     calculate_spot,
     calculate_spot_sign_history,
     calculate_spot_window_graph,
@@ -4612,7 +4613,7 @@ def canonical_fact_text(fact):
     return f"{fact['text']} [{fact['window']}; {fact['unit']}; {label}]"
 
 
-def measurement_metadata(result, *, spot_measurements=()):
+def measurement_metadata(result, *, spot_measurements: Sequence[SpotNativeMeasurement]):
     """Companion metadata preserves the literal §2 bare-field shapes.
 
     Every quantitative or null derived leaf inherits its nearest explicit window and analysis cutoff;
