@@ -40,7 +40,6 @@ class Thresholds(DomainModel):
     call_expiry_days: int
     session_keep_days: int
     update_rate_limit_s: int
-    card_max_chars: int
     heartbeat_utc: str
     escalated_interval_s: int
     escalation_expiry_s: int

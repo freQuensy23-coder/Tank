@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Annotated, Literal, Self
 
-from pydantic import BeforeValidator, ConfigDict, Field, field_validator, model_validator
+from pydantic import BeforeValidator, Field, field_validator, model_validator
 
 from tank.analysis.decision_contracts import (
     Action,
@@ -91,14 +91,12 @@ class PreliminaryGateResult(DomainModel):
 
 
 class PublicationPolicy(DomainModel):
-    card_max_chars: int = Field(gt=0)
     update_rate_limit_s: int = Field(ge=0)
 
     @classmethod
     def from_thresholds(cls, thresholds: Thresholds) -> Self:
         thresholds = Thresholds.model_validate(thresholds)
         return cls(
-            card_max_chars=thresholds.card_max_chars,
             update_rate_limit_s=thresholds.update_rate_limit_s,
         )
 
@@ -719,22 +717,3 @@ class CardInputs(DomainModel):
                 shown.add(identity)
                 subjects.append(edge)
         return tuple(subjects)
-
-
-class CardLengthSection(DomainModel):
-    line: int = Field(ge=1)
-    section: str
-    chars: int = Field(ge=0)
-
-
-class CardLengthDiagnostics(DomainModel):
-    model_config = ConfigDict(validate_by_name=True)
-
-    actual: int = Field(ge=0)
-    max_chars: int = Field(gt=0, validation_alias="max", serialization_alias="max")
-    excess: int = Field(gt=0)
-    sections: tuple[CardLengthSection, ...]
-    newline_chars: int = Field(ge=0)
-    editable_fields: tuple[str, ...]
-    guidance: str
-    preview: str
