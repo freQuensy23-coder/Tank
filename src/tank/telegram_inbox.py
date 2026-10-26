@@ -35,6 +35,14 @@ from tank.contracts.session_followups import (
     Terminated,
     followup_eligibility,
 )
+from tank.contracts.telegram_state import (
+    TelegramAnsweredQuestion,
+    TelegramInboxSettings,
+    TelegramInboxStore,
+    TelegramSentChunk,
+    answer_chunk,
+    settled_question,
+)
 from tank.contracts.telegram_wire import (
     TelegramAttachmentReference,
     TelegramCachedFile,
@@ -253,7 +261,13 @@ class RepositoryFollowupRefusals:
 
 
 class TelegramInbox:
-    def __init__(self, repo, settings, *, http=None):
+    def __init__(
+        self,
+        repo: TelegramInboxStore,
+        settings: TelegramInboxSettings,
+        *,
+        http: httpx.AsyncClient | None = None,
+    ) -> None:
         self.repo, self.settings = repo, settings
         self.http = (
             http if http is not None else httpx.AsyncClient(timeout=httpx.Timeout(POLL_TIMEOUT_S + 15))
@@ -1286,45 +1300,40 @@ class TelegramInbox:
         question = await self.repo.get("out.user_questions", job.question_id)
         if question is None:
             raise ValueError("Answer subject does not exist")
-        binding = FollowupRefusalTarget(question_id=job.question_id, session_id=question["session_id"])
-        validate_question_identity(question, binding)
-        status = question.get("answer_status")
-        if status == "ANSWERED":
-            text = question.get("answer_text") or EMPTY_TEXT
+        binding = FollowupRefusalTarget.model_validate(
+            {"question_id": job.question_id, "session_id": question["session_id"]}
+        )
+        subject = settled_question(question, binding)
+        if isinstance(subject, TelegramAnsweredQuestion):
+            text = EMPTY_TEXT if subject.answer_text is None else subject.answer_text
         else:
-            text = question.get("reason_text") or {
-                "NO_SESSION": GONE_TEXT,
-                "TERMINATED": TERMINATED_TEXT,
-                "ARCHIVED": ARCHIVED_TEXT,
-            }.get(status, FAILED_TEXT)
+            text = FAILED_TEXT if subject.reason_text is None else subject.reason_text
         parts = chunks(text)
         ledger = [
-            row
+            answer_chunk(row, subject)
             async for row in self.repo.iter_all(
-                "out.deliveries", filters={"question_id": question["question_id"], "channel": ANSWER_CHANNEL}
+                "out.deliveries", filters={"question_id": subject.question_id, "channel": ANSWER_CHANNEL}
             )
-            if row.get("purpose") == "ANSWER" and row.get("chunk") is not None
+            if row.get("purpose") not in ("ATTACHMENT", "NOTICE", "PROMPT")
         ]
-        previous = question.get("reply_to_message_id")
+        previous = subject.reply_to_message_id
         unresolved = False
         for index, part in enumerate(parts):
-            rows = [row for row in ledger if row["chunk"] == index]
-            sent = next((row for row in rows if row["status"] == "SENT"), None)
+            rows = [row for row in ledger if row.chunk == index]
+            sent = next((row for row in rows if isinstance(row, TelegramSentChunk)), None)
             if sent:
-                previous = sent["message_ref"]
+                previous = sent.message_ref
                 continue
-            if sum(row["status"] == "GENERATED" for row in rows) > sum(
-                row["status"] == "FAILED" for row in rows
-            ):
+            if sum(row.status == "GENERATED" for row in rows) > sum(row.status == "FAILED" for row in rows):
                 unresolved = True
                 continue
             self.active_token()
             base = {
                 "channel": ANSWER_CHANNEL,
-                "question_id": question["question_id"],
-                "session_id": question["session_id"],
+                "question_id": subject.question_id,
+                "session_id": subject.session_id,
                 "purpose": "ANSWER",
-                "chat_id": question["chat_id"],
+                "chat_id": subject.chat_id,
                 "chunk": index,
                 "chunks": len(parts),
                 "attempt": 1,
@@ -1337,7 +1346,7 @@ class TelegramInbox:
                 immutable=True,
             )
             try:
-                result = await self.send(question["chat_id"], part, previous)
+                result = await self.send(subject.chat_id, part, previous)
             except NOT_SENT:
                 await self.repo.put(
                     "out.deliveries",
@@ -1361,13 +1370,13 @@ class TelegramInbox:
             )
         if unresolved:
             return
-        async with self.repo.lock("question:" + question["question_id"]):
+        async with self.repo.lock("question:" + binding.question_id):
             question = await self.repo.get("out.user_questions", binding.question_id)
             if question is None:
                 raise ValueError("Answer subject disappeared before receipt recording")
             validate_question_identity(question, binding)
             question.update(status="DELIVERED", **collection_clock(utcnow()).fields("delivered_at"))
-            await self.repo.put("out.user_questions", question["question_id"], question)
+            await self.repo.put("out.user_questions", binding.question_id, question)
 
     async def answer_failed(self, payload: TelegramAnswerJob | dict[str, JsonValue], reason: str) -> None:
         """A TELEGRAM_ANSWER job that ran out of attempts leaves a terminal, monitorable record."""
@@ -1378,7 +1387,10 @@ class TelegramInbox:
             if question is None:
                 return
             validate_question_identity(
-                question, FollowupRefusalTarget(question_id=question_id, session_id=question["session_id"])
+                question,
+                FollowupRefusalTarget.model_validate(
+                    {"question_id": question_id, "session_id": question["session_id"]}
+                ),
             )
             if question.get("status") in ("DELIVERED", "DELIVERY_FAILED"):
                 return

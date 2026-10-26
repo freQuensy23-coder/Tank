@@ -1584,7 +1584,14 @@ async def test_answer_chunks_resend_only_after_definite_rejection() -> None:
     question = await repo.get("out.user_questions", question_id)
     question.update(answer_status="ANSWERED", answer_text="a" * 3000 + "\n" + "b" * 3000)
     await repo.put("out.user_questions", question_id, question)
-    base = {"channel": "telegram:answer", "question_id": question_id, "purpose": "ANSWER", "attempt": 1}
+    base = {
+        "channel": "telegram:answer",
+        "question_id": question_id,
+        "session_id": question["session_id"],
+        "chat_id": question["chat_id"],
+        "purpose": "ANSWER",
+        "attempt": 1,
+    }
     await repo.put(
         "out.deliveries", "c0", {**base, "chunk": 0, "status": "GENERATED", "at": "2027-01-15T08:00:00Z"}
     )
