@@ -1,8 +1,8 @@
 # Global refactor plan
 
-Initial base: `1216b4b48cbedd2d58324583c08f0524d272993a`. Main through `122d8c7248c824cb8d07614221f27cce262bfe3b` is integrated. Its X actor, diagnostic and publisher additions are included in the active first-party audit.
+Initial base: `1216b4b48cbedd2d58324583c08f0524d272993a`. Main through `57d11814fe0475c3c521bbe4d7693282ac57a26f` is integrated. Its X actor, diagnostic and publisher additions are included in the active first-party audit.
 
-The user requested a complete refactor across five requirements, with five GPT-6.1 Sol implementation agents and an orchestrating parent. All product edits and verification happen in isolated server worktrees. Production is unchanged.
+The user requested a complete refactor across five requirements, with five GPT-6.1 Sol implementation agents and an orchestrating parent. All product edits and verification now happen in isolated local worktrees, following the user's explicit clarification. Earlier server evidence is retained as historical proof. Production is unchanged.
 
 ## Ownership
 

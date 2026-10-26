@@ -21,6 +21,15 @@ from pydantic import JsonValue, ValidationError
 
 from tank.agents.admission import SessionAdmission
 from tank.agents.admission_repository import admission_candidate, build_admission
+from tank.agents.answer_settlement import (
+    AnswerHistoryEvent,
+    AnswerHistoryPage,
+    HistoryRunning,
+    NativeAnswerQuery,
+    NativeTurnAnswer,
+    QuestionSettlementSession,
+    collect_turn_answers,
+)
 from tank.agents.archive_contracts import (
     ArchiveAlertIdentity,
     ArchiveDelivery,
@@ -30,7 +39,13 @@ from tank.agents.archive_contracts import (
 )
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
 from tank.agents.context_binding import ContextBinding
-from tank.agents.input_ownership import JournalInputLineage, NativeInputOwner, ToolInputLineage
+from tank.agents.input_ownership import (
+    JournalInputLineage,
+    NativeInputOwner,
+    NativeOwnershipSnapshot,
+    ToolInputLineage,
+    UnprovedInputOwnership,
+)
 from tank.agents.native_inputs import (
     AcceptedNativeInput,
     NativeInput,
@@ -117,6 +132,15 @@ from tank.contracts.openma import (
     openma_tools_match,
 )
 from tank.contracts.provenance import AgentProvenance, ResolvedVersionIdentity
+from tank.contracts.session_followups import (
+    FollowupCandidate,
+    FollowupEligibility,
+    FollowupRefusalSink,
+    FollowupRefusalTarget,
+    FollowupSession,
+    NoSession,
+    followup_eligibility,
+)
 from tank.contracts.source_items import (
     FailedExtraction,
     SkippedExtraction,
@@ -124,8 +148,9 @@ from tank.contracts.source_items import (
 from tank.contracts.source_repository import SourceExtractionRepository
 from tank.delivery import DeliveryDeferred
 from tank.ops_progress import session_progress
+from tank.question_answers import record_answer
 from tank.runtime_contracts import ScoutMessage, ScoutReviewJob, UserQuestionMessage
-from tank.telegram_inbox import DOCUMENT_LIMIT, GONE_TEXT, closed_reason, question_message, record_answer
+from tank.telegram_inbox import DOCUMENT_LIMIT, question_message
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, jsonable, parse_time, sha256, utcnow
 
@@ -195,10 +220,19 @@ class SessionFileSender(Protocol):
 
 class SessionService:
     def __init__(
-        self, repo, settings, tool_dispatch, *, versions: ResolvedVersionIdentity, http=None, stream_http=None
+        self,
+        repo,
+        settings,
+        tool_dispatch,
+        *,
+        versions: ResolvedVersionIdentity,
+        refusals: FollowupRefusalSink,
+        http=None,
+        stream_http=None,
     ):
         self.versions = ResolvedVersionIdentity.model_validate(versions)
         self.repo, self.settings, self.tool_dispatch = repo, settings, tool_dispatch
+        self.refusals = refusals
         self.source_extraction = SourceExtractionRepository(repo)
         self.retry_refusals = NativeRetryRefusalJournal(repo, self.versions, self.clock_timestamp)
         self.http = httpx.AsyncClient(timeout=REST_TIMEOUT_S) if http is None else http
@@ -413,12 +447,19 @@ class SessionService:
         return session
 
     async def continuable(self, request: UserQuestionMessage) -> bool:
+        target = FollowupRefusalTarget(question_id=request.question_id, session_id=request.session_id)
         session = await self.repo.get("ops.agent_sessions", request.session_id)
+        if session is not None:
+            require_owned_session_identity(request.session_id, session)
+        eligibility: FollowupEligibility
         if self.settings.replay:
-            session = None
-        closed = closed_reason(session)
-        if closed is not None:
-            await record_answer(self.repo, request.question_id, closed[1], status=closed[0])
+            eligibility = NoSession(status="NO_SESSION", reason="REPLAY")
+        else:
+            eligibility = followup_eligibility(
+                FollowupSession.from_record(session) if session is not None else None
+            )
+        if not isinstance(eligibility, FollowupCandidate):
+            await self.refusals.record(target, eligibility)
             return False
         observed = await NativeSessionReader(self).state(request.session_id)
         if isinstance(observed, NativeSessionMissing) or (
@@ -432,17 +473,12 @@ class SessionService:
                         **self.clock_timestamp().fields("checked_at"),
                     }
                     await put_owned_session(self.repo, request.session_id, current)
-            if current is None:
-                await record_answer(self.repo, request.question_id, GONE_TEXT, status="NO_SESSION")
-                return False
-            if isinstance(observed, NativeSessionMissing):
-                status, text = "NO_SESSION", GONE_TEXT
-            else:
-                closure = closed_reason(current)
-                if closure is None:
-                    raise ValueError("Observed closed native session has no follow-up closure")
-                status, text = closure
-            await record_answer(self.repo, request.question_id, text, status=status)
+            eligibility = followup_eligibility(
+                FollowupSession.from_record(current) if current is not None else None
+            )
+            if isinstance(eligibility, FollowupCandidate):
+                raise ValueError("Observed closed native session has no follow-up closure")
+            await self.refusals.record(target, eligibility)
             return False
         return True
 
@@ -666,9 +702,16 @@ class SessionService:
             async with self.repo.lock("session:" + sid):
                 session = await self.repo.get("ops.agent_sessions", sid)
                 if payload.get("kind") == "USER_QUESTION":
-                    closed = closed_reason(session)
-                    if closed is not None:
-                        await record_answer(self.repo, payload["question_id"], closed[1], status=closed[0])
+                    if session is not None:
+                        require_owned_session_identity(sid, session)
+                    eligibility = followup_eligibility(
+                        FollowupSession.from_record(session) if session is not None else None
+                    )
+                    if not isinstance(eligibility, FollowupCandidate):
+                        await self.refusals.record(
+                            FollowupRefusalTarget(question_id=payload["question_id"], session_id=sid),
+                            eligibility,
+                        )
                         return None
                     self.reopen_for_question(session, payload, key)
                 if key in session.get("messages", []):
@@ -827,32 +870,25 @@ class SessionService:
         return response.event_id if isinstance(response, AcceptedNativeInput) else None
 
     async def native_input_owner(
-        self, session: dict[str, JsonValue], execution_id: str | None
+        self, session: NativeOwnershipSnapshot, execution_id: str | None
     ) -> NativeInputOwner | None:
         """Resolve only actual recorded accepted-input lineage, including tool continuations."""
+        session = NativeOwnershipSnapshot.model_validate(session)
         if execution_id is None:
             return None
         if not execution_id:
             raise ValueError("Native execution identity must be nonempty")
-        journal = session.get("message_log", [])
-        if not isinstance(journal, list):
-            raise ValueError("Native input journal must be an array")
-        lineages: dict[str, JournalInputLineage] = {}
-        for raw in journal:
-            if not isinstance(raw, dict):
-                raise ValueError("Native input journal message must be an object")
-            lineage = JournalInputLineage.from_record(raw)
-            if lineage.message_id in lineages:
-                raise ValueError("Native input journal repeats a message identity")
-            lineages[lineage.message_id] = lineage
-        owners = {
-            owner for lineage in lineages.values() if (owner := lineage.owner(execution_id)) is not None
-        }
-        sid = NativeSessionReference.model_validate({"session_id": session["session_id"]}).session_id
+        if session.lineages is None:
+            return None
+        owners = {owner for lineage in session.lineages if (owner := lineage.owner(execution_id)) is not None}
+        sid = session.session_id
+        message_ids = frozenset(lineage.message_id for lineage in session.lineages)
         async for call in self.repo.iter_all("ops.tool_calls", filters={"session_id": sid}):
             if call.get("remote_event_id") != execution_id:
                 continue
-            owner = ToolInputLineage.from_record(call).owner(execution_id, frozenset(lineages))
+            if call.get("native_turn_message_id") in session.unselected_message_ids:
+                continue
+            owner = ToolInputLineage.from_record(call).owner(execution_id, message_ids)
             if owner is not None:
                 owners.add(owner)
         if len(owners) > 1:
@@ -1017,102 +1053,131 @@ class SessionService:
             await self.deliver_answers(sid)
         return result
 
-    async def turn_answers(self, session, inputs=None):
-        """Per accepted message: the last agent text of its executions and whether its turn ended.
-
-        A turn ends when the newest execution owned by the message went idle with end_turn. History
-        is read newest first and only back to the oldest wanted input, never the whole session.
-        """
-        wanted = set(inputs or ())
-        recent, page = [], None
+    async def turn_answers(
+        self, session: NativeOwnershipSnapshot, inputs: Sequence[str] | None = None
+    ) -> dict[str, NativeTurnAnswer]:
+        """Read actual descending managed history back to the requested accepted inputs."""
+        query = NativeAnswerQuery(ownership=session, input_ids=None if inputs is None else tuple(inputs))
+        session = query.ownership
+        if session.lineages is None:
+            raise ValueError("Native answers require their actual retained input journal")
+        wanted = set(query.input_ids) if query.input_ids is not None else set()
+        recent: list[AnswerHistoryEvent] = []
+        events: dict[str, AnswerHistoryEvent] = {}
+        page: str | None = None
+        visited: set[str] = set()
         while True:
-            params = {"limit": 100, "order": "desc"}
-            if page:
+            params: dict[str, str | int] = {"limit": 100, "order": "desc"}
+            if page is not None:
                 params["page"] = page
-            data = await self.request("GET", f"sessions/{session['session_id']}/events", params=params)
-            for event in data.get("data", []):
+            decoded = AnswerHistoryPage.from_wire(
+                await self.request(
+                    "GET", f"sessions/{quote(session.session_id, safe='')}/events", params=params
+                )
+            )
+            for event in decoded.events:
+                previous = events.get(event.event_id)
+                if previous is not None:
+                    if previous != event:
+                        raise ValueError("Native answer history changed an observed event identity")
+                    continue
+                events[event.event_id] = event
                 recent.append(event)
-                wanted.discard(event.get("id"))
-            page = data.get("next_page")
-            if not page or (inputs and not wanted):
+                wanted.discard(event.event_id)
+            if decoded.next_page is None or (
+                query.input_ids is not None and len(query.input_ids) > 0 and not wanted
+            ):
                 break
-        texts, ends, order, current = {}, {}, [], None
+            if decoded.next_page in visited:
+                raise ValueError("Native answer history did not advance its managed cursor")
+            visited.add(decoded.next_page)
+            page = decoded.next_page
+        owners: dict[str, NativeInputOwner] = {}
         for event in reversed(recent):
-            kind = event.get("type")
-            if kind == "session.status_running":
-                current = event.get("execution_id")
-                if current and current not in order:
-                    order.append(current)
-            elif kind == "agent.message" and current:
-                text = "".join(
-                    block.get("text", "")
-                    for block in event.get("content", [])
-                    if isinstance(block, dict) and block.get("type") == "text"
-                ).strip()
-                if text:
-                    texts[current] = text
-            elif kind == "session.status_idle" and event.get("execution_id"):
-                ends[event["execution_id"]] = (event.get("stop_reason") or {}).get("type") == "end_turn"
-        answers, attempts = {}, {}
-        for execution_id in order:
-            owner = await self.native_input_owner(session, execution_id)
-            if not owner:
-                continue
-            message_id, attempt = owner.message_id, owner.attempt
-            if attempt < attempts.get(message_id, attempt):
-                continue
-            if attempt > attempts.get(message_id, attempt):
-                answers.pop(message_id, None)
-            attempts[message_id] = attempt
-            answer = answers.setdefault(message_id, {"text": None, "ended": False})
-            answer["ended"] = ends.get(execution_id, False)
-            if execution_id in texts:
-                answer["text"] = texts[execution_id]
-        return answers
+            if isinstance(event, HistoryRunning) and event.execution_id is not None:
+                owner = await self.native_input_owner(session, event.execution_id)
+                if owner is not None:
+                    owners[event.execution_id] = owner
+        return collect_turn_answers(list(reversed(recent)), owners)
 
-    async def deliver_answers(self, sid):
-        """Hand each settled follow-up question its answer, or its failure, exactly once.
-
-        Questions settle independently: a later queued turn never holds back an earlier answer.
-        """
-        session = await self.repo.get("ops.agent_sessions", sid)
-        if session is None:
+    async def deliver_answers(self, sid: str) -> None:
+        """Settle each bound question from actual journal phase and observed owned history."""
+        stored: dict[str, JsonValue] | None = await self.repo.get("ops.agent_sessions", sid)
+        if stored is None:
             return
-        stopped = session.get("status") in ("FAILED", "ENDED")
-        pending = [
-            row
-            for row in session.get("message_log", [])
-            if row.get("payload", {}).get("kind") == "USER_QUESTION" and not row.get("answer_recorded")
-        ]
+        require_owned_session_identity(sid, stored)
+        snapshot = QuestionSettlementSession.from_record(stored)
+        if snapshot.questions is None:
+            return
+        pending = [question for question in snapshot.questions if question.answer_recorded is not True]
         if not pending:
             return
-        live = any(row.get("remote_event_id") and row.get("turn_status") != "FAILED" for row in pending)
-        answers = (
-            await self.turn_answers(
-                session, [row["remote_event_id"] for row in pending if row.get("remote_event_id")]
-            )
-            if live
-            else {}
+        history_messages = frozenset(
+            question.message_id for question in pending if question.turn_status != "FAILED"
         )
-        recorded = set()
-        for row in pending:
-            question_id = row["payload"]["question_id"]
-            answer = answers.get(row["message_id"], {})
-            if row.get("turn_status") == "FAILED" or (stopped and not answer.get("ended")):
-                await record_answer(self.repo, question_id, None, status="FAILED")
-            elif row.get("turn_status") == "DONE" or answer.get("ended"):
-                await record_answer(self.repo, question_id, answer.get("text"), status="ANSWERED")
-            else:
-                continue
-            recorded.add(row["message_id"])
-        if not recorded:
-            return
-        async with self.repo.lock("session:" + sid):
-            current = await self.repo.get("ops.agent_sessions", sid)
-            for row in current.get("message_log", []):
-                if row["message_id"] in recorded:
-                    row["answer_recorded"] = True
-            await put_owned_session(self.repo, sid, current)
+        answers: dict[str, NativeTurnAnswer] = {}
+        expected_lineages: dict[str, JournalInputLineage] = {}
+        if history_messages:
+            ownership = NativeOwnershipSnapshot.from_record(stored, message_ids=history_messages)
+            if ownership.lineages is not None:
+                expected_lineages = {lineage.message_id: lineage for lineage in ownership.lineages}
+                inputs = [
+                    lineage.current_input_id
+                    for lineage in ownership.lineages
+                    if lineage.current_input_id is not None
+                ]
+                if inputs:
+                    answers = await self.turn_answers(ownership, inputs)
+        for question in pending:
+            async with self.repo.lock("session:" + sid):
+                current: dict[str, JsonValue] | None = await self.repo.get("ops.agent_sessions", sid)
+                if current is None:
+                    return
+                require_owned_session_identity(sid, current)
+                latest = QuestionSettlementSession.from_record(current)
+                if latest.questions is None:
+                    continue
+                current_questions = {row.message_id: row for row in latest.questions}
+                candidate = current_questions.get(question.message_id)
+                if candidate is None:
+                    continue
+                if candidate.question_id != question.question_id:
+                    raise ValueError("Question settlement journal owner changed its question binding")
+                if candidate.answer_recorded is True:
+                    continue
+                answer = answers.get(question.message_id)
+                ended = answer is not None and answer.ended
+                stopped = latest.status in {"FAILED", "ENDED"}
+                if candidate.turn_status == "FAILED" or (stopped and not ended):
+                    receipt = await record_answer(self.repo, candidate.target(sid), None, status="FAILED")
+                elif candidate.turn_status == "DONE" or ended:
+                    if answer is not None:
+                        ownership = NativeOwnershipSnapshot.from_record(
+                            current, message_ids=frozenset({candidate.message_id})
+                        )
+                        if ownership.lineages is None or len(ownership.lineages) != 1:
+                            raise ValueError("Question answer lost its actual retained journal owner")
+                        if ownership.lineages[0] != expected_lineages[candidate.message_id]:
+                            continue
+                    receipt = await record_answer(
+                        self.repo,
+                        candidate.target(sid),
+                        answer.text if answer is not None else None,
+                        status="ANSWERED",
+                    )
+                else:
+                    continue
+                if receipt is None:
+                    continue
+                journal = current["message_log"]
+                if not isinstance(journal, list):
+                    raise ValueError("Native question journal must be an array")
+                for row in journal:
+                    if not isinstance(row, dict):
+                        raise ValueError("Native question journal message must be an object")
+                    if row["message_id"] == candidate.message_id:
+                        row["answer_recorded"] = True
+                await put_owned_session(self.repo, sid, current)
 
     async def abandon_question(self, session_id, question_id):
         """A question job gave up: retire its unsent intent so recovery never posts it later.
@@ -1246,7 +1311,7 @@ class SessionService:
         if not self.closed and (sid not in self.tasks or self.tasks[sid].done()):
             self.tasks[sid] = asyncio.create_task(self.follow(sid), name="openma:" + sid)
 
-    async def stop_followers(self):
+    async def stop_followers(self) -> None:
         """Retire this controller's followers before finalizing owned local state."""
         tasks = list(self.tasks.values())
         for task in tasks:
@@ -1855,7 +1920,9 @@ class SessionService:
                 "session.error",
                 "execution.status_failed",
             }:
-                owner = await self.native_input_owner(session, event["execution_id"])
+                owner = await self.native_input_owner(
+                    NativeOwnershipSnapshot.from_record(session), event["execution_id"]
+                )
                 if owner:
                     session["active_message_id"] = owner.message_id
                     ContextBinding.from_session(session)
@@ -2109,10 +2176,10 @@ class SessionService:
             return NativeEventRetryRefused(status="RETRY_REFUSED", receipt=recorded)
         try:
             await self.process_event(sid, event, sequence)
-        except UnknownNativeRetryState as refused:
+        except (UnknownNativeRetryState, UnprovedInputOwnership) as refused:
             receipt = await self.retry_refusals.record(sid, frame, refused.reason, sequence)
             self.seen_events.setdefault(sid, set()).add(seen_key(event))
-            log.warning("Native host retry refused: %s", receipt.reason)
+            log.warning("Native host input effect refused: %s", receipt.reason)
             return NativeEventRetryRefused(status="RETRY_REFUSED", receipt=receipt)
         return NativeEventObserved(status="OBSERVED")
 
@@ -2444,7 +2511,7 @@ class SessionService:
             with suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=5)
 
-    async def close(self):
+    async def close(self) -> None:
         self.closed = True
         await self.stop_followers()
         if self.owns_stream_http:

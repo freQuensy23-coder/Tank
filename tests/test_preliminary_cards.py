@@ -28,6 +28,7 @@ from tank.models import Record
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository, Repository
+from tank.telegram_inbox import RepositoryFollowupRefusals
 from tank.util import clock_iso, iso, utcnow
 
 
@@ -102,6 +103,7 @@ async def lead(service: EventToolService) -> Record:
             "certainty": "LOW",
             "criterion": "MATERIAL",
             "dims": unassessed_score_dimensions(),
+            "impact_horizon": {"impact_start": "UNKNOWN"},
         },
     )
     return {
@@ -126,7 +128,11 @@ async def test_preliminary_without_market_analysis_preserves_ordinary_gate(
     service: EventToolService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     args = await lead(service)
-    denied = await service.dispatch("publish_card", {**args, "kind": "FULL"}, {})
+    denied = await service.dispatch(
+        "publish_card",
+        {**{key: value for key, value in args.items() if key != "unconfirmed"}, "kind": "FULL"},
+        {},
+    )
     assert denied["reason"] == "BELOW_MAJOR"
     analysis_read = AsyncMock(side_effect=AssertionError("Preliminary cards must not read analysis records"))
     monkeypatch.setattr(service, "latest_record", analysis_read)
@@ -246,8 +252,16 @@ async def test_preliminary_then_full_uses_ordinary_requirements_and_same_thread(
         assessment.update({"class": "MAJOR", "certainty": "MEDIUM", "criterion": "M2"})
         await service.repo.put("evt.ems_assessments", "ems", assessment)
         with pytest.raises(ValueError, match="UPDATE requires"):
-            await service.dispatch("publish_card", {**args, "kind": "UPDATE"}, {})
-        incomplete = await service.dispatch("publish_card", {**args, "kind": "FULL"}, {})
+            await service.dispatch(
+                "publish_card",
+                {**{key: value for key, value in args.items() if key != "unconfirmed"}, "kind": "UPDATE"},
+                {},
+            )
+        incomplete = await service.dispatch(
+            "publish_card",
+            {**{key: value for key, value in args.items() if key != "unconfirmed"}, "kind": "FULL"},
+            {},
+        )
         assert incomplete["reason"] == "ANALYSIS_INCOMPLETE"
         await service.repo.put(
             "evt.beneficiary_maps",
@@ -258,7 +272,11 @@ async def test_preliminary_then_full_uses_ordinary_requirements_and_same_thread(
                 "analysis_set": ["world:WLD"],
             },
         )
-        incomplete = await service.dispatch("publish_card", {**args, "kind": "FULL"}, {})
+        incomplete = await service.dispatch(
+            "publish_card",
+            {**{key: value for key, value in args.items() if key != "unconfirmed"}, "kind": "FULL"},
+            {},
+        )
         assert incomplete["missing_market_truth"] == ["world:WLD"]
         assert incomplete["missing_decisions"] == ["world:WLD"]
         event = await publication_event(service, eid)
@@ -295,7 +313,11 @@ async def test_preliminary_then_full_uses_ordinary_requirements_and_same_thread(
         truth = await service.truth.assess(eid, "world:WLD", clock_iso())
         assert truth["data_confidence"]["class"] == "LOW"
         await service.dispatch("get_decision", {"event_id": eid, "token_id": "world:WLD"}, {})
-        full = await service.dispatch("publish_card", {**args, "kind": "FULL"}, {})
+        full = await service.dispatch(
+            "publish_card",
+            {**{key: value for key, value in args.items() if key != "unconfirmed"}, "kind": "FULL"},
+            {},
+        )
         assert full["published"]
         assert full["alert_id"] == preliminary["alert_id"]
         assert full["version"] == 2
@@ -588,11 +610,16 @@ async def test_denied_preliminary_gets_one_immediate_correction_in_its_thread(
             service.dispatch,
             http=http,
             versions=service.versions,
+            refusals=RepositoryFollowupRefusals(service.repo),
         )
         for job in await service.repo.list("ops.jobs"):
             await service.repo.put("ops.jobs", job["job_id"], {**job, "status": "DONE"})
         assert not await sessions.can_archive(session, event)
-        update = await service.dispatch("publish_card", {**args, "kind": "UPDATE"}, {})
+        update = await service.dispatch(
+            "publish_card",
+            {**{key: value for key, value in args.items() if key != "unconfirmed"}, "kind": "UPDATE"},
+            {},
+        )
         assert update["reason"] == "BELOW_MAJOR"
         correction = {
             **{key: value for key, value in args.items() if key != "unconfirmed"},
@@ -785,7 +812,11 @@ async def test_postgres_preliminary_and_timed_review_roundtrip(
             truth = await service.truth.assess(eid, "world:WLD", clock_iso())
             assert truth["data_confidence"]["class"] == "LOW"
             await service.dispatch("get_decision", {"event_id": eid, "token_id": "world:WLD"}, context)
-            full = await service.dispatch("publish_card", {**card, "kind": "FULL"}, context)
+            full = await service.dispatch(
+                "publish_card",
+                {**{key: value for key, value in card.items() if key != "unconfirmed"}, "kind": "FULL"},
+                context,
+            )
             assert full["published"] and full["version"] == 2 and full["alert_id"] == first["alert_id"]
             await deliver(repo, service.settings, http, full)
         assert requests[1]["reply_parameters"]["message_id"] == 41

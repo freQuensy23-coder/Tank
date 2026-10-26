@@ -7,16 +7,20 @@ from typing import Annotated, Literal, Protocol, Self
 
 from pydantic import Field, JsonValue, model_validator
 
+from tank.agents.input_ownership import UnprovedOwnershipReason
 from tank.agents.native_retry import UnknownRetryReason
 from tank.agents.session_ownership import put_owned_session, require_owned_session_identity
 from tank.contracts import DomainModel
 from tank.contracts.json import decode_unique_json
+from tank.contracts.native_events import ManagedEventPage as ManagedEventPage
+from tank.contracts.native_events import NativeEventPage as NativeEventPage
+from tank.contracts.native_events import NativeWireEvent as NativeWireEvent
+from tank.contracts.native_events import NodeEventPage as NodeEventPage
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.scalars import OneInt
 from tank.time_precision import Timestamp
 from tank.util import JsonInput, jsonable, sha256
 
-type NativeWireEvent = dict[str, JsonValue]
 type RefusalDigest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
@@ -60,7 +64,7 @@ class NativeRetryRefusal(DomainModel):
     schema_version: OneInt
     session_id: str = Field(min_length=1)
     frame: NativeFrameIdentity
-    reason: UnknownRetryReason
+    reason: UnknownRetryReason | UnprovedOwnershipReason
     sequence: int | None = Field(ge=0)
     recorded_at: Timestamp
     controller: ResolvedVersionIdentity
@@ -142,7 +146,7 @@ class NativeRetryRefusalJournal:
         self,
         session_id: str,
         frame: NativeFrameIdentity,
-        reason: UnknownRetryReason,
+        reason: UnknownRetryReason | UnprovedOwnershipReason,
         sequence: int | None,
     ) -> NativeRetryRefusal:
         async with self.store.lock("session:" + session_id):
@@ -210,19 +214,6 @@ def decode_native_stream(raw: str, sse_id: str) -> NativeInboundFrame:
     if sequence is None and re.fullmatch(r"[0-9]+", sse_id) is not None:
         raise ValueError("Native stream cursor has no reported event sequence")
     return NativeInboundFrame(event=event, sequence=sequence)
-
-
-class ManagedEventPage(DomainModel):
-    data: list[NativeWireEvent]
-    next_page: str | None = Field(min_length=1)
-
-
-class NodeEventPage(DomainModel):
-    data: list[NativeWireEvent]
-    has_more: bool
-
-
-type NativeEventPage = ManagedEventPage | NodeEventPage
 
 
 class ManagedEventCursor(DomainModel):
