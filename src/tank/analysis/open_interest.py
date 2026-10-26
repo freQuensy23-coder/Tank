@@ -191,6 +191,9 @@ class OINativeHistoryBaseline(DomainModel):
     pair_count: int = Field(ge=0)
     rejected_pair_count: int = Field(ge=0)
     pair_tolerance_s: float = Field(ge=0)
+    minimum_history_days: int = Field(gt=0)
+    lookback_days: int = Field(gt=0)
+    quantiles: tuple[float, float]
     first_observed_at: Timestamp
     last_observed_at: Timestamp
     first_pair_end_at: Timestamp
@@ -202,14 +205,41 @@ class OINativeHistoryBaseline(DomainModel):
             raise ValueError("OI history cannot invent more distinct clocks than source observations")
         if self.pair_count + self.rejected_pair_count != self.distinct_source_time_count:
             raise ValueError("OI history cannot invent more evaluated pairs than observed endpoints")
-        if (self.source_observation_count > 0) != (
-            self.first_observed_at.value is not None and self.last_observed_at.value is not None
-        ):
+        if not 0 <= self.quantiles[0] < self.quantiles[1] <= 1:
+            raise ValueError("OI history quantiles require actual ordered probability bounds")
+        source_clocks = (self.first_observed_at.value, self.last_observed_at.value)
+        pair_clocks = (self.first_pair_end_at.value, self.last_pair_end_at.value)
+        has_sources = self.source_observation_count > 0
+        has_pairs = self.pair_count > 0
+        if any((value is not None) != has_sources for value in source_clocks):
             raise ValueError("OI history extent requires its actual observed source clocks")
-        if (self.pair_count > 0) != (
-            self.first_pair_end_at.value is not None and self.last_pair_end_at.value is not None
-        ):
+        if any((value is not None) != has_pairs for value in pair_clocks):
             raise ValueError("OI pair extent requires actual qualified pair endpoints")
+        if self.source_observation_count:
+            initial, final = source_clocks
+            if initial is None or final is None:
+                raise ValueError("Observed OI history cannot omit either source bound")
+            first, last = parse_iso_time(initial), parse_iso_time(final)
+            if (
+                not self.interval.start - timedelta(days=self.lookback_days)
+                <= first
+                <= last
+                < self.interval.start
+            ):
+                raise ValueError("OI history extent must remain in its actual historical selection window")
+            if self.pair_count:
+                initial_pair, final_pair = pair_clocks
+                if initial_pair is None or final_pair is None:
+                    raise ValueError("Qualified OI pairs cannot omit either endpoint bound")
+                pair_first, pair_last = parse_iso_time(initial_pair), parse_iso_time(final_pair)
+                if not first <= pair_first <= pair_last <= last:
+                    raise ValueError("OI pair extent cannot borrow unrelated source clocks")
+                if self.normal_range.bounds is not None and (
+                    last - first < timedelta(days=self.minimum_history_days)
+                    or pair_last - pair_first + self.interval.cutoff - self.interval.start
+                    < timedelta(days=self.minimum_history_days)
+                ):
+                    raise ValueError("An observed OI baseline must satisfy its actual minimum history")
         if self.normal_range.bounds is not None and not self.pair_count:
             raise ValueError("An observed OI baseline requires actual endpoint pairs")
         return self
@@ -318,6 +348,9 @@ def _native_history(
                 pair_count=len(changes),
                 rejected_pair_count=rejected,
                 pair_tolerance_s=tolerance,
+                minimum_history_days=policy.minimum_history_days,
+                lookback_days=policy.lookback_days,
+                quantiles=policy.quantiles,
                 first_observed_at=clocks[times[0]]
                 if times
                 else Timestamp(None, None, "NO_HISTORY_OBSERVATIONS"),

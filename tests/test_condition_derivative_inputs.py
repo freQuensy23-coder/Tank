@@ -250,7 +250,9 @@ def test_registry_scope_qualifies_uncaptured_row_metadata_without_rewriting_evid
     assert original["quote_asset"] is None
 
 
-def historical_case(*, spacing_h: int, wide: bool) -> tuple[OpenInterestCalculator, OIWindowRequest]:
+def historical_case(
+    *, spacing_h: int, quantities: tuple[str, str]
+) -> tuple[OpenInterestCalculator, OIWindowRequest]:
     from datetime import timedelta
 
     from tank.analysis.condition_derivative_inputs import OISelectionPolicy
@@ -264,7 +266,7 @@ def historical_case(*, spacing_h: int, wide: bool) -> tuple[OpenInterestCalculat
         observation()
         | {
             "ts": iso(start - timedelta(hours=hour)),
-            "oi_native": "1E400" if wide and hour % 2 == 0 else "1" if wide else "10",
+            "oi_native": quantities[hour % 2],
         }
         for hour in range(1, 241, spacing_h)
     ]
@@ -291,7 +293,7 @@ def historical_case(*, spacing_h: int, wide: bool) -> tuple[OpenInterestCalculat
 
 
 def test_native_history_preserves_genuinely_observed_zero_changes() -> None:
-    calculator, request = historical_case(spacing_h=1, wide=False)
+    calculator, request = historical_case(spacing_h=1, quantities=("10", "10"))
     baseline = calculator.native_baseline(request, window="W1H")[0]
     assert baseline.source_observation_count == baseline.distinct_source_time_count == 240
     assert baseline.pair_count == 239 and baseline.rejected_pair_count == 1
@@ -304,7 +306,7 @@ def test_native_history_preserves_genuinely_observed_zero_changes() -> None:
 
 
 def test_unrepresentable_history_does_not_drop_pairs_or_erase_native_endpoints() -> None:
-    calculator, request = historical_case(spacing_h=1, wide=True)
+    calculator, request = historical_case(spacing_h=1, quantities=("1E400", "1"))
     baseline = calculator.native_baseline(request, window="W1H")[0]
     assert baseline.source_observation_count == 240
     assert baseline.pair_count == 239 and baseline.rejected_pair_count == 1
@@ -317,10 +319,46 @@ def test_unrepresentable_history_does_not_drop_pairs_or_erase_native_endpoints()
 
 
 def test_sparse_history_cannot_pair_an_observation_with_itself_to_manufacture_zero() -> None:
-    calculator, request = historical_case(spacing_h=24, wide=False)
+    calculator, request = historical_case(spacing_h=24, quantities=("10", "10"))
     baseline = calculator.native_baseline(request, window="W1H")[0]
     assert baseline.source_observation_count == 10
     assert baseline.pair_count == 0 and baseline.rejected_pair_count == 10
     assert baseline.normal_range.bounds is None
     assert baseline.normal_range.reason == "INSUFFICIENT_HISTORY"
     assert baseline.first_pair_end_at.value is None and baseline.last_pair_end_at.value is None
+
+
+def test_native_history_preserves_known_negative_and_positive_change_population() -> None:
+    calculator, request = historical_case(spacing_h=1, quantities=("20", "10"))
+    baseline = calculator.native_baseline(request, window="W1H")[0]
+    assert baseline.pair_count == 239
+    assert baseline.normal_range.bounds is not None
+    assert baseline.normal_range.bounds.lower == -0.5
+    assert baseline.normal_range.bounds.upper == 1.0
+    current = calculator.select(request)[0].native_change(normal_range=baseline.normal_range)
+    assert current is not None and current.value == 0.2
+    assert current.position == "WITHIN" and current.beyond is False
+
+
+@pytest.mark.parametrize(
+    "missing", ["first_observed_at", "last_observed_at", "first_pair_end_at", "last_pair_end_at"]
+)
+def test_observed_native_baseline_cannot_omit_one_actual_clock(missing: str) -> None:
+    from tank.analysis.open_interest import OINativeHistoryBaseline
+    from tank.time_precision import Timestamp
+
+    calculator, request = historical_case(spacing_h=1, quantities=("10", "10"))
+    baseline = calculator.native_baseline(request, window="W1H")[0]
+    with pytest.raises(ValidationError):
+        OINativeHistoryBaseline.model_validate(
+            baseline.model_copy(update={missing: Timestamp(None, None, "NOT_CAPTURED")})
+        )
+
+
+def test_observed_native_baseline_cannot_claim_a_longer_unobserved_history_policy() -> None:
+    from tank.analysis.open_interest import OINativeHistoryBaseline
+
+    calculator, request = historical_case(spacing_h=1, quantities=("10", "10"))
+    baseline = calculator.native_baseline(request, window="W1H")[0]
+    with pytest.raises(ValidationError, match="minimum history"):
+        OINativeHistoryBaseline.model_validate(baseline.model_copy(update={"minimum_history_days": 20}))
