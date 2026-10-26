@@ -38,6 +38,7 @@ from tank.runtime import Runtime
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
+from tank.telegram_inbox import RepositoryFollowupRefusals
 from tank.time_precision import chosen_boundary, collection_clock
 from tank.util import clock_iso, iso, parse_time, utcnow
 
@@ -280,7 +281,12 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
         try:
             async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
                 sessions = SessionService(
-                    repo, session_settings(), tools.dispatch, http=http, versions=fixture_versions()
+                    repo,
+                    session_settings(),
+                    tools.dispatch,
+                    http=http,
+                    versions=fixture_versions(),
+                    refusals=RepositoryFollowupRefusals(repo),
                 )
                 sessions.start_stream = lambda sid: None
                 runtime.sessions = sessions
@@ -434,7 +440,12 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(accepted)) as http:
             sessions = SessionService(
-                repo, session_settings(), tools.dispatch, http=http, versions=fixture_versions()
+                repo,
+                session_settings(),
+                tools.dispatch,
+                http=http,
+                versions=fixture_versions(),
+                refusals=RepositoryFollowupRefusals(repo),
             )
             pending = asyncio.create_task(sessions.process_event("s", event, 8))
             async with asyncio.timeout(5):
@@ -562,7 +573,12 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
             transport=httpx.MockTransport(lambda request: httpx.Response(200, json={}))
         ) as http:
             sessions = SessionService(
-                repo, session_settings(), tools.dispatch, http=http, versions=fixture_versions()
+                repo,
+                session_settings(),
+                tools.dispatch,
+                http=http,
+                versions=fixture_versions(),
+                refusals=RepositoryFollowupRefusals(repo),
             )
             event = {
                 "id": "first-condition",
