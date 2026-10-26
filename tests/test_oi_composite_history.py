@@ -152,7 +152,7 @@ def test_copied_population_range_cannot_override_actual_pairs() -> None:
 
 def test_actual_oi_only_family_preserves_native_and_unrequested_other_facts() -> None:
     calculator, request, rules = composite_source()
-    result = calculate_oi_family(
+    calculation = calculate_oi_family(
         calculator,
         request,
         rules=rules,
@@ -160,6 +160,7 @@ def test_actual_oi_only_family_preserves_native_and_unrequested_other_facts() ->
         history_cache=OIHistoryCache(BaselineRetention(128)),
         window="W1H",
     )
+    result = calculation.result
     assert isinstance(result.synchronized, ConditionSynchronizedOpenInterest)
     observed = result.synchronized.values
     assert observed.oi_native_start == 30 and observed.oi_native_end == 34

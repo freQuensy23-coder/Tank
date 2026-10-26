@@ -16,10 +16,9 @@ from tank.analysis.condition_derivative_inputs import (
 )
 from tank.analysis.condition_graph_contracts import (
     BasicConditionDerivatives,
-    ConditionSynchronizedOpenInterest,
     ConditionWindow,
 )
-from tank.analysis.oi_family import calculate_oi_family
+from tank.analysis.oi_family import OIConditionCalculation, calculate_oi_family
 from tank.analysis.oi_history_cache import OIHistoryCache
 from tank.analysis.oi_synchronization import OISynchronizationPolicy
 from tank.analysis.open_interest import OIWindowRequest, OpenInterestCalculator
@@ -65,8 +64,7 @@ class OIVisibilityWitness(DomainModel):
     visible: bool | None
 
 
-class OIConditionFacts(DomainModel):
-    result: BasicConditionDerivatives
+class OIConditionFacts(OIConditionCalculation):
     source_identity: OIReadIdentity
     visibility_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
@@ -119,15 +117,17 @@ class OIConditionLookup:
                 )
             ),
         )
+        calculation = calculate_oi_family(
+            self._calculator,
+            request,
+            rules=rules,
+            synchronization_policy=synchronization_policy,
+            history_cache=history_cache,
+            window=window,
+        )
         self._facts = OIConditionFacts(
-            result=calculate_oi_family(
-                self._calculator,
-                request,
-                rules=rules,
-                synchronization_policy=synchronization_policy,
-                history_cache=history_cache,
-                window=window,
-            ),
+            result=calculation.result,
+            closing=calculation.closing,
             source_identity=identity,
             visibility_sha256=self.visibility_fingerprint(request.assembled_at),
         )
@@ -152,19 +152,10 @@ class OIConditionLookup:
         return BasicConditionDerivatives.model_validate(self._facts.result)
 
     def closing_observations(self) -> tuple[OIObservation, ...]:
-        synchronized = self._facts.result.synchronized
-        if not isinstance(synchronized, ConditionSynchronizedOpenInterest):
-            return ()
         selected: list[OIObservation] = []
-        for contribution in synchronized.synchronization.end.contributions:
-            candidates = tuple(
-                point
-                for point in self._source.observations
-                if point.instrument.instrument_id == contribution.instrument_id
-                and point.observed_at == contribution.observed_at
-                and point.native_quantity.value == contribution.oi_native
-            )
-            if len(candidates) != 1:
-                raise ValueError("OI freshness must bind one actual selected closing witness")
-            selected.append(candidates[0])
+        for closing in self._facts.closing:
+            point = self._calculator.observation(closing.reference)
+            if point.instrument.instrument_id != closing.instrument_id:
+                raise ValueError("Selected OI freshness evidence cannot borrow another instrument")
+            selected.append(point)
         return tuple(selected)

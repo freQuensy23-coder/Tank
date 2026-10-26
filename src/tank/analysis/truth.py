@@ -5672,6 +5672,7 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
     parameters = _PARAMETERS.set(config)
     baselines = _BASELINE_CACHE.set(baseline_cache)
     try:
+        captured_read_collections: frozenset[str] = frozenset(snapshot)
         end = parse_time(snapshot["cutoff"])
         snapshot = bounded_market_snapshot(snapshot, end)
         result = {"cutoff": iso(end), "spot": {}, "derivatives": {"windows": {}}, "relative": {}}
@@ -5691,6 +5692,12 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 fields = ("flow_bars", "flow_segments", "flow_parent_bars", "tickers", "instruments")
             elif metric in DERIVATIVE_CONDITION_METRICS:
                 domain = "funding" if metric == "deriv.funding_vs_normal" else "oi"
+                if domain == "oi":
+                    missing = tuple(
+                        name for name in ("instruments", "oi") if name not in captured_read_collections
+                    )
+                    if missing:
+                        raise ValueError("Requested OI snapshot requires captured " + ", ".join(missing))
                 fields = (domain, "instruments", "semantics", "capture_metadata", "capture_tier")
             elif metric == "price.close_vs_level":
                 domain = "close"
@@ -5835,8 +5842,8 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 elif domain == "oi":
                     value = OIConditionLookup(
                         token_id=selected["token_id"],
-                        instruments=selected.get("instruments", []),
-                        observations=selected.get("oi", []),
+                        instruments=selected["instruments"],
+                        observations=selected["oi"],
                         semantics=selected.get("semantics"),
                         request=OIWindowRequest(
                             start=offset_schedule(

@@ -1,7 +1,12 @@
 """Actual OI-only derivative facts with unrelated calculations unrequested."""
 
+from typing import Self
+
+from pydantic import Field, model_validator
+
 from tank.analysis.condition_derivative_inputs import (
     CapturedOISynchronizationRules,
+    OIInputEvidenceRef,
     UncapturedOISynchronizationRules,
 )
 from tank.analysis.condition_graph_contracts import (
@@ -25,7 +30,34 @@ from tank.analysis.oi_usd import RecordedOIUsd, recorded_oi_synchronization, rec
 from tank.analysis.oi_window_statistics import OIStatisticsFacts, observed_oi_statistics, oi_window_statistics
 from tank.analysis.open_interest import OIInstrumentWindow, OIWindowRequest, OpenInterestCalculator
 from tank.analysis.positioning import MissingOIUsdDetail
+from tank.contracts import DomainModel
 from tank.util import parse_iso_time
+
+
+class OISelectedClosingEvidence(DomainModel):
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    reference: OIInputEvidenceRef
+
+
+class OIConditionCalculation(DomainModel):
+    result: BasicConditionDerivatives
+    closing: tuple[OISelectedClosingEvidence, ...]
+
+    @model_validator(mode="after")
+    def actual_selected_evidence(self) -> Self:
+        synchronized = self.result.synchronized
+        identities = tuple(point.instrument_id for point in self.closing)
+        references = tuple(point.reference for point in self.closing)
+        if len(set(identities)) != len(identities) or len(set(references)) != len(references):
+            raise ValueError("Selected OI freshness evidence must preserve distinct actual sources")
+        if isinstance(synchronized, ConditionSynchronizedOpenInterest):
+            if set(identities) != {
+                point.instrument_id for point in synchronized.synchronization.end.contributions
+            }:
+                raise ValueError("OI freshness evidence must cover the exact selected closing cohort")
+        elif self.closing:
+            raise ValueError("Unavailable synchronization cannot invent selected closing witnesses")
+        return self
 
 
 def _supplemental(
@@ -67,7 +99,7 @@ def calculate_oi_family(
     synchronization_policy: OISynchronizationPolicy,
     history_cache: OIHistoryCache,
     window: ConditionWindow,
-) -> BasicConditionDerivatives:
+) -> OIConditionCalculation:
     """Compute observed endpoints and like-for-like composite history from owned reads."""
     request = OIWindowRequest.model_validate(request)
     if request.start.value is None or request.cutoff.value is None:
@@ -95,12 +127,19 @@ def calculate_oi_family(
         for point in calculator.select(request)
     )
     selection = calculator.synchronize(request, rules=rules, policy=synchronization_policy, window=window)
+    closing: tuple[OISelectedClosingEvidence, ...] = ()
     synchronized: ConditionSynchronizedOpenInterest | UnavailableConditionSynchronizedOpenInterest
     if isinstance(selection, ObservedOISynchronizedSelection):
         if not isinstance(rules, CapturedOISynchronizationRules):
             raise ValueError("Observed OI requires its actual captured synchronization rules")
         history = history_cache.composite_baseline(
             calculator, request, selection=selection, rules=rules, window=window
+        )
+        closing = tuple(
+            OISelectedClosingEvidence(
+                instrument_id=source.instrument.instrument_id, reference=source.end.evidence
+            )
+            for source in selection.sources
         )
         witness = recorded_oi_synchronization(selection)
         initial, final = witness.start, witness.end
@@ -139,7 +178,7 @@ def calculate_oi_family(
         )
     else:
         synchronized = UnavailableConditionSynchronizedOpenInterest(status="UNAVAILABLE", reason="INCOMPLETE")
-    return BasicConditionDerivatives(
+    result = BasicConditionDerivatives(
         kind="BASIC",
         token_id=calculator.token_id,
         interval=interval,
@@ -149,3 +188,5 @@ def calculate_oi_family(
         liquidations=UnrequestedConditionLiquidations(status="NOT_REQUESTED"),
         incremental_volume=UnrequestedConditionIncrementalVolumes(status="NOT_REQUESTED"),
     )
+
+    return OIConditionCalculation(result=result, closing=closing)

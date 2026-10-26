@@ -249,6 +249,10 @@ def test_explicit_empty_oi_read_retains_unavailability_without_zero_endpoints() 
     assert len(result.per_venue) == 1
     assert result.per_venue[0].open_interest.status == "UNAVAILABLE"
     assert result.synchronized.status == "UNAVAILABLE"
+    del value["oi"]
+    with pytest.raises(ValueError, match="Requested OI snapshot requires captured"):
+        evaluate(value, cache, BaselineCaches.with_capacity(128))
+    assert len(cache) == 1
 
 
 @pytest.mark.parametrize("excluded", ["FUTURE_RECEIPT", "UNRESOLVED_EDGE", "UNREPORTED_RECEIPT"])
@@ -275,3 +279,14 @@ def test_freshness_uses_exact_selected_oi_evidence_with_excluded_duplicate(exclu
     selected = owned.result.synchronized
     assert isinstance(selected, ConditionSynchronizedOpenInterest)
     assert selected.values.oi_usd_end == 1
+
+
+def test_explicit_empty_subject_and_oi_reads_do_not_invent_a_venue_or_zero() -> None:
+    value = packet()
+    value["instruments"] = []
+    value["oi"] = []
+    cache: dict[ConditionTopCacheKey, OIConditionLookup] = {}
+    assert evaluate(value, cache, BaselineCaches.with_capacity(128)) == (False, False)
+    result = only_fact(cache).result
+    assert result.per_venue == ()
+    assert result.synchronized.status == "UNAVAILABLE"
