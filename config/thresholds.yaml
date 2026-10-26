@@ -44,7 +44,6 @@ call_expiry_days: 7
 # An idle agent session stays continuable from Telegram at least this long after its last message (operator ruling 2026-10-24).
 session_keep_days: 7
 update_rate_limit_s: 900
-card_max_chars: 5000
 heartbeat_utc: 08:00
 escalated_interval_s: 15
 escalation_expiry_s: 7200

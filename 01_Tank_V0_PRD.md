@@ -70,7 +70,7 @@ Tank V0 never places orders. All decisions stay with the operator.
 | Role | Channel |
 |---|---|
 | Operator (one person) | Telegram chat **"Tank Alerts"** — decision cards and their threaded updates. |
-| Operator as system owner | Telegram chat **"Tank Ops"** — the daily heartbeat and notices about failed deliveries and LLM spending. |
+| Operator as system owner | Telegram chat **"Tank Ops"** — the processing card of every new material, source entries Tank could not read, failed card deliveries and the daily heartbeat (§7.2). |
 | Reviewer (shadow mode, same person) | Review commands on the Tank machine (§7.4). |
 
 ---
@@ -164,7 +164,7 @@ Rules:
 
 | ID | Source | What Tank reads | Max delay |
 |---|---|---|---|
-| S29 | X | Posts, quotes and reposts of the 86 accounts in §4.3 | 1 min |
+| S29 | X | Own posts of the 86 accounts in §4.3, with the posts they quote, reply to or link, read from their public profiles through an Apify actor (D3); reposts and replies to other accounts are not read | 1 min |
 
 **News**
 
@@ -260,8 +260,8 @@ Each requirement describes behavior the operator can observe or a test can check
 | FR-D-01 | Tank MUST see every new item of every source in §4.2 within its max delay and MUST record when it first saw it. |
 | FR-D-02 | Once an event is graded MAJOR or higher (§6.3), Tank MUST check the official sources of the organizations involved every 15 s for 2 h; around a known milestone (vote end, effective date, launch time) it MUST check every 15 s from 5 min before until confirmed or 2 h after. |
 | FR-D-03 | A new market or a status change on any of the 6 venues MUST become an item within its max delay (S14). |
-| FR-D-04 | Tank MUST capture every post of the X accounts in §4.3 with author, text, time and the posts it quotes or reposts. |
-| FR-D-05 | Tank MUST use only free data sources. |
+| FR-D-04 | Tank MUST capture every own post of the X accounts in §4.3 that the account's public profile shows, with author, complete text, publication time and link, together with the posts it quotes, replies to or links, each with its author, link, time and text. Reposts and replies to other accounts are not captured: a signed-out profile does not show them. When more posts appear between two reads than a profile shows, Tank marks the gap and the source as degraded. |
+| FR-D-05 | Tank MUST use only free data sources; the one paid reader is the Apify actor that reads X (D3). |
 | FR-D-06 | News, GitHub commits and X posts of founders, C-level and the other accounts of §4.3 MUST go to the full analysis when they are about crypto — crypto assets, exchanges, regulation, or a project of the universe — and are kept with the reason for review otherwise. The other sources and the organization accounts always go to the full analysis. (How the check works: 03 §3.1.) |
 
 ### 6.2 Events
@@ -335,8 +335,8 @@ Each requirement describes behavior the operator can observe or a test can check
 | FR-A-02 | A perp-led move MUST lead to DON'T CHASE or WAIT; unconfirmed passive absorption to WATCH-TO-START or WAIT; a liquidity vacuum to DON'T CHASE, or WAIT when the thesis is weak; fragmentation and unknown to WAIT. A token already heavily priced gets DON'T CHASE when its thesis is strong. DON'T CHASE never means EXIT. |
 | FR-A-03 | Tank MUST send a new ordinary card only for MAJOR or STRUCTURAL SHOCK events of HIGH or MEDIUM certainty that are not STALE and not cancelled; a card about a MEDIUM fact MUST say in words what is verified and what is not. LOW-certainty facts never produce ordinary cards. FR-A-08 defines the separate MATERIAL preliminary exception. A STRUCTURAL SHOCK MUST produce a first ordinary card within 3 min of Tank learning about it, completed by a full card in the same thread; an earlier preliminary card does not satisfy this deadline. |
 | FR-A-04 | Updates MUST be replies in the card's thread, sent only when an action, the event grade, the stage or its verification, or a decisive condition changes, when the event is denied, or when Tank stops following a call, at most one per event per 15 min — START, EXIT and broken theses go immediately. LOW and MATERIAL events never produce ordinary cards. FR-A-08 permits preliminary publication for selected MATERIAL leads. STALE facts and repeated coverage without a meaningful change do not justify a new card. The preliminary-path gaps in enforcing these rules are recorded in 03 §11.6. |
-| FR-A-05 | A card MUST follow §7.1, be at most 5,000 characters and cover at most 3 tokens: the tradable primary, the least-repriced credible secondary, then the next most relevant secondary or loser; updates follow these tokens. |
-| FR-A-06 | Every card MUST follow the hard rules in §8: the agent writes its verdict and WHY lines by them, and the card template's own text never breaks them. Tank does not check the wording before sending; a broken rule is found in the daily review. |
+| FR-A-05 | A card MUST follow §7.1 and cover at most 3 tokens: the tradable primary, the least-repriced credible secondary, then the next most relevant secondary or loser; updates follow these tokens. |
+| FR-A-06 | Every card MUST follow the hard rules in §8. The card template's own text never breaks them, and the agent writes its verdict and WHY lines by them. The reviewer checks every card against them in the daily review (V0-H). |
 | FR-A-07 | Every card version MUST be kept unchanged with the evidence it was based on and its delivery status. |
 | FR-A-08 | The analyst MAY select a MATERIAL event for a PRELIMINARY card when there is a concrete sourced lead with a potentially substantial consequence. This is not automatic publication of every MATERIAL event. Preserve the actual event class, stage and certainty, including LOW certainty; state the finding, possible consequence and missing confirmation. Require current quoted evidence and refuse STALE, INVALIDATED, CLOSED or MERGED events, except one denial correction: when an official denial invalidates an event whose cards are only PRELIMINARY, Tank sends at once, in the same thread, a PRELIMINARY marked DENIED that states the denial. Reuse the PARTIAL presentation with a PRELIMINARY headline marker and the existing NOT VERIFIED section; no completed Market Truth, token action or outlook is required. Do not create a second event or a separate card thread. Once an ordinary card exists, use the ordinary update path instead. |
 | FR-A-09 | The analyst MAY schedule one future review of a concrete unresolved question using the existing event-monitoring mechanism. The review needs a question, due time and expiry; it must not invent an announced product milestone. It fires once, may be cancelled, and returns to the event's analyst without requiring a token or market data. Further reviews require explicit new scheduling. Original discovery/publication times remain unchanged. |
@@ -359,7 +359,7 @@ Each requirement describes behavior the operator can observe or a test can check
 | ID | Requirement |
 |---|---|
 | FR-P-01 | Tank MUST notify "Tank Ops" when a card cannot be delivered (§7.2). |
-| FR-P-02 | Tank MUST send a daily heartbeat to "Tank Ops" at 08:00 UTC: cards sent in 24 h, tokens under active analysis, analysis backlog, LLM spending. |
+| FR-P-02 | Tank MUST send a daily heartbeat to "Tank Ops" at 08:00 UTC: cards delivered in the last 24 h, tokens under close market watch, the analysis backlog (queued and running) and how long the oldest queued work has waited, LLM spending since 00:00 UTC (calls without a reported cost counted separately, never as zero), and the number of processing cards that could not be delivered or updated. |
 | FR-P-03 | A reply in "Tank Alerts" or "Tank Ops" to a Tank message about an event or a material that an agent handled MUST continue that agent's session, with all its messages, files and history; the agent's answer MUST come back as a reply in the same chat. When no session can be continued (the material never reached an agent, or the session is closed), Tank MUST reply only with the reason; Tank never answers in the agent's place. |
 | FR-P-04 | An agent session MUST stay open for at least 7 days after its last message, and longer while something keeps it alive: an open call, an armed watch condition, unfinished work, a delivered card or a reader's question. |
 
@@ -371,7 +371,7 @@ Each requirement describes behavior the operator can observe or a test can check
 
 One Telegram thread per event; ordinary full cards cover up to 3 token blocks. A PRELIMINARY version reuses the PARTIAL layout: the same score table, stage, certainty, freshness, VERIFIED / NOT VERIFIED and WHY IT MATTERS blocks, with a PRELIMINARY headline marker and explicit missing confirmation in NOT VERIFIED. It has no market, outlook or action blocks. The ordinary template below remains unchanged.
 
-Telegram uses a native Rich Message table for the seven scores: full dimension name, score out of 10 or Not assessed, and the saved explanation for every row. The renderer prints the existing assessment; it does not ask the agent to reassess or translate it. The compact Scores line remains only in the internal legacy text representation. The 5,000-character cap includes the rendered table.
+Telegram uses a native Rich Message table for the seven scores: full dimension name, score out of 10 or Not assessed, and the saved explanation for every row. The renderer prints the existing assessment; it does not ask the agent to reassess or translate it. The compact Scores line remains only in the internal legacy text representation.
 
 ```
 <STRUCTURAL SHOCK | MAJOR> (<matched criterion>) — <one neutral sentence>
@@ -404,12 +404,16 @@ WHAT TO DO: DON'T CHASE
 
 ### 7.2 "Tank Ops" notices
 
-| Notice | When |
-|---|---|
-| DELIVERY FAILED | A card could not be delivered after 5 attempts |
-| HEARTBEAT | Daily at 08:00 UTC |
-| ITEM PROGRESS | Every newly ingested unique material, including Jev/agent rejections, with processing stage and outcome; subsequent stage changes are reported in Ops independently of Alerts publication |
-| ENTRY ERRORS | A source returned an entry Tank could not turn into a material (missing link, title or date, malformed document, failed X account); each broken entry once, grouped per source poll |
+"Tank Ops" receives exactly these four notices:
+
+| Notice | When | What it contains |
+|---|---|---|
+| ITEM PROGRESS | Every new unique material, whatever happens to it | One card per material, sent once and then edited in place as the material moves on: the material and its source link, the filter result, what the agent decided (no event, the event and its grade), whether a card went to "Tank Alerts" and, if not, why. A rejection by the filter or the agent, an error and an expired step are shown on the same card. It changes regardless of whether anything is published in "Tank Alerts". |
+| ENTRY ERRORS | A source poll returned entries Tank could not turn into a material: no identifier or link, an entry that does not match the source's format, a damaged feed document, a tracked Snapshot proposal missing from the answer, an X profile that could not be read | One message per poll with all its new broken entries; each broken entry is reported only once, however often the source repeats it. For an X profile that failed every attempt, the message lists the attempts and the HTTP request, and the HTTP responses (status, headers, body) are attached as documents in reply to it. |
+| DELIVERY FAILED | A card or update for "Tank Alerts" was not delivered after 5 attempts | The card and its version; the material's processing card shows the same failure. A notice that itself fails to reach "Tank Ops" creates no further notice. |
+| HEARTBEAT | Daily at 08:00 UTC | The figures of FR-P-02. |
+
+A reply in "Tank Ops" to the card of a material reaches the agent that handled it (FR-P-03); a reply to a notice that concerns no material, such as the heartbeat, gets a short explanation.
 
 ### 7.3 Evidence
 
@@ -439,7 +443,7 @@ The reviewer can: list cards and updates for a period; open a card with its vers
 14. The scout never changes what Tank tells the operator.
 15. Every card is timestamped, unchanged after sending, and reproducible from its evidence.
 16. A token is identified by its project, never by ticker alone.
-18. An unverified fact is never presented as verified.
+17. An unverified fact is never presented as verified.
 
 ---
 
@@ -450,7 +454,7 @@ The reviewer can: list cards and updates for a period; open a card with its vers
 | Availability | Tank runs continuously, ≥ 99% of each month; nothing it has read is lost on restart. |
 | Speed | New item → event within 7 min (95% of items); STRUCTURAL SHOCK first card ≤ 3 min after Tank learns of it; MAJOR full card ≤ 8 min; update ≤ 60 s after a decisive condition fires (after the event's current analysis step, if one is running); delivery ≤ 10 s. When analysis falls behind, official sources and work on MAJOR+ events go first; news, GitHub commits and posts of the other X accounts wait. |
 | Time | All times in UTC. |
-| Cost | Data sources free; the analysis model runs on the operator's ChatGPT subscription; web search (DuckDuckGo, D9) is free; the only other paid call, the filter model, costs about $0.07 a day (03 §3.2). Token and spending limits are out of V0 scope. |
+| Cost | Data sources free, except the Apify runs that read X (D3, billed per run); the analysis model runs on the operator's ChatGPT subscription; web search (DuckDuckGo, D9) is free; the only other paid call is the filter and routing model, whose provider reports no cost, so Tank records its usage with the cost unknown (03 §3.1). Token and spending limits are out of V0 scope. |
 | Safety | Tank only reads data; it holds no exchange credentials and cannot trade or move funds. |
 | History kept | Events, cards, delivery records and evidence: permanently. Detailed market data around major events: permanently. Other detailed market data: 30 days. Order-book summaries: 72 hours. Minute-level market history of the universe: 90 days. |
 | Auditability | Cards, delivery records, evidence, state changes, reaction records and reviews are never edited, only appended. |
@@ -468,7 +472,7 @@ The reviewer can: list cards and updates for a period; open a card with its vers
 | V0-D Beneficiaries | The CoW case names CoW as a secondary beneficiary on liquidity/execution; the World and Ondo cases show capture no stronger than indirect; the Quant case names credible secondaries or explains per layer why none qualifies. |
 | V0-E Market truth | The formula checks of 03 §11.4 pass; the QNT 26 Sep window is recognized as price markup without new positions; the ONDO 24 Sep window as new positions and never spot-led; the WLD 16 Oct case reproduces: spot selling in 1 h and 4 h with buy share < 50%, sell side carrying most volume with Kraken as a small buying venue, open positions +8.18% ± 0.5 pp in 4 h on Binance + Bybit, perp-led with absorption unresolved. |
 | V0-F Market truth extended | Depth and price impact on ≥ 3 venues for ≥ 10 tokens; bid refill and price-per-flow measured on the first three selling bursts recorded for universe tokens; venue lead-lag on all major test cases; supply context shown or "n/a" with reason. |
-| V0-G End to end | A live event goes from source to Telegram card with no manual step, within §9 speed limits, with the hard-rule check active and the delivery recorded. |
+| V0-G End to end | A live event goes from source to Telegram card with no manual step, within §9 speed limits, and the delivery is recorded. |
 | V0-H Shadow operation | 14 days continuous; every card frozen and reviewed daily; weekly miss review; S1–S9 measured. |
 
 Shadow-mode success criteria (V0-H):
@@ -498,8 +502,8 @@ Social/narrative scoring (virality, community spread); persistent narrative trac
 | # | Decision |
 |---|---|
 | D1 | Alerts go to Telegram: "Tank Alerts" for cards, "Tank Ops" for operations. |
-| D2 | Only free data sources are used. |
-| D3 | X is read through the operator's own X account (a private list), not a paid API; the terms-of-service risk is accepted. |
+| D2 | Only free data sources are used; X is read through a paid Apify actor (D3). |
+| D3 | X is read through an Apify actor that opens the accounts' public profile pages signed out: no X account, session or paid X API. Apify bills each run. The terms-of-service risk of reading X's public web pages is accepted. |
 | D4 | Actions are for long positions only. |
 | D5 | The universe is the 22 tokens of §4.1; it changes only by explicit decision. |
 | D6 | Rule settings in 03 §12 change only at a checkpoint, as a recorded configuration change, and are re-tested on cases that did not motivate the change. |

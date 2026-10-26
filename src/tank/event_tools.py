@@ -2662,7 +2662,7 @@ class EventToolService:
             preliminary_gate,
             publication_immediate,
         )
-        from tank.telegram_rich import CARD_TEXT_LIMIT, card_rich_message
+        from tank.telegram_rich import card_rich_message
 
         eid = a["event_id"]
         event = await self.require("evt.events", eid)
@@ -3042,11 +3042,7 @@ class EventToolService:
             why=why,
             unconfirmed=a.get("unconfirmed", ""),
         )
-        rich_message = card_rich_message(
-            text,
-            assessment,
-            max_chars=event["thresholds"].get("card_max_chars", CARD_TEXT_LIMIT),
-        )
+        rich_message = card_rich_message(text, assessment)
         if (
             previous
             and last_sent

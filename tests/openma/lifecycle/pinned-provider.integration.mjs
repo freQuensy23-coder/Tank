@@ -33,7 +33,7 @@ function native(disk) {
       assert.equal(invalid,false);assert.equal(disk.running,true);
       if(command==='python3') {
         const python=process.env.TANK_FILE_IO_TEST_PYTHON;
-        assert.ok(python,'explicit Python3.12 test interpreter required');
+        assert.ok(python,'explicit Python3.13 test interpreter required');
         assert.equal(args[0],'-c');assert.equal(args[1],GUEST_FILE_WORKER);
         assert.ok(['read','write'].includes(args[2]));
         assert.equal(args.length,args[2]==='write'?5:4);
