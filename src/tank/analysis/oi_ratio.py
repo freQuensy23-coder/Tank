@@ -35,7 +35,19 @@ class _KnownChange(DomainModel):
     beyond: bool | None
 
 
-def _fraction_change(points: OiEndpoints) -> Fraction:
+class OiFractionNotEstimable(ValueError):
+    """Exact baseline arithmetic would expand an unrepresentable magnitude gap."""
+
+
+def exact_oi_endpoint_fraction(points: OiEndpoints) -> Fraction:
+    """Normalize shared Decimal scale before bounded exact endpoint arithmetic."""
+    points = OiEndpoints.model_validate(points)
+    if points.start == 0:
+        raise ValueError("OI endpoint fractions require a positive baseline")
+    if points.end == 0:
+        return Fraction(-1)
+    if abs(points.end.adjusted() - points.start.adjusted()) > _FLOAT64_EXTREME_EXPONENT_GAP:
+        raise OiFractionNotEstimable("OI endpoint fraction magnitude gap is not estimable")
     initial, final = points.start.as_tuple(), points.end.as_tuple()
     if not isinstance(initial.exponent, int) or not isinstance(final.exponent, int):
         raise ValueError("OI endpoint changes require finite quantities")
@@ -83,7 +95,7 @@ def _known_change(points: OiEndpoints, normal: FloatRange) -> _KnownChange:
             position=position,
             beyond=None if position is None else position != "WITHIN",
         )
-    ratio = Fraction(-1) if points.end == 0 else _fraction_change(points)
+    ratio = exact_oi_endpoint_fraction(points)
     value: float | None
     reason: NativeOiChangeFailure | None
     try:
