@@ -6,8 +6,10 @@ through the repository methods; every collection of MARKET_TABLES is served here
 ClickHouse client keeps them only in memory (tests and replay).
 
 Tables are ReplacingMergeTree on the collection's identity, the newest `_version` wins, and
-every read selects FINAL, so a row reads as its last write. Numbers are stored as their
-exact decimal text (some carry 100 digits), timestamps as DateTime64(6, UTC), JSON as text.
+every read of row values selects FINAL, so a row reads as its last write. FINAL disables the
+skip indexes, so lookups by storage_key or recorded_at first bound the instruments and times
+without FINAL (_narrow). Numbers are stored as their exact decimal text (some carry 100
+digits), timestamps as DateTime64(6, UTC), JSON as text.
 """
 
 import asyncio
@@ -16,11 +18,11 @@ import time
 from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Literal, Protocol
+from typing import Literal, Protocol, Self
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
-from pydantic import Field, JsonValue
+from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.json import decode_json, encode_json
@@ -402,9 +404,47 @@ async def _select(
     )
 
 
+class MarketPredicateSpan(DomainModel):
+    instrument_id: str = Field(min_length=1, pattern=r"\S")
+    lo: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}")
+    hi: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}")
+
+    @model_validator(mode="after")
+    def ordered_utc_bounds(self) -> Self:
+        if parse_utc_time(self.lo) > parse_utc_time(self.hi):
+            raise ValueError("Market predicate bounds are reversed")
+        return self
+
+
+async def _narrow(ch: ClickHouse, collection: str, q: Query, time_field: str) -> bool:
+    """Read stored-version metadata to bound a subsequent FINAL value read."""
+    _table(collection)
+    time_field = _column(collection, time_field)
+    if MARKET_COLUMNS[collection][time_field] != "timestamptz":
+        raise ValueError("Market predicate bounds require a timestamp column")
+    found = await ch.rows(
+        f"SELECT instrument_id, min(`{time_field}`) AS lo, max(`{time_field}`) AS hi "
+        f"FROM {collection} WHERE {q.predicate()} GROUP BY instrument_id ORDER BY instrument_id",
+        q.params,
+    )
+    if not found:
+        return False
+    bounds = [MarketPredicateSpan.model_validate(row) for row in found]
+    spans = [
+        f"(instrument_id = {q.param(row.instrument_id, 'String')}"
+        f" AND `{time_field}` >= {q.param(parse_utc_time(row.lo), DT)}"
+        f" AND `{time_field}` <= {q.param(parse_utc_time(row.hi), DT)})"
+        for row in bounds
+    ]
+    q.where("(" + " OR ".join(spans) + ")")
+    return True
+
+
 async def get(ch: ClickHouse, collection: str, key: str) -> Record | None:
     q = Query()
     q.where(f"storage_key = {q.param(str(key), 'String')}")
+    if not await _narrow(ch, collection, q, MARKET_TABLES[collection]):
+        return None
     rows = await _select(ch, collection, q, "storage_key", "LIMIT 1")
     return _record(collection, rows[0]) if rows else None
 
@@ -516,6 +556,8 @@ async def late_page(
         q.where(f"`{arrival_field}` < {q.param(end, DT)}")
     if after is not None:
         _after(q, (f"`{arrival_field}`", after[0], DT), ("storage_key", str(after[1]), "String"))
+    if not await _narrow(ch, collection, q, MARKET_TABLES[collection]):
+        return []
     rows = await _select(ch, collection, q, f"`{arrival_field}`, storage_key", f"LIMIT {int(limit)}")
     records = await _decode(collection, rows)
     return [
@@ -778,11 +820,12 @@ def _day(text: str) -> datetime:
 async def market_kline_days_recorded_since(
     ch: ClickHouse, since: TimeInput, end: TimeInput
 ) -> set[tuple[str, datetime]]:
+    """Read version metadata; an obsolete version can only invalidate an extra cached day."""
     q = Query()
     q.where(f"recorded_at >= {q.param(since, DT)}")
     q.where(f"open_time < {q.param(end, DT)}")
     rows = await ch.rows(
-        f"SELECT DISTINCT instrument_id, toString(toDate(open_time)) AS day FROM {_table('mkt.klines_1m')} "
+        "SELECT DISTINCT instrument_id, toString(toDate(open_time)) AS day FROM mkt.klines_1m "
         f"WHERE {q.predicate()}",
         q.params,
     )

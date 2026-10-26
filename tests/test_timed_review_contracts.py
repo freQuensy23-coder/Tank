@@ -197,3 +197,17 @@ def test_timed_expression_cannot_hide_in_a_metric_group() -> None:
     with pytest.raises(ValidationError):
         parse_timed_review_expression({**expression, "metric": "dc.class"})
     assert parse_timed_review_expression({"metric": "dc.class"}) is None
+
+
+def test_wholly_absent_lifecycle_clock_is_not_a_missing_occurrence_timestamp() -> None:
+    review = armed_review()
+    assert review.last_evaluated_at is None and review.fired_at is None and review.cancelled_at is None
+    assert parse_watch_condition(encode_watch_condition(review)) == review
+    with pytest.raises(ValidationError):
+        TimedReviewCondition.model_validate(review.model_copy(update={"last_evaluated_at_prec": "EXACT"}))
+    with pytest.raises(ValidationError):
+        TimedReviewCondition.model_validate(
+            review.model_copy(update={"created_at_prec": None, "created_at_prec_reason": None})
+        )
+    with pytest.raises(ValidationError):
+        TimedReviewCondition.model_validate(review.model_copy(update={"fired_at": review.expr.review_at}))
