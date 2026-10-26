@@ -4,10 +4,10 @@ import pytest
 from pydantic import JsonValue, ValidationError
 
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
+from tank.agents.message_dispatch import MessageDispatchRequest
 from tank.analysis.watch_contracts import TimedReviewCondition, TimedReviewExpression, WatchCondition
 from tank.runtime_contracts import ConditionFiredMessage, TimedReviewFiredMessage, parse_agent_message
 from tank.storage import MemoryRepository
-from tank.util import jsonable
 
 
 class ReviewContextConfiguration:
@@ -182,7 +182,9 @@ async def test_context_three_projects_saved_review_question_and_schedule_without
         ReviewContextConfiguration(),
         {"session_id": "session", "event_id": "event", "status": "OPEN"},
     )
-    public = await context.message(jsonable(message), None)
+    wire = message.model_dump(mode="json", by_alias=True)
+    assert isinstance(wire, dict)
+    public = await context.message(MessageDispatchRequest.from_wire(wire), None)
     body = public["message"]
     assert isinstance(body, dict)
     assert body["review_question"] == message.review_question
