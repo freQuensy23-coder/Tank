@@ -189,6 +189,10 @@ def platform_plan(lock: Lock, roots: tuple[RootBinding, ...], platform: Platform
                     raise ValueError("Conflicting target in one snapshot context")
                 selected[name] = edge
                 pending.append((target, policy))
+    for key, unavailable in omitted.items():
+        for name, item in unavailable.items():
+            if item.reason == "UNREQUESTED_OPTIONAL_TEST_FEATURE" and item.target in edges:
+                edges[key][name] = Edge(name=name, target=item.target, kind="optionalDependencies")
     records = tuple(
         Snapshot(
             key=key,

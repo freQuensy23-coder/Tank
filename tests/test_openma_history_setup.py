@@ -69,6 +69,10 @@ def test_both_frozen_platform_plans_preserve_actual_roots_and_native_variants() 
         snapshots = {snapshot.key: snapshot for snapshot in plan.snapshots}
         assert len({snapshot.context for snapshot in plan.snapshots}) == len(snapshots)
         assert all(edge.target in snapshots for snapshot in snapshots.values() for edge in snapshot.edges)
+        mocker = next(snapshot for snapshot in plan.snapshots if snapshot.archive == "@vitest/mocker@4.1.4")
+        vite = next(edge for edge in mocker.edges if edge.name == "vite")
+        assert vite.target in snapshots
+        assert snapshots[vite.target].archive == "vite@7.3.6"
         support = next(link for link in plan.roots if link.name == "undici-types")
         assert support.target == "undici-types@8.9.0"
         assert support.reason == "DECLARED_ROOT_TYPE_SUPPORT"

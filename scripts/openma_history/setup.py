@@ -15,6 +15,7 @@ import urllib.request
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
+from typing import Literal
 
 from pydantic import Field
 
@@ -29,6 +30,11 @@ MARKER = ".tank-owned-setup.json"
 class PackageIdentity(Projection):
     name: str = Field(min_length=1)
     version: str = Field(min_length=1)
+
+
+class SetupFailure(DomainModel):
+    status: Literal["SETUP_FAILED"]
+    reason: Literal["Frozen public-history setup could not complete"]
 
 
 class SetupReport(DomainModel):
@@ -145,6 +151,8 @@ def extract_archive(raw: bytes, archive: Archive, destination: Path) -> None:
             if not (member.isfile() or member.isdir() or member.issym() or member.islnk()):
                 raise ValueError("Unsupported archive member kind")
             member.name = PurePosixPath(*parts[1:]).as_posix()
+            if member.islnk() and not PurePosixPath(member.linkname).parts:
+                raise ValueError("Archive hardlink target is empty")
             if member.islnk() and PurePosixPath(member.linkname).parts[0] == prefix:
                 member.linkname = PurePosixPath(*PurePosixPath(member.linkname).parts[1:]).as_posix()
             package.extract(member, destination, filter="data")
@@ -241,7 +249,12 @@ def main() -> None:
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--report", type=Path, required=True)
     arguments = parser.parse_args(namespace=Arguments())
-    report = materialize(ROOT, arguments.cache, offline=arguments.offline)
+    try:
+        report = materialize(ROOT, arguments.cache, offline=arguments.offline)
+    except (OSError, ValueError, tarfile.TarError):
+        failure = SetupFailure(status="SETUP_FAILED", reason="Frozen public-history setup could not complete")
+        arguments.report.write_text(failure.model_dump_json() + "\n")
+        raise
     arguments.report.write_text(report.model_dump_json(indent=2) + "\n")
     print(report.model_dump_json())
 

@@ -377,11 +377,12 @@ jobs:
           npm ci --prefix scripts/typescript --ignore-scripts --no-audit --no-fund
       - name: Verify and materialize frozen public history dependencies
         run: |
+          set -o pipefail
           mkdir -p .test-results
           uv run --frozen --extra dev python -m scripts.openma_history.manifest --check
           uv run --frozen --extra dev python -m scripts.openma_history.setup \
             --cache "$RUNNER_TEMP/tank-openma-history-archives" \
-            --report .test-results/openma-history-setup.json
+            --report .test-results/openma-history-setup.json 2>&1 | tee .test-results/openma-history-setup.log
       - name: Full public strict, unchanged upstream module and actual PostgreSQL
         run: |
           set -o pipefail
@@ -398,5 +399,6 @@ jobs:
           path: |
             .test-results/openma-history.log
             .test-results/openma-history-setup.json
+            .test-results/openma-history-setup.log
           include-hidden-files: true
           if-no-files-found: error

@@ -5678,6 +5678,11 @@
               "kind": "dependencies",
               "name": "magic-string",
               "target": "magic-string@0.30.21"
+            },
+            {
+              "kind": "optionalDependencies",
+              "name": "vite",
+              "target": "vite@7.3.6(@types/node@26.6.3)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.1)"
             }
           ],
           "key": "@vitest/mocker@4.1.4(msw@2.14.6(@types/node@26.6.3)(typescript@7.0.2))(vite@7.3.6(@types/node@26.6.3)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.1))",
@@ -5686,11 +5691,6 @@
               "name": "msw",
               "reason": "UNREQUESTED_OPTIONAL_TEST_FEATURE",
               "target": "msw@2.14.6(@types/node@26.6.3)(typescript@7.0.2)"
-            },
-            {
-              "name": "vite",
-              "reason": "UNREQUESTED_OPTIONAL_TEST_FEATURE",
-              "target": "vite@7.3.6(@types/node@26.6.3)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.1)"
             }
           ]
         },
@@ -7522,28 +7522,28 @@
         {
           "archive": "fdir@6.5.0",
           "context": "e014d44592d8d2ee5006da35980a30e524ad27c2fe3756aae1b42fa841cceba7",
-          "edges": [],
-          "key": "fdir@6.5.0(picomatch@4.0.5)",
-          "omitted": [
+          "edges": [
             {
+              "kind": "optionalDependencies",
               "name": "picomatch",
-              "reason": "UNREQUESTED_OPTIONAL_TEST_FEATURE",
               "target": "picomatch@4.0.5"
             }
-          ]
+          ],
+          "key": "fdir@6.5.0(picomatch@4.0.5)",
+          "omitted": []
         },
         {
           "archive": "fdir@6.5.0",
           "context": "0e611784cb76df856bb95f815bdada228885469d9b8370cf306d43e12f6e1672",
-          "edges": [],
-          "key": "fdir@6.5.0(picomatch@4.0.7)",
-          "omitted": [
+          "edges": [
             {
+              "kind": "optionalDependencies",
               "name": "picomatch",
-              "reason": "UNREQUESTED_OPTIONAL_TEST_FEATURE",
               "target": "picomatch@4.0.7"
             }
-          ]
+          ],
+          "key": "fdir@6.5.0(picomatch@4.0.7)",
+          "omitted": []
         },
         {
           "archive": "fetch-blob@3.2.0",
@@ -11929,6 +11929,11 @@
           "context": "65aa03618e6c6559d933150016f5ff99dc8cc33924d299d82f359a2c49af9e6b",
           "edges": [
             {
+              "kind": "optionalDependencies",
+              "name": "@types/node",
+              "target": "@types/node@26.6.3"
+            },
+            {
               "kind": "dependencies",
               "name": "esbuild",
               "target": "esbuild@0.28.1"
@@ -11962,11 +11967,6 @@
           "key": "vite@7.3.6(@types/node@26.6.3)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.1)",
           "omitted": [
             {
-              "name": "@types/node",
-              "reason": "UNREQUESTED_OPTIONAL_TEST_FEATURE",
-              "target": "@types/node@26.6.3"
-            },
-            {
               "name": "fsevents",
               "reason": "UNSUPPORTED_PLATFORM",
               "target": "fsevents@2.3.3"
@@ -11997,6 +11997,11 @@
           "archive": "vitest@4.1.4",
           "context": "c955165d173bc91eddc0b373c7e2094a015052c749f932f62acccaa571d54d3a",
           "edges": [
+            {
+              "kind": "optionalDependencies",
+              "name": "@types/node",
+              "target": "@types/node@26.6.3"
+            },
             {
               "kind": "dependencies",
               "name": "@vitest/expect",
@@ -12104,11 +12109,6 @@
               "name": "@opentelemetry/api",
               "reason": "UNREQUESTED_OPTIONAL_TEST_FEATURE",
               "target": "@opentelemetry/api@1.9.0"
-            },
-            {
-              "name": "@types/node",
-              "reason": "UNREQUESTED_OPTIONAL_TEST_FEATURE",
-              "target": "@types/node@26.6.3"
             },
             {
               "name": "@vitest/coverage-v8",
@@ -14898,6 +14898,11 @@
               "kind": "dependencies",
               "name": "magic-string",
               "target": "magic-string@0.30.21"
+            },
+            {
+              "kind": "optionalDependencies",
+              "name": "vite",
+              "target": "vite@7.3.6(@types/node@26.6.3)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.1)"
             }
           ],
           "key": "@vitest/mocker@4.1.4(msw@2.14.6(@types/node@26.6.3)(typescript@7.0.2))(vite@7.3.6(@types/node@26.6.3)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.1))",
@@ -14906,11 +14911,6 @@
               "name": "msw",
               "reason": "UNREQUESTED_OPTIONAL_TEST_FEATURE",
               "target": "msw@2.14.6(@types/node@26.6.3)(typescript@7.0.2)"
-            },
-            {
-              "name": "vite",
-              "reason": "UNREQUESTED_OPTIONAL_TEST_FEATURE",
-              "target": "vite@7.3.6(@types/node@26.6.3)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.1)"
             }
           ]
         },
@@ -16742,28 +16742,28 @@
         {
           "archive": "fdir@6.5.0",
           "context": "e014d44592d8d2ee5006da35980a30e524ad27c2fe3756aae1b42fa841cceba7",
-          "edges": [],
-          "key": "fdir@6.5.0(picomatch@4.0.5)",
-          "omitted": [
+          "edges": [
             {
+              "kind": "optionalDependencies",
               "name": "picomatch",
-              "reason": "UNREQUESTED_OPTIONAL_TEST_FEATURE",
               "target": "picomatch@4.0.5"
             }
-          ]
+          ],
+          "key": "fdir@6.5.0(picomatch@4.0.5)",
+          "omitted": []
         },
         {
           "archive": "fdir@6.5.0",
           "context": "0e611784cb76df856bb95f815bdada228885469d9b8370cf306d43e12f6e1672",
-          "edges": [],
-          "key": "fdir@6.5.0(picomatch@4.0.7)",
-          "omitted": [
+          "edges": [
             {
+              "kind": "optionalDependencies",
               "name": "picomatch",
-              "reason": "UNREQUESTED_OPTIONAL_TEST_FEATURE",
               "target": "picomatch@4.0.7"
             }
-          ]
+          ],
+          "key": "fdir@6.5.0(picomatch@4.0.7)",
+          "omitted": []
         },
         {
           "archive": "fetch-blob@3.2.0",
@@ -21149,6 +21149,11 @@
           "context": "65aa03618e6c6559d933150016f5ff99dc8cc33924d299d82f359a2c49af9e6b",
           "edges": [
             {
+              "kind": "optionalDependencies",
+              "name": "@types/node",
+              "target": "@types/node@26.6.3"
+            },
+            {
               "kind": "dependencies",
               "name": "esbuild",
               "target": "esbuild@0.28.1"
@@ -21182,11 +21187,6 @@
           "key": "vite@7.3.6(@types/node@26.6.3)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.1)",
           "omitted": [
             {
-              "name": "@types/node",
-              "reason": "UNREQUESTED_OPTIONAL_TEST_FEATURE",
-              "target": "@types/node@26.6.3"
-            },
-            {
               "name": "fsevents",
               "reason": "UNSUPPORTED_PLATFORM",
               "target": "fsevents@2.3.3"
@@ -21217,6 +21217,11 @@
           "archive": "vitest@4.1.4",
           "context": "c955165d173bc91eddc0b373c7e2094a015052c749f932f62acccaa571d54d3a",
           "edges": [
+            {
+              "kind": "optionalDependencies",
+              "name": "@types/node",
+              "target": "@types/node@26.6.3"
+            },
             {
               "kind": "dependencies",
               "name": "@vitest/expect",
@@ -21324,11 +21329,6 @@
               "name": "@opentelemetry/api",
               "reason": "UNREQUESTED_OPTIONAL_TEST_FEATURE",
               "target": "@opentelemetry/api@1.9.0"
-            },
-            {
-              "name": "@types/node",
-              "reason": "UNREQUESTED_OPTIONAL_TEST_FEATURE",
-              "target": "@types/node@26.6.3"
             },
             {
               "name": "@vitest/coverage-v8",
