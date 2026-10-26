@@ -2633,6 +2633,122 @@
         "test_reported_delay_and_delivery_zero_are_not_treated_as_absence",
         "test_invalid_attempt_cannot_acquire_a_default_counter"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/question_retirement.py",
+          "symbol": "QueuedQuestionSession",
+          "line": 21
+        },
+        {
+          "path": "src/tank/contracts/question_retirement.py",
+          "symbol": "ActiveQuestionIntent",
+          "line": 26
+        },
+        {
+          "path": "src/tank/contracts/question_retirement.py",
+          "symbol": "UnknownQuestionAcceptance",
+          "line": 30
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "reconcile_answers",
+          "line": 1266
+        }
+      ],
+      "kind": "actual unreported session/input bindings",
+      "reason": "Queued questions can retain an unreported session binding; they never acquire a guessed native session and do not block independently bound questions. A missing active pointer means no recorded active intent. PENDING/RUNNING/null turn phase without retained initial acceptance is explicit unknown state and produces a named host refusal before answer/native effects. HTTP/validation/missing-record failures during answer reconciliation defer settlement and write no completion marker; malformed discovery bindings are not converted into valid state.",
+      "validation": [
+        "test_unbound_queued_question_cannot_invent_a_session_or_block_a_bound_answer",
+        "test_unproved_acceptance_does_not_become_an_unsent_intent"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/agents/outbound_inputs.py",
+          "symbol": "retained_outbound_acceptance",
+          "line": 172
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "abandon_question",
+          "line": 1192
+        }
+      ],
+      "kind": "phase-specific retained native acceptance and local retirement index",
+      "reason": "An observed ACCEPTED/UNREPORTED/EMPTY receipt, actual sent_at, or retained native input identity proves prior acceptance without consuming an unused historical body/retry budget. An unreported legacy receipt/native ID/clock remains explicit, never fabricated. No witness returns None, which does not mean unsent: unknown phases refuse. The retired_message_ids default empty list means no IDs were recorded in that local controller index; new entries are only actual observed owners. It never supplies retry/sequence provenance. Session/journal dictionaries are sparse persistence mutation boundaries protected by the existing controller send lock then actual session lock; already answered both-ID questions reconcile idempotent delivery without reconstructing unused input lineage. No cross-controller POST safety claim is made.",
+      "validation": [
+        "test_initial_acceptance_without_reported_id_is_preserved_as_accepted",
+        "test_accepted_question_retirement_does_not_require_unused_historical_body_or_budget",
+        "test_actual_postgres_retirement_preserves_native_acceptance_through_owned_post_races"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/runtime_contracts.py",
+          "symbol": "read_failure_marker",
+          "line": 348
+        },
+        {
+          "path": "src/tank/runtime_contracts.py",
+          "symbol": "NoFailureProgress",
+          "line": 290
+        },
+        {
+          "path": "src/tank/runtime_contracts.py",
+          "symbol": "NoTerminalDelivery",
+          "line": 294
+        },
+        {
+          "path": "src/tank/runtime_contracts.py",
+          "symbol": "recorded_failure_reason",
+          "line": 456
+        }
+      ],
+      "kind": "requested failure phases and genuinely unreported clocks/error text",
+      "reason": "Wholly absent/all-null reconciliation clocks are unreported; explicit unavailable timestamps retain their reason and value=None. Consumers check actual marker.value before treating them as occurred. Disabled/not-applicable progress and unrequested/not-applicable notifications are closed named phases, never missing required payload fallbacks. A genuinely null stored last_error uses an explicitly tagged actual job-state reason; supplied and stored reasons remain distinct, and blank supplied errors reject. Raw job payload dictionaries are decoded only at the queue boundary into strict concrete notifications. Internal by_name revalidation applies only after wire admission, preserving strict public _depends_on aliases.",
+      "validation": [
+        "test_explicit_unknown_failure_clock_preserves_reason_without_claiming_occurrence",
+        "test_pending_unknown_clock_remains_eligible_without_a_handled_marker",
+        "test_terminal_failure_keeps_wire_alias_admission_and_revalidates_typed_payload",
+        "test_terminal_delivery_requires_the_actual_integer_attempt_before_any_effect"
+      ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/question_retirement.py",
+          "symbol": "QuestionFailureRefusalLedger",
+          "line": 82
+        },
+        {
+          "path": "src/tank/runtime_failure_repository.py",
+          "symbol": "read_question_refusal_ledger",
+          "line": 55
+        },
+        {
+          "path": "src/tank/runtime_failure_repository.py",
+          "symbol": "RepositoryRuntimeFailures",
+          "line": 84
+        },
+        {
+          "path": "src/tank/runtime.py",
+          "symbol": "reconcile_delivery_failures",
+          "line": 385
+        }
+      ],
+      "kind": "dynamic request-digest index and exact sparse queue adapter",
+      "reason": "The ledger is an associative index keyed by actual request SHA256 with strict typed receipt values. A missing host-refusal field supplies no recorded entries for the first actual append; explicit null/malformed keys/scope reject and no native historical refusal is inferred. Raw queue documents remain only at the adapter for exact guarded sparse writes, preserving unrelated fields and prior controller/clock receipts. Missing/changed rows skip effects; an absent reconciliation attempt clock means this controller has not attempted it yet. Required receipt clocks and captured controller identities have no defaults. Only explicit transient driver/connection errors become sanitized unavailable outcomes; permanent driver rejection/global malformed state never becomes handled. Unknown retirement writes a host receipt before any handled marker, preserves native facts, and does not starve unrelated worker jobs.",
+      "validation": [
+        "test_receipt_write_failure_does_not_starve_fresh_worker_work_or_invent_a_question_answer",
+        "test_actual_postgres_worker_refusal_is_durable_and_preserves_fresh_work_after_persistence_failure",
+        "test_changed_job_target_cannot_execute_or_mark_an_older_failure_command",
+        "test_invalid_persistence_is_not_relabelled_as_retryable_availability_or_handled",
+        "test_actual_missing_native_observation_reconciles_changed_facts_without_rewriting_past_refusal"
+      ]
     }
   ]
 }

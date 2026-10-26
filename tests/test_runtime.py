@@ -10,6 +10,7 @@ import pytest
 from agent_source_fixtures import declared_versions_fixture
 from pydantic import JsonValue
 from pydantic_settings import SettingsConfigDict
+from runtime_failure_fixtures import bind_worker_fragment_failure_store
 from source_support import fixture_http_admission
 
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
@@ -23,7 +24,7 @@ from tank.runtime import Runtime
 from tank.runtime_contracts import MarketTruthJob
 from tank.settings import Settings, resolve_versions
 from tank.storage import MemoryRepository, Repository
-from tank.time_precision import Timestamp
+from tank.time_precision import Timestamp, collection_clock
 from tank.util import JsonInput, clock_iso, parse_time
 
 
@@ -52,6 +53,8 @@ async def test_timeout_reports_suspended_operation_without_exception_values(
     runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
     runtime.budget_binding = None
     runtime.repo = repo
+    bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
+    runtime.settings = ProgressPreferences(ops_progress_enabled=False, replay=False)
 
     async def wait_for_snapshot(payload):
         private_url = "https://example.test/private-token"
@@ -81,6 +84,8 @@ async def test_worker_survives_bad_job_and_persists_result() -> None:
     runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
     runtime.budget_binding = None
     runtime.repo = repo
+    bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
+    runtime.settings = ProgressPreferences(ops_progress_enabled=False, replay=False)
 
     async def handle(payload):
         stop.set()
@@ -108,6 +113,8 @@ async def test_worker_refuses_failed_dependency() -> None:
     runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
     runtime.budget_binding = None
     runtime.repo = repo
+    bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
+    runtime.settings = ProgressPreferences(ops_progress_enabled=False, replay=False)
     runtime.handlers = {"RUN_MARKET_TRUTH": AsyncMock()}
     task = asyncio.create_task(runtime.worker(stop))
     for _ in range(100):
@@ -342,7 +349,10 @@ async def test_runtime_quiescence_drains_old_job_dependencies_and_preserves_sess
     runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
     runtime.budget_binding = None
     runtime.repo = repo
-    runtime.settings = SimpleNamespace(shutdown_grace_s=1, config_version="old")
+    bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
+    runtime.settings = SimpleNamespace(
+        shutdown_grace_s=1, config_version="old", ops_progress_enabled=False, replay=False
+    )
     runtime.active_jobs = set()
     runtime.validate = lambda: None
     runtime.bootstrap = AsyncMock()
@@ -722,7 +732,8 @@ async def test_controlled_generation_timeout_preserves_last_job_attempt(
     runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
     runtime.budget_binding = None
     runtime.repo = repo
-    runtime.settings = SimpleNamespace(shutdown_grace_s=0.01)
+    bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
+    runtime.settings = SimpleNamespace(shutdown_grace_s=0.01, ops_progress_enabled=False, replay=False)
     runtime.active_jobs = set()
     runtime.validate = lambda: None
     runtime.bootstrap = AsyncMock()
@@ -829,7 +840,8 @@ async def test_gateway_starts_in_same_runtime_before_sources_and_closes_after_dr
     runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
     runtime.budget_binding = None
     runtime.repo = repo
-    runtime.settings = SimpleNamespace(shutdown_grace_s=1)
+    bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
+    runtime.settings = SimpleNamespace(shutdown_grace_s=1, ops_progress_enabled=False, replay=False)
     runtime.active_jobs = set()
     runtime.validate = lambda: None
     runtime.bootstrap = AsyncMock()
@@ -869,6 +881,8 @@ async def test_unfinished_dependency_defers_without_error_or_attempt_cost(
     runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
     runtime.budget_binding = None
     runtime.repo = repo
+    bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
+    runtime.settings = ProgressPreferences(ops_progress_enabled=False, replay=False)
     runtime.handlers = {"RUN_MARKET_TRUTH": AsyncMock()}
     task = asyncio.create_task(runtime.worker(stop))
     try:
@@ -889,17 +903,10 @@ async def test_unfinished_dependency_defers_without_error_or_attempt_cost(
 
 
 @pytest.mark.asyncio
-async def test_terminal_delivery_reconciliation_covers_expiry_restart_and_validation() -> None:
-    from tank.delivery import DeliveryService
+async def test_terminal_delivery_reconciliation_covers_expiry_restart_and_validation(tmp_path: Path) -> None:
+    from runtime_failure_fixtures import runtime_failure_fixture
 
     repo = MemoryRepository()
-    runtime = object.__new__(Runtime)
-    runtime.budget_scope = RequestBudgetScope()
-    runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
-    runtime.budget_binding = None
-    runtime.repo = repo
-    runtime.settings = ProgressPreferences(ops_progress_enabled=False, replay=False)
-    runtime.delivery = DeliveryService(repo, runtime.settings, http=SimpleNamespace())
     for key, status in [("expired", "EXPIRED"), ("validation", "FAILED")]:
         job = await repo.enqueue(
             "DELIVER", {"alert_id": key, "version": 1, "channel": "telegram:alerts"}, key, max_attempts=1
@@ -907,11 +914,12 @@ async def test_terminal_delivery_reconciliation_covers_expiry_restart_and_valida
         await repo.put(
             "ops.jobs",
             job["job_id"],
-            {**job, "status": status, "finished_at": clock_iso(), "last_error": "ValueError"},
+            {**job, "status": status, **collection_clock().fields("finished_at"), "last_error": "ValueError"},
         )
-    await runtime.reconcile_delivery_failures()
-    runtime._delivery_reconciled_at = None
-    await runtime.reconcile_delivery_failures()
+    async with runtime_failure_fixture(repo, tmp_path, ops_progress_enabled=False) as runtime:
+        await runtime.reconcile_delivery_failures()
+        runtime._failure_reconcile_attempted_at = None
+        await runtime.reconcile_delivery_failures()
     ledger = await repo.list("out.deliveries")
     assert len(ledger) == 2 and all(row["status"] == "FAILED" and row["terminal"] for row in ledger)
     notices = await repo.list("out.ops_notices")
@@ -1035,6 +1043,8 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
         runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
         runtime.budget_binding = None
         runtime.repo = repo
+        bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
+        runtime.settings = ProgressPreferences(ops_progress_enabled=False, replay=False)
         runtime.market = market
         runtime.truth = truth
         runtime.handlers = {
@@ -1281,6 +1291,7 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
                 runtime.budget_binding = None
                 runtime.settings = settings
                 runtime.repo = repo
+                bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
                 runtime.delivery = delivery
 
                 async def handle(payload):
@@ -1457,6 +1468,7 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
                 runtime.budget_binding = None
                 runtime.settings = settings
                 runtime.repo, runtime.delivery = repo, delivery
+                bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
 
                 async def handle(payload):
                     try:
