@@ -11,6 +11,8 @@ from test_truth_start_fixture import compact_start_snapshot
 from truth_support import fixture_truth_config
 
 import tank.analysis.truth as module
+from tank.analysis.condition_graph_contracts import ConditionWindow, DirectWindowConditionSpot
+from tank.analysis.condition_inputs import SpotCalculationInputs
 from tank.scheduler import metric_value
 from tank.settings import Settings
 from tank.util import iso, parse_time
@@ -78,13 +80,13 @@ def test_identical_closed_window_inputs_reused_but_corrected_row_invalidates(
         packet["domain_dependency_fingerprints"] = {"spot": "same-captured-source-head"}
     cache = {}
     calls = []
-    original = module.calculate_spot
+    original = module.calculate_direct_spot
 
-    def counted(*args, **kwargs):
+    def counted(inputs: SpotCalculationInputs, *, window: ConditionWindow) -> DirectWindowConditionSpot:
         calls.append(1)
-        return original(*args, **kwargs)
+        return original(inputs, window=window)
 
-    monkeypatch.setattr(module, "calculate_spot", counted)
+    monkeypatch.setattr(module, "calculate_direct_spot", counted)
     requirements = REQUIREMENTS[:2]
     first = module.compute_condition_values(packet, requirements, cache=cache, config=fixture_truth_config())
     second = module.compute_condition_values(packet, requirements, cache=cache, config=fixture_truth_config())

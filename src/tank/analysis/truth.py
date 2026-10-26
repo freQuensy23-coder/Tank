@@ -28,11 +28,12 @@ from typing import overload
 from pydantic import JsonValue
 
 from tank.analysis.condition_fingerprints import condition_input_fingerprints
-from tank.analysis.condition_graph_codec import encode_basic_condition_spot
+from tank.analysis.condition_graph_codec import encode_scoped_condition_spot
 from tank.analysis.condition_graph_contracts import (
     ConditionStateNodeKey,
     ConditionTopCacheKey,
     ConditionTopVenueSignHistory,
+    ConditionWireClocks,
 )
 from tank.analysis.condition_input_codec import (
     SpotConditionEvaluation,
@@ -64,7 +65,7 @@ from tank.analysis.price_reference import (
 from tank.analysis.spot import (
     SpotCalculator,
     SpotNativeMeasurement,
-    calculate_spot,
+    calculate_direct_spot,
     calculate_spot_window_graph,
     spot_native_measurements,
 )
@@ -2748,13 +2749,13 @@ def enrich_evidence(
             "token_id"
         ):
             continue
+        if book.get("integrity_ok") is not True:
+            continue
         venue = _venue(book)
         if not isinstance(venue, str) or not venue:
             raise ValueError("Book split requires an actual nonblank venue")
         prior_index = latest_indices.get(venue)
-        if book.get("integrity_ok") is True and (
-            prior_index is None or _time(book) > _time(source_books[prior_index])
-        ):
+        if prior_index is None or _time(book) > _time(source_books[prior_index]):
             latest_indices[venue] = book_index
     askdepth: dict[str, Decimal | None] = {
         venue: decimal((source_books[position].get("depth", {}).get("ask", {}).get("p1") or {}).get("usd"))
@@ -5810,7 +5811,8 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                         native_ticker_volume_field="volume_native",
                     )
                     value = SpotConditionEvaluation(
-                        result=calculate_spot(decoded.inputs), source_evidence=decoded.source_evidence
+                        result=calculate_direct_spot(decoded.inputs, window=window),
+                        source_evidence=decoded.source_evidence,
                     )
                 elif domain == "close":
                     value = condition_reference_close(selected, end)
@@ -5848,7 +5850,15 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
             if domain == "spot":
                 if not isinstance(cached, SpotConditionEvaluation):
                     raise TypeError("Spot condition cache requires its typed evaluation and bound evidence")
-                value = encode_basic_condition_spot(cached.result, cached.source_evidence)
+                value = encode_scoped_condition_spot(
+                    cached.result,
+                    cached.source_evidence,
+                    clocks=ConditionWireClocks(
+                        token_id=snapshot["token_id"],
+                        cutoff=propagate_timestamp(snapshot, "cutoff"),
+                        event_anchor=propagate_timestamp(snapshot.get("anchor") or {}, "ts"),
+                    ),
+                )
             else:
                 value = deepcopy(cached)
             fresh = True

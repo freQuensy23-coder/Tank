@@ -12,6 +12,7 @@ from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
     Awaitable,
+    Callable,
     Collection,
     Iterable,
     Iterator,
@@ -24,6 +25,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal, Protocol, Self, overload
+from uuid import uuid4
 
 from psycopg import AsyncConnection, sql
 from psycopg.abc import PQGen
@@ -32,7 +34,16 @@ from pydantic import Field, JsonValue, field_validator, model_validator
 
 from tank.clickhouse_market import ClickHouse
 from tank.contracts import DomainModel
-from tank.contracts.jobs import JobClaimState, JobEnvelope, JobIdentity, JobRetryState
+from tank.contracts.jobs import (
+    InvalidJobClaim,
+    JobClaimMutation,
+    JobClaimRevision,
+    JobClaimScope,
+    JobClaimState,
+    JobEnvelope,
+    JobIdentity,
+    JobRetryState,
+)
 from tank.contracts.json import JsonDocument
 from tank.market_codec import StoredRow, StoredValue
 from tank.market_codec import decode as decode_market
@@ -60,7 +71,13 @@ from tank.retention import (
     benchmark_token_ids,
     protected_windows,
 )
-from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
+from tank.time_precision import (
+    Timestamp,
+    collection_clock,
+    offset_schedule,
+    propagate_timestamp,
+    timestamp_owned_fields,
+)
 from tank.util import (
     JsonInput,
     TimeInput,
@@ -70,6 +87,7 @@ from tank.util import (
     new_id,
     parse_iso_time,
     parse_time,
+    sha256,
     utcnow,
 )
 
@@ -300,6 +318,10 @@ class Repository(Protocol):
         max_attempts: int = 3,
     ) -> Record: ...
     async def claim_job(self) -> Record | None: ...
+    async def transition_claimed_job(
+        self, scope: JobClaimScope, transform: Callable[[JobEnvelope], JobClaimMutation]
+    ) -> JobEnvelope | None: ...
+    async def quarantine_job_claim(self, invalid: InvalidJobClaim) -> bool: ...
     async def finish_job(self, job_id: str) -> None: ...
     async def fail_job(self, job_id: str, error: str | Exception, *, retry_after: float = 1) -> None: ...
     async def recover_jobs(self) -> int: ...
@@ -811,6 +833,56 @@ class RepositoryQueries(ABC):
 
 class QueueMixin(RepositoryQueries):
     @abstractmethod
+    def _locked_job_document(
+        self, job_id: str, kind: str, attempts: int
+    ) -> AbstractAsyncContextManager[ImmutableDocument | None]: ...
+
+    @abstractmethod
+    async def _write_quarantined_job(self, job_id: str, document: Record) -> None: ...
+
+    async def transition_claimed_job(
+        self, scope: JobClaimScope, transform: Callable[[JobEnvelope], JobClaimMutation]
+    ) -> JobEnvelope | None:
+        scope = JobClaimScope.model_validate(scope)
+        async with self._locked_job_document(scope.job_id, scope.kind, scope.attempts) as locked:
+            if locked is None or not scope.matches(locked.document):
+                return None
+            if locked.immutable:
+                raise ImmutableRecordError(f"Immutable record: ops.jobs/{scope.job_id}")
+            current = JobEnvelope.model_validate(locked.document)
+            mutation = JobClaimMutation.model_validate(transform(current))
+            updated = mutation.apply_to(locked.document)
+            JobEnvelope.model_validate(updated)
+            await self.put("ops.jobs", scope.job_id, updated)
+            persisted = await self.get("ops.jobs", scope.job_id)
+            if persisted is None:
+                raise RuntimeError("Owned job transition did not produce a persisted record")
+            return JobEnvelope.model_validate(persisted)
+
+    async def quarantine_job_claim(self, invalid: InvalidJobClaim) -> bool:
+        invalid = InvalidJobClaim.model_validate(invalid)
+        async with self._locked_job_document(invalid.job_id, invalid.kind, invalid.attempts) as locked:
+            if locked is None or locked.document.get("claim_token") != invalid.claim_token:
+                return False
+            current = JobClaimRevision.from_document(locked.document)
+            if (
+                current.status != "RUNNING"
+                or current.job_id != invalid.job_id
+                or current.type != invalid.kind
+                or current.attempts != invalid.attempts
+                or sha256(locked.document) != invalid.revision
+            ):
+                return False
+            if locked.immutable:
+                raise ImmutableRecordError(f"Immutable record: ops.jobs/{invalid.job_id}")
+            owned = timestamp_owned_fields("finished_at")
+            document = {key: value for key, value in locked.document.items() if key not in owned}
+            document.update(status="FAILED", last_error="INVALID_QUEUE_ENVELOPE")
+            document.update(collection_clock().fields("finished_at"))
+            await self._write_quarantined_job(invalid.job_id, document)
+            return True
+
+    @abstractmethod
     def lock(self, key: str) -> AbstractAsyncContextManager[Self]: ...
 
     @abstractmethod
@@ -1116,10 +1188,32 @@ class MemoryRepository(QueueMixin):
 
             job, document = min(candidates, key=order)
             document["status"] = "RUNNING"
+            document["claim_token"] = uuid4().hex
             document.pop("recovery_reclaim", None)
             if job.recovery_reclaim is not True:
                 document["attempts"] = job.attempts + 1
             return copy.deepcopy(document)
+
+    @asynccontextmanager
+    async def _locked_job_document(
+        self, job_id: str, kind: str, attempts: int
+    ) -> AsyncIterator[ImmutableDocument | None]:
+        async with self.transaction():
+            document = self._data.get("ops.jobs", {}).get(job_id)
+            if (
+                document is None
+                or document.get("job_id") != job_id
+                or document.get("type") != kind
+                or document.get("status") != "RUNNING"
+                or type(document.get("attempts")) is not int
+                or document.get("attempts") != attempts
+            ):
+                yield None
+            else:
+                yield ImmutableDocument(document=document, immutable=("ops.jobs", job_id) in self._immutable)
+
+    async def _write_quarantined_job(self, job_id: str, document: Record) -> None:
+        self._data["ops.jobs"][job_id] = copy.deepcopy(document)
 
     async def recover_jobs(self) -> int:
         async with self.transaction():
@@ -1739,6 +1833,7 @@ class PostgresRepository(QueueMixin):
                 UPDATE ops.jobs SET status='RUNNING',
                 attempts=attempts+CASE WHEN document->>'recovery_reclaim'='true' THEN 0 ELSE 1 END,
                 document=document||jsonb_build_object('status','RUNNING','recovery_reclaim',false,
+                  'claim_token',%(claim_token)s::text,
                   'attempts',attempts+CASE WHEN document->>'recovery_reclaim'='true' THEN 0 ELSE 1 END)
                 WHERE storage_key=(SELECT storage_key FROM pick) RETURNING document)
               SELECT (SELECT document FROM claimed) AS document,
@@ -1748,6 +1843,7 @@ class PostgresRepository(QueueMixin):
                   AND d.run_after<=now() AND d.expires_at > now() + make_interval(secs => %(safety)s)
                   AND (SELECT analysis_busy OR fresh_event FROM gate)) AS deferred""",
                     {
+                        "claim_token": uuid4().hex,
                         "analysis": list(ANALYSIS_TYPES),
                         "fresh": FRESH_EVENT_S,
                         "capped": list(RUNNING_CAPS),
@@ -1775,6 +1871,33 @@ class PostgresRepository(QueueMixin):
             return
         self._last_deferral = (now, count, reasons)
         log.info("deferring %d due REACTION_CAPTURE behind event analysis: %s", count, ", ".join(reasons))
+
+    @asynccontextmanager
+    async def _locked_job_document(
+        self, job_id: str, kind: str, attempts: int
+    ) -> AsyncIterator[ImmutableDocument | None]:
+        async with self.lock(f"record:ops.jobs:{job_id}"):
+            row = await (
+                await self._conn().execute(
+                    "SELECT document,immutable FROM ops.jobs WHERE storage_key=%s AND job_id=%s "
+                    "AND type=%s AND status='RUNNING' AND attempts=%s FOR UPDATE",
+                    (job_id, job_id, kind, attempts),
+                )
+            ).fetchone()
+            yield None if row is None else ImmutableDocument.model_validate(row)
+
+    async def _write_quarantined_job(self, job_id: str, document: Record) -> None:
+        from psycopg.types.json import Jsonb
+
+        finished = propagate_timestamp(document, "finished_at")
+        cursor = await self._conn().execute(
+            "UPDATE ops.jobs SET status='FAILED',last_error='INVALID_QUEUE_ENVELOPE', "
+            "finished_at=%s,finished_at_prec=%s,finished_at_prec_reason=%s,document=%s "
+            "WHERE storage_key=%s AND status='RUNNING'",
+            (finished.value, finished.precision, finished.precision_reason, Jsonb(document), job_id),
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError("Quarantined job changed during its locked transition")
 
     async def recover_jobs(self) -> int:
         async with self.transaction():
