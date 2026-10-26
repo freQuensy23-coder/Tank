@@ -15,8 +15,6 @@ from tank.analysis.card_contracts import (
     CardExclusion,
     CardHoldersRevenue,
     CardInputs,
-    CardLengthDiagnostics,
-    CardLengthSection,
     CardMapping,
     CardMarket,
     CardSpotVenue,
@@ -593,25 +591,4 @@ def compose_card(inputs: CardInputs) -> str:
                 role=beneficiary.subject.role,
                 least_repriced=beneficiary.least_repriced,
             )
-    text = "\n".join(lines)
-    if len(text) > inputs.policy.card_max_chars:
-        diagnostics = CardLengthDiagnostics(
-            actual=len(text),
-            max_chars=inputs.policy.card_max_chars,
-            excess=len(text) - inputs.policy.card_max_chars,
-            sections=tuple(
-                CardLengthSection(line=index + 1, section=line.split(":", 1)[0][:64], chars=len(line))
-                for index, line in enumerate(lines)
-            ),
-            newline_chars=len(lines) - 1,
-            editable_fields=(
-                "publish_card.what / verdict / why",
-                "claims.subject / predicate / object / verification_missing via explicit supersedes_claim_ids",
-                "set_beneficiaries.layer_reasons / no_credible_secondary_reason / edges[].causal_chain",
-                "set_assessment.assessment.impact_horizon.dependencies / time_to_materiality",
-            ),
-            guidance="Shorten agent-authored structured text as well as WHAT/verdict/WHY when needed; publish-only shortening may be insufficient. Preserve all facts, remaining uncertainties and required per-layer reasons. Replace claims explicitly; do not invent verification or remove evidence. No text was truncated.",
-            preview=text,
-        )
-        raise ValueError("CARD_LENGTH: " + diagnostics.model_dump_json(by_alias=True))
-    return text
+    return "\n".join(lines)

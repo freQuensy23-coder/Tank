@@ -3,16 +3,15 @@
 from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from datetime import timedelta
-from typing import Annotated, Literal, Protocol, Self
+from typing import Annotated, Protocol, Self
 
 from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.session_followups import FollowupRefusalTarget
+from tank.contracts.telegram_state import AnswerStatus as AnswerStatus
 from tank.time_precision import Timestamp, collection_clock, offset_schedule
 from tank.util import utcnow
-
-type AnswerStatus = Literal["ANSWERED", "FAILED", "NO_SESSION", "TERMINATED", "ARCHIVED"]
 
 
 class QuestionAnswerRepository(Protocol):

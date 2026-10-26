@@ -18,7 +18,6 @@ SCORE_DIMENSIONS = (
     ("Implementation", "implementation"),
 )
 RICH_TEXT_LIMIT = 32768
-CARD_TEXT_LIMIT = 5000
 CARD_LABELS = (
     "WHAT",
     "VERIFIED",
@@ -238,8 +237,6 @@ def score_table(
 def card_rich_message(
     text: str,
     assessment: ScoreAssessment | ScoreAssessmentView | Mapping[str, JsonValue],
-    *,
-    max_chars: int = CARD_TEXT_LIMIT,
 ) -> dict[str, JsonValue]:
     """Freeze approved text and scores without changing assessment decisions."""
     scores = _assessment(assessment)
@@ -262,11 +259,10 @@ def card_rich_message(
             blocks.append(ParagraphBlock(text=content))
     message = RichMessage(blocks=blocks)
     length = len(message.readable_text())
-    limit = min(max_chars, RICH_TEXT_LIMIT)
     block_count = len(blocks) + sum(len(block.cells) for block in blocks if isinstance(block, ScoreTable))
-    if length > limit or block_count > 500:
+    if length > RICH_TEXT_LIMIT or block_count > 500:
         raise ValueError(
             f"CARD_LENGTH: rich message has {length} characters and {block_count} blocks; "
-            f"maximum {limit} characters and 500 blocks"
+            f"Telegram maximum {RICH_TEXT_LIMIT} characters and 500 blocks"
         )
     return message.telegram_payload()

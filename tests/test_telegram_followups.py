@@ -13,6 +13,7 @@ from source_support import fixture_versions
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
+from tank.agents.input_ownership import NativeOwnershipSnapshot
 from tank.contracts.openma import NativeSessionToolUpdate
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -89,20 +90,30 @@ class FakeTelegram:
                 json={
                     "ok": True,
                     "result": {
+                        "file_id": body["file_id"],
+                        "file_unique_id": {"doc_1": "u1", "doc_a": "ua"}[body["file_id"]],
                         "file_path": "docs/" + body["file_id"],
                         "file_size": len(self.files[body["file_id"]]),
                     },
                 },
             )
         if method == "getMe":
-            return httpx.Response(200, json={"ok": True, "result": {"id": BOT}})
+            return httpx.Response(200, json={"ok": True, "result": {"id": BOT, "is_bot": True}})
         if method == "getUpdates":
             ready = [row for row in self.updates if row["update_id"] >= body.get("offset", 0)]
             return httpx.Response(200, json={"ok": True, "result": ready})
         if method == "getChatMember":
             if self.member_error:
-                return httpx.Response(self.member_error, json={"ok": False, "parameters": {"retry_after": 1}})
-            result = {"status": self.member}
+                return httpx.Response(
+                    self.member_error,
+                    json={
+                        "ok": False,
+                        "error_code": self.member_error,
+                        "description": "Synthetic membership request rejected",
+                        "parameters": {"retry_after": 1},
+                    },
+                )
+            result = {"status": self.member, "user": {"id": body["user_id"]}}
             if self.is_member is not None:
                 result["is_member"] = self.is_member
             return httpx.Response(200, json={"ok": True, "result": result})
@@ -396,11 +407,9 @@ async def test_question_goes_into_the_same_session_and_final_turn_text_becomes_t
         assert "Пришёл фоллоуап через Telegram" in text and "Почему не шорт?" in text
         assert "question_id" not in text and "{" not in text
         session = await repo.get("ops.agent_sessions", "ses_1")
-        answers = await service.turn_answers(session)
-        assert answers[session["message_log"][-1]["message_id"]] == {
-            "text": "Потому что OI падает.",
-            "ended": True,
-        }
+        answers = await service.turn_answers(NativeOwnershipSnapshot.from_record(session))
+        answer = answers[session["message_log"][-1]["message_id"]]
+        assert (answer.text, answer.ended) == ("Потому что OI падает.", True)
         session["message_log"][-1]["turn_status"] = "DONE"
         await repo.put("ops.agent_sessions", "ses_1", session)
         await service.deliver_answers("ses_1")
@@ -1094,7 +1103,12 @@ async def test_files_over_20_mb_are_refused_with_a_notice() -> None:
         chat=int(ALERTS),
         chat_type="supergroup",
         caption="?",
-        document={"file_id": "big", "file_name": "a.zip", "file_size": 21 * 1024 * 1024},
+        document={
+            "file_id": "big",
+            "file_unique_id": "big-unique",
+            "file_name": "a.zip",
+            "file_size": 21 * 1024 * 1024,
+        },
         reply_to_message={"message_id": 55, "from": {"id": BOT}},
     )
     telegram = FakeTelegram([{"update_id": 1, "message": big}])
@@ -1176,7 +1190,7 @@ async def test_unsized_file_that_telegram_refuses_is_set_aside_without_blocking_
         chat=int(ALERTS),
         chat_type="supergroup",
         caption="?",
-        document={"file_id": "huge", "file_name": "big.bin"},
+        document={"file_id": "huge", "file_unique_id": "huge-unique", "file_name": "big.bin"},
         reply_to_message={"message_id": 55, "from": {"id": BOT}},
     )
     after = message(
@@ -1485,7 +1499,15 @@ async def test_prompt_is_resent_after_a_definite_telegram_rejection() -> None:
     def flaky(request: httpx.Request):
         if request.url.path.endswith("/sendMessage") and outage["left"]:
             outage["left"] -= 1
-            return httpx.Response(429, json={"ok": False, "parameters": {"retry_after": 1}})
+            return httpx.Response(
+                429,
+                json={
+                    "ok": False,
+                    "error_code": 429,
+                    "description": "Too Many Requests",
+                    "parameters": {"retry_after": 1},
+                },
+            )
         return original(request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(flaky)) as http:
@@ -1562,7 +1584,14 @@ async def test_answer_chunks_resend_only_after_definite_rejection() -> None:
     question = await repo.get("out.user_questions", question_id)
     question.update(answer_status="ANSWERED", answer_text="a" * 3000 + "\n" + "b" * 3000)
     await repo.put("out.user_questions", question_id, question)
-    base = {"channel": "telegram:answer", "question_id": question_id, "purpose": "ANSWER", "attempt": 1}
+    base = {
+        "channel": "telegram:answer",
+        "question_id": question_id,
+        "session_id": question["session_id"],
+        "chat_id": question["chat_id"],
+        "purpose": "ANSWER",
+        "attempt": 1,
+    }
     await repo.put(
         "out.deliveries", "c0", {**base, "chunk": 0, "status": "GENERATED", "at": "2027-01-15T08:00:00Z"}
     )
@@ -1738,8 +1767,8 @@ async def test_answer_lookup_reads_history_only_back_to_the_question() -> None:
             versions=fixture_versions(),
             refusals=RepositoryFollowupRefusals(repo),
         )
-        answers = await service.turn_answers(session, ["in_q"])
-    assert answers["mq"] == {"text": "Ответ", "ended": True} and pages == [0]
+        answers = await service.turn_answers(NativeOwnershipSnapshot.from_record(session), ["in_q"])
+    assert (answers["mq"].text, answers["mq"].ended) == ("Ответ", True) and pages == [0]
 
 
 def test_chunks_respect_telegram_utf16_length() -> None:
@@ -1850,12 +1879,13 @@ def test_captions_are_cut_by_utf16_length_and_photos_fall_back_to_dimensions() -
         {
             "message_id": 1,
             "photo": [
-                {"file_id": "thumb", "width": 90, "height": 90},
-                {"file_id": "full", "width": 1280, "height": 960},
+                {"file_id": "thumb", "file_unique_id": "thumb-unique", "width": 90, "height": 90},
+                {"file_id": "full", "file_unique_id": "full-unique", "width": 1280, "height": 960},
             ],
         }
     )
-    assert photo["file_id"] == "full"
+    assert photo is not None and photo.file_id == "full"
+    assert photo.declared_size is None
 
 
 @pytest.mark.asyncio
@@ -1872,7 +1902,9 @@ async def test_notice_is_retried_after_a_transient_failure_and_sent_once() -> No
     def flaky(request: httpx.Request):
         if request.url.path.endswith("/sendMessage") and outage["left"]:
             outage["left"] -= 1
-            return httpx.Response(503, json={"ok": False})
+            return httpx.Response(
+                503, json={"ok": False, "error_code": 503, "description": "Synthetic API rejection"}
+            )
         return original(request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(flaky)) as http:
@@ -1973,7 +2005,12 @@ async def test_one_permanently_failing_message_never_blocks_the_others() -> None
     def blocked(request: httpx.Request):
         if request.url.path.endswith("/sendMessage") and json.loads(request.content)["chat_id"] == str(USER):
             return httpx.Response(
-                403, json={"ok": False, "description": "Forbidden: bot was blocked by the user"}
+                403,
+                json={
+                    "ok": False,
+                    "error_code": 403,
+                    "description": "Forbidden: bot was blocked by the user",
+                },
             )
         return original(request)
 
@@ -2047,7 +2084,7 @@ async def test_too_large_file_in_a_pair_settles_both_messages() -> None:
         100,
         date=1_800_017_000,
         caption="Вот мой файл",
-        document={"file_id": "huge", "file_name": "big.bin"},
+        document={"file_id": "huge", "file_unique_id": "huge-unique", "file_name": "big.bin"},
     )
     forward = message(
         101,
@@ -2092,7 +2129,10 @@ async def test_paired_size_notice_failure_keeps_both_messages_retryable() -> Non
     repo = MemoryRepository()
     await seed(repo)
     comment = message(
-        110, date=1_800_018_000, caption="Файл", document={"file_id": "huge", "file_name": "b.bin"}
+        110,
+        date=1_800_018_000,
+        caption="Файл",
+        document={"file_id": "huge", "file_unique_id": "huge-unique", "file_name": "b.bin"},
     )
     forward = message(
         111,
@@ -2107,7 +2147,9 @@ async def test_paired_size_notice_failure_keeps_both_messages_retryable() -> Non
     def flaky(request: httpx.Request):
         if request.url.path.endswith("/sendMessage") and outage["left"]:
             outage["left"] -= 1
-            return httpx.Response(502, json={"ok": False})
+            return httpx.Response(
+                502, json={"ok": False, "error_code": 502, "description": "Synthetic API rejection"}
+            )
         return original(request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(flaky)) as http:
@@ -2169,7 +2211,10 @@ async def test_paired_size_notice_settles_both_rows_in_one_transaction() -> None
     repo = MemoryRepository()
     await seed(repo)
     comment = message(
-        120, date=1_800_019_000, caption="Файл", document={"file_id": "huge", "file_name": "b.bin"}
+        120,
+        date=1_800_019_000,
+        caption="Файл",
+        document={"file_id": "huge", "file_unique_id": "huge-unique", "file_name": "b.bin"},
     )
     forward = message(
         121,
@@ -2222,7 +2267,12 @@ async def test_known_oversize_file_in_a_pair_settles_both_messages() -> None:
         130,
         date=1_800_020_000,
         caption="Файл",
-        document={"file_id": "big", "file_name": "b.zip", "file_size": 25 * 1024 * 1024},
+        document={
+            "file_id": "big",
+            "file_unique_id": "big-unique",
+            "file_name": "b.zip",
+            "file_size": 25 * 1024 * 1024,
+        },
     )
     forward = message(
         131,
@@ -2391,8 +2441,8 @@ async def test_text_of_a_failed_attempt_is_never_the_answer() -> None:
             versions=fixture_versions(),
             refusals=RepositoryFollowupRefusals(repo),
         )
-        answers = await service.turn_answers(session, ["in_first"])
-    assert answers["mq"] == {"text": None, "ended": True}
+        answers = await service.turn_answers(NativeOwnershipSnapshot.from_record(session), ["in_first"])
+    assert (answers["mq"].text, answers["mq"].ended) == (None, True)
 
 
 @pytest.mark.asyncio
@@ -2407,9 +2457,9 @@ async def test_reused_attachment_keeps_its_recorded_size() -> None:
             "message_id": 1,
             "document": {"file_id": "doc_a", "file_unique_id": "ua", "file_name": "a.txt"},
         }
-        first = await inbox.attachments(None, "q_r", "ses_1", body)
-        again = await inbox.attachments(None, "q_r", "ses_1", body)
-    assert first[0]["size"] == 5 and again[0]["size"] == 5
+        first = await inbox.attachments("q_r", "ses_1", body)
+        again = await inbox.attachments("q_r", "ses_1", body)
+    assert first[0].size == 5 and again[0].size == 5
 
 
 @pytest.mark.asyncio

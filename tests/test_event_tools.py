@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AsyncExitStack
 from datetime import timedelta
 from pathlib import Path
@@ -16,6 +16,7 @@ from tank.agents.context import CONTEXT_VERSION
 from tank.analysis.page_access import LivePageAccess
 from tank.contracts.json import JsonDocument
 from tank.event_tools import EventToolService, freshness, validate_schema
+from tank.models import Record
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.telegram_inbox import RepositoryFollowupRefusals
@@ -5810,18 +5811,24 @@ async def test_publish_card_keeps_market_truth_once_and_bounds_evidence_and_ops_
             "criterion": "G5",
         },
     )
-    reads = []
-    original = service.repo.iter_all
-    metadata_reads = []
-    original_metadata = service.repo.iter_metadata
+    repo = service.repo
+    assert isinstance(repo, MemoryRepository)
+    reads: list[str] = []
+    original = repo.iter_all
+    metadata_reads: list[tuple[str, tuple[str, ...]]] = []
+    original_metadata = repo.iter_metadata
 
-    def counting(collection, **kwargs):
+    def counting(
+        collection: str, *, filters: Record | None = None, batch_size: int = 1000
+    ) -> AsyncIterator[Record]:
         reads.append(collection)
-        return original(collection, **kwargs)
+        return original(collection, filters=filters, batch_size=batch_size)
 
-    def counting_metadata(collection, fields, **kwargs):
+    def counting_metadata(
+        collection: str, fields: Sequence[str], *, filters: Record | None = None, batch_size: int = 1000
+    ) -> AsyncIterator[Record]:
         metadata_reads.append((collection, tuple(fields)))
-        return original_metadata(collection, fields, **kwargs)
+        return original_metadata(collection, fields, filters=filters, batch_size=batch_size)
 
     monkeypatch.setattr(service.repo, "iter_all", counting)
     monkeypatch.setattr(service.repo, "iter_metadata", counting_metadata)

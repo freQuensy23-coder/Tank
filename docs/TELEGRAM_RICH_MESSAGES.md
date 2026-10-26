@@ -6,7 +6,7 @@ The table has headers, borders, striped rows and compact cell spacing. Agent-aut
 
 Publication freezes the entire rich payload in both the immutable alert and its evidence bundle. Delivery sends that saved payload, including on retries. Existing delivery receipts, idempotency, call activation and replies to the first card remain in force. Historical alerts without a rich payload retain their original sendMessage path.
 
-Both text and rich output are limited to 5,000 characters. The rich check includes table explanations and enforces the Telegram ceiling of 32,768 characters and 500 blocks. A failed size check refuses publication without silently dropping evidence. The existing plain card_text remains available for historical consumers; Telegram follow-ups use the frozen rich text when present.
+Tank sets no card length limit of its own. The rich check includes table explanations and enforces only Telegram's own ceiling of 32,768 characters and 500 blocks; a card above it is refused at publication with the counts, without silently dropping evidence. The existing plain card_text remains available for historical consumers; Telegram follow-ups use the frozen rich text when present.
 
 Telegram replies and forwards may carry rich_message instead of text. The inbox flattens native text, paragraphs, tables, nested blocks and lists before matching a forwarded card and composing the analyst's reference context.
 
