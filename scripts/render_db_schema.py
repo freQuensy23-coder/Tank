@@ -12,12 +12,13 @@ import html
 import re
 import subprocess
 import sys
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence, Set
 from contextlib import suppress
 from pathlib import Path
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, StringConstraints, model_validator
 
 TYPE_MAP = [
     (r"timestamp with time zone", "timestamptz"),
@@ -82,6 +83,8 @@ class SchemaRecord(BaseModel):
 
 
 type SQLColumnName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")]
+type SQLTableName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z_]\w*\.[A-Za-z_]\w*$")]
+type NonBlankText = Annotated[str, StringConstraints(min_length=1, pattern=r"\S")]
 
 
 class KeyConstraint(SchemaRecord):
@@ -98,7 +101,7 @@ class KeyConstraint(SchemaRecord):
 class ForeignKeyConstraint(SchemaRecord):
     kind: Literal["FK"]
     columns: tuple[SQLColumnName, ...] = Field(min_length=1)
-    target_table: Annotated[str, StringConstraints(pattern=r"^[A-Za-z_]\w*\.[A-Za-z_]\w*$")]
+    target_table: SQLTableName
     target_columns: tuple[SQLColumnName, ...] = Field(min_length=1)
     options: str
 
@@ -125,11 +128,170 @@ class CheckConstraint(SchemaRecord):
         return self
 
 
+class PostgreSQLMeasurements(SchemaRecord):
+    name_x: FiniteFloat
+    type_x: FiniteFloat
+    prec_x: FiniteFloat
+    nn_x: FiniteFloat
+    ref_x: FiniteFloat
+    width: Annotated[FiniteFloat, Field(gt=0)]
+
+
+class ClickHouseMeasurements(SchemaRecord):
+    name_x: FiniteFloat
+    type_x: FiniteFloat
+    hint_x: FiniteFloat
+    ref_x: FiniteFloat
+    width: Annotated[FiniteFloat, Field(gt=0)]
+
+
+class MarketSchemaMetadata(SchemaRecord):
+    MARKET_COLUMNS: dict[SQLTableName, dict[SQLColumnName, NonBlankText]]
+    MARKET_IDENTITIES: dict[SQLTableName, tuple[SQLColumnName, ...]]
+
+    @model_validator(mode="after")
+    def complete_identities(self) -> Self:
+        if self.MARKET_COLUMNS.keys() != self.MARKET_IDENTITIES.keys():
+            raise ValueError("Market columns and identity table sets must match")
+        for name, identity in self.MARKET_IDENTITIES.items():
+            if not identity or len(set(identity)) != len(identity):
+                raise ValueError("Market identity must contain distinct columns")
+            if not set(identity) <= self.MARKET_COLUMNS[name].keys() | {"storage_key"}:
+                raise ValueError("Market identity references an undeclared column")
+        return self
+
+
+class ClickHouseMetadata(SchemaRecord):
+    MARKET_TABLES: dict[SQLTableName, SQLColumnName]
+    TRADES: SQLTableName
+    TRADE_COLUMNS: dict[SQLColumnName, NonBlankText]
+    TYPES: dict[NonBlankText, NonBlankText]
+    ZSTD: NonBlankText
+    TIME_CODEC: NonBlankText
+    VERSION_CODEC: NonBlankText
+
+
+class ClickHouseInputs(SchemaRecord):
+    market: MarketSchemaMetadata
+    backend: ClickHouseMetadata
+
+    @model_validator(mode="after")
+    def consumed_columns(self) -> Self:
+        for name, partition in self.backend.MARKET_TABLES.items():
+            if name not in self.market.MARKET_COLUMNS:
+                raise ValueError("ClickHouse series table requires declared market columns")
+            columns = self.market.MARKET_COLUMNS[name]
+            if partition not in columns:
+                raise ValueError("ClickHouse partition requires a declared column")
+            if not set(columns.values()) <= self.backend.TYPES.keys():
+                raise ValueError("ClickHouse series requires an explicit type mapping")
+        return self
+
+
+class RetentionConfiguration(BaseModel):
+    model_config = ConfigDict(strict=True, extra="ignore", frozen=True)
+    base_retention_days: int
+    trades_retention_days: int
+    book_summary_retention_hours: int
+
+
+class BaseRetention(SchemaRecord):
+    kind: Literal["BASE"]
+    days: int
+
+
+class TradesRetention(SchemaRecord):
+    kind: Literal["TRADES"]
+    days: int
+
+
+class BookRetention(SchemaRecord):
+    kind: Literal["BOOK"]
+    hours: int
+
+
+type RetentionRule = BaseRetention | TradesRetention | BookRetention
+
+
+def retention_text(rule: RetentionRule) -> str:
+    if isinstance(rule, BookRetention):
+        return f"kept {rule.hours} h (book_summary_retention_hours), no exceptions"
+    if isinstance(rule, TradesRetention):
+        return f"kept {rule.days} days (trades_retention_days); MAJOR+ event days preserved"
+    return f"kept {rule.days} days (base_retention_days); MAJOR+ event days preserved"
+
+
+class ClickHouseColumn(SchemaRecord):
+    name: SQLColumnName
+    data_type: NonBlankText
+    codec: str
+    precision: bool
+
+
+class SQLDerivedColumn(ClickHouseColumn):
+    origin: Literal["SQL"]
+    sql_kind: NonBlankText
+
+
+class NativeColumn(ClickHouseColumn):
+    origin: Literal["NATIVE"]
+
+
+class VersionColumn(ClickHouseColumn):
+    origin: Literal["VERSION"]
+    name: Literal["_version"]
+    data_type: Literal["UInt64"]
+
+    @model_validator(mode="after")
+    def no_precision_companions(self) -> Self:
+        if self.precision:
+            raise ValueError("Version columns have no timestamp precision companions")
+        return self
+
+
+type CapturedColumn = SQLDerivedColumn | NativeColumn | VersionColumn
+
+
+class SkipIndex(SchemaRecord):
+    name: SQLColumnName
+    column: SQLColumnName
+    kind: Literal["bloom_filter", "minmax"]
+    granularity: Annotated[int, Field(gt=0)]
+
+
+class ClickHouseTable(SchemaRecord):
+    name: SQLTableName
+    partition: SQLColumnName
+    order: tuple[SQLColumnName, ...] = Field(min_length=1)
+    cols: tuple[CapturedColumn, ...] = Field(min_length=1)
+    indexes: tuple[SkipIndex, ...]
+
+    @model_validator(mode="after")
+    def declared_keys(self) -> Self:
+        columns = {column.name for column in self.cols}
+        if len(columns) != len(self.cols):
+            raise ValueError("ClickHouse diagram columns must be unique")
+        if self.partition not in columns or not set(self.order) <= columns:
+            raise ValueError("ClickHouse keys require declared columns")
+        if any(index.column not in columns for index in self.indexes):
+            raise ValueError("Skip indexes require declared columns")
+        return self
+
+
+class ClickHouseRow(SchemaRecord):
+    name: str
+    data_type: str
+    labels: tuple[str, ...]
+    hint: str | None
+    precision: bool
+    reference: str | None
+
+
 class ForeignKeyLink(SchemaRecord):
     name: str = Field(min_length=1)
-    source_table: str
+    source_table: SQLTableName
     source_columns: tuple[SQLColumnName, ...] = Field(min_length=1)
-    target_table: str
+    target_table: SQLTableName
     target_columns: tuple[SQLColumnName, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -474,9 +636,9 @@ def foreign_keys(tables: Mapping[str, Table]) -> list[ForeignKeyLink]:
     return out
 
 
-def literal_assignments(path, names):
+def literal_assignments(path: Path, names: Set[str]) -> dict[str, object]:
     tree = ast.parse(Path(path).read_text())
-    found = {}
+    found: dict[str, object] = {}
     for node in tree.body:
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             target, value = node.target, node.value
@@ -492,70 +654,119 @@ def literal_assignments(path, names):
     return found
 
 
-def ch_model(root):
-    schema = literal_assignments(root / "src/tank/market_schema.py", {"MARKET_COLUMNS", "MARKET_IDENTITIES"})
-    chm = literal_assignments(
-        root / "src/tank/clickhouse_market.py",
-        {
-            "MARKET_TABLES",
-            "TRADES",
-            "TRADE_COLUMNS",
-            "TYPES",
-            "ZSTD",
-            "TIME_CODEC",
-            "VERSION_CODEC",
-            "TRADES_TTL_DAYS",
-        },
+def precision_companions(name: str, data_type: str, names: Set[str]) -> bool:
+    if "DateTime64" not in data_type:
+        return False
+    pair = {name + "_prec", name + "_prec_reason"}
+    present = pair & names
+    if present and present != pair:
+        raise ValueError("Timestamp precision metadata requires both companion columns")
+    return present == pair
+
+
+def ch_model(root: Path) -> tuple[ClickHouseTable, ...]:
+    schema = MarketSchemaMetadata.model_validate(
+        literal_assignments(root / "src/tank/market_schema.py", {"MARKET_COLUMNS", "MARKET_IDENTITIES"})
     )
-    codec_of = {"timestamptz": chm["TIME_CODEC"], "boolean": "", "bigint": "CODEC(Delta, ZSTD(3))"}
-    tables = []
-    for name, part in chm["MARKET_TABLES"].items():
-        ident = list(schema["MARKET_IDENTITIES"][name])
-        cols = [{"name": "storage_key", "type": "String", "codec": "", "kind": "text"}]
-        for n, kind in schema["MARKET_COLUMNS"][name].items():
-            ch = chm["TYPES"][kind]
-            if n not in ident and kind != "text[]":
-                ch = f"Nullable({ch})"
-            cols.append({"name": n, "type": ch, "codec": codec_of.get(kind, chm["ZSTD"]), "kind": kind})
-        cols.append({"name": "_version", "type": "UInt64", "codec": chm["VERSION_CODEC"], "kind": "version"})
-        tables.append(
-            {
-                "name": name,
-                "partition": part,
-                "order": ident,
-                "cols": cols,
-                "indexes": [
-                    ("storage_key_bf", "storage_key", "bloom_filter", 4),
-                    ("recorded_at_mm", "recorded_at", "minmax", 1),
-                ],
-            }
+    backend = ClickHouseMetadata.model_validate(
+        literal_assignments(
+            root / "src/tank/clickhouse_market.py",
+            {"MARKET_TABLES", "TRADES", "TRADE_COLUMNS", "TYPES", "ZSTD", "TIME_CODEC", "VERSION_CODEC"},
         )
-    cols = []
-    for n, kind in chm["TRADE_COLUMNS"].items():
-        codec = chm["TIME_CODEC"] if "DateTime64" in kind else "" if "LowCardinality" in kind else chm["ZSTD"]
-        cols.append({"name": n, "type": kind, "codec": codec, "kind": "native"})
-    cols.append({"name": "_version", "type": "UInt64", "codec": chm["VERSION_CODEC"], "kind": "version"})
-    tables.append(
-        {
-            "name": chm["TRADES"],
-            "partition": "ts",
-            "order": ["instrument_id", "ts", "trade_id"],
-            "cols": cols,
-            "indexes": [],
-        }
     )
-    for t in tables:
-        names = {c["name"] for c in t["cols"]}
-        drop = set()
-        for c in t["cols"]:
-            c["prec"] = False
-            if "DateTime64" in c["type"]:
-                pair = {c["name"] + "_prec", c["name"] + "_prec_reason"} & names
-                if pair:
-                    drop |= pair
-                    c["prec"] = True
-        t["cols"] = [c for c in t["cols"] if c["name"] not in drop]
-    return tables, chm
+    inputs = ClickHouseInputs(market=schema, backend=backend)
+    schema, backend = inputs.market, inputs.backend
+    codec_of = {"timestamptz": backend.TIME_CODEC, "boolean": "", "bigint": "CODEC(Delta, ZSTD(3))"}
+    tables: list[ClickHouseTable] = []
+    for name, partition in backend.MARKET_TABLES.items():
+        identity = schema.MARKET_IDENTITIES[name]
+        definitions = schema.MARKET_COLUMNS[name]
+        columns: list[CapturedColumn] = [
+            SQLDerivedColumn(
+                origin="SQL",
+                name="storage_key",
+                data_type="String",
+                codec="",
+                sql_kind="text",
+                precision=False,
+            )
+        ]
+        hidden: set[str] = set()
+        for column, kind in definitions.items():
+            data_type = backend.TYPES[kind]
+            if column not in identity and kind != "text[]":
+                data_type = f"Nullable({data_type})"
+            paired = precision_companions(column, data_type, definitions.keys())
+            if paired:
+                hidden.update((column + "_prec", column + "_prec_reason"))
+            columns.append(
+                SQLDerivedColumn(
+                    origin="SQL",
+                    name=column,
+                    data_type=data_type,
+                    codec=codec_of.get(kind, backend.ZSTD),
+                    sql_kind=kind,
+                    precision=paired,
+                )
+            )
+        columns.append(
+            VersionColumn(
+                origin="VERSION",
+                name="_version",
+                data_type="UInt64",
+                codec=backend.VERSION_CODEC,
+                precision=False,
+            )
+        )
+        tables.append(
+            ClickHouseTable(
+                name=name,
+                partition=partition,
+                order=identity,
+                cols=tuple(column for column in columns if column.name not in hidden),
+                indexes=(
+                    SkipIndex(
+                        name="storage_key_bf", column="storage_key", kind="bloom_filter", granularity=4
+                    ),
+                    SkipIndex(name="recorded_at_mm", column="recorded_at", kind="minmax", granularity=1),
+                ),
+            )
+        )
+    native: list[CapturedColumn] = []
+    hidden = set()
+    for name, data_type in backend.TRADE_COLUMNS.items():
+        codec = (
+            backend.TIME_CODEC
+            if "DateTime64" in data_type
+            else ""
+            if "LowCardinality" in data_type
+            else backend.ZSTD
+        )
+        paired = precision_companions(name, data_type, backend.TRADE_COLUMNS.keys())
+        if paired:
+            hidden.update((name + "_prec", name + "_prec_reason"))
+        native.append(
+            NativeColumn(origin="NATIVE", name=name, data_type=data_type, codec=codec, precision=paired)
+        )
+    native.append(
+        VersionColumn(
+            origin="VERSION",
+            name="_version",
+            data_type="UInt64",
+            codec=backend.VERSION_CODEC,
+            precision=False,
+        )
+    )
+    tables.append(
+        ClickHouseTable(
+            name=backend.TRADES,
+            partition="ts",
+            order=("instrument_id", "ts", "trade_id"),
+            cols=tuple(column for column in native if column.name not in hidden),
+            indexes=(),
+        )
+    )
+    return tuple(tables)
 
 
 MONO = "Menlo, 'DejaVu Sans Mono', monospace"
@@ -682,7 +893,7 @@ def index_count(t):
     return t.indexes + sum(1 for v in t.constraints.values() if v.kind in ("PK", "UK"))
 
 
-def pg_metrics(tables):
+def pg_metrics(tables) -> PostgreSQLMeasurements:
     name = max(len(c["name"]) for t in tables for c in t.cols)
     typ = max(len(c["type"]) for t in tables for c in t.cols)
     ref = max([len(c["ref"]) + 2 for t in tables for c in t.cols if c["ref"]] or [0])
@@ -692,7 +903,9 @@ def pg_metrics(tables):
     nn_x = prec_x + 27
     ref_x = nn_x + 21
     width = (ref_x + ref * CW * 9.2 + 10) if ref else nn_x + 22
-    return {"name_x": name_x, "type_x": type_x, "prec_x": prec_x, "nn_x": nn_x, "ref_x": ref_x, "w": width}
+    return PostgreSQLMeasurements(
+        name_x=name_x, type_x=type_x, prec_x=prec_x, nn_x=nn_x, ref_x=ref_x, width=width
+    )
 
 
 def pg_table(t, x, y, w, mx):
@@ -761,36 +974,36 @@ def pg_table(t, x, y, w, mx):
         envelope = c["name"] in ("document", "immutable") and t.cols[0]["name"] == "storage_key"
         ink = DIFF_RED if row_change else FAINT if envelope else INK
         weight = ' font-weight="700"' if c["pk"] else ""
-        nx = max(x + mx["name_x"], bx + 3)
+        nx = max(x + mx.name_x, bx + 3)
         out.append(
             f'<text x="{nx:.1f}" y="{ry + 12.2}" font-family="{MONO}" font-size="10.8" fill="{ink}"{weight}>{esc(c["name"])}</text>'
         )
         out.append(
-            f'<text x="{x + mx["type_x"]:.1f}" y="{ry + 12.2}" font-family="{MONO}" font-size="10" '
+            f'<text x="{x + mx.type_x:.1f}" y="{ry + 12.2}" font-family="{MONO}" font-size="10" '
             f'fill="{DIFF_RED if row_change else FAINT if envelope else MUTED}">{esc(c["type"])}</text>'
         )
         if row_change == "removed":
-            end = x + mx["type_x"] + tw(c["type"], 10)
+            end = x + mx.type_x + tw(c["type"], 10)
             out.append(
                 f'<path d="M{nx - 2:.1f},{ry + 8.5} H{end + 2:.1f}" stroke="{DIFF_RED}" stroke-width="1.2"/>'
             )
         if c["prec"]:
-            px = x + mx["type_x"] + tw(c["type"], 10) + 4
+            px = x + mx.type_x + tw(c["type"], 10) + 4
             out.append(
                 f'<text x="{px:.1f}" y="{ry + 11.8}" font-family="{SANS}" font-size="8" fill="#DD6B20" font-weight="600">+prec</text>'
             )
         if c["nn"]:
             out.append(
-                f'<text x="{x + mx["nn_x"]:.1f}" y="{ry + 11.8}" font-family="{SANS}" font-size="8" '
+                f'<text x="{x + mx.nn_x:.1f}" y="{ry + 11.8}" font-family="{SANS}" font-size="8" '
                 f'fill="{FAINT if envelope else "#2D3748"}" font-weight="700">NN</text>'
             )
         elif c["req"]:
             out.append(
-                f'<text x="{x + mx["nn_x"]:.1f}" y="{ry + 11.8}" font-family="{SANS}" font-size="8" fill="{FAINT}" font-weight="600">nn</text>'
+                f'<text x="{x + mx.nn_x:.1f}" y="{ry + 11.8}" font-family="{SANS}" font-size="8" fill="{FAINT}" font-weight="600">nn</text>'
             )
         if c["ref"]:
             out.append(
-                f'<text x="{x + mx["ref_x"]:.1f}" y="{ry + 12}" font-family="{MONO}" font-size="9.2" fill="#3182CE" '
+                f'<text x="{x + mx.ref_x:.1f}" y="{ry + 12}" font-family="{MONO}" font-size="9.2" fill="#3182CE" '
                 f'font-style="italic">→ {esc(c["ref"])}</text>'
             )
     out.append("</g>")
@@ -1106,7 +1319,7 @@ def render_pg(root, base_ref=None):
     for i, names in enumerate(layout):
         mx = pg_metrics([drawn[n] for n in names])
         title = max(tw(n, 12.5) * 1.05 + 70 for n in names)
-        col_w[i] = max(mx["w"], title)
+        col_w[i] = max(mx.width, title)
         col_x[i] = x
         mxs[i] = mx
         x += col_w[i] + PG_GUTTERS.get(i, 46)
@@ -1358,55 +1571,55 @@ CH_COLUMNS = [
     ["mkt.book_summaries"],
     ["mkt.oi_obs", "mkt.tickers_24h"],
 ]
-CH_RETENTION = {
-    "mkt.book_summaries": "kept 72 h (book_summary_retention_hours), no exceptions",
-    "mkt.trades": "kept 30 days (trades_retention_days); MAJOR+ event days preserved",
-}
 CH_WRITER = {"mkt.trades": "written by tank-capture · capture/internal/rawstore/trades.go"}
 
 
-def ch_type(t):
+def ch_type(t: str) -> str:
     return t.replace("DateTime64(6, 'UTC')", "DateTime64(6,'UTC')")
 
 
-def ch_rows(t):
-    rows = []
-    for c in t["cols"]:
-        labels = []
-        if c["name"] in t["order"]:
-            labels.append(f"SK{t['order'].index(c['name']) + 1}")
-        if c["name"] == t["partition"]:
+def ch_rows(table: ClickHouseTable) -> tuple[ClickHouseRow, ...]:
+    rows: list[ClickHouseRow] = []
+    for column in table.cols:
+        labels: list[str] = []
+        if column.name in table.order:
+            labels.append(f"SK{table.order.index(column.name) + 1}")
+        if column.name == table.partition:
             labels.append("PT")
-        if c["name"] == "_version":
+        if column.name == "_version":
             labels.append("VER")
-        for _index, col, kind, _granularity in t["indexes"]:
-            if col == c["name"]:
-                labels.append("BF" if kind == "bloom_filter" else "MM")
-        hint = {"numeric": "dec", "jsonb": "json"}.get(c["kind"])
-        ref = {"instrument_id": "pg reg.instruments", "token_id": "pg reg.tokens"}.get(c["name"])
-        rows.append(
-            {
-                "name": c["name"],
-                "type": ch_type(c["type"]),
-                "labels": labels,
-                "hint": hint,
-                "prec": c["prec"],
-                "ref": ref,
-            }
+        for index in table.indexes:
+            if index.column == column.name:
+                labels.append("BF" if index.kind == "bloom_filter" else "MM")
+        hint = (
+            {"numeric": "dec", "jsonb": "json"}.get(column.sql_kind)
+            if isinstance(column, SQLDerivedColumn)
+            else None
         )
-    return rows
+        reference = {"instrument_id": "pg reg.instruments", "token_id": "pg reg.tokens"}.get(column.name)
+        rows.append(
+            ClickHouseRow(
+                name=column.name,
+                data_type=ch_type(column.data_type),
+                labels=tuple(labels),
+                hint=hint,
+                precision=column.precision,
+                reference=reference,
+            )
+        )
+    return tuple(rows)
 
 
-def ch_metrics(tables):
+def ch_metrics(tables: Sequence[ClickHouseTable]) -> ClickHouseMeasurements:
     rows = [r for t in tables for r in ch_rows(t)]
-    name = max(len(r["name"]) for r in rows)
-    typ = max(len(r["type"]) for r in rows)
+    name = max(len(r.name) for r in rows)
+    typ = max(len(r.data_type) for r in rows)
     name_x = 56
     type_x = name_x + name * CW * 10.8 + 14
     hint_x = type_x + typ * CW * 10 + 6
     ref_x = hint_x + 58
     width = ref_x + len("→ pg reg.instruments") * CW * 9.2 + 10
-    return {"name_x": name_x, "type_x": type_x, "hint_x": hint_x, "ref_x": ref_x, "w": width}
+    return ClickHouseMeasurements(name_x=name_x, type_x=type_x, hint_x=hint_x, ref_x=ref_x, width=width)
 
 
 CH_FILL = "#1F2328"
@@ -1414,25 +1627,27 @@ CH_ACCENT = "#FFCC00"
 CH_TINT = "#FFFBEA"
 
 
-def ch_table(t, x, y, w, mx, retention):
+def ch_table(t, x, y, w, mx, retention: RetentionRule):
     rows = ch_rows(t)
     engine = [
         ("ENGINE", "ReplacingMergeTree(_version)"),
-        ("PARTITION BY", f"toYYYYMMDD({t['partition']})"),
-        ("ORDER BY", f"({', '.join(t['order'])})"),
+        ("PARTITION BY", f"toYYYYMMDD({t.partition})"),
+        ("ORDER BY", f"({', '.join(t.order)})"),
         (
             "RETENTION",
-            retention.get(t["name"], "kept 90 days (base_retention_days); MAJOR+ event days preserved"),
+            retention_text(retention),
         ),
     ]
-    for n, col, k, g in t["indexes"]:
-        engine.append(("INDEX", f"{n} {col} TYPE {k} GRANULARITY {g}"))
-    if t["name"] in CH_WRITER:
-        engine.append(("", CH_WRITER[t["name"]]))
+    for index in t.indexes:
+        engine.append(
+            ("INDEX", f"{index.name} {index.column} TYPE {index.kind} GRANULARITY {index.granularity}")
+        )
+    if t.name in CH_WRITER:
+        engine.append(("", CH_WRITER[t.name]))
     eng_h = 8 + len(engine) * 13
-    box = Box(t["name"], x, y, w, rows, HEAD + eng_h)
-    schema, short = t["name"].split(".")
-    out = [f'<g id="{esc(t["name"])}">']
+    box = Box(t.name, x, y, w, rows, HEAD + eng_h)
+    schema, short = t.name.split(".")
+    out = [f'<g id="{esc(t.name)}">']
     out.append(
         f'<rect x="{x + 2}" y="{y + 3}" width="{w}" height="{box.h}" rx="5" fill="#000" opacity="0.07"/>'
     )
@@ -1447,7 +1662,7 @@ def ch_table(t, x, y, w, mx, retention):
         f'<tspan opacity="0.65">{esc(schema)}.</tspan><tspan font-weight="700" fill="{CH_ACCENT}">{esc(short)}</tspan></text>'
     )
     out.append(
-        f'<text x="{x + w - 8}" y="{y + 15.5}" font-family="{SANS}" font-size="9" fill="#A0AEC0" text-anchor="end">{len(t["cols"]) + sum(r["prec"] for r in rows) * 2} cols</text>'
+        f'<text x="{x + w - 8}" y="{y + 15.5}" font-family="{SANS}" font-size="9" fill="#A0AEC0" text-anchor="end">{len(t.cols) + sum(r.precision for r in rows) * 2} cols</text>'
     )
     out.append(f'<rect x="{x + 0.6}" y="{y + HEAD}" width="{w - 1.2}" height="{eng_h}" fill="{CH_TINT}"/>')
     out.append(
@@ -1462,28 +1677,28 @@ def ch_table(t, x, y, w, mx, retention):
         if i % 2:
             out.append(f'<rect x="{x + 0.6}" y="{ry}" width="{w - 1.2}" height="{ROW}" fill="#F7FAFC"/>')
         bx = x + 6
-        for lab in r["labels"][:3]:
+        for lab in r.labels[:3]:
             g, bw = badge(bx, ry + 3, lab)
             out.append(g)
             bx += bw + 2
-        weight = ' font-weight="700"' if any(lab.startswith("SK") for lab in r["labels"]) else ""
-        nx = max(x + mx["name_x"], bx + 3)
+        weight = ' font-weight="700"' if any(lab.startswith("SK") for lab in r.labels) else ""
+        nx = max(x + mx.name_x, bx + 3)
         out.append(
-            f'<text x="{nx:.1f}" y="{ry + 12.2}" font-family="{MONO}" font-size="10.8" fill="{INK}"{weight}>{esc(r["name"])}</text>'
+            f'<text x="{nx:.1f}" y="{ry + 12.2}" font-family="{MONO}" font-size="10.8" fill="{INK}"{weight}>{esc(r.name)}</text>'
         )
-        tcolor = MUTED if r["type"].startswith(("Nullable", "Array")) else "#2D3748"
+        tcolor = MUTED if r.data_type.startswith(("Nullable", "Array")) else "#2D3748"
         out.append(
-            f'<text x="{x + mx["type_x"]:.1f}" y="{ry + 12.2}" font-family="{MONO}" font-size="10" fill="{tcolor}">{esc(r["type"])}</text>'
+            f'<text x="{x + mx.type_x:.1f}" y="{ry + 12.2}" font-family="{MONO}" font-size="10" fill="{tcolor}">{esc(r.data_type)}</text>'
         )
-        hx = x + mx["hint_x"]
-        if r["prec"]:
+        hx = x + mx.hint_x
+        if r.precision:
             out.append(text(hx, ry + 11.8, "+prec", 8, "#DD6B20", 600))
-        elif r["hint"]:
-            out.append(text(hx, ry + 11.8, r["hint"], 8, "#805AD5", 700))
-        if r["ref"]:
+        elif r.hint:
+            out.append(text(hx, ry + 11.8, r.hint, 8, "#805AD5", 700))
+        if r.reference:
             out.append(
                 text(
-                    x + mx["ref_x"], ry + 12, esc("→ " + r["ref"]), 9.2, "#3182CE", None, MONO, None, "italic"
+                    x + mx.ref_x, ry + 12, esc("→ " + r.reference), 9.2, "#3182CE", None, MONO, None, "italic"
                 )
             )
     out.append("</g>")
@@ -1491,22 +1706,34 @@ def ch_table(t, x, y, w, mx, retention):
 
 
 def render_ch(root):
-    tables, chm = ch_model(root)
-    by = {t["name"]: t for t in tables}
+    tables = ch_model(root)
+    raw_configuration: object = yaml.safe_load((root / "config/thresholds.yaml").read_text())
+    configuration = RetentionConfiguration.model_validate(raw_configuration)
+    retentions: dict[str, RetentionRule] = {}
+    for table in tables:
+        if table.name == "mkt.book_summaries":
+            retentions[table.name] = BookRetention(
+                kind="BOOK", hours=configuration.book_summary_retention_hours
+            )
+        elif table.name == "mkt.trades":
+            retentions[table.name] = TradesRetention(kind="TRADES", days=configuration.trades_retention_days)
+        else:
+            retentions[table.name] = BaseRetention(kind="BASE", days=configuration.base_retention_days)
+    by = {t.name: t for t in tables}
     assert {n for c in CH_COLUMNS for n in c} == set(by)
     margin, top, gutter = 40, 330, 30
     col_x, col_w, mxs = {}, {}, {}
     x = margin
     for i, names in enumerate(CH_COLUMNS):
         mx = ch_metrics([by[n] for n in names])
-        col_w[i], col_x[i], mxs[i] = mx["w"], x, mx
-        x += mx["w"] + gutter
+        col_w[i], col_x[i], mxs[i] = mx.width, x, mx
+        x += mx.width + gutter
     width = x - gutter + margin
     body, bottoms = [], {}
     for i, names in enumerate(CH_COLUMNS):
         y = top
         for n in names:
-            box, svg = ch_table(by[n], col_x[i], y, col_w[i], mxs[i], CH_RETENTION)
+            box, svg = ch_table(by[n], col_x[i], y, col_w[i], mxs[i], retentions[n])
             body.append(svg)
             y += box.h + GAP
         bottoms[i] = y
