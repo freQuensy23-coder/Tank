@@ -29,6 +29,7 @@ from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository, Repository
 from tank.telegram_inbox import RepositoryFollowupRefusals
+from tank.time_precision import propagate_timestamp
 from tank.util import clock_iso, iso, utcnow
 
 
@@ -384,10 +385,12 @@ async def test_timed_review_fires_once_in_original_session_without_market_reads(
     scheduler = scheduler_for(service)
     market_read = AsyncMock(side_effect=AssertionError("No market read expected"))
     monkeypatch.setattr(scheduler.truth, "assess", market_read)
-    await scheduler.eval_conditions({"cutoff": iso(now)})
+    await scheduler.eval_conditions(propagate_timestamp({"cutoff": iso(now)}, "cutoff"))
     assert (await service.repo.get("ana.watch_conditions", condition["cond_id"]))["status"] == "ARMED"
-    await scheduler.eval_conditions({"cutoff": iso(due)})
-    await scheduler.eval_conditions({"cutoff": iso(due + timedelta(minutes=1))})
+    await scheduler.eval_conditions(propagate_timestamp({"cutoff": iso(due)}, "cutoff"))
+    await scheduler.eval_conditions(
+        propagate_timestamp({"cutoff": iso(due + timedelta(minutes=1))}, "cutoff")
+    )
     jobs = await service.repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
     reviews = [job for job in jobs if job["payload"].get("kind") == "CONDITION_FIRED"]
     assert len(reviews) == 1
@@ -439,7 +442,11 @@ async def test_timed_review_cancellation_and_expiry(service: EventToolService, o
         event["lifecycle"] = "INVALIDATED"
         await service.repo.put("evt.events", args["event_id"], event)
     scheduler = scheduler_for(service)
-    await scheduler.eval_conditions({"cutoff": iso(now + timedelta(hours=3 if outcome == "EXPIRED" else 1))})
+    await scheduler.eval_conditions(
+        propagate_timestamp(
+            {"cutoff": iso(now + timedelta(hours=3 if outcome == "EXPIRED" else 1))}, "cutoff"
+        )
+    )
     row = await service.repo.get("ana.watch_conditions", cid)
     assert row["status"] == ("EXPIRED" if outcome == "EXPIRED" else "CANCELLED")
     assert not await service.repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
@@ -541,7 +548,7 @@ async def test_fired_review_keeps_old_event_open_for_queued_analysis(
     scheduler = scheduler_for(service)
     await scheduler._advance_lifecycle(event, now)
     assert (await service.repo.get("evt.events", eid))["lifecycle"] == state
-    await scheduler.eval_conditions({"cutoff": iso(due)})
+    await scheduler.eval_conditions(propagate_timestamp({"cutoff": iso(due)}, "cutoff"))
     event = await service.repo.get("evt.events", eid)
     await scheduler._advance_lifecycle(event, due)
     event = await service.repo.get("evt.events", eid)
@@ -834,7 +841,9 @@ async def test_postgres_preliminary_and_timed_review_roundtrip(
         cid = result["condition"]["cond_id"]
         assert (await repo.get("ana.watch_conditions", cid))["token_id"] is None
         scheduler = scheduler_for(service)
-        await scheduler.eval_conditions({"cutoff": iso(now + timedelta(minutes=5))})
+        await scheduler.eval_conditions(
+            propagate_timestamp({"cutoff": iso(now + timedelta(minutes=5))}, "cutoff")
+        )
         assert (await repo.get("ana.watch_conditions", cid))["status"] == "FIRED"
         jobs = await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
         assert any(job["payload"].get("review_question") for job in jobs)
@@ -866,7 +875,9 @@ async def test_disarm_wins_while_timed_review_waits_for_event_lock(
     monkeypatch.setattr(service.repo, "lock", pause_review)
     scheduler = scheduler_for(service)
     cutoff = now + timedelta(hours={"before_due": 0, "due": 1, "expired": 3}[phase])
-    task = asyncio.create_task(scheduler.eval_conditions({"cutoff": iso(cutoff)}), name="timed-review")
+    task = asyncio.create_task(
+        scheduler.eval_conditions(propagate_timestamp({"cutoff": iso(cutoff)}, "cutoff")), name="timed-review"
+    )
     try:
         await asyncio.wait_for(waiting.wait(), timeout=2)
         cancelled = await service.dispatch(
