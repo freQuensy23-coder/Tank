@@ -144,3 +144,22 @@ def test_copied_endpoint_or_predicate_tampering_refuses() -> None:
         recorded_oi_decomposition(result.endpoints.model_copy(update={"native_end": True}))
     with pytest.raises(ValidationError):
         DecimalPowerTerm(coefficient=Decimal(1), exponent=True)
+
+
+def test_small_endpoint_population_matches_independent_fraction_majority() -> None:
+    for initial in range(1, 6):
+        for final in range(1, 6):
+            for usd0 in range(4):
+                for usd1 in range(4):
+                    result = recorded_oi_decomposition(
+                        endpoints(str(initial), str(final), str(usd0), str(usd1))
+                    )
+                    assert isinstance(result, DefinedRecordedOiDecomposition)
+                    p0, p1 = Fraction(usd0, initial), Fraction(usd1, final)
+                    terms = (
+                        (final - initial) * p0,
+                        initial * (p1 - p0),
+                        (final - initial) * (p1 - p0),
+                    )
+                    total = sum(abs(value) for value in terms)
+                    assert result.native_majority == (2 * abs(terms[0]) > total if total else None)
