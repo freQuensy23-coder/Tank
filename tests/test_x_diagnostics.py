@@ -3,12 +3,14 @@ import json
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from email import policy
+from email.message import EmailMessage
 from email.parser import BytesParser
 from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
 import pytest
+from foundation_helpers import present
 from pydantic import JsonValue
 from pydantic_settings import SettingsConfigDict
 from source_support import (
@@ -21,6 +23,8 @@ from test_sources import settings as source_settings
 from test_xsensor import URL, run
 
 from tank import runtime_composition
+from tank.contracts.jobs import JobEnvelope
+from tank.contracts.source_errors import EntryErrorNotice
 from tank.contracts.sources import SourceAccount
 from tank.delivery import DeliveryError, DeliveryService
 from tank.diagnostic_documents import documents
@@ -141,17 +145,19 @@ async def delivery_runtime(
         await runtime.close()
 
 
-def multipart(request):
+def multipart(request: httpx.Request) -> dict[str, tuple[str | None, bytes]]:
     message = BytesParser(policy=policy.default).parsebytes(
         b"Content-Type: " + request.headers["content-type"].encode() + b"\r\n\r\n" + request.content
     )
-    return {
-        part.get_param("name", header="content-disposition"): (
-            part.get_filename(),
-            part.get_payload(decode=True),
-        )
-        for part in message.iter_parts()
-    }
+    assert isinstance(message, EmailMessage)
+    result: dict[str, tuple[str | None, bytes]] = {}
+    for part in message.iter_parts():
+        name = part.get_param("name", header="content-disposition")
+        content = part.get_payload(decode=True)
+        assert isinstance(name, str) and name and name not in result
+        assert isinstance(content, bytes)
+        result[name] = part.get_filename(), content
+    return result
 
 
 async def notice_for(repo, evidence, tmp_path: Path):
@@ -441,10 +447,10 @@ async def test_changed_json_detail_survives_redaction_and_creates_distinct_ops_n
         body = base64.b64encode(raw).decode() if encoding == "base64" else raw.decode()
         notices.append(await notice_for(repo, diagnostics(body, encoding=encoding), tmp_path))
     assert notices[0]["notice_id"] != notices[1]["notice_id"]
-    for index, detail in enumerate((b"A", b"B")):
+    for index, detail_bytes in enumerate((b"A", b"B")):
         attachments = documents(notices[index]["entry_errors"])
         assert b"session" not in attachments[0].content
-        assert b'"detail":"upstream ' + detail + b'"}' in attachments[0].content
+        assert b'"detail":"upstream ' + detail_bytes + b'"}' in attachments[0].content
     assert len(await repo.list("ops.jobs", filters={"type": "DELIVER"})) == 2
 
 
@@ -469,12 +475,14 @@ async def test_job_runner_preserves_independent_document_retry_budgets(
 
     monkeypatch.setattr(tank.runtime, "collection_clock", observed_clock)
     repo = MemoryRepository()
-    notice = await notice_for(repo, diagnostics("full body"), tmp_path)
-    [job] = await repo.list("ops.jobs", filters={"type": "DELIVER"})
-    counts = {}
-    sent = []
+    notice = EntryErrorNotice.model_validate(await notice_for(repo, diagnostics("full body"), tmp_path))
+    [job_wire] = await repo.list("ops.jobs", filters={"type": "DELIVER"})
+    job = JobEnvelope.model_validate(job_wire)
+    counts: dict[str, int] = {}
+    sent: list[str] = []
     message_count = 0
-    filenames = [row["filename"] for row in notice["document_manifest"]]
+    assert notice.document_manifest is not None
+    filenames = [row.filename for row in notice.document_manifest]
 
     def send(request):
         nonlocal message_count
@@ -482,6 +490,7 @@ async def test_job_runner_preserves_independent_document_retry_budgets(
             message_count += 1
         else:
             filename = multipart(request)["document"][0]
+            assert filename is not None
             counts[filename] = counts.get(filename, 0) + 1
             failures = 5 if exhaust_first and filename == filenames[0] else 4
             if counts[filename] <= failures:
@@ -495,10 +504,10 @@ async def test_job_runner_preserves_independent_document_retry_budgets(
     ):
         execute = runtime.execute_work_wire
         for _ in range(30):
-            current = await repo.get("ops.jobs", job["job_id"])
-            if current["status"] in {"DONE", "FAILED"}:
+            current = JobEnvelope.model_validate(present(await repo.get("ops.jobs", job.job_id)))
+            if current.status in {"DONE", "FAILED"}:
                 break
-            now = max(now, parse_time(current["run_after"])) + timedelta(microseconds=1)
+            now = max(now, parse_time(current.run_after)) + timedelta(microseconds=1)
             stop = asyncio.Event()
 
             async def deliver(work: ClaimedWork) -> JsonValue:
@@ -511,12 +520,12 @@ async def test_job_runner_preserves_independent_document_retry_budgets(
 
             monkeypatch.setattr(runtime, "execute_work_wire", deliver)
             await runtime.worker(stop)
-    current = await repo.get("ops.jobs", job["job_id"])
-    assert current["status"] == ("FAILED" if exhaust_first else "DONE")
+    current = JobEnvelope.model_validate(present(await repo.get("ops.jobs", job.job_id)))
+    assert current.status == ("FAILED" if exhaust_first else "DONE")
     assert counts == dict.fromkeys(filenames, 5)
     assert sent == (filenames[1:] if exhaust_first else filenames)
     assert message_count == 1
-    assert current["attempts"] == (5 if exhaust_first else 1)
+    assert current.attempts == (5 if exhaust_first else 1)
     ledger = await repo.list("out.deliveries", filters={"method": "sendDocument", "status": "SENT"})
     assert [row["filename"] for row in ledger] == sent
     failures = await repo.list("out.deliveries", filters={"method": "sendDocument", "terminal": True})
@@ -563,10 +572,13 @@ async def test_job_runner_defers_large_successful_document_batches_without_spend
         ),
         "2026-10-24T12:00:00Z",
     )
-    notice = await repo.get("out.ops_notices", notice_id)
-    [job] = await repo.list("ops.jobs", filters={"type": "DELIVER"})
-    expected = [row["filename"] for row in notice["document_manifest"]]
-    sent = []
+    assert notice_id is not None
+    notice = EntryErrorNotice.model_validate(present(await repo.get("out.ops_notices", notice_id)))
+    [job_wire] = await repo.list("ops.jobs", filters={"type": "DELIVER"})
+    job = JobEnvelope.model_validate(job_wire)
+    assert notice.document_manifest is not None
+    expected = [row.filename for row in notice.document_manifest]
+    sent: list[str] = []
     messages = 0
     batches = []
 
@@ -575,7 +587,9 @@ async def test_job_runner_defers_large_successful_document_batches_without_spend
         if request.url.path.endswith("sendMessage"):
             messages += 1
         else:
-            sent.append(multipart(request)["document"][0])
+            filename = multipart(request)["document"][0]
+            assert filename is not None
+            sent.append(filename)
             elapsed += 3
         return httpx.Response(200, json={"ok": True, "result": {"message_id": messages + len(sent)}})
 
@@ -585,10 +599,10 @@ async def test_job_runner_defers_large_successful_document_batches_without_spend
     ):
         execute = runtime.execute_work_wire
         for _ in range(50):
-            current = await repo.get("ops.jobs", job["job_id"])
-            if current["status"] in {"DONE", "FAILED"}:
+            current = JobEnvelope.model_validate(present(await repo.get("ops.jobs", job.job_id)))
+            if current.status in {"DONE", "FAILED"}:
                 break
-            now = max(now, parse_time(current["run_after"])) + timedelta(microseconds=1)
+            now = max(now, parse_time(current.run_after)) + timedelta(microseconds=1)
             stop = asyncio.Event()
 
             async def deliver(work: ClaimedWork) -> JsonValue:
@@ -603,8 +617,8 @@ async def test_job_runner_defers_large_successful_document_batches_without_spend
             started = elapsed
             await runtime.worker(stop)
             batches.append(elapsed - started)
-    current = await repo.get("ops.jobs", job["job_id"])
-    assert current["status"] == "DONE" and current["attempts"] == 1
+    current = JobEnvelope.model_validate(present(await repo.get("ops.jobs", job.job_id)))
+    assert current.status == "DONE" and current.attempts == 1
     assert len(expected) == 344 and sent == expected and (messages == 1)
     assert len(batches) > 5 and all(0 < duration <= 30 for duration in batches)
     receipts = await repo.list("out.deliveries", filters={"method": "sendDocument", "status": "SENT"})

@@ -4,26 +4,34 @@ import asyncio
 import gzip
 import json
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from datetime import timedelta
 from pathlib import Path
+from typing import Never
 
 import httpx
 import pytest
+from foundation_helpers import present, text_field
 from pydantic import JsonValue
+from pydantic_settings import SettingsConfigDict
 from runtime_public_fixtures import public_runtime
 from source_support import fixture_http_admission, fixture_versions
 
 from tank.contracts import DomainModel
 from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import JobEnvelope
-from tank.contracts.scheduler_commands import RevisedReactionCommand, reaction_command_from_wire
+from tank.contracts.scheduler_commands import (
+    ReactionCaptureCommand,
+    RevisedReactionCommand,
+    reaction_command_from_wire,
+)
 from tank.contracts.scheduler_results import (
     CapturedReaction,
     ReactionCaptureResult,
+    ReactionCaptureResultDocument,
     ReactionChangeTarget,
     UnchangedReaction,
     applied_reaction_change_receipt,
-    reaction_capture_result,
 )
 from tank.market.service import MarketService
 from tank.runtime_dispatch_contracts import ClaimedWork, RunningJobClaim
@@ -71,7 +79,7 @@ async def run_claimed_reactions(
                                 and job.claim_token is not None
                             )
                             assert isinstance(job.result, dict)
-                            receipts.append(reaction_capture_result(job.result))
+                            receipts.append(ReactionCaptureResultDocument.model_validate(job.result).root)
                         return ReactionWorkerRun(receipts=receipts, auxiliary_job_ids=())
                     assert all(
                         job is not None and job.status not in {"FAILED", "EXPIRED"} for job in observed
@@ -100,7 +108,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
 
     monkeypatch.setattr(scheduler_module, "LATE_REVISION_DEFER_S", 0)
     anchor = utcnow().replace(second=0, microsecond=0) - timedelta(hours=2)
-    inst = {
+    inst: dict[str, JsonValue] = {
         "instrument_id": "binance:spot:TUSD",
         "token_id": "test:T",
         "venue": "binance",
@@ -114,6 +122,8 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
     }
 
     class FixtureSettings(Settings):
+        model_config = SettingsConfigDict(env_file=None)
+
         def load_config(self, name):
             if name == "registry":
                 return {"tokens": [{"token_id": "test:T", "symbol": "T"}], "instruments": [inst]}
@@ -122,7 +132,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
             return super().load_config(name)
 
     settings = FixtureSettings(
-        _env_file=None, data_dir=tmp_path, replay=True, config_version="fixture", code_version="fixture"
+        data_dir=tmp_path, replay=True, config_version="fixture", code_version="fixture"
     )
 
     async def go_capture(name, payload):
@@ -144,7 +154,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         assert not output["errors"], output["errors"]
         return output
 
-    def external(req) -> None:
+    def external(req: httpx.Request) -> Never:
         raise AssertionError("Tank core must not fetch exchange data: " + str(req.url))
 
     async def persist_capture(output, *, observed, minute) -> None:
@@ -185,10 +195,10 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
             settings,
             market,
             None,
-            thresholds=Settings(_env_file=None).thresholds(),
+            thresholds=FixtureSettings().thresholds(),
             versions=fixture_versions(),
         )
-        payload = {
+        payload: dict[str, JsonValue] = {
             "event_id": "e",
             "token_id": "test:T",
             "checkpoint": "PRE_1H",
@@ -197,7 +207,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         }
         receipt = await scheduler.reaction_capture(reaction_command_from_wire(payload))
         assert isinstance(receipt, CapturedReaction)
-        original = await repo.get("out.reaction_checkpoints", receipt.checkpoint_key)
+        original = present(await repo.get("out.reaction_checkpoints", receipt.checkpoint_key))
         assert original is not None
         assert original["r_raw"] is None and original["revision"] == 1
 
@@ -215,7 +225,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         )
         observed = utcnow()
 
-        historical = []
+        historical: list[dict[str, JsonValue]] = []
         for minute in range(-1440, 1):
             opened = anchor + timedelta(minutes=minute)
             close = "100" if opened < anchor - timedelta(minutes=30) else "110"
@@ -246,14 +256,16 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         await repo.put_market_batch(
             "mkt.klines_1m",
             historical,
-            keys=[row["instrument_id"] + ":" + row["open_time"] for row in historical],
+            keys=[
+                text_field(row, "instrument_id") + ":" + text_field(row, "open_time") for row in historical
+            ],
         )
 
-        history_bars = []
+        history_bars: list[dict[str, JsonValue]] = []
         for row in historical:
-            end = parse_time(row["open_time"]) + timedelta(minutes=1)
+            end = parse_time(text_field(row, "open_time")) + timedelta(minutes=1)
             last_trade = {
-                "trade_id": "historical-" + row["open_time"],
+                "trade_id": "historical-" + text_field(row, "open_time"),
                 "price": row["c"],
                 "ts": iso(end - timedelta(microseconds=1)),
             }
@@ -291,14 +303,17 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         await repo.put_market_batch(
             "mkt.flow_bars_1m",
             history_bars,
-            keys=[row["instrument_id"] + ":" + row["minute_start"] for row in history_bars],
+            keys=[
+                text_field(row, "instrument_id") + ":" + text_field(row, "minute_start")
+                for row in history_bars
+            ],
         )
 
         await repo.put_market_batch(
             "mkt.backfill_runs",
             [
                 {
-                    **await repo.get("mkt.backfill_runs", key),
+                    **present(await repo.get("mkt.backfill_runs", key)),
                     **collection_clock(utcnow()).fields("finished_at"),
                     "status": "PARTIAL",
                     "reason": "ONLY_REACTION_WINDOW_CAPTURED",
@@ -312,28 +327,35 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         )
         assert state.status in {"COMPLETE", "PARTIAL"}
         await scheduler.detect_late_data(utcnow())
-        jobs = [j async for j in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE"})]
-        assert jobs and all(job["payload"]["automatic_revision"] for job in jobs)
+        jobs = [
+            JobEnvelope.model_validate(j)
+            async for j in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE"})
+        ]
+        assert jobs and all(
+            isinstance(reaction_command_from_wire(job.payload), RevisedReactionCommand) for job in jobs
+        )
         await run_claimed_reactions(
             repo,
             scheduler,
-            tuple(JobEnvelope.model_validate(job).job_id for job in jobs),
+            tuple(job.job_id for job in jobs),
             tmp_path / "historical-runtime",
             monkeypatch,
         )
-        revised = await repo.get("out.reaction_checkpoints", "e:test:T:PRE_1H:2")
+        revised = present(await repo.get("out.reaction_checkpoints", "e:test:T:PRE_1H:2"))
         assert revised["revision"] == 2 and revised["r_raw"] is not None
         assert revised["r_raw"] == pytest.approx(0.1)
-        assert revised["rwp_id"] == original["rwp_id"] and revised["rwp_id"].startswith("RWP-")
-        assert revised["reason"].startswith("Late capture completed:")
+        assert revised["rwp_id"] == original["rwp_id"] and text_field(revised, "rwp_id").startswith("RWP-")
+        assert text_field(revised, "reason").startswith("Late capture completed:")
         assert await repo.get("out.reaction_checkpoints", "e:test:T:PRE_1H:1") == original
         await scheduler.detect_late_data(utcnow())
-        await scheduler.reaction_capture(reaction_command_from_wire(jobs[0]["payload"]))
+        await scheduler.reaction_capture(reaction_command_from_wire(jobs[0].payload))
         assert len([row async for row in repo.iter_all("out.reaction_checkpoints")]) == 2
 
+        first_change = reaction_command_from_wire(jobs[0].payload)
+        assert isinstance(first_change, RevisedReactionCommand)
         unchanged = dict(
-            jobs[0]["payload"],
-            change_id=jobs[0]["payload"]["change_id"] + ":same",
+            jobs[0].payload,
+            change_id=first_change.change_id + ":same",
             reason="Late duplicate capture",
         )
         result = await scheduler.reaction_capture(reaction_command_from_wire(unchanged))
@@ -376,18 +398,20 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         assert late_bar["complete"] is True and late_bar["last_trade"]["price"] == "120"
         await persist_capture(late, observed=late_observed, minute=late_minute)
         await scheduler.detect_late_data(utcnow())
-        previous_ids = {job["job_id"] for job in jobs}
-        live_jobs = [
-            job
+        previous_ids = {job.job_id for job in jobs}
+        observed_jobs = [
+            JobEnvelope.model_validate(job)
             async for job in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE"})
-            if job["job_id"] not in previous_ids
         ]
-        assert len(live_jobs) == 1 and "CAP-LIVE-" in live_jobs[0]["payload"]["change_id"]
+        live_jobs = [job for job in observed_jobs if job.job_id not in previous_ids]
+        assert len(live_jobs) == 1
+        live_change = reaction_command_from_wire(live_jobs[0].payload)
+        assert isinstance(live_change, RevisedReactionCommand) and "CAP-LIVE-" in live_change.change_id
 
         live_run = await capture_runner(
             repo,
             scheduler,
-            (JobEnvelope.model_validate(live_jobs[0]).job_id,),
+            (live_jobs[0].job_id,),
             tmp_path / "runtime",
             monkeypatch,
         )
@@ -444,6 +468,19 @@ async def run_after_failed_peer(
     first_claimed, release_first = asyncio.Event(), asyncio.Event()
     seen: list[RunningJobClaim] = []
     peer_id: str | None = None
+    executing_job: ContextVar[str | None] = ContextVar("reaction_fixture_claim", default=None)
+    peer_core_entered = asyncio.Event()
+    capture = scheduler.reaction_capture
+
+    async def observed_capture(
+        request: ReactionCaptureCommand, *, wait_for_slot: bool = False
+    ) -> ReactionCaptureResult:
+        if peer_id is not None and executing_job.get() == peer_id:
+            peer_core_entered.set()
+            raise RuntimeError("Synthetic capture input unavailable on the peer's final attempt")
+        return await capture(request, wait_for_slot=wait_for_slot)
+
+    monkeypatch.setattr(scheduler, "reaction_capture", observed_capture)
     marker_key = "reaction-change:" + command.change_id
     assert await repo.get("ops.scheduler_checkpoints", marker_key) is None
     async with asyncio.timeout(REACTION_RETRY_S + 15):
@@ -457,11 +494,13 @@ async def run_after_failed_peer(
                     seen.append(work.scope())
                     first_claimed.set()
                     await release_first.wait()
-                elif work.job.job_id == peer_id:
-                    raise RuntimeError("Synthetic capture input unavailable on the peer's final attempt")
-                else:
+                elif work.job.job_id != peer_id:
                     raise AssertionError("Reaction fixture refuses unrelated jobs")
-                return await execute(work)
+                context = executing_job.set(work.job.job_id)
+                try:
+                    return await execute(work)
+                finally:
+                    executing_job.reset(context)
 
             monkeypatch.setattr(runtime, "execute_work_wire", first_phase)
             stop = asyncio.Event()
@@ -484,6 +523,7 @@ async def run_after_failed_peer(
                     if peer_state is not None and peer_state.status == "FAILED":
                         break
                     await asyncio.sleep(0.005)
+                assert peer_core_entered.is_set()
                 deferred = await jobs.get(original.job_id)
                 assert deferred is not None and deferred.status == "QUEUED"
                 assert deferred.attempts == 0 and "result" not in deferred.model_fields_set
@@ -524,7 +564,11 @@ async def run_after_failed_peer(
                     raise AssertionError("Restart fixture refuses unrelated jobs")
                 assert utcnow() >= parse_time(work.job.run_after)
                 seen.append(work.scope())
-                return await execute(work)
+                context = executing_job.set(work.job.job_id)
+                try:
+                    return await execute(work)
+                finally:
+                    executing_job.reset(context)
 
             monkeypatch.setattr(runtime, "execute_work_wire", restarted_phase)
             stop = asyncio.Event()
@@ -556,7 +600,7 @@ async def run_after_failed_peer(
     assert seen[0].recovery_count is None and seen[1].recovery_count is None
     assert seen[0].payload_revision == seen[1].payload_revision
     assert completed.finished_at is not None and isinstance(completed.result, dict)
-    receipt = reaction_capture_result(completed.result)
+    receipt = ReactionCaptureResultDocument.model_validate(completed.result).root
     assert isinstance(receipt, CapturedReaction) and receipt.revision == 3
     assert canonical_json(completed.payload) == source_payload and completed.expires_at == original.expires_at
     marker = await repo.get("ops.scheduler_checkpoints", marker_key)

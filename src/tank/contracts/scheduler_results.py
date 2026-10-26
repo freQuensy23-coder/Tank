@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, JsonValue, model_validator
+from pydantic import ConfigDict, Field, JsonValue, RootModel, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.scalars import FalseFlag
@@ -97,6 +97,10 @@ class CoalescedReaction(DomainModel):
 type ReactionCaptureResult = (
     CapturedReaction | HistoricalCapturedReaction | UnchangedReaction | AppliedReactionChange
 )
+
+
+class ReactionCaptureResultDocument(RootModel[ReactionCaptureResult]):
+    model_config = ConfigDict(strict=True, hide_input_in_errors=True, revalidate_instances="always")
 
 
 def captured_reaction_receipt(checkpoint_key: str, record: Mapping[str, JsonValue]) -> CapturedReaction:
