@@ -404,3 +404,27 @@ def test_window_evaluation_keeps_closed_native_facts_until_wire_serialization() 
             source_evidence=decoded.source_evidence,
             clocks=decoded.clocks.model_copy(update={"token_id": "OTHER"}),
         )
+
+
+def test_calculator_owns_validated_inputs_and_refuses_invalid_copied_models() -> None:
+    from pydantic import ValidationError
+
+    from tank.analysis.condition_graph_contracts import ConditionInterval
+    from tank.analysis.spot import SpotCalculator
+
+    instrument, rows = source_rows()
+    start = END - timedelta(hours=1)
+    decoded = decode_windows([instrument], rows, chosen_boundary(start, precision="EXACT"))
+    source = decoded.inputs.source
+    calculator = SpotCalculator(source)
+    interval = ConditionInterval(window="EVENT", start=start, cutoff=END)
+    expected = calculator.sign_history(interval=interval, selected_venues=("VENUE",))
+    rows.clear()
+    instrument["token_id"] = "OTHER"
+    with pytest.raises(ValidationError):
+        setattr(source.minutes[0], "buy_qty", Decimal(999))
+    assert calculator.sign_history(interval=interval, selected_venues=("VENUE",)) == expected
+    with pytest.raises(ValidationError):
+        SpotCalculator(source.model_copy(update={"token_id": "OTHER"}))
+    with pytest.raises(ValidationError):
+        SpotCalculator(source.model_copy(update={"minutes": list(source.minutes)}))

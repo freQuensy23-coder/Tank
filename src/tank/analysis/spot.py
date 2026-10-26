@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal, localcontext
@@ -765,10 +766,9 @@ def calculate_spot(inputs: SpotCalculationInputs) -> BasicConditionSpot:
         return _calculate_spot(inputs, qualified, start=inputs.start, cutoff=inputs.cutoff)
 
 
-def calculate_spot_sign_history(
-    inputs: SpotCalculationInputs, *, interval: ConditionInterval, selected_venues: tuple[str, ...]
+def _calculate_spot_sign_history(
+    source: SpotCalculationInputs, *, interval: ConditionInterval, selected_venues: tuple[str, ...]
 ) -> ConditionTopVenueSignHistory:
-    source = SpotCalculationInputs.model_validate(inputs)
     interval = ConditionInterval.model_validate(interval)
     if interval.start < source.start or interval.cutoff > source.cutoff:
         raise ValueError("Sign history must remain inside the actual source interval")
@@ -809,6 +809,26 @@ def calculate_spot_sign_history(
         selected_venues=selected_venues,
         windows=tuple(windows),
     )
+
+
+class SpotCalculator:
+    """Own strict request inputs once while evaluating multiple pure flow intervals."""
+
+    __slots__ = ("_source",)
+
+    def __init__(self, inputs: SpotCalculationInputs) -> None:
+        self._source = deepcopy(SpotCalculationInputs.model_validate(inputs))
+
+    def sign_history(
+        self, *, interval: ConditionInterval, selected_venues: tuple[str, ...]
+    ) -> ConditionTopVenueSignHistory:
+        return _calculate_spot_sign_history(self._source, interval=interval, selected_venues=selected_venues)
+
+
+def calculate_spot_sign_history(
+    inputs: SpotCalculationInputs, *, interval: ConditionInterval, selected_venues: tuple[str, ...]
+) -> ConditionTopVenueSignHistory:
+    return SpotCalculator(inputs).sign_history(interval=interval, selected_venues=selected_venues)
 
 
 def _coverage_through(venues: Sequence[_Venue]) -> Timestamp:

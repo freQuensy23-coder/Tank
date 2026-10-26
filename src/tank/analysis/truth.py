@@ -62,9 +62,9 @@ from tank.analysis.price_reference import (
     decode_price_cadence,
 )
 from tank.analysis.spot import (
+    SpotCalculator,
     SpotNativeMeasurement,
     calculate_spot,
-    calculate_spot_sign_history,
     calculate_spot_window_graph,
     spot_native_measurements,
 )
@@ -5121,7 +5121,7 @@ def _compute_market_truth(snapshot, *, config=None):
         for instrument in snapshot.get("instruments", [])
         if instrument["token_id"] == snapshot["token_id"]
     ]
-    spot_inputs = spot_evaluation.source.at(propagate_timestamp(snapshot, "assembled_at"))
+    spot_calculator = SpotCalculator(spot_evaluation.source.at(propagate_timestamp(snapshot, "assembled_at")))
     snapshot["_has_event"] = bool(av)
     snapshot["_lead_start"] = start
     snapshot["_event_anchor"] = start if av else None
@@ -5153,8 +5153,7 @@ def _compute_market_truth(snapshot, *, config=None):
             d,
             relative,
             window_liquidity,
-            sign_history=calculate_spot_sign_history(
-                spot_inputs,
+            sign_history=spot_calculator.sign_history(
                 interval=spot_graph.spots[name].interval,
                 selected_venues=spot_graph.spots[name].topn.venues,
             ),
@@ -5537,7 +5536,7 @@ def condition_market_state(snapshot, end, cache):
     _spot_graph = spot_evaluation.graph
     spots = spot_evaluation.wire_spots()
     windows, primary = _spot_graph.durations_s, _spot_graph.primary
-    spot_inputs = spot_evaluation.source.at(propagate_timestamp(snapshot, "assembled_at"))
+    spot_calculator = SpotCalculator(spot_evaluation.source.at(propagate_timestamp(snapshot, "assembled_at")))
     scoped = dict(
         snapshot,
         _primary=primary,
@@ -5594,8 +5593,7 @@ def condition_market_state(snapshot, end, cache):
         derivatives,
         relative,
         liquidity,
-        sign_history=calculate_spot_sign_history(
-            spot_inputs,
+        sign_history=spot_calculator.sign_history(
             interval=_spot_graph.spots[primary].interval,
             selected_venues=_spot_graph.spots[primary].topn.venues,
         ),
