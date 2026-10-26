@@ -3,7 +3,7 @@
 import httpx
 import pytest
 from pydantic import JsonValue
-from test_native_file_preparation import NativeFiles, seed_file, service
+from test_native_file_preparation import NativeFiles, RacingPreparation, seed_file, service
 from test_storage import repo as repo
 
 from tank.agents.native_file_preparation import NativePreparationUnavailable, PreparationRecord, source_scope
@@ -164,3 +164,20 @@ async def test_observed_upload_identity_survives_changed_cache_ownership_without
     assert observed.phase == "FILE_ID_OBSERVED" and observed.file_id == "file-native"
     assert observed.intent.scope.question_id == "question"
     assert native.uploads == 1 and native.mounts == 0
+
+
+async def test_actual_phase_cas_preserves_changed_numeric_kind_without_post(repo: StorageBackend) -> None:
+    metadata = await seed_file(repo)
+    native = NativeFiles()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(native.respond)) as http:
+        base = service(repo, http)
+        racing = RacingPreparation(base.store, base.transport, base.versions)
+        with pytest.raises(NativePreparationUnavailable, match="changed before receipt persistence"):
+            await racing.prepare(source_scope(metadata))
+    assert native.uploads == native.mounts == 0
+    stored = await repo.get("ops.telegram_files", metadata.file_key)
+    assert stored is not None
+    phase = stored["native_preparation"]
+    assert isinstance(phase, dict)
+    retained_scope = phase["scope"]
+    assert isinstance(retained_scope, dict) and type(retained_scope["size"]) is float

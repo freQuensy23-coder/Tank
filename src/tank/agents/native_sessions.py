@@ -69,6 +69,12 @@ class NativeSessionResolution(DomainModel):
                 "replay_source_session_id",
                 "replay_evidence_sha256",
                 "replay_cutoff",
+                "replay_at",
+                "replay_at_prec",
+                "replay_at_prec_reason",
+                "replay_at_bucket_anchor",
+                "origin",
+                "historical",
             )
         ):
             raise ValueError("Replay identity requires explicit replay composition")

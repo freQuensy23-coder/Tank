@@ -357,7 +357,7 @@ class NativeFilePreparationService:
             current = await self.store.get("ops.telegram_files", scope.file_key)
             if current is None:
                 raise NativePreparationUnavailable("Native preparation cache disappeared")
-            if current.get("native_preparation") != before or (
+            if canonical_json(current.get("native_preparation")) != canonical_json(before) or (
                 before is None and "native_preparation" in current
             ):
                 raise NativePreparationUnavailable("Native preparation changed before receipt persistence")

@@ -17,7 +17,12 @@ from tank.agents.native_file_preparation import (
     PreparationStore,
     source_scope,
 )
-from tank.contracts.native_files import NativeFileNotRequested
+from tank.contracts.native_files import (
+    NativeFileNotRequested,
+    NativeFilePreparation,
+    NativeFileSourceScope,
+    NativeUploadUnconfirmed,
+)
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.telegram_wire import TelegramCachedFile
 from tank.storage import MemoryRepository
@@ -498,3 +503,37 @@ async def test_ambiguous_native_session_segment_refuses_before_any_upload(identi
         with pytest.raises(ValueError, match="unambiguous path segment"):
             await service(repo, http).prepare(scope)
     assert native.uploads == native.mounts == 0
+
+
+class RacingPreparation(NativeFilePreparationService):
+    async def save(
+        self, scope: NativeFileSourceScope, before: JsonValue, state: NativeFilePreparation
+    ) -> None:
+        if isinstance(state, NativeUploadUnconfirmed):
+            row = await self.store.get("ops.telegram_files", scope.file_key)
+            assert row is not None
+            phase = row["native_preparation"]
+            assert isinstance(phase, dict)
+            current_scope = phase["scope"]
+            assert isinstance(current_scope, dict)
+            current_scope["size"] = float(scope.size)
+            await self.store.put("ops.telegram_files", scope.file_key, row)
+        await super().save(scope, before, state)
+
+
+async def test_phase_cas_distinguishes_integer_from_equal_float_before_native_upload() -> None:
+    repo = MemoryRepository()
+    metadata = await seed_file(repo)
+    native = NativeFiles()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(native.respond)) as http:
+        base = service(repo, http)
+        racing = RacingPreparation(base.store, base.transport, base.versions)
+        with pytest.raises(NativePreparationUnavailable, match="changed before receipt persistence"):
+            await racing.prepare(source_scope(metadata))
+    assert native.uploads == native.mounts == 0
+    stored = await repo.get("ops.telegram_files", metadata.file_key)
+    assert stored is not None
+    phase = stored["native_preparation"]
+    assert isinstance(phase, dict)
+    retained_scope = phase["scope"]
+    assert isinstance(retained_scope, dict) and type(retained_scope["size"]) is float

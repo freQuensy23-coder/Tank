@@ -1821,3 +1821,27 @@ passes strict typing; the older migration test module's whole typing remains ope
 The actual fresh Inbox-to-Session attachment ready/again control is green using
 real writer state and scoped metadata/resource readbacks. Full collected actual
 integration proof is still pending; no parent activation is claimed here.
+
+### Replay annotations and raw phase revision correction — qualification pending
+
+The wider direct-consumer integration selection passed 36 cases and exposed 22
+real replay/reference admission failures: production replay emits replay_at and
+its canonical clock facets, and authored references declare the exact origin plus
+historical=False. Analysis confirmed that catalog. ReplayBinding now models the
+actual clock fields; scalar-only aware clocks preserve unknown precision, while
+reported facets validate coherently. SourceMessage alone supports the closed
+nonhistorical reference pair, requires its actual run/time binding, and refuses
+captured-source relabelling. Actual replay continuation session selectors are
+represented on milestone/expired-call messages. Native live composition refuses
+these replay annotations. No retained payload or replay producer was edited.
+Independent strict checks and 109 focused unit cases passed in 4.44 seconds.
+
+A separate negative race control confirmed that Python dictionary equality masked
+a stored phase's integer-to-float change and allowed the old CAS to proceed. The
+phase guard now compares canonical raw JSON, preserving numeric kinds and field
+presence rather than overwriting changed/malformed state. An actual storage race
+control is added for Memory/PostgreSQL. The combined follow-up gate passed static
+strict eight-target and Ruff checks but stopped in wrapper database preparation:
+the owned PostgreSQL service reported recovery mode, before any tests collected.
+Positive CAS and wider replay integration qualification therefore remain pending;
+no parent activation or complete native/worker migration is claimed.
