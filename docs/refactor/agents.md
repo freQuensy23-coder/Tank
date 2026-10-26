@@ -1364,3 +1364,67 @@ These owner gates ran on the frozen owned work-in-progress source above
 047e21df before the report/commit; product source did not change after the
 passing checks. The immutable wrapper fingerprints remain the exact proof
 identity; parent final-head integration qualification is still required.
+
+Qualified joint question-retirement and Runtime failure cohort
+
+Canonical product source 75e3bd1c normally joins the preserved 4a retirement,
+analysis fd35085e real worker fragments, quality 280fbc07 actual E2E adapter,
+public 494 retry/slot fixes and current parent 253f50da. The Runtime conflict
+kept both the required typed failure repository and explicit retry policy;
+append-only reports retain both complete histories. No inactive worker/native
+producer branch is ancestry. The only subsequent addition is the supported
+unknown-versus-occurred marker regression and final inventory/evidence text;
+product source did not change after the broad passing gates.
+
+SessionService.abandon_question/reconcile_answers and Runtime terminal failure/
+restart reconciliation now consume phase-specific strict records. Actual
+initial ACCEPTED/UNREPORTED/EMPTY receipts or sent_at are preserved without
+requiring an unused old body/budget. Unknown initial acceptance/journal state
+refuses explicitly before answer/native effects; no missing native ID becomes
+an unsent assertion. The existing controller send lock then repository session
+lock serializes retirement with actual initial/recovery POSTs and acceptance
+commit. Both-ID authoritative answer state is rechecked under the question
+lock, preserving the first answer and idempotent delivery. No distributed
+POST guarantee is claimed beyond these actual participating locks.
+
+Runtime requires a concrete RepositoryRuntimeFailures port in production
+composition. Its narrow store port owns actual queue locks, checks current
+job/type/status/target and phase-consumed facts, and performs exact sparse
+writes. Host refusals contain actual captured controller identity, actual
+recording clock and request-digest scope, remain distinct from native receipts,
+and are persisted before any handled marker. The closed JobEnvelope map and
+pre-serialization entity validation preserve absent-versus-explicit-null facts.
+Transient write/broken-ACK outcomes are sanitized named availability failures;
+permanent driver rejection and malformed global data do not become handled.
+Actual unrelated worker work still completes and restart preserves original
+receipt identity. Changed native 404 facts can close the question through the
+real refusal writer without rewriting past refusal or fabricating termination.
+
+All 966 broad affected units pass in 24.30 seconds, zero skips, p90 .321 seconds
+and maximum 5.632 seconds. The entire 140-case affected Linux integration
+collection passes in 65.66 seconds, zero skips, covering real PostgreSQL,
+replay/reference/market-refresh/four E2Es and public queue controls. Evidence
+retirement-75e3-joint-{unit,integration} is external; wrappers verify unchanged
+source/service identity. Independent strict contracts/runtime contracts/
+adapter/helper four targets pass. The two peer caller omissions from the
+previous 129/7 diagnostic are closed without weaker assertions/deadlines.
+
+Final audit correction: the suspected unknown-marker skip was disproved.
+Consumers already inspect marker.value, so an explicit unavailable timestamp
+remains eligible and never masquerades as handled. No product behavior was
+changed. The failed policy diagnostic is preserved externally as
+retirement-75e3-marker-policy-diagnostic.py and marker-before reports. The
+accurate current regression adds four passing units in 1.32 seconds and one
+actual PostgreSQL case in 2.13 seconds, zero skips, and independent test strict
+passes. It preserves explicit unknown reason versus all-null absence and
+proves the actual pending adapter does not invent a handled marker.
+
+The refreshed inventory includes the new inward retirement contracts, sparse
+failure adapter and public retry policy. Twenty-four SessionService/free-helper
+functions and the Runtime worker still lack complete signatures in this
+cohort; annotation status is not whole-body strict proof. Required send/file/
+usage/tool/event/execution-barrier migrations, remaining presentation coupling,
+and the assigned vendor programs remain open on their separate workstreams.
+Exact retained map/default/None classes and behavior controls are recorded by
+symbol/site in agents-exceptions.json. This bounded cohort does not waive any
+of the remaining global work.
