@@ -41,6 +41,9 @@ class JobMetadata(DomainModel):
     recovery_at_prec: str | None = None
     recovery_at_prec_reason: str | None = None
     slot_waiting_since: str | None = None
+    slot_waiting_since_prec: str | None = None
+    slot_waiting_since_prec_reason: str | None = None
+    slot_waiting_since_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
     slot_admitted: bool | None = None
     interrupted_at: str | None = None
     interrupted_at_prec: str | None = None
@@ -120,7 +123,21 @@ class JobMetadata(DomainModel):
         ):
             if any(item is not None for item in (value, precision, reason, anchor)):
                 Timestamp(value, precision, reason, anchor)
-        if self.slot_waiting_since is not None:
+        if any(
+            value is not None
+            for value in (
+                self.slot_waiting_since_prec,
+                self.slot_waiting_since_prec_reason,
+                self.slot_waiting_since_bucket_anchor,
+            )
+        ):
+            Timestamp(
+                self.slot_waiting_since,
+                self.slot_waiting_since_prec,
+                self.slot_waiting_since_prec_reason,
+                self.slot_waiting_since_bucket_anchor,
+            )
+        elif self.slot_waiting_since is not None:
             parse_time(self.slot_waiting_since)
         terminal = self.status in {"DONE", "FAILED", "EXPIRED"}
         if terminal != (self.finished_at is not None):
