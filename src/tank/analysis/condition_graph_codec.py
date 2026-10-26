@@ -67,6 +67,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionRelativeGraph,
     ConditionRelativeNormalRange,
     ConditionRelativeWindow,
+    ConditionRequestedDerivativeView,
     ConditionScheduledUnlock,
     ConditionSlippage,
     ConditionSpotValues,
@@ -594,9 +595,15 @@ def _derivative_support_wire(value: ConditionDerivativeSupportFeatures) -> dict[
 
 def encode_condition_derivatives(value: ConditionDerivatives) -> dict[str, JsonValue]:
     validated = type(value).model_validate(value)
-    result: dict[str, JsonValue] = {
-        "per_venue": [_derivative_venue_wire(venue) for venue in validated.per_venue]
-    }
+    return _derivative_window_wire(
+        validated, [_derivative_venue_wire(venue) for venue in validated.per_venue]
+    )
+
+
+def _derivative_window_wire(
+    validated: ConditionDerivatives, per_venue: list[JsonValue]
+) -> dict[str, JsonValue]:
+    result: dict[str, JsonValue] = {"per_venue": per_venue}
     synchronized = validated.synchronized
     if isinstance(synchronized, ConditionSynchronizedOpenInterest):
         sync = encode_condition_open_interest(synchronized.values)
@@ -2140,4 +2147,67 @@ def encode_full_condition_market_state(
         "selection_proof": _model_wire(proposal),
     }
     result.update(_clock_wire(context.cutoff, "cutoff"))
+    return result
+
+
+def encode_requested_condition_derivatives(value: ConditionRequestedDerivativeView) -> dict[str, JsonValue]:
+    view = ConditionRequestedDerivativeView.model_validate(value)
+    source = view.requested
+    state = view.state
+    direct = {venue.instrument_id: venue for venue in source.per_venue}
+    state_venues = {} if state is None else {venue.instrument_id: venue for venue in state.per_venue}
+    identities = [*state_venues, *(identity for identity in direct if identity not in state_venues)]
+    funding_requested = view.requested_domain("funding")
+    if funding_requested:
+        funding_fresh = view.freshness_passes("funding")
+    rows: list[JsonValue] = []
+    for identity in identities:
+        full = state_venues.get(identity)
+        requested = direct.get(identity)
+        if full is not None:
+            row = _derivative_venue_wire(full)
+        elif requested is not None:
+            row = _derivative_venue_wire(requested)
+        else:
+            raise ValueError("A merged derivative requires its actual indexed source record")
+        row["state_membership"] = full is not None
+        if funding_requested:
+            if full is not None:
+                row["state_funding_facts"] = _model_wire(full.funding)
+            if requested is None:
+                row["funding_vs_normal"] = None
+                row["funding_requested"] = False
+                row["funding_evaluation_available"] = False
+                row["funding_evaluation_reason"] = "OUTSIDE_REQUESTED_INSTRUMENT_SCOPE"
+            else:
+                row.update(encode_condition_funding(requested.funding))
+                row["funding_source_facts"] = _model_wire(requested.funding)
+                row["funding_requested"] = True
+                available = (
+                    isinstance(requested.funding, AvailableConditionFunding)
+                    and requested.funding.funding_vs_normal is not None
+                )
+                row["funding_evaluation_available"] = available and funding_fresh
+                row["funding_evaluation_reason"] = (
+                    None
+                    if available and funding_fresh
+                    else "FRESHNESS_GATE_FAILED"
+                    if not funding_fresh
+                    else "INCOMPLETE"
+                )
+                if not funding_fresh:
+                    row["funding_vs_normal"] = None
+        rows.append(row)
+    result = _derivative_window_wire(source if state is None else state, rows)
+    if view.requested_domain("oi"):
+        oi_fresh = view.freshness_passes("oi")
+        raw = _derivative_window_wire(source, [])
+        result["synchronized"] = raw["synchronized"] if oi_fresh else None
+        result["synchronized_status"] = source.synchronized.status if oi_fresh else "UNAVAILABLE"
+        result["oi_source_facts"] = _model_wire(source.synchronized)
+        if state is not None:
+            result["state_oi_source_facts"] = _model_wire(state.synchronized)
+        if not oi_fresh:
+            result["synchronized_reason"] = "FRESHNESS_GATE_FAILED"
+    result["requested_evaluation"] = [encode_condition_evaluation_proof(proof) for proof in view.proofs]
     return result

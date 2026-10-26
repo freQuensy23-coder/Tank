@@ -1648,6 +1648,12 @@ class ConditionSynchronizedOpenInterest(DomainModel):
     venues: tuple[Annotated[str, Field(min_length=1, pattern=r"\S")], ...] = Field(min_length=1)
     values: ObservedConditionOpenInterest
 
+    @model_validator(mode="after")
+    def actual_distinct_cohort(self) -> Self:
+        if len(self.venues) != len(set(self.venues)):
+            raise ValueError("Observed synchronized OI requires distinct actual cohort venues")
+        return self
+
 
 class UnavailableConditionSynchronizedOpenInterest(DomainModel):
     status: Literal["UNAVAILABLE"]
@@ -6999,6 +7005,39 @@ def condition_metric_domain(metric: ConditionMetric) -> ConditionCacheDomain:
             return "state"
 
 
+def _condition_derivative_metric_available(
+    derivatives: BasicConditionDerivatives, metric: ConditionMetric
+) -> bool:
+    domain = condition_metric_domain(metric)
+    if domain == "funding":
+        return bool(derivatives.per_venue) and all(
+            isinstance(venue.funding, AvailableConditionFunding)
+            and venue.funding.funding_vs_normal is not None
+            for venue in derivatives.per_venue
+        )
+    if domain != "oi":
+        raise ValueError("Derivative availability requires an actual OI or funding metric")
+    synchronized = derivatives.synchronized
+    if not isinstance(synchronized, ConditionSynchronizedOpenInterest):
+        return False
+    match metric:
+        case "deriv.native_oi_chg_pct":
+            return True
+        case "deriv.native_oi_vs_normal":
+            return synchronized.values.native_oi_vs_normal is not None
+        case "deriv.oi_class":
+            return synchronized.values.oi_class is not None
+    raise ValueError("OI availability requires an actual OI condition metric")
+
+
+def _condition_proof_freshness_passes(value: ConditionProofFreshness) -> bool:
+    return (
+        isinstance(value, UnappliedConditionProofFreshness)
+        or isinstance(value, AssessedConditionProofFreshness)
+        and value.passes()
+    )
+
+
 class ConditionEvaluationProof(DomainModel):
     requirement: ConditionRequirement
     cache_key: ConditionTopCacheKey
@@ -7236,25 +7275,7 @@ class SelectiveConditionValues(DomainModel):
         if domain == "spot":
             return self.spot[window].direction is not None
         if domain in {"oi", "funding"}:
-            derivatives = self.derivatives[window]
-            if domain == "funding":
-                return bool(derivatives.per_venue) and all(
-                    isinstance(venue.funding, AvailableConditionFunding)
-                    and venue.funding.funding_vs_normal is not None
-                    for venue in derivatives.per_venue
-                )
-            synchronized = derivatives.synchronized
-            if not isinstance(synchronized, ConditionSynchronizedOpenInterest):
-                return False
-            values = synchronized.values
-            match metric:
-                case "deriv.native_oi_chg_pct":
-                    return True
-                case "deriv.native_oi_vs_normal":
-                    return values.native_oi_vs_normal is not None
-                case "deriv.oi_class":
-                    return values.oi_class is not None
-            raise ValueError("OI availability requires an actual OI condition metric")
+            return _condition_derivative_metric_available(self.derivatives[window], metric)
         if domain == "close":
             return isinstance(self.close, ObservedConditionClose)
         if domain == "dc":
@@ -7275,6 +7296,218 @@ class SelectiveConditionValues(DomainModel):
             isinstance(self.relative.repricing.band(), ObservedConditionRepricingBand)
             if metric == "price.repricing_band"
             else self.relative.windows["EVENT"].raw.value is not None
+        )
+
+
+type ConditionDerivativeDomain = Literal["oi", "funding"]
+
+
+def _condition_observed_derivative_consistency(
+    state: EnrichedConditionDerivativeVenue, requested: ConditionDerivativeVenue
+) -> None:
+    if (state.venue, state.instrument_id) != (requested.venue, requested.instrument_id):
+        raise ValueError("A requested derivative cannot borrow another venue or instrument")
+    old, current = state.open_interest, requested.open_interest
+    if (
+        isinstance(old, ObservedConditionOpenInterest)
+        and isinstance(current, ObservedConditionOpenInterest)
+        and (
+            old.oi_native_start,
+            old.oi_native_end,
+            old.start_observed_at,
+            old.end_observed_at,
+            old.requested_window_duration_s,
+            old.observed_window_duration_s,
+        )
+        != (
+            current.oi_native_start,
+            current.oi_native_end,
+            current.start_observed_at,
+            current.end_observed_at,
+            current.requested_window_duration_s,
+            current.observed_window_duration_s,
+        )
+    ):
+        raise ValueError("Shared observed native OI requires the same actual quantities and endpoint clocks")
+    old_funding, new_funding = state.funding, requested.funding
+    if isinstance(old_funding, UnrequestedConditionFunding) or isinstance(
+        new_funding, UnrequestedConditionFunding
+    ):
+        return
+    for old_point, point in (
+        (old_funding.settled, new_funding.settled),
+        (old_funding.estimate, new_funding.estimate),
+        (old_funding.start, new_funding.start),
+    ):
+        if old_point is not None and point is not None:
+            if (old_point.kind, old_point.rate, old_point.observed_at) != (
+                point.kind,
+                point.rate,
+                point.observed_at,
+            ):
+                raise ValueError(
+                    "Shared funding observations require their actual kind, rate and source clock"
+                )
+            if (
+                old_point.interval_h is not None
+                and point.interval_h is not None
+                and old_point.interval_h != point.interval_h
+            ):
+                raise ValueError("A funding observation cannot change its declared settlement duration")
+
+
+class ConditionRequestedDerivativeView(DomainModel):
+    requested: BasicConditionDerivatives
+    state: EnrichedConditionDerivatives | None
+    proofs: tuple[ConditionEvaluationProof, ...] = Field(min_length=1)
+
+    def proofs_for(self, domain: ConditionDerivativeDomain) -> tuple[ConditionEvaluationProof, ...]:
+        return tuple(proof for proof in self.proofs if proof.cache_key.domain == domain)
+
+    def requested_domain(self, domain: ConditionDerivativeDomain) -> bool:
+        return bool(self.proofs_for(domain))
+
+    def freshness_passes(self, domain: ConditionDerivativeDomain) -> bool:
+        proofs = self.proofs_for(domain)
+        if not proofs:
+            raise ValueError("Freshness is defined only for an actually requested derivative domain")
+        return all(
+            isinstance(proof.freshness, AssessedConditionProofFreshness) and proof.freshness.passes()
+            for proof in proofs
+        )
+
+    @model_validator(mode="after")
+    def exact_requested_scope(self) -> Self:
+        source = self.requested
+        identities = {venue.instrument_id: venue for venue in source.per_venue}
+        if self.requested_domain("oi") and (
+            isinstance(source.synchronized, UnrequestedConditionSynchronizedOpenInterest)
+            or any(
+                isinstance(venue.open_interest, UnrequestedConditionOpenInterest)
+                for venue in source.per_venue
+            )
+        ):
+            raise ValueError("A selected OI view cannot contain an unrequested calculation")
+        if self.requested_domain("funding") and any(
+            isinstance(venue.funding, UnrequestedConditionFunding) for venue in source.per_venue
+        ):
+            raise ValueError("A selected funding view cannot contain an unrequested calculation")
+        seen: set[ConditionRequirement] = set()
+        for proof in self.proofs:
+            if proof.requirement in seen:
+                raise ValueError("A derivative view cannot duplicate its actual requested proof")
+            seen.add(proof.requirement)
+            key = proof.cache_key
+            if key.domain not in {"oi", "funding"} or (
+                key.token_id,
+                key.window,
+                key.cutoff,
+                key.requested_duration_s,
+            ) != (
+                source.token_id,
+                source.interval.window,
+                source.interval.cutoff,
+                (source.interval.cutoff - source.interval.start).total_seconds(),
+            ):
+                raise ValueError("A derivative view requires actual subject, window and cutoff proof scope")
+            if proof.assembled_at != self.proofs[0].assembled_at:
+                raise ValueError("A derivative view cannot mix fresh evaluation contexts")
+            if key.domain == "oi":
+                expected_cohort = (
+                    source.synchronized.venues
+                    if isinstance(source.synchronized, ConditionSynchronizedOpenInterest)
+                    else ()
+                )
+                if (
+                    not isinstance(proof.coverage, ConditionOpenInterestCoverage)
+                    or proof.coverage.venues != expected_cohort
+                ):
+                    raise ValueError("Requested OI proof must preserve its actual synchronized cohort")
+            if proof.available != (
+                _condition_derivative_metric_available(source, proof.requirement.metric)
+                and _condition_proof_freshness_passes(proof.freshness)
+            ):
+                raise ValueError(
+                    "Requested derivative availability requires its actual financial facts and fresh gate"
+                )
+            if isinstance(proof.freshness, AssessedConditionProofFreshness):
+                observations = proof.freshness.observations
+                observation_ids = tuple(observation.instrument_id for observation in observations)
+                if len(set(observation_ids)) != len(observation_ids) or None in observation_ids:
+                    raise ValueError("Derivative freshness requires distinct actual instruments")
+                expected_ids = set(identities)
+                if key.domain == "oi":
+                    expected_ids = {
+                        venue.instrument_id
+                        for venue in source.per_venue
+                        if isinstance(source.synchronized, ConditionSynchronizedOpenInterest)
+                        and venue.venue in source.synchronized.venues
+                    }
+                if set(observation_ids) != expected_ids:
+                    raise ValueError(
+                        "Freshness observations must match the actual selected derivative cohort"
+                    )
+                for observation in observations:
+                    if isinstance(observation, MissingConditionProofObservation):
+                        continue
+                    identity = observation.instrument_id
+                    if identity is None:
+                        raise ValueError("Derivative freshness requires its actual instrument")
+                    venue = identities[identity]
+                    stamp: Timestamp | None = None
+                    if key.domain == "oi" and isinstance(venue.open_interest, ObservedConditionOpenInterest):
+                        stamp = venue.open_interest.end_observed_at
+                    if key.domain == "funding" and isinstance(venue.funding, AvailableConditionFunding):
+                        point = (
+                            venue.funding.estimate
+                            if venue.funding.selected_kind == "CURRENT_ESTIMATE"
+                            else venue.funding.settled
+                        )
+                        if point is None:
+                            raise ValueError("Selected funding requires its actual source observation")
+                        stamp = point.observed_at
+                    if stamp is not None and observation.observed_at != stamp:
+                        raise ValueError(
+                            "Derivative freshness cannot borrow another financial observation clock"
+                        )
+        for domain in ("oi", "funding"):
+            domain_proofs = tuple(proof for proof in self.proofs if proof.cache_key.domain == domain)
+            if domain_proofs and any(
+                proof.cache_key != domain_proofs[0].cache_key or proof.freshness != domain_proofs[0].freshness
+                for proof in domain_proofs
+            ):
+                raise ValueError(
+                    "One requested derivative domain must retain its actual common input and freshness context"
+                )
+        if self.state is not None:
+            if (self.state.token_id, self.state.interval) != (source.token_id, source.interval):
+                raise ValueError(
+                    "Requested and state derivative views cannot coerce different subject or interval scopes"
+                )
+            state_venues = {venue.instrument_id: venue for venue in self.state.per_venue}
+            for identity, venue in identities.items():
+                if identity in state_venues:
+                    _condition_observed_derivative_consistency(state_venues[identity], venue)
+        return self
+
+    @classmethod
+    def from_selection(cls, value: SelectiveConditionValues, window: ConditionWindow) -> Self:
+        selected = SelectiveConditionValues.model_validate(value)
+        source = selected.derivatives[window]
+        state = (
+            selected.state.derivatives
+            if isinstance(selected.state, FullConditionMarketState)
+            and selected.state.primary_window == window
+            else None
+        )
+        return cls(
+            requested=source,
+            state=state,
+            proofs=tuple(
+                proof
+                for proof in selected.proofs
+                if proof.requirement.window == window and proof.cache_key.domain in {"oi", "funding"}
+            ),
         )
 
 
