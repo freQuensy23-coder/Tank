@@ -8,7 +8,7 @@ from typing import Self
 
 import pytest
 from postgres_helpers import PostgresTemplate
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
 from tank.contracts.session_followups import (
     Archived,
@@ -17,7 +17,7 @@ from tank.contracts.session_followups import (
     RetentionArchived,
     Terminated,
 )
-from tank.question_answers import QuestionAnswerRepository
+from tank.question_answers import AnswerStatus, QuestionAnswerContent, QuestionAnswerRepository
 from tank.storage import MemoryRepository, PostgresRepository
 from tank.telegram_inbox import (
     ARCHIVED_TEXT,
@@ -192,5 +192,67 @@ async def test_existing_answer_writer_rejects_mismatched_stored_question_key() -
     await repo.put("out.user_questions", "question", original)
     with pytest.raises(ValueError, match="identity"):
         await record_answer(repo, "question", "actual text", status="ANSWERED")
+    assert await repo.get("out.user_questions", "question") == original
+    assert await repo.list("ops.jobs") == []
+
+
+@pytest.mark.parametrize("status", ["ANSWERED", "FAILED"])
+async def test_answer_writer_preserves_explicit_unreported_text_and_delivery(status: AnswerStatus) -> None:
+    repo = MemoryRepository()
+    original = question()
+    await repo.put("out.user_questions", "question", original)
+    receipt = await record_answer(repo, "question", None, status=status)
+    assert receipt is not None and receipt.status == status
+    stored = await repo.get("out.user_questions", "question")
+    assert stored is not None and stored["answer_status"] == status
+    assert stored["answer_text"] is None and stored["reason_text"] is None
+    assert stored["attachments"] == original["attachments"]
+    jobs = await repo.list("ops.jobs")
+    assert len(jobs) == 1 and jobs[0]["payload"] == {"question_id": "question"}
+
+
+@pytest.mark.parametrize("status", ["ANSWERED", "FAILED", "NO_SESSION", "TERMINATED", "ARCHIVED"])
+@pytest.mark.parametrize("text", ["", " ", "\n\t"])
+@pytest.mark.parametrize("answered", [False, True])
+async def test_supplied_blank_text_cannot_write_or_idempotently_reenqueue(
+    status: AnswerStatus, text: str, answered: bool
+) -> None:
+    repo = MemoryRepository()
+    original = question()
+    if answered:
+        original.update(answer_status="ANSWERED", answer_text="actual prior answer")
+    await repo.put("out.user_questions", "question", original)
+    with pytest.raises(ValidationError):
+        await record_answer(repo, "question", text, status=status)
+    assert await repo.get("out.user_questions", "question") == original
+    assert await repo.list("ops.jobs") == []
+
+
+@pytest.mark.parametrize("status", ["ANSWERED", "FAILED"])
+async def test_nonblank_text_is_preserved_without_whitespace_normalization(status: AnswerStatus) -> None:
+    repo = MemoryRepository()
+    await repo.put("out.user_questions", "question", question())
+    text = "  actual reported text\n"
+    await record_answer(repo, "question", text, status=status)
+    stored = await repo.get("out.user_questions", "question")
+    assert stored is not None
+    field = "answer_text" if status == "ANSWERED" else "reason_text"
+    other = "reason_text" if status == "ANSWERED" else "answer_text"
+    assert stored[field] == text and stored[other] is None
+
+
+@pytest.mark.parametrize("text", [0, False, [], {}])
+def test_answer_content_does_not_coerce_nontext_wire_values(text: JsonValue) -> None:
+    with pytest.raises(ValidationError):
+        QuestionAnswerContent.model_validate({"status": "ANSWERED", "text": text})
+
+
+@pytest.mark.parametrize("status", ["NO_SESSION", "TERMINATED", "ARCHIVED"])
+async def test_closure_writer_requires_actual_formatter_reason_before_effects(status: AnswerStatus) -> None:
+    repo = MemoryRepository()
+    original = question()
+    await repo.put("out.user_questions", "question", original)
+    with pytest.raises(ValidationError, match="actual formatted reason"):
+        await record_answer(repo, "question", None, status=status)
     assert await repo.get("out.user_questions", "question") == original
     assert await repo.list("ops.jobs") == []

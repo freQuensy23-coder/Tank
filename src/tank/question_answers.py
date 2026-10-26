@@ -3,9 +3,9 @@
 from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from datetime import timedelta
-from typing import Literal, Protocol, Self
+from typing import Annotated, Literal, Protocol, Self
 
-from pydantic import Field, JsonValue
+from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
 from tank.contracts.session_followups import FollowupRefusalTarget
@@ -59,9 +59,18 @@ def validate_question_identity(
     return state
 
 
-class QuestionAnswerUpdate(DomainModel):
+class QuestionAnswerContent(DomainModel):
     status: AnswerStatus
-    text: str | None
+    text: Annotated[str, Field(pattern=r"\S")] | None
+
+    @model_validator(mode="after")
+    def closure_requires_its_reported_reason(self) -> Self:
+        if self.status not in ("ANSWERED", "FAILED") and self.text is None:
+            raise ValueError("A follow-up closure requires its actual formatted reason")
+        return self
+
+
+class QuestionAnswerUpdate(QuestionAnswerContent):
     answered_at: Timestamp
 
     def storage_patch(self) -> dict[str, JsonValue]:
@@ -70,8 +79,8 @@ class QuestionAnswerUpdate(DomainModel):
         return {
             "status": self.status,
             "answer_status": self.status,
-            "answer_text": self.text if self.status == "ANSWERED" and self.text else None,
-            "reason_text": self.text if self.status != "ANSWERED" and self.text else None,
+            "answer_text": self.text if self.status == "ANSWERED" else None,
+            "reason_text": self.text if self.status != "ANSWERED" else None,
             **self.answered_at.fields("answered_at"),
         }
 
@@ -93,6 +102,7 @@ async def record_answer(
         if isinstance(question_id, FollowupRefusalTarget)
         else QuestionAnswerKey(question_id=question_id)
     )
+    content = QuestionAnswerContent(status=status, text=text)
     async with repo.lock("question:" + target.question_id), repo.transaction():
         question = await repo.get("out.user_questions", target.question_id)
         if question is None:
@@ -101,7 +111,7 @@ async def record_answer(
         answer_status = state.answer_status
         if answer_status is None:
             transition = QuestionAnswerUpdate(
-                status=status, text=text, answered_at=collection_clock(utcnow())
+                status=content.status, text=content.text, answered_at=collection_clock(utcnow())
             )
             question.update(transition.storage_patch())
             await repo.put("out.user_questions", target.question_id, question)
