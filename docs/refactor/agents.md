@@ -1280,3 +1280,34 @@ execution-barrier/tool/usage/event orchestration, remaining Telegram/file
 presentation coupling and the assigned vendor implementation backlog remain
 open. Earlier 19e0dc59 was an inactive contract checkpoint, not qualified
 caller activation; the final source and real caller proofs supersede it.
+
+
+Held terminal-failure adapter qualification (6c2d1e5c descendant)
+
+The terminal-failure command validates original queue payloads through the
+wire-only delivery/answer decoders before constructing internal typed
+notifications. Internal container revalidation uses Pydantic by_name=True
+so the already typed JobPayload.depends_on field is revalidated under its
+Python field name. This does not enable field-name admission at the public
+wire decoder: a raw depends_on key still rejects, while _depends_on remains
+the actual queue alias. Constructed version=True still rejects. The exact
+regression is test_terminal_failure_keeps_wire_alias_admission_and_revalidates_typed_payload.
+
+The test-only runtime_failure_fixture.http_routes callback is genuinely
+optional HTTP expectation setup: absence permits no HTTP route. It never
+replaces a required Runtime service. The native-missing reconciliation case
+registers and counts its actual GET through this strict router.
+
+On the unchanged owned source after the canonical guard join, the focused
+alias/original delivery cases pass 2/2 in 2.81 seconds; the two new retirement
+files pass all 19 units in 3.78 seconds and all four actual PostgreSQL
+POST-inflight/committed-ACK-loss/refusal-write/restart cases in 6.10 seconds,
+zero skips. The local wrappers verify source identity and exit zero.
+Independent strict four contracts/adapter/helper targets and scoped Ruff
+pass. Evidence prefixes retirement-6c2-alias-focused,
+retirement-6c2-final-phase-unit and retirement-6c2-phase-pg are external.
+The earlier broad diagnostic remains 944 passed/two failed; one delivery
+failure is fixed by the tested alias correction, while the remaining
+Telegram terminal-answer legacy Runtime fixture still needs migration.
+This is a held checkpoint, not full Runtime/caller qualification or whole
+SessionService completion.

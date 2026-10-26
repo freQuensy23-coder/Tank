@@ -176,11 +176,13 @@ def _check_credential_file(file, mode) -> None:
     if "r" not in mode and "+" not in mode:
         return
     path = Path(os.fsdecode(file)).resolve(strict=False)
-    if path in {p.resolve(strict=False) for p in _PROTECTED_CREDENTIAL_FILES} or any(
-        path == root.resolve(strict=False) or root.resolve(strict=False) in path.parents
-        for root in _PROTECTED_CREDENTIAL_ROOTS
-    ):
+    if any(path == protected.resolve(strict=False) for protected in _PROTECTED_CREDENTIAL_FILES):
         raise OfflineCredentialError("pytest offline policy blocked an operator credential path")
+    parents = frozenset(path.parents)
+    for root in _PROTECTED_CREDENTIAL_ROOTS:
+        resolved_root = root.resolve(strict=False)
+        if path == resolved_root or resolved_root in parents:
+            raise OfflineCredentialError("pytest offline policy blocked an operator credential path")
 
 
 def _open(file, mode="r", *args, **kwargs):

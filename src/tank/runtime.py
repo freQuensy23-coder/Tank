@@ -343,7 +343,7 @@ class Runtime:
 
     async def terminal_delivery_failure(self, failure: TerminalJobFailure) -> TerminalFailureOutcome:
         """Apply only actual terminal queue scope and phase-specific notification commands."""
-        failure = TerminalJobFailure.model_validate(failure)
+        failure = TerminalJobFailure.model_validate(failure, by_name=True)
 
         async def apply() -> TerminalFailureOutcome:
             reason = failure_reason_text(failure.reason)

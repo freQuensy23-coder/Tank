@@ -377,7 +377,8 @@ def terminal_notification(
                 "kind": "DELIVERY",
                 "payload": parse_delivery_job(failure_payload(record)),
                 "attempt": record["attempts"],
-            }
+            },
+            by_name=True,
         )
     if header.job_type == "AGENT_MESSAGE":
         payload = failure_payload(record)
@@ -388,7 +389,10 @@ def terminal_notification(
                 target=FollowupRefusalTarget(question_id=message.question_id, session_id=message.session_id),
             )
     if header.job_type == "TELEGRAM_ANSWER":
-        return FailedAnswerNotification.model_validate({"kind": "ANSWER", "payload": failure_payload(record)})
+        return FailedAnswerNotification.model_validate(
+            {"kind": "ANSWER", "payload": TelegramAnswerJob.model_validate(failure_payload(record))},
+            by_name=True,
+        )
     return NoTerminalDelivery(kind="NONE", reason="NOT_APPLICABLE")
 
 
@@ -507,13 +511,16 @@ class TerminalJobFailure(DomainModel):
         notifications_requested: bool,
     ) -> Self:
         header = FailureJobHeader.from_record(record)
-        return cls(
-            header=header,
-            reason=reason,
-            notify_delivery=notifications_requested,
-            report_progress=progress_requested,
-            notification=terminal_notification(header, record, requested=notifications_requested),
-            progress=terminal_progress(header, record, requested=progress_requested),
+        return cls.model_validate(
+            {
+                "header": header,
+                "reason": reason,
+                "notify_delivery": notifications_requested,
+                "report_progress": progress_requested,
+                "notification": terminal_notification(header, record, requested=notifications_requested),
+                "progress": terminal_progress(header, record, requested=progress_requested),
+            },
+            by_name=True,
         )
 
 
@@ -532,15 +539,18 @@ class FailureReconciliationItem(DomainModel):
         notifications_requested: bool,
     ) -> Self:
         header = FailureJobHeader.from_record(record)
-        return cls(
-            failure=TerminalJobFailure.from_record(
-                record,
-                reason=recorded_failure_reason(header, record),
-                progress_requested=progress_requested,
-                notifications_requested=notifications_requested,
-            ),
-            marker_name=marker_name,
-            marker=read_failure_marker(record, marker_name),
+        return cls.model_validate(
+            {
+                "failure": TerminalJobFailure.from_record(
+                    record,
+                    reason=recorded_failure_reason(header, record),
+                    progress_requested=progress_requested,
+                    notifications_requested=notifications_requested,
+                ),
+                "marker_name": marker_name,
+                "marker": read_failure_marker(record, marker_name),
+            },
+            by_name=True,
         )
 
 

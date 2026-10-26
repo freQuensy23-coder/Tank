@@ -92,7 +92,7 @@ class RepositoryRuntimeFailures:
     async def execute(
         self, failure: TerminalJobFailure, operation: Callable[[], Awaitable[TerminalFailureOutcome]]
     ) -> TerminalFailureOutcome:
-        failure = TerminalJobFailure.model_validate(failure)
+        failure = TerminalJobFailure.model_validate(failure, by_name=True)
         try:
             async with self.store.lock("job:" + failure.header.job_id):
                 record = await self.store.get("ops.jobs", failure.header.job_id)
@@ -148,7 +148,7 @@ class RepositoryRuntimeFailures:
             raise FailureJournalRejected() from None
 
     async def mark(self, item: FailureReconciliationItem) -> bool:
-        item = FailureReconciliationItem.model_validate(item)
+        item = FailureReconciliationItem.model_validate(item, by_name=True)
         try:
             async with self.store.lock("job:" + item.failure.header.job_id):
                 record = await self.store.get("ops.jobs", item.failure.header.job_id)
