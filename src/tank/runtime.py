@@ -70,6 +70,7 @@ from tank.runtime_dispatch_contracts import (
 )
 from tank.runtime_evaluation import evaluate_condition_job
 from tank.runtime_failure_commands import terminal_work_failure
+from tank.runtime_market import RuntimeMarketPort
 from tank.runtime_milestone import check_milestone_job
 from tank.runtime_reaction import ReactionJobInvocation, capture_reaction_job
 from tank.runtime_retry import worker_retry_schedule
@@ -83,7 +84,6 @@ from tank.util import parse_time, utcnow
 if TYPE_CHECKING:
     from tank.agents.pipeline import Pipeline
     from tank.agents.sessions import SessionService
-    from tank.market.service import MarketService
     from tank.telegram_inbox import TelegramInbox
 
 
@@ -148,7 +148,7 @@ class Runtime:
         settings: Settings,
         *,
         sources: RuntimeService,
-        market: "MarketService",
+        market: RuntimeMarketPort,
         truth: "MarketTruthPort",
         pipeline: "Pipeline",
         sessions: "SessionService",
@@ -163,7 +163,8 @@ class Runtime:
         failures: RuntimeFailureRepository,
     ) -> None:
         self.repo, self.settings = repo, settings
-        self.sources, self.market, self.truth = sources, market, truth
+        self.sources, self.truth = sources, truth
+        self.market: RuntimeMarketPort = market
         self.pipeline, self.sessions = pipeline, sessions
         self.delivery, self.scheduler, self.gateway, self.inbox = delivery, scheduler, gateway, inbox
         self._bootstrap, self._validate = bootstrap, validate
