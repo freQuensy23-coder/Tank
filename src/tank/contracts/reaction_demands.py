@@ -75,6 +75,14 @@ class ReactionDemandFacts(DomainModel):
             or self.command.change_id != self.source.change_id + ":" + self.command.checkpoint
         ):
             raise ValueError("Reaction demand conflicts with its actual source scope")
+        if self.discovered_at.value is None or self.discovered_at.precision != "COLLECTION_ONLY":
+            raise ValueError("Reaction demand requires its actual discovery clock")
+        if self.baseline.captured_at.value is None:
+            raise ValueError("Reaction demand requires its actual frozen capture clock")
+        if self.source.anchor is None or parse_time(self.source.anchor) != parse_time(
+            self.baseline.anchor.ts
+        ):
+            raise ValueError("Reaction demand conflicts with its frozen anchor scope")
         return self
 
 
@@ -97,11 +105,17 @@ class BlockedReactionDemand(ReactionDemandFacts):
         "LEGACY_COALESCED_RECOVERY_REQUIRED",
         "LINKED_WORK_UNREPORTED",
         "LINKED_WORK_SCOPE_CONFLICT",
-        "APPLIED_MARKER_UNRESOLVED",
     ]
 
 
-type ReactionDemand = PendingReactionDemand | LinkedReactionDemand | BlockedReactionDemand
+class MarkerBlockedReactionDemand(ReactionDemandFacts):
+    phase: Literal["BLOCKED"]
+    reason: Literal["APPLIED_MARKER_UNRESOLVED"]
+
+
+type ReactionDemand = (
+    PendingReactionDemand | LinkedReactionDemand | BlockedReactionDemand | MarkerBlockedReactionDemand
+)
 
 
 class ReactionDiscoveryDisposition(DomainModel):
@@ -114,6 +128,8 @@ class ReactionDiscoveryDisposition(DomainModel):
         "SOURCE_ANCHOR_SCOPE_UNMATCHED",
         "OUTSIDE_CAPTURED_WINDOW",
         "NOT_LATE_AT_DISCOVERY",
+        "CHECKPOINT_CLOCK_UNREPORTED",
+        "CAPTURED_WINDOW_UNREPORTED",
     ]
 
 
