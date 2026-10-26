@@ -117,7 +117,8 @@ jobs:
           src/tank/storage.py src/tank/retention.py src/tank/search.py src/tank/market_storage.py
           src/tank/market_codec.py src/tank/clickhouse_market.py src/tank/models.py src/tank/market_schema.py
           src/tank/settings.py src/tank/util.py src/tank/time_precision.py src/tank/logging.py
-          src/tank/backup.py src/tank/contracts src/tank/market/flow.py src/tank/market/trade_contracts.py
+          src/tank/backup.py src/tank/job_repository.py src/tank/contracts
+          src/tank/market/flow.py src/tank/market/trade_contracts.py
       - name: Check completed foundation tests strictly
         env:
           MYPYPATH: src:tests
