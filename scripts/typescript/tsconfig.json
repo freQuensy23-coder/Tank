@@ -24,5 +24,8 @@
     "../../deploy/**/*.mts",
     "../../tests/openma/**/*.mts",
     "../../vendor/openma/tank-deploy/*.mts"
+  ],
+  "exclude": [
+    "../../tests/openma/persistence/**/*"
   ]
 }

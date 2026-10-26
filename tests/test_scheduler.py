@@ -10,12 +10,13 @@ from source_support import fixture_request_budgets, fixture_versions
 
 from tank.analysis.page_access import LivePageAccess
 from tank.analysis.watch_contracts import WatchCondition, WatchLeaf
+from tank.contracts.milestone_checks import MilestoneCheckCommand
 from tank.models import Record
 from tank.runtime_contracts import ConditionFiredMessage, parse_agent_message
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.time_precision import Timestamp
+from tank.time_precision import Timestamp, propagate_timestamp
 from tank.util import clock_iso, iso, utcnow
 
 
@@ -64,10 +65,12 @@ async def test_recursive_hourly_persistence_does_not_count_same_window_twice() -
             },
         },
     )
-    await scheduler.eval_conditions({"cutoff": iso(now)})
-    await scheduler.eval_conditions({"cutoff": iso(now + timedelta(minutes=30))})
+    await scheduler.eval_conditions(propagate_timestamp({"cutoff": iso(now)}, "cutoff"))
+    await scheduler.eval_conditions(
+        propagate_timestamp({"cutoff": iso(now + timedelta(minutes=30))}, "cutoff")
+    )
     assert (await repo.get("ana.watch_conditions", "c"))["status"] == "ARMED"
-    await scheduler.eval_conditions({"cutoff": iso(now + timedelta(hours=1))})
+    await scheduler.eval_conditions(propagate_timestamp({"cutoff": iso(now + timedelta(hours=1))}, "cutoff"))
     assert (await repo.get("ana.watch_conditions", "c"))["status"] == "FIRED"
     assert len(await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})) == 1
 
@@ -160,7 +163,7 @@ async def test_missing_market_value_never_fires_not_equal_condition() -> None:
         thresholds=Settings(_env_file=None).thresholds(),
         versions=fixture_versions(),
     )
-    await scheduler.eval_conditions({"cutoff": iso(now)})
+    await scheduler.eval_conditions(propagate_timestamp({"cutoff": iso(now)}, "cutoff"))
     assert (await repo.get("ana.watch_conditions", "c"))["status"] == "ARMED"
 
 
@@ -464,19 +467,25 @@ async def test_real_generated_conditions_use_two_closed_nonoverlapping_hours(
         versions=fixture_versions(),
     )
     upgrade = next(condition for condition in conditions if condition.role == "UPGRADE")
-    await scheduler.eval_conditions({"cutoff": iso(created.replace(hour=12, minute=7))})
+    await scheduler.eval_conditions(
+        propagate_timestamp({"cutoff": iso(created.replace(hour=12, minute=7))}, "cutoff")
+    )
     first = WatchCondition.model_validate(await repo.get("ana.watch_conditions", upgrade.cond_id))
     assert first.status == "ARMED"
     assert first.counters["root0"].count == 1
     assert first.counters["root0"].cutoff == iso(created.replace(hour=12, minute=0))
-    await scheduler.eval_conditions({"cutoff": iso(created.replace(hour=12, minute=59))})
+    await scheduler.eval_conditions(
+        propagate_timestamp({"cutoff": iso(created.replace(hour=12, minute=59))}, "cutoff")
+    )
     assert (
         WatchCondition.model_validate(await repo.get("ana.watch_conditions", upgrade.cond_id))
         .counters["root0"]
         .count
         == 1
     )
-    await scheduler.eval_conditions({"cutoff": iso(created.replace(hour=13, minute=1))})
+    await scheduler.eval_conditions(
+        propagate_timestamp({"cutoff": iso(created.replace(hour=13, minute=1))}, "cutoff")
+    )
     final = WatchCondition.model_validate(await repo.get("ana.watch_conditions", upgrade.cond_id))
     assert final.status == "FIRED" and final.counters["root0"].count == 2
     assert final.counters["root0"].cutoff == iso(created.replace(hour=13, minute=0))
@@ -510,7 +519,9 @@ async def test_real_generated_fatal_condition_fires_next_minute_without_hour_thr
         for condition in conditions
         if isinstance(condition.expr, WatchLeaf) and condition.expr.metric == "event.contradiction_fatal"
     )
-    await scheduler.eval_conditions({"cutoff": iso(created.replace(hour=12, minute=0))})
+    await scheduler.eval_conditions(
+        propagate_timestamp({"cutoff": iso(created.replace(hour=12, minute=0))}, "cutoff")
+    )
     assert (
         WatchCondition.model_validate(await repo.get("ana.watch_conditions", fatal.cond_id)).status == "ARMED"
     )
@@ -524,7 +535,9 @@ async def test_real_generated_fatal_condition_fires_next_minute_without_hour_thr
             "detected_at": iso(created.replace(hour=12, minute=1)),
         },
     )
-    await scheduler.eval_conditions({"cutoff": iso(created.replace(hour=12, minute=1))})
+    await scheduler.eval_conditions(
+        propagate_timestamp({"cutoff": iso(created.replace(hour=12, minute=1))}, "cutoff")
+    )
     assert (
         WatchCondition.model_validate(await repo.get("ana.watch_conditions", fatal.cond_id)).status == "FIRED"
     )
@@ -1051,7 +1064,9 @@ async def test_milestone_payload_contains_only_verified_outcome_and_quotes() -> 
         ],
     }
     await repo.put("evt.events", "e", event)
-    await scheduler.milestone_check({"event_id": "e", "milestone": "VOTE", "due_at": "2026-01-01T00:00:00Z"})
+    await scheduler.milestone_check(
+        MilestoneCheckCommand(event_id="e", milestone="VOTE", due_at="2026-01-01T00:00:00Z")
+    )
     jobs = await repo.list("ops.jobs")
     payload = jobs[0]["payload"]
     assert (
@@ -1059,7 +1074,9 @@ async def test_milestone_payload_contains_only_verified_outcome_and_quotes() -> 
         and payload["quotes"] == ["Official vote passed"]
         and not payload["verification_required"]
     )
-    await scheduler.milestone_check({"event_id": "e", "milestone": "VOTE", "due_at": "2026-02-01T00:00:00Z"})
+    await scheduler.milestone_check(
+        MilestoneCheckCommand(event_id="e", milestone="VOTE", due_at="2026-02-01T00:00:00Z")
+    )
     jobs = await repo.list("ops.jobs")
     pending = next(j["payload"] for j in jobs if j["payload"]["verification_required"])
     assert pending["outcome"] is None and pending["quotes"] == []
@@ -1519,18 +1536,26 @@ async def test_rearmed_market_watch_needs_a_new_window_and_a_clear() -> None:
         versions=fixture_versions(),
     )
 
-    await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=10))})
+    await scheduler.eval_conditions(
+        propagate_timestamp({"cutoff": iso(armed + timedelta(minutes=10))}, "cutoff")
+    )
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "ARMED"
 
-    await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=61))})
+    await scheduler.eval_conditions(
+        propagate_timestamp({"cutoff": iso(armed + timedelta(minutes=61))}, "cutoff")
+    )
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "ARMED"
 
     price["relative"]["close_1h_price"] = "10.5"
-    await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=62))})
+    await scheduler.eval_conditions(
+        propagate_timestamp({"cutoff": iso(armed + timedelta(minutes=62))}, "cutoff")
+    )
     cleared = await repo.get("ana.watch_conditions", "c2")
     assert cleared["status"] == "ARMED" and cleared["cleared_at"]
     price["relative"]["close_1h_price"] = "9"
-    await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=63))})
+    await scheduler.eval_conditions(
+        propagate_timestamp({"cutoff": iso(armed + timedelta(minutes=63))}, "cutoff")
+    )
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "FIRED"
 
 
@@ -1566,13 +1591,19 @@ async def test_rearmed_instant_watch_fires_again_only_after_it_cleared() -> None
         thresholds=Settings(_env_file=None).thresholds(),
         versions=fixture_versions(),
     )
-    await scheduler.eval_conditions({"cutoff": iso(now + timedelta(minutes=1))})
+    await scheduler.eval_conditions(
+        propagate_timestamp({"cutoff": iso(now + timedelta(minutes=1))}, "cutoff")
+    )
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "ARMED"
     await repo.put("ana.contradictions", "f1", {**fatal, "resolved_at": iso(now)})
-    await scheduler.eval_conditions({"cutoff": iso(now + timedelta(minutes=2))})
+    await scheduler.eval_conditions(
+        propagate_timestamp({"cutoff": iso(now + timedelta(minutes=2))}, "cutoff")
+    )
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "ARMED"
     await repo.put("ana.contradictions", "f2", {**fatal, "contradiction_id": "f2"})
-    await scheduler.eval_conditions({"cutoff": iso(now + timedelta(minutes=3))})
+    await scheduler.eval_conditions(
+        propagate_timestamp({"cutoff": iso(now + timedelta(minutes=3))}, "cutoff")
+    )
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "FIRED"
 
 
@@ -1622,15 +1653,23 @@ async def test_rearmed_persistent_watch_clears_only_on_an_observed_false_window(
         versions=fixture_versions(),
     )
     for minutes in (5, 55, 115, 175):
-        await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=minutes))})
+        await scheduler.eval_conditions(
+            propagate_timestamp({"cutoff": iso(armed + timedelta(minutes=minutes))}, "cutoff")
+        )
         row = await repo.get("ana.watch_conditions", "c2")
         assert row["status"] == "ARMED" and not row.get("cleared_at")
     sell_hours.add((armed + timedelta(minutes=235)).replace(minute=0))
-    await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=235))})
+    await scheduler.eval_conditions(
+        propagate_timestamp({"cutoff": iso(armed + timedelta(minutes=235))}, "cutoff")
+    )
     assert (await repo.get("ana.watch_conditions", "c2")).get("cleared_at")
-    await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=295))})
+    await scheduler.eval_conditions(
+        propagate_timestamp({"cutoff": iso(armed + timedelta(minutes=295))}, "cutoff")
+    )
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "ARMED"
-    await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=355))})
+    await scheduler.eval_conditions(
+        propagate_timestamp({"cutoff": iso(armed + timedelta(minutes=355))}, "cutoff")
+    )
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "FIRED"
 
 
@@ -1847,7 +1886,7 @@ async def test_eval_conditions_budget_stops_cleanly_and_rotates(monkeypatch: pyt
         thresholds=Settings(_env_file=None).thresholds(),
         versions=fixture_versions(),
     )
-    await scheduler.eval_conditions({"cutoff": iso(now)})
+    await scheduler.eval_conditions(propagate_timestamp({"cutoff": iso(now)}, "cutoff"))
     for cond_id in ("exit", "old-upgrade", "new-upgrade"):
         assert "counters" not in await repo.get("ana.watch_conditions", cond_id)
     order = []
@@ -1860,7 +1899,7 @@ async def test_eval_conditions_budget_stops_cleanly_and_rotates(monkeypatch: pyt
 
     repo.get = tracking_get
     monkeypatch.setattr(scheduler_module, "EVAL_CONDITIONS_BUDGET_S", 60)
-    await scheduler.eval_conditions({"cutoff": iso(now)})
+    await scheduler.eval_conditions(propagate_timestamp({"cutoff": iso(now)}, "cutoff"))
 
     assert order == ["old-upgrade", "new-upgrade", "exit"]
 
@@ -1965,11 +2004,14 @@ async def test_eval_conditions_progresses_when_one_market_read_outlasts_the_budg
         thresholds=Settings(_env_file=None).thresholds(),
         versions=fixture_versions(),
     )
-    await asyncio.wait_for(scheduler.eval_conditions({"cutoff": iso(now)}), 2)
+    await asyncio.wait_for(scheduler.eval_conditions(propagate_timestamp({"cutoff": iso(now)}, "cutoff")), 2)
     assert (await repo.get("ana.watch_conditions", "fatal")).get("last_evaluated_at")
     slow = await repo.get("ana.watch_conditions", "slow")
     assert slow.get("last_attempted_at") and "counters" not in slow
-    await asyncio.wait_for(scheduler.eval_conditions({"cutoff": iso(now + timedelta(minutes=1))}), 2)
+    await asyncio.wait_for(
+        scheduler.eval_conditions(propagate_timestamp({"cutoff": iso(now + timedelta(minutes=1))}, "cutoff")),
+        2,
+    )
     assert (await repo.get("ana.watch_conditions", "fast")).get("last_evaluated_at")
     assert reads[:2] == ["slow-token", "fast-token"]
 
@@ -2019,9 +2061,11 @@ async def test_eval_conditions_per_condition_budget_and_explicit_outcomes(
         thresholds=Settings(_env_file=None).thresholds(),
         versions=fixture_versions(),
     )
-    outcomes = await asyncio.wait_for(scheduler.eval_conditions({"cutoff": iso(now)}), 3)
-    assert outcomes["deferred"] == [{"cond_id": "slow", "reason": "READ_TIMEOUT"}]
-    assert outcomes["fired"] == ["fast"]
+    outcomes = await asyncio.wait_for(
+        scheduler.eval_conditions(propagate_timestamp({"cutoff": iso(now)}, "cutoff")), 3
+    )
+    assert [(item.cond_id, item.reason) for item in outcomes.deferred] == [("slow", "READ_TIMEOUT")]
+    assert outcomes.fired == ["fast"]
     slow = await repo.get("ana.watch_conditions", "slow")
     assert slow["last_attempt_outcome"] == "READ_TIMEOUT" and slow["status"] == "ARMED"
     assert (await repo.get("ana.watch_conditions", "fast"))["status"] == "FIRED"

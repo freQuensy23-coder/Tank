@@ -14,11 +14,14 @@ from tank.analysis.condition_graph_codec import bind_flow_aggregate_evidence, fl
 from tank.analysis.condition_graph_contracts import (
     BasicConditionSpot,
     ConditionBoundaryGroup,
+    ConditionCohortComparison,
     ConditionComposite,
     ConditionFlowAggregate,
     ConditionFlowAggregateProjection,
     ConditionIncompleteMinuteCoverage,
+    ConditionInterval,
     ConditionMissingFlowMetrics,
+    ConditionSignHistoryWindow,
     ConditionSpotBreadth,
     ConditionSpotConcentration,
     ConditionSpotCoverage,
@@ -28,16 +31,21 @@ from tank.analysis.condition_graph_contracts import (
     ConditionSpotVenue,
     ConditionSpotWindowGraph,
     ConditionStatisticalNullReason,
+    ConditionTopVenueSignHistory,
     ConditionTradeCounts,
     ConditionUnavailableBoundaryCoverage,
+    ConditionVenueSignObservation,
     ConditionWeightedBreadth,
     ConditionWindow,
+    DirectWindowConditionSpot,
     FlowAggregateEvidenceRef,
     IncompleteConditionTradeCounts,
     ObservedConditionCohort,
+    ObservedConditionCohortComparison,
     ObservedConditionComposite,
     ObservedConditionTradeCounts,
     UnavailableConditionCohort,
+    UnavailableConditionCohortComparison,
     UnavailableConditionComposite,
     WindowedConditionSpot,
 )
@@ -47,6 +55,7 @@ from tank.analysis.condition_inputs import (
     SpotFlowObservation,
     SpotWindowCalculationInputs,
 )
+from tank.analysis.spot_enrichment import CohortEnrichedConditionSpot, ConditionSpotCohortGraph
 from tank.contracts import DomainModel
 from tank.time_precision import Timestamp
 from tank.util import parse_iso_time
@@ -343,30 +352,39 @@ def _selected_venue(
     return _Venue(venue, totals, tuple(boundaries), significant_flow(totals, inputs.policy), endpoints)
 
 
-def _combined(token_id: str, venues: Sequence[_Venue]) -> NativeFlowTotals:
-    if not venues:
+def combine_native_flow(token_id: str, rows: Sequence[NativeFlowTotals]) -> NativeFlowTotals:
+    rows = tuple(NativeFlowTotals.model_validate(row) for row in rows)
+    if not rows:
         raise ValueError("An unavailable composite cannot become observed zero")
-    values = tuple(
-        amount
-        for row in venues
-        for amount in (row.totals.buy_qty, row.totals.sell_qty, row.totals.sum_sq_qty)
-    )
+    if any(row.token_id != token_id for row in rows):
+        raise ValueError("A native composite cannot combine different token quantities")
+    values = tuple(amount for row in rows for amount in (row.buy_qty, row.sell_qty, row.sum_sq_qty))
     with _native_arithmetic(values):
-        buy = sum((row.totals.buy_qty for row in venues), Decimal(0))
-        sell = sum((row.totals.sell_qty for row in venues), Decimal(0))
+        buy = sum((row.buy_qty for row in rows), Decimal(0))
+        sell = sum((row.sell_qty for row in rows), Decimal(0))
         return NativeFlowTotals(
             token_id=token_id,
             buy_qty=buy,
             sell_qty=sell,
             volume_native=buy + sell,
             cvd=buy - sell,
-            sum_sq_qty=sum((row.totals.sum_sq_qty for row in venues), Decimal(0)),
+            sum_sq_qty=sum((row.sum_sq_qty for row in rows), Decimal(0)),
         )
 
 
-def _composite(
-    totals: NativeFlowTotals | None, venues: Sequence[_Venue], policy: SpotCalculationPolicy
+def _combined(token_id: str, venues: Sequence[_Venue]) -> NativeFlowTotals:
+    return combine_native_flow(token_id, tuple(row.totals for row in venues))
+
+
+def compose_native_flow(
+    totals: NativeFlowTotals | None, venues: tuple[str, ...], policy: SpotCalculationPolicy
 ) -> ConditionComposite:
+    policy = SpotCalculationPolicy.model_validate(policy)
+    totals = NativeFlowTotals.model_validate(totals) if totals is not None else None
+    if not isinstance(venues, tuple) or any(not isinstance(name, str) or not name.strip() for name in venues):
+        raise ValueError("Composite venues require their actual immutable identity tuple")
+    if len(venues) != len(set(venues)) or bool(venues) != (totals is not None):
+        raise ValueError("A composite must preserve its actual distinct observed venue scope")
     if totals is None:
         return UnavailableConditionComposite(
             status="UNAVAILABLE",
@@ -399,7 +417,7 @@ def _composite(
         volume=totals.volume_native,
         buy_share=buy_share,
         bs_ratio=bs_ratio,
-        venues=tuple(row.name for row in venues),
+        venues=venues,
         sign=significant_flow(totals, policy),
         null_reasons=reasons,
     )
@@ -505,7 +523,7 @@ def _calculate_spot(
 ) -> BasicConditionSpot:
     observed, excluded = qualification.observed, qualification.excluded
     totals = _combined(inputs.token_id, observed) if observed else None
-    composite = _composite(totals, observed, inputs.policy)
+    composite = compose_native_flow(totals, tuple(row.name for row in observed), inputs.policy)
     volume = Decimal(0) if totals is None else totals.volume_native
     sign = 0 if totals is None else significant_flow(totals, inputs.policy)
     ticker_daily = _excluded_daily_volume(inputs, excluded, cutoff=cutoff)
@@ -748,6 +766,94 @@ def calculate_spot(inputs: SpotCalculationInputs) -> BasicConditionSpot:
         return _calculate_spot(inputs, qualified, start=inputs.start, cutoff=inputs.cutoff)
 
 
+def calculate_direct_spot(
+    inputs: SpotCalculationInputs, *, window: ConditionWindow
+) -> DirectWindowConditionSpot:
+    source = SpotCalculationInputs.model_validate(inputs)
+    values = tuple(
+        value
+        for row in (*source.minutes, *source.boundaries)
+        for value in (row.buy_qty, row.sell_qty, row.sum_sq_qty)
+        if value is not None
+    )
+    ticker_values = tuple(
+        row.trailing_day_native_volume for row in source.tickers if row.trailing_day_native_volume is not None
+    )
+    with _native_arithmetic((*values, *ticker_values, source.policy.significant_flow_sigma)):
+        qualified = _qualify_spot(source, start=source.start, cutoff=source.cutoff)
+        basic = _calculate_spot(source, qualified, start=source.start, cutoff=source.cutoff)
+        return DirectWindowConditionSpot.from_basic(
+            basic,
+            interval=ConditionInterval(window=window, start=source.start, cutoff=source.cutoff),
+            coverage_through=_coverage_through(qualified.observed),
+        )
+
+
+def _calculate_spot_sign_history(
+    source: SpotCalculationInputs, *, interval: ConditionInterval, selected_venues: tuple[str, ...]
+) -> ConditionTopVenueSignHistory:
+    interval = ConditionInterval.model_validate(interval)
+    if interval.start < source.start or interval.cutoff > source.cutoff:
+        raise ValueError("Sign history must remain inside the actual source interval")
+    declared = {instrument.venue for instrument in source.instruments}
+    if len(set(selected_venues)) != len(selected_venues) or not set(selected_venues) <= declared:
+        raise ValueError("Sign history requires distinct actual declared venues")
+    amounts = tuple(
+        value
+        for row in (*source.minutes, *source.boundaries)
+        for value in (row.buy_qty, row.sell_qty, row.sum_sq_qty)
+        if value is not None
+    )
+    windows: list[ConditionSignHistoryWindow] = []
+    with _native_arithmetic((*amounts, source.policy.significant_flow_sigma)):
+        cursor = interval.start
+        while selected_venues and cursor + timedelta(minutes=15) <= interval.cutoff:
+            cutoff = cursor + timedelta(minutes=15)
+            observations: list[ConditionVenueSignObservation] = []
+            for venue in selected_venues:
+                qualified = _selected_venue(source, venue, start=cursor, cutoff=cutoff)
+                observations.append(
+                    ConditionVenueSignObservation(
+                        venue=venue,
+                        value=qualified.sign if isinstance(qualified, _Venue) else None,
+                        reason=None if isinstance(qualified, _Venue) else "INCOMPLETE",
+                    )
+                )
+            windows.append(
+                ConditionSignHistoryWindow(
+                    interval=ConditionInterval(window="W15M", start=cursor, cutoff=cutoff),
+                    observations=tuple(observations),
+                )
+            )
+            cursor = cutoff
+    return ConditionTopVenueSignHistory(
+        token_id=source.token_id,
+        interval=interval,
+        selected_venues=selected_venues,
+        windows=tuple(windows),
+    )
+
+
+class SpotCalculator:
+    """Own strict request inputs once while evaluating multiple pure flow intervals."""
+
+    __slots__ = ("_source",)
+
+    def __init__(self, inputs: SpotCalculationInputs) -> None:
+        self._source = SpotCalculationInputs.model_validate(inputs)
+
+    def sign_history(
+        self, *, interval: ConditionInterval, selected_venues: tuple[str, ...]
+    ) -> ConditionTopVenueSignHistory:
+        return _calculate_spot_sign_history(self._source, interval=interval, selected_venues=selected_venues)
+
+
+def calculate_spot_sign_history(
+    inputs: SpotCalculationInputs, *, interval: ConditionInterval, selected_venues: tuple[str, ...]
+) -> ConditionTopVenueSignHistory:
+    return SpotCalculator(inputs).sign_history(interval=interval, selected_venues=selected_venues)
+
+
 def _coverage_through(venues: Sequence[_Venue]) -> Timestamp:
     endpoints = tuple(stamp for venue in venues for stamp in venue.coverage_endpoints)
     if not endpoints:
@@ -779,7 +885,7 @@ def _cohort_composite(
     share = display_ratio(totals.volume_native, max_composite.volume)
     if share is None:
         return UnavailableConditionCohort(status="UNAVAILABLE", reason="NOT_COHORT_CONSISTENT")
-    composite = _composite(totals, selected, inputs.policy)
+    composite = compose_native_flow(totals, tuple(row.name for row in selected), inputs.policy)
     if not isinstance(composite, ObservedConditionComposite):
         raise ValueError("Actual complete cohort totals cannot become unavailable")
     previous = tuple(row for row in prior if row.name in cohort)
@@ -865,9 +971,8 @@ def calculate_spot_window_graph(inputs: SpotWindowCalculationInputs) -> Conditio
         return ConditionSpotWindowGraph(spots=spots, durations_s=durations, primary=plan.primary)
 
 
-@dataclass(frozen=True, slots=True)
-class SpotNativeMeasurement:
-    path: str
+class SpotNativeMeasurement(DomainModel):
+    path: str = Field(min_length=1, pattern=r"\S")
     value: Decimal
     window: ConditionWindow
     unit: Literal["NATIVE_TOKEN", "NATIVE_TOKEN_SQUARED"]
@@ -886,12 +991,12 @@ def spot_native_measurements(graph: ConditionSpotWindowGraph) -> tuple[SpotNativ
                 for field, quantity in (("cvd", composite.cvd), ("volume", composite.volume)):
                     measurements.append(
                         SpotNativeMeasurement(
-                            f"spot.{window}.{name}.{field}",
-                            quantity,
-                            window,
-                            "NATIVE_TOKEN",
-                            value.coverage_through,
-                            None,
+                            path=f"spot.{window}.{name}.{field}",
+                            value=quantity,
+                            window=window,
+                            unit="NATIVE_TOKEN",
+                            observed_at=value.coverage_through,
+                            venue=None,
                         )
                     )
         for index, venue in enumerate(value.venues):
@@ -904,12 +1009,101 @@ def spot_native_measurements(graph: ConditionSpotWindowGraph) -> tuple[SpotNativ
             ):
                 measurements.append(
                     SpotNativeMeasurement(
-                        f"spot.{window}.venues[{index}].{field}",
-                        quantity,
-                        window,
-                        "NATIVE_TOKEN_SQUARED" if field == "sum_sq_qty" else "NATIVE_TOKEN",
-                        value.coverage_through,
-                        venue.venue,
+                        path=f"spot.{window}.venues[{index}].{field}",
+                        value=quantity,
+                        window=window,
+                        unit="NATIVE_TOKEN_SQUARED" if field == "sum_sq_qty" else "NATIVE_TOKEN",
+                        observed_at=value.coverage_through,
+                        venue=venue.venue,
                     )
                 )
     return tuple(measurements)
+
+
+def compare_spot_windows(
+    graph: ConditionSpotWindowGraph, policy: SpotCalculationPolicy
+) -> dict[ConditionWindow, dict[ConditionWindow, ConditionCohortComparison]]:
+    validated = ConditionSpotWindowGraph.model_validate(graph)
+    captured_policy = SpotCalculationPolicy.model_validate(policy)
+    totals: dict[tuple[ConditionWindow, tuple[str, ...]], NativeFlowTotals] = {}
+    composites: dict[tuple[ConditionWindow, tuple[str, ...]], ObservedConditionComposite] = {}
+
+    def composite(window: ConditionWindow, cohort: tuple[str, ...]) -> ObservedConditionComposite:
+        key = (window, cohort)
+        if key not in composites:
+            spot = validated.spots[window]
+            rows = tuple(
+                NativeFlowTotals(
+                    token_id=spot.token_id,
+                    buy_qty=row.buy_qty,
+                    sell_qty=row.sell_qty,
+                    volume_native=row.volume_native,
+                    cvd=row.cvd,
+                    sum_sq_qty=row.sum_sq_qty,
+                )
+                for row in spot.venues
+                if row.venue in cohort
+            )
+            totals[key] = combine_native_flow(spot.token_id, rows)
+            result = compose_native_flow(totals[key], cohort, captured_policy)
+            if not isinstance(result, ObservedConditionComposite):
+                raise ValueError("An actual complete venue cohort cannot become an unavailable composite")
+            composites[key] = result
+        return composites[key]
+
+    comparisons: dict[ConditionWindow, dict[ConditionWindow, ConditionCohortComparison]] = {}
+    for name, left in validated.spots.items():
+        left_names = {row.venue for row in left.venues}
+        comparisons[name] = {}
+        for other, right in validated.spots.items():
+            if name == other:
+                continue
+            cohort = tuple(sorted(left_names & {row.venue for row in right.venues}))
+            share: float | None = None
+            majority: bool | None = None
+            current: ObservedConditionComposite | None = None
+            if cohort:
+                current = composite(name, cohort)
+                maximum = left.composite_max
+                if isinstance(maximum, ObservedConditionComposite) and maximum.volume > 0:
+                    share = display_ratio(current.volume, maximum.volume)
+                    with _native_arithmetic((current.volume, maximum.volume)):
+                        majority = 2 * current.volume > maximum.volume
+            if len(cohort) < captured_policy.min_spot_venues or majority is not True or share is None:
+                comparisons[name][other] = UnavailableConditionCohortComparison(
+                    status="UNAVAILABLE",
+                    cohort=cohort,
+                    share_of_max=share,
+                    share_majority=majority,
+                    reason="NOT_COHORT_CONSISTENT",
+                )
+                continue
+            if current is None:
+                raise ValueError("A qualified common cohort requires its actual native totals")
+            comparisons[name][other] = ObservedConditionCohortComparison(
+                status="OBSERVED",
+                cohort=cohort,
+                current=current,
+                other=composite(other, cohort),
+                share_of_max=share,
+                share_majority=True,
+            )
+    return comparisons
+
+
+def enrich_spot_cohorts(
+    graph: ConditionSpotWindowGraph, policy: SpotCalculationPolicy
+) -> ConditionSpotCohortGraph:
+    comparisons = compare_spot_windows(graph, policy)
+    return ConditionSpotCohortGraph(
+        spots={
+            name: CohortEnrichedConditionSpot.from_windowed(
+                value,
+                comparisons=comparisons[name],
+                role="PRIMARY" if name == graph.primary else "OTHER_WINDOW",
+            )
+            for name, value in graph.spots.items()
+        },
+        durations_s=graph.durations_s,
+        primary=graph.primary,
+    )

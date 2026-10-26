@@ -17,7 +17,7 @@ from tank.analysis.watch_contracts import WatchCondition, WatchLeaf
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.time_precision import chosen_boundary, collection_clock
+from tank.time_precision import chosen_boundary, collection_clock, propagate_timestamp
 from tank.util import iso, parse_time
 
 
@@ -90,7 +90,9 @@ async def test_concentrated_sell_only_fires_weaker_watch_downgrade(open_call, ex
         versions=fixture_versions(),
     )
     for hour in (11, 12):
-        await scheduler.eval_conditions({"cutoff": iso(start.replace(hour=hour, minute=1))})
+        await scheduler.eval_conditions(
+            propagate_timestamp({"cutoff": iso(start.replace(hour=hour, minute=1))}, "cutoff")
+        )
     persisted = await repo.get("ana.watch_conditions", condition.cond_id)
     assert persisted["status"] == expected
     if not open_call:
@@ -118,7 +120,9 @@ async def test_concentrated_sell_only_fires_weaker_watch_downgrade(open_call, ex
 
         scheduler.truth = SimpleNamespace(assess=broad)
         for hour, status in [(13, "ARMED"), (14, "FIRED")]:
-            await scheduler.eval_conditions({"cutoff": iso(start.replace(hour=hour, minute=1))})
+            await scheduler.eval_conditions(
+                propagate_timestamp({"cutoff": iso(start.replace(hour=hour, minute=1))}, "cutoff")
+            )
             assert (await repo.get("ana.watch_conditions", condition.cond_id))["status"] == status
         jobs = await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
         assert len(jobs) == 1
@@ -181,7 +185,9 @@ async def fire_generated(rule: DecisionWatch, event, truth_rows):
         versions=fixture_versions(),
     )
     for hour in (11, 12):
-        await scheduler.eval_conditions({"cutoff": iso(start.replace(hour=hour, minute=1))})
+        await scheduler.eval_conditions(
+            propagate_timestamp({"cutoff": iso(start.replace(hour=hour, minute=1))}, "cutoff")
+        )
     return await repo.get("ana.watch_conditions", condition.cond_id)
 
 

@@ -25,7 +25,17 @@ from tank.util import iso, parse_iso_time
 
 def two_contract_synchronization() -> ConditionSynchronizedOpenInterest:
     point = observed_oi_without_usd()
-    point = type(point).model_validate(point.model_copy(update={"oi_usd_start": None, "oi_usd_end": None}))
+    point = type(point).model_validate(
+        point.model_copy(
+            update={
+                "oi_usd_start": None,
+                "oi_usd_end": None,
+                "oi_usd_chg_pct_reason": "INCOMPLETE",
+                "oi_usd_reason": "INCOMPLETE",
+                "oi_usd_detail": "SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE",
+            }
+        )
+    )
     assert point.start_observed_at.value is not None
     assert point.end_observed_at.value is not None
 

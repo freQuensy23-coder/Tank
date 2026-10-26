@@ -10,7 +10,8 @@ from typing import Annotated, Literal, Protocol, Self
 from pydantic import BeforeValidator, Field, field_validator, model_validator
 
 from tank.analysis.execution import BookWalkRequest, BookWalkResult, execute_book_walk
-from tank.analysis.positioning import MissingOIDecomposition, OIDecomposition, oi_class
+from tank.analysis.oi_ratio import NativeOiChangeFailure, UsdOiChangeFailure, native_oi_change, usd_oi_change
+from tank.analysis.positioning import MissingOIDecomposition, OIDecomposition, oi_class_from_comparisons
 from tank.analysis.price_reference import ReferencePriceReturn
 from tank.analysis.statistics_contracts import (
     BetaEstimate,
@@ -1128,11 +1129,9 @@ class UnavailableConditionCohort(DomainModel):
 type ConditionCohort = ObservedConditionCohort | UnavailableConditionCohort
 
 
-class ScopedConditionSpot(ConditionSpotValues):
+class ConditionScopedSpotValues(ConditionSpotValues):
     interval: ConditionInterval
     coverage_through: Timestamp
-    composite_cohort: ConditionCohort
-    cohort_consistent: dict[ConditionWindow, bool]
 
     @model_validator(mode="after")
     def actual_window_scope(self) -> Self:
@@ -1142,6 +1141,52 @@ class ScopedConditionSpot(ConditionSpotValues):
                 raise ValueError("Window coverage must preserve its actual requested cutoff")
         elif stamp is not None:
             raise ValueError("No complete spot venues cannot assert observed window coverage")
+        return self
+
+
+class UnrequestedConditionSpotCalculation(DomainModel):
+    status: Literal["NOT_REQUESTED"]
+
+
+class DirectWindowConditionSpot(ConditionScopedSpotValues):
+    kind: Literal["DIRECT_WINDOW"]
+    composite_cohort: UnrequestedConditionSpotCalculation
+    cohort_comparisons: UnrequestedConditionSpotCalculation
+    size_profile: UnrequestedConditionSpotCalculation
+
+    @classmethod
+    def from_basic(
+        cls, value: BasicConditionSpot, *, interval: ConditionInterval, coverage_through: Timestamp
+    ) -> Self:
+        spot = BasicConditionSpot.model_validate(value)
+        return cls(
+            kind="DIRECT_WINDOW",
+            token_id=spot.token_id,
+            venues=spot.venues,
+            composite_max=spot.composite_max,
+            breadth=spot.breadth,
+            cw_breadth=spot.cw_breadth,
+            exact_majority=spot.exact_majority,
+            topn=spot.topn,
+            concentration=spot.concentration,
+            direction=spot.direction,
+            direction_reason=spot.direction_reason,
+            classification=spot.classification,
+            coverage=spot.coverage,
+            interval=interval,
+            coverage_through=coverage_through,
+            composite_cohort=UnrequestedConditionSpotCalculation(status="NOT_REQUESTED"),
+            cohort_comparisons=UnrequestedConditionSpotCalculation(status="NOT_REQUESTED"),
+            size_profile=UnrequestedConditionSpotCalculation(status="NOT_REQUESTED"),
+        )
+
+
+class ScopedConditionSpot(ConditionScopedSpotValues):
+    composite_cohort: ConditionCohort
+    cohort_consistent: dict[ConditionWindow, bool]
+
+    @model_validator(mode="after")
+    def distinct_cohort_windows(self) -> Self:
         if self.interval.window in self.cohort_consistent:
             raise ValueError("A spot consistency index compares distinct windows only")
         return self
@@ -1306,7 +1351,9 @@ def validate_condition_spot_pairs(
                     raise ValueError("An observed cohort requires actual strict native-volume majority")
 
 
-type ConditionSpot = BasicConditionSpot | WindowedConditionSpot | EnrichedConditionSpot
+type ConditionSpot = (
+    BasicConditionSpot | DirectWindowConditionSpot | WindowedConditionSpot | EnrichedConditionSpot
+)
 
 
 class ConditionSpotWindowGraph(DomainModel):
@@ -1341,12 +1388,14 @@ class ObservedConditionOpenInterest(DomainModel):
     status: Literal["OBSERVED"]
     requested_window_duration_s: float = Field(gt=0)
     observed_window_duration_s: float = Field(ge=0)
-    oi_native_start: Decimal = Field(gt=0)
+    oi_native_start: Decimal = Field(ge=0)
     oi_native_end: Decimal = Field(ge=0)
-    oi_native_chg_pct: float = Field(ge=-1)
+    oi_native_chg_pct: float | None = Field(ge=-1)
+    oi_native_chg_pct_reason: NativeOiChangeFailure | None
     oi_usd_start: Decimal | None = Field(ge=0)
     oi_usd_end: Decimal | None = Field(ge=0)
     oi_usd_chg_pct: float | None = Field(ge=-1)
+    oi_usd_chg_pct_reason: UsdOiChangeFailure | None
     oi_usd_reason: Literal["INCOMPLETE"] | None
     oi_usd_detail: Literal["SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE"] | None
     decomposition: OIDecomposition | MissingOIDecomposition
@@ -1368,42 +1417,29 @@ class ObservedConditionOpenInterest(DomainModel):
         end = parse_iso_time(self.end_observed_at.value)
         if (end - start).total_seconds() != self.observed_window_duration_s:
             raise ValueError("OI observed duration must preserve its actual endpoint clocks")
-        usd_ready = self.oi_usd_start is not None and self.oi_usd_start > 0 and self.oi_usd_end is not None
-        if usd_ready != (self.oi_usd_chg_pct is not None):
-            raise ValueError("USD OI change requires a positive initial and known final USD quantity")
-        if usd_ready:
-            if self.oi_usd_reason is not None or self.oi_usd_detail is not None:
-                raise ValueError("An observed USD OI change cannot carry a missing-conversion reason")
-        elif self.oi_usd_reason is None or self.oi_usd_detail is None:
-            raise ValueError("Unavailable USD OI change requires its actual conversion gap")
-        nr = self.native_normal_range.bounds
-        ur = self.usd_normal_range.bounds
-        native_position = (
-            None
-            if nr is None
-            else "BELOW"
-            if self.oi_native_chg_pct < nr.lower
-            else "ABOVE"
-            if self.oi_native_chg_pct > nr.upper
-            else "WITHIN"
+        native = native_oi_change(
+            self.oi_native_start, self.oi_native_end, normal_range=self.native_normal_range
         )
-        native_beyond = None if nr is None else native_position != "WITHIN"
-        usd_beyond = (
-            None
-            if ur is None or self.oi_usd_chg_pct is None
-            else self.oi_usd_chg_pct < ur.lower or self.oi_usd_chg_pct > ur.upper
-        )
-        if self.native_oi_vs_normal != native_position or self.native_beyond != native_beyond:
-            raise ValueError("Native OI comparisons must use the actual available baseline")
-        if self.usd_beyond != usd_beyond:
-            raise ValueError("USD OI comparison must use the actual change and baseline")
-        expected_class = oi_class(
-            self.oi_native_chg_pct,
-            self.oi_usd_chg_pct,
-            self.decomposition,
-            None if nr is None else (nr.lower, nr.upper),
-            None if ur is None else (ur.lower, ur.upper),
-        )
+        usd = usd_oi_change(self.oi_usd_start, self.oi_usd_end, normal_range=self.usd_normal_range)
+        if (self.oi_native_chg_pct, self.oi_native_chg_pct_reason) != (native.value, native.reason):
+            raise ValueError(
+                "Native OI display must preserve its actual endpoints and derived absence reason"
+            )
+        if (self.oi_usd_chg_pct, self.oi_usd_chg_pct_reason) != (usd.value, usd.reason):
+            raise ValueError("USD OI change requires its actual endpoints and derived absence reason")
+        missing_usd = self.oi_usd_start is None or self.oi_usd_end is None
+        if missing_usd:
+            if self.oi_usd_reason is None or self.oi_usd_detail is None:
+                raise ValueError("Missing USD endpoints require their actual source gap")
+        elif self.oi_usd_reason is not None or self.oi_usd_detail is not None:
+            raise ValueError("Known USD endpoints cannot claim a missing-conversion gap")
+        if (self.native_oi_vs_normal, self.native_beyond) != (native.position, native.beyond):
+            raise ValueError(
+                "Native OI comparisons must use the actual available baseline and exact endpoints"
+            )
+        if self.usd_beyond != usd.beyond:
+            raise ValueError("USD OI comparison must use exact endpoints and the actual baseline")
+        expected_class = oi_class_from_comparisons(native.beyond, usd.beyond, self.decomposition)
         if self.oi_class != expected_class or self.classification_ready != (expected_class is not None):
             raise ValueError(
                 "OI classification readiness must preserve its actual decomposition and baselines"
@@ -7128,12 +7164,37 @@ def _condition_derivative_metric_available(
         return False
     match metric:
         case "deriv.native_oi_chg_pct":
-            return True
+            return synchronized.values.oi_native_chg_pct is not None
         case "deriv.native_oi_vs_normal":
             return synchronized.values.native_oi_vs_normal is not None
         case "deriv.oi_class":
             return synchronized.values.oi_class is not None
     raise ValueError("OI availability requires an actual OI condition metric")
+
+
+type ConditionEvaluationFailure = Literal["INCOMPLETE", "ZERO_BASELINE", "NOT_ESTIMABLE"]
+
+
+def condition_derivative_failure(
+    derivatives: BasicConditionDerivatives, metric: ConditionMetric
+) -> ConditionEvaluationFailure | None:
+    if _condition_derivative_metric_available(derivatives, metric):
+        return None
+    if condition_metric_domain(metric) == "funding":
+        return "INCOMPLETE"
+    synchronized = derivatives.synchronized
+    if isinstance(synchronized, UnrequestedConditionSynchronizedOpenInterest):
+        raise ValueError("An unrequested OI calculation cannot become an evaluated failure")
+    if isinstance(synchronized, UnavailableConditionSynchronizedOpenInterest):
+        return synchronized.reason
+    if metric == "deriv.native_oi_chg_pct":
+        reason = synchronized.values.oi_native_chg_pct_reason
+        if reason is None:
+            raise ValueError("A missing OI display requires its actual derived failure")
+        return reason
+    if synchronized.values.oi_native_chg_pct_reason == "ZERO_BASELINE":
+        return "ZERO_BASELINE"
+    return "INCOMPLETE"
 
 
 def _condition_proof_freshness_passes(value: ConditionProofFreshness) -> bool:
@@ -7150,7 +7211,7 @@ class ConditionEvaluationProof(DomainModel):
     assembled_at: Timestamp
     reused: bool
     available: bool
-    reason: Literal["INCOMPLETE"] | None
+    reason: ConditionEvaluationFailure | None
     freshness: ConditionProofFreshness
     coverage: ConditionSpotCoverage | ConditionOpenInterestCoverage | None
 
@@ -7173,6 +7234,10 @@ class ConditionEvaluationProof(DomainModel):
         )
         if gate and not passed and self.available:
             raise ValueError("A required unproven freshness gate cannot expose an available metric")
+        if not passed and self.reason != "INCOMPLETE":
+            raise ValueError("An unproven freshness gate requires its actual incomplete-evidence reason")
+        if domain != "oi" and self.reason not in (None, "INCOMPLETE"):
+            raise ValueError("A derived OI ratio failure cannot label another metric domain")
         if (self.reason is None) != (self.available and passed):
             raise ValueError("Proof success requires actual availability and its applicable freshness gate")
         if isinstance(self.freshness, AssessedConditionProofFreshness):
@@ -7200,7 +7265,16 @@ class ConditionEvaluationProof(DomainModel):
 
 class ConditionUnavailableRequirement(DomainModel):
     requirement: ConditionRequirement
-    reason: Literal["NOT_SUPPORTED", "INCOMPLETE"]
+    reason: Literal["NOT_SUPPORTED", "INCOMPLETE", "ZERO_BASELINE", "NOT_ESTIMABLE"]
+
+    @model_validator(mode="after")
+    def actual_failure_domain(self) -> Self:
+        if (
+            self.reason in ("ZERO_BASELINE", "NOT_ESTIMABLE")
+            and condition_metric_domain(self.requirement.metric) != "oi"
+        ):
+            raise ValueError("A derived OI ratio failure requires an actual OI metric")
+        return self
 
 
 class UnrequestedConditionFacet(DomainModel):
@@ -7220,7 +7294,7 @@ class SelectiveConditionValues(DomainModel):
     cutoff: Timestamp
     assembled_at: Timestamp
     requested: tuple[ConditionRequirement, ...]
-    spot: dict[ConditionWindow, WindowedConditionSpot]
+    spot: dict[ConditionWindow, DirectWindowConditionSpot | WindowedConditionSpot]
     derivatives: dict[ConditionWindow, BasicConditionDerivatives]
     close: ConditionClose | UncomputedConditionFacet
     confidence: SelectiveConditionConfidence | UncomputedConditionFacet
@@ -7316,6 +7390,20 @@ class SelectiveConditionValues(DomainModel):
                         and observation.venue != selected_book.venue
                     ):
                         raise ValueError("Depth freshness cannot borrow another book's source clock or venue")
+            if proof.cache_key.domain in {"oi", "funding"}:
+                failure = (
+                    condition_derivative_failure(
+                        self.derivatives[proof.requirement.window], proof.requirement.metric
+                    )
+                    if fresh
+                    else "INCOMPLETE"
+                )
+                if proof.reason != failure:
+                    raise ValueError(
+                        "Derivative proof failure must preserve its actual source or ratio cause"
+                    )
+            if proof.requirement in unavailable and unavailable[proof.requirement] != proof.reason:
+                raise ValueError("Unavailable requirements must preserve their actual evaluated proof cause")
             if proof.available != (self._metric_available(proof.requirement) and fresh):
                 raise ValueError(
                     "Proof availability must preserve actual financial facts and the applicable freshness gate"
@@ -7580,6 +7668,15 @@ class ConditionRequestedDerivativeView(DomainModel):
                     )
                 ):
                     raise ValueError("Requested OI proof must preserve its actual synchronized cohort")
+            failure = (
+                condition_derivative_failure(source, proof.requirement.metric)
+                if _condition_proof_freshness_passes(proof.freshness)
+                else "INCOMPLETE"
+            )
+            if proof.reason != failure:
+                raise ValueError(
+                    "Requested derivative failure must preserve its actual source or ratio cause"
+                )
             if proof.available != (
                 _condition_derivative_metric_available(source, proof.requirement.metric)
                 and _condition_proof_freshness_passes(proof.freshness)

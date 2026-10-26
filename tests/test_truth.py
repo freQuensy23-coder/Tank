@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from source_support import fixture_versions
-from truth_support import fixture_truth_config
+from truth_support import fixture_truth_config, unselected_spot_sign_history
 
 from tank.analysis.truth import (
     _oi_stats,
@@ -396,7 +396,17 @@ def test_t5_pairwise_constant_cohort() -> None:
     )
     d = {}
     liquidity = {"per_venue": []}
-    enrich_evidence({"cutoff": iso(end)}, end - timedelta(hours=1), end, spots, "W1H", d, rel, liquidity)
+    enrich_evidence(
+        {"cutoff": iso(end)},
+        end - timedelta(hours=1),
+        end,
+        spots,
+        "W1H",
+        d,
+        rel,
+        liquidity,
+        sign_history=unselected_spot_sign_history("T", end - timedelta(hours=1), end),
+    )
     comparison = spots["W1H"]["cohort_comparisons"]["W24H"]
     assert comparison["cohort"] == ["binance", "kraken", "okx"]
     assert comparison["share_of_max"] == 0.75
@@ -697,6 +707,7 @@ def test_fragmentation_needs_actual_cutoff_safe_independent_rest_gap(confirmatio
         {},
         relative,
         liquidity,
+        sign_history=unselected_spot_sign_history("T", start, end),
     )
     assert liquidity["fragmentation"]["persistent_gap"] is True
     assert liquidity["fragmentation"]["validated"] is (confirmation == "VALID")
@@ -744,6 +755,7 @@ def _fragmentation_of(quotes):
         {},
         relative,
         liquidity,
+        sign_history=unselected_spot_sign_history("T", start, end),
     )
     return liquidity["fragmentation"]
 
@@ -2547,7 +2559,15 @@ def test_cohort_majority_uses_exact_volume_not_rounded_share(epsilon, expected) 
         "context_inputs": {"rv24": None, "rv_normal_range": None},
     }
     enrich_evidence(
-        {"cutoff": iso(end)}, end - timedelta(hours=1), end, spots, "W1H", {}, relative, {"per_venue": []}
+        {"cutoff": iso(end)},
+        end - timedelta(hours=1),
+        end,
+        spots,
+        "W1H",
+        {},
+        relative,
+        {"per_venue": []},
+        sign_history=unselected_spot_sign_history("T", end - timedelta(hours=1), end),
     )
     comparison = spots["W1H"]["cohort_comparisons"]["W24H"]
     assert comparison["share_of_max"] == 0.5
@@ -2781,3 +2801,21 @@ def test_full_assessments_run_one_at_a_time_per_process(monkeypatch: pytest.Monk
     for t in threads:
         t.join()
     assert peak[0] == 1
+
+
+@pytest.mark.parametrize("borrowed_token", [False, True])
+def test_enrichment_refuses_borrowed_sign_history_before_mutating_facts(borrowed_token: bool) -> None:
+    from tank.analysis.truth import enrich_evidence
+
+    end = parse_time("2026-10-16T12:00:00Z")
+    start = end - timedelta(hours=1)
+    spots = {"W1H": {"topn": None}}
+    original = deepcopy(spots)
+    history = unselected_spot_sign_history(
+        "OTHER" if borrowed_token else "T",
+        start,
+        end if borrowed_token else end - timedelta(seconds=1),
+    )
+    with pytest.raises(ValueError, match="actual token, interval and selected venues"):
+        enrich_evidence({"token_id": "T"}, start, end, spots, "W1H", {}, {}, {}, sign_history=history)
+    assert spots == original
