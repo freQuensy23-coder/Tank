@@ -94,7 +94,8 @@ async def test_worker_refuses_missing_or_invalid_cutoff_without_calling_evaluato
         finally:
             stop.set()
             await asyncio.wait_for(worker, 2)
-    assert result["status"] == "FAILED" and result["last_error"] == "ValidationError"
+    assert result["status"] == "FAILED" and result["last_error"] == "INVALID_QUEUE_ENVELOPE"
+    assert result["attempts"] == 1
     assert result["payload"] == payload and "result" not in result
     assert calls == []
     assert await repo.list("ana.watch_conditions") == []

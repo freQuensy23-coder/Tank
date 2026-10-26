@@ -15,9 +15,9 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from market_refresh_runtime_fixtures import refresh_worker
 from native_input_fixtures import acknowledge_native_input
 from pydantic import JsonValue
-from runtime_failure_fixtures import bind_worker_fragment_failure_store
 from scheduling_support import RecordingReactionScheduling
 from source_support import fixture_http_admission, fixture_versions
 from test_agents_session_audit import settings as session_settings
@@ -35,13 +35,18 @@ from tank.analysis.page_access import LivePageAccess
 from tank.analysis.truth import MarketTruthService
 from tank.analysis.watch_contracts import WatchCondition
 from tank.event_tools import EventToolService
-from tank.market.capture_contracts import CaptureReadiness, RepairCompleted
+from tank.market.capture_contracts import (
+    CaptureReadiness,
+    CaptureWaitOutcome,
+    RepairCompleted,
+    TokenEscalation,
+)
 from tank.runtime import Runtime
 from tank.scheduler import Scheduler
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.telegram_inbox import RepositoryFollowupRefusals
-from tank.time_precision import chosen_boundary, collection_clock
+from tank.time_precision import Timestamp, chosen_boundary, collection_clock
 from tank.util import clock_iso, iso, parse_time, utcnow
 
 
@@ -122,10 +127,12 @@ class ReleasedMarket:
     async def condition_snapshot(self, token, cutoff, *, anchor=None, requirements=None):
         return await self.snapshot(token, cutoff, anchor=anchor)
 
-    async def escalate(self, *args, **kwargs) -> None:
+    async def escalate(self, event_id: str, tokens: Sequence[str | TokenEscalation]) -> None:
         return None
 
-    async def capture_readiness(self, event_id: str, token_id: str, *, anchor=None) -> CaptureReadiness:
+    async def capture_readiness(
+        self, event_id: str, token_id: str, *, anchor: Timestamp | None = None
+    ) -> CaptureReadiness:
         return CaptureReadiness(
             event_id=event_id,
             token_id=token_id,
@@ -140,8 +147,14 @@ class ReleasedMarket:
     ) -> RepairCompleted:
         return RepairCompleted(status="COMPLETE", request_id="REQ-released", instruments={})
 
-    async def wait_capture(self, *args, **kwargs) -> None:
+    async def wait_capture(self, event_id: str, token_id: str, *, timeout_s: float) -> CaptureWaitOutcome:
         raise AssertionError("Terminal capture must not wait")
+
+    async def run(self, stop: asyncio.Event) -> None:
+        raise AssertionError("Controlled acquisition must not start live market polling")
+
+    async def close(self) -> None:
+        return None
 
 
 async def persisted_ids(repo):
@@ -269,33 +282,23 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
                 raise httpx.ReadError("Synthetic lost ACK", request=request)
             return httpx.Response(200, json={})
 
-        runtime = object.__new__(Runtime)
-        runtime.repo, runtime.market, runtime.truth = repo, market, truth
-        bind_worker_fragment_failure_store(runtime, repo, fixture_versions())
-        runtime.settings = settings
-        runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate_wire, "RUN_MARKET_TRUTH": runtime.assess_wire}
-        stop = asyncio.Event()
-        worker = None
         event = {
             "id": "decision",
             "type": "agent.custom_tool_use",
             "name": "get_decision",
             "input": {"token_id": "T"},
         }
-        try:
-            async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-                sessions = SessionService(
-                    repo,
-                    session_settings(),
-                    tools.dispatch,
-                    http=http,
-                    versions=fixture_versions(),
-                    refusals=RepositoryFollowupRefusals(repo),
-                )
-                sessions.start_stream = lambda sid: None
-                runtime.sessions = sessions
-                runtime.handlers["AGENT_MESSAGE"] = sessions.send_message
-                worker = asyncio.create_task(runtime.worker(stop))
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+            sessions = SessionService(
+                repo,
+                session_settings(),
+                tools.dispatch,
+                http=http,
+                versions=fixture_versions(),
+                refusals=RepositoryFollowupRefusals(repo),
+            )
+            sessions.start_stream = lambda sid: None
+            async with refresh_worker(repo, settings, market, truth, scheduler, sessions):
                 async with asyncio.timeout(20):
                     with pytest.raises(httpx.ReadError):
                         await sessions.process_event("s", event, 7)
@@ -327,10 +330,6 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
                 assert (await repo.get("ops.agent_sessions", "s"))["next_tool_call_ordinal"] == 1
                 assert before == await persisted_ids(repo)
                 assert await repo.get("ana.market_truth", first["mta_id"]) == first
-        finally:
-            stop.set()
-            if worker is not None:
-                await worker
 
 
 async def test_runtime_waits_for_capture_release_before_numerical_assessment() -> None:
@@ -468,17 +467,8 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
             assert not (await repo.get("ana.watch_conditions", condition["cond_id"])).get("consumed_by")
             assert len(await repo.list("ana.decisions")) == 1
             market.released = True
-            runtime = object.__new__(Runtime)
-            runtime.repo, runtime.market, runtime.truth = repo, market, truth
-            bind_worker_fragment_failure_store(runtime, repo, fixture_versions())
-            runtime.settings = settings
-            runtime.handlers = {
-                "ESCALATE_TOKENS": runtime.escalate_wire,
-                "RUN_MARKET_TRUTH": runtime.assess_wire,
-            }
-            stop = asyncio.Event()
-            worker = asyncio.create_task(runtime.worker(stop))
-            try:
+            scheduler = Scheduler(repo, settings, market, truth, versions=fixture_versions())
+            async with refresh_worker(repo, settings, market, truth, scheduler, sessions):
                 async with asyncio.timeout(20):
                     await sessions.process_event("s", event, 8)
                 jobs = [row async for row in repo.iter_all("ops.jobs", filters={"type": "RUN_MARKET_TRUTH"})]
@@ -488,9 +478,6 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
                 assert len(await repo.list("ana.decisions")) == 2
                 assert (await repo.get("ops.agent_sessions", "s"))["next_tool_call_ordinal"] == 1
                 assert len(acks) == 1
-            finally:
-                stop.set()
-                await worker
 
 
 @pytest.mark.parametrize(
@@ -570,13 +557,6 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
 
         monkeypatch.setattr("tank.event_tools.decision_inputs_from_records", observe)
         market.released = True
-        runtime = object.__new__(Runtime)
-        runtime.repo, runtime.market, runtime.truth = repo, market, truth
-        bind_worker_fragment_failure_store(runtime, repo, fixture_versions())
-        runtime.settings = settings
-        runtime.handlers = {"ESCALATE_TOKENS": runtime.escalate_wire, "RUN_MARKET_TRUTH": runtime.assess_wire}
-        stop = asyncio.Event()
-        worker = asyncio.create_task(runtime.worker(stop))
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(lambda request: httpx.Response(200, json={}))
         ) as http:
@@ -588,51 +568,51 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
                 versions=fixture_versions(),
                 refusals=RepositoryFollowupRefusals(repo),
             )
-            event = {
-                "id": "first-condition",
-                "type": "agent.custom_tool_use",
-                "name": "get_decision",
-                "input": {"token_id": "T"},
-            }
-            pending = asyncio.create_task(sessions.process_event("s", event, 8))
-            try:
-                await asyncio.wait_for(entering.wait(), 5)
-
-                second.update(status="FIRED", fired_at=clock_iso())
-                await repo.put("ana.watch_conditions", second["cond_id"], second)
-                release.set()
-                async with asyncio.timeout(20):
-                    await pending
-                assert evaluated[-1] == [condition["cond_id"]], {
-                    "result": (await repo.get("ops.tool_calls", "s:first-condition"))["result"],
-                    "first": await repo.get("ana.watch_conditions", condition["cond_id"]),
-                    "second": await repo.get("ana.watch_conditions", second["cond_id"]),
+            scheduler = Scheduler(repo, settings, market, truth, versions=fixture_versions())
+            async with refresh_worker(repo, settings, market, truth, scheduler, sessions):
+                event = {
+                    "id": "first-condition",
+                    "type": "agent.custom_tool_use",
+                    "name": "get_decision",
+                    "input": {"token_id": "T"},
                 }
-                first_result = (await repo.get("ops.tool_calls", "s:first-condition"))["result"]
-                assert (await repo.get("ana.watch_conditions", condition["cond_id"]))[
-                    "consumed_by"
-                ] == first_result["dec_id"]
-                deferred = await repo.get("ana.watch_conditions", second["cond_id"])
-                assert deferred["status"] == "FIRED" and not deferred.get("consumed_by")
-                before = len(await repo.list("ana.market_truth"))
-                await sessions.process_event("s", {**event, "id": "second-condition"}, 9)
-                assert evaluated[-1] == [second["cond_id"]]
-                second_result = (await repo.get("ops.tool_calls", "s:second-condition"))["result"]
-                assert (await repo.get("ana.watch_conditions", second["cond_id"]))[
-                    "consumed_by"
-                ] == second_result["dec_id"]
-                assert (await repo.get("ana.watch_conditions", condition["cond_id"]))[
-                    "consumed_by"
-                ] == first_result["dec_id"]
-                assert second_result["dec_id"] != first_result["dec_id"]
-                assert len(await repo.list("ana.market_truth")) == before + 1
-            finally:
-                release.set()
-                stop.set()
-                if not pending.done():
-                    pending.cancel()
-                    await asyncio.gather(pending, return_exceptions=True)
-                await worker
+                pending = asyncio.create_task(sessions.process_event("s", event, 8))
+                try:
+                    await asyncio.wait_for(entering.wait(), 5)
+
+                    second.update(status="FIRED", fired_at=clock_iso())
+                    await repo.put("ana.watch_conditions", second["cond_id"], second)
+                    release.set()
+                    async with asyncio.timeout(20):
+                        await pending
+                    assert evaluated[-1] == [condition["cond_id"]], {
+                        "result": (await repo.get("ops.tool_calls", "s:first-condition"))["result"],
+                        "first": await repo.get("ana.watch_conditions", condition["cond_id"]),
+                        "second": await repo.get("ana.watch_conditions", second["cond_id"]),
+                    }
+                    first_result = (await repo.get("ops.tool_calls", "s:first-condition"))["result"]
+                    assert (await repo.get("ana.watch_conditions", condition["cond_id"]))[
+                        "consumed_by"
+                    ] == first_result["dec_id"]
+                    deferred = await repo.get("ana.watch_conditions", second["cond_id"])
+                    assert deferred["status"] == "FIRED" and not deferred.get("consumed_by")
+                    before = len(await repo.list("ana.market_truth"))
+                    await sessions.process_event("s", {**event, "id": "second-condition"}, 9)
+                    assert evaluated[-1] == [second["cond_id"]]
+                    second_result = (await repo.get("ops.tool_calls", "s:second-condition"))["result"]
+                    assert (await repo.get("ana.watch_conditions", second["cond_id"]))[
+                        "consumed_by"
+                    ] == second_result["dec_id"]
+                    assert (await repo.get("ana.watch_conditions", condition["cond_id"]))[
+                        "consumed_by"
+                    ] == first_result["dec_id"]
+                    assert second_result["dec_id"] != first_result["dec_id"]
+                    assert len(await repo.list("ana.market_truth")) == before + 1
+                finally:
+                    release.set()
+                    if not pending.done():
+                        pending.cancel()
+                        await asyncio.gather(pending, return_exceptions=True)
 
 
 @pytest.mark.parametrize(

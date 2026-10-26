@@ -14,7 +14,7 @@ from tank.runtime_contracts import (
     ReplayBinding,
     ScoutMessage,
     SourceMessage,
-    UserQuestionMessage,
+    agent_message_target,
 )
 from tank.util import sha256
 
@@ -96,14 +96,7 @@ class NativeSessionResolution(DomainModel):
         elif replay:
             raise ValueError("Replay resolution requires its actual bound run identity")
         return cls(
-            target=SessionTarget(
-                session_id=message.session_id,
-                event_id=None
-                if isinstance(message, (ScoutMessage, UserQuestionMessage))
-                else message.event_id,
-                item_id=message.item_id if isinstance(message, SourceMessage) else None,
-                proposal_id=message.proposal_id if isinstance(message, ScoutMessage) else None,
-            ),
+            target=agent_message_target(message),
             role="SCOUT" if isinstance(message, ScoutMessage) else "ANALYST",
             replay=replay_identity,
         )

@@ -6,25 +6,30 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
+import respx
 from agent_source_fixtures import declared_versions_fixture
 from pydantic import JsonValue
 from pydantic_settings import SettingsConfigDict
-from runtime_failure_fixtures import bind_worker_fragment_failure_store
+from runtime_failure_fixtures import runtime_failure_fixture
+from runtime_lifecycle_fixtures import lifecycle_runtime
+from runtime_public_fixtures import public_runtime
 from source_support import fixture_http_admission
 
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.contracts import DomainModel
+from tank.contracts.job_repository import JobRepository
 from tank.contracts.json import decode_json, encode_json
-from tank.contracts.progress import ProgressPreferences
 from tank.contracts.provenance import ResolvedVersionIdentity
+from tank.contracts.scheduler_results import ConditionEvaluationResult
 from tank.market.capture_contracts import CaptureReadiness
-from tank.request_budget import MemoryBudgetBackend, RequestBudgets, RequestBudgetScope, SystemBudgetClock
+from tank.request_budget import RequestBudgets
 from tank.runtime import Runtime
-from tank.runtime_contracts import MarketTruthJob
+from tank.runtime_contracts import DeliveryJob, MarketTruthJob, TelegramAnswerJob
 from tank.settings import Settings, resolve_versions
 from tank.storage import MemoryRepository, Repository
-from tank.time_precision import Timestamp, collection_clock
+from tank.time_precision import Timestamp, collection_clock, offset_schedule
 from tank.util import JsonInput, clock_iso, parse_time
 
 
@@ -41,90 +46,103 @@ def run_fixture_database(operation: Callable[[Repository, Settings], Awaitable[J
 
 @pytest.mark.asyncio
 async def test_timeout_reports_suspended_operation_without_exception_values(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path
 ) -> None:
     import tank.runtime as module
 
     repo = MemoryRepository()
     stop = asyncio.Event()
-    job = await repo.enqueue("RUN_MARKET_TRUTH", {}, "timeout-frames", max_attempts=1)
-    runtime = object.__new__(Runtime)
-    runtime.budget_scope = RequestBudgetScope()
-    runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
-    runtime.budget_binding = None
-    runtime.repo = repo
-    bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
-    runtime.settings = ProgressPreferences(ops_progress_enabled=False, replay=False)
+    job = await JobRepository(repo).enqueue(
+        "EVAL_CONDITIONS", collection_clock().fields("cutoff"), "timeout-frames", max_attempts=1
+    )
 
-    async def wait_for_snapshot(payload):
-        private_url = "https://example.test/private-token"
+    async def wait_for_snapshot(request: httpx.Request) -> httpx.Response:
+        assert request.url == httpx.URL("https://example.test/private-token")
         try:
             await asyncio.Event().wait()
         finally:
             stop.set()
-        return private_url
+        return httpx.Response(200, json={})
 
-    monkeypatch.setitem(module.TIMEOUTS, "RUN_MARKET_TRUTH", 0.01)
-    runtime.handlers = {"RUN_MARKET_TRUTH": wait_for_snapshot}
-    await runtime.worker(stop)
-    assert (await repo.get("ops.jobs", job["job_id"]))["status"] == "FAILED"
+    async with (
+        public_runtime(repo, tmp_path, monkeypatch) as (runtime, _),
+        httpx.AsyncClient(transport=httpx.MockTransport(wait_for_snapshot)) as suspended,
+    ):
+        evaluate = runtime.scheduler.eval_conditions
+
+        async def waiting(cutoff: Timestamp) -> ConditionEvaluationResult:
+            await suspended.get("https://example.test/private-token")
+            return await evaluate(cutoff)
+
+        monkeypatch.setattr(runtime.scheduler, "eval_conditions", waiting)
+        monkeypatch.setitem(module.TIMEOUTS, "EVAL_CONDITIONS", 0.01)
+        await runtime.worker(stop)
+    stored = await repo.get("ops.jobs", job.job_id)
+    assert stored is not None and stored["status"] == "FAILED"
     assert "wait_for_snapshot" in caplog.text
     assert "TimeoutError" in caplog.text
     assert "private-token" not in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_worker_survives_bad_job_and_persists_result() -> None:
+async def test_worker_survives_bad_job_and_persists_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo = MemoryRepository()
     stop = asyncio.Event()
-    bad = await repo.enqueue("BAD", {}, "bad", max_attempts=1)
-    good = await repo.enqueue("GOOD", {}, "good", max_attempts=1)
-    runtime = object.__new__(Runtime)
-    runtime.budget_scope = RequestBudgetScope()
-    runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
-    runtime.budget_binding = None
-    runtime.repo = repo
-    bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
-    runtime.settings = ProgressPreferences(ops_progress_enabled=False, replay=False)
+    bad = await JobRepository(repo).enqueue("BAD", {}, "bad", max_attempts=1)
+    good = await JobRepository(repo).enqueue(
+        "EVAL_CONDITIONS", collection_clock().fields("cutoff"), "good", max_attempts=1
+    )
+    async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, _):
+        evaluate = runtime.scheduler.eval_conditions
 
-    async def handle(payload):
-        stop.set()
-        return {"evidence": "persisted"}
+        async def completed(cutoff: Timestamp) -> ConditionEvaluationResult:
+            result = await evaluate(cutoff)
+            stop.set()
+            return result
 
-    runtime.handlers = {"GOOD": handle}
-    import tank.runtime as module
-
-    module.TIMEOUTS["GOOD"] = 1
-    await runtime.worker(stop)
-    assert (await repo.get("ops.jobs", bad["job_id"]))["status"] == "FAILED"
-    assert (await repo.get("ops.jobs", good["job_id"]))["result"] == {"evidence": "persisted"}
-    assert (await repo.get("ops.jobs", good["job_id"]))["status"] == "DONE"
+        monkeypatch.setattr(runtime.scheduler, "eval_conditions", completed)
+        await runtime.worker(stop)
+    rejected = await repo.get("ops.jobs", bad.job_id)
+    persisted = await repo.get("ops.jobs", good.job_id)
+    assert rejected is not None and rejected["status"] == "FAILED"
+    assert rejected["last_error"] == "INVALID_QUEUE_ENVELOPE"
+    assert persisted is not None and persisted["status"] == "DONE"
+    assert persisted["result"] == {"evaluated": [], "fired": [], "deferred": []}
 
 
 @pytest.mark.asyncio
-async def test_worker_refuses_failed_dependency() -> None:
+async def test_worker_refuses_failed_dependency(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = MemoryRepository()
     stop = asyncio.Event()
-    dep = await repo.enqueue("ESCALATE_TOKENS", {}, "dep", max_attempts=1)
-    await repo.put("ops.jobs", dep["job_id"], {**dep, "status": "FAILED"})
-    job = await repo.enqueue("RUN_MARKET_TRUTH", {"_depends_on": [dep["job_id"]]}, "truth", max_attempts=1)
-    runtime = object.__new__(Runtime)
-    runtime.budget_scope = RequestBudgetScope()
-    runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
-    runtime.budget_binding = None
-    runtime.repo = repo
-    bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
-    runtime.settings = ProgressPreferences(ops_progress_enabled=False, replay=False)
-    runtime.handlers = {"RUN_MARKET_TRUTH": AsyncMock()}
-    task = asyncio.create_task(runtime.worker(stop))
-    for _ in range(100):
-        if (await repo.get("ops.jobs", job["job_id"]))["status"] == "FAILED":
-            break
-        await asyncio.sleep(0.001)
-    stop.set()
-    await task
-    assert (await repo.get("ops.jobs", job["job_id"]))["status"] == "FAILED"
-    runtime.handlers["RUN_MARKET_TRUTH"].assert_not_called()
+    dep = await JobRepository(repo).enqueue("ESCALATE_TOKENS", {}, "dep", max_attempts=1)
+    await repo.put(
+        "ops.jobs", dep.job_id, {**dep.model_dump(mode="json", exclude_unset=True), "status": "FAILED"}
+    )
+    payload: dict[str, JsonValue] = {**collection_clock().fields("cutoff"), "_depends_on": [dep.job_id]}
+    job = await JobRepository(repo).enqueue("EVAL_CONDITIONS", payload, "truth", max_attempts=1)
+    calls: list[Timestamp] = []
+    async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, _):
+        evaluate = runtime.scheduler.eval_conditions
+
+        async def observed(cutoff: Timestamp) -> ConditionEvaluationResult:
+            calls.append(cutoff)
+            return await evaluate(cutoff)
+
+        monkeypatch.setattr(runtime.scheduler, "eval_conditions", observed)
+        task = asyncio.create_task(runtime.worker(stop))
+        for _ in range(100):
+            current = await repo.get("ops.jobs", job.job_id)
+            assert current is not None
+            if current["status"] == "FAILED":
+                break
+            await asyncio.sleep(0.001)
+        stop.set()
+        await task
+    stored = await repo.get("ops.jobs", job.job_id)
+    assert stored is not None and stored["status"] == "FAILED"
+    assert calls == []
 
 
 def test_doctor_distinguishes_syntax_from_deployment_and_never_prints_secrets(tmp_path: Path) -> None:
@@ -317,54 +335,24 @@ async def test_reload_rejects_candidate_then_drains_old_generation_before_swap()
 
 @pytest.mark.asyncio
 async def test_runtime_quiescence_drains_old_job_dependencies_and_preserves_session_provenance(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from datetime import timedelta
 
     import tank.runtime as module
-    from tank.util import iso, utcnow
 
     repo = MemoryRepository()
     stop = asyncio.Event()
     started = asyncio.Event()
     release = asyncio.Event()
-
-    class Service:
-        def __init__(self) -> None:
-            self.stopped = asyncio.Event()
-            self.closed = False
-
-        async def start(self) -> None:
-            pass
-
-        async def run(self, flag) -> None:
-            await flag.wait()
-            self.stopped.set()
-
-        async def close(self) -> None:
-            self.closed = True
-
-    runtime = object.__new__(Runtime)
-    runtime.budget_scope = RequestBudgetScope()
-    runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
-    runtime.budget_binding = None
-    runtime.repo = repo
-    bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
-    runtime.settings = SimpleNamespace(
-        shutdown_grace_s=1, config_version="old", ops_progress_enabled=False, replay=False
+    clock = collection_clock()
+    future = await JobRepository(repo).enqueue(
+        "EVAL_CONDITIONS",
+        clock.fields("cutoff"),
+        "future",
+        run_after=offset_schedule(clock, timedelta(days=1)),
+        expires_at=Timestamp(None, None, "UNBOUNDED"),
     )
-    runtime.active_jobs = set()
-    runtime.validate = lambda: None
-    runtime.bootstrap = AsyncMock()
-    runtime.sources = Service()
-    runtime.scheduler = Service()
-    runtime.market = Service()
-    runtime.sessions = Service()
-    runtime.pipeline = Service()
-    runtime.delivery = Service()
-    runtime.inbox = Service()
-    runtime.gateway = Service()
-    future = await repo.enqueue("FUTURE", {}, "future", run_after=iso(utcnow() + timedelta(days=1)))
     await repo.put(
         "ops.agent_sessions",
         "session",
@@ -388,45 +376,82 @@ async def test_runtime_quiescence_drains_old_job_dependencies_and_preserves_sess
             "result": {"frozen": "old"},
         },
     )
-
-    async def first(payload):
-        started.set()
-        await release.wait()
-        dep = await repo.enqueue("DRAIN_DEP", {}, "dependency")
-        while (await repo.get("ops.jobs", dep["job_id"]))["status"] != "DONE":
-            await asyncio.sleep(0.001)
-        return {"config_version": runtime.settings.config_version}
-
-    async def dependency(payload):
-        return {"config_version": runtime.settings.config_version}
-
-    runtime.handlers = {"DRAIN_FIRST": first, "DRAIN_DEP": dependency}
-    monkeypatch.setitem(module.TIMEOUTS, "DRAIN_FIRST", 2)
-    monkeypatch.setitem(module.TIMEOUTS, "DRAIN_DEP", 2)
-    job = await repo.enqueue("DRAIN_FIRST", {}, "first")
-    task = asyncio.create_task(runtime.run(stop))
-    await started.wait()
-    stop.set()
-    await asyncio.sleep(0.01)
-    assert not runtime.market.stopped.is_set() and not runtime.sessions.stopped.is_set()
-    assert (await repo.get("ops.jobs", job["job_id"]))["status"] == "RUNNING"
-    release.set()
-    await task
-    assert (await repo.get("ops.jobs", job["job_id"]))["result"]["config_version"] == "old"
-    assert (await repo.get("ops.jobs", future["job_id"]))["status"] == "QUEUED"
-    assert (await repo.get("ops.agent_sessions", "session"))["last_event_seq"] == 7
-    assert (await repo.get("ops.tool_calls", "tool"))["result"] == {"frozen": "old"}
-    assert all(
-        service.closed
-        for service in [
-            runtime.sources,
-            runtime.market,
-            runtime.sessions,
-            runtime.pipeline,
-            runtime.delivery,
-            runtime.inbox,
-        ]
+    await repo.put(
+        "out.user_questions",
+        "question",
+        {
+            "question_id": "question",
+            "session_id": "session",
+            "status": "ANSWERED",
+            "answer_status": "ANSWERED",
+            "answer_text": "Synthetic dependent answer",
+            "chat_id": "42",
+            "reply_to_message_id": 17,
+        },
     )
+    versions: list[str] = []
+    async with lifecycle_runtime(repo, tmp_path, shutdown_grace_s=1) as observed:
+        runtime = observed.runtime
+        generation = runtime.settings.require_versions().config_version
+        evaluate = runtime.scheduler.eval_conditions
+        answer = runtime.inbox.answer
+
+        async def first(cutoff: Timestamp) -> ConditionEvaluationResult:
+            versions.append(runtime.scheduler.versions.config_version)
+            started.set()
+            await release.wait()
+            dependency = await JobRepository(repo).enqueue(
+                "TELEGRAM_ANSWER", {"question_id": "question"}, "dependency"
+            )
+            while True:
+                stored = await repo.get("ops.jobs", dependency.job_id)
+                assert stored is not None
+                if stored["status"] == "DONE":
+                    break
+                await asyncio.sleep(0.001)
+            return await evaluate(cutoff)
+
+        async def dependent(payload: TelegramAnswerJob) -> None:
+            versions.append(runtime.settings.require_versions().config_version)
+            await answer(payload)
+
+        monkeypatch.setattr(runtime.scheduler, "eval_conditions", first)
+        monkeypatch.setattr(runtime.inbox, "answer", dependent)
+        monkeypatch.setitem(module.TIMEOUTS, "EVAL_CONDITIONS", 2)
+        monkeypatch.setitem(module.TIMEOUTS, "TELEGRAM_ANSWER", 2)
+        with respx.mock(assert_all_mocked=True, assert_all_called=False) as router:
+            sent = router.post("https://api.telegram.org/botsynthetic-telegram-token/sendMessage").respond(
+                200, json={"ok": True, "result": {"message_id": 18}}
+            )
+            job = await JobRepository(repo).enqueue("EVAL_CONDITIONS", clock.fields("cutoff"), "first")
+            task = asyncio.create_task(runtime.run(stop))
+            try:
+                await started.wait()
+                stop.set()
+                await asyncio.sleep(0.01)
+                assert not observed.services["market"].stopped.is_set()
+                assert not observed.services["sessions"].stopped.is_set()
+                running = await repo.get("ops.jobs", job.job_id)
+                assert running is not None and running["status"] == "RUNNING"
+                release.set()
+                await task
+            finally:
+                release.set()
+                stop.set()
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            assert sent.call_count == 1
+        current = await repo.get("ops.jobs", job.job_id)
+        deferred = await repo.get("ops.jobs", future.job_id)
+        session = await repo.get("ops.agent_sessions", "session")
+        tool = await repo.get("ops.tool_calls", "tool")
+        assert current is not None and current["result"] == {"evaluated": [], "fired": [], "deferred": []}
+        assert versions == [generation, generation]
+        assert deferred is not None and deferred["status"] == "QUEUED"
+        assert session is not None and session["last_event_seq"] == 7
+        assert tool is not None and tool["result"] == {"frozen": "old"}
+        assert all(lifetime.closed.is_set() for lifetime in observed.services.values())
 
 
 def test_review_cli_forwards_period_paging_and_structured_checks(
@@ -709,62 +734,46 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
 
 @pytest.mark.asyncio
 async def test_controlled_generation_timeout_preserves_last_job_attempt(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     import tank.runtime as module
 
     repo = MemoryRepository()
     stop = asyncio.Event()
     started = asyncio.Event()
+    async with lifecycle_runtime(repo, tmp_path, shutdown_grace_s=0) as observed:
+        runtime = observed.runtime
+        evaluate = runtime.scheduler.eval_conditions
 
-    class Service:
-        async def start(self) -> None:
-            pass
+        async def unfinished(cutoff: Timestamp) -> ConditionEvaluationResult:
+            started.set()
+            await asyncio.Event().wait()
+            return await evaluate(cutoff)
 
-        async def run(self, flag) -> None:
-            await flag.wait()
-
-        async def close(self) -> None:
-            pass
-
-    runtime = object.__new__(Runtime)
-    runtime.budget_scope = RequestBudgetScope()
-    runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
-    runtime.budget_binding = None
-    runtime.repo = repo
-    bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
-    runtime.settings = SimpleNamespace(shutdown_grace_s=0.01, ops_progress_enabled=False, replay=False)
-    runtime.active_jobs = set()
-    runtime.validate = lambda: None
-    runtime.bootstrap = AsyncMock()
-    for name in (
-        "sources",
-        "scheduler",
-        "market",
-        "sessions",
-        "pipeline",
-        "delivery",
-        "inbox",
-        "gateway",
-    ):
-        setattr(runtime, name, Service())
-
-    async def unfinished(payload) -> None:
-        started.set()
-        await asyncio.Event().wait()
-
-    runtime.handlers = {"LAST_ATTEMPT": unfinished}
-    monkeypatch.setitem(module.TIMEOUTS, "LAST_ATTEMPT", 10)
-    job = await repo.enqueue("LAST_ATTEMPT", {}, "last", max_attempts=1)
-    task = asyncio.create_task(runtime.run(stop))
-    await started.wait()
-    stop.set()
-    await task
-    preserved = await repo.get("ops.jobs", job["job_id"])
-    assert preserved["status"] == "QUEUED" and preserved["attempts"] == 0
-    assert preserved["interruption_reason"] == "CONTROLLED_GENERATION_STOP"
-    assert preserved["run_after"] == preserved["interrupted_at"]
-    assert preserved["run_after_prec"] == preserved["interrupted_at_prec"] == "COLLECTION_ONLY"
+        monkeypatch.setattr(runtime.scheduler, "eval_conditions", unfinished)
+        monkeypatch.setitem(module.TIMEOUTS, "EVAL_CONDITIONS", 10)
+        job = await JobRepository(repo).enqueue(
+            "EVAL_CONDITIONS", collection_clock().fields("cutoff"), "last", max_attempts=1
+        )
+        task = asyncio.create_task(runtime.run(stop))
+        try:
+            await started.wait()
+            snapshot = runtime.snapshot_active_claims()
+            assert len(snapshot) == 1 and snapshot[0].job_id == job.job_id
+            stop.set()
+            await task
+        finally:
+            stop.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        preserved = await repo.get("ops.jobs", job.job_id)
+        assert preserved is not None
+        assert preserved["status"] == "QUEUED" and preserved["attempts"] == 0
+        assert preserved["interruption_reason"] == "CONTROLLED_GENERATION_STOP"
+        assert preserved["run_after"] == preserved["interrupted_at"]
+        assert preserved["run_after_prec"] == preserved["interrupted_at_prec"] == "COLLECTION_ONLY"
+        assert preserved["claim_token"] == snapshot[0].claim_token
 
 
 def test_doctor_only_checks_fake_subscription_auth_presence_and_internal_key(
@@ -804,102 +813,108 @@ def test_doctor_only_checks_fake_subscription_auth_presence_and_internal_key(
 
 
 @pytest.mark.asyncio
-async def test_gateway_starts_in_same_runtime_before_sources_and_closes_after_drain() -> None:
+async def test_gateway_starts_in_same_runtime_before_sources_and_closes_after_drain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     repo = MemoryRepository()
     stop = asyncio.Event()
     binding = asyncio.Event()
     allow_bind = asyncio.Event()
-    order = []
+    order: list[str] = []
+    async with lifecycle_runtime(repo, tmp_path, shutdown_grace_s=1) as observed:
+        runtime = observed.runtime
 
-    class Service:
-        def __init__(self, name) -> None:
-            self.name = name
-            self.started = asyncio.Event()
-
-        async def run(self, flag) -> None:
-            assert runtime.budget_binding is runtime.budget_scope.require_binding()
-            order.append("run:" + self.name)
-            self.started.set()
-            await flag.wait()
-
-        async def close(self) -> None:
-            order.append("close:" + self.name)
-
-    class Gateway:
-        async def start(self) -> None:
+        async def start_gateway() -> None:
             order.append("gateway:binding")
             binding.set()
             await allow_bind.wait()
             order.append("gateway:ready")
 
-        async def close(self) -> None:
+        monkeypatch.setattr(runtime.gateway, "start", start_gateway)
+        gateway_close = runtime.gateway.close
+        sessions_close = runtime.sessions.close
+
+        async def close_gateway() -> None:
+            await gateway_close()
             order.append("gateway:closed")
 
-    runtime = object.__new__(Runtime)
-    runtime.budget_scope = RequestBudgetScope()
-    runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
-    runtime.budget_binding = None
-    runtime.repo = repo
-    bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
-    runtime.settings = SimpleNamespace(shutdown_grace_s=1, ops_progress_enabled=False, replay=False)
-    runtime.active_jobs = set()
-    runtime.validate = lambda: None
-    runtime.bootstrap = AsyncMock()
-    runtime.handlers = {}
-    runtime.gateway = Gateway()
-    for name in ("sources", "scheduler", "market", "sessions", "pipeline", "delivery", "inbox"):
-        setattr(runtime, name, Service(name))
-    task = asyncio.create_task(runtime.run(stop))
-    await binding.wait()
-    assert not runtime.sources.started.is_set() and not runtime.sessions.started.is_set()
-    allow_bind.set()
-    await runtime.sources.started.wait()
-    await runtime.sessions.started.wait()
-    assert order.index("gateway:ready") < order.index("run:sources")
-    stop.set()
-    await task
-    assert order[-1] == "gateway:closed" and order.index("close:sessions") < order.index("gateway:closed")
-    assert runtime.budget_binding is None
-    with pytest.raises(RuntimeError, match="has not been bound"):
-        await runtime.budget_scope.wait_host("example.invalid")
+        async def close_sessions() -> None:
+            await sessions_close()
+            order.append("close:sessions")
+
+        monkeypatch.setattr(runtime.gateway, "close", close_gateway)
+        monkeypatch.setattr(runtime.sessions, "close", close_sessions)
+        for name, service in (("sources", runtime.sources), ("sessions", runtime.sessions)):
+            lifetime = observed.services[name]
+
+            def observe_run(
+                label: str, run: Callable[[asyncio.Event], Awaitable[None]]
+            ) -> Callable[[asyncio.Event], Awaitable[None]]:
+                async def run_service(flag: asyncio.Event) -> None:
+                    assert runtime.budget_binding is runtime.budget_scope.require_binding()
+                    order.append("run:" + label)
+                    await run(flag)
+
+                return run_service
+
+            monkeypatch.setattr(service, "run", observe_run(name, lifetime.run))
+        task = asyncio.create_task(runtime.run(stop))
+        await binding.wait()
+        assert not observed.services["sources"].started.is_set()
+        assert not observed.services["sessions"].started.is_set()
+        allow_bind.set()
+        await observed.services["sources"].started.wait()
+        await observed.services["sessions"].started.wait()
+        assert order.index("gateway:ready") < order.index("run:sources")
+        stop.set()
+        await task
+        assert order[-1] == "gateway:closed"
+        assert order.index("close:sessions") < order.index("gateway:closed")
+        assert runtime.budget_binding is None
+        with pytest.raises(RuntimeError, match="has not been bound"):
+            await runtime.budget_scope.wait_host("example.invalid")
 
 
 @pytest.mark.asyncio
 async def test_unfinished_dependency_defers_without_error_or_attempt_cost(
     caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from datetime import timedelta
 
-    from tank.util import iso, parse_time, utcnow
-
     repo = MemoryRepository()
     stop = asyncio.Event()
-    dep = await repo.enqueue("ESCALATE_TOKENS", {}, "pending", run_after=iso(utcnow() + timedelta(hours=1)))
-    child = await repo.enqueue("RUN_MARKET_TRUTH", {"_depends_on": [dep["job_id"]]}, "child", priority=0)
-    runtime = object.__new__(Runtime)
-    runtime.budget_scope = RequestBudgetScope()
-    runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
-    runtime.budget_binding = None
-    runtime.repo = repo
-    bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
-    runtime.settings = ProgressPreferences(ops_progress_enabled=False, replay=False)
-    runtime.handlers = {"RUN_MARKET_TRUTH": AsyncMock()}
-    task = asyncio.create_task(runtime.worker(stop))
-    try:
-        async with asyncio.timeout(1):
-            while True:
-                row = await repo.get("ops.jobs", child["job_id"])
-                if row["status"] == "QUEUED" and parse_time(row["run_after"]) > parse_time(
-                    child["run_after"]
-                ):
-                    break
-                await asyncio.sleep(0.001)
-        assert row["attempts"] == 0 and row["last_error"] is None
-        runtime.handlers["RUN_MARKET_TRUTH"].assert_not_called()
-        assert not [r for r in caplog.records if r.levelno >= 40]
-    finally:
-        stop.set()
-        await task
+    dep = await JobRepository(repo).enqueue(
+        "ESCALATE_TOKENS", {}, "pending", run_after=offset_schedule(collection_clock(), timedelta(hours=1))
+    )
+    child = await JobRepository(repo).enqueue(
+        "EVAL_CONDITIONS",
+        {**collection_clock().fields("cutoff"), "_depends_on": [dep.job_id]},
+        "child",
+        priority=0,
+    )
+    async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, _):
+        evaluate = AsyncMock(wraps=runtime.scheduler.eval_conditions)
+        monkeypatch.setattr(runtime.scheduler, "eval_conditions", evaluate)
+        task = asyncio.create_task(runtime.worker(stop))
+        try:
+            async with asyncio.timeout(1):
+                while True:
+                    row = await repo.get("ops.jobs", child.job_id)
+                    assert row is not None
+                    if row["status"] == "QUEUED" and parse_time(row["run_after"]) > parse_time(
+                        child.run_after
+                    ):
+                        break
+                    await asyncio.sleep(0.001)
+            assert row["attempts"] == 0 and row["last_error"] is None
+            evaluate.assert_not_awaited()
+            assert not [record for record in caplog.records if record.levelno >= 40]
+        finally:
+            stop.set()
+            await task
 
 
 @pytest.mark.asyncio
@@ -1023,11 +1038,14 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
         config_version="fixture",
         code_version="fixture",
     )
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda req: (_ for _ in ()).throw(AssertionError("No external requests"))
-        )
-    ) as http:
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda req: (_ for _ in ()).throw(AssertionError("No external requests"))
+            )
+        ) as http,
+        runtime_failure_fixture(repo, tmp_path / "runtime", ops_progress_enabled=False) as runtime,
+    ):
         market = MarketService(
             repo,
             settings,
@@ -1038,22 +1056,13 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
         truth = MarketTruthService(repo, settings, market, versions=declared_versions_fixture())
         original = truth.assess
         truth.assess = AsyncMock(wraps=original)
-        runtime = object.__new__(Runtime)
-        runtime.budget_scope = RequestBudgetScope()
-        runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
-        runtime.budget_binding = None
-        runtime.repo = repo
-        bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
-        runtime.settings = ProgressPreferences(ops_progress_enabled=False, replay=False)
+        from tank.scheduler import Scheduler
+
+        await runtime.scheduler.close()
+        await runtime.market.close()
         runtime.market = market
         runtime.truth = truth
-        runtime.handlers = {
-            "RUN_MARKET_TRUTH": runtime.assess_wire,
-            "EVAL_CONDITIONS": __import__("tank.scheduler", fromlist=["Scheduler"])
-            .Scheduler(repo, settings, market, truth, versions=declared_versions_fixture())
-            .eval_conditions,
-        }
-        runtime.active_jobs = set()
+        runtime.scheduler = Scheduler(repo, settings, market, truth, versions=declared_versions_fixture())
         await market._schedule_event_backfill("e", "T", Timestamp(anchor, "EXACT", None))
         capture_task = asyncio.create_task(external_capture_worker())
         job = await repo.enqueue(
@@ -1163,7 +1172,7 @@ async def transport_database(backend, postgres_template):
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
 async def test_delivery_order_wait_requeues_without_spending_network_attempts(
-    monkeypatch: pytest.MonkeyPatch, backend, transport_database
+    monkeypatch: pytest.MonkeyPatch, backend, transport_database, tmp_path: Path
 ) -> None:
     from datetime import timedelta
 
@@ -1180,6 +1189,7 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
     clock = [base + timedelta(minutes=30)]
     for module in ("tank.util", "tank.storage", "tank.delivery", "tank.runtime"):
         monkeypatch.setattr(module + ".utcnow", lambda: clock[0])
+    monkeypatch.setattr("tank.runtime.collection_clock", lambda: collection_clock(clock[0]))
 
     monkeypatch.setattr("tank.delivery.DELIVERY_LOCK_WAIT_S", 0.2)
     aid = new_id("alert")
@@ -1285,23 +1295,22 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
 
             async def run_one() -> None:
                 stop = asyncio.Event()
-                runtime = object.__new__(Runtime)
-                runtime.budget_scope = RequestBudgetScope()
-                runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
-                runtime.budget_binding = None
-                runtime.settings = settings
-                runtime.repo = repo
-                bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
-                runtime.delivery = delivery
+                deliver = delivery.deliver
 
-                async def handle(payload):
+                async def observed_delivery(payload: DeliveryJob | dict[str, JsonValue]) -> None:
                     try:
-                        return await delivery.deliver(payload)
+                        await deliver(payload)
                     finally:
                         stop.set()
 
-                runtime.handlers = {"DELIVER": handle}
-                await asyncio.wait_for(runtime.worker(stop), 3)
+                with monkeypatch.context() as patch:
+                    patch.setattr(delivery, "deliver", observed_delivery)
+                    async with runtime_failure_fixture(
+                        repo, tmp_path / "runtime", ops_progress_enabled=False
+                    ) as runtime:
+                        await runtime.delivery.close()
+                        runtime.delivery = delivery
+                        await asyncio.wait_for(runtime.worker(stop), 3)
 
             held, release = asyncio.Event(), asyncio.Event()
 
@@ -1354,7 +1363,7 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
 )
 @pytest.mark.parametrize("lock_kind", ["event", "delivery"])
 async def test_contended_delivery_lock_is_scheduling_then_sends_once(
-    monkeypatch: pytest.MonkeyPatch, backend, lock_kind, transport_database
+    monkeypatch: pytest.MonkeyPatch, backend, lock_kind, transport_database, tmp_path: Path
 ) -> None:
 
     import httpx
@@ -1462,22 +1471,22 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
 
             async def run_one() -> None:
                 stop = asyncio.Event()
-                runtime = object.__new__(Runtime)
-                runtime.budget_scope = RequestBudgetScope()
-                runtime.budget_backend = MemoryBudgetBackend(SystemBudgetClock())
-                runtime.budget_binding = None
-                runtime.settings = settings
-                runtime.repo, runtime.delivery = repo, delivery
-                bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
+                deliver = delivery.deliver
 
-                async def handle(payload):
+                async def observed_delivery(payload: DeliveryJob | dict[str, JsonValue]) -> None:
                     try:
-                        return await delivery.deliver(payload)
+                        await deliver(payload)
                     finally:
                         stop.set()
 
-                runtime.handlers = {"DELIVER": handle}
-                await asyncio.wait_for(runtime.worker(stop), TIMEOUTS["DELIVER"] + 2)
+                with monkeypatch.context() as patch:
+                    patch.setattr(delivery, "deliver", observed_delivery)
+                    async with runtime_failure_fixture(
+                        repo, tmp_path / "runtime", ops_progress_enabled=False
+                    ) as runtime:
+                        await runtime.delivery.close()
+                        runtime.delivery = delivery
+                        await asyncio.wait_for(runtime.worker(stop), TIMEOUTS["DELIVER"] + 2)
 
             assert TIMEOUTS["DELIVER"] > http.timeout.read == 8
             await run_one()

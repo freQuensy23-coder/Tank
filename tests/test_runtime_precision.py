@@ -1,15 +1,16 @@
 import asyncio
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 from agent_source_fixtures import declared_versions_fixture
-from runtime_failure_fixtures import bind_worker_fragment_failure_store
+from runtime_public_fixtures import public_runtime
 from session_followup_fixtures import UnexpectedFollowupRefusals
 
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
-from tank.contracts.progress import ProgressPreferences
+from tank.contracts.session_admission import AdmissionCandidate
 from tank.market.capture_contracts import CaptureReadiness
 from tank.runtime import Runtime
 from tank.runtime_contracts import MarketTruthJob
@@ -21,33 +22,35 @@ from tank.util import utcnow
 @pytest.mark.asyncio
 async def test_job_expiring_after_real_claim_records_actual_finish_precision(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     repo = MemoryRepository()
     stop = asyncio.Event()
     now = utcnow()
     expiry = chosen_boundary(now + timedelta(minutes=1), precision="EXACT")
-    queued = await repo.enqueue("ROUTE_ITEM", {}, "expiry", expires_at=expiry)
+    queued = await repo.enqueue("ROUTE_ITEM", {"item_id": "item"}, "expiry", expires_at=expiry)
     claim = repo.claim_job
 
     async def claim_then_advance_runtime_clock():
         job = await claim()
         assert job is not None and job["status"] == "RUNNING"
-        monkeypatch.setattr("tank.runtime.utcnow", lambda: now + timedelta(minutes=2))
+        monkeypatch.setattr(
+            "tank.runtime.collection_clock",
+            lambda: Timestamp((now + timedelta(minutes=2)).isoformat(), "COLLECTION_ONLY"),
+        )
         stop.set()
         return job
 
     monkeypatch.setattr(repo, "claim_job", claim_then_advance_runtime_clock)
-    runtime = object.__new__(Runtime)
-    runtime.repo = repo
-    bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
-    runtime.settings = ProgressPreferences(ops_progress_enabled=False, replay=False)
-    runtime.handlers = {"ROUTE_ITEM": AsyncMock()}
-    await runtime.worker(stop)
-    row = await repo.get("ops.jobs", queued["job_id"])
-    assert row["status"] == "EXPIRED"
-    assert row["finished_at_prec"] == "COLLECTION_ONLY"
-    assert row["finished_at_prec_reason"] is None
-    runtime.handlers["ROUTE_ITEM"].assert_not_awaited()
+    async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, _):
+        route = AsyncMock(wraps=runtime.pipeline.route_item)
+        monkeypatch.setattr(runtime.pipeline, "route_item", route)
+        await runtime.worker(stop)
+        row = await repo.get("ops.jobs", queued["job_id"])
+        assert row["status"] == "EXPIRED"
+        assert row["finished_at_prec"] == "COLLECTION_ONLY"
+        assert row["finished_at_prec_reason"] is None
+        route.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -93,27 +96,18 @@ async def test_market_job_preserves_its_declared_cutoff_precision(precision) -> 
 @pytest.mark.asyncio
 async def test_real_admission_deferral_replaces_clock_facets_and_copies_creation_precision(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    import httpx
-    from pydantic import JsonValue
-    from test_session_admission import settings
-
-    from tank.agents.sessions import SessionService
     from tank.time_precision import propagate_timestamp
 
     repo = MemoryRepository()
-    opts = settings(cap=1)
-    await repo.put(
-        "ops.agent_sessions",
-        "busy",
-        {
-            "session_id": "busy",
-            "event_id": "other-event",
-            "status": "OPEN",
-            "runtime_status": "RUNNING",
-        },
-    )
-    previous = Timestamp((utcnow() - timedelta(minutes=1)).isoformat(), "EXACT")
+    for session_id in ("busy-one", "busy-two"):
+        await repo.put(
+            "ops.agent_sessions",
+            session_id,
+            {"session_id": session_id, "event_id": session_id, "status": "OPEN", "runtime_status": "RUNNING"},
+        )
+    previous = Timestamp((utcnow() - timedelta(minutes=1)).isoformat(), "BUCKET(1m)", bucket_anchor="START")
     job = await repo.enqueue(
         "AGENT_MESSAGE",
         {"kind": "NEW_ITEM", "item_id": "new-source"},
@@ -123,48 +117,28 @@ async def test_real_admission_deferral_replaces_clock_facets_and_copies_creation
     )
     job_id = job["job_id"]
     assert isinstance(job_id, str)
-    job.update(run_after_precision="EXACT", run_after_precision_reason=None, run_after_reason=None)
-    await repo.put("ops.jobs", job_id, job)
     stop = asyncio.Event()
+    async with public_runtime(repo, tmp_path, monkeypatch) as (runtime, _):
+        admit = runtime.sessions.admit_candidate
 
-    def no_native_request(request: httpx.Request) -> httpx.Response:
-        raise AssertionError("An admission deferral cannot send native requests")
-
-    async def no_dispatch(payload: dict[str, JsonValue]) -> None:
-        raise AssertionError("A deferred job cannot dispatch its payload")
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(no_native_request)) as http:
-        sessions = SessionService(
-            repo,
-            opts,
-            None,
-            http=http,
-            stream_http=http,
-            versions=declared_versions_fixture(),
-            refusals=UnexpectedFollowupRefusals(),
-        )
-        admit = sessions.admit
-
-        async def admit_then_stop(payload: dict[str, JsonValue]) -> None:
+        async def admit_then_stop(candidate: AdmissionCandidate) -> None:
             try:
-                await admit(payload)
+                await admit(candidate)
             finally:
                 stop.set()
 
-        monkeypatch.setattr(sessions, "admit", admit_then_stop)
-        runtime = object.__new__(Runtime)
-        runtime.repo = repo
-        bind_worker_fragment_failure_store(runtime, repo, declared_versions_fixture())
-        runtime.settings = opts
-        runtime.sessions = sessions
-        runtime.handlers = {"AGENT_MESSAGE": no_dispatch}
+        dispatch = AsyncMock(wraps=runtime.sessions.dispatch_message)
+        monkeypatch.setattr(runtime.sessions, "admit_candidate", admit_then_stop)
+        monkeypatch.setattr(runtime.sessions, "dispatch_message", dispatch)
         await runtime.worker(stop)
+        dispatch.assert_not_awaited()
     deferred = await repo.get("ops.jobs", job_id)
     assert deferred is not None
     assert deferred["status"] == "QUEUED" and deferred["attempts"] == 0
     assert deferred["payload"] == job["payload"] and deferred["expires_at"] == job["expires_at"]
     assert propagate_timestamp(deferred, "run_after").precision == "COLLECTION_ONLY"
     assert "run_after_precision" not in deferred and "run_after_reason" not in deferred
+    assert "run_after_bucket_anchor" not in deferred
     assert propagate_timestamp(deferred, "slot_waiting_since") == propagate_timestamp(job, "created_at")
 
 
