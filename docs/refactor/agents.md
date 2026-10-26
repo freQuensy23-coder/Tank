@@ -2350,3 +2350,34 @@ empty and absent journals and zero native/recovery effects; these remain pending
 functional qualification. This is enforcement of the existing ownership contract,
 not a claim of a newly reproduced public defect. Static four-target/source checks
 continue to pass; heavy qualifiers remain explicitly held by the parent.
+
+### Scoped native observation compare-and-set
+
+Checkpoint 4a242c32 reproduced both stale-write cases on Memory and PostgreSQL:
+late RUNNING overwrote newer COMPLETED, and late FAILED overwrote newer QUEUED
+from supported image recovery. Each before run had two failures and a passing
+concurrent accepted-input completion control. The pinned coordinator explicitly
+permits retained-configuration FAILED to queued recovery for the same execution;
+a terminal-state priority rule is not a valid substitute for coordination.
+
+The reader now captures its admitted state/host receipt before HTTP, admits every
+three-field page/order first, and compares both under the existing session lock.
+Only a matching actual observation is committed. Every applied nonempty status
+read records a fresh HostExecutionObservation identity, actual scoped queried IDs,
+controller collection clock and captured controller versions. This is host
+coordination provenance, not a provider revision or invented historical generation;
+old absence remains unreported, and explicit null/mismatched scope refuses. There
+is no pre-network write or network wait inside the session transaction. Current
+accepted tool inputs are re-read before the locked decision. A rejected stale
+write derives the result from fresh admitted state, without regressing records or
+claiming that its own response was committed. Cached reads without HTTP mint no
+new observation. The new private namespace is excluded from agent projection.
+
+All 27 bounded unit/pure controls pass in 6.77 s and all four actual PostgreSQL
+races pass in 7.98 s, zero skips/source guards. The same original races are green;
+added ABA proof returns cached values to the original RUNNING state but still
+rejects the late response using genuinely new observed receipt identities. The
+fresh accepted-input control still prevents old-input-set completion. Static
+contract/test targets and Session source checking pass; scoped Ruff/format pass.
+Actual 64+1, correlation/second-page no-write, full caller/replay/Telegram/E2E and
+whole-cohort proof remain required before activation. No parent files changed.

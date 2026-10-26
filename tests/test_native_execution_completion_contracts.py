@@ -158,3 +158,36 @@ def test_nonnull_completion_owner_requires_its_actual_journal_row(
         record["message_log"] = rows
     with pytest.raises(ValidationError, match="active owner"):
         CompletionSessionSnapshot.from_record(record)
+
+
+def test_host_observation_is_scoped_new_provenance_not_a_historical_default() -> None:
+    from agent_source_fixtures import declared_versions_fixture
+
+    from tank.agents.context import clean_value
+    from tank.contracts.session_completion import HostExecutionObservation
+    from tank.time_precision import Timestamp
+
+    record = terminal_record()
+    assert CompletionSessionSnapshot.from_record(record).execution_observation is None
+    assert "native_execution_observation" not in record
+    receipt = HostExecutionObservation(
+        source="HOST_MANAGED_EXECUTION_STATUS",
+        observation_id="host-read",
+        session_id="session",
+        execution_ids=["input"],
+        recorded_at=Timestamp("2026-10-27T00:00:00Z", "COLLECTION_ONLY"),
+        versions=declared_versions_fixture(),
+    )
+    record["native_execution_observation"] = receipt.model_dump(mode="json")
+    assert CompletionSessionSnapshot.from_record(record).execution_observation == receipt
+    assert clean_value(
+        {"native_execution_observation": receipt.model_dump(mode="json"), "text": "Public fact"}
+    ) == {"text": "Public fact"}
+    for corrupted in (
+        None,
+        {**receipt.model_dump(mode="json"), "session_id": "foreign"},
+        {**receipt.model_dump(mode="json"), "execution_ids": ["unobserved"]},
+    ):
+        record["native_execution_observation"] = corrupted
+        with pytest.raises((ValidationError, ValueError)):
+            CompletionSessionSnapshot.from_record(record)
