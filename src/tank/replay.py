@@ -2188,14 +2188,17 @@ async def replay_agent_session(
                         )
                     ]
                     execution = await service.completed_turn(sid)
+                    if execution.session_id != sid:
+                        raise ReplayError("Native execution barrier belongs to another replay session")
 
                     if (
-                        execution["complete"]
+                        execution.complete
                         and (inputs.fixture_reference or not queued_deliveries)
                         and all(call.get("returned_at") for call in calls)
                     ):
-                        execution_barriers[sid] = copy.deepcopy(execution)
-                        await checkpoint_phase(execution, calls)
+                        execution_record = execution.storage_record()
+                        execution_barriers[sid] = copy.deepcopy(execution_record)
+                        await checkpoint_phase(execution_record, calls)
                         message = next(pending_messages, None)
                         if message is None:
                             incomplete = []
@@ -2346,7 +2349,7 @@ async def replay_agent_session(
                 "causal_tool_receipts": causal_tool_receipts,
                 "delivery_receipts": delivery_receipts,
                 "timer_receipts": timer_receipts,
-                "execution_barrier": execution,
+                "execution_barrier": execution.storage_record(),
                 "execution_barriers": execution_barriers,
                 "tool_error_receipts": [
                     {
