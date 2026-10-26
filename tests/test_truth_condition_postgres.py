@@ -12,6 +12,7 @@ from runpy import run_path
 import httpx
 import pytest
 from source_support import fixture_http_admission, fixture_versions
+from truth_support import fixture_truth_config
 
 from tank.analysis.truth import MarketTruthService, compute_market_truth
 from tank.market.cadences import supply_cadences
@@ -274,7 +275,7 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
                 anchor={"type": "T1", "ts": packet["anchor"]["ts"], "ts_prec": "EXACT"},
                 requirements=requirements,
             )
-            full = compute_market_truth(deepcopy(loaded))
+            full = compute_market_truth(deepcopy(loaded), config=fixture_truth_config())
             assert selective["data_confidence"]["class"] == full["data_confidence"]["class"] == "HIGH"
             assert Decimal(selective["liquidity"]["aggregate_depth_p1_usd"]) == Decimal(
                 full["liquidity"]["aggregate_depth_p1_usd"]

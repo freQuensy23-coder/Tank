@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from source_support import fixture_versions
+from truth_support import fixture_truth_config
 
 from tank.analysis.truth import (
     _oi_stats,
@@ -17,6 +18,7 @@ from tank.analysis.truth import (
     spot_truth,
     walk_book,
 )
+from tank.settings import Settings
 from tank.util import iso, parse_epoch, parse_time, parse_utc_time
 
 
@@ -26,6 +28,8 @@ def _fresh_spot_snapshot(*, flow_minutes=1):
     snapshot = {
         "token_id": "T",
         "cutoff": iso(end),
+        "assembled_at": iso(end),
+        "assembled_at_prec": "COLLECTION_ONLY",
         "anchor": {"type": "T0", "ts": iso(end - timedelta(hours=1))},
         "instruments": [],
         "flow_bars": [],
@@ -47,6 +51,9 @@ def _fresh_spot_snapshot(*, flow_minutes=1):
                     "instrument_id": iid,
                     "token_id": "T",
                     "minute_start": iso(end - timedelta(minutes=minute)),
+                    "minute_start_prec": "BUCKET(60s)",
+                    "received_ts": iso(end),
+                    "received_ts_prec": "COLLECTION_ONLY",
                     "buy_qty": 100,
                     "sell_qty": 50,
                     "sum_sq_qty": 1,
@@ -191,7 +198,8 @@ def test_missing_is_not_zero_and_no_leakage() -> None:
                     complete=True,
                 )
             ],
-        )
+        ),
+        config=fixture_truth_config(),
     )
     assert s["data_confidence"]["class"] == "LOW"
     assert s["move_class"] == "UNKNOWN"
@@ -397,7 +405,6 @@ def test_t5_pairwise_constant_cohort() -> None:
 
 @pytest.mark.asyncio
 async def test_assessment_persists_with_event_anchor() -> None:
-    from types import SimpleNamespace
 
     from tank.analysis.truth import MarketTruthService
 
@@ -422,7 +429,7 @@ async def test_assessment_persists_with_event_anchor() -> None:
     repo = Repo()
     service = MarketTruthService(
         repo,
-        SimpleNamespace(config_version="test", code_version="test"),
+        Settings(_env_file=None),
         Market(),
         versions=fixture_versions(),
     )
@@ -1466,7 +1473,7 @@ def test_derivative_windows_keep_one_hour_watch_separate_from_four_hour_crowding
         row["oi_usd"] = native * 100
     for row in snapshot["funding"]:
         row["rate"] = 0.0001 if parse_time(row["settlement_time"]) >= end - timedelta(hours=2) else 0
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=fixture_truth_config())
     windows = result["derivatives"]["windows"]
     assert set(windows) == {"W15M", "W1H", "W4H", "W24H", "EVENT"}
     assert result["derivatives"]["window"] == "EVENT"
@@ -1597,7 +1604,7 @@ def test_supported_move_has_decisive_measured_facts_and_capture_readiness() -> N
         "reason": "Some old backfill unavailable",
         "backfill_id": "BF-1",
     }
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=fixture_truth_config())
     assert result["move_class"] == "SPOT_LED_ACCUMULATION"
     assert 2 <= len(result["decisive_facts"]) <= 3
     assert all(isinstance(fact, str) for fact in result["decisive_facts"])
@@ -1729,7 +1736,6 @@ async def test_assessment_cpu_runs_off_event_loop_and_default_cutoff_is_closed_m
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import threading
-    from types import SimpleNamespace
 
     import tank.analysis.truth as module
 
@@ -1756,7 +1762,7 @@ async def test_assessment_cpu_runs_off_event_loop_and_default_cutoff_is_closed_m
 
     service = module.MarketTruthService(
         Repo(),
-        SimpleNamespace(config_version="test", code_version="test"),
+        Settings(_env_file=None),
         Market(),
         versions=fixture_versions(),
     )
@@ -1778,14 +1784,14 @@ def test_closed_bar_collection_latency_is_not_future_market_data() -> None:
     for row in snapshot["flow_bars"]:
         if parse_time(row["minute_start"]) == end - timedelta(minutes=1):
             row["received_ts"] = iso(end + timedelta(milliseconds=5))
-    measured = compute_market_truth(snapshot)
+    measured = compute_market_truth(snapshot, config=fixture_truth_config())
     assert measured["data_confidence"]["class"] == "HIGH"
     assert measured["spot"]["W24H"]["coverage"]["n_complete"] == 2
     assert measured["relative"]["ref_venue"] is not None
     assert measured["time_policy"] == "SEMANTIC_MARKET_TIME_WITH_ASSEMBLY_AVAILABILITY"
 
     snapshot["assembled_at"] = iso(end)
-    unavailable = compute_market_truth(snapshot)
+    unavailable = compute_market_truth(snapshot, config=fixture_truth_config())
     assert unavailable["spot"]["W24H"]["coverage"]["n_complete"] == 0
     assert unavailable["data_confidence"]["class"] != "HIGH"
 
@@ -1800,7 +1806,7 @@ def test_canonical_text_facts_print_units_windows_and_preserve_audit_companion()
     snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
         "synthetic_start_snapshot"
     ]()
-    truth = compute_market_truth(snapshot)
+    truth = compute_market_truth(snapshot, config=fixture_truth_config())
     assert all(isinstance(f, str) for f in truth["decisive_facts"])
     assert len(truth["decisive_facts"]) == len(truth["decisive_fact_details"])
     for text, detail in zip(truth["decisive_facts"], truth["decisive_fact_details"], strict=False):
@@ -1963,7 +1969,7 @@ def test_market_truth_propagates_quiet_spot_poll_watermark(watermark_offset_s, e
         }
     }
     original = deepcopy(snapshot)
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=fixture_truth_config())
     assert result["primary_window"] == "EVENT"
     assert result["spot"]["EVENT"]["coverage"]["n_complete"] == 2
     assert result["data_confidence"]["class"] == expected_class
@@ -1992,7 +1998,7 @@ def test_previous_window_bars_without_usd_rate_do_not_crash_size_profile() -> No
                 f"B{i}": {"buy_qty": "1", "sell_qty": "1", "buy_notional": "10", "sell_notional": "5"}
                 for i in range(1, 6)
             }
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=fixture_truth_config())
     assert result["primary_window"] == "EVENT"
     assert parse_time(result["spot"]["EVENT"]["start"]) == start
     profile = result["spot"][result["primary_window"]]["size_profile"]
@@ -2170,7 +2176,7 @@ def test_null_measurements_have_companion_context_without_wrapping_literal_field
     snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
         "synthetic_start_snapshot"
     ]()
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=fixture_truth_config())
     assert result["relative"]["windows"]["EVENT"]["r_eth_adj"] is None
     meta = result["measurement_metadata"]["relative.windows.EVENT.r_eth_adj"]
     assert meta["value"] is None and meta["unit"] == "DECIMAL_FRACTION"
@@ -2403,7 +2409,7 @@ def test_successful_measurements_have_unit_precision_coverage_and_exact_json_val
     snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
         "synthetic_start_snapshot"
     ]()
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=fixture_truth_config())
     cvd = result["measurement_metadata"]["spot.EVENT.composite_max.cvd"]
     assert cvd["value"] == result["spot"]["EVENT"]["composite_max"]["cvd"]
     assert isinstance(cvd["value"], str)
@@ -2433,7 +2439,7 @@ def test_market_truth_json_preserves_exact_large_plus_tiny_native_volume() -> No
             key=lambda r: r["minute_start"],
         )
         last.update(buy_qty=qty, sum_sq_qty=squared, buy_notional=usd)
-    result = compute_market_truth(snapshot)
+    result = compute_market_truth(snapshot, config=fixture_truth_config())
     expected = "1" + "0" * 150 + "." + "0" * 39 + "1"
     assert format(Decimal(result["spot"]["EVENT"]["composite_max"]["volume"]), "f") == expected
     assert (
@@ -2604,7 +2610,6 @@ def test_distribution_cohort_buy_to_sell_does_not_require_current_selling_majori
 async def test_assessment_calls_snapshot_with_shared_canonical_anchor(
     event_time, precision, state_verified, kind
 ) -> None:
-    from types import SimpleNamespace
 
     from tank.analysis.truth import MarketTruthService
     from tank.market.capture import event_anchor
@@ -2634,7 +2639,7 @@ async def test_assessment_calls_snapshot_with_shared_canonical_anchor(
     market = Market()
     result = await MarketTruthService(
         Repo(),
-        SimpleNamespace(config_version="test", code_version="test"),
+        Settings(_env_file=None),
         market,
         versions=fixture_versions(),
     ).assess("EVT", "T", "2026-10-16T12:00:00Z")

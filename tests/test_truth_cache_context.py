@@ -9,6 +9,7 @@ from decimal import Decimal
 from threading import Barrier
 
 import pytest
+from truth_support import fixture_truth_config
 
 import tank.analysis.truth as module
 from tank.util import iso, parse_time
@@ -20,6 +21,8 @@ def _spot_packet():
     packet = {
         "token_id": "T",
         "cutoff": iso(end),
+        "assembled_at": iso(end),
+        "assembled_at_prec": "COLLECTION_ONLY",
         "anchor": {"type": "T0", "ts": iso(end - timedelta(minutes=15))},
         "instruments": [],
         "flow_bars": [],
@@ -41,6 +44,8 @@ def _spot_packet():
                     "instrument_id": iid,
                     "token_id": "T",
                     "minute_start": iso(end - timedelta(minutes=minute)),
+                    "received_ts": iso(end),
+                    "received_ts_prec": "COLLECTION_ONLY",
                     "buy_qty": 100,
                     "sell_qty": 50,
                     "sum_sq_qty": 1,
@@ -124,10 +129,16 @@ def test_concurrent_actual_assessments_isolate_inherited_cache_and_restore_conte
         contexts = [copy_context(), copy_context()]
         with ThreadPoolExecutor(max_workers=2) as pool:
             a = pool.submit(
-                contexts[0].run, module.compute_market_truth, first, config={"history_min_days": 7}
+                contexts[0].run,
+                module.compute_market_truth,
+                first,
+                config=fixture_truth_config(history_min_days=7),
             )
             b = pool.submit(
-                contexts[1].run, module.compute_market_truth, second, config={"history_min_days": 8}
+                contexts[1].run,
+                module.compute_market_truth,
+                second,
+                config=fixture_truth_config(history_min_days=8),
             )
             results = [a.result(timeout=30), b.result(timeout=30)]
         assert observed["FIRST"] is not observed["SECOND"]
@@ -184,7 +195,7 @@ def test_failed_assessment_restores_all_inherited_context(monkeypatch: pytest.Mo
     monkeypatch.setattr(module, "_compute_market_truth", fail)
     try:
         with pytest.raises(RuntimeError, match="Synthetic assessment failure"):
-            module.compute_market_truth({}, config={"history_min_days": 7})
+            module.compute_market_truth({}, config=fixture_truth_config(history_min_days=7))
         assert module._BASELINE_CACHE.get() is cache
         assert cache.depth.get("existing") == module.DepthBaseline(mean_usd=Decimal(23))
         assert cache.depth.get("failed-assessment") is None

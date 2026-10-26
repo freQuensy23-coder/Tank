@@ -6,6 +6,7 @@ import httpx
 import pytest
 import yaml
 from source_support import fixture_http_admission, fixture_versions
+from truth_support import fixture_truth_config
 
 from tank.market.service import MarketService
 from tank.settings import Settings
@@ -322,7 +323,9 @@ async def test_capture_tier_uses_durable_activation_and_demotion_history_not_fut
         )
         from tank.analysis.truth import compute_market_truth
 
-        unknown_truth = compute_market_truth(await service.snapshot(token, clock))
+        unknown_truth = compute_market_truth(
+            await service.snapshot(token, clock), config=fixture_truth_config()
+        )
         check = next(
             row for row in unknown_truth["data_confidence"]["freshness"] if row["collection"] == "oi"
         )
@@ -402,7 +405,7 @@ async def test_actual_producer_tier_metadata_controls_90second_oi_and_funding_fr
     await service._record_capture_tier(spot["token_id"], "HOT", "TEST_ACTUAL_POLICY_ACTIVATED")
     hot_snapshot = await service.snapshot(spot["token_id"], cutoff)
     assert hot_snapshot["capture_tier"] == hot_snapshot["capture_metadata"]["tier"] == "HOT"
-    hot = compute_market_truth(hot_snapshot)
+    hot = compute_market_truth(hot_snapshot, config=fixture_truth_config())
     checks = [
         c
         for c in hot["data_confidence"]["freshness"]
@@ -426,7 +429,7 @@ async def test_actual_producer_tier_metadata_controls_90second_oi_and_funding_fr
     )["capture_tier"] == "HOT"
     base_snapshot = await service.snapshot(spot["token_id"], clock)
     assert base_snapshot["capture_tier"] == "BASE"
-    base = compute_market_truth(base_snapshot)
+    base = compute_market_truth(base_snapshot, config=fixture_truth_config())
     checks = [
         c
         for c in base["data_confidence"]["freshness"]
@@ -1267,3 +1270,77 @@ async def test_generic_market_write_cannot_bypass_capture_control_contract(setup
         with pytest.raises(ValueError, match="validated capture repository"):
             await service._put("mkt.backfill_runs", "BF-invalid", {})
     assert await repo.get("mkt.backfill_runs", "BF-invalid") is None
+
+
+async def test_snapshot_retains_actual_partial_parent_for_typed_spot_without_financial_canaries(
+    setup,
+) -> None:
+    from decimal import Decimal
+
+    from tank.analysis.condition_input_codec import decode_spot_inputs
+    from tank.analysis.condition_inputs import SpotCalculationPolicy
+    from tank.analysis.spot import calculate_spot
+    from tank.market.flow import FlowAccumulator
+    from tank.market.trade_contracts import FlowIdentity
+    from tank.time_precision import propagate_timestamp
+
+    repo, settings, instrument = setup
+    start = parse_time("2026-06-17T12:00:00Z")
+    observed = start + timedelta(seconds=31)
+    cutoff = start + timedelta(seconds=30)
+    accumulator = FlowAccumulator(now=lambda: observed)
+    identity = FlowIdentity(
+        instrument_id=instrument["instrument_id"],
+        token_id=instrument["token_id"],
+        venue="binance",
+        market_type="SPOT",
+        quote_asset="USD",
+    )
+    accumulator.empty_minute(identity, start)
+    accumulator.prove_range(
+        identity.instrument_id,
+        start,
+        cutoff,
+        complete=True,
+        source="declared-empty-capture-fixture",
+        observed_at=observed,
+    )
+    accumulator.register_boundaries(identity.instrument_id, [cutoff])
+    stored = accumulator.record((identity.instrument_id, iso(start)), complete=False).model_dump(mode="json")
+    await repo.put("mkt.flow_bars_1m", "actual-partial-parent", stored)
+    original = await repo.get("mkt.flow_bars_1m", "actual-partial-parent")
+
+    def refuse_http(request):
+        raise AssertionError("A repository snapshot cannot request external HTTP")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(refuse_http)) as http:
+        service = MarketService(
+            repo, settings, http=http, versions=fixture_versions(), admission=fixture_http_admission()
+        )
+        try:
+            snapshot = await service.snapshot(instrument["token_id"], cutoff)
+            assert snapshot["flow_bars"] == []
+            assert snapshot["flow_parent_bars"] == [original]
+            projected = decode_spot_inputs(
+                token_id=instrument["token_id"],
+                start=start,
+                cutoff=cutoff,
+                assembled_at=propagate_timestamp(snapshot, "assembled_at"),
+                instruments=snapshot["instruments"],
+                flow_bars=snapshot["flow_bars"],
+                flow_parent_bars=snapshot["flow_parent_bars"],
+                flow_segments=[],
+                tickers=snapshot["tickers"],
+                policy=SpotCalculationPolicy.from_thresholds(settings.thresholds()),
+                native_ticker_volume_field="volume_native",
+            )
+            result = calculate_spot(projected.inputs)
+            assert result.coverage.n_complete == 1
+            assert result.venues[0].buy_qty == Decimal(0) and result.venues[0].sell_qty == Decimal(0)
+            piece = projected.inputs.boundaries[0]
+            assert piece.received_at.value is None and piece.generated_empty is not None
+            assert piece.parent_document is not None
+            assert projected.source_evidence.original(piece.parent_document.evidence) == original
+            assert await repo.get("mkt.flow_bars_1m", "actual-partial-parent") == original
+        finally:
+            await service.close()

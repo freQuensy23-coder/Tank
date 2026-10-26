@@ -5,6 +5,7 @@ from pathlib import Path
 from runpy import run_path
 
 import pytest
+from truth_support import fixture_truth_config
 
 import tank.analysis.truth as truth
 from tank.market import normalize
@@ -74,10 +75,11 @@ def test_legacy_unit_verified_bybit_unknown_edge_is_supplemental_only() -> None:
     assert observed["ts"] == packet["cutoff"]
     assert observed["ts_bucket_anchor"] == "UNSPECIFIED"
     assert observed["scope"] == "SUPPLEMENTAL_PROVIDER_OBSERVATION_NOT_WINDOW_ENDPOINT"
-    full = truth.compute_market_truth(packet)
+    full = truth.compute_market_truth(packet, config=fixture_truth_config())
     selected = truth.compute_condition_values(
         packet,
         [dict(metric="dc.class", window="EVENT"), dict(metric="deriv.native_oi_chg_pct", window="EVENT")],
+        config=fixture_truth_config(),
     )
     assert full["data_confidence"]["class"] == selected["data_confidence"]["class"] == "MEDIUM"
     assert "critical_semantics_verified" not in full["data_confidence"]

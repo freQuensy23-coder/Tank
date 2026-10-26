@@ -85,7 +85,7 @@ def test_explicit_unprojected_feature_is_distinct_from_captured_unavailability()
             verdict="Approval is confirmed.",
             why=("The source confirms approval", "Effects remain uncertain"),
         ),
-        policy=PublicationPolicy(card_max_chars=5000, update_rate_limit_s=900),
+        policy=PublicationPolicy(update_rate_limit_s=900),
     )
     assert inputs.market_by_token["world:WLD"].holders_revenue is None
     market["supply"] = {"holders_revenue": {"protocols": [], "reason": "NO_CAPTURED_FUNDAMENTALS"}}
