@@ -16,6 +16,9 @@ export function requireDisposablePostgresDsn(value: string | undefined, expected
     !['postgres:', 'postgresql:'].includes(database.protocol) ||
     database.hostname !== expectedHost ||
     database.username !== 'tank_ci' ||
+    database.password.length === 0 ||
+    database.search.length > 0 ||
+    database.hash.length > 0 ||
     !/^\/tank_test_[a-z0-9_]+$/.test(database.pathname)
   ) throw new Error('Invalid disposable persistence database');
   return database.href;
