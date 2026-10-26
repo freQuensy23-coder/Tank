@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"time"
+	"unicode/utf8"
 )
 
 type Record struct {
@@ -94,6 +95,9 @@ func physicalKeys(data []byte) error {
 }
 
 func DecodeRecord(data []byte) (Record, error) {
+	if !utf8.Valid(data) {
+		return Record{}, errors.New("physical backfill row requires UTF-8 JSON")
+	}
 	if err := physicalKeys(data); err != nil {
 		return Record{}, err
 	}

@@ -73,7 +73,7 @@ func TestPhysicalNullsAndRetainedUnknownMetadataAreNotUpgraded(t *testing.T) {
 }
 
 func TestResultPreservesSQLNullVersusJSONNullAndExactNumberText(t *testing.T) {
-	for _, raw := range []string{"null", `{"number":9007199254740993.000100,"text":"000.10"}`, `"opaque prior evidence"`} {
+	for _, raw := range []string{"null", "0", "0.0", "false", `{"number":9007199254740993.000100,"text":"000.10"}`, `"opaque prior evidence"`} {
 		row := Record{StorageKey: "BF-record", BackfillID: "BF-record", ResultJSON: &raw}
 		decoded, err := DecodeRecord(physicalDocument(t, row))
 		if err != nil {
@@ -143,5 +143,25 @@ func TestSQLJsonTextMustBeACompleteValue(t *testing.T) {
 		if _, err := DecodeRecord(physicalDocument(t, row)); err == nil {
 			t.Fatalf("invalid physical JSON text was admitted: %q", raw)
 		}
+	}
+}
+
+func TestExplicitZeroTimeIsNotMissingPhysicalClock(t *testing.T) {
+	at := time.Time{}
+	row := Record{StorageKey: "BF-record", BackfillID: "BF-record", Anchor: &at}
+	decoded, err := DecodeRecord(physicalDocument(t, row))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Anchor == nil || !decoded.Anchor.Equal(at) {
+		t.Fatal("explicit zero time became an absent clock")
+	}
+}
+
+func TestInvalidUTF8IsRefusedInsteadOfReplaced(t *testing.T) {
+	data := physicalDocument(t, Record{StorageKey: "BF-record", BackfillID: "BF-record", Status: text("PENDING")})
+	malformed := bytes.Replace(data, []byte("PENDING"), []byte{'P', 0xff}, 1)
+	if _, err := DecodeRecord(malformed); err == nil {
+		t.Fatal("invalid UTF-8 was silently normalized")
 	}
 }
