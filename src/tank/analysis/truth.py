@@ -36,13 +36,11 @@ from tank.analysis.condition_graph_contracts import (
     ConditionWireClocks,
 )
 from tank.analysis.condition_input_codec import (
-    SpotConditionEvaluation,
-    SpotWindowEvaluation,
-    decode_spot_inputs,
-    decode_spot_windows,
+    SpotDirectEvidenceLookup,
+    SpotWindowEvidenceLookup,
 )
 from tank.analysis.condition_inputs import (
-    SpotCalculationSource,
+    SpotCalculationPolicy,
     SpotPolicyConfiguration,
 )
 from tank.analysis.execution import ExecutionLevelWire, ExecutionSide, execute_book_walk, execution_request
@@ -63,10 +61,7 @@ from tank.analysis.price_reference import (
     decode_price_cadence,
 )
 from tank.analysis.spot import (
-    SpotCalculator,
     SpotNativeMeasurement,
-    calculate_direct_spot,
-    calculate_spot_window_graph,
     spot_native_measurements,
 )
 from tank.analysis.statistics_contracts import (
@@ -5090,7 +5085,7 @@ def bounded_market_snapshot(snapshot, end):
     return snapshot
 
 
-def spot_window_graph(snapshot) -> SpotWindowEvaluation:
+def _captured_spot_policy() -> SpotCalculationPolicy:
     parameters = _PARAMETERS.get()
     if parameters is None:
         raise ValueError("Spot computation requires captured policy")
@@ -5101,26 +5096,7 @@ def spot_window_graph(snapshot) -> SpotWindowEvaluation:
             if name in parameters
         }
     ).calculation_policy()
-    decoded = decode_spot_windows(
-        token_id=snapshot["token_id"],
-        cutoff=propagate_timestamp(snapshot, "cutoff"),
-        event_anchor=propagate_timestamp(snapshot, "anchor", missing_reason="NO_EVENT_ANCHOR"),
-        assembled_at=propagate_timestamp(snapshot, "assembled_at"),
-        instruments=snapshot.get("instruments", []),
-        flow_bars=snapshot.get("flow_bars", []),
-        flow_parent_bars=snapshot.get("flow_parent_bars", []),
-        flow_segments=flow_segments(snapshot),
-        tickers=snapshot.get("tickers", []),
-        policy=policy,
-        native_ticker_volume_field="volume_native",
-    )
-    graph = calculate_spot_window_graph(decoded.inputs)
-    return SpotWindowEvaluation(
-        graph=graph,
-        source=SpotCalculationSource.from_inputs(decoded.inputs.source),
-        source_evidence=decoded.source_evidence,
-        clocks=decoded.clocks,
-    )
+    return policy
 
 
 @precise
@@ -5146,9 +5122,21 @@ def _compute_market_truth(snapshot, *, config=None):
             [point[0] for point in points],
             [point[1] for point in points],
         )
-    spot_evaluation = spot_window_graph(snapshot)
+    spot_evaluation = SpotWindowEvidenceLookup(
+        token_id=snapshot["token_id"],
+        cutoff=propagate_timestamp(snapshot, "cutoff"),
+        event_anchor=propagate_timestamp(snapshot, "anchor", missing_reason="NO_EVENT_ANCHOR"),
+        assembled_at=propagate_timestamp(snapshot, "assembled_at"),
+        instruments=snapshot.get("instruments", []),
+        flow_bars=snapshot.get("flow_bars", []),
+        flow_parent_bars=snapshot.get("flow_parent_bars", []),
+        flow_segments=flow_segments(snapshot),
+        tickers=snapshot.get("tickers", []),
+        policy=_captured_spot_policy(),
+        native_ticker_volume_field="volume_native",
+    )
     spot_graph = spot_evaluation.graph
-    spots = spot_evaluation.wire_spots()
+    spots = spot_evaluation.wire_spots(assembled_at=propagate_timestamp(snapshot, "assembled_at"))
     windows, primary = spot_graph.durations_s, spot_graph.primary
     snapshot["_primary"] = primary
     instruments = [
@@ -5156,7 +5144,6 @@ def _compute_market_truth(snapshot, *, config=None):
         for instrument in snapshot.get("instruments", [])
         if instrument["token_id"] == snapshot["token_id"]
     ]
-    spot_calculator = SpotCalculator(spot_evaluation.source.at(propagate_timestamp(snapshot, "assembled_at")))
     snapshot["_has_event"] = bool(av)
     snapshot["_lead_start"] = start
     snapshot["_event_anchor"] = start if av else None
@@ -5188,9 +5175,10 @@ def _compute_market_truth(snapshot, *, config=None):
             d,
             relative,
             window_liquidity,
-            sign_history=spot_calculator.sign_history(
+            sign_history=spot_evaluation.sign_history(
                 interval=spot_graph.spots[name].interval,
                 selected_venues=spot_graph.spots[name].topn.venues,
+                assembled_at=propagate_timestamp(snapshot, "assembled_at"),
             ),
         )
         d["support_features"] = support_features(scoped, wstart, end, spots[name], d, window_liquidity, su)
@@ -5559,19 +5547,36 @@ def condition_market_state(snapshot, end, cache):
             expected_direction_sha256=fingerprint(snapshot.get("expected_direction")),
         )
 
-        return deepcopy(remember(cache, key, build))
+        cached = remember(cache, key, build)
+        if isinstance(cached, SpotWindowEvidenceLookup) and not cached.matches_visibility(
+            propagate_timestamp(snapshot, "assembled_at")
+        ):
+            cached = build()
+            cache[key] = cached
+        return cached if isinstance(cached, SpotWindowEvidenceLookup) else deepcopy(cached)
 
     spot_evaluation = node(
         "spot",
         ("flow_bars", "flow_segments", "flow_parent_bars", "tickers", "instruments", "anchor"),
-        lambda: spot_window_graph(snapshot),
+        lambda: SpotWindowEvidenceLookup(
+            token_id=snapshot["token_id"],
+            cutoff=propagate_timestamp(snapshot, "cutoff"),
+            event_anchor=propagate_timestamp(snapshot, "anchor", missing_reason="NO_EVENT_ANCHOR"),
+            assembled_at=propagate_timestamp(snapshot, "assembled_at"),
+            instruments=snapshot.get("instruments", []),
+            flow_bars=snapshot.get("flow_bars", []),
+            flow_parent_bars=snapshot.get("flow_parent_bars", []),
+            flow_segments=flow_segments(snapshot),
+            tickers=snapshot.get("tickers", []),
+            policy=_captured_spot_policy(),
+            native_ticker_volume_field="volume_native",
+        ),
     )
-    if not isinstance(spot_evaluation, SpotWindowEvaluation):
+    if not isinstance(spot_evaluation, SpotWindowEvidenceLookup):
         raise TypeError("Spot state cache requires its typed graph and source evidence")
     _spot_graph = spot_evaluation.graph
-    spots = spot_evaluation.wire_spots()
+    spots = spot_evaluation.wire_spots(assembled_at=propagate_timestamp(snapshot, "assembled_at"))
     windows, primary = _spot_graph.durations_s, _spot_graph.primary
-    spot_calculator = SpotCalculator(spot_evaluation.source.at(propagate_timestamp(snapshot, "assembled_at")))
     scoped = dict(
         snapshot,
         _primary=primary,
@@ -5628,9 +5633,10 @@ def condition_market_state(snapshot, end, cache):
         derivatives,
         relative,
         liquidity,
-        sign_history=spot_calculator.sign_history(
+        sign_history=spot_evaluation.sign_history(
             interval=_spot_graph.spots[primary].interval,
             selected_venues=_spot_graph.spots[primary].topn.venues,
+            assembled_at=propagate_timestamp(snapshot, "assembled_at"),
         ),
     )
     derivatives["support_features"] = support_features(
@@ -5779,6 +5785,12 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                 expected_direction_sha256=fingerprint(snapshot.get("expected_direction")),
             )
             hit = key in cache
+            if hit and domain == "spot":
+                previous = cache[key]
+                if isinstance(previous, SpotDirectEvidenceLookup) and not previous.matches_visibility(
+                    propagate_timestamp(snapshot, "assembled_at")
+                ):
+                    hit = False
             if not hit:
                 selected = {field: snapshot[field] for field in fields if field in snapshot}
                 selected.update(
@@ -5797,10 +5809,11 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                             if name in config
                         }
                     ).calculation_policy()
-                    decoded = decode_spot_inputs(
+                    value = SpotDirectEvidenceLookup(
                         token_id=selected["token_id"],
                         start=start,
                         cutoff=end,
+                        window=window,
                         assembled_at=propagate_timestamp(snapshot, "assembled_at"),
                         instruments=selected.get("instruments", []),
                         flow_bars=selected.get("flow_bars", []),
@@ -5809,10 +5822,6 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                         tickers=selected.get("tickers", []),
                         policy=policy,
                         native_ticker_volume_field="volume_native",
-                    )
-                    value = SpotConditionEvaluation(
-                        result=calculate_direct_spot(decoded.inputs, window=window),
-                        source_evidence=decoded.source_evidence,
                     )
                 elif domain == "close":
                     value = condition_reference_close(selected, end)
@@ -5848,11 +5857,11 @@ def compute_condition_values(snapshot, requirements, *, config=None, cache=None,
                     cache.pop(next(iter(cache)))
             cached = cache[key]
             if domain == "spot":
-                if not isinstance(cached, SpotConditionEvaluation):
+                if not isinstance(cached, SpotDirectEvidenceLookup):
                     raise TypeError("Spot condition cache requires its typed evaluation and bound evidence")
                 value = encode_scoped_condition_spot(
                     cached.result,
-                    cached.source_evidence,
+                    cached,
                     clocks=ConditionWireClocks(
                         token_id=snapshot["token_id"],
                         cutoff=propagate_timestamp(snapshot, "cutoff"),
