@@ -2242,3 +2242,46 @@ contracts plus the actual helper/refusal/controlled-claim targets. Scoped six-fi
 Ruff and formatting pass. Tested functional prefix b6a681c0 is unchanged except
 this report. Complete peer reaction/X/market-refresh/E2E producer qualification and
 full default-unit timing remain outstanding; this checkpoint is not global release.
+
+### Completion-lineage correction (separate held tranche)
+
+The before checkpoint b9416450 reproduces two actual issues: a missing retry count
+is reported as zero in source-completion diagnostics, and a failed tool input with
+no retained attempt is retired as if it were known attempt zero under a current
+attempt-one owner. The corrected-/v1 supersession before control fails only the
+unknown case while known zero passes; original negative evidence is preserved.
+Fresh dispatch writes explicit zero and retry writes increment an admitted count;
+existing outbound and input-ownership models already preserve missing counts as
+unknown. No counter/body is reconstructed from list position or another message.
+
+The inward session_completion contracts carry the consumed message/attempt facts,
+source-completion records and pure older-attempt policy. Actual settled-turn
+callers use typed entries and serialize only at the persisted diagnostic/cache
+boundary. Missing counter is None; known zero stays zero. Supersession requires
+the actual same owner, both observed ordered counters and a distinct actual
+replacement input. Unknown facts cannot authorize retirement. Native queue facts
+are still retained, and independently proven terminal completion remains free of
+unused retry/body requirements: count None/0/1, exhausted partial body, cached
+repeat, one history GET/no POST/no retry rewrite all pass on Memory and PostgreSQL.
+The remaining raw execution receipt/barrier/settled orchestration is still open,
+not hidden behind a generic DTO or claimed whole-module completion.
+
+All 79 connected units pass in 18.47 seconds and all 32 actual completion/workflow
+cases pass in 20.36 seconds, zero skips/source guards. Independent strict contract
+and pure-test targets pass; scoped Ruff/format pass. Configured 200-source mypy has
+only the separately owned analysis _condition_cache error. The new actual test
+module still calls the existing untyped barrier/completed-turn methods; no strict
+whole-caller claim or suppression is made. Inventory now records 16 remaining
+Session signatures, zero Runtime signatures; body/caller/vendor scope stays open.
+
+Initial actual failures exposed incomplete newly authored PostgreSQL fixture rows,
+not product permission to weaken schema: five lacked required session metadata;
+then two lacked the declared source-origin FK, and the default synthetic source
+helper had nullable publication precision rejected by the current SQL constraint.
+The new source origin now explicitly authors its publication/time precision and
+full request metadata. Unreported agent version/last-item time use explicit
+absence reasons, opened_at is the actual fixture construction clock, and the new
+local cursor is declared zero. Existing/frozen payloads and original attempt/body
+controls are unchanged; no missing retry count was padded. All setup receipts stay
+separate from the final green complete case set. Scalar version admission also
+uses the canonical strict integer guard, rejecting float/string/bool lookalikes.

@@ -3056,6 +3056,35 @@
         "test_actual_tick_queue_worker_preserves_cutoff_and_stores_real_evaluation_result",
         "test_real_answer_error_requeues_or_finishes_using_reported_or_application_delay"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/session_completion.py",
+          "symbol": "CompletionMessage"
+        },
+        {
+          "path": "src/tank/contracts/session_completion.py",
+          "symbol": "SourceCompletionEntry"
+        },
+        {
+          "path": "src/tank/contracts/session_completion.py",
+          "symbol": "FailedToolAttempt.is_prior_to"
+        },
+        {
+          "path": "src/tank/agents/sessions.py",
+          "symbol": "SessionService.source_completion_snapshot"
+        }
+      ],
+      "kind": "observed completion index and genuinely unreported retry provenance",
+      "reason": "Fresh journal intents explicitly write retry_count=0; retained journal/tool records can genuinely omit it, as existing MessageAttempt and JournalInputLineage already permit. Completion models preserve that absence as None, never zero. Missing kind/source extraction metadata remains unreported rather than NOT_APPLICABLE; source messages require their actual item identity. item_id/native_input_id remain nullable for non-source messages or genuinely unreported accepted input identity. The per-message dictionary is an associative diagnostic index keyed by actual distinct journal message IDs; no entries for an absent journal invent no source outcomes and do not grant native completion. storage_record is solely the persisted proof/cache comparison boundary. A failed tool input can be superseded only with the same actual owner, observed strictly ordered integer attempts, and a distinct actual replacement ID; unknown owner/count/replacement produces no supersession. Independently proven terminal inputs do not consume unused retry counters or full historical bodies.",
+      "validation": [
+        "test_source_completion_preserves_unknown_and_known_retry_attempts",
+        "test_failed_tool_input_requires_observed_older_attempt_before_supersession",
+        "test_independently_completed_input_settles_without_unused_retry_or_body",
+        "test_failed_attempt_requires_actual_order_and_replacement",
+        "test_reported_attempt_requires_strict_nonnegative_integer"
+      ]
     }
   ]
 }

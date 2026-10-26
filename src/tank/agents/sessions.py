@@ -166,6 +166,13 @@ from tank.contracts.question_retirement import (
     UnretainedQuestionJournal,
 )
 from tank.contracts.session_admission import AdmissionCandidate
+from tank.contracts.session_completion import (
+    CompletionAttemptOwner,
+    CompletionMessage,
+    FailedToolAttempt,
+    SourceCompletionEntry,
+    SourceCompletionSnapshot,
+)
 from tank.contracts.session_followups import (
     FollowupCandidate,
     FollowupEligibility,
@@ -1013,7 +1020,9 @@ class SessionService:
                         identity
                         and states.get(identity, {}).get("state") == "FAILED"
                         and owner
-                        and call.get("native_turn_retry_count", 0) < owner.get("retry_count", 0)
+                        and FailedToolAttempt.from_record(call).is_prior_to(
+                            CompletionAttemptOwner.from_record(owner)
+                        )
                     ):
                         current.setdefault("superseded_native_inputs", {})[identity] = {
                             "reason": "FAILED_PRIOR_TURN_ATTEMPT",
@@ -1050,25 +1059,41 @@ class SessionService:
             "execution_states": states,
         }
 
-    async def source_completion_snapshot(self, session):
-        outcomes = {}
-        for message in session.get("message_log", []):
-            payload = message.get("payload", {})
-            item_id = payload.get("item_id")
-            source_message = payload.get("kind") in {"NEW_ITEM", "ITEM_ADDED"}
-            item = await self.repo.get("ingest.source_items", item_id) if source_message and item_id else None
-            outcomes[message["message_id"]] = {
-                "version": SOURCE_COMPLETION_VERSION,
-                "item_id": item_id,
-                "native_input_id": message.get("remote_event_id"),
-                "retry_attempt": message.get("retry_count", 0),
-                "outcome": item.get("extraction_status")
-                if item
+    async def source_completion_snapshot(self, session: dict[str, JsonValue]) -> SourceCompletionSnapshot:
+        journal = session.get("message_log", [])
+        if not isinstance(journal, list):
+            raise ValueError("Completion message journal must be an array")
+        outcomes: dict[str, SourceCompletionEntry] = {}
+        for raw in journal:
+            if not isinstance(raw, dict):
+                raise ValueError("Completion journal message must be an object")
+            message = CompletionMessage.from_record(raw)
+            if message.message_id in outcomes:
+                raise ValueError("Completion journal repeats a message identity")
+            item = (
+                await self.repo.get("ingest.source_items", message.item_id)
+                if message.source_message is True and message.item_id is not None
+                else None
+            )
+            outcome = (
+                item.get("extraction_status")
+                if item is not None
                 else "MISSING_SOURCE_ITEM"
-                if source_message
-                else "NOT_APPLICABLE",
-            }
-        return outcomes
+                if message.source_message is True
+                else "NOT_APPLICABLE"
+                if message.source_message is False
+                else None
+            )
+            outcomes[message.message_id] = SourceCompletionEntry.model_validate(
+                {
+                    "version": SOURCE_COMPLETION_VERSION,
+                    "item_id": message.item_id,
+                    "native_input_id": message.native_input_id,
+                    "retry_attempt": message.retry_attempt,
+                    "outcome": outcome,
+                }
+            )
+        return SourceCompletionSnapshot(entries=outcomes)
 
     async def completed_turn(self, sid):
         result = await self.settled_turn(sid)
@@ -1306,7 +1331,7 @@ class SessionService:
         if (
             local["complete"]
             and session.get("verified_native_completion") == local
-            and session.get("verified_source_completion") == source_outcomes
+            and session.get("verified_source_completion") == source_outcomes.storage_record()
         ):
             return local
         if not local["accepted_input_ids"] and not local["unidentified_inputs"]:
@@ -1369,14 +1394,16 @@ class SessionService:
             current["runtime_status"] = "IDLE"
             outcomes = await self.source_completion_snapshot(current)
             for message in current.get("message_log", []):
-                if message["message_id"] in outcomes:
-                    message["source_completion_verified"] = copy.deepcopy(outcomes[message["message_id"]])
+                if message["message_id"] in outcomes.entries:
+                    message["source_completion_verified"] = outcomes.entries[
+                        message["message_id"]
+                    ].model_dump(mode="json")
 
                     if "workflow_completion_verified" in message:
                         message["legacy_workflow_completion_verified"] = message.pop(
                             "workflow_completion_verified"
                         )
-            current["verified_source_completion"] = outcomes
+            current["verified_source_completion"] = outcomes.storage_record()
             current["verified_native_completion"] = copy.deepcopy(after)
             await put_owned_session(self.repo, sid, current)
             await session_progress(self.repo, self.settings, current)
