@@ -1428,3 +1428,23 @@ and the assigned vendor programs remain open on their separate workstreams.
 Exact retained map/default/None classes and behavior controls are recorded by
 symbol/site in agents-exceptions.json. This bounded cohort does not waive any
 of the remaining global work.
+
+
+### Required condition evaluation caller
+
+Clean parent 956666e1 normally joins producer 7c0e8b27, without held worker or
+native-file ancestry. Runtime.eval_conditions_wire admits the queued payload
+through EvalConditionsJob and passes its actual cutoff facets as Timestamp.
+The checked runtime_evaluation protocol consumes ConditionEvaluationResult;
+that result is revalidated before the durable ops.jobs.result JSON boundary.
+Neither missing cutoff nor unknown occurrence becomes a processing clock.
+
+Negative workflow evidence at e869 records four failures from the old direct
+dictionary dispatch. Final source passed 80 connected units in 16.26 seconds
+and all five collected actual PostgreSQL cases in 5.31 seconds, zero skips,
+with unchanged source fingerprints. Actual Scheduler.tick, queue claim, Runtime
+worker and evaluator produce DONE with the real serialized receipt; missing,
+naive and unknown cutoffs fail before evaluation. A constructed invalid typed
+receipt also refuses before serialization. Independent strict checks pass for
+runtime_evaluation, scheduler_results, runtime_public_fixtures and the result
+boundary test. Whole Runtime.worker body typing remains open.
