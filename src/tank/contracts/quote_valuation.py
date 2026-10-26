@@ -57,6 +57,7 @@ type NativeQuoteScope = QuoteValuationScope | UnknownQuoteValuationScope
 
 
 class QuoteRateEvidenceRef(DomainModel):
+    kind: Literal["CANONICAL_STORAGE_READ"]
     collection: QuoteMarketCollection
     source_projection_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     source_evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -308,6 +309,13 @@ class QualifiedQuoteValue(DomainModel):
 
 
 class QuoteValuationEvidenceLookup(Protocol):
+    """Reproject the original read and descriptor, including actual currency and clocks.
+
+    Implementations preserve the requested reference, refuse conflicting/missing source facts,
+    and retain original wire extensions outside these consumed-value models. A provider body
+    hash cannot substitute for a canonical storage/input read and its qualified scope descriptor.
+    """
+
     def native_quote_value(self, reference: QuoteRateEvidenceRef) -> NativeQuoteValue: ...
 
     def quote_usd_rate(

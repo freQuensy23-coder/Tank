@@ -50,6 +50,7 @@ def unknown() -> Timestamp:
 
 def evidence(digit: Literal["a", "b", "c"]) -> QuoteRateEvidenceRef:
     return QuoteRateEvidenceRef(
+        kind="CANONICAL_STORAGE_READ",
         collection="mkt.klines_1m",
         source_projection_sha256=digit * 64,
         source_evidence_sha256=digit * 64,
@@ -347,3 +348,60 @@ def test_declared_policy_rejects_float_or_bool_substitutes_and_unresolved_versio
         type(policy).model_validate(policy.model_copy(update={"max_age_s": True}))
     with pytest.raises(ValidationError):
         current_quote_age_policy(VERSIONS.model_copy(update={"code_version": "unversioned"}))
+
+
+@pytest.mark.parametrize("quantity", [Decimal(0), Decimal(-3)])
+def test_available_quote_amount_keeps_known_zero_and_signed_amounts(quantity: Decimal) -> None:
+    point = native(quantity, quote_asset="USDT", denomination="QUOTE")
+    source = rate(Decimal(2), quote_asset="USDT", as_of=AT)
+    value = qualify_captured_quote_value(
+        point,
+        source,
+        policy=current_quote_age_policy(VERSIONS),
+        assembled_at=receipt(AT + timedelta(seconds=2)),
+    )
+    assert value.usd_value == quantity * 2
+    assert value.unavailable_reasons == ()
+
+
+def test_future_native_receipt_cannot_be_cleared_or_replaced_by_rate_receipt() -> None:
+    point = native(Decimal(3), quote_asset="USDT", denomination="QUOTE")
+    point = NativeQuoteValue.model_validate(
+        point.model_copy(update={"received_at": receipt(AT + timedelta(seconds=5))})
+    )
+    source = rate(Decimal(2), quote_asset="USDT", as_of=AT)
+    value = qualify_captured_quote_value(
+        point,
+        source,
+        policy=current_quote_age_policy(VERSIONS),
+        assembled_at=receipt(AT + timedelta(seconds=2)),
+    )
+    assert value.facts.calculation.value == Decimal(6) and value.usd_value is None
+    assert value.unavailable_reasons == ("NATIVE_RECEIPT_AFTER_ASSEMBLY",)
+    with pytest.raises(ValidationError, match="actual source receipts"):
+        QualifiedQuoteValue.model_validate(
+            value.model_copy(update={"proof": value.proof.model_copy(update={"failures": ()})})
+        )
+
+
+def test_wire_roundtrip_preserves_original_clock_metadata_and_refuses_boolean_quantity() -> None:
+    point = native(Decimal(3), quote_asset="USDT", denomination="QUOTE_PER_NATIVE_TOKEN")
+    source = rate(Decimal("0.98"), quote_asset="USDT", as_of=AT)
+    value = qualify_captured_quote_value(
+        point,
+        source,
+        policy=current_quote_age_policy(VERSIONS),
+        assembled_at=receipt(AT + timedelta(seconds=2)),
+    )
+    restored = QualifiedQuoteValue.model_validate_json(value.model_dump_json())
+    assert restored.usd_value == Decimal("2.94")
+    assert restored.facts.usd_denomination == "USD_PER_NATIVE_TOKEN"
+    assert restored.facts.context.kind == "CURRENT_ANALYSIS_CAPTURED_RATE"
+    assert restored.facts.context.source == source
+    assert restored.facts.context.source.as_of.precision is None
+    encoded = point.model_dump_json()
+    assert '"value":"3"' in encoded
+    with pytest.raises(ValidationError):
+        NativeQuoteValue.model_validate_json(encoded.replace('"value":"3"', '"value":true'))
+    with pytest.raises(ValidationError):
+        QuoteRateEvidenceRef.model_validate(evidence("a").model_copy(update={"kind": "PROVIDER_BODY"}))
