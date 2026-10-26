@@ -125,9 +125,15 @@ async def test_outcome_immutable_revision_and_frozen_beta() -> None:
     assert a["btc_adjusted_return"] == pytest.approx(0.18) and a["direction_correct"] is True
     assert a["mfe"] == pytest.approx(0.3) and a["mae"] == pytest.approx(-0.1)
 
-    for reason in ("INSUFFICIENT_HISTORY", "NOT_ESTIMABLE", "NOT_CAPTURED"):
+    for reason, captured_value in (
+        ("INSUFFICIENT_HISTORY", None),
+        ("NOT_ESTIMABLE", None),
+        ("INSUFFICIENT_HISTORY", 1.0),
+        ("NOT_ESTIMABLE", 1.0),
+        ("NOT_CAPTURED", 1.0),
+    ):
         unavailable = deepcopy(truth)
-        unavailable["relative"]["beta_btc"] = 1.0
+        unavailable["relative"]["beta_btc"] = captured_value
         if reason == "NOT_CAPTURED":
             unavailable["relative"].pop("beta_flags")
         else:

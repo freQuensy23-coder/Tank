@@ -423,6 +423,28 @@ def test_zero_variance_benchmark_cannot_manufacture_adjusted_move_classification
     assert result["move_class"] == "UNKNOWN"
 
 
+def test_insufficient_beta_history_preserves_raw_move_without_adjusted_conclusions() -> None:
+    snapshot = compact_start_snapshot()
+    anchor = parse_time(snapshot["anchor"]["ts"])
+    snapshot["klines"] = [
+        row for row in snapshot["klines"] if parse_time(row["open_time"]) >= anchor - timedelta(days=6)
+    ]
+    result = compute_market_truth(snapshot)
+    relative = result["relative"]
+    assert relative["beta_btc"] is None
+    assert relative["beta_flags"]["btc"] == "INSUFFICIENT_HISTORY"
+    assert relative["windows"]["EVENT"]["r_raw"] == pytest.approx(0.011)
+    for window in relative["windows"].values():
+        assert window["r_btc_adj"] is None
+        assert window["r_btc_adj_reason"] == "INSUFFICIENT_HISTORY"
+        assert window["relative_return"] is None
+        assert window["normal_range"] is None and window["pctile"] is None
+    assert relative["pre_event_runup"]["ar"] is None
+    assert relative["pre_event_runup"]["flag"] is None
+    assert relative["normal_ranges"]["W4H"]["value"] is None
+    assert result["move_class"] == "UNKNOWN"
+
+
 def test_sparse_benchmark_gap_does_not_authorize_adjusted_move() -> None:
     snapshot = synthetic_start_snapshot()
     end = parse_time(snapshot["cutoff"])
