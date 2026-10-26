@@ -15,6 +15,7 @@ from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
 from tank.agents.input_ownership import NativeOwnershipSnapshot
 from tank.contracts.openma import NativeSessionToolUpdate
+from tank.contracts.session_completion import CompletionSessionSnapshot
 from tank.contracts.session_followups import FollowupRefusalTarget
 from tank.settings import Settings
 from tank.storage import MemoryRepository
@@ -440,9 +441,9 @@ async def test_failed_session_reopens_and_retires_its_failed_turn_from_the_barri
             {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
         )
         session = await repo.get("ops.agent_sessions", "ses_1")
-        barrier = await service.execution_barrier(session)
+        barrier = await service.execution_barrier(CompletionSessionSnapshot.from_record(session))
     assert session["status"] == "OPEN" and session["retired_message_ids"] == ["m0"]
-    assert barrier["accepted_input_ids"] == ["in_q"]
+    assert barrier.accepted_input_ids == ["in_q"]
     assert len(posts) == 1
 
 
@@ -549,9 +550,9 @@ async def test_retried_question_is_never_retired_by_a_concurrent_failure() -> No
         await repo.put("ops.agent_sessions", "ses_1", session)
         await service.send_message(payload)
         session = await repo.get("ops.agent_sessions", "ses_1")
-        barrier = await service.execution_barrier(session)
+        barrier = await service.execution_barrier(CompletionSessionSnapshot.from_record(session))
     assert session["status"] == "OPEN" and session["retired_message_ids"] == ["m0"]
-    assert barrier["accepted_input_ids"] == ["in_q"] and len(posts) == 1
+    assert barrier.accepted_input_ids == ["in_q"] and len(posts) == 1
 
 
 @pytest.mark.asyncio
