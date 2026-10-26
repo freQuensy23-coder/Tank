@@ -22,6 +22,26 @@ from tank.deployment.publisher import Publisher, PublisherStateError
 from tank.time_precision import collection_clock
 
 
+class StandTiming(DomainModel):
+    stage: Literal["ENTER", "DONE"]
+    action: PublisherAction
+    process_id: int
+    monotonic_s: float
+    process_cpu_s: float
+
+
+def record_timing(root: Path, action: PublisherAction, stage: Literal["ENTER", "DONE"]) -> None:
+    observation = StandTiming(
+        stage=stage,
+        action=action,
+        process_id=os.getpid(),
+        monotonic_s=time.monotonic(),
+        process_cpu_s=time.process_time(),
+    )
+    with (root / "effects.log").open("a") as stream:
+        stream.write("STAND_TIMING " + observation.model_dump_json() + "\n")
+
+
 class StandInvocation(DomainModel):
     image: str
     orchestrator: CommitSHA
@@ -125,7 +145,9 @@ def main() -> None:
                 "interrupt": os.environ.get("TANK_PUBLISHER_STAND_INTERRUPT"),
             }
         )
+        record_timing(invocation.root, invocation.action, "ENTER")
         run(invocation, configuration)
+        record_timing(invocation.root, invocation.action, "DONE")
     except (
         ApifyAPIError,
         ArtifactError,

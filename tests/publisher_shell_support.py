@@ -24,14 +24,23 @@ class ShellHost:
     orchestrator: str
 
     def deploy(self, selected: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            ["bash", str(self.root / "deploy.sh"), selected, self.orchestrator],
-            cwd=self.root,
-            env=self.environment,
-            text=True,
-            capture_output=True,
-            timeout=10,
-        )
+        try:
+            return subprocess.run(
+                ["bash", str(self.root / "deploy.sh"), selected, self.orchestrator],
+                cwd=self.root,
+                env=self.environment,
+                text=True,
+                capture_output=True,
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired as error:
+            evidence = self.root / "effects.log"
+            if evidence.is_file():
+                phases = [
+                    line for line in evidence.read_text().splitlines() if line.startswith("STAND_TIMING ")
+                ]
+                error.add_note("Owned stand phase timing:\n" + "\n".join(phases))
+            raise
 
 
 def shell_host(
