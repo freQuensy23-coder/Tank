@@ -8,6 +8,7 @@ import pytest
 from agent_source_fixtures import declared_versions_fixture
 from pydantic import JsonValue
 from pydantic_settings import SettingsConfigDict
+from session_followup_fixtures import UnexpectedFollowupRefusals
 
 from tank.agents.context_binding import ContextBinding
 from tank.agents.session_ownership import put_owned_session
@@ -84,6 +85,7 @@ async def test_corrupt_owner_cannot_post_or_change_terminal_source_state(
             http=client,
             stream_http=client,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         with pytest.raises(ValueError, match="authoritative journal owner"):
             if entrypoint == "message":
@@ -137,6 +139,7 @@ async def test_active_callback_terminal_failure_does_not_fail_the_opening_or_las
             http=client,
             stream_http=client,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         await service.process_event("session", {"id": "failure", "type": "agent.refusal"})
     session = await repo.get("ops.agent_sessions", "session")
@@ -198,6 +201,7 @@ async def test_send_writer_revalidates_owner_after_reloading_under_lock(
             http=client,
             stream_http=client,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         with pytest.raises(ValueError, match="authoritative journal owner"):
             await service.send_message({"session_id": "session", "kind": "ITEM_ADDED", "item_id": "origin"})
@@ -239,6 +243,7 @@ async def test_acknowledged_execution_can_rebind_only_to_its_actual_journal_owne
             http=client,
             stream_http=client,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         await service.process_event(
             "session",

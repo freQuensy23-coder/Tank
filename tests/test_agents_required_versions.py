@@ -8,6 +8,7 @@ import pytest
 from agent_source_fixtures import declared_versions_fixture, pipeline_settings_fixture, source_item_fixture
 from pydantic import ValidationError
 from pydantic_settings import SettingsConfigDict
+from session_followup_fixtures import UnexpectedFollowupRefusals
 
 from tank.agents.classification import DecisionClassifier
 from tank.agents.decision import DecisionItem, DecisionState
@@ -51,7 +52,13 @@ def test_invalid_provenance_fails_before_allocating_owned_http_client(
                 versions=invalid_identity(),
             )
         else:
-            SessionService(MemoryRepository(), UnreadSettings(), None, versions=invalid_identity())
+            SessionService(
+                MemoryRepository(),
+                UnreadSettings(),
+                None,
+                versions=invalid_identity(),
+                refusals=UnexpectedFollowupRefusals(),
+            )
 
 
 @pytest.mark.asyncio

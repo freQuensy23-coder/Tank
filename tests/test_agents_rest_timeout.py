@@ -8,6 +8,7 @@ import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture, native_tool_arguments_fixture
 from native_input_fixtures import acknowledge_native_input
+from session_followup_fixtures import UnexpectedFollowupRefusals
 from test_agents import seed_session, settings
 
 from tank.agents import sessions as session_module
@@ -55,7 +56,12 @@ async def test_stalled_rest_read_times_out_without_changing_sse(
         opts, _ = settings(openma_url=url)
         injected = httpx.AsyncClient(timeout=None) if injected_unbounded_client else None
         service = SessionService(
-            MemoryRepository(), opts, None, http=injected, versions=declared_versions_fixture()
+            MemoryRepository(),
+            opts,
+            None,
+            http=injected,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         try:
             if not injected_unbounded_client:
@@ -104,12 +110,26 @@ async def test_rest_ack_timeout_retains_result_and_reuses_native_ack_body() -> N
         "input": native_tool_arguments_fixture("fetch_page"),
     }
     async with httpx.AsyncClient(transport=httpx.MockTransport(acknowledge), timeout=None) as http:
-        first = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
+        first = SessionService(
+            repo,
+            opts,
+            dispatch,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         with pytest.raises(httpx.ReadTimeout):
             await first.process_event("ses_1", event)
         stored = await repo.get("ops.tool_calls", "ses_1:call")
         assert stored["status"] == "DONE" and not stored.get("returned_at")
-        resumed = SessionService(repo, opts, dispatch, http=http, versions=declared_versions_fixture())
+        resumed = SessionService(
+            repo,
+            opts,
+            dispatch,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         await resumed.process_event("ses_1", event)
         await resumed.process_event("ses_1", event)
     assert dispatched == ["fetch_page"]

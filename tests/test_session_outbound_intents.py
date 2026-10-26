@@ -7,6 +7,7 @@ import pytest
 from agent_source_fixtures import declared_versions_fixture
 from native_input_fixtures import acknowledge_native_input
 from pydantic import JsonValue, ValidationError
+from session_followup_fixtures import UnexpectedFollowupRefusals
 
 from tank.agents.native_inputs import NativeUserMessage, UnreportedNativeInput
 from tank.agents.outbound_inputs import (
@@ -66,6 +67,7 @@ async def test_actual_initial_acceptance_preserves_reported_or_unreported_receip
             None,
             http=http,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         await service.post_message_intent("session", "message")
         again = await service.post_message_intent("session", "message")
@@ -104,6 +106,7 @@ async def test_changed_durable_body_refuses_acceptance_commit_after_http_respons
             None,
             http=http,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         with pytest.raises(ValueError, match="intent changed"):
             await service.post_message_intent("session", "message")
@@ -136,12 +139,26 @@ async def test_new_service_recovers_lost_initial_response_with_same_durable_inpu
 
     configuration = Settings(openma_url="http://native", ops_progress_enabled=False, _env_file=None)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        first = SessionService(repo, configuration, None, http=http, versions=declared_versions_fixture())
+        first = SessionService(
+            repo,
+            configuration,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         with pytest.raises(httpx.ReadError):
             await first.post_message_intent("session", "message")
         assert await repo.get("ops.agent_sessions", "session") == original
         assert not first.tasks
-        recovered = SessionService(repo, configuration, None, http=http, versions=declared_versions_fixture())
+        recovered = SessionService(
+            repo,
+            configuration,
+            None,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         await recovered.recover_outbound_inputs("session")
         assert not recovered.tasks
     assert len(calls) == 2 and calls[0] == calls[1]
@@ -183,6 +200,7 @@ async def test_invalid_retained_intent_refuses_before_any_native_post(field: str
             None,
             http=http,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         with pytest.raises(ValueError):
             await service.post_message_intent("session", "message")
@@ -228,6 +246,7 @@ async def test_concurrent_receipts_preserve_or_refine_actual_acknowledgment_with
             None,
             http=http,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         result = await service.post_message_intent("session", "message")
     result_journal = result["message_log"]
@@ -258,6 +277,7 @@ async def test_outbound_row_identity_must_match_native_receiver_before_posting()
             None,
             http=http,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         with pytest.raises(ValueError, match="identity differs"):
             await service.post_message_intent("session", "message")
@@ -281,6 +301,7 @@ async def test_native_input_receiver_is_required_and_encoded_as_one_path_segment
             None,
             http=http,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         body = NativeUserMessage(type="user.message", content=[])
         if identity:
@@ -310,6 +331,7 @@ async def test_recovery_refuses_unmatched_active_owner_before_posting_an_otherwi
             None,
             http=http,
             versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
         )
         with pytest.raises(ValueError, match="authoritative journal owner"):
             await service.recover_outbound_inputs("session")

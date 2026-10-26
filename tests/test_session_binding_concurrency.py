@@ -11,6 +11,7 @@ import httpx
 import pytest
 from agent_source_fixtures import declared_versions_fixture, source_record_fixture
 from scheduling_support import RecordingReactionScheduling
+from session_followup_fixtures import UnexpectedFollowupRefusals
 from source_support import fixture_http_admission
 from test_agents_execution_barrier import config
 
@@ -184,7 +185,12 @@ async def test_controller_snapshot_cannot_erase_domain_binding(
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             service = SessionService(
-                repo, config(), tools.dispatch, http=client, versions=declared_versions_fixture()
+                repo,
+                config(),
+                tools.dispatch,
+                http=client,
+                versions=declared_versions_fixture(),
+                refusals=UnexpectedFollowupRefusals(),
             )
             poll_task = asyncio.create_task(service.execution_barrier(session, verify_remote=True))
             await writer_ready.wait()

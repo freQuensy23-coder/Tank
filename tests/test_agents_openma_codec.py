@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from agent_source_fixtures import declared_versions_fixture
 from scheduling_support import RecordingReactionScheduling
+from session_followup_fixtures import UnexpectedFollowupRefusals
 from source_support import fixture_http_admission
 
 from tank.agents.context import CONTEXT_VERSION
@@ -101,7 +102,14 @@ async def test_patched_actual_tool_uses_host_bound_item(tmp_path: Path) -> None:
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json={}))
     ) as http:
-        service = SessionService(repo, opts, tools.dispatch, http=http, versions=declared_versions_fixture())
+        service = SessionService(
+            repo,
+            opts,
+            tools.dispatch,
+            http=http,
+            versions=declared_versions_fixture(),
+            refusals=UnexpectedFollowupRefusals(),
+        )
         await service.tool(session, {**result["realTool"], "input": {}})
     ledger = await repo.get("ops.tool_calls", "s:call_1")
     assert ledger["status"] == "DONE" and ledger["returned_at"]

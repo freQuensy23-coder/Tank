@@ -23,6 +23,7 @@ from tank.telegram_inbox import (
     OPS_NOT_RECEIVED_TEXT,
     OPS_UNMATCHED_TEXT,
     OPS_WAITING_TEXT,
+    RepositoryFollowupRefusals,
     TelegramInbox,
     question_id_for,
     question_message,
@@ -147,7 +148,14 @@ async def test_ops_reply_about_analyzed_unpublished_item_continues_its_session_a
     assert "Tank Ops" in text and "itm_2" in text and "Делистинг токена" in text
     posts = []
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma(posts, []))) as http:
-        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
+        service = SessionService(
+            repo,
+            session_settings(),
+            None,
+            http=http,
+            versions=fixture_versions(),
+            refusals=RepositoryFollowupRefusals(repo),
+        )
         service.start_stream = lambda sid: None
         await service.send_message(jobs[0]["payload"])
     assert posts[0][0] == "/v1/sessions/ses_2/events"
@@ -201,7 +209,14 @@ async def test_ops_reply_about_published_item_continues_its_session_and_answers_
     ]
     posts = []
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma(posts, []))) as http:
-        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
+        service = SessionService(
+            repo,
+            session_settings(),
+            None,
+            http=http,
+            versions=fixture_versions(),
+            refusals=RepositoryFollowupRefusals(repo),
+        )
         service.start_stream = lambda sid: None
         await service.send_message(jobs[0]["payload"])
     assert posts[0][0] == "/v1/sessions/ses_1/events"
@@ -292,7 +307,14 @@ async def test_ops_reply_about_archived_session_gets_only_the_reason(retention) 
     assert (await repo.get("out.user_questions", question_id))["session_id"] == "ses_4"
     posts = []
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma(posts, []))) as http:
-        service = SessionService(repo, session_settings(), None, http=http, versions=fixture_versions())
+        service = SessionService(
+            repo,
+            session_settings(),
+            None,
+            http=http,
+            versions=fixture_versions(),
+            refusals=RepositoryFollowupRefusals(repo),
+        )
         payload = {"kind": "USER_QUESTION", "session_id": "ses_4", "question_id": question_id}
         assert await service.send_message(payload) is None
     assert posts == []
