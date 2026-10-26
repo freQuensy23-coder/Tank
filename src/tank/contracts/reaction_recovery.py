@@ -119,6 +119,8 @@ class ReactionRecoveryUnresolved(DomainModel):
         "CHECKPOINT_SCOPE_MISMATCH",
         "CHECKPOINT_CLOCK_UNREPORTED",
         "SOURCE_MAY_ALREADY_BE_CAPTURED",
+        "WITNESS_UNADMITTED",
+        "RECOVERY_LINK_UNADMITTED",
     ]
 
 

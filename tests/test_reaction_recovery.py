@@ -5,10 +5,19 @@ from pydantic import JsonValue, ValidationError
 
 from tank.contracts.reaction_recovery import (
     ReactionRecoveryEvidence,
+    ReactionRecoveryUnresolved,
     ReactionRecoveryWitnessRequest,
     RetainedCoalescedReaction,
 )
-from tank.reaction_recovery import recovery_backfill_from_record, recovery_eligibility
+from tank.contracts.stored_documents import ImmutableDocument, NativeBackfillWitness
+from tank.reaction_recovery import (
+    RecoveryWitnessIndex,
+    admit_recovery_witnesses,
+    recovery_backfill_from_record,
+    recovery_eligibility,
+    recovery_idempotency_key,
+)
+from tank.storage import MemoryRepository
 from tank.time_precision import Timestamp, collection_clock
 from tank.util import sha256
 
@@ -303,3 +312,102 @@ def test_source_admission_does_not_invent_missing_required_facts(field: str) -> 
     del source[field]
     with pytest.raises(ValidationError):
         recovery_backfill_from_record(source)
+
+
+async def recovery_witness_rows() -> tuple[ReactionRecoveryWitnessRequest, RecoveryWitnessIndex]:
+    fields = recovery_evidence_fields()
+    original = fields["original"]
+    assert isinstance(original, dict)
+    payload = original["command"]
+    assert isinstance(payload, dict)
+    payload = payload | {"_depends_on": []}
+    repo = MemoryRepository()
+    original_job = await repo.enqueue("REACTION_CAPTURE", payload, "original", max_attempts=5)
+    peer = await repo.enqueue(
+        "REACTION_CAPTURE", payload | {"change_id": "other-change:POST_24H"}, "peer", max_attempts=5
+    )
+    original_id, peer_id = original_job["job_id"], peer["job_id"]
+    assert isinstance(original_id, str) and isinstance(peer_id, str)
+    identity = recovery_idempotency_key(original_id, sha256(payload), peer_id)
+    change_id = payload["change_id"]
+    assert isinstance(change_id, str)
+    request = ReactionRecoveryWitnessRequest(
+        enqueue_idempotency_key=identity,
+        original_job_id=original_id,
+        peer_job_id=peer_id,
+        source_backfill_id="source",
+        checkpoint_key="event:token:POST_24H:1",
+        change_marker_key="reaction-change:" + change_id,
+        change_owner_key="reaction-change-owner:" + change_id,
+        recovery_link_key=identity,
+    )
+    checkpoint = fields["checkpoint"]
+    assert isinstance(checkpoint, dict)
+    checkpoint_receipt = checkpoint["receipt"]
+    assert isinstance(checkpoint_receipt, dict)
+    checkpoint_record = {
+        name: value for name, value in checkpoint_receipt.items() if name not in {"kind", "checkpoint_key"}
+    } | {
+        "anchor": checkpoint["anchor"],
+        **collection_clock("2026-10-20T11:00:00Z").fields("captured_at"),
+    }
+    return request, {
+        ("ops.jobs", original_id): ImmutableDocument(
+            document=original_job
+            | {
+                "status": "DONE",
+                "attempts": 1,
+                "result": {"coalesced_into": peer_id},
+                **collection_clock().fields("finished_at"),
+            },
+            immutable=False,
+        ),
+        ("ops.jobs", peer_id): ImmutableDocument(
+            document=peer | {"status": "FAILED", "attempts": 5, **collection_clock().fields("finished_at")},
+            immutable=False,
+        ),
+        ("mkt.backfill_runs", "source"): NativeBackfillWitness(
+            record={
+                "backfill_id": "source",
+                "event_id": "event",
+                "token_id": "token",
+                "status": "FAILED",
+                **Timestamp("2026-10-19T00:00:00Z", "EXACT").fields("anchor"),
+                **collection_clock("2026-10-20T12:00:00Z").fields("finished_at"),
+            }
+        ),
+        ("out.reaction_checkpoints", request.checkpoint_key): ImmutableDocument(
+            document=checkpoint_record, immutable=True
+        ),
+        ("ops.scheduler_checkpoints", request.change_marker_key): None,
+        ("ops.scheduler_checkpoints", request.change_owner_key): None,
+        ("ops.scheduler_checkpoints", request.recovery_link_key): None,
+    }
+
+
+async def test_recovery_admits_actual_queue_payload_with_metadata_and_distinct_native_row() -> None:
+    request, rows = await recovery_witness_rows()
+    before = rows[("ops.jobs", request.original_job_id)]
+    assert isinstance(before, ImmutableDocument)
+    result = admit_recovery_witnesses(request, rows)
+    assert isinstance(result, ReactionRecoveryEvidence)
+    eligibility = recovery_eligibility(result)
+    assert eligibility.kind == "ELIGIBLE"
+    payload = before.document["payload"]
+    assert isinstance(payload, dict)
+    assert payload["_depends_on"] == []
+    assert result.original.payload_revision == sha256(payload)
+    assert before.document["result"] == {"coalesced_into": request.peer_job_id}
+
+
+async def test_native_backfill_cannot_borrow_document_immutability_metadata() -> None:
+    request, admitted_rows = await recovery_witness_rows()
+    rows = dict(admitted_rows)
+    source = rows[("mkt.backfill_runs", request.source_backfill_id)]
+    assert isinstance(source, NativeBackfillWitness)
+    rows[("mkt.backfill_runs", request.source_backfill_id)] = ImmutableDocument(
+        document=source.record, immutable=True
+    )
+    result = admit_recovery_witnesses(request, rows)
+    assert isinstance(result, ReactionRecoveryUnresolved)
+    assert result.reason == "WITNESS_UNADMITTED"
