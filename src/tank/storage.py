@@ -476,6 +476,12 @@ def _queue_anchor(value: TimeInput | Timestamp | None, field: str) -> Timestamp:
     return propagate_timestamp({field: value}, field)
 
 
+def _replace_job_clock_fields(record: Record, field: str, stamp: Timestamp) -> None:
+    for name in timestamp_owned_fields(field):
+        record.pop(name, None)
+    record.update(stamp.fields(field))
+
+
 def _stamp_job_clock_fields(record: Record) -> Record:
     """Explicit lifecycle clock policy for the in-memory test double, mirroring SQL026."""
     created = (
@@ -938,13 +944,13 @@ class QueueMixin(RepositoryQueries):
                 if expired
                 else ("FAILED" if envelope.attempts >= envelope.max_attempts else "QUEUED")
             )
-            job.update(
-                offset_schedule(collection_clock(), timedelta(seconds=retry_after)).fields("run_after")
+            _replace_job_clock_fields(
+                job, "run_after", offset_schedule(collection_clock(), timedelta(seconds=retry_after))
             )
             if job["status"] in ("FAILED", "EXPIRED"):
-                job.update(collection_clock().fields("finished_at"))
+                _replace_job_clock_fields(job, "finished_at", collection_clock())
             else:
-                job.update(Timestamp(None, None, "PENDING").fields("finished_at"))
+                _replace_job_clock_fields(job, "finished_at", Timestamp(None, None, "PENDING"))
             await self.put("ops.jobs", job_id, job)
 
     async def _transition_job(self, job_id: str, status: Literal["DONE"]) -> None:
@@ -954,7 +960,7 @@ class QueueMixin(RepositoryQueries):
                 raise KeyError(job_id)
             if job["status"] == "RUNNING":
                 job["status"] = status
-                job.update(collection_clock().fields("finished_at"))
+                _replace_job_clock_fields(job, "finished_at", collection_clock())
                 await self.put("ops.jobs", job_id, job)
 
 
@@ -1146,10 +1152,10 @@ class MemoryRepository(QueueMixin):
                     continue
                 if job.expires_at is not None and parse_time(job.expires_at) <= now:
                     document["status"] = "EXPIRED"
-                    document.update(collection_clock().fields("finished_at"))
+                    _replace_job_clock_fields(document, "finished_at", collection_clock())
                 elif job.attempts >= job.max_attempts and job.recovery_reclaim is not True:
                     document["status"] = "FAILED"
-                    document.update(collection_clock().fields("finished_at"))
+                    _replace_job_clock_fields(document, "finished_at", collection_clock())
                 elif parse_time(job.run_after) <= now:
                     candidates.append((job, document))
             running: dict[str, int] = {}
@@ -1225,14 +1231,14 @@ class MemoryRepository(QueueMixin):
                 expired = job.expires_at is not None and parse_time(job.expires_at) <= utcnow()
                 document["status"] = "EXPIRED" if expired else "QUEUED"
                 if expired:
-                    document.update(collection_clock().fields("finished_at"))
+                    _replace_job_clock_fields(document, "finished_at", collection_clock())
                 else:
                     document.update(
                         recovery_reclaim=True,
                         recovery_count=(0 if job.recovery_count is None else job.recovery_count) + 1,
                     )
-                    document.update(collection_clock().fields("recovery_at"))
-                    document.update(Timestamp(None, None, "PENDING").fields("finished_at"))
+                    _replace_job_clock_fields(document, "recovery_at", collection_clock())
+                    _replace_job_clock_fields(document, "finished_at", Timestamp(None, None, "PENDING"))
                 count += 1
             return count
 
@@ -1901,14 +1907,21 @@ class PostgresRepository(QueueMixin):
 
     async def recover_jobs(self) -> int:
         async with self.transaction():
-            cursor = await self._conn().execute("""UPDATE ops.jobs
+            cursor = await self._conn().execute(
+                """UPDATE ops.jobs
               SET status=CASE WHEN expires_at<=now() THEN 'EXPIRED' ELSE 'QUEUED' END,
-              document=document||jsonb_build_object('status',CASE WHEN expires_at<=now() THEN 'EXPIRED' ELSE 'QUEUED' END,
+              document=(document - %(recovery_fields)s::text[] - %(finished_fields)s::text[])
+                ||jsonb_build_object('status',CASE WHEN expires_at<=now() THEN 'EXPIRED' ELSE 'QUEUED' END,
                 'recovery_reclaim',expires_at IS NULL OR expires_at>now(),
                 'recovery_at',to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
                 'recovery_at_prec','COLLECTION_ONLY','recovery_at_prec_reason',NULL,
                 'recovery_count',coalesce((document->>'recovery_count')::int,0)+1)
-              WHERE status='RUNNING'""")
+              WHERE status='RUNNING'""",
+                {
+                    "recovery_fields": sorted(timestamp_owned_fields("recovery_at")),
+                    "finished_fields": sorted(timestamp_owned_fields("finished_at")),
+                },
+            )
             return cursor.rowcount
 
 
