@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping, Sequence
 from decimal import Decimal, InvalidOperation
+from typing import Literal
 
 from pydantic import JsonValue
 
@@ -111,6 +112,7 @@ def decode_oi_inputs(
 ) -> OIReadSnapshot:
     known: dict[str, DerivativeInstrument] = {}
     scopes: dict[str, bytes] = {}
+    registry_ids: set[str] = set()
     for original in instruments:
         if original.get("token_id") != token_id or original.get("market_type") != "PERP_LINEAR":
             continue
@@ -120,42 +122,50 @@ def decode_oi_inputs(
             raise ValueError("OI instrument read cannot contain ambiguous duplicate identities")
         known[instrument.instrument_id] = instrument
         scopes[instrument.instrument_id] = payload
+        registry_ids.add(instrument.instrument_id)
     points: list[OIObservation] = []
     sources: list[OISourceProjection] = []
     for index, original in enumerate(observations):
         if original.get("token_id") is not None and original.get("token_id") != token_id:
+            foreign_iid = original.get("instrument_id")
+            if isinstance(foreign_iid, str) and foreign_iid in registry_ids:
+                raise ValueError("OI source token contradicts its declared instrument scope")
             continue
         row, payload = _wire(original)
         iid = _required_text(row, "instrument_id")
-        instrument = known.get(iid)
-        if instrument is None:
-            instrument = _instrument(row)
-            if instrument.token_id != token_id:
-                raise ValueError("OI source must belong to its actual requested subject")
-            known[iid] = instrument
-            scopes[iid] = payload
-            basis = "SOURCE_ROW"
-        else:
+        basis: Literal["INSTRUMENT_READ", "SOURCE_ROW"]
+        if iid in registry_ids:
+            selected = known[iid]
+            scope_payload = scopes[iid]
             basis = "INSTRUMENT_READ"
+        else:
+            selected = _instrument(row)
+            if selected.token_id != token_id:
+                raise ValueError("OI source must belong to its actual requested subject")
+            if iid in known and known[iid] != selected:
+                raise ValueError("OI source rows cannot contradict one instrument's actual scope")
+            known[iid] = selected
+            scope_payload = payload
+            basis = "SOURCE_ROW"
         descriptor = OISourceDescriptor(
             format="OI_INPUT_READ_V1",
             collection="mkt.oi",
             row_index=index,
             original_projection_sha256=sha256(payload),
-            scope_projection_sha256=sha256(scopes[iid]),
+            scope_projection_sha256=sha256(scope_payload),
             scope_basis=basis,
-            instrument=instrument,
+            instrument=selected,
         )
         reference = OIInputEvidenceRef(
             row_index=index,
             source_projection_sha256=descriptor.original_projection_sha256,
             source_evidence_sha256=sha256(descriptor),
         )
-        points.append(_point(row, instrument, reference))
+        points.append(_point(row, selected, reference))
         sources.append(
             OISourceProjection(
                 original=payload,
-                scope_original=scopes[iid],
+                scope_original=scope_payload,
                 descriptor=descriptor,
                 reference=reference,
             )
