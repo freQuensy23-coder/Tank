@@ -51,14 +51,18 @@ class PublicationHistory(DomainModel):
         )
 
 
+def publication_revision_from_record(record: Mapping[str, JsonValue]) -> PublicationRevisionRef:
+    try:
+        fields = {key: record[key] for key in ("event_id", "alert_id", "version", "kind")}
+    except KeyError as exc:
+        raise ValueError("Publication revision is missing a required identity fact") from exc
+    return PublicationRevisionRef.model_validate(fields)
+
+
 def publication_history_from_records(
     event_id: str, records: Iterable[Mapping[str, JsonValue]]
 ) -> PublicationHistory:
-    revisions: list[PublicationRevisionRef] = []
-    for record in records:
-        try:
-            fields = {key: record[key] for key in ("event_id", "alert_id", "version", "kind")}
-        except KeyError as exc:
-            raise ValueError("Publication revision is missing a required identity fact") from exc
-        revisions.append(PublicationRevisionRef.model_validate(fields))
-    return PublicationHistory(event_id=event_id, revisions=tuple(revisions))
+    return PublicationHistory(
+        event_id=event_id,
+        revisions=tuple(publication_revision_from_record(record) for record in records),
+    )

@@ -129,3 +129,64 @@ def test_unknown_kind_and_blank_identity_are_not_inferred() -> None:
     row["kind"] = "LEGACY_UNKNOWN"
     with pytest.raises(ValidationError):
         publication_history_from_records("event-equal-clock", [row])
+
+
+async def test_actual_repository_first_full_and_scoped_read_use_numeric_identity() -> None:
+    from tank.analysis.publication_history_repository import PublicationHistoryRepository
+
+    repo = MemoryRepository()
+    await repo.open()
+    try:
+        for version in (9, 10):
+            await repo.put(
+                "out.alerts", "alert-equal-clock:" + str(version), record(version, "FULL"), immutable=True
+            )
+        reader = PublicationHistoryRepository(repo)
+        history = await reader.history("event-equal-clock")
+        first, newest = history.first_full(), history.latest_revision()
+        assert first is not None and first.version == 9
+        assert newest is not None and newest.version == 10
+        assert (await reader.read_record(first))["version"] == 9
+        assert (await reader.read_record(newest))["version"] == 10
+    finally:
+        await repo.close()
+
+
+async def test_actual_repository_mismatched_stored_key_or_identity_refuses() -> None:
+    from tank.analysis.publication_history_repository import PublicationHistoryRepository
+
+    repo = MemoryRepository()
+    await repo.open()
+    try:
+        await repo.put("out.alerts", "alert-equal-clock:9", record(10))
+        reader = PublicationHistoryRepository(repo)
+        claimed = PublicationRevisionRef(
+            event_id="event-equal-clock", alert_id="alert-equal-clock", version=9, kind="UPDATE"
+        )
+        with pytest.raises(ValueError, match="disagrees with its scoped revision identity"):
+            await reader.read_record(claimed)
+        newest = (await reader.history("event-equal-clock")).latest_revision()
+        assert newest is not None and newest.version == 10
+        with pytest.raises(ValueError, match="missing its actual immutable row"):
+            await reader.read_record(newest)
+    finally:
+        await repo.close()
+
+
+async def test_actual_repository_immutable_revision_cannot_change_after_selection() -> None:
+    from tank.analysis.publication_history_repository import PublicationHistoryRepository
+    from tank.storage import ImmutableRecordError
+
+    repo = MemoryRepository()
+    await repo.open()
+    try:
+        original = record(9)
+        await repo.put("out.alerts", "alert-equal-clock:9", original)
+        reader = PublicationHistoryRepository(repo)
+        selected = (await reader.history("event-equal-clock")).latest_revision()
+        assert selected is not None
+        with pytest.raises(ImmutableRecordError):
+            await repo.put("out.alerts", "alert-equal-clock:9", record(10))
+        assert await reader.read_record(selected) == original
+    finally:
+        await repo.close()
