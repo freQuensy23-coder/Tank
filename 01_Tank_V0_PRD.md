@@ -164,7 +164,7 @@ Rules:
 
 | ID | Source | What Tank reads | Max delay |
 |---|---|---|---|
-| S29 | X | Own posts of the 86 accounts in §4.3, read from their public profiles through an Apify actor (D3); reposts and the text of quoted posts are not read | 1 min |
+| S29 | X | Own posts of the 86 accounts in §4.3, with the posts they quote, reply to or link, read from their public profiles through an Apify actor (D3); reposts and replies to other accounts are not read | 1 min |
 
 **News**
 
@@ -260,7 +260,7 @@ Each requirement describes behavior the operator can observe or a test can check
 | FR-D-01 | Tank MUST see every new item of every source in §4.2 within its max delay and MUST record when it first saw it. |
 | FR-D-02 | Once an event is graded MAJOR or higher (§6.3), Tank MUST check the official sources of the organizations involved every 15 s for 2 h; around a known milestone (vote end, effective date, launch time) it MUST check every 15 s from 5 min before until confirmed or 2 h after. |
 | FR-D-03 | A new market or a status change on any of the 6 venues MUST become an item within its max delay (S14). |
-| FR-D-04 | Tank MUST capture every own post of the X accounts in §4.3 that the account's public profile shows, with author, text, publication time and link. Reposts and the text of quoted posts are not captured. When more posts appear between two reads than a profile shows, Tank marks the gap and the source as degraded. |
+| FR-D-04 | Tank MUST capture every own post of the X accounts in §4.3 that the account's public profile shows, with author, complete text, publication time and link, together with the posts it quotes, replies to or links, each with its author, link, time and text. Reposts and replies to other accounts are not captured: a signed-out profile does not show them. When more posts appear between two reads than a profile shows, Tank marks the gap and the source as degraded. |
 | FR-D-05 | Tank MUST use only free data sources; the one paid reader is the Apify actor that reads X (D3). |
 | FR-D-06 | News, GitHub commits and X posts of founders, C-level and the other accounts of §4.3 MUST go to the full analysis when they are about crypto — crypto assets, exchanges, regulation, or a project of the universe — and are kept with the reason for review otherwise. The other sources and the organization accounts always go to the full analysis. (How the check works: 03 §3.1.) |
 
