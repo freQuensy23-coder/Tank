@@ -229,3 +229,25 @@ test('actual PG missing history SELECT result refuses without claiming work or r
   assert.ok(faults >= 2);
   assert.deepEqual(await persisted(f.sql), before);
 });
+
+for (const kind of ['future', 'duplicate']) {
+  test('actual PG refuses ' + kind + ' source positions before continuation claims', async (t: TestContext): Promise<void> => {
+    const f = await fixture(t);
+    const ids = kind === 'future' ? ['future'] : ['first', 'second'];
+    const documents = new Map<string, string>();
+    for (const id of ids) {
+      const document = JSON.stringify({id, type: 'session.status_running', processedAt: '2026-10-26T00:00:00Z',
+        source_position: {revision: kind === 'future' ? 2 : 1, index: 0}});
+      documents.set(id, document);
+      await f.sql.prepare('INSERT INTO managed_session_events(workspace_id,session_id,id,type,document,processed_at) VALUES(?,?,?,?,?,?)')
+        .bind(f.scope.workspaceId, f.scope.sessionId, id, 'session.status_running', document, 0).run();
+    }
+    const before = await persisted(f.sql);
+    await assert.rejects(loadSessionContinuationSnapshot(f.sql, f.scope), /Invalid persisted continuation history source order/);
+    await assert.rejects(f.store.claim({...f.scope, ownerId: 'worker', attemptId: 'attempt', claimedAt: '2026-10-26T00:00:01Z', leaseTtlMs: 10000}), /Invalid persisted continuation history source order/);
+    assert.deepEqual(await persisted(f.sql), before);
+    const rows = await f.sql.prepare('SELECT id,document FROM managed_session_events ORDER BY id').all<{id: string; document: string}>();
+    assert.ok(rows.results !== undefined && rows.results.length === documents.size);
+    for (const row of rows.results) assert.equal(row.document, documents.get(row.id));
+  });
+}

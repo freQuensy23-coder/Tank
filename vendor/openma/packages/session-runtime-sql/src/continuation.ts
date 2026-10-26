@@ -89,6 +89,7 @@ function continuationHistoryStatement(statement: SqlStatement): SqlStatement {
     async all<T = unknown>(): Promise<SqlSelectResult<T>> {
       const result = await statement.all<T>();
       let revision: number | undefined;
+      const positions = new Set<string>();
       for (const value of requiredContinuationRows(result.results)) {
         const row = continuationRow(value, ['revision', 'history_kind', 'document']);
         const current = rowInteger(row.revision, 0);
@@ -97,7 +98,12 @@ function continuationHistoryStatement(statement: SqlStatement): SqlStatement {
         if (row.history_kind === null) {
           if (row.document !== null) throw new ContinuationProtocolError('Invalid persisted continuation history row');
         } else if (row.history_kind === 'event' || row.history_kind === 'initial') {
-          decodeContinuationHistorySourceDocument(rowString(row.document));
+          const metadata = decodeContinuationHistorySourceDocument(rowString(row.document));
+          if (row.history_kind === 'event' && metadata.position !== undefined) {
+            const key = `${metadata.position.revision}:${metadata.position.index}`;
+            if (metadata.position.revision > current || positions.has(key)) throw new ContinuationProtocolError('Invalid persisted continuation history source order');
+            positions.add(key);
+          }
         } else throw new ContinuationProtocolError('Invalid persisted continuation history row');
       }
       return result;
