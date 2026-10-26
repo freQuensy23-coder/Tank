@@ -10,6 +10,7 @@ from postgres_helpers import PostgresTemplate
 from pydantic import JsonValue
 from pydantic_settings import SettingsConfigDict
 
+from tank.contracts.session_followups import FollowupRefusalTarget
 from tank.question_answers import record_answer
 from tank.settings import Settings
 from tank.storage import MemoryRepository, PostgresRepository
@@ -57,7 +58,9 @@ async def operate(inbox: TelegramInbox, operation: Operation, row: dict[str, Jso
     if operation == "answer":
         await inbox.answer({"question_id": "q"})
     elif operation == "document":
-        await inbox.send_session_file("q", "call", "report.txt", b"actual bytes")
+        await inbox.send_session_file(
+            FollowupRefusalTarget(question_id="q", session_id="s"), "call", "report.txt", b"actual bytes"
+        )
     elif operation == "notice":
         await inbox.notice(row, "actual notice", "IGNORED", reason="NO_REFERENCE")
     else:
