@@ -19,10 +19,10 @@ from source_support import fixture_http_admission
 
 from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.contracts import DomainModel
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.json import decode_json, encode_json
 from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.scheduler_results import ConditionEvaluationResult
+from tank.job_repository import JobRepository
 from tank.market.capture_contracts import CaptureReadiness
 from tank.request_budget import RequestBudgets
 from tank.runtime import Runtime

@@ -4,8 +4,8 @@ import pytest
 from pydantic import JsonValue
 from test_storage import repo as repo
 
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.progress import JobFailureProgressView
+from tank.job_repository import JobRepository
 from tank.runtime_contracts import NoFailureProgress, SuppliedFailureReason
 from tank.runtime_dispatch_contracts import ClaimedWork, WorkerFailureRequest
 from tank.runtime_failure_commands import terminal_work_failure

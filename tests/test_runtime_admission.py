@@ -4,8 +4,8 @@ import pytest
 from pydantic import JsonValue
 from test_storage import repo as repo
 
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.session_admission import SessionTarget
+from tank.job_repository import JobRepository
 from tank.runtime_admission import worker_admission
 from tank.runtime_dispatch_contracts import ClaimedWork
 from tank.runtime_worker_repository import RepositoryWorkerQueue

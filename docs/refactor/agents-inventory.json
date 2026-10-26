@@ -1764,11 +1764,11 @@
     },
     {
       "path": "src/tank/agents/pipeline.py",
-      "lines": 308,
+      "lines": 309,
       "functions": [
         {
           "symbol": "PipelineSettings.foundry_api_key",
-          "line": 53,
+          "line": 54,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1776,7 +1776,7 @@
         },
         {
           "symbol": "PipelineSettings.foundry_endpoint",
-          "line": 55,
+          "line": 56,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1784,7 +1784,7 @@
         },
         {
           "symbol": "PipelineSettings.foundry_deployment",
-          "line": 57,
+          "line": 58,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1792,7 +1792,7 @@
         },
         {
           "symbol": "PipelineSettings.replay",
-          "line": 59,
+          "line": 60,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1800,14 +1800,6 @@
         },
         {
           "symbol": "PipelineSettings.load_config",
-          "line": 61,
-          "missing_parameters": [],
-          "missing_return": false,
-          "dict_nodes": 0,
-          "get_calls": 0
-        },
-        {
-          "symbol": "PipelineSettings.thresholds",
           "line": 62,
           "missing_parameters": [],
           "missing_return": false,
@@ -1815,8 +1807,16 @@
           "get_calls": 0
         },
         {
+          "symbol": "PipelineSettings.thresholds",
+          "line": 63,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
           "symbol": "PipelineStore.iter_range",
-          "line": 66,
+          "line": 67,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1824,7 +1824,7 @@
         },
         {
           "symbol": "priority",
-          "line": 78,
+          "line": 79,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1832,7 +1832,7 @@
         },
         {
           "symbol": "Pipeline.__init__",
-          "line": 87,
+          "line": 88,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1840,7 +1840,7 @@
         },
         {
           "symbol": "Pipeline.cutoff",
-          "line": 106,
+          "line": 107,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1848,7 +1848,7 @@
         },
         {
           "symbol": "Pipeline.source_item",
-          "line": 119,
+          "line": 120,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1856,7 +1856,7 @@
         },
         {
           "symbol": "Pipeline.save_source",
-          "line": 130,
+          "line": 131,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1864,7 +1864,7 @@
         },
         {
           "symbol": "Pipeline.item_view",
-          "line": 137,
+          "line": 138,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1872,7 +1872,7 @@
         },
         {
           "symbol": "Pipeline.state",
-          "line": 141,
+          "line": 142,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1880,7 +1880,7 @@
         },
         {
           "symbol": "Pipeline.score",
-          "line": 144,
+          "line": 145,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1888,7 +1888,7 @@
         },
         {
           "symbol": "Pipeline.score_identity",
-          "line": 147,
+          "line": 148,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1896,7 +1896,7 @@
         },
         {
           "symbol": "Pipeline._score_record",
-          "line": 152,
+          "line": 153,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1904,7 +1904,7 @@
         },
         {
           "symbol": "Pipeline.filter_item_wire",
-          "line": 157,
+          "line": 158,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1912,7 +1912,7 @@
         },
         {
           "symbol": "Pipeline.filter_item",
-          "line": 161,
+          "line": 162,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1920,7 +1920,7 @@
         },
         {
           "symbol": "Pipeline.registry",
-          "line": 217,
+          "line": 218,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1928,7 +1928,7 @@
         },
         {
           "symbol": "Pipeline.selector",
-          "line": 220,
+          "line": 221,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1936,7 +1936,7 @@
         },
         {
           "symbol": "Pipeline.identities",
-          "line": 223,
+          "line": 224,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1944,7 +1944,7 @@
         },
         {
           "symbol": "Pipeline.event_view",
-          "line": 226,
+          "line": 227,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1952,7 +1952,7 @@
         },
         {
           "symbol": "Pipeline.routing_state",
-          "line": 229,
+          "line": 230,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1960,7 +1960,7 @@
         },
         {
           "symbol": "Pipeline._candidate_events",
-          "line": 232,
+          "line": 233,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1968,7 +1968,7 @@
         },
         {
           "symbol": "Pipeline.candidate_events",
-          "line": 237,
+          "line": 238,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1976,7 +1976,7 @@
         },
         {
           "symbol": "Pipeline.route_item_wire",
-          "line": 242,
+          "line": 243,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -1984,7 +1984,7 @@
         },
         {
           "symbol": "Pipeline.route_item",
-          "line": 246,
+          "line": 247,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -1992,7 +1992,7 @@
         },
         {
           "symbol": "Pipeline.close",
-          "line": 306,
+          "line": 307,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5272,11 +5272,11 @@
     },
     {
       "path": "src/tank/runtime_worker_repository.py",
-      "lines": 244,
+      "lines": 245,
       "functions": [
         {
           "symbol": "RepositoryWorkerQueue.__init__",
-          "line": 29,
+          "line": 30,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5284,7 +5284,7 @@
         },
         {
           "symbol": "RepositoryWorkerQueue.claim",
-          "line": 33,
+          "line": 34,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 2,
@@ -5292,7 +5292,7 @@
         },
         {
           "symbol": "RepositoryWorkerQueue.invalid_claim",
-          "line": 57,
+          "line": 58,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5300,7 +5300,7 @@
         },
         {
           "symbol": "RepositoryWorkerQueue.reject_invalid",
-          "line": 81,
+          "line": 82,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5308,7 +5308,7 @@
         },
         {
           "symbol": "RepositoryWorkerQueue.current",
-          "line": 84,
+          "line": 85,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5316,7 +5316,7 @@
         },
         {
           "symbol": "RepositoryWorkerQueue.terminal",
-          "line": 90,
+          "line": 91,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5324,15 +5324,15 @@
         },
         {
           "symbol": "RepositoryWorkerQueue.interrupt",
-          "line": 108,
+          "line": 109,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
           "get_calls": 0
         },
         {
-          "symbol": "RepositoryWorkerQueue.interrupt.interrupted",
-          "line": 114,
+          "symbol": "RepositoryWorkerQueue.interrupted",
+          "line": 115,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5340,15 +5340,15 @@
         },
         {
           "symbol": "RepositoryWorkerQueue.dependency",
-          "line": 126,
+          "line": 127,
           "missing_parameters": [],
           "missing_return": false,
-          "dict_nodes": 0,
+          "dict_nodes": 1,
           "get_calls": 1
         },
         {
           "symbol": "RepositoryWorkerQueue.dependencies",
-          "line": 137,
+          "line": 138,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 1,
@@ -5356,15 +5356,15 @@
         },
         {
           "symbol": "RepositoryWorkerQueue.requeue",
-          "line": 160,
+          "line": 161,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
           "get_calls": 0
         },
         {
-          "symbol": "RepositoryWorkerQueue.requeue.defer",
-          "line": 163,
+          "symbol": "RepositoryWorkerQueue.defer",
+          "line": 164,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5372,15 +5372,15 @@
         },
         {
           "symbol": "RepositoryWorkerQueue.expire",
-          "line": 187,
+          "line": 188,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
           "get_calls": 0
         },
         {
-          "symbol": "RepositoryWorkerQueue.expire.expire_due",
-          "line": 194,
+          "symbol": "RepositoryWorkerQueue.expire_due",
+          "line": 195,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5388,15 +5388,15 @@
         },
         {
           "symbol": "RepositoryWorkerQueue.complete",
-          "line": 204,
+          "line": 205,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
           "get_calls": 0
         },
         {
-          "symbol": "RepositoryWorkerQueue.complete.complete_current",
-          "line": 215,
+          "symbol": "RepositoryWorkerQueue.complete_current",
+          "line": 216,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5404,15 +5404,15 @@
         },
         {
           "symbol": "RepositoryWorkerQueue.fail",
-          "line": 220,
+          "line": 221,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
           "get_calls": 0
         },
         {
-          "symbol": "RepositoryWorkerQueue.fail.fail_current",
-          "line": 226,
+          "symbol": "RepositoryWorkerQueue.fail_current",
+          "line": 227,
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 0,
@@ -5514,6 +5514,186 @@
           "missing_parameters": [],
           "missing_return": false,
           "dict_nodes": 3,
+          "get_calls": 0
+        }
+      ]
+    },
+    {
+      "path": "src/tank/contracts/job_repository.py",
+      "lines": 57,
+      "functions": [
+        {
+          "symbol": "QueueStore.get",
+          "line": 20,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "QueueStore.put",
+          "line": 22,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "QueueStore.transaction",
+          "line": 31,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "QueueStore.lock",
+          "line": 33,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "QueueStore.enqueue",
+          "line": 35,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "QueueStore.claim_job",
+          "line": 47,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "QueueStore.transition_claimed_job",
+          "line": 49,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "QueueStore.quarantine_job_claim",
+          "line": 53,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "QueueStore.finish_job",
+          "line": 55,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "QueueStore.fail_job",
+          "line": 57,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        }
+      ]
+    },
+    {
+      "path": "src/tank/job_repository.py",
+      "lines": 101,
+      "functions": [
+        {
+          "symbol": "JobRepository.__init__",
+          "line": 16,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "JobRepository.transaction",
+          "line": 20,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "JobRepository.lock",
+          "line": 23,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "JobRepository.get",
+          "line": 26,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 1
+        },
+        {
+          "symbol": "JobRepository.put",
+          "line": 30,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "JobRepository.enqueue",
+          "line": 35,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "JobRepository.claim",
+          "line": 57,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "JobRepository.claim_with_revision",
+          "line": 61,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "JobRepository.reject_invalid",
+          "line": 93,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "JobRepository.finish",
+          "line": 97,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
+          "get_calls": 0
+        },
+        {
+          "symbol": "JobRepository.fail",
+          "line": 100,
+          "missing_parameters": [],
+          "missing_return": false,
+          "dict_nodes": 0,
           "get_calls": 0
         }
       ]

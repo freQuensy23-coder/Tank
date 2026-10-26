@@ -9,7 +9,6 @@ from runtime_public_fixtures import public_runtime
 from test_runtime_condition_evaluation import finished_attempt
 from test_storage import repo as repo
 
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.scheduler_commands import (
     InitialReactionCommand,
     ManualReactionRevisionCommand,
@@ -17,6 +16,7 @@ from tank.contracts.scheduler_commands import (
     RevisedReactionCommand,
 )
 from tank.contracts.scheduler_results import CapturedReaction, ReactionCaptureResult
+from tank.job_repository import JobRepository
 from tank.runtime_reaction import reaction_job_command, validate_reaction_receipt
 from tank.storage import StorageBackend
 

@@ -7,8 +7,8 @@ from pydantic import JsonValue, ValidationError
 from test_job_claim_revision import requeued_job_with_partial_receipt_clock
 from test_storage import repo as repo
 
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import InvalidJobClaim, JobClaimMutation, JobClaimScope, JobEnvelope
+from tank.job_repository import JobRepository
 from tank.models import Record
 from tank.storage import StorageBackend
 from tank.time_precision import Timestamp, chosen_boundary, collection_clock

@@ -3056,6 +3056,27 @@
         "test_actual_tick_queue_worker_preserves_cutoff_and_stores_real_evaluation_result",
         "test_real_answer_error_requeues_or_finishes_using_reported_or_application_delay"
       ]
+    },
+    {
+      "sites": [
+        {
+          "path": "src/tank/contracts/job_repository.py",
+          "symbol": "QueueStore"
+        },
+        {
+          "path": "src/tank/job_repository.py",
+          "symbol": "JobRepository"
+        }
+      ],
+      "kind": "queue port inward, concrete persistence adapter outward",
+      "reason": "QueueStore declares the actual ten storage capabilities and required records remain in contracts.jobs. Concrete async get/put/enqueue/claim/quarantine/finish/fail I/O now lives in tank.job_repository, with no compatibility re-export from contracts. Class AST is identical to caller-qualified0d; raw claim revision, fresh token, sparse mutation, original payload and nullable historical observations are unchanged. Wire JSON mappings remain only at actual queue/store admission and serialization boundaries, never substitutes for concrete application commands. Broader generic Repository/source adapter and whole-application architecture work remains open.",
+      "validation": [
+        "test_queue_port_runs_real_lifecycle_without_document_query_capabilities",
+        "test_queue_port_keeps_actual_transaction_rollback",
+        "test_command_quarantine_uses_original_claim_revision_despite_valid_model_normalization",
+        "test_reclaimed_same_attempt_refuses_completion_from_previous_controller",
+        "test_atomic_completion_serializes_recovery_until_real_write_commits"
+      ]
     }
   ]
 }

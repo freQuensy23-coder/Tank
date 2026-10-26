@@ -18,7 +18,6 @@ from runtime_public_fixtures import public_runtime
 from source_support import fixture_http_admission, fixture_versions
 
 from tank.contracts import DomainModel
-from tank.contracts.job_repository import JobRepository
 from tank.contracts.jobs import JobEnvelope
 from tank.contracts.scheduler_commands import (
     ReactionCaptureCommand,
@@ -33,6 +32,7 @@ from tank.contracts.scheduler_results import (
     UnchangedReaction,
     applied_reaction_change_receipt,
 )
+from tank.job_repository import JobRepository
 from tank.market.service import MarketService
 from tank.runtime_dispatch_contracts import ClaimedWork, RunningJobClaim
 from tank.scheduler import REACTION_RETRY_S, Scheduler
