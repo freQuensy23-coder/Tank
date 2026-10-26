@@ -6,13 +6,14 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 from test_condition_graph_codec import EvidenceLookup, condition_wire_clocks, projection
-from test_condition_graph_contracts import AT, windowed_spot_graph
+from test_condition_graph_contracts import AT, basic_spot_graph, windowed_spot_graph
 
 from tank.analysis.condition_graph_codec import encode_scoped_condition_spot
 from tank.analysis.condition_graph_contracts import (
     ConditionCohortComparison,
     ConditionInterval,
     ConditionWindow,
+    DirectWindowConditionSpot,
     ObservedConditionCohort,
     ObservedConditionCohortComparison,
     ObservedConditionComposite,
@@ -243,3 +244,57 @@ def test_requested_spot_refuses_another_window_or_changed_coverage_before_lookup
     state = type(state).model_validate(state.model_copy(update={"coverage": coverage}))
     with pytest.raises(ValidationError, match="selected spot financial or coverage facts"):
         ConditionRequestedSpotView(requested=source, state=state)
+
+
+def test_direct_window_requires_no_cross_window_computation_and_preserves_native_facts() -> None:
+    from tank.analysis.condition_graph_codec import encode_requested_condition_spot
+    from tank.analysis.spot_enrichment import ConditionRequestedSpotView
+
+    basic = basic_spot_graph()
+    scoped = windowed_spot_graph()
+    direct = DirectWindowConditionSpot.from_basic(
+        basic, interval=scoped.interval, coverage_through=scoped.coverage_through
+    )
+    assert direct.composite_max == basic.composite_max
+    assert direct.exact_majority == basic.exact_majority
+    assert direct.coverage == basic.coverage
+    lookup = EvidenceLookup(projection())
+    wire = encode_requested_condition_spot(
+        ConditionRequestedSpotView(requested=direct, state=None), lookup, clocks=condition_wire_clocks()
+    )
+    assert wire["enrichment_phase"] == "DIRECT_WINDOW"
+    assert wire["composite_cohort_status"] == "NOT_REQUESTED"
+    assert "composite_cohort_reason" not in wire
+    assert wire["cohort_consistent"] == {}
+    assert wire["cohort_comparisons_status"] == "NOT_REQUESTED"
+    assert wire["size_profile_status"] == "NOT_REQUESTED"
+    assert wire["direction"] == basic.direction
+    assert wire["observed_at_prec"] == scoped.coverage_through.precision
+    assert lookup.calls == 0
+    assert DirectWindowConditionSpot.model_validate_json(direct.model_dump_json()) == direct
+    enriched = cohort_phase().spots["W1H"]
+    view = ConditionRequestedSpotView(requested=direct, state=enriched)
+    assert (
+        encode_requested_condition_spot(view, lookup, clocks=condition_wire_clocks())["enrichment_phase"]
+        == "COHORT_COMPARISONS"
+    )
+
+
+def test_direct_window_refuses_unproven_coverage_and_computed_cohort_padding() -> None:
+    from tank.time_precision import Timestamp
+
+    basic = basic_spot_graph()
+    scoped = windowed_spot_graph()
+    with pytest.raises(ValidationError, match="actual requested cutoff"):
+        DirectWindowConditionSpot.from_basic(
+            basic,
+            interval=scoped.interval,
+            coverage_through=Timestamp(value=None, precision=None, precision_reason="NOT_CAPTURED"),
+        )
+    stamp = Timestamp(value=scoped.coverage_through.value, precision=None, precision_reason="NOT_CAPTURED")
+    direct = DirectWindowConditionSpot.from_basic(basic, interval=scoped.interval, coverage_through=stamp)
+    assert direct.coverage_through == stamp
+    with pytest.raises(ValidationError):
+        DirectWindowConditionSpot.model_validate(
+            direct.model_copy(update={"composite_cohort": scoped.composite_cohort})
+        )

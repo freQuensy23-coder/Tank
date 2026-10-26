@@ -6,6 +6,7 @@ from pydantic import AliasChoices, ConfigDict, Field, JsonValue, RootModel, mode
 
 from tank.analysis.watch_contracts import MilestoneSnapshot, TimedReviewCondition, WatchCall, WatchCondition
 from tank.contracts import DomainModel
+from tank.contracts.milestone_checks import ScheduledMilestoneCheck
 from tank.contracts.progress import JobFailureProgressView
 from tank.contracts.question_retirement import QuestionFailureRefusalReceipt
 from tank.contracts.scalars import FalseFlag, TrueFlag
@@ -55,14 +56,8 @@ class EvalConditionsJob(JobPayload):
     cutoff_bucket_anchor: BucketAnchor | None = None
 
 
-class MilestoneCheckJob(JobPayload):
-    event_id: str
-    milestone: str
-    due_at: str
-    due_at_prec: str | None
-    due_at_prec_reason: str | None
-    source_id: str | None
-    due_at_bucket_anchor: BucketAnchor | None = None
+class MilestoneCheckJob(ScheduledMilestoneCheck, JobPayload):
+    pass
 
 
 class ReactionAnchor(DomainModel):

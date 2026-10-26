@@ -1,12 +1,19 @@
 """Typed queue-envelope adapter; concrete application commands belong to dispatchers."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from typing import Protocol, Self
 
 from pydantic import JsonValue, ValidationError
 
-from tank.contracts.jobs import ClaimedJob, InvalidJobClaim, JobClaimRevision, JobEnvelope
+from tank.contracts.jobs import (
+    ClaimedJob,
+    InvalidJobClaim,
+    JobClaimMutation,
+    JobClaimRevision,
+    JobClaimScope,
+    JobEnvelope,
+)
 from tank.contracts.repository import Collection
 from tank.time_precision import Timestamp
 from tank.util import JsonInput, TimeInput, sha256
@@ -41,6 +48,12 @@ class QueueStore(Protocol):
     ) -> dict[str, JsonValue]: ...
 
     async def claim_job(self) -> dict[str, JsonValue] | None: ...
+
+    async def transition_claimed_job(
+        self, scope: JobClaimScope, transform: Callable[[JobEnvelope], JobClaimMutation]
+    ) -> JobEnvelope | None: ...
+
+    async def quarantine_job_claim(self, invalid: InvalidJobClaim) -> bool: ...
 
     async def finish_job(self, job_id: str) -> None: ...
 
@@ -116,6 +129,7 @@ class JobRepository:
                 else:
                     fields.add("extra_field")
             return InvalidJobClaim(
+                claim_token=claim.claim_token,
                 job_id=claim.job_id,
                 kind=claim.type,
                 attempts=claim.attempts,

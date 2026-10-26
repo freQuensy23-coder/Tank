@@ -1881,6 +1881,43 @@ remain active. The worker annotation is not an independently strict body claim.
 New independent reaction/milestone adapters and narrowed queue dependencies will
 join only after this preserved checkpoint, through their canonical peer commits.
 
+
+### Clean current-parent output-file caller companion
+
+This separate cohort starts at parent f24bd4a9 and normally joins ingestion's
+9b4443dd bound sender, without inactive native-input/worker/reaction APIs. The
+Session native-tool boundary admits filename/caption/call identity and resolves
+its actual owned journal message into the required question/session target before
+native GET. It never recovers a target from last_payload or a list position.
+Question identity is checked before reading the scoped output. The sender then
+rechecks the authoritative question and every matching delivery row under its
+question lock before a Telegram POST.
+
+The delegated sender lookup and send share one locked context producer. Known
+SENT/UNKNOWN outcomes return before native GET and need no active credential or
+unused bytes. Fresh lookup validates availability without returning credentials;
+actual send rechecks state. The use case keeps downloaded content opaque bytes,
+preserves the existing read attempts/delay/REST deadline and document limit, and
+validates the returned closed outcome before native-tool JSON serialization.
+Malformed cached model instances refuse. Binding changes during the native read
+cannot produce a Telegram POST or a GENERATED record for a foreign question.
+
+All 357 affected Telegram/ownership/migration/E2E units pass in 14.28 seconds,
+zero skips, p90 .144 seconds and maximum .993 seconds. The complete 45-case actual
+Linux integration selection passes in 20.96 seconds with zero skips/source guards,
+including actual PG binding/race/receipt cases and four E2Es. Independent strict
+helper/contracts/new-test three targets passes, as do scoped Ruff/format/comments/diff checks.
+The selected default Inbox/composition check reports only the imported baseline
+truth.py _condition_cache annotation at 6031; no suppression or unrelated edit was
+added. The first new PG controls omitted required at clocks; only their authored
+fixture receipts were completed before the whole actual selection passed.
+
+This does not close all SessionService typing. Constructor/aggregate/tool/event/
+usage/barrier flows, its existing unconfigured sender state, presentation-limit
+coupling and whole worker migration remain open. The separately qualified native
+input checkpoint db160129 stays immutable and is not an ancestor of this clean
+output companion. Exact retained maps/None sites are recorded in the machine
+exception ledger rather than a blanket legacy exemption.
 Worker queue completion/failure checkpoint (inactive dispatch branch)
 
 RepositoryWorkerQueue now guards completion and failure writes with actual job
@@ -1986,3 +2023,32 @@ coupling and whole worker migration remain open. The separately qualified native
 input checkpoint db160129 stays immutable and is not an ancestor of this clean
 output companion. Exact retained maps/None sites are recorded in the machine
 exception ledger rather than a blanket legacy exemption.
+
+Inactive atomic claim contract prerequisite
+
+JobMetadata.claim_token preserves genuine historical/not-yet-claimed absence as
+omission, including bare JSON dump/read roundtrip; explicit reported null refuses.
+Current JobClaimScope and InvalidJobClaim require an observed nonblank token.
+Scope.matches checks the original raw payload digest and actual RUNNING identity,
+attempt and nullable observed recovery count before envelope admission. Recovery
+count None is unreported context, never a generated zero or the authority token.
+The backend must mint a fresh actual token on every claim, including same-attempt
+recovery and refunded admission/dependency deferral.
+
+QueueStore defines transition_claimed_job with a synchronous fresh-JobEnvelope to
+closed JobClaimMutation callback under actual row atomicity, and separate token/
+original-revision quarantine for malformed rows. Mutation.apply_to replaces only
+reported lifecycle scalars and complete named timestamp families on original raw
+wire; omitted fields remain untouched, explicit result None means actual void,
+and terminal mutations require an occurred completion clock. Optional patch fields
+represent an unrequested write, not guessed provider/domain facts. A None backend
+outcome means no matching owned RUNNING claim and no effect; physical implementation
+and consumer qualification are pending and must not be inferred from this API.
+
+This pure checkpoint is based on canonical 025240b8, with no held worker/native
+extras. Independent strict source/test three targets, Ruff/format and 21 pinned
+native pure cases pass (10.30 seconds total, zero skips/source guards). Proof prefix
+job-claim-mutations-roundtrip; backend Memory/PostgreSQL fencing and three stale
+controller races remain held for the paired cohort. These claims concern atomic
+queue acknowledgment/failure/requeue, not a distributed external-effect lease;
+network calls must not run inside this callback/row lock.
