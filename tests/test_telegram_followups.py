@@ -793,9 +793,10 @@ async def test_answer_ledger_rows_satisfy_the_delivery_schema_and_route_replies(
 
 
 def test_question_message_is_plain_text_with_truncated_reference() -> None:
+    from tank.question_prompts import question_prompt
     from tank.telegram_inbox import question_message
 
-    text = question_message({"text": "А дальше?", "reference": {"text": "x" * 5000}})
+    text = question_message(question_prompt({"text": "А дальше?", "reference": {"text": "x" * 5000}}))
     assert text.count("x") == 1024 and text.index("А дальше?") > text.index("x")
 
 
@@ -1597,7 +1598,14 @@ async def test_answer_chunks_resend_only_after_definite_rejection() -> None:
     question = await repo.get("out.user_questions", question_id)
     question.update(answer_status="ANSWERED", answer_text="a" * 3000 + "\n" + "b" * 3000)
     await repo.put("out.user_questions", question_id, question)
-    base = {"channel": "telegram:answer", "question_id": question_id, "purpose": "ANSWER", "attempt": 1}
+    base = {
+        "channel": "telegram:answer",
+        "question_id": question_id,
+        "session_id": question["session_id"],
+        "chat_id": question["chat_id"],
+        "purpose": "ANSWER",
+        "attempt": 1,
+    }
     await repo.put(
         "out.deliveries", "c0", {**base, "chunk": 0, "status": "GENERATED", "at": "2027-01-15T08:00:00Z"}
     )
