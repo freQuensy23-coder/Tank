@@ -10,6 +10,7 @@ from pydantic import JsonValue
 from tank.analysis.condition_graph_contracts import (
     AvailableConditionFunding,
     BasicConditionSpot,
+    CapturedConditionChainLiquidity,
     CapturedConditionHoldersRevenue,
     CapturedConditionLending,
     CapturedConditionUnlocks,
@@ -18,6 +19,7 @@ from tank.analysis.condition_graph_contracts import (
     ConditionAggregateLiquidations,
     ConditionBoundaryGroup,
     ConditionCadence,
+    ConditionChainLiquidity,
     ConditionClose,
     ConditionComputedOutcomeRanges,
     ConditionConfidence,
@@ -72,6 +74,7 @@ from tank.analysis.condition_graph_contracts import (
     ObservedConditionMarketContext,
     ObservedConditionReferencePrice,
     ObservedConditionSizeProfile,
+    SelectedConditionStablecoinPoint,
     SelectiveConditionConfidence,
     UnavailableConditionCirculatingShare,
     UnavailableConditionLeadLag,
@@ -1488,3 +1491,53 @@ def encode_condition_holders_revenue(
     output["cadence_basis"] = output["cadence_source"]
     output["cadence_basis_reason"] = output["cadence_source_reason"]
     return output
+
+
+def encode_condition_chain_liquidity(
+    value: ConditionChainLiquidity, *, clocks: ConditionWireClocks
+) -> dict[str, JsonValue]:
+    chain = type(value).model_validate(value)
+    context = ConditionWireClocks.model_validate(clocks)
+    if not isinstance(chain, CapturedConditionChainLiquidity):
+        return {"chain": chain.chain, "value": None, "reason": chain.reason}
+    if (
+        chain.token_id != context.token_id
+        or context.cutoff.value is None
+        or chain.cutoff != parse_iso_time(context.cutoff.value)
+    ):
+        raise ValueError("Chain context serialization requires its actual token and cutoff")
+    visibility = chain.visibility.eligible()
+    if not isinstance(visibility, ConditionObservedPredicate) or not visibility.value:
+        return {
+            "chain": chain.chain,
+            "value": None,
+            "reason": "RECEIVED_AFTER_ASSEMBLY"
+            if isinstance(visibility, ConditionObservedPredicate)
+            else "RECEIPT_VISIBILITY_UNPROVEN",
+        }
+    current = chain.current
+    day_change, week_change = chain.change_24h(), chain.change_7d()
+    result: dict[str, JsonValue] = {
+        "chain": chain.chain,
+        "supply_usd": _decimal_wire(current.value_usd)
+        if isinstance(current, SelectedConditionStablecoinPoint)
+        else None,
+        "supply_chg_24h": _decimal_wire(day_change.value),
+        "supply_chg_24h_reason": day_change.reason,
+        "supply_chg_7d": _decimal_wire(week_change.value),
+        "supply_chg_7d_reason": week_change.reason,
+        "reason": current.value_reason
+        if isinstance(current, SelectedConditionStablecoinPoint)
+        else current.reason,
+        "asof_points": {
+            "current": _model_wire(current),
+            "day_ago": _model_wire(chain.day_ago),
+            "week_ago": _model_wire(chain.week_ago),
+        },
+        "source_observation_sha256": chain.source_observation_sha256,
+        "capture_visibility": _model_wire(chain.visibility),
+    }
+    result.update(_clock_wire(chain.observed_at, "observed_at"))
+    if isinstance(current, SelectedConditionStablecoinPoint):
+        result.update(_clock_wire(current.observed_at, "supply_usd_observed_at"))
+    return result

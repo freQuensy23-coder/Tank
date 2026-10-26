@@ -5250,7 +5250,7 @@ class ConditionHoldersRevenueProtocol(DomainModel):
     periods: tuple[ConditionHoldersRevenuePeriod, ConditionHoldersRevenuePeriod]
     chart_available: bool | None
     latest_chart_point: ConditionHoldersRevenueChartPoint | None
-    reason: str | None = Field(min_length=1, pattern=r"\S")
+    reason: str | None
 
     @model_validator(mode="after")
     def actual_provider_periods(self) -> Self:
@@ -5293,7 +5293,7 @@ class CapturedConditionHoldersRevenue(DomainModel):
     identity_evidence: FundamentalsEvidence | None
     identity_reason: Literal["IDENTITY_EVIDENCE_NOT_CAPTURED"] | None
     source_observation_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    reason: str | None = Field(min_length=1, pattern=r"\S")
+    reason: str | None
 
     @field_validator("cutoff")
     @classmethod
@@ -5476,7 +5476,7 @@ def _condition_inventory_fractional_change(
 
 class UnavailableConditionExchangeInventory(DomainModel):
     status: Literal["UNAVAILABLE"]
-    reason: str = Field(min_length=1, pattern=r"\S")
+    reason: str
 
 
 class ComparableConditionExchangeInventory(DomainModel):
@@ -5700,7 +5700,7 @@ class CapturedConditionWalletFlows(DomainModel):
 
 class UnavailableConditionWalletFlows(DomainModel):
     status: Literal["UNAVAILABLE"]
-    reason: str = Field(min_length=1, pattern=r"\S")
+    reason: str
 
 
 type ConditionWalletFlows = CapturedConditionWalletFlows | UnavailableConditionWalletFlows
@@ -5871,7 +5871,7 @@ class CapturedConditionLending(DomainModel):
 
 class UnavailableConditionLending(DomainModel):
     status: Literal["UNAVAILABLE"]
-    reason: str = Field(min_length=1, pattern=r"\S")
+    reason: str
 
 
 type ConditionLending = CapturedConditionLending | UnavailableConditionLending
@@ -5964,7 +5964,7 @@ class CapturedConditionUnlocks(DomainModel):
 
 class UnavailableConditionUnlocks(DomainModel):
     status: Literal["UNAVAILABLE"]
-    reason: str = Field(min_length=1, pattern=r"\S")
+    reason: str
 
 
 type ConditionUnlocks = CapturedConditionUnlocks | UnavailableConditionUnlocks
@@ -6063,7 +6063,7 @@ class CapturedConditionChainLiquidity(DomainModel):
 class UnavailableConditionChainLiquidity(DomainModel):
     status: Literal["UNAVAILABLE"]
     chain: str | None = Field(min_length=1, pattern=r"\S")
-    reason: str = Field(min_length=1, pattern=r"\S")
+    reason: str
 
 
 type ConditionChainLiquidity = CapturedConditionChainLiquidity | UnavailableConditionChainLiquidity

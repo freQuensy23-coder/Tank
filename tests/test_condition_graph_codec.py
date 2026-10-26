@@ -28,7 +28,14 @@ from tank.analysis.condition_graph_contracts import (
     EnrichedConditionSpot,
     FlowAggregateEvidenceRef,
     IncompleteConditionTradeCounts,
+    UnavailableConditionChainLiquidity,
+    UnavailableConditionExchangeInventory,
+    UnavailableConditionLending,
+    UnavailableConditionUnlocks,
+    UnavailableConditionWalletFlows,
 )
+from tank.contracts import DomainModel
+from tank.contracts.json import decode_json
 from tank.util import sha256
 
 
@@ -1701,4 +1708,79 @@ def test_holders_revenue_wire_never_uses_unknown_or_late_receipt_as_available_re
     with pytest.raises(ValueError, match="actual token and cutoff"):
         encode_condition_holders_revenue(
             late, clocks=condition_wire_clocks().model_copy(update={"token_id": "OTHER"})
+        )
+
+
+@pytest.mark.parametrize(
+    ("schema", "extra"),
+    [
+        (UnavailableConditionExchangeInventory, {}),
+        (UnavailableConditionWalletFlows, {}),
+        (UnavailableConditionUnlocks, {}),
+        (UnavailableConditionLending, {}),
+        (UnavailableConditionChainLiquidity, {"chain": None}),
+    ],
+)
+def test_captured_blank_supply_error_is_not_a_missing_required_reason(
+    schema: type[DomainModel], extra: dict[str, JsonValue]
+) -> None:
+    payload: dict[str, JsonValue] = {"status": "UNAVAILABLE", "reason": "", **extra}
+    record = schema.model_validate(payload)
+    wire = decode_json(record.model_dump_json())
+    assert isinstance(wire, dict) and wire["reason"] == "" and wire["status"] == "UNAVAILABLE"
+    del payload["reason"]
+    with pytest.raises(ValidationError):
+        schema.model_validate(payload)
+    with pytest.raises(ValidationError):
+        schema.model_validate({**payload, "reason": None})
+
+
+def test_captured_blank_protocol_error_is_distinct_from_no_error() -> None:
+    from test_condition_graph_contracts import holders_revenue
+
+    original = holders_revenue()
+    protocol = type(original.protocols[0]).model_validate(
+        original.protocols[0].model_copy(update={"reason": ""})
+    )
+    captured = type(original).model_validate(
+        original.model_copy(update={"protocols": (protocol,), "reason": ""})
+    )
+    assert captured.reason == "" and captured.protocols[0].reason == ""
+    assert original.reason is None and original.protocols[0].reason is None
+
+
+def test_chain_wire_preserves_source_point_clock_zero_and_missing_prior_period() -> None:
+    from test_condition_graph_contracts import chain_liquidity
+
+    from tank.analysis.condition_graph_codec import encode_condition_chain_liquidity
+    from tank.time_precision import Timestamp
+
+    model = chain_liquidity()
+    wire = encode_condition_chain_liquidity(model, clocks=condition_wire_clocks())
+    assert wire["supply_usd"] == "0" and wire["supply_chg_24h"] == "-10"
+    assert wire["supply_chg_7d"] is None and wire["supply_chg_7d_reason"] == "INCOMPLETE"
+    assert wire["observed_at"] == "2026-10-17T12:00:00Z"
+    assert wire["supply_usd_observed_at"] == "2026-10-17T00:00:00Z"
+    assert wire["supply_usd_observed_at_prec"] is None
+    assert wire["supply_usd_observed_at_prec_reason"] == "NOT_CAPTURED"
+    assert model.current.status == "SELECTED_SOURCE_POINT"
+    late = type(model).model_validate(
+        model.model_copy(
+            update={
+                "visibility": model.visibility.model_copy(
+                    update={
+                        "received_at": Timestamp(value="2026-10-17T12:00:01Z", precision="COLLECTION_ONLY")
+                    }
+                )
+            }
+        )
+    )
+    assert encode_condition_chain_liquidity(late, clocks=condition_wire_clocks()) == {
+        "chain": "chain",
+        "value": None,
+        "reason": "RECEIVED_AFTER_ASSEMBLY",
+    }
+    with pytest.raises(ValueError, match="actual token and cutoff"):
+        encode_condition_chain_liquidity(
+            model, clocks=condition_wire_clocks().model_copy(update={"token_id": "OTHER"})
         )
