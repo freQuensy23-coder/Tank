@@ -1,5 +1,6 @@
 """Independent exact native-flow and significance boundaries for the typed producer."""
 
+from datetime import timedelta
 from decimal import Decimal, localcontext
 
 import pytest
@@ -262,3 +263,38 @@ def test_known_receipt_does_not_authorize_a_complete_future_minute() -> None:
     )
     result = calculate_spot(source.inputs)
     assert result.coverage.n_complete == 0 and result.direction is None
+
+
+def test_parent_bound_piece_identity_is_not_replaced_by_an_equal_flattened_projection() -> None:
+    from test_condition_input_codec import AT, generated_empty_bar
+
+    parent = generated_empty_bar()
+    embedded = parent["boundary_segments"]
+    assert isinstance(embedded, list) and isinstance(embedded[0], dict)
+    flat = dict(embedded[0], flattened_marker="separate captured input projection")
+    source = decode_spot_inputs(
+        token_id="T",
+        start=AT,
+        cutoff=AT + timedelta(seconds=30),
+        assembled_at=Timestamp("2026-10-19T12:00:40Z", "COLLECTION_ONLY"),
+        instruments=[
+            {"instrument_id": "VENUE:spot:T", "token_id": "T", "venue": "binance", "market_type": "SPOT"}
+        ],
+        flow_bars=[],
+        flow_parent_bars=[parent],
+        flow_segments=[flat],
+        tickers=[],
+        policy=SpotCalculationPolicy(significant_flow_sigma=Decimal(2), min_spot_venues=2),
+        native_ticker_volume_field="volume_native",
+    )
+    standalone, actual_parent = source.inputs.boundaries
+    assert standalone.evidence.source_evidence_sha256 != actual_parent.evidence.source_evidence_sha256
+    result = calculate_spot(source.inputs)
+    aggregate = result.venues[0].boundary_segments[0].aggregates[0]
+    assert aggregate.evidence.source_evidence_sha256 == actual_parent.evidence.source_evidence_sha256
+    wire = flow_aggregate_evidence_wire(aggregate, source.source_evidence)
+    assert "flattened_marker" not in wire
+    assert (
+        source.source_evidence.original(standalone.evidence)["flattened_marker"]
+        == "separate captured input projection"
+    )

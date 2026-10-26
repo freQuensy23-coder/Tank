@@ -10,7 +10,13 @@ from typing import Literal
 from pydantic import JsonValue, ValidationError
 
 from tank.analysis.condition_graph_codec import flow_aggregate_projection_sha256
-from tank.analysis.condition_graph_contracts import ConditionFlowAggregateProjection, FlowAggregateEvidenceRef
+from tank.analysis.condition_graph_contracts import (
+    ConditionFlowAggregateProjection,
+    ConditionInterval,
+    ConditionWindow,
+    ConditionWireClocks,
+    FlowAggregateEvidenceRef,
+)
 from tank.analysis.condition_inputs import (
     FlowInputEvidenceRef,
     FlowSourceDescriptor,
@@ -20,11 +26,12 @@ from tank.analysis.condition_inputs import (
     SpotFlowParent,
     SpotInstrument,
     SpotTickerObservation,
+    SpotWindowCalculationInputs,
 )
 from tank.analysis.spot import aggregate_projection
 from tank.contracts.json import decode_json
 from tank.market.trade_contracts import EmptyBoundarySegment
-from tank.time_precision import Timestamp, propagate_timestamp
+from tank.time_precision import Timestamp, offset_schedule, propagate_timestamp
 from tank.util import JsonInput, canonical_json, parse_iso_time, sha256
 
 
@@ -257,6 +264,10 @@ def _flow(
         start=start,
         end=end,
         kind="BOUNDARY" if boundary else "FULL_MINUTE",
+        start_clock=propagate_timestamp(row, start_field),
+        end_clock=propagate_timestamp(row, "end")
+        if boundary
+        else offset_schedule(propagate_timestamp(row, "minute_start"), timedelta(minutes=1)),
         complete=complete,
         buy_qty=_amount(row, "buy_qty"),
         sell_qty=_amount(row, "sell_qty"),
@@ -497,4 +508,73 @@ def decode_spot_inputs(
             policy=policy,
         ),
         source_evidence=SpotSourceEvidence(originals),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class DecodedSpotWindows:
+    inputs: SpotWindowCalculationInputs
+    source_evidence: SpotSourceEvidence
+    clocks: ConditionWireClocks
+
+
+def decode_spot_windows(
+    *,
+    token_id: str,
+    cutoff: Timestamp,
+    event_anchor: Timestamp,
+    assembled_at: Timestamp,
+    instruments: Sequence[Mapping[str, JsonInput]],
+    flow_bars: Sequence[Mapping[str, JsonInput]],
+    flow_parent_bars: Sequence[Mapping[str, JsonInput]],
+    flow_segments: Sequence[Mapping[str, JsonInput]],
+    tickers: Sequence[Mapping[str, JsonInput]],
+    policy: SpotCalculationPolicy,
+    native_ticker_volume_field: Literal["volume_native", "volume"],
+) -> DecodedSpotWindows:
+    clocks = ConditionWireClocks(token_id=token_id, cutoff=cutoff, event_anchor=event_anchor)
+    if clocks.cutoff.value is None:
+        raise ValueError("Spot windows require the actual cutoff")
+    end = parse_iso_time(clocks.cutoff.value)
+    anchor = (
+        parse_iso_time(event_anchor.value) if event_anchor.value is not None else end - timedelta(hours=4)
+    )
+    if anchor >= end:
+        raise ValueError("Forward spot windows require an earlier actual event or analysis anchor")
+    durations: dict[ConditionWindow, timedelta] = {
+        "W15M": timedelta(minutes=15),
+        "W1H": timedelta(hours=1),
+        "W4H": timedelta(hours=4),
+        "W24H": timedelta(days=1),
+        "EVENT": end - anchor,
+    }
+    base = decode_spot_inputs(
+        token_id=token_id,
+        start=min(end - 2 * duration for duration in durations.values()),
+        cutoff=end,
+        assembled_at=assembled_at,
+        instruments=instruments,
+        flow_bars=flow_bars,
+        flow_parent_bars=flow_parent_bars,
+        flow_segments=flow_segments,
+        tickers=tickers,
+        policy=policy,
+        native_ticker_volume_field=native_ticker_volume_field,
+    )
+    current: dict[ConditionWindow, ConditionInterval] = {}
+    prior: dict[ConditionWindow, ConditionInterval] = {}
+    for name, duration in durations.items():
+        current[name] = ConditionInterval(window=name, start=end - duration, cutoff=end)
+        prior[name] = ConditionInterval(window=name, start=end - 2 * duration, cutoff=end - duration)
+    primary: Literal["EVENT", "W4H"] = (
+        "EVENT"
+        if event_anchor.value is not None and timedelta(minutes=15) <= end - anchor <= timedelta(days=1)
+        else "W4H"
+    )
+    return DecodedSpotWindows(
+        inputs=SpotWindowCalculationInputs(
+            source=base.inputs, current=current, previous=prior, event_anchor=event_anchor, primary=primary
+        ),
+        source_evidence=base.source_evidence,
+        clocks=clocks,
     )

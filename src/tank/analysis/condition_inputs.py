@@ -6,6 +6,7 @@ from typing import Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 
+from tank.analysis.condition_graph_contracts import ConditionInterval, ConditionWindow
 from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
 from tank.market.trade_contracts import EmptyBoundarySegment
@@ -74,6 +75,8 @@ class SpotFlowObservation(DomainModel):
     start: datetime
     end: datetime
     kind: Literal["FULL_MINUTE", "BOUNDARY"]
+    start_clock: Timestamp
+    end_clock: Timestamp
     complete: bool | None
     buy_qty: Decimal | None = Field(ge=0)
     sell_qty: Decimal | None = Field(ge=0)
@@ -99,6 +102,13 @@ class SpotFlowObservation(DomainModel):
     def actual_interval_and_quantities(self) -> Self:
         if self.start >= self.end:
             raise ValueError("Spot flow requires a positive actual interval")
+        if (
+            self.start_clock.value is None
+            or self.end_clock.value is None
+            or parse_iso_time(self.start_clock.value) != self.start
+            or parse_iso_time(self.end_clock.value) != self.end
+        ):
+            raise ValueError("Spot endpoint metadata must bind its actual source interval")
         if self.kind == "FULL_MINUTE" and (
             self.start.second or self.start.microsecond or self.end != self.start + timedelta(minutes=1)
         ):
@@ -229,4 +239,48 @@ class SpotCalculationInputs(DomainModel):
         for ticker in self.tickers:
             if identities.get(ticker.instrument.instrument_id) != ticker.instrument:
                 raise ValueError("Spot ticker must bind to its actual declared input scope")
+        return self
+
+
+class SpotWindowCalculationInputs(DomainModel):
+    source: SpotCalculationInputs
+    current: dict[ConditionWindow, ConditionInterval]
+    previous: dict[ConditionWindow, ConditionInterval]
+    event_anchor: Timestamp
+    primary: Literal["EVENT", "W4H"]
+
+    @model_validator(mode="after")
+    def actual_window_plan(self) -> Self:
+        fixed = {"W15M": 900, "W1H": 3600, "W4H": 14400, "W24H": 86400}
+        names = {*fixed, "EVENT"}
+        if set(self.current) != names or set(self.previous) != names:
+            raise ValueError("Spot graph requires the actual current and prior five windows")
+        if len({row.cutoff for row in self.current.values()}) != 1 or any(
+            row.cutoff != self.source.cutoff for row in self.current.values()
+        ):
+            raise ValueError("Spot graph current windows require one actual cutoff")
+        for name, current in self.current.items():
+            if current.window != name or self.previous[name].window != name:
+                raise ValueError("Spot graph window key must bind its actual interval")
+            duration = current.cutoff - current.start
+            if name in fixed and duration != timedelta(seconds=fixed[name]):
+                raise ValueError("Named spot window must preserve its declared duration")
+            prior = self.previous[name]
+            if prior.start < self.source.start:
+                raise ValueError("Prior spot interval must remain inside its actual source read scope")
+            if prior.cutoff != current.start or prior.cutoff - prior.start != duration:
+                raise ValueError("Prior spot window must immediately precede the current interval")
+        event = self.current["EVENT"]
+        anchor = self.event_anchor.value
+        if anchor is not None and parse_iso_time(anchor) != event.start:
+            raise ValueError("EVENT spot window must preserve its actual anchor")
+        if anchor is None and event.start != self.current["W4H"].start:
+            raise ValueError("Without an event anchor EVENT uses the declared W4H analysis interval")
+        primary = (
+            "EVENT"
+            if anchor is not None and timedelta(minutes=15) <= event.cutoff - event.start <= timedelta(days=1)
+            else "W4H"
+        )
+        if self.primary != primary:
+            raise ValueError("Primary spot window must follow the actual event-anchor policy")
         return self

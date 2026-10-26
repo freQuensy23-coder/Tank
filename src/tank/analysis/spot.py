@@ -26,18 +26,29 @@ from tank.analysis.condition_graph_contracts import (
     ConditionSpotMajority,
     ConditionSpotTopN,
     ConditionSpotVenue,
+    ConditionSpotWindowGraph,
     ConditionStatisticalNullReason,
     ConditionTradeCounts,
     ConditionUnavailableBoundaryCoverage,
     ConditionWeightedBreadth,
+    ConditionWindow,
     FlowAggregateEvidenceRef,
     IncompleteConditionTradeCounts,
+    ObservedConditionCohort,
     ObservedConditionComposite,
     ObservedConditionTradeCounts,
+    UnavailableConditionCohort,
     UnavailableConditionComposite,
+    WindowedConditionSpot,
 )
-from tank.analysis.condition_inputs import SpotCalculationInputs, SpotCalculationPolicy, SpotFlowObservation
+from tank.analysis.condition_inputs import (
+    SpotCalculationInputs,
+    SpotCalculationPolicy,
+    SpotFlowObservation,
+    SpotWindowCalculationInputs,
+)
 from tank.contracts import DomainModel
+from tank.time_precision import Timestamp
 from tank.util import parse_iso_time
 
 type FlowSign = Literal[-1, 0, 1]
@@ -188,6 +199,7 @@ class _Venue:
     totals: NativeFlowTotals
     boundaries: tuple[ConditionBoundaryGroup, ...]
     sign: FlowSign
+    coverage_endpoints: tuple[Timestamp, ...]
 
 
 def _partial_intervals(start: datetime, cutoff: datetime) -> tuple[tuple[datetime, datetime], ...]:
@@ -233,9 +245,9 @@ def _boundary_cover(
         projection = aggregate_projection(complete[0])
         if any(aggregate_projection(row) != projection for row in complete[1:]):
             raise ValueError("Conflicting eligible boundary financial evidence")
-        dedicated = [row for row in complete if row.evidence.collection == "flow_segments"]
-        if len(dedicated) == 1:
-            row = dedicated[0]
+        parent_bound = [row for row in complete if row.parent_document is not None]
+        if len(parent_bound) == 1:
+            row = parent_bound[0]
         elif len(complete) == 1:
             row = complete[0]
         else:
@@ -245,14 +257,14 @@ def _boundary_cover(
     return tuple(selected)
 
 
-def _selected_venue(inputs: SpotCalculationInputs, venue: str) -> _Venue | ConditionSpotExclusion:
+def _selected_venue(
+    inputs: SpotCalculationInputs, venue: str, *, start: datetime, cutoff: datetime
+) -> _Venue | ConditionSpotExclusion:
     instruments = tuple(item.instrument_id for item in inputs.instruments if item.venue == venue)
     rows = [
         row
         for row in inputs.minutes
-        if row.instrument.instrument_id in instruments
-        and inputs.start <= row.start
-        and row.end <= inputs.cutoff
+        if row.instrument.instrument_id in instruments and start <= row.start and row.end <= cutoff
     ]
     index: dict[tuple[str, datetime], SpotFlowObservation] = {}
     for row in rows:
@@ -260,10 +272,10 @@ def _selected_venue(inputs: SpotCalculationInputs, venue: str) -> _Venue | Condi
         if key in index:
             raise ValueError("A spot minute cannot identify multiple physical source rows")
         index[key] = row
-    first = inputs.start.replace(second=0, microsecond=0)
-    if first < inputs.start:
+    first = start.replace(second=0, microsecond=0)
+    if first < start:
         first += timedelta(minutes=1)
-    last = inputs.cutoff.replace(second=0, microsecond=0)
+    last = cutoff.replace(second=0, microsecond=0)
     cursor = first
     while cursor < last:
         for instrument_id in instruments:
@@ -281,10 +293,10 @@ def _selected_venue(inputs: SpotCalculationInputs, venue: str) -> _Venue | Condi
                 )
         cursor += timedelta(minutes=1)
     boundaries = []
-    for start, cutoff in _partial_intervals(inputs.start, inputs.cutoff):
+    for left, right in _partial_intervals(start, cutoff):
         pieces: list[SpotFlowObservation] = []
         for instrument_id in instruments:
-            covered = _boundary_cover(inputs, instrument_id, start, cutoff)
+            covered = _boundary_cover(inputs, instrument_id, left, right)
             if covered is None:
                 return ConditionUnavailableBoundaryCoverage(
                     venue=venue,
@@ -296,8 +308,8 @@ def _selected_venue(inputs: SpotCalculationInputs, venue: str) -> _Venue | Condi
                                 reason
                                 for row in inputs.boundaries
                                 if row.instrument.instrument_id in instruments
-                                and row.start < cutoff
-                                and row.end > start
+                                and row.start < right
+                                and row.end > left
                                 for reason in row.source_reasons
                             }
                         )
@@ -314,7 +326,7 @@ def _selected_venue(inputs: SpotCalculationInputs, venue: str) -> _Venue | Condi
         rows.extend(pieces)
         boundaries.append(
             ConditionBoundaryGroup(
-                start=start, cutoff=cutoff, aggregates=tuple(bound_aggregate(row) for row in pieces)
+                start=left, cutoff=right, aggregates=tuple(bound_aggregate(row) for row in pieces)
             )
         )
     totals = summarize_native_flow(inputs.token_id, rows)
@@ -325,7 +337,10 @@ def _selected_venue(inputs: SpotCalculationInputs, venue: str) -> _Venue | Condi
             detail="FLOW_AGGREGATE_FIELDS_MISSING",
             missing_metrics=totals.missing_metrics,
         )
-    return _Venue(venue, totals, tuple(boundaries), significant_flow(totals, inputs.policy))
+    endpoints = tuple(row.end_clock for row in rows if row.end == cutoff)
+    if len(endpoints) != len(instruments):
+        raise ValueError("Complete spot coverage requires the actual endpoint of every instrument")
+    return _Venue(venue, totals, tuple(boundaries), significant_flow(totals, inputs.policy), endpoints)
 
 
 def _combined(token_id: str, venues: Sequence[_Venue]) -> NativeFlowTotals:
@@ -426,7 +441,7 @@ def _venue_output(row: _Venue, total: Decimal) -> ConditionSpotVenue:
 
 
 def _excluded_daily_volume(
-    inputs: SpotCalculationInputs, excluded: Sequence[ConditionSpotExclusion]
+    inputs: SpotCalculationInputs, excluded: Sequence[ConditionSpotExclusion], *, cutoff: datetime
 ) -> Decimal | None:
     daily: list[Decimal] = []
     excluded_venues = {row.venue for row in excluded}
@@ -439,7 +454,7 @@ def _excluded_daily_volume(
             if ticker.instrument == instrument
             and ticker.visible_at(inputs.assembled_at) is True
             and ticker.observed_at.value is not None
-            and parse_iso_time(ticker.observed_at.value) <= inputs.cutoff
+            and parse_iso_time(ticker.observed_at.value) <= cutoff
         ]
         if not candidates:
             return None
@@ -467,21 +482,34 @@ def _strict_majority(numerator: Decimal, denominator: Decimal) -> bool | None:
     return None if denominator == 0 else 2 * numerator > denominator
 
 
-def _calculate_spot(inputs: SpotCalculationInputs) -> BasicConditionSpot:
+@dataclass(frozen=True, slots=True)
+class _SpotQualification:
+    observed: tuple[_Venue, ...]
+    excluded: tuple[ConditionSpotExclusion, ...]
+
+
+def _qualify_spot(inputs: SpotCalculationInputs, *, start: datetime, cutoff: datetime) -> _SpotQualification:
     observed: list[_Venue] = []
     excluded: list[ConditionSpotExclusion] = []
     for name in sorted({instrument.venue for instrument in inputs.instruments}):
-        selected = _selected_venue(inputs, name)
+        selected = _selected_venue(inputs, name, start=start, cutoff=cutoff)
         if isinstance(selected, _Venue):
             observed.append(selected)
         else:
             excluded.append(selected)
+    return _SpotQualification(tuple(observed), tuple(excluded))
+
+
+def _calculate_spot(
+    inputs: SpotCalculationInputs, qualification: _SpotQualification, *, start: datetime, cutoff: datetime
+) -> BasicConditionSpot:
+    observed, excluded = qualification.observed, qualification.excluded
     totals = _combined(inputs.token_id, observed) if observed else None
     composite = _composite(totals, observed, inputs.policy)
     volume = Decimal(0) if totals is None else totals.volume_native
     sign = 0 if totals is None else significant_flow(totals, inputs.policy)
-    ticker_daily = _excluded_daily_volume(inputs, excluded)
-    duration = inputs.cutoff - inputs.start
+    ticker_daily = _excluded_daily_volume(inputs, excluded, cutoff=cutoff)
+    duration = cutoff - start
     seconds = Decimal(duration.days * 86400 + duration.seconds) + Decimal(duration.microseconds) / 1000000
     scaled_covered = volume * 86400
     denominator = None if ticker_daily is None else scaled_covered + ticker_daily * seconds
@@ -716,4 +744,122 @@ def calculate_spot(inputs: SpotCalculationInputs) -> BasicConditionSpot:
         row.trailing_day_native_volume for row in inputs.tickers if row.trailing_day_native_volume is not None
     )
     with _native_arithmetic((*values, *ticker_values, inputs.policy.significant_flow_sigma)):
-        return _calculate_spot(inputs)
+        qualified = _qualify_spot(inputs, start=inputs.start, cutoff=inputs.cutoff)
+        return _calculate_spot(inputs, qualified, start=inputs.start, cutoff=inputs.cutoff)
+
+
+def _coverage_through(venues: Sequence[_Venue]) -> Timestamp:
+    endpoints = tuple(stamp for venue in venues for stamp in venue.coverage_endpoints)
+    if not endpoints:
+        return Timestamp(None, None, "NO_COMPLETE_VENUES")
+    selected = endpoints[0]
+    if any(stamp.value != selected.value for stamp in endpoints):
+        raise ValueError("Complete window endpoints must bind the same actual cutoff")
+    if all(stamp == selected for stamp in endpoints):
+        return selected
+    return Timestamp(selected.value, None, "COVERAGE_ENDPOINT_METADATA_DIFFERS")
+
+
+def _cohort_composite(
+    inputs: SpotCalculationInputs,
+    current: Sequence[_Venue],
+    prior: Sequence[_Venue],
+    maximum: BasicConditionSpot,
+    cohort: frozenset[str],
+) -> ObservedConditionCohort | UnavailableConditionCohort:
+    selected = tuple(row for row in current if row.name in cohort)
+    if len(selected) < inputs.policy.min_spot_venues:
+        return UnavailableConditionCohort(status="UNAVAILABLE", reason="NOT_COHORT_CONSISTENT")
+    totals = _combined(inputs.token_id, selected)
+    max_composite = maximum.composite_max
+    if not isinstance(max_composite, ObservedConditionComposite) or max_composite.volume <= 0:
+        return UnavailableConditionCohort(status="UNAVAILABLE", reason="NOT_COHORT_CONSISTENT")
+    if not 2 * totals.volume_native > max_composite.volume:
+        return UnavailableConditionCohort(status="UNAVAILABLE", reason="NOT_COHORT_CONSISTENT")
+    share = display_ratio(totals.volume_native, max_composite.volume)
+    if share is None:
+        return UnavailableConditionCohort(status="UNAVAILABLE", reason="NOT_COHORT_CONSISTENT")
+    composite = _composite(totals, selected, inputs.policy)
+    if not isinstance(composite, ObservedConditionComposite):
+        raise ValueError("Actual complete cohort totals cannot become unavailable")
+    previous = tuple(row for row in prior if row.name in cohort)
+    velocity: float | None = None
+    reason: Literal["INCOMPLETE", "ZERO_BASELINE", "NOT_ESTIMABLE"] | None = "INCOMPLETE"
+    if len(previous) == len(cohort):
+        baseline = _combined(inputs.token_id, previous).volume_native
+        velocity = display_ratio(totals.volume_native, baseline)
+        reason = None if velocity is not None else "ZERO_BASELINE" if baseline == 0 else "NOT_ESTIMABLE"
+    return ObservedConditionCohort(
+        status="OBSERVED",
+        cvd=composite.cvd,
+        volume=composite.volume,
+        buy_share=composite.buy_share,
+        bs_ratio=composite.bs_ratio,
+        venues=composite.venues,
+        sign=composite.sign,
+        null_reasons=composite.null_reasons,
+        cohort=composite.venues,
+        share_of_max=share,
+        share_majority=True,
+        velocity=velocity,
+        velocity_reason=reason,
+    )
+
+
+def calculate_spot_window_graph(inputs: SpotWindowCalculationInputs) -> ConditionSpotWindowGraph:
+    plan = SpotWindowCalculationInputs.model_validate(inputs)
+    source = plan.source
+    amounts = tuple(
+        amount
+        for row in (*source.minutes, *source.boundaries)
+        for amount in (row.buy_qty, row.sell_qty, row.sum_sq_qty)
+        if amount is not None
+    )
+    ticker_amounts = tuple(
+        row.trailing_day_native_volume for row in source.tickers if row.trailing_day_native_volume is not None
+    )
+    with _native_arithmetic((*amounts, *ticker_amounts, source.policy.significant_flow_sigma)):
+        qualified = {
+            name: _qualify_spot(source, start=interval.start, cutoff=interval.cutoff)
+            for name, interval in plan.current.items()
+        }
+        prior = {
+            name: _qualify_spot(source, start=interval.start, cutoff=interval.cutoff)
+            for name, interval in plan.previous.items()
+        }
+        current = {
+            name: _calculate_spot(source, qualified[name], start=interval.start, cutoff=interval.cutoff)
+            for name, interval in plan.current.items()
+        }
+        cohort = frozenset.intersection(
+            *(frozenset(row.name for row in rows.observed) for rows in qualified.values())
+        )
+        spots: dict[ConditionWindow, WindowedConditionSpot] = {}
+        durations: dict[ConditionWindow, float] = {}
+        for name, interval in plan.current.items():
+            basic = current[name]
+            selected = _cohort_composite(
+                source, qualified[name].observed, prior[name].observed, basic, cohort
+            )
+            consistent = isinstance(selected, ObservedConditionCohort)
+            durations[name] = (interval.cutoff - interval.start).total_seconds()
+            spots[name] = WindowedConditionSpot(
+                kind="WINDOWED",
+                token_id=basic.token_id,
+                venues=basic.venues,
+                composite_max=basic.composite_max,
+                breadth=basic.breadth,
+                cw_breadth=basic.cw_breadth,
+                exact_majority=basic.exact_majority,
+                topn=basic.topn,
+                concentration=basic.concentration,
+                direction=basic.direction,
+                direction_reason=basic.direction_reason,
+                classification=basic.classification,
+                coverage=basic.coverage,
+                interval=interval,
+                coverage_through=_coverage_through(qualified[name].observed),
+                composite_cohort=selected,
+                cohort_consistent={other: consistent for other in plan.current if other != name},
+            )
+        return ConditionSpotWindowGraph(spots=spots, durations_s=durations, primary=plan.primary)
