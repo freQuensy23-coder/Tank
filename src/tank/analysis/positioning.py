@@ -9,7 +9,9 @@ from pydantic import Field
 from tank.contracts import DomainModel
 
 type Scalar = Decimal | str | int | float
-type MissingOIUsdDetail = Literal["SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE", "REPORTED_USD_INVALID"]
+type MissingOIUsdDetail = Literal[
+    "SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE", "REPORTED_USD_INVALID", "RECORDED_USD_NOT_CAPTURED"
+]
 
 
 class OIDecomposition(DomainModel):

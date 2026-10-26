@@ -188,6 +188,31 @@ def test_invalid_reported_usd_preserves_native_endpoints_and_its_distinct_source
         )
 
 
+def test_absent_recorded_usd_does_not_claim_an_unconsumed_mark_or_fx_source() -> None:
+    value = ObservedConditionOpenInterest.model_validate(
+        observed_oi_without_usd().model_copy(
+            update={
+                "oi_usd_start": None,
+                "oi_usd_chg_pct_reason": "INCOMPLETE",
+                "oi_usd_reason": "INCOMPLETE",
+                "oi_usd_detail": "RECORDED_USD_NOT_CAPTURED",
+                "decomposition": MissingOIDecomposition(detail="RECORDED_USD_NOT_CAPTURED"),
+            }
+        )
+    )
+    wire = encode_condition_open_interest(value)
+    assert wire["oi_native_start"] == "10" and wire["oi_native_end"] == "0"
+    assert wire["oi_native_chg_pct"] == -1.0 and wire["native_beyond"] is True
+    assert wire["oi_usd_start"] is None and wire["oi_usd_end"] == "0"
+    assert wire["oi_usd_reason"] == "INCOMPLETE" and wire["oi_usd_detail"] == "RECORDED_USD_NOT_CAPTURED"
+    assert isinstance(value.decomposition, MissingOIDecomposition)
+    assert value.decomposition.detail == "RECORDED_USD_NOT_CAPTURED"
+    with pytest.raises(ValidationError, match="explicit qualification cause"):
+        ObservedConditionOpenInterest.model_validate(
+            value.model_copy(update={"oi_usd_reason": "NOT_ESTIMABLE"})
+        )
+
+
 def test_classification_helper_retains_existing_api_and_three_valued_predicates() -> None:
     dec = decomposition(Decimal(10), Decimal(20), Decimal(2), Decimal(2))
     assert oi_class(1.0, 1.0, dec, [-0.1, 0.1], [-0.1, 0.1]) == "REAL_NATIVE"
