@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from copy import deepcopy
 from decimal import Decimal
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import JsonValue
 
@@ -11,7 +11,10 @@ from tank.analysis.condition_graph_contracts import (
     AvailableConditionFunding,
     BasicConditionSpot,
     ConditionAggregateLiquidations,
+    ConditionBoundaryGroup,
     ConditionClose,
+    ConditionComputedOutcomeRanges,
+    ConditionDeclaredEventAnchor,
     ConditionDerivatives,
     ConditionDerivativeSupportFeatures,
     ConditionDerivativeVenue,
@@ -21,6 +24,8 @@ from tank.analysis.condition_graph_contracts import (
     ConditionFlowCaptureWitness,
     ConditionFunding,
     ConditionFundingObservation,
+    ConditionGeneratedEmptyFlowProjection,
+    ConditionGeneratedEmptyFlowVisibility,
     ConditionIncrementalVolumes,
     ConditionLiquidations,
     ConditionNativeVolumeSupport,
@@ -31,9 +36,13 @@ from tank.analysis.condition_graph_contracts import (
     ConditionPredicate,
     ConditionReferenceTradeEvidenceRef,
     ConditionReferenceTradeProjection,
+    ConditionRelativeGraph,
+    ConditionRelativeNormalRange,
+    ConditionRelativeWindow,
     ConditionSpotValues,
     ConditionSynchronizedOpenInterest,
     ConditionWireClocks,
+    DeclaredConditionDirection,
     EnrichedConditionDerivatives,
     EnrichedConditionDerivativeVenue,
     EnrichedConditionSpot,
@@ -42,6 +51,8 @@ from tank.analysis.condition_graph_contracts import (
     KnownConditionTradeCount,
     ObservedConditionCohort,
     ObservedConditionCohortComparison,
+    ObservedConditionMarketContext,
+    ObservedConditionReferencePrice,
     ObservedConditionSizeProfile,
     UnavailableConditionLeadLag,
     UnavailableConditionOpenInterest,
@@ -50,10 +61,16 @@ from tank.analysis.condition_graph_contracts import (
     UnrequestedConditionOpenInterest,
     WindowedConditionSpot,
 )
-from tank.analysis.statistics_contracts import DecimalRange, FloatRange
+from tank.analysis.statistics_contracts import (
+    DecimalRange,
+    FloatRange,
+    HistoryDiagnostic,
+    UnavailableBeta,
+    UnavailableHistoryDiagnostics,
+)
 from tank.contracts import DomainModel
 from tank.contracts.json import JsonDocument
-from tank.time_precision import Timestamp
+from tank.time_precision import Timestamp, offset_schedule
 from tank.util import iso, sha256
 
 
@@ -310,7 +327,7 @@ def _decimal_wire(value: Decimal | None) -> str | None:
     return None if value is None else str(value)
 
 
-def _range_wire(value: DecimalRange | FloatRange) -> list[JsonValue] | None:
+def _range_wire(value: DecimalRange | FloatRange | ConditionRelativeNormalRange) -> list[JsonValue] | None:
     validated = type(value).model_validate(value)
     bounds = validated.bounds
     if bounds is None:
@@ -685,6 +702,8 @@ def encode_scoped_condition_spot(
 
 
 def reference_trade_projection_sha256(value: ConditionReferenceTradeProjection) -> str:
+    if type(value) is not ConditionReferenceTradeProjection:
+        raise TypeError("A declared reference trade projection is required")
     projection = ConditionReferenceTradeProjection.model_validate(value)
     serialized: JsonValue = _model_wire(projection)
     envelope: dict[str, JsonValue] = {
@@ -716,12 +735,282 @@ def reference_trade_evidence_wire(
     reference: ConditionReferenceTradeEvidenceRef,
     evidence: ConditionReferenceTradeLookup,
 ) -> dict[str, JsonValue]:
+    digest = reference_trade_projection_sha256(value)
     projection = ConditionReferenceTradeProjection.model_validate(value)
     validated = ConditionReferenceTradeEvidenceRef.model_validate(reference)
-    if validated.projection_sha256 != reference_trade_projection_sha256(projection):
+    if validated.projection_sha256 != digest:
         raise ValueError("Reference trade evidence does not match its declared projection")
     resolved = evidence.resolve_reference_trade(validated, expected=projection)
     checked = JsonDocument.validate_value(dict(resolved))
     if not isinstance(checked, dict):
         raise TypeError("Reference trade evidence must serialize as an object")
     return deepcopy(checked)
+
+
+def _boundary_wire(
+    value: ConditionBoundaryGroup, evidence: ConditionFlowEvidenceLookup
+) -> dict[str, JsonValue]:
+    boundary = ConditionBoundaryGroup.model_validate(value)
+    count = boundary.trade_count()
+    result: dict[str, JsonValue] = {
+        "start": iso(boundary.start),
+        "cutoff": iso(boundary.cutoff),
+        "trade_count": count.value,
+        "aggregates": [
+            flow_aggregate_evidence_wire(aggregate, evidence) for aggregate in boundary.aggregates
+        ],
+    }
+    if not isinstance(count, KnownConditionTradeCount):
+        result["trade_count_reason"] = count.reason
+    return result
+
+
+def _history_wire(value: HistoryDiagnostic) -> dict[str, JsonValue]:
+    validated = type(value).model_validate(value)
+    if isinstance(validated, UnavailableHistoryDiagnostics):
+        return {
+            "exact": validated.exact,
+            "reason": validated.reason,
+            "target_window_duration_s": validated.target_window_duration_s,
+            "resolution_s": validated.resolution_s,
+            "sample_count": validated.sample_count,
+        }
+    duration, staleness = validated.observed_duration_bounds_s, validated.endpoint_staleness_bounds_s
+    return {
+        "target_window_duration_s": validated.target_window_duration_s,
+        "observed_duration_bounds_s": None if duration is None else [duration.lower, duration.upper],
+        "endpoint_staleness_bounds_s": None if staleness is None else [staleness.lower, staleness.upper],
+        "exact": validated.exact,
+        "resolution_s": validated.resolution_s,
+        "alignment": validated.alignment,
+        "sample_count": validated.sample_count,
+        "latest_observed_at": None
+        if validated.latest_observed_at is None
+        else iso(validated.latest_observed_at),
+    }
+
+
+def _relative_window_wire(
+    value: ConditionRelativeWindow, root: ConditionRelativeGraph, clocks: ConditionWireClocks
+) -> dict[str, JsonValue]:
+    window = ConditionRelativeWindow.model_validate(value)
+    bounds = clocks.bounds(window.interval)
+    reference = root.reference_instrument_id
+    covered = False if reference is None else root.reference_coverage[reference].complete
+    result: dict[str, JsonValue] = {
+        "window": window.interval.window,
+        "start_origin": bounds.start_origin,
+        "precision": window.observed_at.precision,
+        "coverage": {"reference_venue": reference, "complete_24h": covered},
+        "r_raw": window.raw.value,
+        "r_raw_reason": window.raw.reason,
+        "r_btc_adj": window.btc_adjusted.value,
+        "r_btc_adj_reason": window.btc_adjusted.reason,
+        "r_eth_adj": window.eth_adjusted.value,
+        "r_eth_adj_reason": window.eth_adjusted.reason,
+        "r_sector_adj": window.sector_adjusted.value,
+        "sector_reason": window.sector_adjusted.reason,
+        "relative_measure": window.measure,
+        "relative_return": window.relative_return(),
+        "btc_reference_freshness": _model_wire(window.btc_reference.freshness()),
+        "eth_reference_freshness": _model_wire(window.eth_reference.freshness()),
+        "pctile": window.percentile,
+        "pctile_reason": window.percentile_reason,
+        "normal_range": _range_wire(window.normal_range),
+        "normal_range_reason": window.normal_range.reason,
+        "beyond_normal": window.beyond_normal(),
+        "historical_window_resolution_s": window.history.resolution_s,
+        "historical_window_duration_s": window.history.target_window_duration_s,
+        "requested_window_duration_s": (window.interval.cutoff - window.interval.start).total_seconds(),
+        "historical_alignment": "AS_OF_AT_EXACT_TARGET_BOUNDS",
+        "historical_measurement": _history_wire(window.history),
+    }
+    result.update(_clock_wire(bounds.start, "start"))
+    result.update(_clock_wire(bounds.cutoff, "cutoff"))
+    result.update(_clock_wire(window.observed_at, "observed_at"))
+    return result
+
+
+def encode_condition_relative(
+    value: ConditionRelativeGraph, evidence: ConditionRelativeEvidenceLookup, *, clocks: ConditionWireClocks
+) -> dict[str, JsonValue]:
+    validated = ConditionRelativeGraph.model_validate(value)
+    context = ConditionWireClocks.model_validate(clocks)
+    if validated.token_id != context.token_id:
+        raise ValueError("Relative serialization cannot borrow another subject's clock context")
+    event_window = validated.windows["EVENT"]
+    for window in validated.windows.values():
+        context.bounds(window.interval)
+    anchor = validated.anchor
+    anchor_type: Literal["T0", "T1", "KNOWN_TO_US_AT", "ANALYSIS_WINDOW_START"]
+    if isinstance(anchor.origin, ConditionDeclaredEventAnchor):
+        if context.event_anchor != anchor.origin.at:
+            raise ValueError("Relative event anchor metadata must preserve its captured clock")
+        anchor_clock = anchor.origin.at
+        anchor_type = anchor.origin.source
+        anchor_origin = "CAPTURED_EVENT_ANCHOR"
+    else:
+        if context.event_anchor.value is not None:
+            raise ValueError("An analysis-window start cannot be labeled as a captured event anchor")
+        if context.cutoff.value is None:
+            raise ValueError("Relative serialization requires its actual cutoff")
+        anchor_clock = offset_schedule(context.cutoff, anchor.origin.at - event_window.interval.cutoff)
+        anchor_type = "ANALYSIS_WINDOW_START"
+        anchor_origin = "CUTOFF_OFFSET"
+    coverage: dict[str, JsonValue] = {}
+    for iid, item in validated.reference_coverage.items():
+        coverage[iid] = {
+            "complete": item.complete,
+            "expected_duration_s": item.expected_duration_s,
+            "boundary_segments": [_boundary_wire(group, evidence) for group in item.boundary_segments],
+            "excluded": [_model_wire(exclusion) for exclusion in item.excluded],
+            "volume_unit": item.volume_unit,
+            "covered_volume_native": _decimal_wire(item.covered_volume_native),
+        }
+    anchor_wire: dict[str, JsonValue] = {
+        "type": anchor_type,
+        "start_origin": anchor_origin,
+        "ref_price": _decimal_wire(anchor.price.value),
+        "price_source": anchor.price.source,
+    }
+    anchor_wire.update(_clock_wire(anchor_clock, "ts"))
+    anchor_wire.update(_clock_wire(anchor.price.observed_at, "price_observed_at"))
+    if isinstance(anchor.price, ObservedConditionReferencePrice):
+        reference = anchor.trade_evidence_ref
+        if reference is None or anchor.price.source != "LAST_TRADE":
+            raise ValueError("An observed anchor requires its actual reference trade evidence")
+        projection = ConditionReferenceTradeProjection(
+            token_id=validated.token_id,
+            instrument_id=anchor.price.instrument_id,
+            market_type="SPOT",
+            source=anchor.price.source,
+            price=anchor.price.value,
+            observed_at=anchor.price.observed_at,
+        )
+        anchor_wire["evidence"] = reference_trade_evidence_wire(projection, reference, evidence)
+        anchor_wire["price_reason"] = None
+    else:
+        anchor_wire["evidence"] = None
+        anchor_wire["price_reason"] = anchor.price.reason
+    declaration = validated.direction_declaration
+    beta_btc, beta_eth = event_window.btc_beta, event_window.eth_beta
+    repricing = validated.repricing.band()
+    market = validated.context.classification()
+    inputs = validated.context
+    context_wire: dict[str, JsonValue] = {
+        "btc_return_24h": inputs.btc_return_24h,
+        "rv24": inputs.rv24,
+        "rv24_bound": iso(inputs.rv24_bound),
+        "rv24_resolution_s": inputs.rv24_resolution_s,
+        "return_normal_range": _range_wire(inputs.return_normal_range),
+        "return_normal_range_reason": inputs.return_normal_range.reason,
+        "return_lower_quartile": inputs.return_lower_quartile,
+        "rv_normal_range": _range_wire(inputs.rv_normal_range),
+        "rv_normal_range_reason": inputs.rv_normal_range.reason,
+        "rule": inputs.rule,
+    }
+    context_wire.update(_clock_wire(inputs.rv24_observed_at, "rv24_observed_cutoff"))
+    runup = validated.runup
+    runup_wire: dict[str, JsonValue] = {
+        "window": runup.window,
+        "anchor_kind": anchor_type,
+        "anchor_origin": anchor_origin,
+        "start_origin": "CUTOFF_OFFSET",
+        "ar": runup.value.value,
+        "ar_reason": runup.value.reason,
+        "pctile": runup.percentile,
+        "pctile_reason": runup.percentile_reason,
+        "flag": _predicate_wire(runup.beyond_normal),
+    }
+    runup_wire.update(_clock_wire(offset_schedule(anchor_clock, runup.start - runup.cutoff), "start"))
+    runup_wire.update(_clock_wire(anchor_clock, "cutoff"))
+    if not isinstance(runup.beyond_normal, ConditionObservedPredicate):
+        runup_wire["flag_reason"] = runup.beyond_normal.reason
+    outcome_reference = validated.outcome_btc_reference
+    btc_wire: dict[str, JsonValue] = {
+        "instrument_id": outcome_reference.instrument_id,
+        "entry_ref_price": _decimal_wire(outcome_reference.value),
+        "price_source": outcome_reference.source,
+        "reason": None
+        if isinstance(outcome_reference, ObservedConditionReferencePrice)
+        else outcome_reference.reason,
+    }
+    btc_wire.update(_clock_wire(outcome_reference.observed_at, "observed_at"))
+    ranges: dict[str, JsonValue] = {}
+    if isinstance(validated.outcome_ranges, ConditionComputedOutcomeRanges):
+        for name, baseline in validated.outcome_ranges.by_horizon.items():
+            serialized_range: dict[str, JsonValue] = {
+                "value": _range_wire(baseline.normal_range),
+                "unit": baseline.unit,
+                "relative_measure": baseline.measure,
+                "window": baseline.window,
+                "precision": baseline.observed_at.precision,
+                "coverage": {"sample_count": baseline.history.sample_count},
+                "reason": baseline.normal_range.reason,
+                "historical_measurement": _history_wire(baseline.history),
+            }
+            serialized_range.update(
+                _clock_wire(offset_schedule(anchor_clock, baseline.start - baseline.cutoff), "start")
+            )
+            serialized_range.update(_clock_wire(anchor_clock, "cutoff"))
+            serialized_range.update(_clock_wire(baseline.observed_at, "observed_at"))
+            ranges[name] = serialized_range
+    result: dict[str, JsonValue] = {
+        "expected_direction": declaration.value,
+        "repricing_sign": (1 if declaration.normalized() == "BUY" else -1)
+        if isinstance(declaration, DeclaredConditionDirection)
+        else None,
+        "outcome_btc_reference": btc_wire,
+        "normal_ranges": ranges,
+        "normal_ranges_status": validated.outcome_ranges.status,
+        "entry_ref_price": _decimal_wire(validated.entry.value),
+        "entry_price_source": validated.entry.source,
+        "ref_venue": validated.reference_instrument_id,
+        "reference_coverage": coverage,
+        "reference_reason": validated.reference_reason,
+        "anchor": anchor_wire,
+        "windows": {
+            name: _relative_window_wire(window, validated, context)
+            for name, window in validated.windows.items()
+        },
+        "beta_btc": beta_btc.value,
+        "beta_eth": beta_eth.value,
+        "beta_flags": {
+            "btc": beta_btc.reason if isinstance(beta_btc, UnavailableBeta) else None,
+            "eth": beta_eth.reason if isinstance(beta_eth, UnavailableBeta) else None,
+        },
+        "beta_estimates": {"btc": _model_wire(beta_btc), "eth": _model_wire(beta_eth)},
+        "pre_event_runup": runup_wire,
+        "repricing_band": repricing.value,
+        "repricing_reason": None if repricing.status == "OBSERVED" else repricing.reason,
+        "market_context": market.value,
+        "market_context_reason": None
+        if isinstance(market, ObservedConditionMarketContext)
+        else market.reason,
+        "context_inputs": context_wire,
+    }
+    result.update(_clock_wire(validated.entry.observed_at, "entry_price_observed_at"))
+    result.update(encode_condition_reference_close(validated.close_1h))
+    return result
+
+
+def generated_empty_flow_projection_sha256(value: ConditionGeneratedEmptyFlowProjection) -> str:
+    if type(value) not in (ConditionGeneratedEmptyFlowProjection, ConditionGeneratedEmptyFlowVisibility):
+        raise TypeError("A declared generated empty flow projection is required")
+    checked = type(value).model_validate(value)
+    projection = ConditionGeneratedEmptyFlowProjection(
+        token_id=checked.token_id,
+        venue=checked.venue,
+        market_type=checked.market_type,
+        segment=checked.segment,
+    )
+    serialized = JsonDocument.model_validate(projection.model_dump(mode="json"), strict=True).root
+    return sha256({"schema": "tank.condition.generated-empty-flow.v1", "projection": serialized})
+
+
+def validate_generated_empty_flow_evidence(value: ConditionGeneratedEmptyFlowVisibility) -> None:
+    if type(value) is not ConditionGeneratedEmptyFlowVisibility:
+        raise TypeError("A bound generated empty flow visibility is required")
+    validated = ConditionGeneratedEmptyFlowVisibility.model_validate(value)
+    if validated.evidence.projection_sha256 != generated_empty_flow_projection_sha256(validated):
+        raise ValueError("Generated empty flow evidence does not match its declared projection")

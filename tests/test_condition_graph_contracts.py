@@ -1338,6 +1338,9 @@ def test_market_context_known_zero_is_neutral_and_missing_volatility_is_unavaila
         btc_return_24h=0.0,
         rv24=0.0,
         rv24_bound=AT,
+        rv24_observed_at=Timestamp(
+            value="2026-10-17T12:00:00Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+        ),
         rv24_resolution_s=3600,
         return_normal_range=zero_range,
         return_lower_quartile=0.0,
@@ -1348,6 +1351,29 @@ def test_market_context_known_zero_is_neutral_and_missing_volatility_is_unavaila
     assert result.status == "OBSERVED" and result.value == "NEUTRAL"
     absent = inputs.model_copy(update={"rv24": None}).classification()
     assert absent.status == "UNAVAILABLE" and absent.value is None
+    previous_hour = Timestamp(
+        value="2026-10-17T11:00:00Z", precision=None, precision_reason="PRECISION_NOT_CAPTURED"
+    )
+    unavailable = ConditionMarketContextInputs.model_validate(
+        inputs.model_copy(update={"rv24": None, "rv24_observed_at": previous_hour})
+    )
+    assert unavailable.rv24_observed_at == previous_hour and unavailable.classification().value is None
+    with pytest.raises(ValidationError, match="qualified source hour"):
+        ConditionMarketContextInputs.model_validate(
+            inputs.model_copy(update={"rv24_observed_at": previous_hour})
+        )
+    with pytest.raises(ValidationError, match="source observation"):
+        ConditionMarketContextInputs.model_validate(
+            inputs.model_copy(
+                update={
+                    "rv24_observed_at": Timestamp(
+                        value="2026-10-17T13:00:00Z",
+                        precision=None,
+                        precision_reason="PRECISION_NOT_CAPTURED",
+                    )
+                }
+            )
+        )
     with pytest.raises(ValidationError, match="completed UTC hour"):
         inputs.model_copy(update={"rv24_bound": AT + timedelta(seconds=1)}).classification()
     with pytest.raises(ValidationError, match="actual available return history"):
@@ -1429,7 +1455,7 @@ def relative_graph_without_event() -> ConditionRelativeGraph:
     from tank.analysis.condition_graph_contracts import (
         ConditionAnalysisWindowStart,
         ConditionMarketContextInputs,
-        ConditionPreEventRunup,
+        ConditionPreAnalysisRunup,
         ConditionPriceReferenceCoverage,
         ConditionRelativeAnchor,
         ConditionRelativeReturn,
@@ -1520,8 +1546,8 @@ def relative_graph_without_event() -> ConditionRelativeGraph:
             trade_evidence_ref=None,
         ),
         windows=windows,
-        pre_event_runup=ConditionPreEventRunup(
-            window="PRE_EVENT_W24H",
+        runup=ConditionPreAnalysisRunup(
+            window="PRE_ANALYSIS_W24H",
             start=anchor_at - timedelta(days=1),
             cutoff=anchor_at,
             value=ConditionRelativeReturn(value=None, reason="INSUFFICIENT_HISTORY"),
@@ -1534,6 +1560,7 @@ def relative_graph_without_event() -> ConditionRelativeGraph:
             btc_return_24h=None,
             rv24=None,
             rv24_bound=AT,
+            rv24_observed_at=absent,
             rv24_resolution_s=3600,
             return_normal_range=FloatRange(bounds=None, reason="INSUFFICIENT_HISTORY"),
             return_lower_quartile=None,
@@ -1571,7 +1598,7 @@ def test_relative_graph_preserves_analysis_boundary_without_fabricating_event_an
                 }
             )
         )
-    with pytest.raises(ValidationError, match="real captured event anchor"):
+    with pytest.raises(ValidationError, match="Runup phase must preserve"):
         ConditionRelativeGraph.model_validate(
             graph.model_copy(
                 update={

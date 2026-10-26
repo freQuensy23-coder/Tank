@@ -16,6 +16,7 @@ from tank.analysis.condition_graph_codec import (
 from tank.analysis.condition_graph_contracts import (
     BasicConditionDerivatives,
     ConditionFlowAggregateProjection,
+    ConditionGeneratedEmptyFlowProjection,
     ConditionReferenceTradeEvidenceRef,
     ConditionReferenceTradeProjection,
     ConditionSizeProfile,
@@ -939,3 +940,213 @@ def test_reference_trade_wire_binds_source_descriptor_and_actual_projection_befo
     with pytest.raises(ValueError, match="source evidence mismatch"):
         reference_trade_evidence_wire(projection, reference, source)
     assert source.original["p"] == "12.50"
+
+
+class UnrequestedRelativeEvidence:
+    def resolve_flow_aggregate(
+        self, reference: FlowAggregateEvidenceRef, *, expected: ConditionFlowAggregateProjection
+    ) -> Mapping[str, JsonValue]:
+        raise AssertionError("No flow evidence is declared by this unavailable reference fixture")
+
+    def resolve_reference_trade(
+        self, reference: ConditionReferenceTradeEvidenceRef, *, expected: ConditionReferenceTradeProjection
+    ) -> Mapping[str, JsonValue]:
+        raise AssertionError("No anchor trade is declared by this unavailable reference fixture")
+
+
+def test_relative_wire_preserves_analysis_origin_unknown_precision_and_unavailable_beta() -> None:
+    from test_condition_graph_contracts import relative_graph_without_event
+
+    from tank.analysis.condition_graph_codec import encode_condition_relative
+
+    model = relative_graph_without_event()
+    wire = encode_condition_relative(model, UnrequestedRelativeEvidence(), clocks=condition_wire_clocks())
+    assert wire["expected_direction"] is None and wire["repricing_sign"] is None
+    assert wire["beta_btc"] is None and wire["beta_eth"] is None
+    assert wire["repricing_band"] is None and wire["repricing_reason"] == "NO_EVENT_ANCHOR"
+    anchor = wire["anchor"]
+    assert isinstance(anchor, dict)
+    assert anchor["type"] == "ANALYSIS_WINDOW_START" and anchor["start_origin"] == "CUTOFF_OFFSET"
+    assert anchor["ts"] == "2026-10-17T08:00:00Z"
+    assert anchor["ts_prec"] == "COLLECTION_ONLY" and anchor["evidence"] is None
+    runup = wire["pre_event_runup"]
+    assert isinstance(runup, dict)
+    assert runup["window"] == "PRE_ANALYSIS_W24H" and runup["anchor_kind"] == "ANALYSIS_WINDOW_START"
+    assert runup["start"] == "2026-10-16T08:00:00Z" and runup["cutoff"] == anchor["ts"]
+    assert wire["entry_price_observed_at_prec"] is None
+    assert wire["entry_price_observed_at_prec_reason"] == "PRECISION_NOT_CAPTURED"
+    context = wire["context_inputs"]
+    assert isinstance(context, dict)
+    assert context["rv24_observed_cutoff"] is None
+    assert context["rv24_observed_cutoff_prec_reason"] == "INCOMPLETE"
+    assert context["rv24_bound"] == "2026-10-17T12:00:00Z"
+
+
+def test_relative_wire_refuses_borrowed_subject_or_event_clock_context() -> None:
+    from test_condition_graph_contracts import relative_graph_without_event
+
+    from tank.analysis.condition_graph_codec import encode_condition_relative
+    from tank.time_precision import Timestamp
+
+    model = relative_graph_without_event()
+    context = condition_wire_clocks()
+    with pytest.raises(ValueError, match="another subject"):
+        encode_condition_relative(
+            model, UnrequestedRelativeEvidence(), clocks=context.model_copy(update={"token_id": "OTHER"})
+        )
+    with pytest.raises(ValueError):
+        encode_condition_relative(
+            model,
+            UnrequestedRelativeEvidence(),
+            clocks=context.model_copy(
+                update={"event_anchor": Timestamp(value="2026-10-17T08:00:00Z", precision="EXACT")}
+            ),
+        )
+
+
+def generated_empty_projection() -> ConditionGeneratedEmptyFlowProjection:
+    from tank.analysis.condition_graph_contracts import ConditionGeneratedEmptyFlowProjection
+    from tank.market.trade_contracts import EmptyBoundarySegment
+
+    end = datetime(2026, 10, 17, 12, tzinfo=UTC)
+    return ConditionGeneratedEmptyFlowProjection(
+        token_id="T",
+        venue="a",
+        market_type="SPOT",
+        segment=EmptyBoundarySegment(
+            instrument_id="fixture-instrument",
+            start=end - timedelta(seconds=30),
+            start_prec="EXACT",
+            start_prec_reason=None,
+            end=end,
+            end_prec="EXACT",
+            end_prec_reason=None,
+            complete=False,
+            observed_at=end + timedelta(seconds=1),
+            observed_at_prec="COLLECTION_ONLY",
+            observed_at_prec_reason=None,
+            coverage_reason="INCOMPLETE",
+            buy_qty=Decimal(0),
+            sell_qty=Decimal(0),
+            buy_notional=None,
+            sell_notional=None,
+            n_buy=0,
+            n_sell=0,
+            sum_sq_qty=Decimal(0),
+            open=None,
+            high=None,
+            low=None,
+            close=None,
+            vwap=None,
+            size_buckets=None,
+            first_trade=None,
+            last_trade=None,
+        ),
+    )
+
+
+def test_generated_empty_visibility_is_independent_of_capture_completeness_and_receipt() -> None:
+    from tank.analysis.condition_graph_codec import (
+        generated_empty_flow_projection_sha256,
+        validate_generated_empty_flow_evidence,
+    )
+    from tank.analysis.condition_graph_contracts import (
+        ConditionGeneratedEmptyFlowVisibility,
+        FlowCaptureEvidenceRef,
+    )
+    from tank.time_precision import Timestamp
+
+    projection = generated_empty_projection()
+    observed = ConditionGeneratedEmptyFlowVisibility(
+        token_id=projection.token_id,
+        venue=projection.venue,
+        market_type=projection.market_type,
+        segment=projection.segment,
+        basis="GENERATED_EMPTY_PIECE",
+        assembled_at=Timestamp(value="2026-10-17T12:00:02Z", precision="COLLECTION_ONLY"),
+        evidence=FlowCaptureEvidenceRef(
+            projection_sha256=generated_empty_flow_projection_sha256(projection),
+            source_evidence_sha256=sha256({"fixture": "actual-generated-empty-source"}),
+        ),
+    )
+    validate_generated_empty_flow_evidence(observed)
+    result = observed.eligible()
+    assert result.status == "OBSERVED" and result.value is True
+    assert not observed.segment.complete
+    future = observed.model_copy(
+        update={"assembled_at": Timestamp(value="2026-10-17T12:00:00Z", precision="COLLECTION_ONLY")}
+    )
+    result = future.eligible()
+    assert result.status == "OBSERVED" and result.value is False
+    modified = observed.model_copy(update={"venue": "OTHER"})
+    with pytest.raises(ValueError, match="does not match"):
+        validate_generated_empty_flow_evidence(modified)
+    with pytest.raises(ValidationError):
+        type(projection).model_validate(
+            projection.model_copy(
+                update={"segment": projection.segment.model_copy(update={"observed_at_prec": "EXACT"})}
+            )
+        )
+
+
+def test_generated_visibility_cannot_authorize_an_incomplete_or_different_capture_piece() -> None:
+    from test_condition_graph_contracts import capture_witness
+
+    from tank.analysis.condition_graph_codec import generated_empty_flow_projection_sha256
+    from tank.analysis.condition_graph_contracts import (
+        ConditionFlowCapturePiece,
+        ConditionGeneratedEmptyFlowVisibility,
+        FlowCaptureEvidenceRef,
+    )
+    from tank.time_precision import Timestamp
+
+    projection = generated_empty_projection()
+    witness = capture_witness(
+        projection.segment.instrument_id,
+        projection.venue,
+        projection.market_type,
+        projection.segment.start,
+        projection.segment.end,
+    )
+    visibility = ConditionGeneratedEmptyFlowVisibility(
+        token_id=projection.token_id,
+        venue=projection.venue,
+        market_type=projection.market_type,
+        segment=projection.segment,
+        basis="GENERATED_EMPTY_PIECE",
+        assembled_at=Timestamp(value="2026-10-17T12:00:02Z", precision="COLLECTION_ONLY"),
+        evidence=FlowCaptureEvidenceRef(
+            projection_sha256=generated_empty_flow_projection_sha256(projection),
+            source_evidence_sha256=witness.evidence.source_evidence_sha256,
+        ),
+    )
+    with pytest.raises(ValidationError, match="exact complete scoped source piece"):
+        ConditionFlowCapturePiece(basis="BOUNDARY", aggregate=witness, visibility=visibility)
+    complete_segment = type(projection.segment).model_validate(
+        projection.segment.model_copy(update={"complete": True, "coverage_reason": None})
+    )
+    complete_projection = type(projection).model_validate(
+        projection.model_copy(update={"segment": complete_segment})
+    )
+    visibility = type(visibility).model_validate(
+        visibility.model_copy(
+            update={
+                "segment": complete_segment,
+                "evidence": FlowCaptureEvidenceRef(
+                    projection_sha256=generated_empty_flow_projection_sha256(complete_projection),
+                    source_evidence_sha256=witness.evidence.source_evidence_sha256,
+                ),
+            }
+        )
+    )
+    piece = ConditionFlowCapturePiece(basis="BOUNDARY", aggregate=witness, visibility=visibility)
+    result = piece.visibility.eligible()
+    assert result.status == "OBSERVED" and result.value is True
+    for invalid in (
+        visibility.model_copy(update={"venue": "OTHER"}),
+        visibility.model_copy(
+            update={"evidence": visibility.evidence.model_copy(update={"source_evidence_sha256": "0" * 64})}
+        ),
+    ):
+        with pytest.raises(ValidationError, match="exact complete scoped source piece"):
+            ConditionFlowCapturePiece(basis="BOUNDARY", aggregate=witness, visibility=invalid)

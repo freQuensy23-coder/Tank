@@ -33,7 +33,7 @@ from tank.contracts.provenance import ResolvedVersionIdentity
 from tank.contracts.registry import FundamentalsEvidence, LendingPool
 from tank.contracts.scalars import TrueFlag, require_integer, require_number
 from tank.market.book_contracts import BookLevel
-from tank.market.trade_contracts import QuoteUsdValuation
+from tank.market.trade_contracts import EmptyBoundarySegment, QuoteUsdValuation
 from tank.time_precision import Timestamp, offset_schedule
 from tank.util import parse_epoch, parse_iso_time
 
@@ -2182,6 +2182,7 @@ class ConditionMarketContextInputs(DomainModel):
     btc_return_24h: float | None
     rv24: float | None = Field(ge=0)
     rv24_bound: datetime
+    rv24_observed_at: Timestamp
     rv24_resolution_s: Annotated[Literal[3600], BeforeValidator(require_number)]
     return_normal_range: FloatRange
     return_lower_quartile: float | None
@@ -2198,6 +2199,17 @@ class ConditionMarketContextInputs(DomainModel):
 
     @model_validator(mode="after")
     def actual_return_history(self) -> Self:
+        source = self.rv24_observed_at.value
+        observed = None if source is None else parse_iso_time(source)
+        if observed is not None and (
+            observed > self.rv24_bound
+            or observed.minute != 0
+            or observed.second != 0
+            or observed.microsecond != 0
+        ):
+            raise ValueError("RV source observation must preserve its actual completed source hour")
+        if self.rv24 is not None and observed != self.rv24_bound:
+            raise ValueError("Known RV requires its actual qualified source hour at the calculation bound")
         if (self.return_normal_range.bounds is None) != (self.return_lower_quartile is None):
             raise ValueError("A return quartile must preserve actual available return history")
         return self
@@ -2435,8 +2447,7 @@ class ConditionPriceReferenceCoverage(DomainModel):
         return self
 
 
-class ConditionPreEventRunup(DomainModel):
-    window: Literal["PRE_EVENT_W24H"]
+class ConditionPriorDayRunup(DomainModel):
     start: datetime
     cutoff: datetime
     value: ConditionRelativeReturn
@@ -2452,10 +2463,21 @@ class ConditionPreEventRunup(DomainModel):
     @model_validator(mode="after")
     def actual_prior_day(self) -> Self:
         if (self.cutoff - self.start).total_seconds() != 86400:
-            raise ValueError("Pre-event runup requires the actual preceding 24-hour interval")
+            raise ValueError("Prior-boundary runup requires the actual preceding 24-hour interval")
         if (self.percentile is None) != (self.percentile_reason is not None):
             raise ValueError("Missing runup percentile requires its actual missing-input reason")
         return self
+
+
+class ConditionPreEventRunup(ConditionPriorDayRunup):
+    window: Literal["PRE_EVENT_W24H"]
+
+
+class ConditionPreAnalysisRunup(ConditionPriorDayRunup):
+    window: Literal["PRE_ANALYSIS_W24H"]
+
+
+type ConditionRunup = ConditionPreEventRunup | ConditionPreAnalysisRunup
 
 
 type ConditionOutcomeHorizon = Literal["W1H", "W4H", "W12H", "W24H", "W3D", "W7D"]
@@ -2562,7 +2584,7 @@ class ConditionRelativeGraph(DomainModel):
     close_1h: ConditionClose
     anchor: ConditionRelativeAnchor
     windows: dict[ConditionWindow, ConditionRelativeWindow]
-    pre_event_runup: ConditionPreEventRunup
+    runup: ConditionRunup
     repricing: ConditionRepricing
     context: ConditionMarketContextInputs
     outcome_btc_reference: ConditionReferencePrice
@@ -2634,13 +2656,17 @@ class ConditionRelativeGraph(DomainModel):
             raise ValueError("Market context must preserve its actual completed-hour calculation bound")
         if self.anchor.price.instrument_id != self.reference_instrument_id:
             raise ValueError("Anchor price must preserve the actual selected reference instrument")
+        if isinstance(self.anchor.origin, ConditionAnalysisWindowStart) != isinstance(
+            self.runup, ConditionPreAnalysisRunup
+        ):
+            raise ValueError("Runup phase must preserve its actual event anchor or analysis-window origin")
         anchor = self.anchor.instant()
         if event_window.raw.value is not None and (
             not isinstance(self.anchor.price, ObservedConditionReferencePrice)
             or not isinstance(self.entry, ObservedConditionReferencePrice)
         ):
             raise ValueError("An observed event return requires actual anchor and cutoff reference prices")
-        if self.windows["EVENT"].interval.start != anchor or self.pre_event_runup.cutoff != anchor:
+        if self.windows["EVENT"].interval.start != anchor or self.runup.cutoff != anchor:
             raise ValueError(
                 "Event-relative calculations must preserve the actual anchor or analysis boundary"
             )
@@ -2650,7 +2676,7 @@ class ConditionRelativeGraph(DomainModel):
         ):
             raise ValueError("Anchor reference trade must strictly precede the actual anchor boundary")
         day_window = self.windows["W24H"]
-        runup = self.pre_event_runup
+        runup = self.runup
         expected_percentile = runup.value.value is not None and day_window.history.sample_count > 0
         if (runup.percentile is not None) != expected_percentile:
             raise ValueError("Runup percentile requires its actual return and preceding historical samples")
@@ -2709,6 +2735,12 @@ class ConditionRelativeGraph(DomainModel):
         ):
             raise ValueError("A real captured event anchor cannot be relabelled as missing")
         return self
+
+    def pre_event_support(self) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        if isinstance(validated.runup, ConditionPreAnalysisRunup):
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="NO_EVENT_ANCHOR")
+        return validated.runup.beyond_normal
 
 
 class ConditionCoveredBookRange(DomainModel):
@@ -4458,10 +4490,56 @@ class ConditionFundingConfirmationGraph(DomainModel):
         )
 
 
+class ConditionGeneratedEmptyFlowProjection(DomainModel):
+    token_id: str = Field(min_length=1, pattern=r"\S")
+    venue: str = Field(min_length=1, pattern=r"\S")
+    market_type: Literal["SPOT", "PERP"]
+    segment: EmptyBoundarySegment
+
+    @model_validator(mode="after")
+    def actual_generated_empty_piece(self) -> Self:
+        row = self.segment
+        if row.n_buy != 0 or row.n_sell != 0 or row.buy_qty != 0 or row.sell_qty != 0:
+            raise ValueError("Generated empty visibility requires an actual observed empty piece")
+        return self
+
+
+class ConditionGeneratedEmptyFlowVisibility(ConditionGeneratedEmptyFlowProjection):
+    basis: Literal["GENERATED_EMPTY_PIECE"]
+    assembled_at: Timestamp
+    evidence: FlowCaptureEvidenceRef
+
+    def eligible(self) -> ConditionPredicate:
+        validated = type(self).model_validate(self)
+        assembled = validated.assembled_at.value
+        if assembled is None:
+            return ConditionUnavailablePredicate(status="UNAVAILABLE", reason="INCOMPLETE")
+        return ConditionObservedPredicate(
+            status="OBSERVED", value=validated.segment.observed_at <= parse_iso_time(assembled)
+        )
+
+
 class ConditionFlowCapturePiece(DomainModel):
     basis: Literal["FULL_MINUTE", "BOUNDARY"]
     aggregate: ConditionFlowCaptureWitness
-    visibility: ConditionReceiptVisibility
+    visibility: ConditionReceiptVisibility | ConditionGeneratedEmptyFlowVisibility
+
+    @model_validator(mode="after")
+    def generated_visibility_scope(self) -> Self:
+        visibility = self.visibility
+        if isinstance(visibility, ConditionGeneratedEmptyFlowVisibility):
+            witness, segment = self.aggregate, visibility.segment
+            if (
+                (visibility.token_id, visibility.venue, visibility.market_type, segment.instrument_id)
+                != (witness.token_id, witness.venue, witness.market_type, witness.instrument_id)
+                or (segment.start, segment.end) != (witness.start, witness.end)
+                or not segment.complete
+                or visibility.evidence.source_evidence_sha256 != witness.evidence.source_evidence_sha256
+            ):
+                raise ValueError(
+                    "Generated capture visibility requires the exact complete scoped source piece"
+                )
+        return self
 
 
 class ConditionFlowWindowQualification(DomainModel):
@@ -6504,6 +6582,11 @@ class FullConditionMarketState(DomainModel):
             )
         ):
             raise ValueError("Full state cannot borrow another token's financial context")
+        pre_event = self.relative.pre_event_support()
+        if "PRE_EVENT_RUNUP" in self.candidates.flags and not (
+            isinstance(pre_event, ConditionObservedPredicate) and pre_event.value
+        ):
+            raise ValueError("A pre-event runup flag requires actual event-anchored observed support")
         if any(observation.token_id != self.token_id for observation in self.data_confidence.freshness):
             raise ValueError("Full confidence cannot borrow another subject's observed freshness")
         if any(window.interval.cutoff != self.cutoff for window in self.relative.windows.values()):
