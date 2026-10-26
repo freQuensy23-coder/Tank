@@ -10,6 +10,7 @@ import { WorkspaceExports } from './workspace-exports.mts';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 export const HISTORY_MODULE = 'vendor/openma/packages/managed-agents-adapters-sql/test/session-event-source-position.test.ts';
+export const PROJECTION_MODULE = 'vendor/openma/packages/managed-agents-adapters-sql/test/tank-continuation-projection.pg.test.ts';
 const CONFIG = 'vendor/openma/packages/managed-agents-adapters-sql/vitest.config.ts';
 const MODULE_SHA256 = 'b1480462425a147b125c302773e4b79f45fda67c8bf3e1b157ed8ae32c1a5488';
 const CONFIG_SHA256 = '25ec2e1f7465adaa4f1d62ca7f43dfdd071f57f1bd08110128d40f538c89c2a1';
@@ -31,11 +32,14 @@ export interface HistoryModuleSummary {
   max_ms: number;
   p90_ms: number;
 }
-export function verifyHistoryModuleReport(document: string, expectedModule: string): HistoryModuleSummary {
+export interface ProjectionModuleSummary extends Omit<HistoryModuleSummary, 'schema'> {
+  schema: 'tank.persistence.tank-projection.v1';
+}
+function verifyModuleReport(document: string, expectedModule: string, expectedCases: number, p90LimitMs: number): Omit<HistoryModuleSummary, 'schema'> {
   const report = decodeRuntimeJson(document);
   if (!object(report) || report.success !== true) return invalidReport();
   const total = integer(report.numTotalTests), passed = integer(report.numPassedTests);
-  if (total !== 5 || passed !== total || integer(report.numFailedTests) !== 0 || integer(report.numPendingTests) !== 0) return invalidReport();
+  if (total !== expectedCases || passed !== total || integer(report.numFailedTests) !== 0 || integer(report.numPendingTests) !== 0) return invalidReport();
   if (!Array.isArray(report.testResults) || report.testResults.length !== 1) return invalidReport();
   const file: unknown = report.testResults[0];
   if (!object(file) || file.status !== 'passed' || typeof file.name !== 'string' || !isAbsolute(file.name) || resolve(file.name) !== resolve(expectedModule)) return invalidReport();
@@ -49,8 +53,14 @@ export function verifyHistoryModuleReport(document: string, expectedModule: stri
   }
   durations.sort((left, right) => left - right);
   const p90 = durations.at(Math.ceil(durations.length * .9) - 1);
-  if (p90 === undefined || p90 >= 1000) return invalidReport();
-  return {schema: 'tank.persistence.history-module.v1', cases: total, passed, failed: 0, skipped: 0, todo: 0, max_ms: Math.max(...durations), p90_ms: p90};
+  if (p90 === undefined || p90 >= p90LimitMs) return invalidReport();
+  return {cases: total, passed, failed: 0, skipped: 0, todo: 0, max_ms: Math.max(...durations), p90_ms: p90};
+}
+export function verifyHistoryModuleReport(document: string, expectedModule: string): HistoryModuleSummary {
+  return {schema: 'tank.persistence.history-module.v1', ...verifyModuleReport(document, expectedModule, 5, 1000)};
+}
+export function verifyTankProjectionModuleReport(document: string, expectedModule: string): ProjectionModuleSummary {
+  return {schema: 'tank.persistence.tank-projection.v1', ...verifyModuleReport(document, expectedModule, 3, 10000)};
 }
 function checkedBytes(path: string, expected: string): void {
   if (createHash('sha256').update(readFileSync(path)).digest('hex') !== expected) throw new Error('Protected history qualification source differs from declared input');
@@ -81,6 +91,7 @@ export function runHistoryModule(): void {
     const files = [
       'scripts/openma-persistence/history-module.mts', 'scripts/openma-persistence/history-module-config.ts',
       'scripts/openma-persistence/workspace-exports.mts',
+      'scripts/openma-persistence/projection-config.ts', PROJECTION_MODULE,
       'vendor/openma/packages/session-runtime-contract/src/continuation.ts',
       'vendor/openma/packages/session-runtime-sql/src/continuation.ts',
       'vendor/openma/packages/session-runtime-sql/src/coordination.ts',
@@ -101,6 +112,17 @@ export function runHistoryModule(): void {
     process.stdout.write(document + '\n');
     if (result.error !== undefined || result.status !== 0) throw new Error('History module execution did not pass');
     console.log(JSON.stringify(verifyHistoryModuleReport(document, resolve(repository, HISTORY_MODULE))));
+    const projectionReport = resolve(temporary, 'projection-report.json');
+    const projection = spawnSync(process.execPath, [binary, 'run', '--config', resolve(repository, 'scripts/openma-persistence/projection-config.ts'), '--testTimeout', '10000', '--reporter', 'json', '--outputFile', projectionReport, 'test/tank-continuation-projection.pg.test.ts'], {
+      cwd: resolve(repository, 'vendor/openma/packages/managed-agents-adapters-sql'), encoding: 'utf8', timeout: 60000,
+      env: {...process.env, TANK_OPENMA_HISTORY_CACHE_DIR: resolve(temporary, 'projection-cache')},
+    });
+    process.stdout.write(projection.stdout);
+    process.stderr.write(projection.stderr);
+    const projectionDocument = readFileSync(projectionReport, 'utf8');
+    process.stdout.write(projectionDocument + '\n');
+    if (projection.error !== undefined || projection.status !== 0) throw new Error('Tank projection module execution did not pass');
+    console.log(JSON.stringify(verifyTankProjectionModuleReport(projectionDocument, resolve(repository, PROJECTION_MODULE))));
   } finally { rmSync(temporary, {recursive: true}); }
 }
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) runHistoryModule();

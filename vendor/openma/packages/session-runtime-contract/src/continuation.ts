@@ -1,7 +1,7 @@
 import { decodeRuntimeJson, RuntimeJsonDocumentError } from "./json";
 import type { SentSessionEvent, SessionEventView, SessionStopReason, UserMessageContentBlock, ToolResultContentBlock, ImageSource, DocumentSource, TextContentBlock, OutcomeRubric } from '@open-managed-agents/domain/sessions';
 import { encodeSessionEventDocument, type OrderedSessionEvent, type ExecutionProgressReceipt, type SessionEventSourcePosition, type SessionEventExecutionMetadata } from './history';
-import type { SessionExecutionState } from './coordination';
+import type { SessionExecutionFence, SessionExecutionState } from './coordination';
 export interface ContinuationExecution {
   id: string;
   laneId: string;
@@ -742,4 +742,23 @@ export function encodeContinuationSessionEventDocument(
   });
   if (admitted.position === undefined) return invalidSessionEventSource();
   return encodeSessionEventDocument(event, admitted.position, admitted.executionId, admitted.executionMetadata);
+}
+
+export type RuntimeProjectionDocumentEncoder = (
+  event: SessionEventView, position: SessionEventSourcePosition, fence: SessionExecutionFence | undefined,
+) => string;
+
+export function encodeDefaultRuntimeProjectionDocument(
+  event: SessionEventView, position: SessionEventSourcePosition, fence: SessionExecutionFence | undefined,
+): string {
+  return encodeContinuationSessionEventDocument(event, position, fence?.executionId);
+}
+
+export function encodeTankContinuationProjectionDocument(
+  event: SessionEventView, position: SessionEventSourcePosition, fence: SessionExecutionFence | undefined,
+): string {
+  if (fence === undefined) throw new ContinuationProtocolError('Tank continuation projection requires an execution fence');
+  return encodeContinuationSessionEventDocument(event, position, fence.executionId, {
+    attemptId: fence.attemptId, generation: fence.generation,
+  });
 }

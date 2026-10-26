@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { decodePublicSessionEventDocument, decodeSessionEventDocument, encodeSessionEventDocument, type SessionEventExecutionMetadata } from '../../../vendor/openma/packages/session-runtime-contract/src/history.ts';
-import { decodeContinuationHistorySourceDocument, encodeContinuationSessionEventDocument } from '../../../vendor/openma/packages/session-runtime-contract/src/continuation.ts';
+import { decodeContinuationHistorySourceDocument, encodeContinuationSessionEventDocument, encodeDefaultRuntimeProjectionDocument, encodeTankContinuationProjectionDocument } from '../../../vendor/openma/packages/session-runtime-contract/src/continuation.ts';
+import type { SessionExecutionFence } from '../../../vendor/openma/packages/session-runtime-contract/src/coordination.ts';
 import type { SessionEventView } from '../../../vendor/openma/packages/managed-agents-domain/src/sessions/index.ts';
 
 const event: SessionEventView = { id: 'event', type: 'session.status_running', processedAt: '2026-10-26T00:00:00Z' };
@@ -11,6 +12,30 @@ const metadata: SessionEventExecutionMetadata = {
     phaseInputIds: ['first'], phaseStartEventId: 'start', terminalEventId: 'terminal',
     laneId: 'lane', attemptId: 'attempt', generation: 2 },
 };
+const fence: SessionExecutionFence = {
+  workspaceId: 'scope', sessionId: 'session', executionId: 'execution', attemptId: 'attempt',
+  ownerId: 'worker', generation: 2, expiresAt: '2026-10-26T00:00:10Z',
+};
+test('generic projection retains the original public shape with genuine optional fence absence', () => {
+  const position = {revision: 3, index: 0};
+  assert.deepEqual(decodeSessionEventDocument(encodeDefaultRuntimeProjectionDocument(event, position, fence)), {
+    event, position, executionId: fence.executionId,
+  });
+  assert.deepEqual(decodeSessionEventDocument(encodeDefaultRuntimeProjectionDocument(event, position, undefined)), {
+    event, position,
+  });
+});
+test('named Tank projection encodes the actual fence attempt and generation', () => {
+  const position = {revision: 3, index: 0};
+  assert.deepEqual(decodeSessionEventDocument(encodeTankContinuationProjectionDocument(event, position, fence)), {
+    event, position, executionId: fence.executionId,
+    executionMetadata: {attemptId: fence.attemptId, generation: fence.generation},
+  });
+});
+test('Tank projection refuses an absent or malformed fence without guessing receipt facts', () => {
+  assert.throws(() => encodeTankContinuationProjectionDocument(event, {revision: 3, index: 0}, undefined), /requires an execution fence/);
+  assert.throws(() => encodeTankContinuationProjectionDocument(event, {revision: 3, index: 0}, {...fence, generation: 0}), /Invalid persisted continuation history source/);
+});
 test('history private metadata preserves genuine absence and actual declared fields', () => {
   assert.deepEqual(decodeSessionEventDocument(JSON.stringify(event)), { event });
   const document = encodeSessionEventDocument(event, { revision: 3, index: 0 }, 'execution', metadata);

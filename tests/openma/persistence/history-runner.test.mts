@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { verifyHistoryModuleReport } from '../../../scripts/openma-persistence/history-module.mts';
+import { PROJECTION_MODULE, verifyHistoryModuleReport, verifyTankProjectionModuleReport } from '../../../scripts/openma-persistence/history-module.mts';
 import { WorkspaceExports } from '../../../scripts/openma-persistence/workspace-exports.mts';
 
 const repository = fileURLToPath(new URL('../../../', import.meta.url));
@@ -16,6 +16,27 @@ function report(): string {
       {fullName: 'acceptance false', status: 'passed', duration: 4},
       {fullName: 'acceptance true', status: 'passed', duration: 5},
     ]}],
+  });
+}
+function projectionReport(): string {
+  return JSON.stringify({success: true, numTotalTests: 3, numPassedTests: 3, numFailedTests: 0, numPendingTests: 0,
+    testResults: [{status: 'passed', name: resolve(repository, PROJECTION_MODULE), assertionResults: [
+      {fullName: 'default', status: 'passed', duration: 100},
+      {fullName: 'Tank binding', status: 'passed', duration: 1500},
+      {fullName: 'refusals', status: 'passed', duration: 300},
+    ]}],
+  });
+}
+test('actual PG report requires all owned integration cases with its declared deadline', () => {
+  assert.deepEqual(verifyTankProjectionModuleReport(projectionReport(), resolve(repository, PROJECTION_MODULE)), {
+    schema: 'tank.persistence.tank-projection.v1', cases: 3, passed: 3, failed: 0, skipped: 0, todo: 0, max_ms: 1500, p90_ms: 1500,
+  });
+  assert.throws(() => verifyTankProjectionModuleReport(projectionReport(), module), /incomplete or inconsistent/);
+});
+for (const [from, to] of [['"success":true', '"success":false'], ['"numPassedTests":3', '"numPassedTests":2'],
+  ['"numPendingTests":0', '"numPendingTests":1'], ['"duration":1500', '"duration":10000']]) {
+  test('failed, skipped or over-deadline PG report refuses ' + to, () => {
+    assert.throws(() => verifyTankProjectionModuleReport(projectionReport().replace(from, to), resolve(repository, PROJECTION_MODULE)), /incomplete or inconsistent/);
   });
 }
 test('full module report verifies exact complete source and actual case metrics', () => {
