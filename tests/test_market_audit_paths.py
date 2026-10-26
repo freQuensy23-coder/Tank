@@ -10,7 +10,12 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
+from truth_support import fixture_truth_config
 
+from tank.analysis.condition_graph_contracts import ConditionInterval
+from tank.analysis.condition_input_codec import decode_spot_inputs
+from tank.analysis.condition_inputs import SpotCalculationPolicy
+from tank.analysis.spot import calculate_spot_sign_history
 from tank.analysis.truth import (
     derivatives_truth,
     enrich_evidence,
@@ -21,6 +26,8 @@ from tank.analysis.truth import (
     supply_truth,
     support_features,
 )
+from tank.contracts.configuration import Thresholds
+from tank.time_precision import propagate_timestamp
 from tank.util import iso, parse_time
 
 END = parse_time("2026-10-16T12:00:00Z")
@@ -201,7 +208,27 @@ def derive(packet, start=START, end=END):
     deriv = derivatives_truth(packet, start, end)
     liquidity = liquidity_truth(packet, start, end, spot, relative)
     supply = supply_truth(packet, start, end)
-    enrich_evidence(packet, start, end, {"EVENT": spot}, "EVENT", deriv, relative, liquidity)
+    native = decode_spot_inputs(
+        token_id=packet["token_id"],
+        start=start,
+        cutoff=end,
+        assembled_at=propagate_timestamp(packet, "assembled_at"),
+        instruments=packet["instruments"],
+        flow_bars=packet["flow_bars"],
+        flow_parent_bars=[],
+        flow_segments=[],
+        tickers=[],
+        policy=SpotCalculationPolicy.from_thresholds(Thresholds.model_validate(fixture_truth_config())),
+        native_ticker_volume_field="volume_native",
+    )
+    history = calculate_spot_sign_history(
+        native.inputs,
+        interval=ConditionInterval(window="EVENT", start=start, cutoff=end),
+        selected_venues=tuple(spot["topn"]["venues"]),
+    )
+    enrich_evidence(
+        packet, start, end, {"EVENT": spot}, "EVENT", deriv, relative, liquidity, sign_history=history
+    )
     features = support_features(packet, start, end, spot, deriv, liquidity, supply)
     deriv["support_features"] = features
     return spot, deriv, liquidity, supply, relative
@@ -380,9 +407,21 @@ def test_raw_alternating_top_venue_signs_do_not_invent_second_path() -> None:
                     sell_notional="100" if s > 0 else "2000",
                 )
             )
+    captured = END + timedelta(seconds=1)
+    packet.update(assembled_at=iso(captured), assembled_at_prec="COLLECTION_ONLY")
+    for row in packet["flow_bars"]:
+        row.update(received_ts=iso(captured), received_ts_prec="COLLECTION_ONLY")
     spot, d, liquidity, s, r = derive(packet, start, END)
     assert spot["classification"] == "DIVERGENT" and spot["direction"] == "SELL"
     assert liquidity["fragmentation"]["top_sign_flips"] is True
+    before_receipt = deepcopy(packet)
+    before_receipt["assembled_at"] = iso(END)
+    assert derive(before_receipt, start, END)[2]["fragmentation"]["top_sign_flips"] is None
+    missing_receipts = deepcopy(packet)
+    for row in missing_receipts["flow_bars"]:
+        row.pop("received_ts")
+        row.pop("received_ts_prec")
+    assert derive(missing_receipts, start, END)[2]["fragmentation"]["top_sign_flips"] is None
     assert liquidity["fragmentation"]["validated"] is False
     classified = select_move(spot, d, liquidity, s, r, "HIGH", "EVENT")
     candidate = next(c for c in classified["divergence"]["candidates"] if c["state"] == "FRAGMENTATION")

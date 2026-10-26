@@ -30,9 +30,9 @@ from pydantic import JsonValue
 from tank.analysis.condition_fingerprints import condition_input_fingerprints
 from tank.analysis.condition_graph_codec import encode_basic_condition_spot, encode_scoped_condition_spot
 from tank.analysis.condition_graph_contracts import (
-    ConditionInterval,
     ConditionStateNodeKey,
     ConditionTopCacheKey,
+    ConditionTopVenueSignHistory,
 )
 from tank.analysis.condition_input_codec import (
     SpotConditionEvaluation,
@@ -40,7 +40,6 @@ from tank.analysis.condition_input_codec import (
     decode_spot_windows,
 )
 from tank.analysis.condition_inputs import (
-    SpotCalculationInputs,
     SpotCalculationSource,
     SpotPolicyConfiguration,
 )
@@ -2554,9 +2553,28 @@ def _usd_mid(row, mid):
 
 
 def enrich_evidence(
-    snapshot, start, end, spots, primary, deriv, relative, liquidity, *, spot_inputs: SpotCalculationInputs
+    snapshot,
+    start,
+    end,
+    spots,
+    primary,
+    deriv,
+    relative,
+    liquidity,
+    *,
+    sign_history: ConditionTopVenueSignHistory,
 ):
     """Compute cross-window claims only on pairwise common, complete venues."""
+    sign_history = ConditionTopVenueSignHistory.model_validate(sign_history)
+    selected_top = tuple(spots[primary]["topn"]["venues"]) if spots[primary].get("topn") else ()
+    if (
+        sign_history.interval.start != start
+        or sign_history.interval.cutoff != end
+        or set(sign_history.selected_venues) != set(selected_top)
+        or snapshot.get("token_id") is not None
+        and sign_history.token_id != snapshot["token_id"]
+    ):
+        raise ValueError("Enrichment sign history must bind its actual token, interval and selected venues")
     for name, left in spots.items():
         left["cohort_comparisons"] = {}
         for other, right in spots.items():
@@ -2922,12 +2940,6 @@ def enrich_evidence(
     deriv["funding_dispersion_normal_range_8h"] = normal_dispersion
     deriv["funding_dispersion_beyond_normal"] = funding_beyond
 
-    selected_top = tuple(spots[primary]["topn"]["venues"]) if spots[primary].get("topn") else ()
-    sign_history = calculate_spot_sign_history(
-        spot_inputs,
-        interval=ConditionInterval(window="EVENT", start=start, cutoff=end),
-        selected_venues=selected_top,
-    )
     flips = sign_history.multiple_flips()
     top_flips = flips.value if flips.status == "OBSERVED" else None
     liquidity["fragmentation"] = dict(
@@ -5137,7 +5149,19 @@ def _compute_market_truth(snapshot, *, config=None):
         window_liquidity["elasticity"].update(window=name, start=iso(wstart), cutoff=iso(end))
         window_liquidity["replenishment"].update(window=name, start=iso(wstart), cutoff=iso(end))
         enrich_evidence(
-            scoped, wstart, end, spots, name, d, relative, window_liquidity, spot_inputs=spot_inputs
+            scoped,
+            wstart,
+            end,
+            spots,
+            name,
+            d,
+            relative,
+            window_liquidity,
+            sign_history=calculate_spot_sign_history(
+                spot_inputs,
+                interval=spot_graph.spots[name].interval,
+                selected_venues=spot_graph.spots[name].topn.venues,
+            ),
         )
         d["support_features"] = support_features(scoped, wstart, end, spots[name], d, window_liquidity, su)
         if name == "EVENT" and not av:
@@ -5561,7 +5585,19 @@ def condition_market_state(snapshot, end, cache):
     liquidity = liquidity_truth(scoped, wstart, end, spots[primary], relative)
     supply = node("supply", ("supply", "anchor"), lambda: supply_truth(scoped, wstart, end))
     enrich_evidence(
-        scoped, wstart, end, spots, primary, derivatives, relative, liquidity, spot_inputs=spot_inputs
+        scoped,
+        wstart,
+        end,
+        spots,
+        primary,
+        derivatives,
+        relative,
+        liquidity,
+        sign_history=calculate_spot_sign_history(
+            spot_inputs,
+            interval=_spot_graph.spots[primary].interval,
+            selected_venues=_spot_graph.spots[primary].topn.venues,
+        ),
     )
     derivatives["support_features"] = support_features(
         scoped, wstart, end, spots[primary], derivatives, liquidity, supply
