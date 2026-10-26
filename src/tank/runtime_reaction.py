@@ -226,7 +226,9 @@ class ReactionJobInvocation(DomainModel):
 
     @classmethod
     def from_context(cls, context: ReactionClaimContext) -> Self:
-        return cls(context=context, queue_input=_reaction_input(context.original_payload))
+        return cls.model_validate(
+            {"context": context, "queue_input": _reaction_input(context.original_payload)}, by_name=True
+        )
 
     @classmethod
     def from_record(cls, record: Mapping[str, JsonValue]) -> Self:
@@ -294,7 +296,9 @@ async def reaction_leader(
             payload = context.original_payload
             if not isinstance(payload, dict) or "automatic_revision" not in payload:
                 continue
-            peer = QueuedReactionPeer(context=context, queue_input=ChangedReactionJob.model_validate(payload))
+            peer = QueuedReactionPeer.model_validate(
+                {"context": context, "queue_input": ChangedReactionJob.model_validate(payload)}, by_name=True
+            )
             state, request = peer.context.claim, peer.queue_input
             if (request.event_id, request.token_id, request.checkpoint) != (
                 command.event_id,
@@ -372,7 +376,7 @@ async def capture_reaction_job(
     clock: Callable[[], Timestamp],
     retry_delay: timedelta,
 ) -> dict[str, JsonValue]:
-    invocation = ReactionJobInvocation.model_validate(invocation)
+    invocation = ReactionJobInvocation.model_validate(invocation, by_name=True)
     command = invocation.command
     target = ReactionTarget(
         event_id=command.event_id, token_id=command.token_id, checkpoint=command.checkpoint
