@@ -223,3 +223,53 @@ def test_caller_mutation_cannot_change_already_cached_owned_facts() -> None:
     corrected = only_fact(cache).result.synchronized
     assert isinstance(corrected, ConditionSynchronizedOpenInterest)
     assert corrected.values.oi_native_end == 9999
+
+
+@pytest.mark.parametrize("collection", ["instruments", "oi"])
+def test_requested_oi_read_collections_cannot_be_omitted(collection: str) -> None:
+    value = packet()
+    rows = value["oi"]
+    assert isinstance(rows, list)
+    for row in rows:
+        assert isinstance(row, dict)
+        row.update(token_id="T", venue="binance", market_type="PERP_LINEAR")
+    del value[collection]
+    cache: dict[ConditionTopCacheKey, OIConditionLookup] = {}
+    with pytest.raises(ValueError, match="Requested OI snapshot requires captured"):
+        evaluate(value, cache, BaselineCaches.with_capacity(128))
+    assert cache == {}
+
+
+def test_explicit_empty_oi_read_retains_unavailability_without_zero_endpoints() -> None:
+    value = packet()
+    value["oi"] = []
+    cache: dict[ConditionTopCacheKey, OIConditionLookup] = {}
+    assert evaluate(value, cache, BaselineCaches.with_capacity(128)) == (False, False)
+    result = only_fact(cache).result
+    assert len(result.per_venue) == 1
+    assert result.per_venue[0].open_interest.status == "UNAVAILABLE"
+    assert result.synchronized.status == "UNAVAILABLE"
+
+
+@pytest.mark.parametrize("excluded", ["FUTURE_RECEIPT", "UNRESOLVED_EDGE"])
+def test_freshness_uses_exact_selected_oi_evidence_with_excluded_duplicate(excluded: str) -> None:
+    value = packet()
+    rows = value["oi"]
+    assert isinstance(rows, list) and isinstance(rows[-1], dict)
+    duplicate = deepcopy(rows[-1])
+    duplicate.update(metric_key="OTHER_OI", oi_usd="999")
+    if excluded == "FUTURE_RECEIPT":
+        duplicate["received_ts"] = "2026-10-16T12:00:03Z"
+    else:
+        duplicate.update(ts_prec="BUCKET(60s)", ts_bucket_anchor="UNSPECIFIED")
+    rows.append(duplicate)
+    cache: dict[ConditionTopCacheKey, OIConditionLookup] = {}
+    assert evaluate(value, cache, BaselineCaches.with_capacity(128)) == (False, True)
+    owned = only_fact(cache)
+    closing = owned.closing_observations()
+    assert len(closing) == 1 and closing[0].metric_key == "OI"
+    assert closing[0].reported_usd.value == 1
+    assert closing[0].evidence.row_index != len(rows) - 1
+    selected = owned.result.synchronized
+    assert isinstance(selected, ConditionSynchronizedOpenInterest)
+    assert selected.values.oi_usd_end == 1
